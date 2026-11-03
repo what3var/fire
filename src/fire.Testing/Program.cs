@@ -10,6 +10,8 @@ using fire.Values;
 
 // The standard libraries (time, io, graphics, ...): packed from their projects (Source next to the program, copied from packages/ of the repository) and installed into a store of their
 // own for this run (the C++ libraries of their natives are built on first use).
+// every check line numbered against the count of the last run ("OK: [12/530] ..."), every line flushed at once (TestUtils.cs, docs/TESTING.md)
+TestProgress.Install();
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 var standardRoot = Path.Combine(Path.GetTempPath(), "fire-test-standard-" + Guid.NewGuid().ToString("N"));
@@ -15724,10 +15726,14 @@ if (Environment.GetEnvironmentVariable("FIRE_TEST_NO_NATIVE") == "1") Console.Wr
 else
 {
     Console.WriteLine("=== Native-Backend: erzeugtes C++ gegen die VM ===");
+    Console.WriteLine($"(bis zu {TestJobs.Count} Faelle zugleich (FIRE_TEST_JOBS), gebaut mit {NativeTestBuild.Opt} (FIRE_TEST_OPT){(NativeTestBuild.Ccache != null ? ", ccache" : "")})");
+    // (the async reads of the output of processes complete on the thread pool: enough threads that a worker that waits for a process never waits for them)
+    ThreadPool.GetMinThreads(out int minWorkers, out int minIo);
+    ThreadPool.SetMinThreads(Math.Max(minWorkers, 8 * TestJobs.Count), Math.Max(minIo, 8 * TestJobs.Count));
     int natFailures = 0;
     void CheckNat(string title, bool ok, string? detail = null)
     {
-        if (!ok) natFailures++;
+        if (!ok) Interlocked.Increment(ref natFailures);
         Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}" + (detail == null ? "" : $"\n{detail}"));
     }
 
@@ -24698,221 +24704,248 @@ else
         }
 
         natCases = natCases.Where(c => TestSelected(c.Name)).ToArray();
-        // The VM runs sequentially: the precision of float is process-wide while a program runs.
-        var vmResults = natCases.Select(c => { var text = vmOutput(c.Source); Value.SingleFloats = false; return text; }).ToArray();
-
-        // at most a few C++ compilations at a time: every case has its own compiler process (AddressSanitizer: hundreds of MB each), all at once would not fit in memory
-        var buildGate = new SemaphoreSlim(4);
-        var compiled = natCases.Select((c, index) => Task.Run(() =>
+        // First the VM runs the cases here, one after the other and alone, as before: the precision of float (Value.SingleFloats) and the handlers of
+        // `terminate` are process-wide while a program runs (the compiler must not make its constants while a VM with 32-bit floats runs), and some thread
+        // cases of the VM depend on timing that a machine busy with compilers upsets. Then the C of every case is generated (in parallel, in this process) and
+        // handed to the workers that build and run it (only processes: FIRE_TEST_JOBS at a time, the biggest program first - a case with the ui library
+        // compiles for minutes and must not start last); the outputs are compared in the order of the cases (the output is the same as one case after the other).
+        var vmResults = new string[natCases.Length];
+        int vmAt = 0;
+        using (TestProgress.Heartbeat("VM (Faelle nativ == VM)", () => Volatile.Read(ref vmAt), natCases.Length, () => natCases[Math.Min(Volatile.Read(ref vmAt), natCases.Length - 1)].Name))
+            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Volatile.Write(ref vmAt, i + 1); }
+        Value.SingleFloats = false;
+        // what the native program of a case did: its output, stderr and exit code (Output null: it did not build - Stderr says why)
+        var natRan = new (string? Output, string Stderr, int Exit)[natCases.Length];
+        var natRanReady = new ManualResetEventSlim[natCases.Length];
+        for (int i = 0; i < natCases.Length; i++) natRanReady[i] = new ManualResetEventSlim(false);
+        int natRanCount = 0;
+        // (generated first: the cases with big libraries - their C is the biggest)
+        string[] natHeavyImports = { "\"ui\"", "\"circuits.ui\"", "\"ui.docking\"", "\"dialogs\"", "\"scene3d\"", "\"circuits\"" };
+        var natOrder = Enumerable.Range(0, natCases.Length).OrderByDescending(i => natHeavyImports.Count(h => natCases[i].Source.Contains("#import " + h))).ThenByDescending(i => natCases[i].Source.Length).ToList();
+        var natPipeline = TestJobs.StartPipeline(natOrder, index =>
         {
-            string expected = vmResults[index];
-            fire.Native.NativeSources generated;
-            try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
-            catch (fire.Native.NativeNotSupportedException ex) { return (c.Name, expected, $"nicht uebersetzbar: {ex.Message}"); }
-            string cpp = generated.Program;
-            string exeFile = Path.Combine(workDir, $"case{index}.bin");
-
-            string RunTool(string tool, string arguments, out int exit)
-            {
-                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments)
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
-                var errTask = p.StandardError.ReadToEndAsync();
-                string output = p.StandardOutput.ReadToEnd();
-                p.WaitForExit();
-                exit = p.ExitCode;
-                return output + errTask.Result;
-            }
-
-            // the libraries that the program asks for (`// fire-link: ssl` from the `linkLibraries` of a package)
-            string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-            string build;
-            int buildExit;
-            buildGate.Wait();
-            try { build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"case{index}", $"-pthread -O2 -Wall -Wextra {sanitize}", exeFile, out buildExit, linkFlags); }
-            finally { buildGate.Release(); }
-            if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C/C++-Compiler: " + build);
-            if (c.Name.StartsWith("Abbruch:"))
-            {
-                // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
-                // stderr ("Unhandled exception of type 'Class': message")
-                using var run = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exeFile) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
-                var stderrTask = run.StandardError.ReadToEndAsync();
-                string stdout = run.StandardOutput.ReadToEnd();
-                run.WaitForExit();
-                string vmStderr;
-                lock (vmUnhandled) vmStderr = vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
-                return (c.Name, expected + "stderr: " + vmStderr, run.ExitCode == 1 ? stdout + "stderr: " + stderrTask.Result.TrimEnd('\n', '\r') : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
-            }
-            string actual = RunTool(exeFile, "", out int runExit);
-            // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
-            return (c.Name, expected, runExit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? actual : $"Exitcode {runExit}: {actual}");
-        })).ToArray();
-        Task.WaitAll(compiled);
-
-        foreach (var task in compiled)
+            try { return (Sources: (fire.Native.NativeSources?)fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release)), Error: (string?)null); }
+            catch (fire.Native.NativeNotSupportedException ex) { return (Sources: null, Error: $"nicht uebersetzbar: {ex.Message}"); }
+            catch (Exception ex) { return (Sources: null, Error: $"Generator: {ex}"); }
+        }, item => (item.Sources?.Program.Length ?? 0) + (item.Sources?.Natives?.Length ?? 0), (index, item) =>
         {
-            var (name, expected, actual) = task.Result;
-            CheckNat($"Native == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
-        }
-
-        // Leaving out what the program does not reach (docs/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): by default ("trim": "reached") a class the
-        // program never reaches is not there for a lookup by its name - the VM has every class, so the outputs differ by design; "trim": "reflection" (once a
-        // class is looked up by name) and "trim": "all" (--keep-all, debug builds) keep them, then the output is the VM's again.
-        const string trimTitle = "Weglassen (trim): Reflection und JSON per Name in den drei Stufen, keep-trAll, Debug, Groesse des ui-Programms";
-        if (TestSelected(trimTitle))
-        {
-            string trRunTrim(string source, fire.Native.TrimMode? trim, string tag)
+            (string? Output, string Stderr, int Exit) Ran()
             {
-                fire.Native.NativeSources generated;
-                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release), trim: trim); }
-                catch (fire.Native.NativeNotSupportedException ex) { return "nicht uebersetzbar: " + ex.Message; }
-                string exe = Path.Combine(workDir, $"trim_{tag}.bin");
-                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"trim_{tag}", $"-pthread -O1 -Wall -Wextra {sanitize}", exe, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) return "C/C++-Compiler: " + build;
-                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
-                var err = p.StandardError.ReadToEndAsync();
-                string output = p.StandardOutput.ReadToEnd();
-                p.WaitForExit();
-                return p.ExitCode == 0 ? output : $"Exitcode {p.ExitCode}: {output}{err.Result}";
+                var generated = item.Sources;
+                if (generated == null) return (null, item.Error!, 0);
+                string exeFile = Path.Combine(workDir, $"case{index}.bin");
+                // the libraries that the program asks for (`// fire-link: ssl` from the `linkLibraries` of a package)
+                string linkFlags = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"case{index}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exeFile, out int buildExit, linkFlags);
+                if (buildExit != 0 || build.Contains("warning:")) return (null, "C/C++-Compiler: " + build, 0);
+                return TestProcess.Run(exeFile, "", workDir);
             }
-            const string trByName = """
-                #import "reflection"
-                class Seen {
-                    int a
-                    construct() { this.a = 1 }
-                }
-                class Ghost {
-                    int b
-                    construct() { this.b = 2 }
-                }
-                [Keep]
-                class Kept {
-                    int c
-                    construct() { this.c = 3 }
-                }
-                class Tool {
-                    [Keep] static int Version() { return 4 }
-                }
-                var s = new Seen()
-                print(Type.Of(s).Name + " " + Reflect.Get(s, "a"))
-                try { any g = Reflect.New("Ghost", []); print("ghost " + g.b) } catch (ReflectionException e) { print("ghost: " + e.message) }
-                print(Type.Named("Ghost") == undefined)
-                any k = Reflect.New("Kept", [])
-                print("kept " + k.c)
-                print(Type.Named("Tool") != undefined)
-                var has = ""
-                foreach (n in Type.Names()) { if (n == "Seen" || n == "Ghost" || n == "Kept" || n == "Tool") { has = has + n + " " } }
-                print(has)
-                """;
-            string trVmByName = vmOutput(trByName);
-            CheckNat("Weglassen (trim): die VM findet jede Klasse per Name", trVmByName == "Seen 1\nghost 2\nFalse\nkept 3\nTrue\nGhost Kept Seen Tool \n", trVmByName);
-            string trReached = trRunTrim(trByName, null, "reached");
-            CheckNat("Weglassen (trim): reached (Standard) - eine nie erreichte Klasse ist per Name unbekannt, [Keep] auf Klasse und Member bleibt",
-                trReached == "Seen 1\nghost: Unknown class 'Ghost'.\nTrue\nkept 3\nTrue\nKept Seen Tool \n", trReached);
-            string trReflection = trRunTrim(trByName, fire.Native.TrimMode.Reflection, "reflection");
-            CheckNat("Weglassen (trim): reflection - sobald eine Klasse per Name gesucht wird, bleibt jede (wie die VM)", trReflection == trVmByName, trReflection);
-            string trAll = trRunTrim(trByName, fire.Native.TrimMode.All, "all");
-            CheckNat("Weglassen (trim): all - alles bleibt (wie die VM)", trAll == trVmByName, trAll);
-
-            // JSON: "$type" names only the classes of the declared types (with their subclasses); a class outside them is unknown natively, unless everything is kept
-            const string trJson = """
-                #import "json"
-                class Shape { string name = "s" }
-                class Square : Shape { int side = 2 }
-                class Lonely { int never = 5 }
-                class Box {
-                    Shape shape
-                    construct() { }
-                }
-                print(Json.Serialize(new Square()))
-                try {
-                    var b = Json.Deserialize<Box>("{\"shape\":{\"$type\":\"Lonely\"}}")
-                    any x = b.shape
-                    print("lonely " + x.never)
-                } catch (JsonException e) { print("json: " + e.message) }
-                """;
-            string trVmJson = vmOutput(trJson);
-            CheckNat("Weglassen (trim): JSON in der VM - $type darf jede Klasse nennen", trVmJson == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\nlonely undefined\n", trVmJson);
-            string trJsonReached = trRunTrim(trJson, null, "json_reached");
-            CheckNat("Weglassen (trim): JSON reached - $type ausserhalb der deklarierten Typen (und ihrer Unterklassen) ist eine unbekannte Klasse",
-                trJsonReached == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\njson: $.shape: unknown class 'Lonely'.\n", trJsonReached);
-            string trJsonAll = trRunTrim(trJson, fire.Native.TrimMode.All, "json_all");
-            CheckNat("Weglassen (trim): JSON all - wie die VM", trJsonAll == trVmJson, trJsonAll);
-            // what JSON pulls in: writing only the objects the program makes; reading the declared classes, their subclasses and the classes of their fields
-            string trGenerated(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release)).Program;
-            string trWriteOnly = trGenerated("#import \"json\"\nclass P { int x = 1 }\nclass Unused { int y = 2 }\nclass Other : P { }\nprint(Json.Serialize(new P()))");
-            string trReading = trGenerated("#import \"json\"\nclass P { int x = 1\n Q q }\nclass Q { int z }\nclass Unused { int y = 2 }\nclass Other : P { }\nprint(Json.Deserialize<P>(\"{}\").x)");
-            string trAnySlot = trGenerated("#import \"json\"\nclass P { int x = 1\n any free }\nclass Unused { int y = 2 }\nprint(Json.Deserialize<P>(\"{}\").x)");
-            CheckNat("Weglassen (trim): JSON - Schreiben zieht keine Klassen nach, Lesen die deklarierten (mit Unterklassen und Feldtypen), ein any-Feld alle",
-                !trWriteOnly.Contains("{\"Unused\"") && !trWriteOnly.Contains("{\"Other\"") && trWriteOnly.Contains("{\"P\"")
-                && trReading.Contains("{\"Other\"") && trReading.Contains("{\"Q\"") && !trReading.Contains("{\"Unused\"") && trAnySlot.Contains("{\"Unused\""), "");
-
-            // a debug build keeps everything (the debugger, ROADMAP section 8); the configuration and the command line
-            var trDebugLinked = new Linker().CompileAndLink(new[] { "#debug\nprint(1)" }, null, null, null);
-            var trReleaseLinked = new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release);
-            CheckNat("Weglassen (trim): ein Debug-Build behaelt alles; \"trim\" in fire.native.json und --keep-all",
-                fire.Native.CppGenerator.EffectiveTrim(trDebugLinked, null) == fire.Native.TrimMode.All
-                && fire.Native.CppGenerator.EffectiveTrim(trReleaseLinked, null) == fire.Native.TrimMode.Reached
-                && fire.Native.CppGenerator.EffectiveTrim(trReleaseLinked, fire.Native.TrimMode.Reflection) == fire.Native.TrimMode.Reflection
-                && fire.Native.NativeConfig.Parse("{\"trim\": \"all\"}").Trim == fire.Native.TrimMode.All
-                && fire.Native.NativeConfig.Parse("{\"trim\": \"reflection\"}").Trim == fire.Native.TrimMode.Reflection
-                && fire.Native.NativeConfig.Parse("{}").Trim == null
-                && CommandLineParser.Parse(new[] { "build", "a.fire", "--keep-all" }).KeepAll
-                && CommandLineParser.Parse(new[] { "run", "a.fire", "--keep-all" }).Error != null);
-
-            // the size: the minimal ui program (a window, a root, one label) - 7.85 MB of C before section 11
-            const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
-            var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
-            int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
-            int trUiAll = fire.Native.CppGenerator.GenerateSources(trUiLinked, trim: fire.Native.TrimMode.All).Program.Length;
-            CheckNat("Weglassen (trim): das minimale ui-Programm bleibt klein (unter 3 MB C; keep-all ist mehr als doppelt so gross)", trUiSize < 3_000_000 && trUiAll > 2 * trUiSize, $"{trUiSize} / keep-all {trUiAll}");
-        }
-
-        // SChannel, the TLS of the Windows platform: the TLS case built for Windows with MinGW and run under Wine (when both are on this machine) must print what the VM prints
-        {
-            string? FindTool(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
-            string? mingw = FindTool("x86_64-w64-mingw32-g++");
-            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindTool("wine64") ?? FindTool("wine");
-            int tlsIndex = Array.FindIndex(natCases, c => c.Name.StartsWith("Tls: Handshake", StringComparison.Ordinal));
-            if (mingw == null || wine == null || tlsIndex < 0)
+            try { natRan[index] = Ran(); }
+            catch (Exception ex) { natRan[index] = (null, "Test: " + ex, 0); }
+            Interlocked.Increment(ref natRanCount);
+            natRanReady[index].Set();
+        });
+        int natWaiting = 0;
+        using (TestProgress.Heartbeat("native Faelle gebaut und gelaufen", () => Volatile.Read(ref natRanCount), natCases.Length, () => "wartet auf " + natCases[Volatile.Read(ref natWaiting)].Name))
+            for (int index = 0; index < natCases.Length; index++)
             {
-                Console.WriteLine("(Tls mit SChannel: uebersprungen - MinGW (x86_64-w64-mingw32-g++) und Wine sind auf diesem Rechner nicht da)");
-            }
-            else
-            {
-                string name = "Tls (SChannel, fuer Windows gebaut, unter Wine)";
-                try
+                Volatile.Write(ref natWaiting, index);
+                natRanReady[index].Wait();
+                var c = natCases[index];
+                var (stdout, stderr, exit) = natRan[index];
+                string expected = vmResults[index], actual;
+                if (stdout == null) actual = stderr;
+                else if (c.Name.StartsWith("Abbruch:"))
                 {
-                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
-                    string cpp = generated.Program;
-                    string exeFile = Path.Combine(workDir, "schannel.exe");
-                    string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-                    string Run(string tool, string arguments, out int exit)
-                    {
-                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
-                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
-                        info.Environment["WINEDEBUG"] = "-all";
-                        using var p = System.Diagnostics.Process.Start(info)!;
-                        var errTask = p.StandardError.ReadToEndAsync();
-                        string output = p.StandardOutput.ReadToEnd();
-                        if (!p.WaitForExit(240000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
-                        exit = p.ExitCode;
-                        return output + errTask.Result;
-                    }
-                    string build = NativeTestBuild.Build((tool, arguments) => (Run(tool, arguments, out int code), code), mingw, generated, workDir, "schannel", "-O2 -Wall -Wextra -static", exeFile, out int buildExit, linkFlags);
-                    if (buildExit != 0 || build.Contains("warning:")) CheckNat(name, false, "MinGW: " + build);
-                    else
-                    {
-                        string actual = Run(wine, $"\"{exeFile}\"", out int runExit);
-                        // (the Wine output has no stray lines: WINEDEBUG is off; lines Wine itself prints about the prefix are dropped)
-                        actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("wine:", StringComparison.Ordinal)));
-                        string expected = vmResults[tlsIndex].Replace("\r", "");
-                        CheckNat(name, runExit == 0 && expected.TrimEnd() == actual.TrimEnd(), $"  erwartet (VM):\n{expected}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
-                    }
+                    // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
+                    // stderr ("Unhandled exception of type 'Class': message")
+                    expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
+                    actual = exit == 1 ? stdout + "stderr: " + stderr.TrimEnd('\n', '\r') : $"Exitcode {exit}: {stdout}{stderr}";
                 }
-                catch (Exception ex) { CheckNat(name, false, ex.Message); }
+                // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
+                else actual = exit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
+                CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
             }
-        }
+        natPipeline.Join();
+
+        // (the trim cases and the TLS case under Wine at the same time)
+        TestJobs.Concurrently(() =>
+        {
+            // Leaving out what the program does not reach (docs/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): by default ("trim": "reached") a class the
+            // program never reaches is not there for a lookup by its name - the VM has every class, so the outputs differ by design; "trim": "reflection" (once a
+            // class is looked up by name) and "trim": "all" (--keep-all, debug builds) keep them, then the output is the VM's again.
+            const string trimTitle = "Weglassen (trim): Reflection und JSON per Name in den drei Stufen, keep-trAll, Debug, Groesse des ui-Programms";
+            if (TestSelected(trimTitle))
+            {
+                // (a build that starts now on a thread of its own and is asked for later: the five builds run at the same time as the VM here)
+                Func<string> trLater(Func<string> run)
+                {
+                    if (TestJobs.Count <= 1) { string now = run(); return () => now; }
+                    string? result = null;
+                    var thread = new Thread(() => result = run(), 16 << 20) { IsBackground = true };
+                    thread.Start();
+                    return () => { thread.Join(); return result!; };
+                }
+                string trRunTrim(string source, fire.Native.TrimMode? trim, string tag)
+                {
+                    fire.Native.NativeSources generated;
+                    try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release), trim: trim); }
+                    catch (fire.Native.NativeNotSupportedException ex) { return "nicht uebersetzbar: " + ex.Message; }
+                    string exe = Path.Combine(workDir, $"trim_{tag}.bin");
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"trim_{tag}", $"-pthread -O1 -Wall -Wextra {sanitize}", exe, out int buildExit);
+                    if (buildExit != 0 || build.Contains("warning:")) return "C/C++-Compiler: " + build;
+                    using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
+                    var err = p.StandardError.ReadToEndAsync();
+                    string output = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit();
+                    return p.ExitCode == 0 ? output : $"Exitcode {p.ExitCode}: {output}{err.Result}";
+                }
+                const string trByName = """
+                    #import "reflection"
+                    class Seen {
+                        int a
+                        construct() { this.a = 1 }
+                    }
+                    class Ghost {
+                        int b
+                        construct() { this.b = 2 }
+                    }
+                    [Keep]
+                    class Kept {
+                        int c
+                        construct() { this.c = 3 }
+                    }
+                    class Tool {
+                        [Keep] static int Version() { return 4 }
+                    }
+                    var s = new Seen()
+                    print(Type.Of(s).Name + " " + Reflect.Get(s, "a"))
+                    try { any g = Reflect.New("Ghost", []); print("ghost " + g.b) } catch (ReflectionException e) { print("ghost: " + e.message) }
+                    print(Type.Named("Ghost") == undefined)
+                    any k = Reflect.New("Kept", [])
+                    print("kept " + k.c)
+                    print(Type.Named("Tool") != undefined)
+                    var has = ""
+                    foreach (n in Type.Names()) { if (n == "Seen" || n == "Ghost" || n == "Kept" || n == "Tool") { has = has + n + " " } }
+                    print(has)
+                    """;
+                var trReachedLater = trLater(() => trRunTrim(trByName, null, "reached"));
+                var trReflectionLater = trLater(() => trRunTrim(trByName, fire.Native.TrimMode.Reflection, "reflection"));
+                var trAllLater = trLater(() => trRunTrim(trByName, fire.Native.TrimMode.All, "all"));
+                string trVmByName = vmOutput(trByName);
+                CheckNat("Weglassen (trim): die VM findet jede Klasse per Name", trVmByName == "Seen 1\nghost 2\nFalse\nkept 3\nTrue\nGhost Kept Seen Tool \n", trVmByName);
+                string trReached = trReachedLater();
+                CheckNat("Weglassen (trim): reached (Standard) - eine nie erreichte Klasse ist per Name unbekannt, [Keep] auf Klasse und Member bleibt",
+                    trReached == "Seen 1\nghost: Unknown class 'Ghost'.\nTrue\nkept 3\nTrue\nKept Seen Tool \n", trReached);
+                string trReflection = trReflectionLater();
+                CheckNat("Weglassen (trim): reflection - sobald eine Klasse per Name gesucht wird, bleibt jede (wie die VM)", trReflection == trVmByName, trReflection);
+                string trAll = trAllLater();
+                CheckNat("Weglassen (trim): all - alles bleibt (wie die VM)", trAll == trVmByName, trAll);
+
+                // JSON: "$type" names only the classes of the declared types (with their subclasses); a class outside them is unknown natively, unless everything is kept
+                const string trJson = """
+                    #import "json"
+                    class Shape { string name = "s" }
+                    class Square : Shape { int side = 2 }
+                    class Lonely { int never = 5 }
+                    class Box {
+                        Shape shape
+                        construct() { }
+                    }
+                    print(Json.Serialize(new Square()))
+                    try {
+                        var b = Json.Deserialize<Box>("{\"shape\":{\"$type\":\"Lonely\"}}")
+                        any x = b.shape
+                        print("lonely " + x.never)
+                    } catch (JsonException e) { print("json: " + e.message) }
+                    """;
+                var trJsonReachedLater = trLater(() => trRunTrim(trJson, null, "json_reached"));
+                var trJsonAllLater = trLater(() => trRunTrim(trJson, fire.Native.TrimMode.All, "json_all"));
+                string trVmJson = vmOutput(trJson);
+                CheckNat("Weglassen (trim): JSON in der VM - $type darf jede Klasse nennen", trVmJson == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\nlonely undefined\n", trVmJson);
+                string trJsonReached = trJsonReachedLater();
+                CheckNat("Weglassen (trim): JSON reached - $type ausserhalb der deklarierten Typen (und ihrer Unterklassen) ist eine unbekannte Klasse",
+                    trJsonReached == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\njson: $.shape: unknown class 'Lonely'.\n", trJsonReached);
+                string trJsonAll = trJsonAllLater();
+                CheckNat("Weglassen (trim): JSON all - wie die VM", trJsonAll == trVmJson, trJsonAll);
+                // what JSON pulls in: writing only the objects the program makes; reading the declared classes, their subclasses and the classes of their fields
+                string trGenerated(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release)).Program;
+                string trWriteOnly = trGenerated("#import \"json\"\nclass P { int x = 1 }\nclass Unused { int y = 2 }\nclass Other : P { }\nprint(Json.Serialize(new P()))");
+                string trReading = trGenerated("#import \"json\"\nclass P { int x = 1\n Q q }\nclass Q { int z }\nclass Unused { int y = 2 }\nclass Other : P { }\nprint(Json.Deserialize<P>(\"{}\").x)");
+                string trAnySlot = trGenerated("#import \"json\"\nclass P { int x = 1\n any free }\nclass Unused { int y = 2 }\nprint(Json.Deserialize<P>(\"{}\").x)");
+                CheckNat("Weglassen (trim): JSON - Schreiben zieht keine Klassen nach, Lesen die deklarierten (mit Unterklassen und Feldtypen), ein any-Feld alle",
+                    !trWriteOnly.Contains("{\"Unused\"") && !trWriteOnly.Contains("{\"Other\"") && trWriteOnly.Contains("{\"P\"")
+                    && trReading.Contains("{\"Other\"") && trReading.Contains("{\"Q\"") && !trReading.Contains("{\"Unused\"") && trAnySlot.Contains("{\"Unused\""), "");
+
+                // a debug build keeps everything (the debugger, ROADMAP section 8); the configuration and the command line
+                var trDebugLinked = new Linker().CompileAndLink(new[] { "#debug\nprint(1)" }, null, null, null);
+                var trReleaseLinked = new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release);
+                CheckNat("Weglassen (trim): ein Debug-Build behaelt alles; \"trim\" in fire.native.json und --keep-all",
+                    fire.Native.CppGenerator.EffectiveTrim(trDebugLinked, null) == fire.Native.TrimMode.All
+                    && fire.Native.CppGenerator.EffectiveTrim(trReleaseLinked, null) == fire.Native.TrimMode.Reached
+                    && fire.Native.CppGenerator.EffectiveTrim(trReleaseLinked, fire.Native.TrimMode.Reflection) == fire.Native.TrimMode.Reflection
+                    && fire.Native.NativeConfig.Parse("{\"trim\": \"all\"}").Trim == fire.Native.TrimMode.All
+                    && fire.Native.NativeConfig.Parse("{\"trim\": \"reflection\"}").Trim == fire.Native.TrimMode.Reflection
+                    && fire.Native.NativeConfig.Parse("{}").Trim == null
+                    && CommandLineParser.Parse(new[] { "build", "a.fire", "--keep-all" }).KeepAll
+                    && CommandLineParser.Parse(new[] { "run", "a.fire", "--keep-all" }).Error != null);
+
+                // the size: the minimal ui program (a window, a root, one label) - 7.85 MB of C before section 11
+                const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
+                var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
+                int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
+                int trUiAll = fire.Native.CppGenerator.GenerateSources(trUiLinked, trim: fire.Native.TrimMode.All).Program.Length;
+                CheckNat("Weglassen (trim): das minimale ui-Programm bleibt klein (unter 3 MB C; keep-all ist mehr als doppelt so gross)", trUiSize < 3_000_000 && trUiAll > 2 * trUiSize, $"{trUiSize} / keep-all {trUiAll}");
+            }
+        }, () =>
+        {
+            // SChannel, the TLS of the Windows platform: the TLS case built for Windows with MinGW and run under Wine (when both are on this machine) must print what the VM prints
+            lock (TestJobs.Wine)
+            {
+                string? FindTool(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+                string? mingw = FindTool("x86_64-w64-mingw32-g++");
+                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindTool("wine64") ?? FindTool("wine");
+                int tlsIndex = Array.FindIndex(natCases, c => c.Name.StartsWith("Tls: Handshake", StringComparison.Ordinal));
+                if (mingw == null || wine == null || tlsIndex < 0)
+                {
+                    Console.WriteLine("(Tls mit SChannel: uebersprungen - MinGW (x86_64-w64-mingw32-g++) und Wine sind auf diesem Rechner nicht da)");
+                }
+                else
+                {
+                    string name = "Tls (SChannel, fuer Windows gebaut, unter Wine)";
+                    try
+                    {
+                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
+                        string cpp = generated.Program;
+                        string exeFile = Path.Combine(workDir, "schannel.exe");
+                        string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                        string Run(string tool, string arguments, out int exit)
+                        {
+                            var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+                            info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                            info.Environment["WINEDEBUG"] = "-all";
+                            using var p = System.Diagnostics.Process.Start(info)!;
+                            var errTask = p.StandardError.ReadToEndAsync();
+                            string output = p.StandardOutput.ReadToEnd();
+                            if (!p.WaitForExit(240000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                            exit = p.ExitCode;
+                            return output + errTask.Result;
+                        }
+                        string build = NativeTestBuild.Build((tool, arguments) => (Run(tool, arguments, out int code), code), mingw, generated, workDir, "schannel", $"{NativeTestBuild.Opt} -Wall -Wextra -static", exeFile, out int buildExit, linkFlags);
+                        if (buildExit != 0 || build.Contains("warning:")) CheckNat(name, false, "MinGW: " + build);
+                        else
+                        {
+                            string actual = Run(wine, $"\"{exeFile}\"", out int runExit);
+                            // (the Wine output has no stray lines: WINEDEBUG is off; lines Wine itself prints about the prefix are dropped)
+                            actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("wine:", StringComparison.Ordinal)));
+                            string expected = vmResults[tlsIndex].Replace("\r", "");
+                            CheckNat(name, runExit == 0 && expected.TrimEnd() == actual.TrimEnd(), $"  erwartet (VM):\n{expected}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                        }
+                    }
+                    catch (Exception ex) { CheckNat(name, false, ex.Message); }
+                }
+            }
+        });
 
         // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
         string out64 = vmOutput("print(0.1 + 0.2)\nprint(1.0 / 3)"), out32 = vmOutput("#floatwidth 32\nprint(0.1 + 0.2)\nprint(1.0 / 3)");
@@ -24958,740 +24991,560 @@ else
             cliEsp.Error == null && cliEsp.Target == esp && CommandLineParser.Parse(new[] { "native", "a.script", "-t", "amiga" }).TargetName == "amiga"
             && CommandLineParser.Parse(new[] { "run", "a.script", "-t", "esp32" }).Error != null && CommandLineParser.Parse(new[] { "native", "a.script" }).Target == null);
 
-        string RunProc(string tool, string arguments, string dir, out int exit, string? input = null)
+        // (variables for the program in `environment`: cases run at the same time, Environment.SetEnvironmentVariable would reach the others)
+        string RunProc(string tool, string arguments, string dir, out int exit, string? input = null, IReadOnlyDictionary<string, string?>? environment = null)
         {
-            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments)
-            { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input != null, UseShellExecute = false, WorkingDirectory = dir })!;
-            if (input != null) { p.StandardInput.Write(input); p.StandardInput.Close(); }
-            var errTask = p.StandardError.ReadToEndAsync();
-            string output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            exit = p.ExitCode;
-            return output + errTask.Result;
+            var (stdout, stderr, code) = TestProcess.Run(tool, arguments, dir, input, environment);
+            exit = code;
+            return stdout + stderr;
         }
-        // ---- The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): the program driven over the protocol, against the VM (NativeDebugTests.cs)
-        NativeDebugTests.Run(CheckNat, cxx, workDir, sanitize);
-
-        // ---- Devices: the same scripts as in the device checks of the VM, natively with the loopback device (FIRE_DEVICES), against the expected outputs
+        // The debugger, the devices, the windows (with the UI) and FreeRTOS at the same time (TestJobs.Concurrently: the output stays in this order). They share no
+        // files, the VM runs only in the debugger part, Wine is taken in turn (TestJobs.Wine), every X server is its own (TestJobs.XvfbServer); the programs
+        // get their variables per process. (What the window cases left behind before they did so - the sections after them expect it:)
+        Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+        TestJobs.Concurrently(() =>
         {
-            if (devNativeCases.Count == 0) Console.WriteLine("(Geraete nativ: keine Faelle - die Geraete-Pruefungen der VM liefen nicht)");
-            var devTasks = devNativeCases.Where(c => TestSelected(c.Title)).Select((c, index) => Task.Run(() =>
-            {
-                var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
-                if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
-                var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Defines = defines } };
-                fire.Native.NativeSources generated;
-                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Script }, null, null, VmExecutionMode.Release, null, target), target); }
-                catch (fire.Native.NativeNotSupportedException ex) { return (c.Title, "", $"nicht uebersetzbar: {ex.Message}"); }
-                string exe = Path.Combine(workDir, $"dev{index}.bin");
-                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"dev{index}", $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C/C++-Compiler: " + build);
-                string actual = RunProc(exe, "", workDir, out int runExit);
-                return (c.Title, string.Concat(c.Expected.Select(l => l + "\n")), runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
-            })).ToArray();
-            Task.WaitAll(devTasks);
-            foreach (var task in devTasks)
-            {
-                var (title, expected, actual) = task.Result;
-                CheckNat($"Geraete nativ: {title}", expected == actual, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
-            }
-            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER")) && Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == null) CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
-        }
-
-        // ---- Window (packages/windows/native/fire_bridge_windows.h): SDL2 and SDL3 with the dummy driver - the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3,
-        // there is no comparison here) -, the clipboard of X11 under Xvfb, and Windows (MinGW, SDL3) under Wine
+            // ---- The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): the program driven over the protocol, against the VM (NativeDebugTests.cs)
+            NativeDebugTests.Run(CheckNat, cxx, workDir, sanitize);
+        }, () =>
         {
-            string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
-            File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
-            RunProc(cxx, $"-std=c++17 \"{sdlProbe}\" -lSDL2 -o \"{sdlProbe}.bin\"", workDir, out int sdlExit);
-            var windowCases = new (string Title, string Script, string[] Expected, string Define)[]
+            // ---- Devices: the same scripts as in the device checks of the VM, natively with the loopback device (FIRE_DEVICES), against the expected outputs
             {
-                ("Fenster: Framebuffer anzeigen, VSync, Tick, Ereignisse anmelden", """
-            #import "windows"
-            var fb = new Framebuffer(64, 48)
-            var con = new Renderer(fb)
-            con.Clear()
-            con.FillRect(4, 4, 20, 10, new SolidBrush(12))
-            var win = new Window(fb, "fire test")
-            print(win.VSync)
-            win.VSync = false
-            print(win.VSync)
-            print(win.EnableEvents())
-            print(win.Tick())
-            print(win.NextEvent())
-            print(win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key") }))
-            print(win.RegisterClose(func() => { print("close") }))
-            print(win.RegisterTextInput(func(string t) => { print("text " + t) }))
-            for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, new SolidBrush(9)); win.Tick() }
-            print(win.Tick())
-            """, new[] { "True", "False", "True", "True", "undefined", "True", "True", "True", "True" }, ""),
-                ("Fenster: AutoResize bringt den Framebuffer auf die Groesse des Fensters", """
-            #import "windows"
-            var fb = new Framebuffer(64, 48)
-            var win = new Window(fb, "resize")
-            print(win.AutoResize)
-            win.AutoResize = true
-            print(win.AutoResize)
-            win.EnableEvents()
-            win.RegisterResize(func(int w, int h) => { print("cb " + w + " " + h) })
-            print(win.Tick())
-            print(fb.Width() + "x" + fb.Height())
-            var e = win.NextEvent()
-            print(e[0] + " " + e[1] + " " + e[2])
-            print(fb.Resize(0, 5))
-            print(fb.Resize(20000, 5))
-            print(fb.Width() + "x" + fb.Height())
-            print(fb.Resize(100, 80))
-            print(fb.Width() + "x" + fb.Height())
-            """, new[] { "False", "True", "cb 90 70", "True", "90x70", "4 90 70", "False", "False", "90x70", "True", "100x80" }, "-DFIRE_DISPLAY_SELFTEST_RESIZE "),
-                ("Fenster: Touch- und Joystick-Ereignisse, TouchMouse", """
-            #import "windows"
-            var fb = new Framebuffer(64, 48)
-            var win = new Window(fb, "input")
-            print(win.TouchMouse)
-            win.TouchMouse = false
-            print(win.TouchMouse)
-            win.RegisterTouchDown(func(int f, float x, float y, float p) => { print("down " + f + " " + x + " " + y + " " + p) })
-            win.RegisterJoystickAxis(func(int j, int a, float v) => { print("axis " + j + " " + a + " " + v) })
-            win.RegisterJoystickHat(func(int j, int h, int m) => { print("hat " + j + " " + h + " " + m) })
-            win.RegisterJoystickButtonDown(func(int j, int b) => { print("button " + j + " " + b) })
-            win.RegisterJoystickRemoved(func(int j) => { print("removed " + j) })
-            win.EnableEvents()
-            print(win.Tick())
-            var e = win.NextEvent()
-            while (e != undefined) {
-                var line = ""
-                for (var i = 0; i < e.length; i++) { line = line + e[i] + " " }
-                print("queued " + line)
-                e = win.NextEvent()
-            }
-            """, new[] { "True", "False", "down 5 32 12 1", "axis 7 1 -1", "button 7 3", "hat 7 0 3", "removed 7", "True", "queued 16 5 32 12 1 ", "queued 17 5 48 24 0.5 ", "queued 18 5 48 24 0 ", "queued 32 7 1 -1 ", "queued 33 7 3 ", "queued 34 7 3 ", "queued 35 7 0 3 ", "queued 37 7 " }, "-DFIRE_DISPLAY_SELFTEST_INPUT "),
-                ("Fenster: Drop von Dateien und Text aus einem anderen Programm (Callbacks, Warteschlange, Position), die Zwischenablage", """
-            #import "windows"
-            var fb = new Framebuffer(64, 48)
-            var win = new Window(fb, "drop")
-            win.RegisterDropFiles(func(any files, float x, float y) => {
-                var line = "files"
-                foreach (f in files) { line = line + " [" + f + "]" }
-                print(line + " at " + x + " " + y)
-            })
-            win.RegisterDropText(func(string text, float x, float y) => { print("text [" + text + "] at " + x + " " + y) })
-            win.EnableEvents()
-            print(win.Tick())
-            var e = win.NextEvent()
-            while (e != undefined) {
-                if (e[0] == 40) { print("queued 40 " + e[1].length + " " + e[1][0] + " " + e[2] + " " + e[3]) }
-                if (e[0] == 41) { print("queued 41 " + e[1] + " " + e[2] + " " + e[3]) }
-                e = win.NextEvent()
-            }
-            print(Clipboard.HasText)
-            print(Clipboard.SetText("Grüße aus fire 😀"))
-            print(Clipboard.HasText + " " + Clipboard.GetText() + " " + Clipboard.GetText().Length)
-            """, new[] { "files [/tmp/eins.txt] [/tmp/zwei ä.png] at 40 30", "text [gezogener Text] at 40 30", "files [/tmp/allein.txt] at 40 30", "False", "queued 40 2 /tmp/eins.txt 40 30", "queued 41 gezogener Text 40 30", "queued 40 1 /tmp/allein.txt 40 30", "False", "True", "True Grüße aus fire 😀 17" }, "-DFIRE_DISPLAY_SELFTEST_DROP "),
-                ("UI: ein Drop aus einem anderen Programm erreicht das Element darunter, ein Textfeld kopiert und fuegt ueber die Zwischenablage ein", """
-            #import "ui"
-            var fb = new Framebuffer(64, 48)
-            var win = new Window(fb, "ui drop")
-            var ui = new UI.Root(fb, win)
-            var area = new UI.Panel(0, 0, 60, 40)
-            area.AllowDrop = true
-            area.OnDrop = func (UI.DragData d, int x, int y) => {
-                print("area " + d.Files.Count + " [" + d.Text + "] " + d.External + " " + x + " " + y)
-                return UI.DropEffect.Copy
-            }
-            ui.Add(area)
-            var tb = new UI.TextBox("kopier mich", 0, 0, 10, 10)
-            tb.Visible = false
-            ui.Add(tb)
-            ui.Draw()
-            ui.Tick()
-            tb.SelectAll()
-            tb.Copy()
-            print(Clipboard.GetText())
-            tb.Select(0, 6)
-            tb.Paste()
-            print(tb.Text)
-            """, new[] { "area 2 [] True 40 30", "area 0 [gezogener Text] True 40 30", "area 1 [] True 40 30", "kopier mich", "kopier mich mich" }, "-DFIRE_DISPLAY_SELFTEST_DROP "),
-                ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
-            #import "windows"
-            var fb = new Framebuffer(64, 48)
-            var win = new Window(fb, "events")
-            var log = ""
-            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("keydown " + k + " " + s + " " + m + " " + r) })
-            win.RegisterKeyUp(func(int k, int s, int m, bool r) => { print("keyup " + k + " " + s + " " + m + " " + r) })
-            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
-            win.RegisterMouseUp(func(int b, float x, float y) => { print("up " + b + " " + x + " " + y) })
-            win.RegisterMouseMove(func(float x, float y, int st) => { print("move " + x + " " + y + " " + st) })
-            win.RegisterMouseMoveRelative(func(float x, float y, int st) => { print("rel " + x + " " + y + " " + st) })
-            win.RegisterMouseScroll(func(float sx, float sy, float x, float y) => { print("scroll " + sx + " " + sy) })
-            win.RegisterTextInput(func(string t) => { print("text " + t + " " + t.Length) })
-            win.RegisterCloseRequest(func() => { print("closerequest") })
-            win.RegisterClose(func() => { print("close") })
-            win.EnableEvents()
-            var open = win.Tick()
-            print("open " + open)
-            var e = win.NextEvent()
-            while (e != undefined) {
-                var line = ""
-                for (var i = 0; i < e.length; i++) { line = line + e[i] + " " }
-                print("queued " + line)
-                e = win.NextEvent()
-            }
-            print(win.NextEvent())
-            """, new[] { "keydown 97 4 1 False", "keyup 97 4 0 False", "down 1 32 24", "up 1 32 24", "move 10 12 1", "rel 3 -2 1", "scroll 0 1.5", "text éx 2", "closerequest", "close", "open False", "queued 24 97 4 1 False ", "queued 25 97 4 0 False ", "queued 8 1 32 24 ", "queued 11 1 32 24 ", "queued 9 10 12 1 ", "queued 10 3 -2 1 ", "queued 12 0 1.5 0 0 ", "queued 3 éx ", "queued 2 ", "queued 1 ", "undefined" }, "-DFIRE_DISPLAY_SELFTEST "),
-                ("Fenster: WindowManager.Run auf dem Programm-Thread (Konstruktor-Parameter, onCycle, Callbacks)", """
-            #import "windows"
-            var fb = new Framebuffer(64, 48)
-            var mine = new WindowManager()
-            var win = new Window(fb, "run", mine)
-            var cycles = 0
-            win.onCycle = func () => { cycles++ }
-            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k) })
-            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
-            print("mine " + (win.Manager == mine) + ", started " + mine.IsStarted)
-            win.Run()
-            print("done: cycles " + (cycles > 0) + ", closed " + win.IsClosed + ", left " + mine.Count)
-            """, new[] { "mine True, started False", "key 97", "down 1 32 24", "done: cycles True, closed True, left 0" }, "-DFIRE_DISPLAY_SELFTEST "),
-                ("Fenster: Window.Show startet den Thread des Managers, das Programm geht weiter und wartet am Ende", """
-            #import "windows"
-            var fb = new Framebuffer(64, 48)
-            var win = new Window(fb, "shown")
-            var cycles = 0
-            win.onCycle = func () => { cycles++ }
-            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k + " in cycle " + (cycles >= 0)) })
-            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
-            win.Show()
-            print("goes on, started " + win.Manager.IsStarted + ", default " + (win.Manager == WindowManager.Default))
-            """, new[] { "goes on, started True, default True", "key 97 in cycle True", "down 1 32 24" }, "-DFIRE_DISPLAY_SELFTEST "),
-            };
-            // every case with SDL2 and - when this machine has it - with SDL3 (FIRE_SDL3, fire_display_sdl3.h): the same output
-            string sdl3Probe = Path.Combine(workDir, "sdl3probe.c");
-            File.WriteAllText(sdl3Probe, "#include <SDL3/SDL.h>\nint main(void) { return SDL_Init(0) ? 0 : 1; }\n");
-            RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{sdl3Probe}\" -lSDL3 -o \"{sdl3Probe}.bin\"", workDir, out int sdl3Exit);
-            if (sdl3Exit != 0) Console.WriteLine("(SDL3 nicht verfuegbar: die Fenster laufen nur mit SDL2)");
-            string? FindProgram(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
-            string? xvfbRun = FindProgram("xvfb-run");
-            // (under X11 libdbus, which SDL3 uses, keeps a buffer until the end: not a leak of the program)
-            string lsanFile = Path.Combine(workDir, "lsan.supp");
-            File.WriteAllText(lsanFile, "leak:libdbus-1.so\n");
-            // Builds a case for SDL `version` and runs it: `display` "dummy" (the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
-            // (`script` is the reader, `second` the writer that starts 0.3 s after it on the same X server; the output is the reader's) or "x11-late" (the writer
-            // first, the reader 1 s later: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
-            // `firstCommand` instead of the reader built from `script` (the VM: forge run).
-            void RunWindowCase(string title, string script, string[] expected, string define, int version, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null)
-            {
-                string label = version == 3 ? $"{title} [SDL3]" : title;
-                var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
-                fire.Native.NativeSources Generate(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target), target);
-                var generated = Generate(script);
-                string cpp = generated.Program;
-                bool asks = version == 3 ? cpp.Contains("// fire-link: SDL3") && cpp.Contains("#define FIRE_SDL3 1") && !cpp.Contains("// fire-link: SDL2")
-                                         : cpp.Contains("// fire-link: SDL2") && !cpp.Contains("FIRE_SDL3");
-                CheckNat($"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, "");
-                if ((version == 2 ? sdlExit : sdl3Exit) != 0) { Console.WriteLine($"(SDL{version} nicht verfuegbar: {label} wird nicht ausgefuehrt)"); return; }
-                if (display != "dummy" && xvfbRun == null) { Console.WriteLine($"(xvfb-run nicht da: {label} wird nicht ausgefuehrt)"); return; }
-                string Build(fire.Native.NativeSources sources, string name, out string exe)
+                if (devNativeCases.Count == 0) Console.WriteLine("(Geraete nativ: keine Faelle - die Geraete-Pruefungen der VM liefen nicht)");
+                var devTasks = TestJobs.Map(devNativeCases.Where(c => TestSelected(c.Title)).ToList(), (c, index) =>
                 {
-                    exe = Path.Combine(workDir, name + ".bin");
-                    File.WriteAllText(Path.Combine(workDir, name + ".c"), sources.Program);
-                    var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], target, Path.Combine(workDir, name + ".c"), workDir, exe);
-                    CheckNat($"Fenster: {label}: der Build haengt -lSDL{version} an", command.Arguments.Contains($"-lSDL{version}") && !command.Arguments.Contains($"-lSDL{5 - version}"), command.Arguments);
-                    string log = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}{define}", exe, out int buildExit, $" -lSDL{version}");
-                    return buildExit != 0 || log.Contains("warning:") ? "C/C++-Compiler: " + log : "";
-                }
-                string name = $"window{version}_" + Math.Abs(title.GetHashCode());
-                string exe = "";
-                string failed = firstCommand == null ? Build(generated, name, out exe) : "";
-                string exe2 = "";
-                if (failed == "" && second != null && secondCommand == null) failed = Build(Generate(second), name + "_w", out exe2);
-                if (failed != "") { CheckNat($"Fenster: {label}", false, failed); return; }
-                string actual;
-                int runExit;
-                if (display == "dummy")
+                    var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
+                    if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
+                    var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Defines = defines } };
+                    fire.Native.NativeSources generated;
+                    try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Script }, null, null, VmExecutionMode.Release, null, target), target); }
+                    catch (fire.Native.NativeNotSupportedException ex) { return (c.Title, "", $"nicht uebersetzbar: {ex.Message}"); }
+                    string exe = Path.Combine(workDir, $"dev{index}.bin");
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"dev{index}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit);
+                    if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C/C++-Compiler: " + build);
+                    string actual = RunProc(exe, "", workDir, out int runExit);
+                    return (c.Title, string.Concat(c.Expected.Select(l => l + "\n")), runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
+                });
+                foreach (var task in devTasks)
                 {
-                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
-                    actual = RunProc(exe, "", workDir, out runExit);
+                    var (title, expected, actual) = task;
+                    CheckNat($"Geraete nativ: {title}", expected == actual, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
                 }
-                else
+                if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER")) && Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == null) CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
+            }
+        }, () =>
+        {
+            // ---- Window (packages/windows/native/fire_bridge_windows.h): SDL2 and SDL3 with the dummy driver - the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3,
+            // there is no comparison here) -, the clipboard of X11 under Xvfb, and Windows (MinGW, SDL3) under Wine
+            {
+                string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
+                File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
+                RunProc(cxx, $"-std=c++17 \"{sdlProbe}\" -lSDL2 -o \"{sdlProbe}.bin\"", workDir, out int sdlExit);
+                var windowCases = new (string Title, string Script, string[] Expected, string Define)[]
                 {
-                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "x11");
-                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", $"suppressions={lsanFile}:print_suppressions=0");
-                    if (second == null) actual = RunProc(xvfbRun!, $"-a \"{exe}\"", workDir, out runExit);
-                    else
-                    {
-                        string readerOut = Path.Combine(workDir, name + ".out");
-                        // (a script: the reader in the background, the writer 0.3 s later; the exit code says whether both ended well)
-                        string both = Path.Combine(workDir, name + ".sh");
-                        string reader = firstCommand ?? $"\"{exe}\"", writer = secondCommand ?? $"\"{exe2}\"";
-                        File.WriteAllText(both, display == "x11-late"
-                            ? $"{writer} > /dev/null 2>&1 &\nw=$!\nsleep 1\n{reader} > \"{readerOut}\" 2>&1\nr=$?\nwait $w\nexit $(( $? + r ))\n"
-                            : $"{reader} > \"{readerOut}\" 2>&1 &\nr=$!\nsleep 0.3\n{writer} > /dev/null 2>&1\nw=$?\nwait $r\nexit $(( $? + w ))\n");
-                        string writerLog = RunProc(xvfbRun!, $"-a sh \"{both}\"", workDir, out runExit);
-                        actual = (File.Exists(readerOut) ? File.ReadAllText(readerOut) : "") + writerLog;
-                        // (the VM as the reader: its first start after a build installs the standard packages and says so)
-                        if (firstCommand != null)
-                            actual = string.Concat(actual.Split('\n').Where(l => l != "" && !l.StartsWith("Installing the standard package") && !l.StartsWith("Building the native part")).Select(l => l + "\n"));
-                    }
-                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
-                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
-                }
-                string want = string.Concat(expected.Select(l => l + "\n"));
-                CheckNat($"Fenster: {label}", runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}");
-            }
-            foreach (var wc in windowCases)
-            {
-                if (!TestSelected(wc.Title)) continue;
-                RunWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 2);
-                RunWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 3);
-            }
-
-            // ---- what only SDL3 has (and what SDL2 says instead): hover, pictures and files on the clipboard; the real clipboard of X11 (Xvfb), also between two programs
-            const string clipScript = """
-            #import "windows"
-            print(Clipboard.SetText("Grüße aus fire 😀"))
-            print(Clipboard.HasText + " " + Clipboard.GetText() + " " + Clipboard.GetText().Length)
-            var img = new Framebuffer(3, 2)
-            var pr = new Renderer(img)
-            pr.Clear()
-            pr.SetPixel(0, 0, 0xFF0000FF)
-            pr.SetPixel(1, 0, 0x8000FF00)
-            var x0 = img.ReadBytes()
-            var png = img.ToPng()
-            var again = Framebuffer.FromImage(png)
-            var x1 = again.ReadBytes()
-            var same = x0.Length == x1.Length && png[1] == 80
-            for (var i = 0; i < x0.Length; i++) { if (x0[i] != x1[i]) { same = false } }
-            print("png " + same)
-            print(Clipboard.SetImage(img) + " " + Clipboard.HasImage + " " + Clipboard.HasText + " " + Clipboard.HasFiles)
-            var back = Clipboard.GetImage()
-            if (back == undefined) { print("no image") } else {
-                var y1 = back.ReadBytes()
-                var same2 = x0.Length == y1.Length
-                for (var i = 0; i < x0.Length; i++) { if (x0[i] != y1[i]) { same2 = false } }
-                print(back.Width() + "x" + back.Height() + " " + same2)
-            }
-            var paths = new List<string>()
-            paths.Add("/tmp/ein Ordner/datei ä.txt")
-            paths.Add("/tmp/zwei")
-            print(Clipboard.SetFiles(paths) + " " + Clipboard.HasFiles + " " + Clipboard.HasImage)
-            var got = Clipboard.GetFiles()
-            var line = "files " + got.length
-            foreach (f in got) { line = line + " [" + f + "]" }
-            print(line)
-            Clipboard.SetText("Text")
-            print(Clipboard.HasFiles + " " + Clipboard.GetFiles().length + " " + Clipboard.HasText + " " + (Clipboard.GetImage() == undefined))
-            """;
-            string[] clip3 = { "True", "True Grüße aus fire 😀 17", "png True", "True True False False", "3x2 True", "True True False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "False 0 True True" };
-            string[] clip2 = { "True", "True Grüße aus fire 😀 17", "png True", "False False True False", "no image", "False False False", "files 0", "False 0 True True" };
-            const string writerScript = """
-            #import "windows"
-            #import "time"
-            class W {
-                // answers the questions of the other program (each call takes in the events of the clipboard)
-                static undefined Serve(int ms) {
-                    for (var i = 0; i < ms / 20; i++) {
-                        var unused = Clipboard.HasText
-                        Sleep(20ms)
-                    }
-                }
-            }
-            W.Serve(500)
-            Clipboard.SetText("Text aus dem anderen Programm ä")
-            W.Serve(1500)
-            var img = new Framebuffer(5, 4)
-            var pr = new Renderer(img)
-            pr.Clear()
-            pr.SetPixel(0, 0, 0xFF0000FF)
-            pr.SetPixel(4, 3, 0xFF00FF00)
-            Clipboard.SetImage(img)
-            W.Serve(1500)
-            var paths = new List<string>()
-            paths.Add("/tmp/ein Ordner/datei ä.txt")
-            paths.Add("/tmp/zwei")
-            Clipboard.SetFiles(paths)
-            W.Serve(1500)
-            """;
-            const string readerScript = """
-            #import "windows"
-            #import "time"
-            var t = 0
-            while (!Clipboard.HasText && t < 1500) { Sleep(20ms); t++ }   // (up to 30 s: the writer may be the VM, whose first start installs the standard packages)
-            print("text [" + Clipboard.GetText() + "]")
-            t = 0
-            while (!Clipboard.HasImage && t < 120) { Sleep(20ms); t++ }
-            var img = Clipboard.GetImage()
-            if (img == undefined) { print("image none") } else {
-                var bytes = img.ReadBytes()
-                print("image " + img.Width() + "x" + img.Height() + " " + bytes[0] + " " + bytes[3] + " " + bytes[(3 * 5 + 4) * 4 + 1] + " " + Clipboard.HasText)
-            }
-            t = 0
-            while (!Clipboard.HasFiles && t < 120) { Sleep(20ms); t++ }
-            var files = Clipboard.GetFiles()
-            var line = "files " + files.length
-            foreach (f in files) { line = line + " [" + f + "]" }
-            print(line)
-            """;
-            // (the writer copies first and serves until another program takes the clipboard; the reader starts 1 s later, asks once, then takes the clipboard)
-            const string lateWriterScript = """
-            #import "windows"
-            #import "time"
-            Clipboard.SetText("Text von vorher ä")
-            for (var t = 0; t < 1500; t++) {
-                var s = Clipboard.GetText()
-                if (s == undefined) { break }
-                if (s != "Text von vorher ä") { break }
-                Sleep(20ms)
-            }
-            """;
-            const string lateReaderScript = """
-            #import "windows"
-            print("has " + Clipboard.HasText)
-            print("text [" + Clipboard.GetText() + "]")
-            Clipboard.SetText("fertig")
-            """;
-            string[] lateExpected = { "has True", "text [Text von vorher ä]" };
-            var sdlCases = new (string Title, string Script, string[]? Expected2, string[]? Expected3, string Define, string Display, string? Second)[]
-            {
-                ("Fenster: DragHover und DragLeave, solange etwas aus einem anderen Programm ueber dem Fenster ist (Callbacks, Warteschlange)", """
-            #import "windows"
-            var fb = new Framebuffer(64, 48)
-            var win = new Window(fb, "hover")
-            win.RegisterDropFiles(func(any files, float x, float y) => { print("files [" + files[0] + "] at " + x + " " + y) })
-            win.RegisterDragHover(func(float x, float y) => { print("hover " + x + " " + y) })
-            win.RegisterDragLeave(func() => { print("leave") })
-            win.EnableEvents()
-            print(win.Tick())
-            var e = win.NextEvent()
-            while (e != undefined) {
-                var line = ""
-                for (var i = 0; i < e.length; i++) { if (e[0] != 40 || i != 1) { line = line + e[i] + " " } }
-                print("queued " + line)
-                e = win.NextEvent()
-            }
-            """, null, new[] { "hover 10 20", "hover 30 22", "leave", "hover 40 30", "files [/tmp/hier.txt] at 40 30", "True", "queued 42 10 20 ", "queued 42 30 22 ", "queued 43 ", "queued 42 40 30 ", "queued 40 40 30 " },
-                    "-DFIRE_DISPLAY_SELFTEST_HOVER ", "dummy", null),
-                ("Fenster: Zwischenablage mit Bildern (PNG) und Dateien in einem Programm (SDL2: nur Text)", clipScript, clip2, clip3, "", "dummy", null),
-                ("Fenster: die Zwischenablage von X11 (Xvfb): Text, Bild und Dateien in einem Programm", clipScript, clip2, clip3, "", "x11", null),
-                ("Fenster: die Zwischenablage von X11 (Xvfb) zwischen zwei Programmen: Text, Bild, Dateien", readerScript,
-                    new[] { "text [Text aus dem anderen Programm ä]", "image none", "files 0" },
-                    new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" }, "", "x11-two", writerScript),
-                ("Fenster: die Zwischenablage von X11 (Xvfb): was ein anderes Programm vor dem Start kopiert hat, ist gleich bei der ersten Frage da", lateReaderScript,
-                    lateExpected, lateExpected, "", "x11-late", lateWriterScript),
-            };
-            foreach (var sc in sdlCases)
-            {
-                if (!TestSelected(sc.Title)) continue;
-                if (sc.Expected2 != null) RunWindowCase(sc.Title, sc.Script, sc.Expected2, sc.Define, 2, sc.Display, sc.Second);
-                if (sc.Expected3 != null) RunWindowCase(sc.Title, sc.Script, sc.Expected3, sc.Define, 3, sc.Display, sc.Second);
-            }
-
-            // which SDL: the generator asks the build only for a program with a window; the target, the toolchain and FIRE_SDL decide first
-            {
-                int asked = 0;
-                int Choose() { asked++; return 3; }
-                const string withWindow = "#import \"windows\"\nvar fb = new Framebuffer(8, 8)\nvar w = new Window(fb, \"t\")\n";
-                var windowLinked = new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Host);
-                string chosen3 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host, Choose).Program;
-                string fixed2 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 2 } }, Choose).Program;
-                string plain = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host).Program;
-                int askedForWindows = asked;
-                fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, TargetProfile.Host), TargetProfile.Host, Choose);
-                string wasm = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Wasm), TargetProfile.Wasm, Choose).Program;
-                CheckNat("SDL3 oder SDL2: der Build wird nur bei einem Fenster gefragt; 3 -> `// fire-link: SDL3` und FIRE_SDL3, das Ziel (sdl 2) geht vor, ohne Frage SDL2, wasm bleibt bei SDL2",
-                    chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("FIRE_SDL3")
-                    && plain.Contains("// fire-link: SDL2") && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3"), $"asked {asked}");
-                var config3 = fire.Native.NativeConfig.Parse("{ \"targets\": { \"pc\": { \"extends\": \"linux\", \"sdl\": 3 } }, \"toolchains\": { \"old\": { \"extends\": \"gcc\", \"sdl\": 2 } } }");
-                var pc = config3.ResolveTarget("pc");
-                var old = config3.ResolveToolchain(pc, "old");
-                string? savedFireSdl = Environment.GetEnvironmentVariable("FIRE_SDL");
-                try
-                {
-                    Environment.SetEnvironmentVariable("FIRE_SDL", null);
-                    bool fromConfig = fire.Compiler.NativeBuilder.RequestedSdl(pc, old) == 3 && fire.Compiler.NativeBuilder.RequestedSdl(TargetProfile.Host, old) == 2
-                        && fire.Compiler.NativeBuilder.RequestedSdl(TargetProfile.Host, fire.Native.ToolchainDef.BuiltIn["gcc"]) == null;
-                    Environment.SetEnvironmentVariable("FIRE_SDL", "2");
-                    bool fromEnv = fire.Compiler.NativeBuilder.RequestedSdl(pc, old) == 2 && fire.Compiler.NativeBuilder.WithRequestedSdl(pc, old).Native.Sdl == 2;
-                    CheckNat("SDL3 oder SDL2: \"sdl\" des Ziels und der Toolchain, FIRE_SDL geht vor", pc.Native.Sdl == 3 && old.Sdl == 2 && fromConfig && fromEnv);
-                }
-                finally { Environment.SetEnvironmentVariable("FIRE_SDL", savedFireSdl); }
-            }
-
-            // ---- the VM with the real SDL3 (SDL3-CS) on X11: it puts text, a picture and files on the clipboard (forge run under Xvfb), a native program with SDL3 reads them
-            {
-                string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) gibt einem nativen Programm Text, Bild und Dateien ueber die Zwischenablage";
-                string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
-                if (!TestSelected(title)) { }
-                else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
-                else
-                {
-                    string writer = Path.Combine(workDir, "vmwriter.fire");
-                    File.WriteAllText(writer, writerScript);
-                    RunWindowCase(title, readerScript, new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" },
-                        "", 3, "x11-two", writerScript, $"\"{forge}\" run \"{writer}\"");
-                }
-            }
-            // ---- the VM as the reader that starts after a native program copied (SDL 3.2 alone would not see it: SdlClipboard asks once, like fire_display_sdl3.h)
-            {
-                string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) sieht, was ein natives Programm vor ihrem Start kopiert hat";
-                string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
-                if (!TestSelected(title)) { }
-                else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
-                else
-                {
-                    string reader = Path.Combine(workDir, "vmlatereader.fire");
-                    File.WriteAllText(reader, lateReaderScript);
-                    RunWindowCase(title, lateReaderScript, lateExpected, "", 3, "x11-late", lateWriterScript, null, $"\"{forge}\" run \"{reader}\"");
-                }
-            }
-
-            // ---- drag-out (Window.StartDrag): a fire window drags a text and then two files into another program. X11 under Xvfb (XDND): the target is a native fire
-            // program with SDL3 that prints what is dropped on it; the source a fire window built with SDL2 and with SDL3 (and once on the thread of its manager:
-            // Window.Show), and the VM's window (forge run). The hand is a small X program that presses, moves and lets go with XTest (libXtst, loaded at run time).
-            // Both windows open in the middle of the screen: the hand drags from the middle of the source to a point near the left edge of the bigger target.
-            const string dragDriverSource = """
-                #include <X11/Xlib.h>
-                #include <dlfcn.h>
-                #include <stdio.h>
-                #include <stdlib.h>
-                #include <string.h>
-                #include <time.h>
-                typedef int (*FakeButton)(Display*, unsigned int, int, unsigned long);
-                typedef int (*FakeMotion)(Display*, int, int, int, unsigned long);
-                static void pause_ms(int ms) { struct timespec t; t.tv_sec = ms / 1000; t.tv_nsec = (long)(ms % 1000) * 1000000L; nanosleep(&t, NULL); }
-                static Window find(Display* d, Window w, const char* name) {
-                    Window root, parent, *kids = NULL, found = 0;
-                    unsigned int n = 0, i;
-                    char* title = NULL;
-                    if (XFetchName(d, w, &title) && title) { int same = strcmp(title, name) == 0; XFree(title); if (same) return w; }
-                    if (!XQueryTree(d, w, &root, &parent, &kids, &n)) return 0;
-                    for (i = 0; i < n && !found; i++) found = find(d, kids[i], name);
-                    if (kids) XFree(kids);
-                    return found;
-                }
-                static int point(Display* d, Window w, int* x, int* y, int left) {
-                    XWindowAttributes a;
-                    Window child;
-                    if (!XGetWindowAttributes(d, w, &a)) return 0;
-                    XTranslateCoordinates(d, w, DefaultRootWindow(d), left ? 20 : a.width / 2, a.height / 2, x, y, &child);
-                    return 1;
-                }
-                int main(int argc, char** argv) {
-                    Display* d = XOpenDisplay(NULL);
-                    void* xtst = dlopen("libXtst.so.6", RTLD_NOW);
-                    FakeButton button;
-                    FakeMotion motion;
-                    Window src = 0, dst = 0;
-                    int times = argc > 3 ? atoi(argv[3]) : 1, k, i, sx, sy, dx, dy;
-                    if (d == NULL || xtst == NULL || argc < 3) { fprintf(stderr, "driver: no display or no libXtst\n"); return 2; }
-                    button = (FakeButton)dlsym(xtst, "XTestFakeButtonEvent");
-                    motion = (FakeMotion)dlsym(xtst, "XTestFakeMotionEvent");
-                    if (!button || !motion) { fprintf(stderr, "driver: XTest incomplete\n"); return 2; }
-                    for (k = 0; k < 300 && (!src || !dst); k++) {
-                        src = find(d, DefaultRootWindow(d), argv[1]);
-                        dst = find(d, DefaultRootWindow(d), argv[2]);
-                        if (!src || !dst) pause_ms(100);
-                    }
-                    if (!src || !dst) { fprintf(stderr, "driver: windows not found\n"); return 2; }
-                    pause_ms(1000);
-                    for (k = 0; k < times; k++) {
-                        if (!point(d, src, &sx, &sy, 0) || !point(d, dst, &dx, &dy, 1)) return 2;
-                        motion(d, -1, sx, sy, 0); XSync(d, False); pause_ms(300);
-                        button(d, 1, True, 0); XSync(d, False); pause_ms(400);
-                        for (i = 1; i <= 12; i++) { motion(d, -1, sx + (dx - sx) * i / 12, sy + (dy - sy) * i / 12, 0); XSync(d, False); pause_ms(40); }
-                        pause_ms(300);
-                        button(d, 1, False, 0); XSync(d, False);
-                        pause_ms(1500);
-                    }
-                    XCloseDisplay(d);
-                    return 0;
-                }
-                """;
-            string? dragDriver = null;
-            bool dragDriverTried = false;
-            // (built once, when a case needs it: the headers of X11 are needed; libXtst only at run time)
-            string? DragDriver()
-            {
-                if (dragDriverTried) return dragDriver;
-                dragDriverTried = true;
-                string c = Path.Combine(workDir, "dragdriver.c");
-                File.WriteAllText(c, dragDriverSource);
-                string exe = Path.Combine(workDir, "dragdriver.bin");
-                RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{c}\" -o \"{exe}\" -lX11 -ldl", workDir, out int code);
-                dragDriver = code == 0 ? exe : null;
-                return dragDriver;
-            }
-            string DragSourceScript(string path1, string path2, bool show) => """
+                    ("Fenster: Framebuffer anzeigen, VSync, Tick, Ereignisse anmelden", """
                 #import "windows"
-                #import "time"
                 var fb = new Framebuffer(64, 48)
-                var win = new Window(fb, "fire drag source")
-                var drags = 0
-                win.RegisterMouseDown(func(int b, float x, float y) => {
-                    drags++
-                    if (drags == 1) { print("text " + win.StartDrag("Text aus fire ä", undefined)) }
-                    else {
-                        var files = new List<string>()
-                        files.Add("PATH1")
-                        files.Add("PATH2")
-                        print("files " + win.StartDrag("", files))
-                        CLOSE
-                    }
+                var con = new Renderer(fb)
+                con.Clear()
+                con.FillRect(4, 4, 20, 10, new SolidBrush(12))
+                var win = new Window(fb, "fire test")
+                print(win.VSync)
+                win.VSync = false
+                print(win.VSync)
+                print(win.EnableEvents())
+                print(win.Tick())
+                print(win.NextEvent())
+                print(win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key") }))
+                print(win.RegisterClose(func() => { print("close") }))
+                print(win.RegisterTextInput(func(string t) => { print("text " + t) }))
+                for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, new SolidBrush(9)); win.Tick() }
+                print(win.Tick())
+                """, new[] { "True", "False", "True", "True", "undefined", "True", "True", "True", "True" }, ""),
+                    ("Fenster: AutoResize bringt den Framebuffer auf die Groesse des Fensters", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "resize")
+                print(win.AutoResize)
+                win.AutoResize = true
+                print(win.AutoResize)
+                win.EnableEvents()
+                win.RegisterResize(func(int w, int h) => { print("cb " + w + " " + h) })
+                print(win.Tick())
+                print(fb.Width() + "x" + fb.Height())
+                var e = win.NextEvent()
+                print(e[0] + " " + e[1] + " " + e[2])
+                print(fb.Resize(0, 5))
+                print(fb.Resize(20000, 5))
+                print(fb.Width() + "x" + fb.Height())
+                print(fb.Resize(100, 80))
+                print(fb.Width() + "x" + fb.Height())
+                """, new[] { "False", "True", "cb 90 70", "True", "90x70", "4 90 70", "False", "False", "90x70", "True", "100x80" }, "-DFIRE_DISPLAY_SELFTEST_RESIZE "),
+                    ("Fenster: Touch- und Joystick-Ereignisse, TouchMouse", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "input")
+                print(win.TouchMouse)
+                win.TouchMouse = false
+                print(win.TouchMouse)
+                win.RegisterTouchDown(func(int f, float x, float y, float p) => { print("down " + f + " " + x + " " + y + " " + p) })
+                win.RegisterJoystickAxis(func(int j, int a, float v) => { print("axis " + j + " " + a + " " + v) })
+                win.RegisterJoystickHat(func(int j, int h, int m) => { print("hat " + j + " " + h + " " + m) })
+                win.RegisterJoystickButtonDown(func(int j, int b) => { print("button " + j + " " + b) })
+                win.RegisterJoystickRemoved(func(int j) => { print("removed " + j) })
+                win.EnableEvents()
+                print(win.Tick())
+                var e = win.NextEvent()
+                while (e != undefined) {
+                    var line = ""
+                    for (var i = 0; i < e.length; i++) { line = line + e[i] + " " }
+                    print("queued " + line)
+                    e = win.NextEvent()
+                }
+                """, new[] { "True", "False", "down 5 32 12 1", "axis 7 1 -1", "button 7 3", "hat 7 0 3", "removed 7", "True", "queued 16 5 32 12 1 ", "queued 17 5 48 24 0.5 ", "queued 18 5 48 24 0 ", "queued 32 7 1 -1 ", "queued 33 7 3 ", "queued 34 7 3 ", "queued 35 7 0 3 ", "queued 37 7 " }, "-DFIRE_DISPLAY_SELFTEST_INPUT "),
+                    ("Fenster: Drop von Dateien und Text aus einem anderen Programm (Callbacks, Warteschlange, Position), die Zwischenablage", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "drop")
+                win.RegisterDropFiles(func(any files, float x, float y) => {
+                    var line = "files"
+                    foreach (f in files) { line = line + " [" + f + "]" }
+                    print(line + " at " + x + " " + y)
                 })
+                win.RegisterDropText(func(string text, float x, float y) => { print("text [" + text + "] at " + x + " " + y) })
+                win.EnableEvents()
+                print(win.Tick())
+                var e = win.NextEvent()
+                while (e != undefined) {
+                    if (e[0] == 40) { print("queued 40 " + e[1].length + " " + e[1][0] + " " + e[2] + " " + e[3]) }
+                    if (e[0] == 41) { print("queued 41 " + e[1] + " " + e[2] + " " + e[3]) }
+                    e = win.NextEvent()
+                }
+                print(Clipboard.HasText)
+                print(Clipboard.SetText("Grüße aus fire 😀"))
+                print(Clipboard.HasText + " " + Clipboard.GetText() + " " + Clipboard.GetText().Length)
+                """, new[] { "files [/tmp/eins.txt] [/tmp/zwei ä.png] at 40 30", "text [gezogener Text] at 40 30", "files [/tmp/allein.txt] at 40 30", "False", "queued 40 2 /tmp/eins.txt 40 30", "queued 41 gezogener Text 40 30", "queued 40 1 /tmp/allein.txt 40 30", "False", "True", "True Grüße aus fire 😀 17" }, "-DFIRE_DISPLAY_SELFTEST_DROP "),
+                    ("UI: ein Drop aus einem anderen Programm erreicht das Element darunter, ein Textfeld kopiert und fuegt ueber die Zwischenablage ein", """
+                #import "ui"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "ui drop")
+                var ui = new UI.Root(fb, win)
+                var area = new UI.Panel(0, 0, 60, 40)
+                area.AllowDrop = true
+                area.OnDrop = func (UI.DragData d, int x, int y) => {
+                    print("area " + d.Files.Count + " [" + d.Text + "] " + d.External + " " + x + " " + y)
+                    return UI.DropEffect.Copy
+                }
+                ui.Add(area)
+                var tb = new UI.TextBox("kopier mich", 0, 0, 10, 10)
+                tb.Visible = false
+                ui.Add(tb)
+                ui.Draw()
+                ui.Tick()
+                tb.SelectAll()
+                tb.Copy()
+                print(Clipboard.GetText())
+                tb.Select(0, 6)
+                tb.Paste()
+                print(tb.Text)
+                """, new[] { "area 2 [] True 40 30", "area 0 [gezogener Text] True 40 30", "area 1 [] True 40 30", "kopier mich", "kopier mich mich" }, "-DFIRE_DISPLAY_SELFTEST_DROP "),
+                    ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "events")
+                var log = ""
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("keydown " + k + " " + s + " " + m + " " + r) })
+                win.RegisterKeyUp(func(int k, int s, int m, bool r) => { print("keyup " + k + " " + s + " " + m + " " + r) })
+                win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+                win.RegisterMouseUp(func(int b, float x, float y) => { print("up " + b + " " + x + " " + y) })
+                win.RegisterMouseMove(func(float x, float y, int st) => { print("move " + x + " " + y + " " + st) })
+                win.RegisterMouseMoveRelative(func(float x, float y, int st) => { print("rel " + x + " " + y + " " + st) })
+                win.RegisterMouseScroll(func(float sx, float sy, float x, float y) => { print("scroll " + sx + " " + sy) })
+                win.RegisterTextInput(func(string t) => { print("text " + t + " " + t.Length) })
+                win.RegisterCloseRequest(func() => { print("closerequest") })
+                win.RegisterClose(func() => { print("close") })
+                win.EnableEvents()
+                var open = win.Tick()
+                print("open " + open)
+                var e = win.NextEvent()
+                while (e != undefined) {
+                    var line = ""
+                    for (var i = 0; i < e.length; i++) { line = line + e[i] + " " }
+                    print("queued " + line)
+                    e = win.NextEvent()
+                }
+                print(win.NextEvent())
+                """, new[] { "keydown 97 4 1 False", "keyup 97 4 0 False", "down 1 32 24", "up 1 32 24", "move 10 12 1", "rel 3 -2 1", "scroll 0 1.5", "text éx 2", "closerequest", "close", "open False", "queued 24 97 4 1 False ", "queued 25 97 4 0 False ", "queued 8 1 32 24 ", "queued 11 1 32 24 ", "queued 9 10 12 1 ", "queued 10 3 -2 1 ", "queued 12 0 1.5 0 0 ", "queued 3 éx ", "queued 2 ", "queued 1 ", "undefined" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    ("Fenster: WindowManager.Run auf dem Programm-Thread (Konstruktor-Parameter, onCycle, Callbacks)", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var mine = new WindowManager()
+                var win = new Window(fb, "run", mine)
+                var cycles = 0
+                win.onCycle = func () => { cycles++ }
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k) })
+                win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+                print("mine " + (win.Manager == mine) + ", started " + mine.IsStarted)
+                win.Run()
+                print("done: cycles " + (cycles > 0) + ", closed " + win.IsClosed + ", left " + mine.Count)
+                """, new[] { "mine True, started False", "key 97", "down 1 32 24", "done: cycles True, closed True, left 0" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    ("Fenster: Window.Show startet den Thread des Managers, das Programm geht weiter und wartet am Ende", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "shown")
+                var cycles = 0
+                win.onCycle = func () => { cycles++ }
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k + " in cycle " + (cycles >= 0)) })
+                win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+                win.Show()
+                print("goes on, started " + win.Manager.IsStarted + ", default " + (win.Manager == WindowManager.Default))
+                """, new[] { "goes on, started True, default True", "key 97 in cycle True", "down 1 32 24" }, "-DFIRE_DISPLAY_SELFTEST "),
+                };
+                // every case with SDL2 and - when this machine has it - with SDL3 (FIRE_SDL3, fire_display_sdl3.h): the same output
+                string sdl3Probe = Path.Combine(workDir, "sdl3probe.c");
+                File.WriteAllText(sdl3Probe, "#include <SDL3/SDL.h>\nint main(void) { return SDL_Init(0) ? 0 : 1; }\n");
+                RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{sdl3Probe}\" -lSDL3 -o \"{sdl3Probe}.bin\"", workDir, out int sdl3Exit);
+                if (sdl3Exit != 0) Console.WriteLine("(SDL3 nicht verfuegbar: die Fenster laufen nur mit SDL2)");
+                string? FindProgram(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+                string? xvfbRun = FindProgram("xvfb-run");
+                // (under X11 libdbus, which SDL3 uses, keeps a buffer until the end: not a leak of the program)
+                string lsanFile = Path.Combine(workDir, "lsan.supp");
+                File.WriteAllText(lsanFile, "leak:libdbus-1.so\n");
+                // (what runs: the native window cases and the cases under Wine at the same time - see the end of this block)
+                var windowRuns = new List<Action>();
+                // Builds a case for SDL `version` and runs it: `display` "dummy" (the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
+                // (`script` is the reader, `second` the writer that starts 0.3 s after it on the same X server; the output is the reader's) or "x11-late" (the writer
+                // first, the reader 1 s later: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
+                // `firstCommand` instead of the reader built from `script` (the VM: forge run).
+                // PrepareWindowCase generates, builds and runs a case (in parallel with other cases: TestJobs.Ordered - each run has an X server of its own,
+                // TestJobs.XvfbServer) and returns the step that reports what happened, in the order of the cases.
+                Action PrepareWindowCase(string title, string script, string[] expected, string define, int version, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null)
+                {
+                    var said = new List<Action>();
+                    Action Replay() => () => { foreach (var say in said) say(); };
+                    string label = version == 3 ? $"{title} [SDL3]" : title;
+                    var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
+                    fire.Native.NativeSources Generate(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target), target);
+                    var generated = Generate(script);
+                    string cpp = generated.Program;
+                    bool asks = version == 3 ? cpp.Contains("// fire-link: SDL3") && cpp.Contains("#define FIRE_SDL3 1") && !cpp.Contains("// fire-link: SDL2")
+                                             : cpp.Contains("// fire-link: SDL2") && !cpp.Contains("FIRE_SDL3");
+                    said.Add(() => CheckNat($"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, ""));
+                    if ((version == 2 ? sdlExit : sdl3Exit) != 0) { said.Add(() => Console.WriteLine($"(SDL{version} nicht verfuegbar: {label} wird nicht ausgefuehrt)")); return Replay(); }
+                    if (display != "dummy" && xvfbRun == null) { said.Add(() => Console.WriteLine($"(xvfb-run nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
+                    string Build(fire.Native.NativeSources sources, string name, out string exe)
+                    {
+                        exe = Path.Combine(workDir, name + ".bin");
+                        File.WriteAllText(Path.Combine(workDir, name + ".c"), sources.Program);
+                        var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], target, Path.Combine(workDir, name + ".c"), workDir, exe);
+                        said.Add(() => CheckNat($"Fenster: {label}: der Build haengt -lSDL{version} an", command.Arguments.Contains($"-lSDL{version}") && !command.Arguments.Contains($"-lSDL{5 - version}"), command.Arguments));
+                        string log = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}{define}", exe, out int buildExit, $" -lSDL{version}");
+                        return buildExit != 0 || log.Contains("warning:") ? "C/C++-Compiler: " + log : "";
+                    }
+                    string name = $"window{version}_" + Math.Abs(title.GetHashCode());
+                    string exe = "";
+                    string failed = firstCommand == null ? Build(generated, name, out exe) : "";
+                    string exe2 = "";
+                    if (failed == "" && second != null && secondCommand == null) failed = Build(Generate(second), name + "_w", out exe2);
+                    if (failed != "") { said.Add(() => CheckNat($"Fenster: {label}", false, failed)); return Replay(); }
+                    // (the program runs here, on the worker: every X server is its own; what it did is reported by the step)
+                    {
+                        string actual;
+                        int runExit;
+                        if (display == "dummy") actual = RunProc(exe, "", workDir, out runExit, null, new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy" });
+                        else
+                        {
+                            var x11 = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "x11", ["LSAN_OPTIONS"] = $"suppressions={lsanFile}:print_suppressions=0" };
+                            if (second == null) actual = RunProc(xvfbRun!, $"{TestJobs.XvfbServer()} \"{exe}\"", workDir, out runExit, null, x11);
+                            else
+                            {
+                                string readerOut = Path.Combine(workDir, name + ".out");
+                                // (a script: the reader in the background, the writer 0.3 s later; the exit code says whether both ended well)
+                                string both = Path.Combine(workDir, name + ".sh");
+                                string reader = firstCommand ?? $"\"{exe}\"", writer = secondCommand ?? $"\"{exe2}\"";
+                                File.WriteAllText(both, display == "x11-late"
+                                    ? $"{writer} > /dev/null 2>&1 &\nw=$!\nsleep 1\n{reader} > \"{readerOut}\" 2>&1\nr=$?\nwait $w\nexit $(( $? + r ))\n"
+                                    : $"{reader} > \"{readerOut}\" 2>&1 &\nr=$!\nsleep 0.3\n{writer} > /dev/null 2>&1\nw=$?\nwait $r\nexit $(( $? + w ))\n");
+                                string writerLog = RunProc(xvfbRun!, $"{TestJobs.XvfbServer()} sh \"{both}\"", workDir, out runExit, null, x11);
+                                actual = (File.Exists(readerOut) ? File.ReadAllText(readerOut) : "") + writerLog;
+                                // (the VM as the reader: its first start after a build installs the standard packages and says so)
+                                if (firstCommand != null)
+                                    actual = string.Concat(actual.Split('\n').Where(l => l != "" && !l.StartsWith("Installing the standard package") && !l.StartsWith("Building the native part")).Select(l => l + "\n"));
+                            }
+                        }
+                        string want = string.Concat(expected.Select(l => l + "\n"));
+                        said.Add(() => CheckNat($"Fenster: {label}", runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}"));
+                    }
+                    return Replay();
+                }
+                void RunWindowCase(string title, string script, string[] expected, string define, int version, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null) =>
+                    PrepareWindowCase(title, script, expected, define, version, display, second, secondCommand, firstCommand)();
+                // (the cases of windowCases and sdlCases below: built and run in parallel, reported in their order)
+                var windowSteps = new List<Func<Action>>();
+                foreach (var wc in windowCases)
+                {
+                    if (!TestSelected(wc.Title)) continue;
+                    windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 2));
+                    windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 3));
+                }
 
-                """.Replace("PATH1", path1).Replace("PATH2", path2).Replace("CLOSE", show ? "win.Close()" : "")
-                + (show ? "win.Show()\n" : "var t = 0\nwhile (drags < 2 && t < 1500) { win.Tick(); Sleep(10ms); t++ }\n");
-            const string dragTargetScript = """
+                // ---- what only SDL3 has (and what SDL2 says instead): hover, pictures and files on the clipboard; the real clipboard of X11 (Xvfb), also between two programs
+                const string clipScript = """
+                #import "windows"
+                print(Clipboard.SetText("Grüße aus fire 😀"))
+                print(Clipboard.HasText + " " + Clipboard.GetText() + " " + Clipboard.GetText().Length)
+                var img = new Framebuffer(3, 2)
+                var pr = new Renderer(img)
+                pr.Clear()
+                pr.SetPixel(0, 0, 0xFF0000FF)
+                pr.SetPixel(1, 0, 0x8000FF00)
+                var x0 = img.ReadBytes()
+                var png = img.ToPng()
+                var again = Framebuffer.FromImage(png)
+                var x1 = again.ReadBytes()
+                var same = x0.Length == x1.Length && png[1] == 80
+                for (var i = 0; i < x0.Length; i++) { if (x0[i] != x1[i]) { same = false } }
+                print("png " + same)
+                print(Clipboard.SetImage(img) + " " + Clipboard.HasImage + " " + Clipboard.HasText + " " + Clipboard.HasFiles)
+                var back = Clipboard.GetImage()
+                if (back == undefined) { print("no image") } else {
+                    var y1 = back.ReadBytes()
+                    var same2 = x0.Length == y1.Length
+                    for (var i = 0; i < x0.Length; i++) { if (x0[i] != y1[i]) { same2 = false } }
+                    print(back.Width() + "x" + back.Height() + " " + same2)
+                }
+                var paths = new List<string>()
+                paths.Add("/tmp/ein Ordner/datei ä.txt")
+                paths.Add("/tmp/zwei")
+                print(Clipboard.SetFiles(paths) + " " + Clipboard.HasFiles + " " + Clipboard.HasImage)
+                var got = Clipboard.GetFiles()
+                var line = "files " + got.length
+                foreach (f in got) { line = line + " [" + f + "]" }
+                print(line)
+                Clipboard.SetText("Text")
+                print(Clipboard.HasFiles + " " + Clipboard.GetFiles().length + " " + Clipboard.HasText + " " + (Clipboard.GetImage() == undefined))
+                """;
+                string[] clip3 = { "True", "True Grüße aus fire 😀 17", "png True", "True True False False", "3x2 True", "True True False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "False 0 True True" };
+                string[] clip2 = { "True", "True Grüße aus fire 😀 17", "png True", "False False True False", "no image", "False False False", "files 0", "False 0 True True" };
+                const string writerScript = """
                 #import "windows"
                 #import "time"
-                var fb = new Framebuffer(400, 300)
-                var win = new Window(fb, "fire drop target")
-                var got = 0
-                win.RegisterDropText(func(string text, float x, float y) => {
-                    print("dropped text [" + text + "]")
-                    got++
-                })
-                win.RegisterDropFiles(func(any files, float x, float y) => {
-                    var line = "dropped files " + files.length
-                    foreach (f in files) { line = line + " [" + f + "]" }
-                    print(line)
-                    got++
-                })
-                var t = 0
-                while (got < 2 && t < 1500) { win.Tick(); Sleep(10ms); t++ }
-                """;
-            // (the script for the X server: the target, half a second later the source, then the hand; the outputs of source and target; the exit code: all three ended well)
-            // (what the programs printed about the drag - not what forge or Wine say besides: packages it installs, the end of the X connection)
-            string DragLines(string file) => File.Exists(file)
-                ? string.Concat(File.ReadAllText(file).Replace("\r", "").Split('\n').Where(l => l.StartsWith("text ", StringComparison.Ordinal) || l.StartsWith("files ", StringComparison.Ordinal) || l.StartsWith("dropped ", StringComparison.Ordinal)).Select(l => l + "\n"))
-                : "";
-            string DragScript(string target, string source, string driver, string outSource, string outTarget, string delay = "0.5") =>
-                $"{target} > \"{outTarget}\" 2>&1 &\nt=$!\nsleep {delay}\n{source} > \"{outSource}\" 2>&1 &\ns=$!\n\"{driver}\" \"fire drag source\" \"fire drop target\" 2\nd=$?\nwait $s\nse=$?\nwait $t\nte=$?\nexit $(( d + se + te ))\n";
-            {
-                string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
-                var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (SDL3-CS)", 3, false, true) };
-                string[] dragExpected = { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" };
-                string? dragTarget = null;
-                foreach (var dc in dragCases)
-                {
-                    string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (X11, Xvfb, XDND): Text und Dateien, die Antwort Kopie [{dc.Label}]";
-                    if (!TestSelected(title)) continue;
-                    if (xvfbRun == null || sdl3Exit != 0 || (dc.Sdl == 2 && sdlExit != 0)) { Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder SDL2 fehlen: {title})"); continue; }
-                    if (dc.Vm && !File.Exists(forge)) { Console.WriteLine($"(uebersprungen - forge fehlt: {title})"); continue; }
-                    string? driver = DragDriver();
-                    if (driver == null) { Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})"); continue; }
-                    string Build(string script, int version, string name)
-                    {
-                        var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
-                        var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
-                        string exe = Path.Combine(workDir, name + ".bin");
-                        string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, $" -lSDL{version}");
-                        if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
-                        return exe;
+                class W {
+                    // answers the questions of the other program (each call takes in the events of the clipboard)
+                    static undefined Serve(int ms) {
+                        for (var i = 0; i < ms / 20; i++) {
+                            var unused = Clipboard.HasText
+                            Sleep(20ms)
+                        }
                     }
-                    string sourceCommand;
+                }
+                W.Serve(500)
+                Clipboard.SetText("Text aus dem anderen Programm ä")
+                W.Serve(1500)
+                var img = new Framebuffer(5, 4)
+                var pr = new Renderer(img)
+                pr.Clear()
+                pr.SetPixel(0, 0, 0xFF0000FF)
+                pr.SetPixel(4, 3, 0xFF00FF00)
+                Clipboard.SetImage(img)
+                W.Serve(1500)
+                var paths = new List<string>()
+                paths.Add("/tmp/ein Ordner/datei ä.txt")
+                paths.Add("/tmp/zwei")
+                Clipboard.SetFiles(paths)
+                W.Serve(1500)
+                """;
+                const string readerScript = """
+                #import "windows"
+                #import "time"
+                var t = 0
+                while (!Clipboard.HasText && t < 1500) { Sleep(20ms); t++ }   // (up to 30 s: the writer may be the VM, whose first start installs the standard packages)
+                print("text [" + Clipboard.GetText() + "]")
+                t = 0
+                while (!Clipboard.HasImage && t < 120) { Sleep(20ms); t++ }
+                var img = Clipboard.GetImage()
+                if (img == undefined) { print("image none") } else {
+                    var bytes = img.ReadBytes()
+                    print("image " + img.Width() + "x" + img.Height() + " " + bytes[0] + " " + bytes[3] + " " + bytes[(3 * 5 + 4) * 4 + 1] + " " + Clipboard.HasText)
+                }
+                t = 0
+                while (!Clipboard.HasFiles && t < 120) { Sleep(20ms); t++ }
+                var files = Clipboard.GetFiles()
+                var line = "files " + files.length
+                foreach (f in files) { line = line + " [" + f + "]" }
+                print(line)
+                """;
+                // (the writer copies first and serves until another program takes the clipboard; the reader starts 1 s later, asks once, then takes the clipboard)
+                const string lateWriterScript = """
+                #import "windows"
+                #import "time"
+                Clipboard.SetText("Text von vorher ä")
+                for (var t = 0; t < 1500; t++) {
+                    var s = Clipboard.GetText()
+                    if (s == undefined) { break }
+                    if (s != "Text von vorher ä") { break }
+                    Sleep(20ms)
+                }
+                """;
+                const string lateReaderScript = """
+                #import "windows"
+                print("has " + Clipboard.HasText)
+                print("text [" + Clipboard.GetText() + "]")
+                Clipboard.SetText("fertig")
+                """;
+                string[] lateExpected = { "has True", "text [Text von vorher ä]" };
+                var sdlCases = new (string Title, string Script, string[]? Expected2, string[]? Expected3, string Define, string Display, string? Second)[]
+                {
+                    ("Fenster: DragHover und DragLeave, solange etwas aus einem anderen Programm ueber dem Fenster ist (Callbacks, Warteschlange)", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "hover")
+                win.RegisterDropFiles(func(any files, float x, float y) => { print("files [" + files[0] + "] at " + x + " " + y) })
+                win.RegisterDragHover(func(float x, float y) => { print("hover " + x + " " + y) })
+                win.RegisterDragLeave(func() => { print("leave") })
+                win.EnableEvents()
+                print(win.Tick())
+                var e = win.NextEvent()
+                while (e != undefined) {
+                    var line = ""
+                    for (var i = 0; i < e.length; i++) { if (e[0] != 40 || i != 1) { line = line + e[i] + " " } }
+                    print("queued " + line)
+                    e = win.NextEvent()
+                }
+                """, null, new[] { "hover 10 20", "hover 30 22", "leave", "hover 40 30", "files [/tmp/hier.txt] at 40 30", "True", "queued 42 10 20 ", "queued 42 30 22 ", "queued 43 ", "queued 42 40 30 ", "queued 40 40 30 " },
+                        "-DFIRE_DISPLAY_SELFTEST_HOVER ", "dummy", null),
+                    ("Fenster: Zwischenablage mit Bildern (PNG) und Dateien in einem Programm (SDL2: nur Text)", clipScript, clip2, clip3, "", "dummy", null),
+                    ("Fenster: die Zwischenablage von X11 (Xvfb): Text, Bild und Dateien in einem Programm", clipScript, clip2, clip3, "", "x11", null),
+                    ("Fenster: die Zwischenablage von X11 (Xvfb) zwischen zwei Programmen: Text, Bild, Dateien", readerScript,
+                        new[] { "text [Text aus dem anderen Programm ä]", "image none", "files 0" },
+                        new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" }, "", "x11-two", writerScript),
+                    ("Fenster: die Zwischenablage von X11 (Xvfb): was ein anderes Programm vor dem Start kopiert hat, ist gleich bei der ersten Frage da", lateReaderScript,
+                        lateExpected, lateExpected, "", "x11-late", lateWriterScript),
+                };
+                foreach (var sc in sdlCases)
+                {
+                    if (!TestSelected(sc.Title)) continue;
+                    if (sc.Expected2 != null) windowSteps.Add(() => PrepareWindowCase(sc.Title, sc.Script, sc.Expected2, sc.Define, 2, sc.Display, sc.Second));
+                    if (sc.Expected3 != null) windowSteps.Add(() => PrepareWindowCase(sc.Title, sc.Script, sc.Expected3, sc.Define, 3, sc.Display, sc.Second));
+                }
+                windowRuns.Add(() => TestJobs.Ordered(windowSteps.Count, i => windowSteps[i](), (_, run) => run(), what: "Fenster: gebaut"));
+
+                // which SDL: the generator asks the build only for a program with a window; the target, the toolchain and FIRE_SDL decide first
+                windowRuns.Add(() =>
+                {
+                    int asked = 0;
+                    int Choose() { asked++; return 3; }
+                    const string withWindow = "#import \"windows\"\nvar fb = new Framebuffer(8, 8)\nvar w = new Window(fb, \"t\")\n";
+                    var windowLinked = new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Host);
+                    string chosen3 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host, Choose).Program;
+                    string fixed2 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 2 } }, Choose).Program;
+                    string plain = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host).Program;
+                    int askedForWindows = asked;
+                    fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, TargetProfile.Host), TargetProfile.Host, Choose);
+                    string wasm = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Wasm), TargetProfile.Wasm, Choose).Program;
+                    CheckNat("SDL3 oder SDL2: der Build wird nur bei einem Fenster gefragt; 3 -> `// fire-link: SDL3` und FIRE_SDL3, das Ziel (sdl 2) geht vor, ohne Frage SDL2, wasm bleibt bei SDL2",
+                        chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("FIRE_SDL3")
+                        && plain.Contains("// fire-link: SDL2") && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3"), $"asked {asked}");
+                    var config3 = fire.Native.NativeConfig.Parse("{ \"targets\": { \"pc\": { \"extends\": \"linux\", \"sdl\": 3 } }, \"toolchains\": { \"old\": { \"extends\": \"gcc\", \"sdl\": 2 } } }");
+                    var pc = config3.ResolveTarget("pc");
+                    var old = config3.ResolveToolchain(pc, "old");
+                    string? savedFireSdl = Environment.GetEnvironmentVariable("FIRE_SDL");
                     try
                     {
-                        dragTarget ??= Build(dragTargetScript, 3, "dragtarget");
-                        string sourceScript = DragSourceScript("/tmp/ein Ordner/datei ä.txt", "/tmp/zwei", dc.Show);
-                        if (dc.Vm)
-                        {
-                            string file = Path.Combine(workDir, "dragsource.fire");
-                            File.WriteAllText(file, sourceScript);
-                            sourceCommand = $"\"{forge}\" run \"{file}\"";
-                        }
-                        else sourceCommand = "\"" + Build(sourceScript, dc.Sdl, $"dragsource{dc.Sdl}{(dc.Show ? "s" : "")}") + "\"";
+                        Environment.SetEnvironmentVariable("FIRE_SDL", null);
+                        bool fromConfig = fire.Compiler.NativeBuilder.RequestedSdl(pc, old) == 3 && fire.Compiler.NativeBuilder.RequestedSdl(TargetProfile.Host, old) == 2
+                            && fire.Compiler.NativeBuilder.RequestedSdl(TargetProfile.Host, fire.Native.ToolchainDef.BuiltIn["gcc"]) == null;
+                        Environment.SetEnvironmentVariable("FIRE_SDL", "2");
+                        bool fromEnv = fire.Compiler.NativeBuilder.RequestedSdl(pc, old) == 2 && fire.Compiler.NativeBuilder.WithRequestedSdl(pc, old).Native.Sdl == 2;
+                        CheckNat("SDL3 oder SDL2: \"sdl\" des Ziels und der Toolchain, FIRE_SDL geht vor", pc.Native.Sdl == 3 && old.Sdl == 2 && fromConfig && fromEnv);
                     }
-                    catch (InvalidOperationException ex) { CheckNat(title, false, ex.Message); continue; }
-                    string outSource = Path.Combine(workDir, "dragsource.out"), outTarget = Path.Combine(workDir, "dragtarget.out");
-                    string script = Path.Combine(workDir, "drag.sh");
-                    File.WriteAllText(script, DragScript($"\"{dragTarget}\"", sourceCommand, driver, outSource, outTarget));
-                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "x11");
-                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", $"suppressions={lsanFile}:print_suppressions=0");
-                    string runLog = RunProc(xvfbRun, $"-a sh \"{script}\"", workDir, out int runExit);
-                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
-                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
-                    string actual = DragLines(outSource) + DragLines(outTarget);
-                    string want = string.Concat(dragExpected.Select(l => l + "\n"));
-                    CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}");
-                }
-            }
+                    finally { Environment.SetEnvironmentVariable("FIRE_SDL", savedFireSdl); }
+                });
 
-            // ---- drag-out on Wayland (wl_data_device.start_drag, fire_dragout_wayland): weston with its X11 backend draws into Xvfb; source and target are native fire
-            // programs with SDL3 on Wayland (an SDL3 with the Wayland driver: the one of the system or the folder FIRE_TEST_SDL3_WAYLAND, put first on
-            // LD_LIBRARY_PATH). Wayland clients cannot know where their windows are: the source is magenta, the target green, and the hand finds them on the X
-            // screen (XGetImage) - it presses in the source and lets go on the point of the target farthest from it, twice (text, then files); a third program
-            // drags onto the black background (no target: 0). SDL_MOUSE_FOCUS_CLICKTHROUGH: the press that gives the source the focus back after a drop counts.
-            // (SDL 3.2 draws on Wayland always through EGL - Mesa, llvmpipe here - which keeps memory that LeakSanitizer would report: suppressed for this case)
-            {
-                const string handSource = """
+                // ---- the VM with the real SDL3 (SDL3-CS) on X11: it puts text, a picture and files on the clipboard (forge run under Xvfb), a native program with SDL3 reads them
+                windowRuns.Add(() =>
+                {
+                    string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) gibt einem nativen Programm Text, Bild und Dateien ueber die Zwischenablage";
+                    string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                    if (!TestSelected(title)) { }
+                    else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
+                    else
+                    {
+                        string writer = Path.Combine(workDir, "vmwriter.fire");
+                        File.WriteAllText(writer, writerScript);
+                        RunWindowCase(title, readerScript, new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" },
+                            "", 3, "x11-two", writerScript, $"\"{forge}\" run \"{writer}\"");
+                    }
+                });
+                // ---- the VM as the reader that starts after a native program copied (SDL 3.2 alone would not see it: SdlClipboard asks once, like fire_display_sdl3.h)
+                windowRuns.Add(() =>
+                {
+                    string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) sieht, was ein natives Programm vor ihrem Start kopiert hat";
+                    string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                    if (!TestSelected(title)) { }
+                    else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
+                    else
+                    {
+                        string reader = Path.Combine(workDir, "vmlatereader.fire");
+                        File.WriteAllText(reader, lateReaderScript);
+                        RunWindowCase(title, lateReaderScript, lateExpected, "", 3, "x11-late", lateWriterScript, null, $"\"{forge}\" run \"{reader}\"");
+                    }
+                });
+
+                // ---- drag-out (Window.StartDrag): a fire window drags a text and then two files into another program. X11 under Xvfb (XDND): the target is a native fire
+                // program with SDL3 that prints what is dropped on it; the source a fire window built with SDL2 and with SDL3 (and once on the thread of its manager:
+                // Window.Show), and the VM's window (forge run). The hand is a small X program that presses, moves and lets go with XTest (libXtst, loaded at run time).
+                // Both windows open in the middle of the screen: the hand drags from the middle of the source to a point near the left edge of the bigger target.
+                const string dragDriverSource = """
                     #include <X11/Xlib.h>
-                    #include <X11/Xutil.h>
                     #include <dlfcn.h>
                     #include <stdio.h>
                     #include <stdlib.h>
+                    #include <string.h>
                     #include <time.h>
                     typedef int (*FakeButton)(Display*, unsigned int, int, unsigned long);
                     typedef int (*FakeMotion)(Display*, int, int, int, unsigned long);
                     static void pause_ms(int ms) { struct timespec t; t.tv_sec = ms / 1000; t.tv_nsec = (long)(ms % 1000) * 1000000L; nanosleep(&t, NULL); }
-                    typedef struct Box { int x0, y0, x1, y1, n; } Box;
-                    static void scan(Display* d, unsigned long src, unsigned long dst, Box* s, Box* t, int* tx, int* ty) {
+                    static Window find(Display* d, Window w, const char* name) {
+                        Window root, parent, *kids = NULL, found = 0;
+                        unsigned int n = 0, i;
+                        char* title = NULL;
+                        if (XFetchName(d, w, &title) && title) { int same = strcmp(title, name) == 0; XFree(title); if (same) return w; }
+                        if (!XQueryTree(d, w, &root, &parent, &kids, &n)) return 0;
+                        for (i = 0; i < n && !found; i++) found = find(d, kids[i], name);
+                        if (kids) XFree(kids);
+                        return found;
+                    }
+                    static int point(Display* d, Window w, int* x, int* y, int left) {
                         XWindowAttributes a;
-                        XImage* img;
-                        int x, y;
-                        long best = -1;
-                        XGetWindowAttributes(d, DefaultRootWindow(d), &a);
-                        img = XGetImage(d, DefaultRootWindow(d), 0, 0, (unsigned)a.width, (unsigned)a.height, AllPlanes, ZPixmap);
-                        s->n = t->n = 0;
-                        if (img == NULL) return;
-                        for (y = 0; y < a.height; y++)
-                            for (x = 0; x < a.width; x++) {
-                                unsigned long p = XGetPixel(img, x, y) & 0xFFFFFF;
-                                Box* b = p == src ? s : p == dst ? t : NULL;
-                                if (b == NULL) continue;
-                                if (b->n == 0) { b->x0 = b->x1 = x; b->y0 = b->y1 = y; }
-                                if (x < b->x0) b->x0 = x;
-                                if (x > b->x1) b->x1 = x;
-                                if (y < b->y0) b->y0 = y;
-                                if (y > b->y1) b->y1 = y;
-                                b->n++;
-                            }
-                        for (y = t->y0 + 10; t->n && y <= t->y1 - 10; y += 8)
-                            for (x = t->x0 + 10; x <= t->x1 - 10; x += 8) {
-                                long dx, dy, dist;
-                                if ((XGetPixel(img, x, y) & 0xFFFFFF) != dst) continue;
-                                dx = x - (s->x0 + s->x1) / 2; dy = y - (s->y0 + s->y1) / 2;
-                                dist = dx * dx + dy * dy;
-                                if (dist > best) { best = dist; *tx = x; *ty = y; }
-                            }
-                        XDestroyImage(img);
+                        Window child;
+                        if (!XGetWindowAttributes(d, w, &a)) return 0;
+                        XTranslateCoordinates(d, w, DefaultRootWindow(d), left ? 20 : a.width / 2, a.height / 2, x, y, &child);
+                        return 1;
                     }
                     int main(int argc, char** argv) {
                         Display* d = XOpenDisplay(NULL);
                         void* xtst = dlopen("libXtst.so.6", RTLD_NOW);
                         FakeButton button;
                         FakeMotion motion;
-                        unsigned long src, dst;
-                        int times = argc > 3 ? atoi(argv[3]) : 1, k, i, tx = 0, ty = 0;
-                        Box s, t;
-                        if (d == NULL || xtst == NULL || argc < 3) { fprintf(stderr, "hand: no display or no libXtst\n"); return 2; }
-                        src = strtoul(argv[1], NULL, 16); dst = strtoul(argv[2], NULL, 16);
+                        Window src = 0, dst = 0;
+                        int times = argc > 3 ? atoi(argv[3]) : 1, k, i, sx, sy, dx, dy;
+                        if (d == NULL || xtst == NULL || argc < 3) { fprintf(stderr, "driver: no display or no libXtst\n"); return 2; }
                         button = (FakeButton)dlsym(xtst, "XTestFakeButtonEvent");
                         motion = (FakeMotion)dlsym(xtst, "XTestFakeMotionEvent");
-                        if (!button || !motion) { fprintf(stderr, "hand: XTest incomplete\n"); return 2; }
-                        for (k = 0; k < 300; k++) {
-                            scan(d, src, dst, &s, &t, &tx, &ty);
-                            if (s.n > 100 && t.n > 1000) break;
-                            pause_ms(100);
+                        if (!button || !motion) { fprintf(stderr, "driver: XTest incomplete\n"); return 2; }
+                        for (k = 0; k < 300 && (!src || !dst); k++) {
+                            src = find(d, DefaultRootWindow(d), argv[1]);
+                            dst = find(d, DefaultRootWindow(d), argv[2]);
+                            if (!src || !dst) pause_ms(100);
                         }
-                        if (s.n <= 100 || t.n <= 1000) { fprintf(stderr, "hand: windows not found (%d, %d)\n", s.n, t.n); return 2; }
-                        pause_ms(700);
+                        if (!src || !dst) { fprintf(stderr, "driver: windows not found\n"); return 2; }
+                        pause_ms(1000);
                         for (k = 0; k < times; k++) {
-                            int sx, sy;
-                            scan(d, src, dst, &s, &t, &tx, &ty);
-                            sx = (s.x0 + s.x1) / 2; sy = (s.y0 + s.y1) / 2;
+                            if (!point(d, src, &sx, &sy, 0) || !point(d, dst, &dx, &dy, 1)) return 2;
                             motion(d, -1, sx, sy, 0); XSync(d, False); pause_ms(300);
                             button(d, 1, True, 0); XSync(d, False); pause_ms(400);
-                            for (i = 1; i <= 12; i++) { motion(d, -1, sx + (tx - sx) * i / 12, sy + (ty - sy) * i / 12, 0); XSync(d, False); pause_ms(40); }
+                            for (i = 1; i <= 12; i++) { motion(d, -1, sx + (dx - sx) * i / 12, sy + (dy - sy) * i / 12, 0); XSync(d, False); pause_ms(40); }
                             pause_ms(300);
                             button(d, 1, False, 0); XSync(d, False);
                             pause_ms(1500);
@@ -25700,386 +25553,609 @@ else
                         return 0;
                     }
                     """;
-                string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Wayland: weston unter Xvfb, wl_data_device): Text und Dateien, die Antwort Kopie; ins Leere 0 [SDL3]";
-                string? weston = FindProgram("weston");
-                string? wlLibs = Environment.GetEnvironmentVariable("FIRE_TEST_SDL3_WAYLAND") is { Length: > 0 } wlEnv ? wlEnv : null;
-                if (!TestSelected(title)) { }
-                else if (xvfbRun == null || sdl3Exit != 0 || weston == null) Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder weston fehlen: {title})");
-                else
+                string? dragDriver = null;
+                bool dragDriverTried = false;
+                // (built once, when a case needs it - the native drag cases and those under Wine ask at the same time: the headers of X11 are needed; libXtst only at run time)
+                string? DragDriver()
                 {
-                    // (has this SDL3 the Wayland driver? - SDL lists the drivers it was built with, no display needed)
-                    string probe = Path.Combine(workDir, "wlprobe.c");
-                    File.WriteAllText(probe, "#include <SDL3/SDL.h>\n#include <string.h>\nint main(void) { int i; for (i = 0; i < SDL_GetNumVideoDrivers(); i++) if (strcmp(SDL_GetVideoDriver(i), \"wayland\") == 0) return 0; return 1; }\n");
-                    RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{probe}\" -lSDL3 -o \"{probe}.bin\"", workDir, out _);
-                    string handC = Path.Combine(workDir, "wlhand.c"), hand = Path.Combine(workDir, "wlhand.bin");
-                    File.WriteAllText(handC, handSource);
-                    RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{handC}\" -o \"{hand}\" -lX11 -ldl", workDir, out int handExit);
-                    string ldPath = wlLibs != null ? $"LD_LIBRARY_PATH=\"{wlLibs}\" " : "";
-                    File.WriteAllText(probe + ".sh", $"{ldPath}\"{probe}.bin\"\n");
-                    RunProc("sh", $"\"{probe}.sh\"", workDir, out int probeExit);
-                    if (probeExit != 0) Console.WriteLine($"(uebersprungen - das SDL3 hier hat keinen Wayland-Treiber (FIRE_TEST_SDL3_WAYLAND: ein Ordner mit einem libSDL3.so mit Wayland): {title})");
-                    else if (handExit != 0) Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
-                    else
-                    {
-                        string Colored(string script, int w, int h, string color) => script.Replace("var win = new Window(", $"var paint = new Renderer(fb)\nfor (var py = 0; py < {h}; py++) {{ for (var px = 0; px < {w}; px++) {{ paint.SetPixel(px, py, {color}) }} }}\nvar win = new Window(");
-                        string Build(string script, string name)
-                        {
-                            var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 3 } };
-                            var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
-                            string exe = Path.Combine(workDir, name + ".bin");
-                            string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL3");
-                            if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
-                            return exe;
+                    lock (windowRuns) return DragDriverOnce();
+                }
+                string? DragDriverOnce()
+                {
+                    if (dragDriverTried) return dragDriver;
+                    dragDriverTried = true;
+                    string c = Path.Combine(workDir, "dragdriver.c");
+                    File.WriteAllText(c, dragDriverSource);
+                    string exe = Path.Combine(workDir, "dragdriver.bin");
+                    RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{c}\" -o \"{exe}\" -lX11 -ldl", workDir, out int code);
+                    dragDriver = code == 0 ? exe : null;
+                    return dragDriver;
+                }
+                string DragSourceScript(string path1, string path2, bool show) => """
+                    #import "windows"
+                    #import "time"
+                    var fb = new Framebuffer(64, 48)
+                    var win = new Window(fb, "fire drag source")
+                    var drags = 0
+                    win.RegisterMouseDown(func(int b, float x, float y) => {
+                        drags++
+                        if (drags == 1) { print("text " + win.StartDrag("Text aus fire ä", undefined)) }
+                        else {
+                            var files = new List<string>()
+                            files.Add("PATH1")
+                            files.Add("PATH2")
+                            print("files " + win.StartDrag("", files))
+                            CLOSE
                         }
-                        try
-                        {
-                            string source = Build(Colored(DragSourceScript("/tmp/ein Ordner/datei ä.txt", "/tmp/zwei", false), 64, 48, "0xFFFF00FF"), "wldragsource");
-                            string target = Build(Colored(dragTargetScript, 400, 300, "0xFF00FF00"), "wldragtarget");
-                            string run = Path.Combine(workDir, "wldrag.sh"), runtime = Path.Combine(workDir, "wlrun");
-                            string outSource = Path.Combine(workDir, "wlsource.out"), outTarget = Path.Combine(workDir, "wltarget.out"), outEmpty = Path.Combine(workDir, "wlempty.out");
-                            string socket = $"wl-fire-{Environment.ProcessId}";
-                            // (weston first - its socket says it is there -, then target, source and hand as for X11; then a source alone over the black background)
-                            File.WriteAllText(run, $"""
-                                export XDG_RUNTIME_DIR="{runtime}"
-                                mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
-                                printf '[core]\nidle-time=0\n[shell]\npanel-position=none\nbackground-color=0xff000000\n' > "{runtime}/weston.ini"
-                                "{weston}" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={socket} --config="{runtime}/weston.ini" > "{runtime}/weston.log" 2>&1 &
-                                wp=$!
-                                for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/{socket}" ] && break; sleep 0.1; done
-                                export WAYLAND_DISPLAY={socket} SDL_VIDEODRIVER=wayland SDL_MOUSE_FOCUS_CLICKTHROUGH=1 {ldPath}
-                                "{target}" > "{outTarget}" 2>&1 &
-                                t=$!
-                                sleep 0.5
-                                "{source}" > "{outSource}" 2>&1 &
-                                s=$!
-                                "{hand}" FF00FF 00FF00 2
-                                d=$?
-                                wait $s; se=$?
-                                wait $t; te=$?
-                                sleep 0.5
-                                "{source}" > "{outEmpty}" 2>&1 &
-                                s=$!
-                                "{hand}" FF00FF 000000 2
-                                d2=$?
-                                wait $s; se2=$?
-                                kill $wp; wait $wp
-                                exit $(( d + se + te + d2 + se2 ))
-                                """.Replace("\r", ""));
-                            string wlLsan = Path.Combine(workDir, "lsan_wayland.supp");
-                            File.WriteAllText(wlLsan, "leak:libdbus-1.so\nleak:SDL_EGL_LoadLibrary\nleak:GL_RunCommandQueue\nleak:libLLVM\nleak:libEGL_mesa\nleak:libgallium\n");
-                            Environment.SetEnvironmentVariable("LSAN_OPTIONS", $"suppressions={wlLsan}:print_suppressions=0");
-                            string runLog = RunProc(xvfbRun, $"-a -s \"-screen 0 1024x768x24\" sh \"{run}\"", workDir, out int runExit);
-                            Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
-                            string actual = DragLines(outSource) + DragLines(outTarget) + DragLines(outEmpty);
-                            string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "text 0", "files 0" }.Select(l => l + "\n"));
-                            CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}"
-                                + (File.Exists(outSource) ? File.ReadAllText(outSource) : "") + (File.Exists(outTarget) ? File.ReadAllText(outTarget) : ""));
-                        }
-                        catch (InvalidOperationException ex) { CheckNat(title, false, ex.Message); }
-                    }
-                }
-            }
+                    })
 
-            // ---- Windows: the window and the clipboard built with MinGW against the MinGW package of SDL3 (SDL3_DIR, else /opt/sdl-mingw/SDL3-*), SDL3.dll next to it, run under Wine
-            {
-                string title = "Fenster: Windows (MinGW, SDL3, unter Wine): Drop-Ereignisse, Zwischenablage mit Text, Bild (CF_DIB) und Dateien (CF_HDROP)";
-                string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
-                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
-                string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
-                    : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
-                var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
-                if (!TestSelected(title)) { }
-                else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null)
-                    Console.WriteLine("(Fenster unter Wine: uebersprungen - MinGW, Wine, xvfb-run oder das MinGW-Paket von SDL3 (SDL3_DIR, /opt/sdl-mingw) fehlen)");
-                else
+                    """.Replace("PATH1", path1).Replace("PATH2", path2).Replace("CLOSE", show ? "win.Close()" : "")
+                    + (show ? "win.Show()\n" : "var t = 0\nwhile (drags < 2 && t < 1500) { win.Tick(); Sleep(10ms); t++ }\n");
+                const string dragTargetScript = """
+                    #import "windows"
+                    #import "time"
+                    var fb = new Framebuffer(400, 300)
+                    var win = new Window(fb, "fire drop target")
+                    var got = 0
+                    win.RegisterDropText(func(string text, float x, float y) => {
+                        print("dropped text [" + text + "]")
+                        got++
+                    })
+                    win.RegisterDropFiles(func(any files, float x, float y) => {
+                        var line = "dropped files " + files.length
+                        foreach (f in files) { line = line + " [" + f + "]" }
+                        print(line)
+                        got++
+                    })
+                    var t = 0
+                    while (got < 2 && t < 1500) { win.Tick(); Sleep(10ms); t++ }
+                    """;
+                // (the script for the X server: the target, half a second later the source, then the hand; the outputs of source and target; the exit code: all three ended well)
+                // (what the programs printed about the drag - not what forge or Wine say besides: packages it installs, the end of the X connection)
+                string DragLines(string file) => File.Exists(file)
+                    ? string.Concat(File.ReadAllText(file).Replace("\r", "").Split('\n').Where(l => l.StartsWith("text ", StringComparison.Ordinal) || l.StartsWith("files ", StringComparison.Ordinal) || l.StartsWith("dropped ", StringComparison.Ordinal)).Select(l => l + "\n"))
+                    : "";
+                string DragScript(string target, string source, string driver, string outSource, string outTarget, string delay = "0.5") =>
+                    $"{target} > \"{outTarget}\" 2>&1 &\nt=$!\nsleep {delay}\n{source} > \"{outSource}\" 2>&1 &\ns=$!\n\"{driver}\" \"fire drag source\" \"fire drop target\" 2\nd=$?\nwait $s\nse=$?\nwait $t\nte=$?\nexit $(( d + se + te ))\n";
+                windowRuns.Add(() =>
                 {
-                    var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
-                    string winDir = Path.Combine(workDir, "wine_sdl3");
-                    Directory.CreateDirectory(winDir);
-                    fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
-                    File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
-                    string RunWine(string tool, string arguments, out int exit)
+                    string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                    var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (SDL3-CS)", 3, false, true) };
+                    string[] dragExpected = { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" };
+                    string DragBuild(string script, int version, string name)
                     {
-                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
-                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
-                        info.Environment["WINEDEBUG"] = "-all";
-                        info.Environment["LANG"] = "C.UTF-8";
-                        using var p = System.Diagnostics.Process.Start(info)!;
-                        var errTask = p.StandardError.ReadToEndAsync();
-                        string output = p.StandardOutput.ReadToEnd();
-                        if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
-                        exit = p.ExitCode;
-                        return output + errTask.Result;
+                        var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
+                        var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
+                        string exe = Path.Combine(workDir, name + ".bin");
+                        string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, $" -lSDL{version}");
+                        if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
+                        return exe;
                     }
-                    // (a new prefix is set up first: the program that runs while Wine makes it prints nothing)
-                    RunWine(wine, "wineboot --init", out _);
-                    var winCases = new (string Name, string Script, string Define, string Driver, string[] Expected)[]
+                    // (the target once for all cases; the cases built in parallel, run one after the other - one X server at a time)
+                    var dragTarget = new Lazy<string>(() => DragBuild(dragTargetScript, 3, "dragtarget"));
+                    var dragSteps = new List<Func<Action>>();
+                    foreach (var dc in dragCases)
                     {
-                        ("drop", windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Script, "-DFIRE_DISPLAY_SELFTEST_DROP ", "dummy",
-                            windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Expected),
-                        ("clip", clipScript.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\\\fire\\\\ein Ordner\\\\datei ä.txt").Replace("/tmp/zwei", "C:\\\\zwei"), "", "windows",
-                            clip3.Select(l => l.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\fire\\ein Ordner\\datei ä.txt").Replace("/tmp/zwei", "C:\\zwei")).ToArray()),
-                    };
-                    foreach (var wcase in winCases)
-                    {
-                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wcase.Script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
-                        string exeFile = Path.Combine(winDir, wcase.Name + ".exe");
-                        string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-                        string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, wcase.Name,
-                            $"-O2 -Wall -Wextra {wcase.Define}-I\"{Path.Combine(sdl3Mingw, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
-                        if (buildExit != 0 || build.Contains("warning:") || !links.Contains("-lSDL3")) { CheckNat($"{title}: {wcase.Name}", false, "MinGW: " + links + "\n" + build); continue; }
-                        // (the driver of Windows needs a desktop: Wine's comes from the X server of Xvfb)
-                        string actual = RunWine(xvfbRun, $"-a env SDL_VIDEODRIVER={wcase.Driver} \"{wine}\" \"{exeFile}\"", out int runExit);
-                        // (what Wine and the X server say besides the program: about the prefix, the end of the connection)
-                        actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
-                        string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
-                        CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
-                    }
-                }
-            }
-
-            // ---- the VM's clipboard under Windows (Wine): files as CF_HDROP (SdlClipboard + WinClipboard). A small harness with fire.Terminal.Sdl is published for win-x64
-            // (self-contained; its own artifacts folder, so that the projects of the repository keep theirs) and runs under Wine: it puts two files on the clipboard,
-            // checks them with the shell (DragQueryFileW) and reads them back; a native program (MinGW, SDL3) reads them and puts its own there, which the harness reads.
-            {
-                string title = "Fenster: die VM unter Windows (win-x64 unter Wine): Dateien in der Zwischenablage als CF_HDROP, auch mit einem nativen Programm";
-                string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
-                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
-                string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
-                    : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
-                var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
-                string? sdlProject = null;
-                for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null && sdlProject == null; dir = dir.Parent)
-                {
-                    string candidate = Path.Combine(dir.FullName, "src", "fire.Terminal.Sdl", "fire.Terminal.Sdl.csproj");
-                    if (File.Exists(candidate)) sdlProject = candidate;
-                }
-                if (!TestSelected(title)) { }
-                else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null || sdlProject == null)
-                    Console.WriteLine("(die VM unter Wine: uebersprungen - MinGW, Wine, xvfb-run, das MinGW-Paket von SDL3 oder die Quellen von fire.Terminal.Sdl fehlen)");
-                else
-                {
-                    string vmDir = Path.Combine(workDir, "wine_vmclip");
-                    Directory.CreateDirectory(vmDir);
-                    File.WriteAllText(Path.Combine(vmDir, "harness.csproj"), $"""
-                        <Project Sdk="Microsoft.NET.Sdk">
-                          <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
-                          <ItemGroup><ProjectReference Include="{sdlProject}" /></ItemGroup>
-                        </Project>
-                        """);
-                    File.WriteAllText(Path.Combine(vmDir, "Program.cs"), """
-                        using System.Runtime.InteropServices;
-                        using System.Text;
-                        using fire.Terminal.Sdl;
-                        static class P
+                        string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (X11, Xvfb, XDND): Text und Dateien, die Antwort Kopie [{dc.Label}]";
+                        if (!TestSelected(title)) continue;
+                        dragSteps.Add(() =>
                         {
-                            [DllImport("user32.dll")] static extern int OpenClipboard(IntPtr owner);
-                            [DllImport("user32.dll")] static extern int CloseClipboard();
-                            [DllImport("user32.dll")] static extern int IsClipboardFormatAvailable(uint format);
-                            [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);
-                            [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern uint DragQueryFileW(IntPtr drop, uint index, StringBuilder? file, uint size);
-                            static string ShellFiles()
+                            if (xvfbRun == null || sdl3Exit != 0 || (dc.Sdl == 2 && sdlExit != 0)) return () => Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder SDL2 fehlen: {title})");
+                            if (dc.Vm && !File.Exists(forge)) return () => Console.WriteLine($"(uebersprungen - forge fehlt: {title})");
+                            string? driver = DragDriver();
+                            if (driver == null) return () => Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
+                            string sourceCommand;
+                            try
                             {
-                                if (OpenClipboard(IntPtr.Zero) == 0) return "not open";
-                                try
+                                _ = dragTarget.Value;
+                                string sourceScript = DragSourceScript("/tmp/ein Ordner/datei ä.txt", "/tmp/zwei", dc.Show);
+                                if (dc.Vm)
                                 {
-                                    IntPtr h = GetClipboardData(15);
-                                    if (h == IntPtr.Zero) return "none";
-                                    uint n = DragQueryFileW(h, 0xFFFFFFFF, null, 0);
-                                    var line = n.ToString();
-                                    for (uint i = 0; i < n; i++) { var sb = new StringBuilder(1024); DragQueryFileW(h, i, sb, 1024); line += " [" + sb + "]"; }
-                                    return line;
+                                    string file = Path.Combine(workDir, "dragsource.fire");
+                                    File.WriteAllText(file, sourceScript);
+                                    sourceCommand = $"\"{forge}\" run \"{file}\"";
                                 }
-                                finally { CloseClipboard(); }
+                                else sourceCommand = "\"" + DragBuild(sourceScript, dc.Sdl, $"dragsource{dc.Sdl}{(dc.Show ? "s" : "")}") + "\"";
                             }
-                            static string Files(string[] files) => files.Length + string.Concat(files.Select(f => " [" + f + "]"));
-                            static int Main(string[] args)
+                            catch (InvalidOperationException ex) { return () => CheckNat(title, false, ex.Message); }
+                            return () =>
                             {
-                                Console.OutputEncoding = Encoding.UTF8;
-                                var c = new SdlClipboard();
-                                if (args.Length > 0 && args[0] == "read") { Console.WriteLine("vm read " + Files(c.GetFiles()) + " " + c.HasFiles + " " + c.HasText); return 0; }
-                                string[] paths = { @"C:\fire\ein Ordner\datei ä.txt", @"C:\zwei" };
-                                Console.WriteLine("vm set " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText + " " + c.HasImage);
-                                Console.WriteLine("vm shell " + ShellFiles());
-                                Console.WriteLine("vm get " + Files(c.GetFiles()));
-                                Console.WriteLine("vm text " + c.SetText("Text") + " " + c.HasFiles + " " + (IsClipboardFormatAvailable(15) != 0) + " " + c.HasText + " " + c.GetText());
-                                Console.WriteLine("vm again " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText);
-                                return 0;
-                            }
+                                string outSource = Path.Combine(workDir, "dragsource.out"), outTarget = Path.Combine(workDir, "dragtarget.out");
+                                string script = Path.Combine(workDir, "drag.sh");
+                                File.WriteAllText(script, DragScript($"\"{dragTarget.Value}\"", sourceCommand, driver, outSource, outTarget));
+                                // (the hand presses and moves on a clock: no compiler of this run at the same time - TestJobs.Alone)
+                                int runExit = 0;
+                                string runLog = TestJobs.Alone(() => RunProc(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", workDir, out runExit, null,
+                                    new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "x11", ["LSAN_OPTIONS"] = $"suppressions={lsanFile}:print_suppressions=0" }));
+                                string actual = DragLines(outSource) + DragLines(outTarget);
+                                string want = string.Concat(dragExpected.Select(l => l + "\n"));
+                                CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}");
+                            };
+                        });
+                    }
+                    TestJobs.Ordered(dragSteps.Count, i => dragSteps[i](), (_, run) => run());
+                });
+
+                // ---- drag-out on Wayland (wl_data_device.start_drag, fire_dragout_wayland): weston with its X11 backend draws into Xvfb; source and target are native fire
+                // programs with SDL3 on Wayland (an SDL3 with the Wayland driver: the one of the system or the folder FIRE_TEST_SDL3_WAYLAND, put first on
+                // LD_LIBRARY_PATH). Wayland clients cannot know where their windows are: the source is magenta, the target green, and the hand finds them on the X
+                // screen (XGetImage) - it presses in the source and lets go on the point of the target farthest from it, twice (text, then files); a third program
+                // drags onto the black background (no target: 0). SDL_MOUSE_FOCUS_CLICKTHROUGH: the press that gives the source the focus back after a drop counts.
+                // (SDL 3.2 draws on Wayland always through EGL - Mesa, llvmpipe here - which keeps memory that LeakSanitizer would report: suppressed for this case)
+                windowRuns.Add(() =>
+                {
+                    const string handSource = """
+                        #include <X11/Xlib.h>
+                        #include <X11/Xutil.h>
+                        #include <dlfcn.h>
+                        #include <stdio.h>
+                        #include <stdlib.h>
+                        #include <time.h>
+                        typedef int (*FakeButton)(Display*, unsigned int, int, unsigned long);
+                        typedef int (*FakeMotion)(Display*, int, int, int, unsigned long);
+                        static void pause_ms(int ms) { struct timespec t; t.tv_sec = ms / 1000; t.tv_nsec = (long)(ms % 1000) * 1000000L; nanosleep(&t, NULL); }
+                        typedef struct Box { int x0, y0, x1, y1, n; } Box;
+                        static void scan(Display* d, unsigned long src, unsigned long dst, Box* s, Box* t, int* tx, int* ty) {
+                            XWindowAttributes a;
+                            XImage* img;
+                            int x, y;
+                            long best = -1;
+                            XGetWindowAttributes(d, DefaultRootWindow(d), &a);
+                            img = XGetImage(d, DefaultRootWindow(d), 0, 0, (unsigned)a.width, (unsigned)a.height, AllPlanes, ZPixmap);
+                            s->n = t->n = 0;
+                            if (img == NULL) return;
+                            for (y = 0; y < a.height; y++)
+                                for (x = 0; x < a.width; x++) {
+                                    unsigned long p = XGetPixel(img, x, y) & 0xFFFFFF;
+                                    Box* b = p == src ? s : p == dst ? t : NULL;
+                                    if (b == NULL) continue;
+                                    if (b->n == 0) { b->x0 = b->x1 = x; b->y0 = b->y1 = y; }
+                                    if (x < b->x0) b->x0 = x;
+                                    if (x > b->x1) b->x1 = x;
+                                    if (y < b->y0) b->y0 = y;
+                                    if (y > b->y1) b->y1 = y;
+                                    b->n++;
+                                }
+                            for (y = t->y0 + 10; t->n && y <= t->y1 - 10; y += 8)
+                                for (x = t->x0 + 10; x <= t->x1 - 10; x += 8) {
+                                    long dx, dy, dist;
+                                    if ((XGetPixel(img, x, y) & 0xFFFFFF) != dst) continue;
+                                    dx = x - (s->x0 + s->x1) / 2; dy = y - (s->y0 + s->y1) / 2;
+                                    dist = dx * dx + dy * dy;
+                                    if (dist > best) { best = dist; *tx = x; *ty = y; }
+                                }
+                            XDestroyImage(img);
                         }
-                        """);
-                    string publish = RunProc("dotnet", $"publish -c Release -r win-x64 --self-contained -o out --artifacts-path artifacts -p:NuGetAudit=false", vmDir, out int publishExit);
-                    string harness = Path.Combine(vmDir, "out", "harness.exe");
-                    if (publishExit != 0 || !File.Exists(harness))
-                        Console.WriteLine("(die VM unter Wine: uebersprungen - `dotnet publish -r win-x64` ging nicht (ohne Netz fehlt das Laufzeitpaket fuer win-x64): "
-                            + string.Join(" ", publish.Split('\n').Where(l => l.Contains("error")).Take(2)) + ")");
+                        int main(int argc, char** argv) {
+                            Display* d = XOpenDisplay(NULL);
+                            void* xtst = dlopen("libXtst.so.6", RTLD_NOW);
+                            FakeButton button;
+                            FakeMotion motion;
+                            unsigned long src, dst;
+                            int times = argc > 3 ? atoi(argv[3]) : 1, k, i, tx = 0, ty = 0;
+                            Box s, t;
+                            if (d == NULL || xtst == NULL || argc < 3) { fprintf(stderr, "hand: no display or no libXtst\n"); return 2; }
+                            src = strtoul(argv[1], NULL, 16); dst = strtoul(argv[2], NULL, 16);
+                            button = (FakeButton)dlsym(xtst, "XTestFakeButtonEvent");
+                            motion = (FakeMotion)dlsym(xtst, "XTestFakeMotionEvent");
+                            if (!button || !motion) { fprintf(stderr, "hand: XTest incomplete\n"); return 2; }
+                            for (k = 0; k < 300; k++) {
+                                scan(d, src, dst, &s, &t, &tx, &ty);
+                                if (s.n > 100 && t.n > 1000) break;
+                                pause_ms(100);
+                            }
+                            if (s.n <= 100 || t.n <= 1000) { fprintf(stderr, "hand: windows not found (%d, %d)\n", s.n, t.n); return 2; }
+                            pause_ms(700);
+                            for (k = 0; k < times; k++) {
+                                int sx, sy;
+                                scan(d, src, dst, &s, &t, &tx, &ty);
+                                sx = (s.x0 + s.x1) / 2; sy = (s.y0 + s.y1) / 2;
+                                motion(d, -1, sx, sy, 0); XSync(d, False); pause_ms(300);
+                                button(d, 1, True, 0); XSync(d, False); pause_ms(400);
+                                for (i = 1; i <= 12; i++) { motion(d, -1, sx + (tx - sx) * i / 12, sy + (ty - sy) * i / 12, 0); XSync(d, False); pause_ms(40); }
+                                pause_ms(300);
+                                button(d, 1, False, 0); XSync(d, False);
+                                pause_ms(1500);
+                            }
+                            XCloseDisplay(d);
+                            return 0;
+                        }
+                        """;
+                    string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Wayland: weston unter Xvfb, wl_data_device): Text und Dateien, die Antwort Kopie; ins Leere 0 [SDL3]";
+                    string? weston = FindProgram("weston");
+                    string? wlLibs = Environment.GetEnvironmentVariable("FIRE_TEST_SDL3_WAYLAND") is { Length: > 0 } wlEnv ? wlEnv : null;
+                    if (!TestSelected(title)) { }
+                    else if (xvfbRun == null || sdl3Exit != 0 || weston == null) Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder weston fehlen: {title})");
                     else
                     {
-                        var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
-                        fire.Native.NativeRuntimeFiles.WriteTo(vmDir, "windows");
-                        File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(vmDir, "SDL3.dll"), true);
-                        string RunWine(string tool, string arguments, out int exit)
-                        {
-                            var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = vmDir };
-                            info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
-                            info.Environment["WINEDEBUG"] = "-all";
-                            info.Environment["LANG"] = "C.UTF-8";
-                            using var p = System.Diagnostics.Process.Start(info)!;
-                            var errTask = p.StandardError.ReadToEndAsync();
-                            string output = p.StandardOutput.ReadToEnd();
-                            if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
-                            exit = p.ExitCode;
-                            return output + errTask.Result;
-                        }
-                        RunWine(wine, "wineboot --init", out _);
-                        const string nativeScript = """
-                        #import "windows"
-                        var got = Clipboard.GetFiles()
-                        var line = "native " + got.length
-                        foreach (f in got) { line = line + " [" + f + "]" }
-                        print(line + " " + Clipboard.HasFiles + " " + Clipboard.HasText)
-                        var paths = new List<string>()
-                        paths.Add("C:\\nativ\\drei ö.txt")
-                        print("native set " + Clipboard.SetFiles(paths))
-                        """;
-                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { nativeScript }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
-                        string nativeExe = Path.Combine(vmDir, "nativeclip.exe");
-                        string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-                        string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, vmDir, "nativeclip",
-                            $"-O2 -Wall -Wextra -I\"{Path.Combine(sdl3Mingw, "include")}\"", nativeExe, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
-                        if (buildExit != 0 || build.Contains("warning:")) CheckNat(title, false, "MinGW: " + links + "\n" + build);
+                        // (has this SDL3 the Wayland driver? - SDL lists the drivers it was built with, no display needed)
+                        string probe = Path.Combine(workDir, "wlprobe.c");
+                        File.WriteAllText(probe, "#include <SDL3/SDL.h>\n#include <string.h>\nint main(void) { int i; for (i = 0; i < SDL_GetNumVideoDrivers(); i++) if (strcmp(SDL_GetVideoDriver(i), \"wayland\") == 0) return 0; return 1; }\n");
+                        RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{probe}\" -lSDL3 -o \"{probe}.bin\"", workDir, out _);
+                        string handC = Path.Combine(workDir, "wlhand.c"), hand = Path.Combine(workDir, "wlhand.bin");
+                        File.WriteAllText(handC, handSource);
+                        RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{handC}\" -o \"{hand}\" -lX11 -ldl", workDir, out int handExit);
+                        string ldPath = wlLibs != null ? $"LD_LIBRARY_PATH=\"{wlLibs}\" " : "";
+                        File.WriteAllText(probe + ".sh", $"{ldPath}\"{probe}.bin\"\n");
+                        RunProc("sh", $"\"{probe}.sh\"", workDir, out int probeExit);
+                        if (probeExit != 0) Console.WriteLine($"(uebersprungen - das SDL3 hier hat keinen Wayland-Treiber (FIRE_TEST_SDL3_WAYLAND: ein Ordner mit einem libSDL3.so mit Wayland): {title})");
+                        else if (handExit != 0) Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
                         else
                         {
-                            // (one X server for all three, so that they share Wine's desktop and its clipboard)
-                            string script = Path.Combine(vmDir, "run.sh");
-                            File.WriteAllText(script, $"export SDL_VIDEODRIVER=windows\n\"{wine}\" \"{harness}\" && \"{wine}\" \"{nativeExe}\" && \"{wine}\" \"{harness}\" read\n");
-                            string actual = RunWine(xvfbRun, $"-a sh \"{script}\"", out int runExit);
-                            actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => l != "" && !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
-                            string want = string.Join("\n", new[]
+                            string Colored(string script, int w, int h, string color) => script.Replace("var win = new Window(", $"var paint = new Renderer(fb)\nfor (var py = 0; py < {h}; py++) {{ for (var px = 0; px < {w}; px++) {{ paint.SetPixel(px, py, {color}) }} }}\nvar win = new Window(");
+                            string Build(string script, string name)
                             {
-                                "vm set True True False False", "vm shell 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]", "vm get 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]",
-                                "vm text True False False True Text", "vm again True True False",
-                                "native 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei] True False", "native set True", "vm read 1 [C:\\nativ\\drei ö.txt] True False",
-                            });
-                            CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                                var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 3 } };
+                                var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
+                                string exe = Path.Combine(workDir, name + ".bin");
+                                string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL3");
+                                if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
+                                return exe;
+                            }
+                            try
+                            {
+                                // (both at once)
+                                var wlBuilt = new string[2];
+                                TestJobs.Ordered(2, i => i == 0 ? Build(Colored(DragSourceScript("/tmp/ein Ordner/datei ä.txt", "/tmp/zwei", false), 64, 48, "0xFFFF00FF"), "wldragsource")
+                                    : Build(Colored(dragTargetScript, 400, 300, "0xFF00FF00"), "wldragtarget"), (i, exe) => wlBuilt[i] = exe);
+                                string source = wlBuilt[0], target = wlBuilt[1];
+                                string run = Path.Combine(workDir, "wldrag.sh"), runtime = Path.Combine(workDir, "wlrun");
+                                string outSource = Path.Combine(workDir, "wlsource.out"), outTarget = Path.Combine(workDir, "wltarget.out"), outEmpty = Path.Combine(workDir, "wlempty.out");
+                                string socket = $"wl-fire-{Environment.ProcessId}";
+                                // (weston first - its socket says it is there -, then target, source and hand as for X11; then a source alone over the black background)
+                                File.WriteAllText(run, $"""
+                                    export XDG_RUNTIME_DIR="{runtime}"
+                                    mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+                                    printf '[core]\nidle-time=0\n[shell]\npanel-position=none\nbackground-color=0xff000000\n' > "{runtime}/weston.ini"
+                                    "{weston}" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={socket} --config="{runtime}/weston.ini" > "{runtime}/weston.log" 2>&1 &
+                                    wp=$!
+                                    for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/{socket}" ] && break; sleep 0.1; done
+                                    export WAYLAND_DISPLAY={socket} SDL_VIDEODRIVER=wayland SDL_MOUSE_FOCUS_CLICKTHROUGH=1 {ldPath}
+                                    "{target}" > "{outTarget}" 2>&1 &
+                                    t=$!
+                                    sleep 0.5
+                                    "{source}" > "{outSource}" 2>&1 &
+                                    s=$!
+                                    "{hand}" FF00FF 00FF00 2
+                                    d=$?
+                                    wait $s; se=$?
+                                    wait $t; te=$?
+                                    sleep 0.5
+                                    "{source}" > "{outEmpty}" 2>&1 &
+                                    s=$!
+                                    "{hand}" FF00FF 000000 2
+                                    d2=$?
+                                    wait $s; se2=$?
+                                    kill $wp; wait $wp
+                                    exit $(( d + se + te + d2 + se2 ))
+                                    """.Replace("\r", ""));
+                                string wlLsan = Path.Combine(workDir, "lsan_wayland.supp");
+                                File.WriteAllText(wlLsan, "leak:libdbus-1.so\nleak:SDL_EGL_LoadLibrary\nleak:GL_RunCommandQueue\nleak:libLLVM\nleak:libEGL_mesa\nleak:libgallium\n");
+                                string runLog = RunProc(xvfbRun, $"{TestJobs.XvfbServer()} -s \"-screen 0 1024x768x24\" sh \"{run}\"", workDir, out int runExit, null,
+                                    new Dictionary<string, string?> { ["LSAN_OPTIONS"] = $"suppressions={wlLsan}:print_suppressions=0" });
+                                string actual = DragLines(outSource) + DragLines(outTarget) + DragLines(outEmpty);
+                                string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "text 0", "files 0" }.Select(l => l + "\n"));
+                                CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}"
+                                    + (File.Exists(outSource) ? File.ReadAllText(outSource) : "") + (File.Exists(outTarget) ? File.ReadAllText(outTarget) : ""));
+                            }
+                            catch (InvalidOperationException ex) { CheckNat(title, false, ex.Message); }
                         }
                     }
-                }
+                });
+
+                // the cases under Wine (one prefix: TestJobs.Wine) at the same time as the native window cases above
+                Action wineRuns = () =>
+                {
+                    lock (TestJobs.Wine)
+                    {
+                        // ---- Windows: the window and the clipboard built with MinGW against the MinGW package of SDL3 (SDL3_DIR, else /opt/sdl-mingw/SDL3-*), SDL3.dll next to it, run under Wine
+                        {
+                            string title = "Fenster: Windows (MinGW, SDL3, unter Wine): Drop-Ereignisse, Zwischenablage mit Text, Bild (CF_DIB) und Dateien (CF_HDROP)";
+                            string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                            string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
+                                : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
+                            var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
+                            if (!TestSelected(title)) { }
+                            else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null)
+                                Console.WriteLine("(Fenster unter Wine: uebersprungen - MinGW, Wine, xvfb-run oder das MinGW-Paket von SDL3 (SDL3_DIR, /opt/sdl-mingw) fehlen)");
+                            else
+                            {
+                                var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
+                                string winDir = Path.Combine(workDir, "wine_sdl3");
+                                Directory.CreateDirectory(winDir);
+                                fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
+                                File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
+                                string RunWine(string tool, string arguments, out int exit)
+                                {
+                                    var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
+                                    info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                                    info.Environment["WINEDEBUG"] = "-all";
+                                    info.Environment["LANG"] = "C.UTF-8";
+                                    using var p = System.Diagnostics.Process.Start(info)!;
+                                    var errTask = p.StandardError.ReadToEndAsync();
+                                    string output = p.StandardOutput.ReadToEnd();
+                                    if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                                    exit = p.ExitCode;
+                                    return output + errTask.Result;
+                                }
+                                // (a new prefix is set up first: the program that runs while Wine makes it prints nothing)
+                                RunWine(wine, "wineboot --init", out _);
+                                var winCases = new (string Name, string Script, string Define, string Driver, string[] Expected)[]
+                                {
+                                    ("drop", windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Script, "-DFIRE_DISPLAY_SELFTEST_DROP ", "dummy",
+                                        windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Expected),
+                                    ("clip", clipScript.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\\\fire\\\\ein Ordner\\\\datei ä.txt").Replace("/tmp/zwei", "C:\\\\zwei"), "", "windows",
+                                        clip3.Select(l => l.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\fire\\ein Ordner\\datei ä.txt").Replace("/tmp/zwei", "C:\\zwei")).ToArray()),
+                                };
+                                foreach (var wcase in winCases)
+                                {
+                                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wcase.Script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                                    string exeFile = Path.Combine(winDir, wcase.Name + ".exe");
+                                    string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                                    string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, wcase.Name,
+                                        $"{NativeTestBuild.Opt} -Wall -Wextra {wcase.Define}-I\"{Path.Combine(sdl3Mingw, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
+                                    if (buildExit != 0 || build.Contains("warning:") || !links.Contains("-lSDL3")) { CheckNat($"{title}: {wcase.Name}", false, "MinGW: " + links + "\n" + build); continue; }
+                                    // (the driver of Windows needs a desktop: Wine's comes from the X server of Xvfb)
+                                    string actual = RunWine(xvfbRun, $"{TestJobs.XvfbServer()} env SDL_VIDEODRIVER={wcase.Driver} \"{wine}\" \"{exeFile}\"", out int runExit);
+                                    // (what Wine and the X server say besides the program: about the prefix, the end of the connection)
+                                    actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
+                                    string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
+                                    CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                                }
+                            }
+                        }
+
+                        // ---- the VM's clipboard under Windows (Wine): files as CF_HDROP (SdlClipboard + WinClipboard). A small harness with fire.Terminal.Sdl is published for win-x64
+                        // (self-contained; its own artifacts folder, so that the projects of the repository keep theirs) and runs under Wine: it puts two files on the clipboard,
+                        // checks them with the shell (DragQueryFileW) and reads them back; a native program (MinGW, SDL3) reads them and puts its own there, which the harness reads.
+                        {
+                            string title = "Fenster: die VM unter Windows (win-x64 unter Wine): Dateien in der Zwischenablage als CF_HDROP, auch mit einem nativen Programm";
+                            string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                            string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
+                                : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
+                            var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
+                            string? sdlProject = null;
+                            for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null && sdlProject == null; dir = dir.Parent)
+                            {
+                                string candidate = Path.Combine(dir.FullName, "src", "fire.Terminal.Sdl", "fire.Terminal.Sdl.csproj");
+                                if (File.Exists(candidate)) sdlProject = candidate;
+                            }
+                            if (!TestSelected(title)) { }
+                            else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null || sdlProject == null)
+                                Console.WriteLine("(die VM unter Wine: uebersprungen - MinGW, Wine, xvfb-run, das MinGW-Paket von SDL3 oder die Quellen von fire.Terminal.Sdl fehlen)");
+                            else
+                            {
+                                string vmDir = Path.Combine(workDir, "wine_vmclip");
+                                Directory.CreateDirectory(vmDir);
+                                File.WriteAllText(Path.Combine(vmDir, "harness.csproj"), $"""
+                                    <Project Sdk="Microsoft.NET.Sdk">
+                                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+                                      <ItemGroup><ProjectReference Include="{sdlProject}" /></ItemGroup>
+                                    </Project>
+                                    """);
+                                File.WriteAllText(Path.Combine(vmDir, "Program.cs"), """
+                                    using System.Runtime.InteropServices;
+                                    using System.Text;
+                                    using fire.Terminal.Sdl;
+                                    static class P
+                                    {
+                                        [DllImport("user32.dll")] static extern int OpenClipboard(IntPtr owner);
+                                        [DllImport("user32.dll")] static extern int CloseClipboard();
+                                        [DllImport("user32.dll")] static extern int IsClipboardFormatAvailable(uint format);
+                                        [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);
+                                        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern uint DragQueryFileW(IntPtr drop, uint index, StringBuilder? file, uint size);
+                                        static string ShellFiles()
+                                        {
+                                            if (OpenClipboard(IntPtr.Zero) == 0) return "not open";
+                                            try
+                                            {
+                                                IntPtr h = GetClipboardData(15);
+                                                if (h == IntPtr.Zero) return "none";
+                                                uint n = DragQueryFileW(h, 0xFFFFFFFF, null, 0);
+                                                var line = n.ToString();
+                                                for (uint i = 0; i < n; i++) { var sb = new StringBuilder(1024); DragQueryFileW(h, i, sb, 1024); line += " [" + sb + "]"; }
+                                                return line;
+                                            }
+                                            finally { CloseClipboard(); }
+                                        }
+                                        static string Files(string[] files) => files.Length + string.Concat(files.Select(f => " [" + f + "]"));
+                                        static int Main(string[] args)
+                                        {
+                                            Console.OutputEncoding = Encoding.UTF8;
+                                            var c = new SdlClipboard();
+                                            if (args.Length > 0 && args[0] == "read") { Console.WriteLine("vm read " + Files(c.GetFiles()) + " " + c.HasFiles + " " + c.HasText); return 0; }
+                                            string[] paths = { @"C:\fire\ein Ordner\datei ä.txt", @"C:\zwei" };
+                                            Console.WriteLine("vm set " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText + " " + c.HasImage);
+                                            Console.WriteLine("vm shell " + ShellFiles());
+                                            Console.WriteLine("vm get " + Files(c.GetFiles()));
+                                            Console.WriteLine("vm text " + c.SetText("Text") + " " + c.HasFiles + " " + (IsClipboardFormatAvailable(15) != 0) + " " + c.HasText + " " + c.GetText());
+                                            Console.WriteLine("vm again " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText);
+                                            return 0;
+                                        }
+                                    }
+                                    """);
+                                string publish = RunProc("dotnet", $"publish -c Release -r win-x64 --self-contained -o out --artifacts-path artifacts -p:NuGetAudit=false", vmDir, out int publishExit);
+                                string harness = Path.Combine(vmDir, "out", "harness.exe");
+                                if (publishExit != 0 || !File.Exists(harness))
+                                    Console.WriteLine("(die VM unter Wine: uebersprungen - `dotnet publish -r win-x64` ging nicht (ohne Netz fehlt das Laufzeitpaket fuer win-x64): "
+                                        + string.Join(" ", publish.Split('\n').Where(l => l.Contains("error")).Take(2)) + ")");
+                                else
+                                {
+                                    var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
+                                    fire.Native.NativeRuntimeFiles.WriteTo(vmDir, "windows");
+                                    File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(vmDir, "SDL3.dll"), true);
+                                    string RunWine(string tool, string arguments, out int exit)
+                                    {
+                                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = vmDir };
+                                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                                        info.Environment["WINEDEBUG"] = "-all";
+                                        info.Environment["LANG"] = "C.UTF-8";
+                                        using var p = System.Diagnostics.Process.Start(info)!;
+                                        var errTask = p.StandardError.ReadToEndAsync();
+                                        string output = p.StandardOutput.ReadToEnd();
+                                        if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                                        exit = p.ExitCode;
+                                        return output + errTask.Result;
+                                    }
+                                    RunWine(wine, "wineboot --init", out _);
+                                    const string nativeScript = """
+                                    #import "windows"
+                                    var got = Clipboard.GetFiles()
+                                    var line = "native " + got.length
+                                    foreach (f in got) { line = line + " [" + f + "]" }
+                                    print(line + " " + Clipboard.HasFiles + " " + Clipboard.HasText)
+                                    var paths = new List<string>()
+                                    paths.Add("C:\\nativ\\drei ö.txt")
+                                    print("native set " + Clipboard.SetFiles(paths))
+                                    """;
+                                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { nativeScript }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                                    string nativeExe = Path.Combine(vmDir, "nativeclip.exe");
+                                    string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                                    string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, vmDir, "nativeclip",
+                                        $"{NativeTestBuild.Opt} -Wall -Wextra -I\"{Path.Combine(sdl3Mingw, "include")}\"", nativeExe, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
+                                    if (buildExit != 0 || build.Contains("warning:")) CheckNat(title, false, "MinGW: " + links + "\n" + build);
+                                    else
+                                    {
+                                        // (one X server for all three, so that they share Wine's desktop and its clipboard)
+                                        string script = Path.Combine(vmDir, "run.sh");
+                                        File.WriteAllText(script, $"export SDL_VIDEODRIVER=windows\n\"{wine}\" \"{harness}\" && \"{wine}\" \"{nativeExe}\" && \"{wine}\" \"{harness}\" read\n");
+                                        string actual = RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out int runExit);
+                                        actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => l != "" && !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
+                                        string want = string.Join("\n", new[]
+                                        {
+                                            "vm set True True False False", "vm shell 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]", "vm get 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]",
+                                            "vm text True False False True Text", "vm again True True False",
+                                            "native 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei] True False", "native set True", "vm read 1 [C:\\nativ\\drei ö.txt] True False",
+                                        });
+                                        CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                                    }
+                                }
+                            }
+                        }
+
+                        // ---- drag-out under Wine (OLE: DoDragDrop with our IDataObject and IDropSource): the same as on X11 - the source built with MinGW against SDL3 and SDL2, the
+                        // target with SDL3 (its OLE drop target), the hand the X program above on the X server that Wine draws on
+                        {
+                            string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                            string? MingwSdl(int version)
+                            {
+                                string? dir = Environment.GetEnvironmentVariable($"SDL{version}_DIR") is { Length: > 0 } fromEnv ? fromEnv
+                                    : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", $"SDL{version}-*").OrderBy(d => d).LastOrDefault() : null;
+                                string header = version == 3 ? Path.Combine("include", "SDL3", "SDL.h") : Path.Combine("include", "SDL2", "SDL.h");
+                                return dir == null ? null : new[] { dir, Path.Combine(dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, header)) && File.Exists(Path.Combine(d, "bin", $"SDL{version}.dll")));
+                            }
+                            string? sdl3Mingw = MingwSdl(3), sdl2Mingw = MingwSdl(2);
+                            foreach (int version in new[] { 3, 2 })
+                            {
+                                string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (Windows unter Wine, OLE): Text (CF_UNICODETEXT) und Dateien (CF_HDROP) [SDL{version}]";
+                                string? sdlMingw = version == 3 ? sdl3Mingw : sdl2Mingw;
+                                if (!TestSelected(title)) continue;
+                                if (mingw == null || wine == null || sdl3Mingw == null || sdlMingw == null || xvfbRun == null) { Console.WriteLine($"(uebersprungen - MinGW, Wine, xvfb-run oder die MinGW-Pakete von SDL fehlen: {title})"); continue; }
+                                string? driver = DragDriver();
+                                if (driver == null) { Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})"); continue; }
+                                string winDir = Path.Combine(workDir, "wine_drag");
+                                Directory.CreateDirectory(winDir);
+                                fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
+                                File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
+                                File.Copy(Path.Combine(sdlMingw, "bin", $"SDL{version}.dll"), Path.Combine(winDir, $"SDL{version}.dll"), true);
+                                string RunWine(string tool, string arguments, out int exit)
+                                {
+                                    var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
+                                    info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                                    info.Environment["WINEDEBUG"] = "-all";
+                                    info.Environment["LANG"] = "C.UTF-8";
+                                    info.Environment["SDL_VIDEODRIVER"] = "windows";
+                                    using var p = System.Diagnostics.Process.Start(info)!;
+                                    var errTask = p.StandardError.ReadToEndAsync();
+                                    string output = p.StandardOutput.ReadToEnd();
+                                    if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                                    exit = p.ExitCode;
+                                    return output + errTask.Result;
+                                }
+                                string BuildWin(string script, int sdl, string sdlDir, string name, out string error)
+                                {
+                                    var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = sdl } };
+                                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                                    string exeFile = Path.Combine(winDir, name + ".exe");
+                                    string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                                    string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, name,
+                                        $"{NativeTestBuild.Opt} -Wall -Wextra -I\"{Path.Combine(sdlDir, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdlDir, "lib")}\"{links}");
+                                    error = buildExit != 0 || build.Contains("warning:") || !links.Contains($"-lSDL{sdl}") ? "MinGW: " + links + "\n" + build : "";
+                                    return exeFile;
+                                }
+                                RunWine(wine, "wineboot --init", out _);
+                                string targetExe = BuildWin(dragTargetScript, 3, sdl3Mingw, "dragtarget", out string targetError);
+                                string sourceExe = BuildWin(DragSourceScript("C:\\\\fire\\\\ein Ordner\\\\datei ä.txt", "C:\\\\zwei", false), version, sdlMingw, $"dragsource{version}", out string sourceError);
+                                if (targetError != "" || sourceError != "") { CheckNat(title, false, targetError + sourceError); continue; }
+                                string outSource = Path.Combine(winDir, "dragsource.out"), outTarget = Path.Combine(winDir, "dragtarget.out");
+                                string script = Path.Combine(winDir, "drag.sh");
+                                // (Wine's windows need a moment more: the source starts 2 s after the target)
+                                File.WriteAllText(script, DragScript($"\"{wine}\" \"{targetExe}\"", $"\"{wine}\" \"{sourceExe}\"", driver, outSource, outTarget, "2"));
+                                // (the hand presses and moves on a clock: no compiler of this run at the same time - TestJobs.Alone)
+                                int runExit = 0;
+                                string runLog = TestJobs.Alone(() => RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out runExit));
+                                string actual = DragLines(outSource) + DragLines(outTarget);
+                                string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]" }.Select(l => l + "\n"));
+                                CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}{runLog}");
+                            }
+                        }
+                    }
+                };
+                // (at the same time: the window cases; the checks of FIRE_SDL, the VM on X11 and the drag cases one after the other - the VM (forge run) installs the
+                // standard packages on its first start, the drag cases share their files -; Wayland; the cases under Wine)
+                if (windowRuns.Count != 6) throw new InvalidOperationException("the window runs changed: " + windowRuns.Count);
+                TestJobs.Concurrently(windowRuns[0], () => { for (int i = 1; i < 5; i++) windowRuns[i](); }, windowRuns[5], wineRuns);
             }
 
-            // ---- drag-out under Wine (OLE: DoDragDrop with our IDataObject and IDropSource): the same as on X11 - the source built with MinGW against SDL3 and SDL2, the
-            // target with SDL3 (its OLE drop target), the hand the X program above on the X server that Wine draws on
+            // ---- UI library: the same elements natively (window with the dummy driver) against the VM with the dummy
             {
-                string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
-                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
-                string? MingwSdl(int version)
-                {
-                    string? dir = Environment.GetEnvironmentVariable($"SDL{version}_DIR") is { Length: > 0 } fromEnv ? fromEnv
-                        : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", $"SDL{version}-*").OrderBy(d => d).LastOrDefault() : null;
-                    string header = version == 3 ? Path.Combine("include", "SDL3", "SDL.h") : Path.Combine("include", "SDL2", "SDL.h");
-                    return dir == null ? null : new[] { dir, Path.Combine(dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, header)) && File.Exists(Path.Combine(d, "bin", $"SDL{version}.dll")));
-                }
-                string? sdl3Mingw = MingwSdl(3), sdl2Mingw = MingwSdl(2);
-                foreach (int version in new[] { 3, 2 })
-                {
-                    string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (Windows unter Wine, OLE): Text (CF_UNICODETEXT) und Dateien (CF_HDROP) [SDL{version}]";
-                    string? sdlMingw = version == 3 ? sdl3Mingw : sdl2Mingw;
-                    if (!TestSelected(title)) continue;
-                    if (mingw == null || wine == null || sdl3Mingw == null || sdlMingw == null || xvfbRun == null) { Console.WriteLine($"(uebersprungen - MinGW, Wine, xvfb-run oder die MinGW-Pakete von SDL fehlen: {title})"); continue; }
-                    string? driver = DragDriver();
-                    if (driver == null) { Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})"); continue; }
-                    string winDir = Path.Combine(workDir, "wine_drag");
-                    Directory.CreateDirectory(winDir);
-                    fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
-                    File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
-                    File.Copy(Path.Combine(sdlMingw, "bin", $"SDL{version}.dll"), Path.Combine(winDir, $"SDL{version}.dll"), true);
-                    string RunWine(string tool, string arguments, out int exit)
-                    {
-                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
-                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
-                        info.Environment["WINEDEBUG"] = "-all";
-                        info.Environment["LANG"] = "C.UTF-8";
-                        info.Environment["SDL_VIDEODRIVER"] = "windows";
-                        using var p = System.Diagnostics.Process.Start(info)!;
-                        var errTask = p.StandardError.ReadToEndAsync();
-                        string output = p.StandardOutput.ReadToEnd();
-                        if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
-                        exit = p.ExitCode;
-                        return output + errTask.Result;
-                    }
-                    string BuildWin(string script, int sdl, string sdlDir, string name, out string error)
-                    {
-                        var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = sdl } };
-                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
-                        string exeFile = Path.Combine(winDir, name + ".exe");
-                        string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-                        string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, name,
-                            $"-O2 -Wall -Wextra -I\"{Path.Combine(sdlDir, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdlDir, "lib")}\"{links}");
-                        error = buildExit != 0 || build.Contains("warning:") || !links.Contains($"-lSDL{sdl}") ? "MinGW: " + links + "\n" + build : "";
-                        return exeFile;
-                    }
-                    RunWine(wine, "wineboot --init", out _);
-                    string targetExe = BuildWin(dragTargetScript, 3, sdl3Mingw, "dragtarget", out string targetError);
-                    string sourceExe = BuildWin(DragSourceScript("C:\\\\fire\\\\ein Ordner\\\\datei ä.txt", "C:\\\\zwei", false), version, sdlMingw, $"dragsource{version}", out string sourceError);
-                    if (targetError != "" || sourceError != "") { CheckNat(title, false, targetError + sourceError); continue; }
-                    string outSource = Path.Combine(winDir, "dragsource.out"), outTarget = Path.Combine(winDir, "dragtarget.out");
-                    string script = Path.Combine(winDir, "drag.sh");
-                    // (Wine's windows need a moment more: the source starts 2 s after the target)
-                    File.WriteAllText(script, DragScript($"\"{wine}\" \"{targetExe}\"", $"\"{wine}\" \"{sourceExe}\"", driver, outSource, outTarget, "2"));
-                    string runLog = RunWine(xvfbRun, $"-a sh \"{script}\"", out int runExit);
-                    string actual = DragLines(outSource) + DragLines(outTarget);
-                    string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]" }.Select(l => l + "\n"));
-                    CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}{runLog}");
-                }
-            }
-        }
-
-        // ---- UI library: the same elements natively (window with the dummy driver) against the VM with the dummy
-        {
-            string sdlProbe2 = Path.Combine(workDir, "sdlprobe.cpp.bin");
-            if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
-            else if (uiDrawExpected.Length == 0 || !TestSelected("UI nativ == VM")) Console.WriteLine("(UI nativ == VM: uebersprungen - die UI-Pruefungen der VM liefen nicht, oder der Filter schliesst es aus)");
-            else
-            {
-                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
-                string exe = Path.Combine(workDir, "uidraw.bin");
-                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, "uidraw", $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL2");
-                if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C/C++-Compiler: " + build);
+                string sdlProbe2 = Path.Combine(workDir, "sdlprobe.cpp.bin");
+                if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
+                else if (uiDrawExpected.Length == 0 || !TestSelected("UI nativ == VM")) Console.WriteLine("(UI nativ == VM: uebersprungen - die UI-Pruefungen der VM liefen nicht, oder der Filter schliesst es aus)");
                 else
                 {
-                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
-                    string actual = RunProc(exe, "", workDir, out int runExit);
-                    string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
-                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 5, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
+                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
+                    string exe = Path.Combine(workDir, "uidraw.bin");
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, "uidraw", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL2");
+                    if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C/C++-Compiler: " + build);
+                    else
+                    {
+                        string actual = RunProc(exe, "", workDir, out int runExit, null, new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy" });
+                        string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
+                        CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 5, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
+                    }
                 }
             }
-        }
-
-        // ---- Platform layer: the same thread programs on FreeRTOS (tasks, semaphores) - here on the simulator (native/sim, pthreads)
+        }, () =>
         {
-            string[] rtosCases = { "Actor: fire with", "Actor: mehrere", "sync: die Kopie", "sync: Arrays", "taking: der Thread", "terminate im Hauptprogramm", "catch threads()",
-                "Globals: sync global ist atomar", "Globals: fire global mit taking", "Thread startet Thread", "Globals: #nosync haelt", "leave aus einer Funktion" };
-            var rtosIndexes = Enumerable.Range(0, natCases.Length).Where(i => natCases[i].Name.StartsWith("Threads:") && rtosCases.Any(c => natCases[i].Name.Contains(c))).ToArray();
-            var rtosTasks = rtosIndexes.Select(index => Task.Run(() =>
+            // ---- Platform layer: the same thread programs on FreeRTOS (tasks, semaphores) - here on the simulator (native/sim, pthreads)
             {
-                string expected = vmResults[index];
-                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
-                string exe = Path.Combine(workDir, $"rtos{index}.bin");
-                // the board's startup code would call the entry point from a task; here main does
-                generated = generated with { Program = generated.Program + "\nint main(void) { fire_start(); return 0; }\n" };
-                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"rtos{index}", $"-pthread -O2 -Wall -Wextra {sanitize}-I\"{Path.Combine(workDir, "sim")}\"", exe, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C/C++-Compiler: " + build);
-                string actual = RunProc(exe, "", workDir, out _);   // (a FreeRTOS program has no exit code)
-                return (natCases[index].Name, expected, actual);
-            })).ToArray();
-            Task.WaitAll(rtosTasks);
-            foreach (var task in rtosTasks)
-            {
-                var (name, expected, actual) = task.Result;
-                CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}");
+                string[] rtosCases = { "Actor: fire with", "Actor: mehrere", "sync: die Kopie", "sync: Arrays", "taking: der Thread", "terminate im Hauptprogramm", "catch threads()",
+                    "Globals: sync global ist atomar", "Globals: fire global mit taking", "Thread startet Thread", "Globals: #nosync haelt", "leave aus einer Funktion" };
+                var rtosIndexes = Enumerable.Range(0, natCases.Length).Where(i => natCases[i].Name.StartsWith("Threads:") && rtosCases.Any(c => natCases[i].Name.Contains(c))).ToArray();
+                var rtosTasks = TestJobs.Map(rtosIndexes, (index, _) =>
+                {
+                    string expected = vmResults[index];
+                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                    string exe = Path.Combine(workDir, $"rtos{index}.bin");
+                    // the board's startup code would call the entry point from a task; here main does
+                    generated = generated with { Program = generated.Program + "\nint main(void) { fire_start(); return 0; }\n" };
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"rtos{index}", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}-I\"{Path.Combine(workDir, "sim")}\"", exe, out int buildExit);
+                    if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C/C++-Compiler: " + build);
+                    string actual = RunProc(exe, "", workDir, out _);   // (a FreeRTOS program has no exit code)
+                    return (natCases[index].Name, expected, actual);
+                });
+                foreach (var task in rtosTasks)
+                {
+                    var (name, expected, actual) = task;
+                    CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}");
+                }
+                if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
             }
-            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
-        }
+        });
 
         // ---- Target configuration (fire.native.json) and `build` with the native engine
         {
