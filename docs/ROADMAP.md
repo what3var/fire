@@ -260,7 +260,11 @@ Dynamisches Laden:
 * **umgesetzt** (Phase D a; docs/language/18-native-code.md): `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
   das nur feste Namen kennt). `Get(..., release: "free")`: die Freigabefunktion der Bibliothek - ein zurückgegebener Zeiger wird ein `NativeHandle`, das dem Besitz folgt
   (`delete` oder das Ende des Besitzers gibt ihn einmal frei), ein zurückgegebener String wird kopiert und gleich freigegeben. `NativeHandle` ist `[NoCopy]` (SPEC 5.12,
-  vererbt): `flat`/`copy` verdoppeln es nie (eine `ArgumentException`, auch als Feld oder Element einer tiefen Kopie). `is of`/`!`/`throw` eines zerstörten Objekts
+  vererbt): `flat`/`copy` verdoppeln es nie (eine `ArgumentException`, auch als Feld oder Element einer tiefen Kopie). Ebenso die Kopien der Threads
+  (VM und nativ gleich, vor jedem Kopieren): `fire taking x`/`fire M(args)` (der Thread startet nicht), die Objekt-Argumente von `fire global` (nativ wurde
+  der Auftrag vorher trotzdem eingereiht), `sync`/`sync flat` (Fall A, beim vollen `sync` auch Fall C; nichts wird zurückgeschrieben). Kein `taking` verschiebt
+  ein Objekt. Offen: ein verschiebendes `taking` (z.B. `fire taking take h`, das eine Ressource an den Thread übergibt); die isolierte Kopie der Globals für einen
+  Host-Callback, wenn das Hauptprogramm nicht mehr läuft, prüft `[NoCopy]` nicht (VM). `is of`/`!`/`throw` eines zerstörten Objekts
   sind in VM und nativ eine `DestroyedException` (nativ las `isof_*` vorher den freigegebenen Speicher).
 * **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert
   ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie; Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.

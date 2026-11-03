@@ -18770,6 +18770,88 @@ else
             print(pc.v)
             print("end")
             """),
+        ("[NoCopy] Threads: taking, fire Methode(), fire global (auch aus einem Thread) kopieren keine Instanz - ArgumentException, bevor kopiert, gestartet oder eingereiht wird", """
+            #nosync
+            [NoCopy]
+            class Res { int id
+                construct(int i) { this.id = i }
+                destruct() { print("release " + this.id) } }
+            class SubRes : Res { construct(int i) : base(i) { } }
+            class Holder { string name; Res res
+                construct(string n) { this.name = n; this.res = new Res(3) } }
+            class Plain { int v }
+            class Worker { Res res; int n
+                Run(int k) { print("never run " + k) }
+                Start() { fire Run(1) } }
+            var total = 0
+            var done = 0
+            var r = new Res(1)
+            var s = new SubRes(2)
+            var h = new Holder("h")
+            var arr = [new Plain(), r]
+            var p = new Plain()
+            p.v = 5
+            try { fire taking r { print("never r") } } catch (ArgumentException e) { print("taking: " + e.message) }
+            try { fire taking s { print("never s") } } catch (ArgumentException e) { print("taking sub: " + e.message) }
+            try { fire taking p taking h { print("never h") } } catch (ArgumentException e) { print("taking field: " + e.message) }
+            try { fire taking arr { print("never arr") } } catch (ArgumentException e) { print("taking array: " + e.message) }
+            var w = new Worker()
+            w.res = new Res(4)
+            try { w.Start() } catch (ArgumentException e) { print("fire method: " + e.message) }
+            try { fire global taking p taking r { total = total + 100 } } catch (ArgumentException e) { print("global: " + e.message) }
+            try { fire global taking h { total = total + 1000 } } catch (ArgumentException e) { print("global field: " + e.message) }
+            fire global taking p taking arr { total = total + p.v + arr.Length }
+            print("jobs: " + sync globals)
+            print("total: " + total)
+            fire taking p {
+                try { fire global taking p { total = total + 10 } } catch (ArgumentException e) { print("never: " + e.message) }
+                var own = new Holder("own")
+                try { fire global taking own { total = total + 1000 } } catch (ArgumentException e) { print("thread global: " + e.message) }
+                delete own
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            sync globals
+            print("total: " + total)
+            print("end")
+            """),
+        ("[NoCopy] Threads: sync/sync flat schreiben keine Instanz zurueck (Fall A, Fall C, Array) - ArgumentException, das Original bleibt; sync flat im Fall C teilt nur", """
+            #nosync
+            class Thing { int id
+                construct(int i) { this.id = i } }
+            [NoCopy]
+            class Res : Thing { construct(int i) : base(i) { } }
+            class Plain { int v; Plain next; Thing thing; Thing list[] }
+            var done = 0
+            var p = new Plain()
+            p.v = 5
+            p.thing = new Thing(1)
+            var orig = p
+            fire taking p {
+                p.v = 7
+                p.next = new Plain()
+                p.next.thing = new Res(10)
+                try { sync p } catch (ArgumentException e) { print("sync A: " + e.message) }
+                print("original after refused: " + orig.v + " " + (orig.next == undefined))
+                try { sync flat p } catch (ArgumentException e) { print("sync flat A: " + e.message) }
+                p.next = undefined
+                p.list = [new Thing(3), new Res(12)]
+                try { sync p } catch (ArgumentException e) { print("sync array: " + e.message) }
+                print("original list: " + (orig.list == undefined))
+                p.list = [new Thing(4)]
+                p.thing = new Res(11)
+                try { sync p } catch (ArgumentException e) { print("sync C: " + e.message) }
+                print("original after C: " + orig.v + " " + orig.thing.id)
+                print("sync flat C: " + (sync flat p))
+                print("original after flat: " + orig.v + " " + orig.thing.id + " " + (orig.thing is of Res) + " " + (orig.list == undefined))
+                p.thing = new Thing(5)
+                print("sync: " + (sync p))
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("main: " + p.v + " " + p.thing.id + " " + (p.thing is of Res) + " " + p.list.Length + " " + p.list[0].id)
+            print("end")
+            """),
         ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """
             class Base {
                 private int secret

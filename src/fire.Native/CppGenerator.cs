@@ -5014,11 +5014,17 @@ namespace fire.Native
                     var body = GetFunc(chunk.Functions[ins.A[0]], FuncKind.FireBody);
                     body.GlobalSlotCount = ins.A[1];
                     int first = d - argc;
-                    var sbf = new StringBuilder("{ OwnList* travel = newTravel(); Value av[" + Math.Max(1, argc) + "] = {}; ");
+                    var sbf = new StringBuilder();
+                    // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - checked for all of them before the first is copied (the thread does not start)
+                    if (takingCount > 0)
+                        sbf.Append($"{{ Value tv[{takingCount}] = {{{string.Join(", ", Enumerable.Range(first, takingCount).Select(S))}}}; if (takingNoCopyFree(tv, {takingCount})) ");
+                    sbf.Append("{ OwnList* travel = newTravel(); Value av[" + Math.Max(1, argc) + "] = {}; ");
                     for (int i = 0; i < takingCount; i++) sbf.Append($"av[{i}] = takeCopy({S(first + i)}, travel); ");
                     if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
                     sbf.Append($"ensureDomain(); fireThread({body.Name}, av, {argc}, travel); }}");
+                    if (takingCount > 0) sbf.Append(" }");
                     E(sbf.ToString());
+                    if (takingCount > 0) Check();
                     d = first;
                     return Next();
                 }
@@ -5081,6 +5087,7 @@ namespace fire.Native
                     Need(argc + 1);
                     int first = d - argc - 1;
                     E($"{{ Value av[{Math.Max(1, argc)}] = {{{string.Join(", ", Enumerable.Range(first, argc).Select(S).DefaultIfEmpty("Undef()"))}}}; postJob({S(d - 1)}, av, {argc}); }}");
+                    if (argc > 0) Check();   // (`[NoCopy]`: an argument that reaches one is the ArgumentException, nothing is queued)
                     d = first;
                     return Next();
                 }

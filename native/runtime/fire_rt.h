@@ -4700,14 +4700,20 @@ FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList
  * --------------------------------------------------------------------------------------------------------------------- */
 /* `[NoCopy]` on the class or a base class (FireClassDesc.flags 1): flat/copy never duplicate an instance of it. */
 FIRE_FN bool classNoCopy(uint32_t cls) { return cls < g_classDescCount && (g_classDescs[cls].flags & 1u) != 0; }
-/* ... an ArgumentException instead (the text of RuntimeClass.NoCopyMessage in the VM). */
-FIRE_COLD FIRE_FN Value noCopyError(uint32_t cls, bool nested) {
+/* ... an ArgumentException instead (the text of RuntimeClass.NoCopyMessage in the VM). `op`: NULL for flat/copy, else the copy of a thread
+ * ("taking", "fire global", "sync" - sync always reaches it through a field or an element). */
+FIRE_COLD FIRE_FN Value noCopyErrorOp(uint32_t cls, bool nested, const char* op) {
     char text[400];
     const char* name = cls < g_classDescCount && g_classDescs[cls].name ? g_classDescs[cls].name : "?";
-    if (nested) snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.", name);
-    else snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.", name);
+    if (!op) {
+        if (nested) snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.", name);
+        else snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.", name);
+    } else if (nested || strcmp(op, "sync") == 0)
+        snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - '%s' reaches an instance of it (a field or an element of the copied value), which exists only once.", name, op);
+    else snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - '%s' would copy an instance of it, which exists only once.", name, op);
     return fireError("ArgumentException", text);
 }
+FIRE_COLD FIRE_FN Value noCopyError(uint32_t cls, bool nested) { return noCopyErrorOp(cls, nested, NULL); }
 /* The operand of flat/copy is a destroyed object (its memory is freed: nothing of it can be read). */
 FIRE_COLD FIRE_FN Value copyDestroyedError(void) { return fireError("ArgumentException", "An already destroyed object cannot be copied."); }
 
@@ -4821,6 +4827,7 @@ typedef struct DeepCopier {
     OwnList* owner;
     bool taking;          /* a copy for a fire thread (`taking`): only the own ownership tree of treeRoot, copies are marked */
     bool noCopy;          /* `copy x` (and the arguments of a job): an instance of a `[NoCopy]` class is an ArgumentException */
+    const char* noCopyOp; /* ... its text: NULL for copy, else "taking"/"fire global"/"sync" (noCopyErrorOp) */
     Obj* treeRoot;
     CopyMap objects;      /* object -> copy (the objects found, which are copied) */
     CopyMap containers;   /* array/buffer -> copy */
@@ -4866,7 +4873,7 @@ FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
             if (!leafAlive(v)) continue;
             o = asObj(v);
             if (copyMapFind(&c->objects, o)) continue;
-            if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyError(o->cls, start.kind != K_Class || o != asObj(start)); return false; }
+            if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyErrorOp(o->cls, start.kind != K_Class || o != asObj(start), c->noCopyOp); return false; }
             if (c->taking && c->treeRoot && !withinTree(o, c->treeRoot)) {
 #ifdef FIRE_THREADS
                 char text[200];
@@ -4973,6 +4980,21 @@ FIRE_FN Value deepCopy(Value v, OwnList* owner) {
 }
 
 FIRE_FN Value copyValue(Value v, bool deep, OwnList* owner) { return deep ? deepCopy(v, owner) : flatCopy(v, owner); }
+
+/* `[NoCopy]` before a copy for another thread (`taking`, the arguments of `fire global`, case A of `sync`): false - the ArgumentException is thrown - when
+ * an instance of a `[NoCopy]` class is reachable from v through fields and array elements. Only looks (the discovery of a deep copy), so it runs before
+ * anything is copied, queued or started; the VM walks the same way (ObjectCopier.RequireNoCopyFree). */
+FIRE_FN bool noCopyFree(Value v, const char* op) {
+    DeepCopier c;
+    bool ok;
+    if (v.kind != K_Class && !(v.kind == K_Array && ownedOf(v))) return true;
+    copierInit(&c, NULL);
+    c.noCopy = true;
+    c.noCopyOp = op;
+    ok = copierDiscover(&c, v);
+    copierFree(&c);
+    return ok;
+}
 
 /* `obj.field = copy x`: the copy belongs to the object (when it is being destroyed already, the copy goes with it at once). */
 FIRE_FN Value copyOwned(Value target, Value v, bool deep) {
@@ -5716,11 +5738,15 @@ FIRE_FN void sectionScopeExit(bool entered) { if (entered) { g_secDepth = 0; sec
 FIRE_FN void sectionEnterOp(void) { if (g_isThread && g_secDepth++ == 0) sectionAcquire(); }
 FIRE_FN void sectionExitOp(void) { if (g_isThread && g_secDepth > 0 && --g_secDepth == 0) sectionRelease(); }
 
-/* `fire global { ... } taking x`: the job (a lambda with the copies as parameters) is queued, the caller goes on. */
+/* `fire global { ... } taking x`: the job (a lambda with the copies as parameters) is queued, the caller goes on. An argument that reaches an instance of a
+ * `[NoCopy]` class is the ArgumentException before anything is copied or queued (no job runs). */
 FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) {
-    JobReq* j = (JobReq*)malloc(sizeof(JobReq));
+    JobReq* j;
     Req q;
     uint32_t i;
+    for (i = 0; i < n; i++)
+        if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return;
+    j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
     j->lam = lam;
     retain(lam);
@@ -5859,6 +5885,14 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
     }
 }
 
+/* `fire ... taking a taking b`: every `taking` is a copy, so an instance of a `[NoCopy]` class reachable from one of them is the ArgumentException - checked
+ * for all of them before the first is copied (the thread does not start). */
+FIRE_FN bool takingNoCopyFree(const Value* vs, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) if (!noCopyFree(vs[i], "taking")) return false;
+    return true;
+}
+
 /* ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):
  *   A: copy has an object, original has none -> a new independent copy for the original;  B: copy has none, original has one -> the original loses it
  *   (destroyed if the original's object owned it);  C: both have one -> the reference stays (a full sync goes into it). */
@@ -5925,6 +5959,38 @@ FIRE_FN void syncFields(Obj* src, Obj* tgt, bool flat) {
     }
 }
 
+/* The walk of syncFields without writing anything (`[NoCopy]`, SPEC 5.12): case A of anything that reaches an instance of a `[NoCopy]` class, and case C of a
+ * full sync whose source is one (its fields would go into another instance), are the ArgumentException; case C of the same instance or of `sync flat`, and
+ * case B, copy nothing. The same walk as SyncEngine.RequireNoCopyFields in the VM. `seen`: the source objects visited (a cycle). */
+FIRE_FN bool syncNoCopyFields(Obj* src, Obj* tgt, bool flat, CopyMap* seen);
+FIRE_FN bool syncNoCopySingle(Value src, Value tgt, bool flat, CopyMap* seen) {
+    uint32_t i;
+    if (src.kind == K_Class && tgt.kind == K_Class) {
+        Obj* s;
+        if (flat || !leafAlive(src) || !leafAlive(tgt) || asObj(src) == asObj(tgt)) return true;
+        s = asObj(src);
+        if (FIRE_UNLIKELY(classNoCopy(s->cls))) { noCopyErrorOp(s->cls, true, "sync"); return false; }
+        return syncNoCopyFields(s, asObj(tgt), false, seen);
+    }
+    if (src.kind == K_Class) return noCopyFree(src, "sync");
+    if (tgt.kind == K_Class || src.kind != K_Array || !ownedOf(src)) return true;
+    {
+        Arr* sa = arrOf(src);
+        Arr* oldArr = (tgt.kind == K_Array && ownedOf(tgt)) ? arrOf(tgt) : NULL;
+        for (i = 0; i < sa->length; i++)
+            if (!syncNoCopySingle(arrItems(sa)[i], (oldArr && i < oldArr->length) ? arrItems(oldArr)[i] : Undef(), flat, seen)) return false;
+    }
+    return true;
+}
+FIRE_FN bool syncNoCopyFields(Obj* src, Obj* tgt, bool flat, CopyMap* seen) {
+    uint32_t i;
+    if (copyMapFind(seen, src)) return true;
+    copyMapPut(seen, src, Undef());
+    for (i = 0; i < src->nfields; i++)
+        if (!syncNoCopySingle(objFields(src)[i], i < tgt->nfields ? objFields(tgt)[i] : Undef(), flat, seen)) return false;
+    return true;
+}
+
 /* `sync x` / `sync flat x` (also the `try` forms: there is only one thread at a time, so nothing is ever busy): true, or `undefined` when the original does
  * not exist any more. */
 FIRE_FN Value syncValue(Value v, bool flat) {
@@ -5935,6 +6001,12 @@ FIRE_FN Value syncValue(Value v, bool flat) {
     slot = ptrMapFind(&g_originOf, copy);
     if (!slot) fatal("sync: this object is not a 'taking' copy (no SyncOrigin set).");
     if (!*slot) return Undef();
+    {
+        CopyMap seen = {0};
+        bool ok = syncNoCopyFields(copy, (Obj*)*slot, flat, &seen);
+        copyMapFree(&seen);
+        if (!ok) return Undef();   /* (the ArgumentException: nothing was written back) */
+    }
     syncFields(copy, (Obj*)*slot, flat);
     return Bool(true);
 }

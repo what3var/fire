@@ -47,6 +47,10 @@ print("main: " + counter.value)             // main: 15
 
 - `taking` can be repeated: `fire taking a taking b { ... }`. Numbers and strings can be taken too (`taking i`).
 - A copy must not point to objects outside its own ownership tree; `taking` refuses such an object with an error instead of sharing memory.
+- `taking` always copies - nothing is moved to the thread. An instance of a **`[NoCopy]`** class (a resource like `NativeHandle`) cannot be copied: when `x`
+  (or a field or an element of it) is one, the `fire` throws an `ArgumentException` and the thread does not start. The same goes for an object that
+  `fire global` would copy for its job (it is not queued) and for `sync`, when it would copy one back into the original (nothing is written back);
+  `sync flat` keeping an object that is on both sides is fine. The table in [Ownership](13-ownership.md#copying-flat-and-copy) lists every form.
 - `sync` returning `undefined` is a good moment for the thread to `leave`.
 
 ## Global variables

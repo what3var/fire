@@ -448,6 +448,8 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   Der Rumpf eines `fire`-Blocks ist eine eigene Funktion (`FuncKind.FireBody`, wie das Hauptprogramm: eigener globaler Scope `OG`); die Globals des Hauptprogramms (Slots unterhalb
   `globalSlotCount`) sind die geteilten `G{n}`, die Slots dahinter (Erfassungen und Variablen des Blocks) Variablen des Threads `T{n}`. `taking x` kopiert **im Aufrufer**:
   `takeCopy` = `DeepCopier` im Modus `taking` (nur der eigene Besitzbaum, sonst Abbruch "taking rejected"; Lambda/Zeiger im Graphen ebenso; Arrays und Puffer werden mitkopiert).
+  Vorher prüft `takingNoCopyFree` alle Erfassungen auf `[NoCopy]` (`noCopyFree`: die Entdeckungsphase des `DeepCopier`, ohne zu kopieren) - eine `ArgumentException`, der Thread
+  startet nicht; ebenso `postJob` (die Objekt-Argumente von `fire global`, vor dem Einreihen) und `syncValue` (`syncNoCopyFields` geht den Weg von `syncFields`, ohne zu schreiben).
   Die Kopien reisen in einer Liste (`travel`) und gehören dem globalen Scope des Threads; sie tragen Flag 16 (am Ende des Threads läuft ihr Destruktor nicht, was der Thread selbst
   darin angelegt hat wird zerstört) und - die Wurzel - Flag 32 samt Eintrag in `g_originOf`/`g_copiesOf` (der Original-Zeiger für `sync`; ein zerstörtes Original gibt `undefined`).
   `sync`/`sync flat` (Fall A/B/C, Arrays elementweise neu, Puffer kopiert) arbeiten auf den Feldern gleicher Klasse.

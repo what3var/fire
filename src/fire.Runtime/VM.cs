@@ -4657,6 +4657,9 @@ namespace fire.Runtime
                     Value? withValue = hasWith ? Pop() : null;
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
+                    // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element) is the ArgumentException
+                    // here in the spawning thread, before anything is copied and before the thread starts (the copies are made in the new thread).
+                    foreach (var tv in takingValues) ObjectCopier.RequireNoCopyFree(tv, "taking");
 
                     // The globals of the main program are NOT copied: the thread reads them directly (under the lock) and changes them only in
                     // a section that the main program grants at `sync globals` (see Runtime.GlobalsBroker). At the first `fire`
@@ -4710,6 +4713,9 @@ namespace fire.Runtime
 
                     // The arguments belong to the job, not to this thread: objects are deeply copied, their owner is a holder scope that
                     // the main program releases after the run.
+                    // `[NoCopy]` (SPEC 5.12): checked for all of them first - nothing is copied or queued when one is refused (the ArgumentException).
+                    foreach (var ja in jobArgs)
+                        if (ja.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(ja, "fire global");
                     var holder = new Scope(null);
                     for (int i = 0; i < jobArgs.Length; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
