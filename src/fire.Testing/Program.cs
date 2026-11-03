@@ -26017,6 +26017,71 @@ else
                             }
                         }
 
+                        // ---- Windows with fire's own display (fire_display_win32.h): MinGW, only user32/gdi32 linked, run under Wine - a real window (keys, mouse, text and the close
+                        // of the tests' events, the frame shown), the clipboard (text, picture as PNG/CF_DIB, files as CF_HDROP) and the drops of the tests without a screen
+                        {
+                            string title = "Fenster: Windows (MinGW, eigene Anzeige, unter Wine): Fenster, Zwischenablage mit Text, Bild und Dateien, Drop-Ereignisse";
+                            string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                            if (!TestSelected(title)) { }
+                            else if (mingw == null || wine == null || xvfbRun == null) Console.WriteLine("(Fenster unter Wine, eigene Anzeige: uebersprungen - MinGW, Wine oder xvfb-run fehlen)");
+                            else
+                            {
+                                var winTarget = TargetProfile.Windows;
+                                string winDir = Path.Combine(workDir, "wine_fire");
+                                Directory.CreateDirectory(winDir);
+                                fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
+                                string RunWine(string tool, string arguments, out int exit)
+                                {
+                                    var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
+                                    info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                                    info.Environment["WINEDEBUG"] = "-all";
+                                    info.Environment["LANG"] = "C.UTF-8";
+                                    using var p = System.Diagnostics.Process.Start(info)!;
+                                    var errTask = p.StandardError.ReadToEndAsync();
+                                    string output = p.StandardOutput.ReadToEnd();
+                                    if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                                    exit = p.ExitCode;
+                                    return output + errTask.Result;
+                                }
+                                RunWine(wine, "wineboot --init", out _);
+                                const string realWindow = """
+                                #import "windows"
+                                var fb = new Framebuffer(320, 200)
+                                var r = new Renderer(fb)
+                                r.Clear()
+                                var win = new Window(fb, "fire unter Wine")
+                                win.RegisterKeyDown(func(int k, int s, int m, bool rep) => { print("key " + k + " " + s + " " + m) })
+                                win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+                                win.RegisterTextInput(func(string t) => { print("text " + t) })
+                                win.RegisterCloseRequest(func() => { print("close request") })
+                                print(win.Tick())
+                                """;
+                                var winCases = new (string Name, string Script, string Define, string Display, string[] Expected)[]
+                                {
+                                    ("window", realWindow, "-DFIRE_DISPLAY_SELFTEST ", "win32", new[] { "key 97 4 1", "down 1 32 24", "text éx", "close request", "False" }),
+                                    ("drop", windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Script, "-DFIRE_DISPLAY_SELFTEST_DROP ", "headless",
+                                        windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Expected),
+                                    ("clip", clipScript.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\\\fire\\\\ein Ordner\\\\datei ä.txt").Replace("/tmp/zwei", "C:\\\\zwei"), "", "win32",
+                                        clip3.Select(l => l.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\fire\\ein Ordner\\datei ä.txt").Replace("/tmp/zwei", "C:\\zwei")).ToArray()),
+                                };
+                                foreach (var wcase in winCases)
+                                {
+                                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wcase.Script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                                    string exeFile = Path.Combine(winDir, wcase.Name + ".exe");
+                                    string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()));
+                                    string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, wcase.Name,
+                                        $"{NativeTestBuild.Opt} -Wall -Wextra {wcase.Define}", exeFile, out int buildExit, links);
+                                    if (buildExit != 0 || build.Contains("warning:") || links.Contains("SDL") || !links.Contains("-luser32")) { CheckNat($"{title}: {wcase.Name}", false, "MinGW: " + links + "\n" + build); continue; }
+                                    string actual = RunWine(xvfbRun, $"{TestJobs.XvfbServer()} env FIRE_DISPLAY={wcase.Display} \"{wine}\" \"{exeFile}\"", out int runExit);
+                                    // (Wine's own goodbye when xvfb-run takes the X server away is not the program's)
+                                    actual = string.Concat(actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("X connection to ", StringComparison.Ordinal)).Select(l => l + "\n"));
+                                    string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
+                                    CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                                }
+                            }
+                        }
+
                         // ---- the VM's clipboard under Windows (Wine): files as CF_HDROP (SdlClipboard + WinClipboard). A small harness with fire.Terminal.Sdl is published for win-x64
                         // (self-contained; its own artifacts folder, so that the projects of the repository keep theirs) and runs under Wine: it puts two files on the clipboard,
                         // checks them with the shell (DragQueryFileW) and reads them back; a native program (MinGW, SDL3) reads them and puts its own there, which the harness reads.

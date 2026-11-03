@@ -246,7 +246,7 @@ namespace fire.Native
         /// macOS its frameworks (`framework:` - the build makes `-framework` of it).</summary>
         private IEnumerable<string> OwnDisplayLibraries()
         {
-            if (_target.Native.Platform == "windows") return new[] { "user32", "gdi32", "imm32", "ole32", "shell32", "uuid" };
+            if (_target.Native.Platform == "windows") return new[] { "user32", "gdi32" };   // (imm32, dwmapi, ole32 are loaded at run time)
             if (_target.Name == "macos") return new[] { "framework:Cocoa", "framework:QuartzCore", "framework:Carbon" };
             return new[] { "dl", "pthread" };
         }
