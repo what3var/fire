@@ -285,7 +285,11 @@ namespace fire.Compiler
         /// `_topLevelSourceIndex` (see there). Passed to Chunk.MarkLine,
         /// so that a debugger (see editor sub-project) knows, with several
         /// source files, in which file a given line lies.</summary>
-        private int CurrentSourceIndex => _enclosingClass?.Decl.Source ?? _topLevelSourceIndex;
+        private int CurrentSourceIndex => s_memberSource ?? _enclosingClass?.Decl.Source ?? _topLevelSourceIndex;
+
+        /// <summary>The source of the member of a class being compiled - for a member of `class extends X` that of the extension, not of X (its lines lie in the
+        /// file of the extension; the native backend gives the member to the module of that file, ROADMAP 9). Null outside a member.</summary>
+        [ThreadStatic] private static int? s_memberSource;
 
         /// <summary>All known (fully qualified) class names - basis
         /// for ResolveTypeRef (SPEC "Namespaces"). Not readonly: the
@@ -921,6 +925,8 @@ namespace fire.Compiler
                 // Every member is a restart point of its own (see
                 // CompileStmt) - an error in one field/method does
                 // not prevent the compilation of the other members.
+                var outerMember = s_memberSource;
+                s_memberSource = member.Source;
                 try
                 {
                     switch (member)
@@ -1001,6 +1007,7 @@ namespace fire.Compiler
                 {
                     _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, member.Line)).At(rc.Decl.Source));
                 }
+                finally { s_memberSource = outerMember; }
             }
 
             // No declaration of its own -> exactly ONE synthesised 0-arg public
@@ -1017,6 +1024,8 @@ namespace fire.Compiler
             {
                 foreach (var ctor in ctorDecls)
                 {
+                    var outerMember = s_memberSource;
+                    s_memberSource = ctor.Source;
                     try
                     {
                         rc.AddConstructor(CompileConstructorProto(rc, ctor, ctor.Access));
@@ -1025,6 +1034,7 @@ namespace fire.Compiler
                     {
                         _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, ctor.Line)).At(rc.Decl.Source));
                     }
+                    finally { s_memberSource = outerMember; }
                 }
             }
         }

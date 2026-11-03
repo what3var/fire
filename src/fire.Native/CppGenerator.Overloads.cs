@@ -62,7 +62,7 @@ namespace fire.Native
                 GetFunc(proto, kind);
                 DefaultArgs(proto, argc, "self", "list");   // (registers the functions of the default values)
             }
-            selector = new OverloadSelector($"ovs_{_overloadSelectors.Count}", rc, protos, declaring, argc, kind, deniedMessages, addresses, name, hint);
+            selector = new OverloadSelector($"{Px}ovs_{_overloadSelectors.Count}", rc, protos, declaring, argc, kind, deniedMessages, addresses, name, hint);
             _overloadSelectors[key] = selector;
             return selector;
         }
@@ -246,7 +246,7 @@ namespace fire.Native
                     // the test is a function of its own (C has no lambdas): the value, and the object whose type arguments count
                     string body = $"{{ (void)own; {byTypeArg}return {fits}; }}";
                     if (!_ovGenericTests.TryGetValue(body, out var testName))
-                        _ovGenericTests[body] = testName = $"ovg_{_ovGenericTests.Count}";
+                        _ovGenericTests[body] = testName = $"{Px}ovg_{_ovGenericTests.Count}";
                     return $"({v}.kind == K_Undefined ? {Overloads.UndefinedScore} : {testName}({v}, {(usesOwner ? ownerObj : "NULL")}) ? {Overloads.GenericScore} : {Overloads.NoMatch})";
                 }
             }
@@ -254,14 +254,14 @@ namespace fire.Native
         }
 
         /// <summary>`ovd_Name(v)`: the score of an object for a parameter of class Name - ClassExact for an object of Name, one less per step to a derived class.</summary>
-        private string OverloadClassFunctions()
+        private string OverloadClassFunctions(bool classScores = true)
         {
             var sb = new StringBuilder();
             foreach (var (body, testName) in _ovGenericTests)
                 sb.AppendLine($"FIRE_MAYBE_UNUSED static bool {testName}(Value ovc, Obj* own) {body}");
-            foreach (var name in _ovClassNames)
+            foreach (var name in classScores ? _ovClassNames : new SortedSet<string>())
             {
-                sb.AppendLine($"FIRE_MAYBE_UNUSED static int ovd_{Mangle(name)}(Value v) {{");
+                sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}int ovd_{Mangle(name)}(Value v) {{");
                 sb.AppendLine($"    if (!leafAlive(v)) return {Overloads.UndefinedScore};");
                 var cases = new StringBuilder();
                 foreach (var cls in _classList)

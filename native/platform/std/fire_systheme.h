@@ -55,7 +55,15 @@ static void fire_theme_fontSpec(const char* spec, char* family, size_t size, dou
 }
 
 /* "family;a;b" into the fonts of the theme. */
-static void fire_theme_fonts(FireSystemTheme* t, const char* family, const char* rest) { snprintf(t->fonts, sizeof t->fonts, "%s%s", family, rest); }
+static void fire_theme_fonts(FireSystemTheme* t, const char* family, const char* rest) {
+    /* (cut to the size of the field, like snprintf - written out: gcc warns about a possible truncation where the call is inlined) */
+    size_t cap = sizeof t->fonts - 1, n = strlen(family), m = strlen(rest);
+    if (n > cap) n = cap;
+    if (m > cap - n) m = cap - n;
+    memcpy(t->fonts, family, n);
+    memcpy(t->fonts + n, rest, m);
+    t->fonts[n + m] = 0;
+}
 
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 /* The output of a command (its first line, trimmed) into `out` (`size` bytes), "" when it fails. */

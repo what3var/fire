@@ -112,7 +112,7 @@ namespace fire.Native
             int lv = DebugLevelOf(f, d, st, locals);
             var (src, line) = chunk.GetLocationRange(ins.Addr, out int start, out _);
             if (i == 0 || start == ins.Addr || isTarget)
-                o.Code.AppendLine($"    FIRE_DBG_L({src}, {line}, {lv});");
+                o.Code.AppendLine($"    FIRE_DBG_L({DbgSrc(src)}, {line}, {lv});");
             else if (lv != o.DbgLv)
                 o.Code.AppendLine($"    DF->lv = {lv};");
             o.DbgLv = lv;
@@ -277,7 +277,7 @@ namespace fire.Native
                     {
                         string field = cls.Fields[i];
                         if (!_fieldNames.Contains(field)) continue;
-                        string tail = (HasProperty(field) ? ", &scratch_" : "") + (RestrictedField(field) ? $", {cls.Id}u" : "");
+                        string tail = (FieldHasList(field) ? ", &scratch_" : "") + (FieldHasCaller(field) ? $", {cls.Id}u" : "");
                         sb.AppendLine($"            case {i}: sf_{Mangle(field)}(o, x{tail}); leave(&scratch_); return;");
                     }
                     sb.AppendLine("            default: break;");

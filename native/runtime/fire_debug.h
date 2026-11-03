@@ -931,7 +931,7 @@ static Value g_dbgSetExc;
 static void dbgSetCatch(void* ctx, uint32_t ci, Value e) { (void)ci; g_dbgSetExc = e; clearPending(e); exitJump((Handler*)ctx, 0); }
 static void dbgRunTask(DbgThread* t) {
     static const int32_t anything[] = {-1};
-    static const HandlerInfo catchAll = {1, anything, 0};
+    static const HandlerInfo catchAll = {1, anything, 0, NULL};
     DbgTask* task = t->task;
     const char* error = NULL;
     DbgThread* owner;

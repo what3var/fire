@@ -277,6 +277,37 @@ namespace fire.Compiler
             if (errors.Count > 0) throw new LibraryEntryPointException(string.Join(Environment.NewLine, errors));
         }
 
+        /// <summary>The modules each module of the program needs (ROADMAP 9): the imports its sources name (with what they bring along) and, for a library of the project,
+        /// the libraries it references. `core` (the prelude) is needed by all and not listed.</summary>
+        private IReadOnlyDictionary<string, IReadOnlyList<string>> ModuleDependencies(IReadOnlyList<ProcessedSource> processed)
+        {
+            var deps = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            var modules = processed.Skip(1).Select(p => p.Module).Where(m => m != null).Select(m => m!).Distinct().ToList();
+            foreach (var module in modules)
+            {
+                var needs = new List<string>();
+                void Need(string key) { if (key != module && !needs.Contains(key)) needs.Add(key); }
+                if (Plan != null && Plan.Libraries.TryGetValue(module, out var library))
+                {
+                    foreach (var other in library.Requires) if (Plan.Libraries.TryGetValue(other, out var lib)) Need(lib.ImportName);
+                    foreach (var file in library.Sources)
+                        foreach (var name in ImportedPreludes.FindImportNames(file.Text))
+                        {
+                            if (Plan.Libraries.TryGetValue(name, out var lib)) { Need(lib.ImportName); continue; }
+                            try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) Need(key); }
+                            catch (Exception) { }
+                        }
+                }
+                else
+                {
+                    try { foreach (var key in ImportedPreludes.WithDependencies(module)) Need(key); }
+                    catch (Exception) { }
+                }
+                deps[module] = needs.Where(modules.Contains).ToList();
+            }
+            return deps;
+        }
+
         /// <param name="floatWidthOverride">32 or 64: precision of `float` for this build (command line); overrides `#floatwidth` and the target.</param>
         /// <param name="target">The target the program is built for: its `#import` libraries are checked and its float precision is the
         /// default (`#floatwidth` and <paramref name="floatWidthOverride"/> win). Null = no restriction, 64 bits.</param>
@@ -517,7 +548,9 @@ namespace fire.Compiler
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
             List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
             var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
-                SourceHashes = SourceHashesOf(processedSources.Count - driverSources, sources).Concat(new string?[driverSources]).ToList() };
+                SourceHashes = SourceHashesOf(processedSources.Count - driverSources, sources).Concat(new string?[driverSources]).ToList(),
+                SourceModules = processedSources.Select((p, i) => i == 0 ? "core" : p.Module).ToList(), ModuleDeps = ModuleDependencies(processedSources),
+                SourceTextHashes = processedSources.Select(p => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(p.Source))).ToLowerInvariant()).ToList() };
 
             if (!string.IsNullOrEmpty(outname))
             {

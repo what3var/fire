@@ -3339,7 +3339,9 @@ typedef struct HandlerInfo {
     uint32_t ncatch;
     const int32_t* types;   /* per catch clause: the type id for excMatches, -1 = catches everything */
     uint8_t hasFinally;
+    const int32_t* typeMap; /* a library module (ROADMAP 9): its type ids -> those of the program (fire_exct_M); NULL: the ids are the program's */
 } HandlerInfo;
+#define FIRE_HANDLER_TYPE(info, i) ((info)->typeMap && (info)->types[i] >= 0 ? (info)->typeMap[(info)->types[i]] : (info)->types[i])
 
 struct Handler {
     Handler* prev;
@@ -3420,7 +3422,7 @@ FIRE_FN bool wouldBeCaught(Value exception) {
     for (h = g_handlers; h; h = h->prev)
         if (!h->finallyOnly)
             for (i = 0; i < h->info->ncatch; i++)
-                if (h->info->types[i] < 0 || excMatches(exception, h->info->types[i])) return true;
+                if (h->info->types[i] < 0 || excMatches(exception, FIRE_HANDLER_TYPE(h->info, i))) return true;
     return false;
 }
 #endif
@@ -3446,7 +3448,7 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
         int found = -1;
         uint32_t i;
         for (i = 0; i < h->info->ncatch && found < 0; i++)
-            if (h->info->types[i] < 0 || excMatches(exception, h->info->types[i])) found = (int)i;
+            if (h->info->types[i] < 0 || excMatches(exception, FIRE_HANDLER_TYPE(h->info, i))) found = (int)i;
         if (found >= 0) {
             Pending pending;
             Handler fin;

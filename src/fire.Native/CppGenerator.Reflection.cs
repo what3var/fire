@@ -433,7 +433,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
 
             // ---- get / set / call / new ------------------------------------------------------------------------------------
             var fieldNames = _fieldNames.OrderBy(n => n, StringComparer.Ordinal).ToList();
-            string tail(string name, bool setter) => (HasProperty(name) ? ", list" : "") + (RestrictedField(name) ? ", caller" : "");
+            string tail(string name, bool setter) => (FieldHasList(name) ? ", list" : "") + (FieldHasCaller(name) ? ", caller" : "");
             var get = new StringBuilder();
             var set = new StringBuilder();
             foreach (var name in fieldNames)
@@ -552,10 +552,10 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
         private string WrapProbeSetter(string name, string text)
         {
             string m = Mangle(name);
-            bool list = HasProperty(name), caller = RestrictedField(name);
+            bool list = FieldHasList(name), caller = FieldHasCaller(name);
             string lp = (list ? ", OwnList* list" : "") + (caller ? ", uint32_t caller" : "");
             string callArgs = (list ? ", list" : "") + (caller ? ", caller" : "");
-            text = text.Replace($"static inline void sf_{m}(", $"static inline void sfo_{m}(");
+            text = text.Replace($"{HelperInline}void sf_{m}(", $"static inline void sfo_{m}(");
             var sb = new StringBuilder(text);
             sb.AppendLine($"static void sfa_{m}(Value v, Value x, OwnList* list, uint32_t caller) {{ (void)list; (void)caller; sfo_{m}(v, x{callArgs}); }}");
             // the old value as the probe sees it: the field, else the getter, else undefined (no access check)
@@ -566,7 +566,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
                 else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) arms.Add((cls.Id, $"{{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}"));
             }
             sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{MergedCases(arms)}        default: return Undef();\n    }}\n}}");
-            sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{");
+            sb.AppendLine($"{HelperInline}void sf_{m}(Value v, Value x{lp}) {{");
             sb.AppendLine($"    if (FIRE_UNLIKELY(asObj(v)->h.flags & 2)) {{ probedSet(v, {CStr(name)}, x, sfa_{m}, gfp_{m}, {(caller ? "caller" : "0xFFFFFFFFu")}); return; }}");
             sb.AppendLine($"    sfo_{m}(v, x{callArgs});");
             sb.AppendLine("}");

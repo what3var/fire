@@ -29,6 +29,10 @@ namespace fire.Compiler
     {
         /// <summary>The prelude of a package that says `"serializable": false` (docs/JSON.md): its classes are excluded from JSON.</summary>
         public bool NotSerializable { get; init; }
+
+        /// <summary>The module (ROADMAP 9: a library that can be built on its own) the source belongs to: the import key of the prelude of an import, the import name of a
+        /// library of the project; null for the program itself (the prelude of the compiler is the module `core`, see LinkedProgram.SourceModules).</summary>
+        public string? Module { get; init; }
     }
 
     /// <summary>The files embedded in a program while it is preprocessed: the same file is stored once (the id of a resource is its index).</summary>

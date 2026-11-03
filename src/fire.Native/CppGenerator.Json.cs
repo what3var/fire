@@ -147,12 +147,18 @@ namespace fire.Native
         {
             var sb = new StringBuilder();
             // the engine (C, fire_json.h), then the tables of the program's classes and the functions that read them
-            sb.AppendLine("#define FIRE_JSON_IMPLEMENTATION 1");
-            sb.AppendLine("#include \"fire_json.h\"");
+            if (_moduleBodies == null)   // (with library modules it is included before their code)
+            {
+                sb.AppendLine("#define FIRE_JSON_IMPLEMENTATION 1");
+                sb.AppendLine("#include \"fire_json.h\"");
+            }
             var rows = new List<string>();
             int listCls = -1, listItems = -1, listCount = -1, objCls = -1, objKeys = -1, objValues = -1, objCount = -1;
-            foreach (var ci in _classList.OrderBy(c => c.Id))
+            var jsonById = _classList.ToDictionary(c => c.Id);
+            int jsonIds = _classList.Count == 0 ? 0 : _classList.Max(c => c.Id) + 1;
+            for (int jsonId = 0; jsonId < jsonIds; jsonId++)
             {
+                if (!jsonById.TryGetValue(jsonId, out var ci)) { rows.Add("{\"\", \"\", 0, NULL, 0, 0, 0}"); continue; }   // (an id without a class, see ClassDescTable)
                 var rc = ci.Rc;
                 var fields = JsonMethods.JsonFieldsOf(rc).Where(f => rc.FieldIndex.ContainsKey(f.Name)).ToList();
                 string fieldTable = "NULL";

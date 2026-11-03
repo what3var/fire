@@ -86,8 +86,8 @@ namespace fire.Compiler
                     .FirstOrDefault(i => string.Equals(i.Name, importName, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(i.Import.Prelude));
 
         /// <summary>The prelude of the import as processed: marked when its package says `"serializable": false` (its classes are excluded from JSON).</summary>
-        private static ProcessedSource Marked(ProcessedSource source, InstalledImport? import) =>
-            import?.Import.Serializable == false ? source with { NotSerializable = true } : source;
+        private static ProcessedSource Marked(ProcessedSource source, InstalledImport? import, string module) =>
+            (import?.Import.Serializable == false ? source with { NotSerializable = true } : source) with { Module = module };
 
         private static (string Source, string Folder)? PreludeOf(InstalledImport import) =>
             import.ReadPrelude() is { } text ? (text, Path.GetDirectoryName(import.FullPath(import.Import.Prelude!))!) : null;
@@ -127,32 +127,32 @@ namespace fire.Compiler
 
             if (nativeImports.Contains(NativeImports.Graphics))
             {
-                if (Wants(NativeImports.Graphics)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("graphics")), FindPreludeImport("graphics"))); inserted++; }
+                if (Wants(NativeImports.Graphics)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("graphics")), FindPreludeImport("graphics"), NativeImports.Graphics)); inserted++; }
                 GraphicsBridge.RegisterStubs(natives);
             }
 
             if (nativeImports.Contains(NativeImports.Windows))
             {
                 // behind `graphics`: the prelude order (every insertion stands BEFORE the earlier ones) and that of the native functions are independent of each other
-                if (Wants(NativeImports.Windows)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("windows")), FindPreludeImport("windows"))); inserted++; }
+                if (Wants(NativeImports.Windows)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("windows")), FindPreludeImport("windows"), NativeImports.Windows)); inserted++; }
                 WindowsBridge.RegisterStubs(natives);
             }
 
             if (nativeImports.Contains(NativeImports.Ui))
             {
                 // pure fire source on the classes of the graphics bridge: no native functions
-                if (Wants(NativeImports.Ui)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("ui")), FindPreludeImport("ui"))); inserted++; }
+                if (Wants(NativeImports.Ui)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("ui")), FindPreludeImport("ui"), NativeImports.Ui)); inserted++; }
             }
 
             if (nativeImports.Contains(NativeImports.Linq))
             {
                 // pure fire source, no native functions
-                if (Wants(NativeImports.Linq)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("linq")), FindPreludeImport("linq"))); inserted++; }
+                if (Wants(NativeImports.Linq)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("linq")), FindPreludeImport("linq"), NativeImports.Linq)); inserted++; }
             }
 
             if (nativeImports.Contains(NativeImports.Reflection))
             {
-                if (Wants(NativeImports.Reflection)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("reflection")), FindPreludeImport("reflection"))); inserted++; }
+                if (Wants(NativeImports.Reflection)) { processedSources.Insert(1, Marked(preprocess(BuiltInPrelude("reflection")), FindPreludeImport("reflection"), NativeImports.Reflection)); inserted++; }
                 ReflectionNatives.Register(natives); // when translating only the names count (the compiler then writes type metadata along)
             }
 
@@ -160,7 +160,7 @@ namespace fire.Compiler
             foreach (var key in nativeImports.Where(k => k.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal))
             {
                 var package = PackageStore.Default.FindKey(key) ?? throw new Exception($"The import '{key.Substring(PackageStore.KeyPrefix.Length)}' belongs to a package that is not installed.");
-                if (PreludeOf(package) is { } prelude) { processedSources.Insert(1, Marked(preprocess(prelude), package)); inserted++; }
+                if (PreludeOf(package) is { } prelude) { processedSources.Insert(1, Marked(preprocess(prelude), package, key)); inserted++; }
                 PackageImports.RegisterNames(natives, package);
             }
 
