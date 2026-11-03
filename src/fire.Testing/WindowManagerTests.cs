@@ -106,7 +106,7 @@ static class WindowManagerTests
                     return fake;
                 }
             },
-            FireRuntime.AddHostHold);
+            d => vm?.AddHostHold(d));
         fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
         fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
         ReflectionNatives.Register(natives);
@@ -132,7 +132,7 @@ static class WindowManagerTests
         }
         VM.ResetTerminateForTests();
         string? unhandled = vm.UnhandledException != null ? new UncaughtScriptException(vm.UnhandledException).ToString() : null;
-        lock (fakes) return new Result(lines, fakes.ToList(), runnerId, unhandled, FireRuntime.HostHolds);
+        lock (fakes) return new Result(lines, fakes.ToList(), runnerId, unhandled, vm.HostHolds);
     }
 
     public static void Run()
@@ -148,6 +148,7 @@ static class WindowManagerTests
             Cooperative();
             AutoClose();
             ButtonSymbols();
+            HoldsPerProgram();
         }
         catch (Exception ex)
         {
@@ -159,6 +160,24 @@ static class WindowManagerTests
     private static string Show(Result r) => string.Join("\n", r.Lines) + (r.Unhandled != null ? "\nUNHANDLED: " + r.Unhandled : "");
 
     // Run(): the manager on the program's thread, blocking until the windows are closed
+    // Holds belong to the program they keep alive: a program next to it (the editor's live view and a run) ends when it is done, and nothing is held after its end
+    private static void HoldsPerProgram()
+    {
+        var held = fire.Compiler.RuntimeSession.Build(new[] { "print(\"a\")" }, VmExecutionMode.Release, args => Value.MakeUndefined());
+        held.VirtualMachine!.AddHostHold(1);   // (as an open window of a manager's thread would)
+        var other = fire.Compiler.RuntimeSession.Build(new[] { "print(\"b\")" }, VmExecutionMode.Release, args => Value.MakeUndefined());
+        var run = new Thread(() => other.Run());
+        run.Start();
+        bool otherEnded = run.Join(5000);
+        var first = new Thread(() => held.Run());
+        first.Start();
+        bool waits = !first.Join(300);
+        held.VirtualMachine.AddHostHold(-1);
+        bool firstEnded = first.Join(5000);
+        Check("Holds gehoeren ihrem Programm: ein anderes endet trotzdem, das gehaltene wartet bis zur Freigabe", otherEnded && waits && firstEnded && held.VirtualMachine.HostHolds == 0,
+            $"anderes beendet {otherEnded}, gehaltenes wartet {waits}, dann beendet {firstEnded}");
+    }
+
     private static void CurrentThread()
     {
         var r = Run("""

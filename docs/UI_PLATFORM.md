@@ -178,7 +178,8 @@ Die VM benutzt für `graphics` und `windows` die C-Implementierung (Standard; `F
   Fenster ohne Bildschirm (der Designer liest das Bild aus dem Framebuffer).
 * **Je Programm statt je Prozess:** der `fire_host` einer Bibliothek mit eigenen Diensten schickt `request_service` an die VM des Programms, das *diese*
   Bibliothek benutzt; am Programmende werden nur die Bibliotheken des Programms zurückgesetzt (`PackageHost.Begin(..., libraries)`), Lambdas laufender Programme
-  bleiben gültig.
+  bleiben gültig. **Holds gehören dem Programm** (`VM.AddHostHold` seiner Haupt-VM; die C-Bibliothek meldet sie über ihren eigenen `fire_host.hold`
+  an die VM, die sie benutzt): ein Fenster der Live-Ansicht hält kein Programm daneben auf, und nach dem Ende eines Programms hält nichts mehr.
 * **SDL3-CS ist entfernt** (`fire.Terminal.Sdl`, `SdlFramebufferRenderer`, `SdlClipboard`): die Fenster des Desktops zeigt in der VM nur noch die C-Bibliothek. Die
   C#-Implementierung (`fire.Terminal`, `fire.Terminal.Windows`) bleibt als Rückfall, wo die Bibliothek nicht gebaut werden kann (kein C-Compiler) oder
   `FIRE_VM_GRAPHICS=cs` sie wählt: Grafik geht, Fenster nur mit einem Renderer des Hosts (die Tests, der Editor über `HostRenderer`); sonst meldet das Fenster,
@@ -188,4 +189,3 @@ Noch offen:
 
 * Die Tests mit gefälschten Renderern (`FakeRenderer`, `ScriptedWindow` u. a.) und die Unit-Tests der C#-Grafik prüfen weiter die C#-Implementierung.
 * Der C#-Zwilling der Grafik für Programme fällt weg, sobald die Bibliothek vorgebaut mitgeliefert wird (dann braucht die VM keinen C-Compiler mehr dafür).
-* Holds am Programmende sind prozessweit (`FireRuntime.AddHostHold`): ein Fenster der Live-Ansicht hält auch ein Programm daneben am Ende auf (wie bisher in C#).

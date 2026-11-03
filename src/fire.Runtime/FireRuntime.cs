@@ -103,19 +103,8 @@ namespace fire.Runtime
             }
         }
 
-        // Host holds: something of the host keeps the program alive after its last statement - the open windows that a window manager's thread
-        // shows (fire's WindowManager.Start). The main program then waits at its end, serving what is posted to it, until they are gone.
-        private static int _hostHolds;
-
-        /// <summary>Adds (or, negative, removes) holds on the program end.</summary>
-        public static void AddHostHold(int delta)
-        {
-            Interlocked.Add(ref _hostHolds, delta);
-            WakeWaitingOwner();
-        }
-
-        /// <summary>The holds on the program end (see <see cref="AddHostHold"/>).</summary>
-        public static int HostHolds => Volatile.Read(ref _hostHolds);
+        // Host holds (the open windows that a window manager's thread shows) belong to the program they keep alive: VM.AddHostHold of its main VM -
+        // a program in the editor's live view does not hold up another one, and nothing outlives the program it was taken for.
 
         /// <summary>Wakes a main program that is waiting in <see cref="WaitForAllFireThreads"/> (a thread has put something into the queue).</summary>
         internal static void WakeWaitingOwner()

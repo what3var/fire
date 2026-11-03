@@ -215,7 +215,7 @@ namespace fire.Compiler
                 // `#import "windows"`: the SDL window for the framebuffer (registered directly behind graphics, as when translating)
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
-                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer ?? (hostWindows != null ? () => new HostRenderer(hostWindows.Display) : null), FireRuntime.AddHostHold);   // windowRenderer: null = a SDL window
+                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer ?? (hostWindows != null ? () => new HostRenderer(hostWindows.Display) : null), d => session.VirtualMachine?.AddHostHold(d));   // windowRenderer: null = a SDL window
                     fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
                 }
             }

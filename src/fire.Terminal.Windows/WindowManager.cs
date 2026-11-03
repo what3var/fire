@@ -74,7 +74,7 @@ namespace fire.Terminal.Windows
 
         /// <param name="rendererFactory">Creates the renderer per window: the host's (the tests, an editor that shows the pictures itself). Without one there is no
         /// window of the desktop here - the VM shows those through the C library of graphics and windows (fire.Compiler.GraphicsLibrary, docs/UI_PLATFORM.md).</param>
-        /// <param name="hold">Adds holds on the program end (fire.Runtime's FireRuntime.AddHostHold): the windows that a manager's thread shows keep the program alive.</param>
+        /// <param name="hold">Adds holds on the program end (the VM.AddHostHold of the program's main VM): the windows that a manager's thread shows keep the program alive.</param>
         public WindowManager(FramebufferManager framebuffers, Action<LambdaValue, Value[]> callbackRunner,
             Func<IFramebufferRenderer>? rendererFactory = null, Action<int>? hold = null)
         {

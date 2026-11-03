@@ -133,9 +133,9 @@ namespace fire.Runtime
                         if (lib.Service != null)
                             block = PackageHost.BlockWithService(() =>
                             {
-                                var vm = lib.MainVm;
+                                var vm = lib.MainVm ?? PackageHost.MainVm;
                                 if (vm == null || !vm.PostHostAction(lib.Service)) { }
-                            }, out lib.HostKeepAlive);
+                            }, delta => (lib.MainVm ?? PackageHost.MainVm)?.AddHostHold(delta), out lib.HostKeepAlive);
                         Marshal.GetDelegateForFunctionPointer<SetHostFn>(setHost)(block);
                     }
                     if (NativeLibrary.TryGetExport(handle, "fire_pkg_reset", out var reset))

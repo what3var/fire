@@ -67,7 +67,7 @@ namespace fire.Runtime
                 {
                     if (_block != IntPtr.Zero) return _block;
                     _ioAllow = IoAllow; _netAllow = NetAllow; _stdRead = StdRead; _stdWrite = StdWrite; _stdFlush = StdFlush; _winAttach = WinAttach; _winDetach = WinDetach;
-                    _callLambda = CallLambda; _requestService = RequestService; _hold = delta => FireRuntime.AddHostHold(delta);
+                    _callLambda = CallLambda; _requestService = RequestService; _hold = delta => _mainVm?.AddHostHold(delta);
                     var host = new FireHost
                     {
                         Size = Marshal.SizeOf<FireHost>(),
@@ -92,17 +92,22 @@ namespace fire.Runtime
 
         /// <summary>The `fire_host` of a library with services of its own (`fire_pkg_service`: the windows' managers of the graphics library): the same functions, but its
         /// request_service goes to <paramref name="requestService"/> - the VM of the program that uses THIS library (an editor runs several programs, each with a copy of the
-        /// library). `keepAlive` must live as long as the library.</summary>
-        internal static IntPtr BlockWithService(Action requestService, out object keepAlive)
+        /// library), and so do its holds (`hold`: the windows it shows keep that program alive, no other). `keepAlive` must live as long as the library.</summary>
+        internal static IntPtr BlockWithService(Action requestService, Action<int> hold, out object keepAlive)
         {
             var host = Marshal.PtrToStructure<FireHost>(Block);
             RequestServiceFn fn = () => requestService();
+            HoldFn holdFn = delta => hold(delta);
             host.RequestService = Marshal.GetFunctionPointerForDelegate(fn);
+            host.Hold = Marshal.GetFunctionPointerForDelegate(holdFn);
             var block = Marshal.AllocHGlobal(Marshal.SizeOf<FireHost>());
             Marshal.StructureToPtr(host, block, false);
-            keepAlive = fn;
+            keepAlive = new object[] { fn, holdFn };
             return block;
         }
+
+        /// <summary>The main program's VM that last called a library (null: none yet).</summary>
+        internal static VM? MainVm => _mainVm;
 
         // ---- lambdas that cross to a library (FIRE_LAMBDA): a handle each, with the VM that gave it; they stay until their program has ended (Begin of a later session) ----
         private static readonly Dictionary<long, (LambdaValue Lambda, VM? Owner)> Lambdas = new();
@@ -154,7 +159,7 @@ namespace fire.Runtime
             return owner != null && owner.PostCallback(entry.Lambda, values, Report) ? 0 : 1;
         }
 
-        /// <summary>`request_service`: the libraries' services run at the next safe point of the main program (or right away when nobody runs: no program).</summary>
+        /// <summary>`request_service` of a library without services of its own: at the next safe point of the main program.</summary>
         private static void RequestService()
         {
             var owner = _mainVm;

@@ -150,7 +150,7 @@ namespace fire.Runtime
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RegisterWindows(Session session, NativeRegistry natives, object framebuffers)
         {
-            var windowManager = new fire.Terminal.Windows.WindowManager((fire.Terminal.FramebufferManager)framebuffers, (l, v) => session.CallLambda(l, v), null, FireRuntime.AddHostHold);
+            var windowManager = new fire.Terminal.Windows.WindowManager((fire.Terminal.FramebufferManager)framebuffers, (l, v) => session.CallLambda(l, v), null, d => session.VirtualMachine?.AddHostHold(d));
             fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
             session.StopWindows = windowManager.StopManagers;
         }
