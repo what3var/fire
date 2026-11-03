@@ -394,6 +394,9 @@ namespace fire.Compiler
         /// <see cref="ClassMeta"/> and marks the classes of the library.</summary>
         private bool Reflection => _natives.Has(fire.Standard.ReflectionPrelude.MembersNative);
 
+        /// <summary>Write the <see cref="ClassMeta"/> even without the reflection library (a plugin: the program that loads it reflects on its classes).</summary>
+        private bool _classMeta;
+
         /// <summary>For compiling a lambda/method/constructor body
         /// into a chunk of its own (FunctionProto): shares the resolver
         /// references and the native registry with the outer compiler, but builds
@@ -513,13 +516,13 @@ namespace fire.Compiler
                 : ne.ClassRef.BaseName;
 
         public static CompiledProgram Compile(
-            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives)
+            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives, bool classMeta = false)
         {
             s_unitChecks = resolveResult.UnitChecks;
             s_methodTypeArgs = resolveResult.MethodTypeArgs;
             s_localGuards = resolveResult.LocalGuards;
             s_overloadHints = resolveResult.OverloadHints;
-            var compiler = new Compiler(resolveResult, natives);
+            var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
             var classes = compiler.CompileClasses(program);
 
             // `#nosync` (no matter where in the top-level code it stands): right at the start, before any code runs
@@ -789,7 +792,7 @@ namespace fire.Compiler
                 {
                     classes[cd.Name] = new RuntimeClass(cd.Name, cd);
                     MarkKeepAndSerializable(classes[cd.Name], cd);
-                    if (Reflection)
+                    if (Reflection || _classMeta)
                     {
                         classes[cd.Name].Meta = BuildClassMeta(cd);
                         classes[cd.Name].IsReflectionHelper = fire.Standard.ReflectionPrelude.HelperClasses.Contains(cd.Name);

@@ -554,6 +554,12 @@ static class LinkageTests
         print(Reflect.Get(dev, "id") + " " + Reflect.Call(d, "Run", [5]) + " " + Type.Of(dev).Name)
         print("again " + Library.Load(Environment.Get("FIRE_TEST_PLUGIN")).Classes().Length)
         try { Reflect.New("Kit.Nope", []) } catch (ReflectionException e) { print("nope: " + e.message) }
+        // (Kit does not import reflection: its classes still carry their metadata - fields by name, Type.Of(x).Fields())
+        any kitSettings = Reflect.New("Kit.Settings", [])
+        Reflect.Set(kitSettings, "level", 7)
+        var kitFields = ""
+        foreach (var kf in Type.Of(kitSettings).Fields()) { kitFields = kitFields + " " + kf.Name + ":" + kf.TypeName }
+        print(Reflect.Get(kitSettings, "level") + " " + Reflect.Get(kitSettings, "title") + kitFields + " " + Type.Of(kitSettings).Find("Show").Kind)
         any up = Environment.Get("FIRE_TEST_UNITS")
         if (up != undefined) {
             Library.Load(up)
@@ -652,7 +658,8 @@ static class LinkageTests
         + "kit 3 2 2 fast j0 9 Kit.Settings\nfast j1 9\n{\"$type\":\"Meter.Reading\",\"level\":3.0,\"span\":2.5,\"heat\":20.0,\"loose\":{\"$value\":4.0,\"$unit\":\"bn\"}}\n3pears 2.5km 20C 293.15K 4bn\n";
 
     private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Settings True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
-        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 4\nnope: Unknown class 'Kit.Nope'.\n";
+        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 4\nnope: Unknown class 'Kit.Nope'.\n"
+        + "7 kit title:string level:int marks:List<int> dev:Api.Device method\n";
 
     /// <summary>fire plugins (ROADMAP 9 phase D b): a project with a library `Api` (an interface, a class, an exception), a program with linkage "shared" that loads the
     /// plugin `Kit` (built with `--linkage plugin --host`) and uses its classes through the interface, the base class, reflection and catch; the errors when the plugin does

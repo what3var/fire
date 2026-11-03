@@ -69,7 +69,7 @@ namespace fire.Compiler
                 hostDir = Path.GetDirectoryName(file);
             }
             else if (dll) return Fail("A plugin for Windows is built for a program (--host <program>): its DLL imports from the DLLs of the program's libraries.");
-            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { ClassMeta = true, BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             string name = plan?.Project.Name ?? Path.GetFileName(full);
             var watch = Stopwatch.StartNew();
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the plugin");
@@ -138,7 +138,7 @@ namespace fire.Compiler
                 {
                     // the bytecode for the VM: compiled for the VM (`#if vm`), with the interfaces of the modules as the VM sees them
                     BuildMonitor.Step(BuildPhase.CompileFire, "Compiling the plugin's bytecode for the VM");
-                    var vmLinked = new Linker { BasePath = basePath, Engine = "vm", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth);
+                    var vmLinked = new Linker { ClassMeta = true, BasePath = basePath, Engine = "vm", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth);
                     var vmDeps = (ModuleInterface.Modules(vmLinked) ?? new()).OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => (m.Key, ModuleInterface.Text(vmLinked, m.Value.Classes, m.Value.Sources)));
                     PluginBytecode.Write(bytecode, name, vmLinked, vmDeps, PluginVmNatives(vmLinked, Path.GetDirectoryName(bytecode)!, log));
                     log.AppendLine($"plugin {name}: {library}, {Path.GetFileName(bytecode)} (the VM)");

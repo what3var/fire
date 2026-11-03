@@ -53,6 +53,10 @@ namespace fire.Compiler
         /// says which file it is in. With a <see cref="Plan"/> these are the files of the project.</summary>
         public IReadOnlyList<string?>? SourcePaths { get; set; }
 
+        /// <summary>Write the reflection metadata of the classes (ClassMeta) even when the program does not import `reflection`: a plugin (`--linkage plugin`),
+        /// whose classes the program that loads it reaches by reflection (Reflect.Get/Set, `Type.Of(x).Members`).</summary>
+        public bool ClassMeta { get; set; }
+
         /// <summary>The symbols of `#if`: the ones asked for and those of the project's settings.</summary>
         private IReadOnlyList<string>? EffectiveDefines()
         {
@@ -530,7 +534,7 @@ namespace fire.Compiler
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
-            var compiled = Compiler.Compile(program, resolveResult, natives);
+            var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta);
             // the classes of a package with `"serializable": false` (docs/JSON.md)
             var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));
             if (notSerializable.Count > 0)
