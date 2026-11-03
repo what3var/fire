@@ -18784,6 +18784,50 @@ else
             var lam = func () => { return b.open }
             print(lam())
             """),
+        ("Interface-Aufrufe: oeffentlich per Definition - ohne Zugriffspruefung, auch wenn eine fremde Klasse den Namen privat hat", """
+            interface IShape {
+                int Area(int scale)
+                string Name()
+            }
+            class Square : IShape {
+                int side
+                construct(int s) { this.side = s }
+                int Area(int scale) { return this.side * this.side * scale }
+                string Name() { return "square" }
+            }
+            class BigSquare : Square {
+                construct(int s) : base(s) { }
+                string Name() { return "big " + base.Name() }
+            }
+            class Disc : IShape {
+                int Area(int scale) { return 3 * scale }
+                string Name() { return "disc" }
+            }
+            class Vault {
+                private int Area(int scale) { return 1000 }
+                private string Name() { return "vault" }
+                int Open() { return this.Area(1) }
+            }
+            class Report {
+                static int Sum(IShape s, int n) {
+                    int acc = 0
+                    for (int i = 0; i < n; i++) { acc = acc + s.Area(i) }
+                    return acc
+                }
+                static string Describe(IShape s) { return s.Name() + " " + s.Area(1) }
+            }
+            print(Report.Sum(new Square(2), 10))
+            print(Report.Sum(new Disc(), 4))
+            print(Report.Describe(new BigSquare(3)))
+            print(Report.Describe(new Disc()))
+            print(new Vault().Open())
+            any v = new Vault()
+            try { print(v.Name()) } catch (AccessDeniedException e) { print("denied: " + e.message) }
+            try { print(Report.Describe(undefined)) } catch (Exception e) { print("undefined: " + e.message) }
+            var gone = new Square(1)
+            delete gone
+            try { print(Report.Describe(gone)) } catch (Exception e) { print("destroyed: " + e.message) }
+            """),
         ("Reflection: Type, Member, Get/Set/Call/New/Has, Selektoren, Zugriffsregeln; probe/silence", """
             #import "reflection"
             class Circle {
@@ -24568,6 +24612,25 @@ else
             if (probe.ExitCode == 0 && System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(probeFile + ".bin") { UseShellExecute = false, RedirectStandardError = true }) is { } run) { run.StandardError.ReadToEnd(); run.WaitForExit(); if (run.ExitCode == 0) sanitize = "-fsanitize=address,undefined -fno-sanitize-recover=undefined "; }
         }
         Console.WriteLine(sanitize.Length > 0 ? "(die Faelle laufen unter AddressSanitizer/UBSan)" : "(Sanitizer nicht verfuegbar)");
+
+        // a call through an interface (members public, E4063): its own dispatcher over the implementing classes - no caller class, no access check, not the
+        // class outside the interface that has the name privately
+        const string interfaceCallTitle = "Interface-Aufrufe: eigener Verteiler ohne Aufruferklasse und Zugriffspruefung (fremde private Methode gleichen Namens)";
+        if (TestSelected(interfaceCallTitle))
+        {
+            string icpp = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { """
+                interface IShape { int Area(int scale) }
+                class Square : IShape { int Area(int scale) { return 4 * scale } }
+                class Disc : IShape { int Area(int scale) { return 3 * scale } }
+                class Vault { private int Area(int scale) { return 1000 } int Open() { return this.Area(1) } }
+                class Report { static int Use(IShape s) { return s.Area(2) } }
+                print(Report.Use(new Square()) + Report.Use(new Disc()) + new Vault().Open())
+                """ }, null, null, VmExecutionMode.Release)).Program;
+            int start = icpp.IndexOf("static Value icall_IShape_Area_1(Value self, Value a0)\n{", StringComparison.Ordinal);
+            string body = start < 0 ? "" : icpp.Substring(start, icpp.IndexOf("\n}\n", start, StringComparison.Ordinal) - start);
+            CheckNat(interfaceCallTitle, body.Length > 0 && !body.Contains("accessDenied") && !body.Contains("caller") && body.Split("return f").Length == 3
+                && System.Text.RegularExpressions.Regex.IsMatch(icpp, @"= icall_IShape_Area_1\(s\d+, s\d+\);"), body.Length > 0 ? body : icpp);
+        }
 
         natCases = natCases.Where(c => TestSelected(c.Name)).ToArray();
         // The VM runs sequentially: the precision of float is process-wide while a program runs.

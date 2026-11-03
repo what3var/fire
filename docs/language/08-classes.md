@@ -165,6 +165,10 @@ A variable of a base class can hold an object of a derived class, and the member
 the same name again with another access, the compiler cannot know which one is found, and the run time decides. `#performance` leaves out the
 checks at run time, not the ones of the compiler.
 
+The methods of an interface are public: a class implements them with public methods (a `private` or `protected` one is the error `E4063`, see
+[Interfaces and generics](09-interfaces-and-generics.md)). A call through a value of an interface type is therefore always allowed - nothing is
+checked for it, neither by the compiler nor at run time.
+
 ## `readonly`
 
 A `readonly` field can be set only in its initializer or in a constructor of its own class (as `this.field = ...`). The compiler reports

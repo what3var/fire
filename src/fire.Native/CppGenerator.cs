@@ -133,6 +133,9 @@ namespace fire.Native
         private readonly Dictionary<string, ClassInfo> _classes = new();
         private readonly List<ClassInfo> _classList = new();
         private readonly SortedSet<(string Name, int Argc)> _dispatchers = new();
+        /// <summary>Calls `x.Name(...)` on a value of an interface type whose classes all have a public method for it: each gets a dispatcher of its own
+        /// over those classes only (InterfaceDispatcher) - no access check, no other class of the program that has a method of that name.</summary>
+        private readonly SortedSet<(string Interface, string Name, int Argc)> _interfaceDispatchers = new();
         /// <summary>Operators (method names `operator+`, ...) that the program overloads and that an operation of it uses: each gets a wrapper `ov_...` (SPEC 5.11).</summary>
         private readonly SortedSet<string> _operators = new();
         /// <summary>Class and interface names tested with `is of`: each gets a function `isof_...`.</summary>
@@ -551,12 +554,24 @@ namespace fire.Native
         private readonly List<string> _objTypeNames = new();
         private readonly Dictionary<string, int> _objTypeIndex = new();
         /// <summary>The type "an object of this class or of a class derived from it".</summary>
-        private int ObjType(RuntimeClass rc)
+        private int ObjType(RuntimeClass rc) => ObjTypeNamed(rc.Name);
+        private int ObjTypeNamed(string name)
         {
-            if (!_objTypeIndex.TryGetValue(rc.Name, out int index)) { index = _objTypeNames.Count; _objTypeNames.Add(rc.Name); _objTypeIndex[rc.Name] = index; }
+            if (!_objTypeIndex.TryGetValue(name, out int index)) { index = _objTypeNames.Count; _objTypeNames.Add(name); _objTypeIndex[name] = index; }
             return TypeOf(KindObj, index);
         }
         private RuntimeClass ObjClass(int type) => FindClass(_objTypeNames[UnitOfType(type)]);
+        /// <summary>The interface of a type "an object of a class that implements this interface" (a parameter declared with it), null for any other type. Such a
+        /// type is KindObj too, but no class: ObjClass is not asked for it.</summary>
+        private string? InterfaceOfType(int type) =>
+            BaseKindOfType(type) == KindObj && (type & TypeNone) == 0 && _objTypeNames[UnitOfType(type)] is var name && !_program.Program.Classes.ContainsKey(name) ? name : null;
+
+        /// <summary>The type of a value that passed the check of a declaration with only this interface (the guard of a parameter): an object of a class that
+        /// implements it, or undefined. Not for `IEnumerable` (arrays, buffers and strings pass it too) or a name no class implements.</summary>
+        private int? InterfaceType(string spec) =>
+            DeclaredType.Parse(spec) is { TypeParamIndex: < 0, SingleName: { } name } && !_program.Program.Classes.ContainsKey(name)
+                && GenericClassNames.PlainName(name) != "IEnumerable" && _program.Program.Classes.Values.Any(rc => rc.Interfaces.Contains(name))
+                ? ObjTypeNamed(name) | NullableBit : null;
         /// <summary>The classes of the program (that are created) an object of type `rc` can be: rc and the classes derived from it.</summary>
         private IEnumerable<ClassInfo> InstancesOf(RuntimeClass rc) => _classList.Where(c => ClassIs(c.Rc, rc.Name));
 
@@ -741,7 +756,8 @@ namespace fire.Native
             if (parsed.Alternatives.Length > 0)
             {
                 string fits = string.Join(" || ", parsed.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(c => HoldsExpr(value, c))) + ")"));
-                altCheck = $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && !({fits}) && ({value}.kind != K_Class || leafAlive({value})))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
+                // (a destroyed object first: its memory is gone, `is of` must not read its class)
+                altCheck = $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && ({value}.kind != K_Class || leafAlive({value})) && !({fits}))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
             }
             if (parsed.TypeParamIndex < 0) return altCheck;
             // a type parameter: the type argument of the object (class) or of the call (method) decides when it is known, its `where` otherwise
@@ -895,7 +911,8 @@ namespace fire.Native
 
         /// <summary>Does a value of this static type pass the check of a declaration (DeclaredType, encoded) as it is?</summary>
         private bool FitsClassType(int type, string spec) =>
-            type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0 && DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name);
+            type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0
+                && (InterfaceOfType(type) is { } iface ? DeclaredType.Parse(spec).SingleName == iface : DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name));
 
         /// <summary>The static return type of a generated function (joined by its `return` instructions; constructors return the object).</summary>
         private static string ReturnKey(Func f) => "ret:" + f.Name;
@@ -1347,7 +1364,7 @@ namespace fire.Native
                 foreach (var cls in _classList)
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType) _isOfTypes.UnionWith(IsOfNames(requiredType));
             // (the dispatchers and selectors first: their scores register the `is of` tests, class scores and type arguments they use)
-            var dispatcherCode = _dispatchers.Select(x => Dispatcher(x.Name, x.Argc)).ToList();
+            var dispatcherCode = _dispatchers.Select(x => Dispatcher(x.Name, x.Argc)).Concat(_interfaceDispatchers.Select(x => InterfaceDispatcher(x.Interface, x.Name, x.Argc))).ToList();
             var selectorCode = _overloadSelectors.Values.Select(SelectorFunction).ToList();
             string targTables = TArgTables();
             foreach (var typeName in _isOfTypes) sb.AppendLine($"FIRE_MAYBE_UNUSED static bool isof_{Mangle(typeName)}(Value v);");
@@ -1363,6 +1380,7 @@ namespace fire.Native
                 if (WrapDispatchers) sb.AppendLine(DispatcherSignature(name, argc, "direct_") + ";");
                 if (_usesActors) sb.AppendLine($"static Value msg_{Mangle(name)}_{argc}(Value self, const Value* a, OwnList* list);");
             }
+            foreach (var (iface, name, argc) in _interfaceDispatchers) sb.AppendLine(InterfaceDispatcherSignature(iface, name, argc) + ";");
             foreach (var method in _operators) sb.AppendLine($"static Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list);");
             sb.AppendLine("FIRE_MAYBE_UNUSED static inline Value aget_g(Value a, Value i, OwnList* list);");
             sb.AppendLine("FIRE_MAYBE_UNUSED static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
@@ -1524,6 +1542,9 @@ namespace fire.Native
                 if (enumerator.Rc.FindConstructor(2) is { } ctor && ctor.ParamCount == 2) GetFunc(ctor, FuncKind.Ctor);
             }
 
+            foreach (var (iface, name, argc) in _interfaceDispatchers.ToList())
+                foreach (var (_, method) in InterfaceImplementations(iface, name, argc) ?? new())
+                    GetFunc(method, FuncKind.Method);
             foreach (var (name, argc) in _dispatchers.ToList())
             {
                 foreach (var cls in _classList.ToList())
@@ -1677,6 +1698,58 @@ namespace fire.Native
         /// <summary>The text of the VM for a `new` that finds no constructor (VM.DescribeConstructorNotFound).</summary>
         private static string DescribeConstructorNotFound(RuntimeClass rc, int argCount) =>
             $"Class '{rc.Name}' has no constructor with {argCount} argument(s) (available: {string.Join(", ", rc.Constructors.Keys.OrderBy(x => x))} argument(s)).";
+
+        private static string InterfaceDispatcherName(string iface, string name, int argc) => $"icall_{Mangle(iface)}_{Mangle(name)}_{argc}";
+        private static string InterfaceDispatcherSignature(string iface, string name, int argc) =>
+            $"FIRE_MAYBE_UNUSED static Value {InterfaceDispatcherName(iface, name, argc)}(Value self{string.Concat(Enumerable.Range(0, argc).Select(i => $", Value a{i}"))})";
+
+        /// <summary>The classes of the program that implement <paramref name="iface"/>, each with its method `name(argc)` - when every one has exactly one,
+        /// public, not static and without default values (then a call needs no access check and no scoring); null otherwise.</summary>
+        private List<(ClassInfo Class, FunctionProto Proto)>? InterfaceImplementations(string iface, string name, int argc)
+        {
+            var result = new List<(ClassInfo, FunctionProto)>();
+            foreach (var c in _classList.Where(c => ClassIs(c.Rc, iface)))
+            {
+                if (c.Rc.IsTypeOverloaded(name, argc)) return null;
+                var found = c.Rc.FindMethodWithAccess(name, argc);
+                if (found.Proto is not { IsStatic: false } m || found.Access != AccessModifier.Public || m.ParamCount != argc) return null;
+                result.Add((c, m));
+            }
+            return result.Count > 0 ? result : null;
+        }
+
+        /// <summary>Is a dispatcher of the interface better than the one of the name: the name is private or protected somewhere (the general one takes the class
+        /// of the caller and checks it), or a class outside the interface has the method too (the general one switches over it as well). Not for a name that
+        /// means something for other values too (a built-in method, a base-type extension: the general dispatcher knows what undefined does with it).</summary>
+        private bool InterfaceDispatchWorthwhile(string iface, string name, int argc) =>
+            !DispatchNeedsList(name, argc) && !ExtensionMethods(name, argc).Any() && InterfaceImplementations(iface, name, argc) != null
+            && (RestrictedMethodName(name) || _classList.Any(c => !ClassIs(c.Rc, iface) && c.Rc.FindMethodWithAccess(name, argc).Proto != null));
+
+        /// <summary>`icall_I_name_argc`: the method of the object's class for the classes that implement the interface. The type is that of a value that passed
+        /// the guard of a declaration with the interface (InterfaceType): an object of one of these classes or undefined (and a destroyed object, which reports
+        /// itself) - like DirectMethod for a class, nothing else is looked for. (Not the general dispatcher as a fallback: it would be a second caller of each
+        /// method, which then no longer goes inline into a call site that is its only one.)</summary>
+        private string InterfaceDispatcher(string iface, string name, int argc)
+        {
+            // (an entry of an earlier round of the fixpoint that no call site uses any more: no cases)
+            var impls = InterfaceImplementations(iface, name, argc) ?? new List<(ClassInfo Class, FunctionProto Proto)>();
+            string args = string.Concat(Enumerable.Range(0, argc).Select(i => $", a{i}"));
+            var sb = new StringBuilder();
+            sb.AppendLine(InterfaceDispatcherSignature(iface, name, argc));
+            sb.AppendLine("{");
+            if (impls.Count == 0 && argc > 0) sb.AppendLine("    " + string.Concat(Enumerable.Range(0, argc).Select(i => $"(void)a{i}; ")).TrimEnd());
+            sb.AppendLine("    if (FIRE_LIKELY(self.kind == K_Class)) {");
+            sb.AppendLine("        if (FIRE_UNLIKELY(!leafAlive(self))) return destroyedError(self);");
+            sb.AppendLine("        switch (asObj(self)->cls) {");
+            foreach (var group in impls.GroupBy(t => t.Proto))
+                sb.AppendLine($"            {string.Concat(group.Select(t => $"case {t.Class.Id}: "))}return {_funcByProto[group.Key].Name}(self{args});");
+            sb.AppendLine("            default: break;");
+            sb.AppendLine("        }");
+            sb.AppendLine("    }");
+            sb.AppendLine($"    return missingMethod(self, {CString(name)}, {argc});");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
 
         private string Dispatcher(string name, int argc)
         {
@@ -3024,7 +3097,7 @@ namespace fire.Native
             int Ty(int k) => k < 0 || k >= 64 ? TypeUnknown : st.Types[k];
             byte K(int k) => KindOfType(Ty(k));
             // An object of a known class, or undefined when the type is nullable (a parameter or field declared with the class).
-            bool ObjSlot(int k) => BaseKindOfType(Ty(k)) == KindObj && (Ty(k) & TypeNone) == 0;
+            bool ObjSlot(int k) => BaseKindOfType(Ty(k)) == KindObj && (Ty(k) & TypeNone) == 0 && InterfaceOfType(Ty(k)) == null;
             int U(int k) => UnitOfType(Ty(k));
             void SetT(int k, int type) { if (k >= 0 && k < 64) st.Types[k] = type; }
             bool IsNum(byte kind) => kind is KindInt or KindFloat;
@@ -3929,6 +4002,19 @@ namespace fire.Native
                         AdoptResult(slot, specCondition == null ? ReturnType(callee) : JoinTypes(ReturnType(callee), ReturnType(target)));
                         d = slot + 1; return Next();
                     }
+                    if (!passesAddresses && !WrapDispatchers && OwnMethodId(method, argc) == null && !(_usesReflection && ReflectionMethodNames.Contains(method))
+                        && InterfaceOfType(Ty(slot)) is { } receiverInterface && InterfaceDispatchWorthwhile(receiverInterface, method, argc))
+                    {
+                        // a value of an interface type: its classes implement the method publicly (E4063) - their own dispatcher, no access check, no caller
+                        _interfaceDispatchers.Add((receiverInterface, method, argc));
+                        long imask = ArgMask();
+                        ArgsBefore(d - argc, argc, imask);
+                        E($"{S(slot)} = {InterfaceDispatcherName(receiverInterface, method, argc)}({S(slot)}{Args(d - argc, argc)});");
+                        ArgsAfter(argc, imask, S(slot));
+                        Check();
+                        AdoptResult(slot, DispatchResultType(method, argc));
+                        d = slot + 1; return Next();
+                    }
                     if (!passesAddresses && !WrapDispatchers && OwnMethodId(method, argc) == null
                         && !(_usesReflection && ReflectionMethodNames.Contains(method))
                         && HintBefore(f, ins) is { IsConstructor: false } callHint && callHint.Method == method)
@@ -4176,7 +4262,7 @@ namespace fire.Native
                     }
                     E(ClassGuard(v, spec, Str(ins.A[2]), SelfObj(f), f.HasCallTArgs ? "ctargs" : null));
                     Check();
-                    JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | NullableBit : TypeUnknown);
+                    JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | NullableBit : InterfaceType(spec) ?? TypeUnknown);
                     _kindsKept = true;
                     return Next();
                 }

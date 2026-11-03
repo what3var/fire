@@ -262,6 +262,7 @@ namespace fire.Compiler
         ("E4060", ErrorArea.Resolver, "Property '{*}' of class '{*}' needs a type (use the type it holds, or 'any' if every type is allowed)"),
         ("E4061", ErrorArea.Resolver, "'{*}' is generic with {*} type parameter(s), not {*}"),
         ("E4062", ErrorArea.Resolver, "'{*}' is ambiguous: {*} (more than one '#using' brings it); write the full name"),
+        ("E4063", ErrorArea.Resolver, "Method '{*}' of class '{*}' implements interface '{*}' and must be public, not {*} (a member of an interface is public)"),
         ("E4058", ErrorArea.Resolver, "'var {*}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {*}')"),
         ("E5001", ErrorArea.Compiler, "Only the first 16 parameters of a method can be 'ref'."),
         ("E5002", ErrorArea.Compiler, "Internal error: 'class extends {*}' was not merged (the program must be produced by Parser.Parse()/ParseMultiple())."),

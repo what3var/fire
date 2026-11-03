@@ -302,6 +302,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4060` | Property '…' of class '…' needs a type (use the type it holds, or 'any' if every type is allowed) |
 | `E4061` | '…' is generic with … type parameter(s), not … |
 | `E4062` | '…' is ambiguous: … (more than one '#using' brings it); write the full name |
+| `E4063` | Method '…' of class '…' implements interface '…' and must be public, not … (a member of an interface is public) |
 | `E4058` | 'var …' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int …') |
 
 ### E5xxx - Bytecode compiler

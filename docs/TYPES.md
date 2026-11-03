@@ -57,7 +57,8 @@ not have (`e.Message` on an `Exception`) is `TC008`, a call with a number of arg
 `this.` (also inherited ones) are checked like those with it. A `private`/`protected` member that the code may not use is `TC012` (an error in lax mode too, with the
 message of the `AccessDeniedException`): on a receiver whose class is known (also `this`, a member without `this.`, `ClassName.Static`, `new`, `base.M()` and the
 call of the base constructor), when every class the object can be denies it (a derived class that declares the name again with another access leaves it to the
-run time); `any` and reflection are checked at run time.
+run time); `any` and reflection are checked at run time. A member of an interface is public (a class implements it with a public method, `E4063`), so a call
+through a value of an interface type has nothing to report.
 
 Known gaps: `SelectMany` and the selector projections (`SelectMember`, ...) are `Query` of `any`.
 

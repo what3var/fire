@@ -479,6 +479,28 @@ static class TypeTests
                 B b2 = new B()
                 try { print(b2.M()) } catch (AccessDeniedException e) { print("verweigert") }
                 """) is var mixed && mixed == "|2\nverweigert", mixed);
+
+            // a member of an interface is public: so is the method that implements it (E4063) - a call through the interface needs no access check
+            string iface = "interface IShape { int Area() }\n";
+            foreach (var (what, code) in new[]
+            {
+                ("private", "class Sq : IShape { private int Area() { return 4 } }"),
+                ("protected", "class Sq : IShape { protected int Area() { return 4 } }"),
+                ("verdeckt die oeffentliche der Basisklasse", "class Base { int Area() { return 1 } }\nclass Sq : Base, IShape { private int Area() { return 4 } }"),
+                ("in einer Unterklasse einer implementierenden Klasse", "class Sq : IShape { int Area() { return 4 } }\nclass Sub : Sq { protected int Area() { return 5 } }"),
+            })
+                Check($"Interface: eine Implementierung {what} ist ein Fehler (E4063)", Run(iface + code + "\nprint(1)") is var notPublic && notPublic == "|ERROR E4063", notPublic);
+            Check("Interface: die Meldung nennt Methode, Klasse und Interface",
+                CompileText(iface + "class Sq : IShape { private int Area() { return 4 } }") is var ifaceText
+                && ifaceText.Contains("Method 'Area' of class 'Sq' implements interface 'IShape' and must be public, not private"), ifaceText);
+            Check("Interface: oeffentlich geerbt, eine private Ueberladung anderer Stelligkeit oder ein privates Mitglied einer fremden Klasse ohne Befund", Run(iface + """
+                class Base { int Area() { return 1 } }
+                class Sq : Base, IShape { private int Area(int scale) { return 4 * scale } int Twice() { return this.Area(2) } }
+                class Other { private int Area() { return 9 } int Mine() { return this.Area() } }
+                IShape s = new Sq()
+                print(s.Area())
+                print(new Sq().Twice() + new Other().Mine())
+                """) is var inherited && inherited == "|1\n17", inherited);
         }
 
         // named arguments: each goes to the parameter of its name (its type is checked there); an unknown name and a parameter without value are errors

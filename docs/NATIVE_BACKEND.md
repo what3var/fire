@@ -315,7 +315,13 @@ einzigen Maschine, keine Garantie.
   und der Getter/Setter als Funktion (auch die Abkürzung über den `OverloadHint` nimmt nur erlaubte Klassen, die anderen gehen zum Dispatcher); eine verbotene
   Stelle meldet schon der Typprüfer (`TC012`). Nur wo die Klasse nicht bekannt ist (`any`, Reflection), bekommen Feldhelfer (`gf_`/`sf_`) und Dispatcher eines
   irgendwo eingeschränkt deklarierten Namens den Parameter `caller` (die Klasse des aufrufenden Codes) und prüfen je Klasse; alle anderen Namen behalten den
-  schnellen Pfad. Der Initialisierer eines statischen Feldes läuft ungeprüft.
+  schnellen Pfad. Der Initialisierer eines statischen Feldes läuft ungeprüft. Ein Parameter mit einem Interface als Typ (nicht `IEnumerable`) hat den statischen Typ
+  „ein Objekt einer Klasse, die das Interface implementiert, oder undefined" (die Prüfung am Parameter lässt nichts anderes durch). Ein Aufruf darauf, den alle diese
+  Klassen öffentlich implementieren (für die Methoden des Interfaces erzwingt das `E4063`), geht an einen eigenen Verteiler `icall_<Interface>_<Methode>_<n>`: nur
+  diese Klassen, ohne `caller` und ohne Prüfung, ohne den Rückgriff auf den allgemeinen Dispatcher (eine Methode, die nur an dieser Stelle gerufen wird, bleibt so
+  inline). Er entsteht nur, wo er etwas spart: der Name ist irgendwo eingeschränkt, oder eine Klasse außerhalb des Interfaces hat die Methode auch. Messung
+  (gcc -O2, 2·10⁸ Aufrufe `s.F(acc)` über `IShape s`, eine fremde Klasse mit `private int F(int)`): 0,65 s → 0,40 s, so schnell wie ohne die fremde Klasse; wird die
+  Methode auch anderswo gerufen (nicht mehr inline), ändert sich nichts messbar (~1,1 s vorher wie nachher).
 
 * **Eingebaute Umwandlungen**: `string.ToBytes/ToUnicode`, `char.ToByte/ToUnicode`, `byte.ToChar`, `buffer.ToString/ToUnicode/ToUnicodeChar/ToLittleEndian/ToBigEndian` und `buffer.littleEndian`
   (SPEC 8.10; ein Puffer trägt seine Byte-Reihenfolge, die der Maschine wird zur Laufzeit festgestellt) stehen im Dispatcher der Methode, wenn keine Klasse sie selbst deklariert.

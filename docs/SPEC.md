@@ -1706,6 +1706,10 @@ class List : IEnumerable {
 - An `interface` only declares method signatures (no fields, no
   constructor), similar to `extern`, just for class-internal contracts instead of
   native functions.
+- The methods of an interface are **public**: the method that implements one (found by name and number of parameters, the nearest in the base-class chain) must be
+  public - `private`/`protected` is the compile error `E4063`, also in a derived class of an implementing class (it would hide the public one). A public method
+  inherited from the base class counts; other methods of the name (another number of parameters) may be private. A call through a value of an interface type is
+  therefore always allowed: neither the compiler nor the run time checks it.
 - An `interface` may be **generic** (`interface ICommand<T> { Execute(T context) }`) and stand next to a non-generic one of the same name (as with classes,
   see 5.8); a class names it with type arguments (`class Command<T> : ICommand<T>`). As everywhere, only the name and the NUMBER of type arguments count.
   Likewise a **base class** may carry type arguments: `class Home : Command<IDevice>` inherits from the generic class `Command<T>`. An interface is also allowed as the **type of a
