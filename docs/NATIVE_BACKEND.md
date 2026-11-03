@@ -307,6 +307,31 @@ Damit laufen alle neun Benchmarks nativ (`lambda` siehe unten). Mit clang++ sind
 (Typinferenz) wird `fib` weitere ~4x schneller (`native/spike/spike.cpp`). Die Zahlen sind Momentaufnahmen von einer
 einzigen Maschine, keine Garantie.
 
+### Klassen-Deskriptoren statt `switch` in den Hooks der Runtime (ROADMAP 9, A0)
+
+Was die Runtime über eine Klasse wissen muss - ihr Name (`className`), die Destruktoren ihrer Kette (`runDestructors`), `ToString()` (`userToString`), das Feld
+`message` einer Ausnahme, die nichts fängt (`excMessageIndex`), das ganzzahlige Feld `ticks` eines TimeSpan (`timeObjTicks`) und welche `catch`-Typen ein Objekt ist
+(`excMatches`) -, steht in einer Tabelle `FireClassDesc kClassDescs[]` (eine Zeile je Klassen-Id, `fire_init` setzt `g_classDescs`), nicht mehr in je einer generierten
+Funktion mit einem `switch` über die Klassen-Ids. Die Funktionen sind jetzt Teil der Runtime (`fire_rt.h`, am Ende). Der `catch`-Typ `Exception` hat immer die Id 0
+(`FIRE_EXC_ANY`), jede Klasse listet die Ids der übrigen `catch`-Typen, die sie ist. Das ist die Voraussetzung dafür, dass Module ihre Klassen selbst beschreiben
+(Abschnitt "Getrennte Übersetzung").
+
+Gemessen (gcc 13 `-O2`, Programme in `scratch`: die Benchmarks von `fire.Benchmarks` mit etwa 20-facher Arbeit plus `exceptions` - 300 000 geworfene Ausnahmen
+zweier Klassen einer Hierarchie, zwei `catch` - und `virtual` - Aufrufe über die Basisklasse, `ToString`, ein Destruktor), alt und neu abwechselnd, 30 Läufe, mit
+Prozessstart; gleiche Ausgaben:
+
+| Benchmark | vorher min | nachher min | Verhältnis | Median-Verhältnis |
+|---|---:|---:|---:|---:|
+| `alloc` | 43,8 ms | 45,1 ms | 1,03 | 0,98 |
+| `exceptions` | 44,5 ms | 44,5 ms | 1,00 | 1,03 |
+| `fib` | 12,5 ms | 13,0 ms | 1,04 | 1,01 |
+| `list` | 88,3 ms | 89,2 ms | 1,01 | 1,03 |
+| `method` | 15,8 ms | 14,4 ms | 0,91 | 0,89 |
+| `string` | 31,2 ms | 30,0 ms | 0,96 | 0,96 |
+| `virtual` | 58,0 ms | 58,4 ms | 1,01 | 0,96 |
+
+Alles innerhalb des Rauschens (±4 %, Last auf dem Rechner ~1). Die gestrippten Programme sind 0-8 KB größer (Seitengrenzen; die Tabelle ersetzt die Switches).
+
 ## Stand
 
 Übersetzt wird eine Teilmenge der ISA:

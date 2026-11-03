@@ -1785,7 +1785,26 @@ typedef struct Obj {
 } Obj;
 FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
 
-/* Runs the destructors of the object's class chain, derived class first (generated; empty if no class has one). */
+/* A class of the program as the runtime sees it (ROADMAP 9, A0): the generated program fills a table of these (one row per class id, `g_classDescs`) instead of a
+ * function with a switch over the class ids for each question. Its name, the number of fields, the field `message` (an exception that nothing catches) and the
+ * whole-number field `ticks` (a TimeSpan for the time functions) - -1 when the class has none or the program does not need it -, the destructors of the class
+ * and its base classes (derived class first, NULL: none), ToString() (NULL: none) and the exception types (the ids of `catch (T e)`, HandlerInfo.types) an
+ * object of the class is, ending with -1 (NULL: none). */
+typedef struct FireClassDesc {
+    const char* name;
+    uint32_t nfields;
+    int32_t messageIndex;
+    int32_t ticksIndex;
+    void (*destroy)(Obj* o);
+    Value (*toString)(Value self);
+    const int32_t* excTypes;
+} FireClassDesc;
+extern const FireClassDesc* g_classDescs;
+extern uint32_t g_classDescCount;
+/* The catch type `Exception` (catches every exception object): always type id 0. */
+#define FIRE_EXC_ANY 0
+
+/* Runs the destructors of the object's class chain, derived class first (the descriptor of its class). */
 void runDestructors(Obj* o);
 
 FIRE_FN Value ObjV(Obj* o) { Value r; r.kind = K_Class; r.width = 0; r.reserved = o->h.gen; r.unit = o->h.slot; r.p = o; return r; }
@@ -2261,10 +2280,11 @@ FIRE_FN Buf* allocBufExternal(uint8_t* data, uint32_t length, OwnList* list) {
 /* ---------------------------------------------------------------------------------------------------------------------
  * Strings
  * --------------------------------------------------------------------------------------------------------------------- */
-/* Generated: calls the ToString() method of the object's class if it has one (the result is a string value created in `list`). */
+/* Calls the ToString() method of the object's class if it has one (the result is a string value created in `list`; the descriptor of the class). */
 bool userToString(Value object, OwnList* list, Value* result);
 
-const char* className(uint32_t cls);   /* (generated) */
+/* The name of the class with this id ("?" for none; the descriptor of the class). */
+const char* className(uint32_t cls);
 
 /* The characters of a value as `+` and `$"..."` append them (Value.ToString()). */
 typedef struct Piece {
@@ -3330,7 +3350,7 @@ struct Handler {
     uint8_t finallyOnly;
 };
 
-/* Generated: does the exception match the catch type (`typeId` as stored in HandlerInfo.types)? */
+/* Does the exception match the catch type (`typeId` as stored in HandlerInfo.types; FIRE_EXC_ANY: `Exception`)? The descriptor of its class lists its types. */
 bool excMatches(Value exception, int32_t typeId);
 /* Generated: builds an IndexOutOfBoundsException (message, index, length) owned by the global scope. */
 Value makeIndexError(Value message, int64_t index, int64_t length);
@@ -3362,7 +3382,7 @@ FIRE_FN void takeGlobal(Obj* o) {
     ownLink(g_globalOwn, &o->h);
 }
 
-/* Generated: the index of the field `message` of an object of the class, -1 when the class has none. */
+/* The index of the field `message` of an object of the class, -1 when the class has none (the descriptor of the class). */
 int32_t excMessageIndex(uint32_t cls);
 /* An exception that nothing catches: the text of the VM (UncaughtScriptException) - the class and the text of the field `message`. */
 FIRE_COLD FIRE_FN void reportUnhandled(Value exception) {
@@ -3823,8 +3843,8 @@ FIRE_FN Value accessDenied(const char* text) {
  * --------------------------------------------------------------------------------------------------------------------- */
 #define TICKS_PER_MS ((int64_t)10000)
 
-/* Generated: the `ticks` of a TimeSpan (any class with a whole number field `ticks`); false for another object (and for every object when the program has
- * none). */
+/* The `ticks` of a TimeSpan (any class with a whole number field `ticks`, the descriptor of the class); false for another object (and for every object when the
+ * program has none). */
 bool timeObjTicks(Value v, int64_t* ticks);
 
 /* Is the unit a unit of time (the dimension `s` and nothing else)? `factor` is then its size in seconds. */
@@ -5871,6 +5891,64 @@ bool g_autoSync = true;
 
 #ifdef FIRE_DEBUG
 #include "fire_debug.h"
+#endif
+
+/* ---------------------------------------------------------------------------------------------------------------------
+ * The questions the runtime asks about a class, answered from the table of class descriptors (g_classDescs, set by the program's fire_init). In the
+ * translation unit with the runtime's state; a library of a package for the VM (FIRE_LIBRARY) has no classes and answers them itself (fire_pkg_wrapper.h).
+ * --------------------------------------------------------------------------------------------------------------------- */
+#if defined(FIRE_RT_IMPLEMENTATION) && !defined(FIRE_LIBRARY) && !defined(__cplusplus)
+const FireClassDesc* g_classDescs = NULL;
+uint32_t g_classDescCount = 0;
+
+FIRE_FN const FireClassDesc* classDescOf(uint32_t cls) { return cls < g_classDescCount ? &g_classDescs[cls] : NULL; }
+
+const char* className(uint32_t cls) {
+    const FireClassDesc* d = classDescOf(cls);
+    return d ? d->name : "?";
+}
+
+void runDestructors(Obj* o) {
+    const FireClassDesc* d = classDescOf(o->cls);
+    if (d && d->destroy) d->destroy(o);
+}
+
+int32_t excMessageIndex(uint32_t cls) {
+    const FireClassDesc* d = classDescOf(cls);
+    return d ? d->messageIndex : -1;
+}
+
+bool excMatches(Value exception, int32_t typeId) {
+    const FireClassDesc* d;
+    const int32_t* t;
+    if (typeId == FIRE_EXC_ANY) return true;
+    d = classDescOf(asObj(exception)->cls);
+    if (!d || !d->excTypes) return false;
+    for (t = d->excTypes; *t >= 0; t++) if (*t == typeId) return true;
+    return false;
+}
+
+bool timeObjTicks(Value v, int64_t* ticks) {
+    const FireClassDesc* d = classDescOf(asObj(v)->cls);
+    Value t;
+    if (!d || d->ticksIndex < 0) return false;
+    t = objFields(asObj(v))[d->ticksIndex];
+    if (t.kind != K_Int) return false;
+    *ticks = t.i;
+    return true;
+}
+
+bool userToString(Value object, OwnList* list, Value* result) {
+    const FireClassDesc* d = classDescOf(asObj(object)->cls);
+    if (!d || !d->toString) return false;
+#ifdef FIRE_DEBUG
+    FIRE_DBG_NESTED(*result = d->toString(object));
+#else
+    *result = d->toString(object);
+#endif
+    adopt(*result, list);
+    return true;
+}
 #endif
 
 FIRE_END

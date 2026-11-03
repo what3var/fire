@@ -241,7 +241,8 @@ namespace fire.Native
         private bool _usesActors;
         private Func _cur = null!;   // the function that is being generated
         private Func? _main;   // the top level (not in _funcs)
-        private readonly List<string> _excTypes = new();
+        /// <summary>The catch types (`catch (T e)`) by id; id 0 is `Exception` (FIRE_EXC_ANY: catches every exception).</summary>
+        private readonly List<string> _excTypes = new() { "Exception" };
         /// <summary>The program uses TakeUpwards: every scope then knows its parent scope (and has an owner list).</summary>
         private bool _usesTakeUpwards;
         /// <summary>The program takes the address of an array or buffer element (`ref a[i]`): the handle table keeps the headers, so that `p + n` can be checked against the bounds.</summary>
@@ -2151,59 +2152,9 @@ namespace fire.Native
         private string RuntimeHooks()
         {
             var sb = new StringBuilder();
-            sb.AppendLine("void runDestructors(Obj* o) {");
-            var cases = new StringBuilder();
-            foreach (var cls in _classList)
-            {
-                var chain = new List<string>();
-                for (var rc = cls.Rc; rc != null; rc = rc.Base)
-                    if (rc.Destructor != null) chain.Add($"{_funcByProto[rc.Destructor].Name}(ObjV(o));");
-                if (chain.Count > 0) cases.AppendLine($"        case {cls.Id}: {string.Join(" ", chain)} break;");
-            }
-            if (cases.Length > 0)
-            {
-                sb.AppendLine("    switch (o->cls) {");
-                sb.Append(cases);
-                sb.AppendLine("        default: break;");
-                sb.AppendLine("    }");
-            }
-            else sb.AppendLine("    (void)o;");
-            sb.AppendLine("}");
-
-            sb.AppendLine("const char* className(uint32_t cls) {");
-            sb.AppendLine("    switch (cls) {");
-            foreach (var cls in _classList) sb.AppendLine($"        case {cls.Id}: return {CString(cls.Rc.Name)};");
-            sb.AppendLine("        default: return \"?\";");
-            sb.AppendLine("    }");
-            sb.AppendLine("}");
-            // the field `message` of an exception that nothing catches (reportUnhandled prints it like the VM)
-            sb.AppendLine("int32_t excMessageIndex(uint32_t cls) {");
-            var messageCases = _usesExceptions ? _classList.Where(c => c.Rc.FieldIndex.ContainsKey("message")).GroupBy(c => c.Rc.FieldIndex["message"]).ToList() : new();
-            if (messageCases.Count > 0)
-            {
-                sb.AppendLine("    switch (cls) {");
-                foreach (var g in messageCases) sb.AppendLine("        " + string.Concat(g.Select(c => $"case {c.Id}: ")) + $"return {g.Key};");
-                sb.AppendLine("        default: return -1;");
-                sb.AppendLine("    }");
-            }
-            else sb.AppendLine("    (void)cls; return -1;");
-            sb.AppendLine("}");
-
+            sb.Append(ClassDescTable());
             if (_usesExceptions)
             {
-                sb.AppendLine("bool excMatches(Value exception, int32_t type) {");
-                sb.AppendLine("    uint32_t cls = asObj(exception)->cls; (void)cls;");
-                sb.AppendLine("    switch (type) {");
-                for (int i = 0; i < _excTypes.Count; i++)
-                {
-                    string typeName = _excTypes[i];
-                    if (typeName == "Exception") { sb.AppendLine($"        case {i}: return true;"); continue; }
-                    var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
-                    sb.AppendLine($"        case {i}: " + (ids.Count == 0 ? "return false;" : "switch (cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }"));
-                }
-                sb.AppendLine("        default: return false;");
-                sb.AppendLine("    }");
-                sb.AppendLine("}");
                 var indexClass = _classes.GetValueOrDefault("IndexOutOfBoundsException") ?? throw new NativeNotSupportedException("exceptions need the prelude class IndexOutOfBoundsException");
                 var destroyedClass = _classes.GetValueOrDefault("DestroyedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DestroyedException");
                 var divideClass = _classes.GetValueOrDefault("DivideByZeroException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DivideByZeroException");
@@ -2263,39 +2214,46 @@ namespace fire.Native
                 sb.AppendLine("    return Undef();");
                 sb.AppendLine("}");
             }
-            // (always: a compiler that keeps unused static functions - TinyCC - still links `timeTicksOf`, which calls it)
-            {
-                // a TimeSpan is any class with a whole number field `ticks` (like the VM looks at the field, not at the class name)
-                sb.AppendLine("bool timeObjTicks(Value v, int64_t* ticks) {");
-                var tick = new StringBuilder();
-                foreach (var cls in _classList)
-                    if (cls.Rc.FieldIndex.TryGetValue("ticks", out int index)) tick.AppendLine($"        case {cls.Id}: if (objFields(o)[{index}].kind == K_Int) {{ *ticks = objFields(o)[{index}].i; return true; }} return false;");
-                if (tick.Length > 0 && _needsTimeObj)
-                {
-                    sb.AppendLine("    Obj* o = asObj(v);");
-                    sb.AppendLine("    switch (o->cls) {");
-                    sb.Append(tick);
-                    sb.AppendLine("        default: return false;");
-                    sb.AppendLine("    }");
-                }
-                else sb.AppendLine("    (void)v; (void)ticks; return false;");
-                sb.AppendLine("}");
-            }
-            sb.AppendLine("bool userToString(Value object, OwnList* list, Value* result) {");
-            var toStrings = new StringBuilder();
+            return sb.ToString();
+        }
+
+        /// <summary>The descriptors of the classes (FireClassDesc in fire_rt.h, one row per class id): what the runtime asks about a class - its name, the
+        /// fields `message` and `ticks`, the destructors of its chain, ToString() and the exception types it is - without a switch over the class ids.</summary>
+        private string ClassDescTable()
+        {
+            var sb = new StringBuilder();
+            var rows = new List<string>();
             foreach (var cls in _classList)
-                if (cls.Rc.FindMethodWithAccess("ToString", 0).Proto is { } m && m.ParamCount == 0)
-                    toStrings.AppendLine($"        case {cls.Id}: {Nested($"*result = {_funcByProto[m].Name}(object);")} adopt(*result, list); return true;");
-            if (toStrings.Length > 0)
             {
-                sb.AppendLine("    switch (asObj(object)->cls) {");
-                sb.Append(toStrings);
-                sb.AppendLine("        default: break;");
-                sb.AppendLine("    }");
+                var chain = new List<string>();
+                for (var rc = cls.Rc; rc != null; rc = rc.Base)
+                    if (rc.Destructor != null) chain.Add($"{_funcByProto[rc.Destructor].Name}(ObjV(o));");
+                string destroy = "NULL";
+                if (chain.Count > 0)
+                {
+                    destroy = $"fire_dtor_{cls.Id}";
+                    sb.AppendLine($"static void {destroy}(Obj* o) {{ {string.Join(" ", chain)} }}");
+                }
+                string toString = cls.Rc.FindMethodWithAccess("ToString", 0).Proto is { ParamCount: 0 } m ? _funcByProto[m].Name : "NULL";
+                int message = _usesExceptions && cls.Rc.FieldIndex.TryGetValue("message", out int mi) ? mi : -1;
+                int ticks = _needsTimeObj && cls.Rc.FieldIndex.TryGetValue("ticks", out int ti) ? ti : -1;
+                string excTypes = "NULL";
+                if (_usesExceptions)
+                {
+                    var types = Enumerable.Range(1, _excTypes.Count - 1).Where(i => ClassIs(cls.Rc, _excTypes[i])).ToList();
+                    if (types.Count > 0)
+                    {
+                        excTypes = $"kExcT{cls.Id}";
+                        sb.AppendLine($"static const int32_t {excTypes}[] = {{{string.Join(", ", types)}, -1}};");
+                    }
+                }
+                rows.Add($"{{{CString(cls.Rc.Name)}, {cls.Fields.Count}, {message}, {ticks}, {destroy}, {toString}, {excTypes}}}");
             }
-            else sb.AppendLine("    (void)object; (void)list; (void)result;");
-            sb.AppendLine("    return false;");
-            sb.AppendLine("}");
+            if (rows.Count > 0)
+            {
+                sb.AppendLine($"static const FireClassDesc kClassDescs[] = {{\n    {string.Join(",\n    ", rows)}\n}};");
+                _initCode.Insert(0, $"    g_classDescs = kClassDescs; g_classDescCount = {rows.Count};\n");
+            }
             return sb.ToString();
         }
 
