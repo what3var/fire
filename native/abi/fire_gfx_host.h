@@ -6,6 +6,10 @@
  *                                                    capacity words are enough; returns width*height (0: no such framebuffer)
  *   fire_gfx_host_attach(id, present, ctx)           the windows that show framebuffer `id` call `present` instead (scene3d DirectDrawing: fire_host.win_attach); 1 attached
  *   fire_gfx_host_detach(id, ctx)                    takes that presenter away again (only the one of `ctx`)
+ *   fire_gfx_host_display(host)                      the host drives the windows of the program (FireDisplayHost, fire_display_headless.h: its events, its pictures and its
+ *                                                    pointer; NULL: windows without a screen) - the editor's live view and design view; before the first window opens.
+ *                                                    A library is loaded once per process: a host that drives one program this way loads a copy of its own
+ *                                                    (GraphicsLibrary.Instance), so that the windows of another program still go to the desktop. 1: done, 0: this library has no such display
  *   fire_gfx_host_reset()                            a program has ended (fire_pkg_reset): its windows close, the managers' threads stop, its framebuffers, renderers,
  *                                                    brushes and pens go - the next program's ids start at 1 again, as in the C# implementation */
 #ifndef FIRE_GFX_HOST_H
@@ -40,6 +44,18 @@ FIRE_PKG_EXPORT void fire_gfx_host_detach(int id, void* ctx) {
     fire_pkgLock();
     fire_gfx_detachPresenter(id, ctx);
     fire_pkgUnlock();
+}
+
+FIRE_PKG_EXPORT int fire_gfx_host_display(const void* host) {   /* (a FireDisplayHost) */
+#ifdef FIRE_DISPLAY_DESKTOP_H
+    fire_pkgLock();
+    fire_display_host((const FireDisplayHost*)host);
+    fire_pkgUnlock();
+    return 1;
+#else
+    (void)host;
+    return 0;
+#endif
 }
 
 /* (called with the lock held: fire_pkg_reset) */

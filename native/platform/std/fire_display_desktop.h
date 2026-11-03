@@ -67,6 +67,7 @@ enum { FIRE_DD_NONE = 0, FIRE_DD_HEADLESS = 1, FIRE_DD_KIND_X11 = 2, FIRE_DD_KIN
 /* Which display this program talks to (decided once). */
 static int fire_display_kind(void) {
     static volatile int kind = -1;
+    if (g_fireDisplayHosted) return FIRE_DD_HEADLESS;   /* (a host drives the windows: fire_display_host) */
     if (kind < 0) {
         const char* want = getenv("FIRE_DISPLAY");
         const char* sdl = getenv("SDL_VIDEODRIVER");

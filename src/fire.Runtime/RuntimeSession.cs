@@ -92,8 +92,7 @@ namespace fire.Runtime
             if (linkedProgram.GraphicsNatives is { } graphicsNatives)
             {
                 // graphics and windows in C: their library is in the payload (docs/UI_PLATFORM.md, part 2)
-                string file = (OperatingSystem.IsWindows() ? "" : "lib") + "fire_gfx" + (OperatingSystem.IsWindows() ? ".dll" : OperatingSystem.IsMacOS() ? ".dylib" : ".so");
-                PackageNativeBinding.Register(natives, graphicsNatives, graphicsNatives.Select(_ => file).ToList(), null);
+                PackageNativeBinding.Register(natives, graphicsNatives, graphicsNatives.Select(_ => GraphicsLibraryFile).ToList(), null);
                 PackageHost.GraphicsInC = true;
             }
             else if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
@@ -111,7 +110,11 @@ namespace fire.Runtime
             // hosts with their own policy (editor) build their session via fire.Compiler.RuntimeSession.
             // what the natives of packages (the io package) ask of the host: the real console, everything allowed - the packed runtime has no other host
             if (linkedProgram.PackageNatives is { Count: > 0 } || linkedProgram.GraphicsNatives != null)
-                session.IoResources = PackageHost.Begin(null, null, linkedProgram.NativeImports.Contains("pkg:devices"));
+            {
+                var libraries = (linkedProgram.PackageNativeLibraries ?? new List<string>()).Concat(linkedProgram.GraphicsNatives != null ? new[] { GraphicsLibraryFile } : Array.Empty<string>())
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                session.IoResources = PackageHost.Begin(null, null, linkedProgram.NativeImports.Contains("pkg:devices"), libraries: libraries);
+            }
 
             // the natives of imports of packages (C++ in shared libraries, the libraries of a packed program come from its payload): same names, same order
             PackageNativeBinding.Register(natives, linkedProgram.PackageNatives, linkedProgram.PackageNativeLibraries, null);
@@ -127,6 +130,8 @@ namespace fire.Runtime
 
             return session;
         }
+
+        private static string GraphicsLibraryFile => (OperatingSystem.IsWindows() ? "" : "lib") + "fire_gfx" + (OperatingSystem.IsWindows() ? ".dll" : OperatingSystem.IsMacOS() ? ".dylib" : ".so");
 
         // Each of these methods is the ONLY place that mentions its bridge types (see class documentation).
 

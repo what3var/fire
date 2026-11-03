@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using fire.Bytecode;
 using fire.Package.Manager;
 using fire.Runtime;
@@ -62,29 +63,33 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Registers the natives of graphics (and, with <paramref name="withWindows"/>, of windows) bound to the C library, in the order of the stubs.</summary>
-        public static void Register(NativeRegistry natives, bool withWindows, Action<string>? log = null)
+        /// <summary>Registers the natives of graphics (and, with <paramref name="withWindows"/>, of windows) bound to the C library, in the order of the stubs - to the
+        /// library of the process, or to a copy of it (<paramref name="instance"/>: a program whose windows a host drives). Returns the file name the natives are bound to.</summary>
+        public static string Register(NativeRegistry natives, bool withWindows, Action<string>? log = null, Instance? instance = null)
         {
             SyncEnvironment();
             var stubs = new NativeRegistry();
             fire.Terminal.Bridge.GraphicsBridge.RegisterStubs(stubs);
             if (withWindows) fire.Windows.Bridge.WindowsBridge.RegisterStubs(stubs);
             var names = stubs.Names.OrderBy(stubs.IndexOf).ToList();
-            string file = PackageLibrary.GraphicsFileName;
-            string? path = Locate(log);
-            PackageHost.GraphicsInC = true;   /* (scene3d's presenter goes to this library) */
+            string file = instance?.File ?? PackageLibrary.GraphicsFileName;
+            string? path = instance?.Path ?? Locate(log);
+            if (instance == null) PackageHost.GraphicsInC = true;   /* (scene3d's presenter goes to this library) */
             PackageNativeBinding.Register(natives, names, names.Select(_ => file).ToList(),
                 f => f == file ? path ?? throw new DllNotFoundException(_failure ?? "the library of graphics and windows is not there") : null);
+            return file;
         }
 
         [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
         private delegate int PixelsFn(int id, uint[]? output, int capacity, out int width, out int height);
 
-        /// <summary>The pixels of a framebuffer of the program (R,G,B,A per word), or null when there is no such framebuffer.</summary>
-        public static uint[]? Pixels(int framebuffer, out int width, out int height)
+        /// <summary>The pixels of a framebuffer of the program (R,G,B,A per word), or null when there is no such framebuffer (<paramref name="instance"/>: of the program that
+        /// runs on that copy of the library).</summary>
+        public static uint[]? Pixels(int framebuffer, out int width, out int height, Instance? instance = null)
         {
             width = height = 0;
-            var fn = PackageNativeBinding.Export(PackageLibrary.GraphicsFileName, f => Locate(), "fire_gfx_host_pixels");
+            var fn = instance != null ? PackageNativeBinding.Export(instance.File, f => instance.Path, "fire_gfx_host_pixels")
+                                      : PackageNativeBinding.Export(PackageLibrary.GraphicsFileName, f => Locate(), "fire_gfx_host_pixels");
             if (fn == IntPtr.Zero) return null;
             var pixels = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<PixelsFn>(fn);
             int n = pixels(framebuffer, null, 0, out width, out height);
@@ -93,5 +98,189 @@ namespace fire.Compiler
             pixels(framebuffer, result, n, out width, out height);
             return result;
         }
+
+        // ---- programs whose windows a host drives: the editor's live view (LiveSession) and design view (UiPreview) ----
+
+        /// <summary>
+        /// A copy of the library for one program at a time whose windows the host drives (<see cref="IHostDisplay"/>): the library has one state per process - its framebuffers,
+        /// its windows, the display it talks to - so a program in the editor's live view gets a copy of its own (loaded under another name), and a program next to it still
+        /// shows its windows on the desktop. The copies are kept for the next program (a pool: <see cref="Acquire"/>, <see cref="Dispose"/>); its end resets the copy.
+        /// </summary>
+        public sealed class Instance : IDisposable
+        {
+            [StructLayout(LayoutKind.Sequential)]
+            private struct HostBlock { public int Size; public IntPtr Ctx, NextEvent, Present, Cursor; }
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int NextEventFn(IntPtr ctx, int window, IntPtr output);
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void PresentFn(IntPtr ctx, int window, IntPtr rgba, int width, int height, int vsync);
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void CursorFn(IntPtr ctx, int window, int cursor);
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int DisplayFn(IntPtr host);
+
+            private static readonly List<Instance> Pool = new();
+            private static bool _swept;
+
+            /// <summary>The name the natives are bound to (PackageNativeBinding) and the file of the copy.</summary>
+            public string File { get; }
+            public string Path { get; }
+            private readonly DateTime _stamp;
+            private bool _busy;
+            private volatile IHostDisplay? _display;
+            private readonly NextEventFn _next;
+            private readonly PresentFn _present;
+            private readonly CursorFn _cursor;
+            private readonly IntPtr _block, _hostless;
+            private int[] _scratch = Array.Empty<int>();
+
+            private Instance(string file, string path, DateTime stamp)
+            {
+                File = file; Path = path; _stamp = stamp;
+                _next = NextEvent; _present = Present; _cursor = Cursor;
+                _block = Marshal.AllocHGlobal(Marshal.SizeOf<HostBlock>());
+                Marshal.StructureToPtr(new HostBlock
+                {
+                    Size = Marshal.SizeOf<HostBlock>(),
+                    NextEvent = Marshal.GetFunctionPointerForDelegate(_next),
+                    Present = Marshal.GetFunctionPointerForDelegate(_present),
+                    Cursor = Marshal.GetFunctionPointerForDelegate(_cursor),
+                }, _block, false);
+                _hostless = Marshal.AllocHGlobal(Marshal.SizeOf<HostBlock>());
+                Marshal.StructureToPtr(new HostBlock { Size = Marshal.SizeOf<HostBlock>() }, _hostless, false);
+            }
+
+            /// <summary>A copy for one program (null: the library cannot be had - see <see cref="Failure"/>; the caller takes the C# implementation then).</summary>
+            public static Instance? Acquire(Action<string>? log = null)
+            {
+                string? source = Locate(log);
+                if (source == null) return null;
+                DateTime stamp = System.IO.File.GetLastWriteTimeUtc(source);
+                lock (Pool)
+                {
+                    if (Pool.FirstOrDefault(i => !i._busy && i._stamp == stamp) is { } free) { free._busy = true; return free; }
+                    try
+                    {
+                        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fire-gfx-" + Environment.ProcessId);
+                        if (!_swept) { _swept = true; SweepCopies(); }
+                        Directory.CreateDirectory(dir);
+                        string file = (Pool.Count + 1) + "-" + PackageLibrary.GraphicsFileName;
+                        string path = System.IO.Path.Combine(dir, file);
+                        System.IO.File.Copy(source, path, overwrite: true);
+                        var made = new Instance(file, path, stamp) { _busy = true };
+                        Pool.Add(made);
+                        return made;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        _failure = "the library of graphics and windows could not be copied for the editor (" + ex.Message + ")";
+                        return null;
+                    }
+                }
+            }
+
+            /// <summary>The copies of processes that have ended (they could not delete them while their copies were loaded).</summary>
+            private static void SweepCopies()
+            {
+                try
+                {
+                    foreach (string dir in Directory.GetDirectories(System.IO.Path.GetTempPath(), "fire-gfx-*"))
+                    {
+                        if (!int.TryParse(System.IO.Path.GetFileName(dir).AsSpan("fire-gfx-".Length), out int pid) || pid == Environment.ProcessId) continue;
+                        bool running;
+                        try { using var p = System.Diagnostics.Process.GetProcessById(pid); running = !p.HasExited; }
+                        catch (ArgumentException) { running = false; }
+                        catch (InvalidOperationException) { running = false; }
+                        if (!running) try { Directory.Delete(dir, recursive: true); } catch (Exception) { }
+                    }
+                }
+                catch (Exception) { }
+            }
+
+            /// <summary>The host drives the program's windows from now on (<paramref name="display"/> null: windows without a screen - no events, the pictures stay in the
+            /// framebuffers). Before the program opens one.</summary>
+            public void Attach(IHostDisplay? display)
+            {
+                _display = display;
+                var fn = PackageNativeBinding.Export(File, f => Path, "fire_gfx_host_display");
+                if (fn == IntPtr.Zero) throw new InvalidOperationException("The library of graphics and windows has no display for a host (fire_gfx_host_display).");
+                Marshal.GetDelegateForFunctionPointer<DisplayFn>(fn)(display != null ? _block : _hostless);
+            }
+
+            /// <summary>The program has ended (its session reset the copy): the copy is free for the next one.</summary>
+            public void Dispose()
+            {
+                _display = null;
+                lock (Pool) _busy = false;
+            }
+
+            private int NextEvent(IntPtr ctx, int window, IntPtr output)
+            {
+                try
+                {
+                    if (_display is not { } d || !d.NextEvent(window, out var e)) return 0;
+                    int[] ints = { e.Type, e.Button, e.Buttons, e.KeyCode, e.Modifiers, e.Width, e.Height };
+                    Marshal.Copy(ints, 0, output, ints.Length);
+                    float[] floats = { e.X, e.Y, e.Dx, e.Dy };
+                    Marshal.Copy(floats, 0, output + 28, floats.Length);
+                    byte[] text = new byte[32];
+                    if (e.Text is { Length: > 0 } t)
+                    {
+                        // (UTF-8, at most 31 bytes, cut at a character: longer text comes as several events - LiveSession splits it)
+                        int n = 0;
+                        foreach (var rune in t.EnumerateRunes())
+                        {
+                            int len = rune.Utf8SequenceLength;
+                            if (n + len > 31) break;
+                            rune.EncodeToUtf8(text.AsSpan(n));
+                            n += len;
+                        }
+                    }
+                    Marshal.Copy(text, 0, output + 44, 32);
+                    return 1;
+                }
+                catch (Exception) { return 0; }
+            }
+
+            private void Present(IntPtr ctx, int window, IntPtr rgba, int width, int height, int vsync)
+            {
+                try
+                {
+                    if (_display is not { } d || rgba == IntPtr.Zero || width <= 0 || height <= 0) return;
+                    int n = width * height;
+                    if (_scratch.Length < n) _scratch = new int[n];
+                    Marshal.Copy(rgba, _scratch, 0, n);
+                    d.Present(window, MemoryMarshal.Cast<int, uint>(_scratch.AsSpan(0, n)), width, height, vsync != 0);
+                }
+                catch (Exception) { }
+            }
+
+            private void Cursor(IntPtr ctx, int window, int cursor)
+            {
+                try { _display?.Cursor(window, cursor); } catch (Exception) { }
+            }
+        }
+    }
+
+    /// <summary>The host drives the windows of the program (RuntimeSession.Build): <see cref="Display"/> gets their pictures and gives their events; null: windows
+    /// without a screen (the design view: the pictures stay in the framebuffers).</summary>
+    public sealed record HostWindows(IHostDisplay? Display);
+
+    /// <summary>One event a host hands to a program's window (<see cref="IHostDisplay.NextEvent"/>): <see cref="Type"/> as EventType (mouse, keys, text, resize, close);
+    /// positions in pixels of the window. MouseDown/Up: Button, X, Y; MouseMove: X, Y (the buttons the window keeps itself); MouseScroll: Dx, Dy (notches, Dy &gt; 0: up), X, Y;
+    /// KeyDown/Up: KeyCode, Modifiers (SDL's numbers, see UI.Keys); TextInput: Text; Resize: Width, Height; Close.</summary>
+    public struct HostDisplayEvent
+    {
+        public int Type, Button, Buttons, KeyCode, Modifiers, Width, Height;
+        public float X, Y, Dx, Dy;
+        public string? Text;
+    }
+
+    /// <summary>A host that drives the windows of a program running on the C library (<see cref="GraphicsLibrary.Instance"/>): the editor's live view. Called on the thread of
+    /// the window (the windows' manager), not the host's.</summary>
+    public interface IHostDisplay
+    {
+        /// <summary>The next event for window <paramref name="window"/> (1, 2, ...: in the order the program opened them); false: none now.</summary>
+        bool NextEvent(int window, out HostDisplayEvent e);
+        /// <summary>A picture of the window (R,G,B,A per word, row by row; only valid during the call). With <paramref name="vsync"/>, the host waits like the vertical blank.</summary>
+        void Present(int window, ReadOnlySpan<uint> rgba, int width, int height, bool vsync);
+        /// <summary>The mouse pointer the program wants over the window (SDL numbering, see UI.Cursor).</summary>
+        void Cursor(int window, int cursor);
     }
 }

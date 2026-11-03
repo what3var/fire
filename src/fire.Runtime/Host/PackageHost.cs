@@ -90,8 +90,23 @@ namespace fire.Runtime
             }
         }
 
-        // ---- lambdas that cross to a library (FIRE_LAMBDA): a handle each, with the VM that gave it; they stay until the program ends (Begin of the next session) ----
-        private static readonly List<(LambdaValue Lambda, VM? Owner)> Lambdas = new();
+        /// <summary>The `fire_host` of a library with services of its own (`fire_pkg_service`: the windows' managers of the graphics library): the same functions, but its
+        /// request_service goes to <paramref name="requestService"/> - the VM of the program that uses THIS library (an editor runs several programs, each with a copy of the
+        /// library). `keepAlive` must live as long as the library.</summary>
+        internal static IntPtr BlockWithService(Action requestService, out object keepAlive)
+        {
+            var host = Marshal.PtrToStructure<FireHost>(Block);
+            RequestServiceFn fn = () => requestService();
+            host.RequestService = Marshal.GetFunctionPointerForDelegate(fn);
+            var block = Marshal.AllocHGlobal(Marshal.SizeOf<FireHost>());
+            Marshal.StructureToPtr(host, block, false);
+            keepAlive = fn;
+            return block;
+        }
+
+        // ---- lambdas that cross to a library (FIRE_LAMBDA): a handle each, with the VM that gave it; they stay until their program has ended (Begin of a later session) ----
+        private static readonly Dictionary<long, (LambdaValue Lambda, VM? Owner)> Lambdas = new();
+        private static long _lastLambda;
         private static VM? _mainVm;
 
         /// <summary>A call from a VM into a library: the main program's VM (not a fire thread's) is the one the library's services and lambdas from other threads go to.</summary>
@@ -107,8 +122,8 @@ namespace fire.Runtime
             var vm = VM.CurrentThreadVm;
             lock (Lambdas)
             {
-                Lambdas.Add((lambda, vm != null && !vm.IsFireThreadVm ? vm : _mainVm ?? vm));
-                return Lambdas.Count;   // (1, 2, ...: 0 is no lambda)
+                Lambdas[++_lastLambda] = (lambda, vm != null && !vm.IsFireThreadVm ? vm : _mainVm ?? vm);
+                return _lastLambda;   // (1, 2, ...: 0 is no lambda)
             }
         }
 
@@ -119,8 +134,7 @@ namespace fire.Runtime
             (LambdaValue Lambda, VM? Owner) entry;
             lock (Lambdas)
             {
-                if (handle < 1 || handle > Lambdas.Count) return 1;
-                entry = Lambdas[(int)handle - 1];
+                if (!Lambdas.TryGetValue(handle, out entry)) return 1;
             }
             var values = new Value[argc];
             for (int i = 0; i < argc; i++) values[i] = PackageNativeBinding.FromNative(args + i * PackageNativeBinding.ValSize);
@@ -148,7 +162,9 @@ namespace fire.Runtime
         }
 
         /// <summary>A session starts: the policy and the console of the host for the natives of packages (null: everything is allowed, the real console). Dispose at its end.</summary>
-        public static IDisposable Begin(IoPolicy? policy, IoStdio? stdio, bool usesDevices = false, object? deviceManager = null, NetPolicy? netPolicy = null)
+        /// <param name="libraries">The files of the libraries the program uses (as registered with PackageNativeBinding): only these are reset at its end - another program
+        /// may still use the others (the editor's live view). null: all of them.</param>
+        public static IDisposable Begin(IoPolicy? policy, IoStdio? stdio, bool usesDevices = false, object? deviceManager = null, NetPolicy? netPolicy = null, IReadOnlyCollection<string>? libraries = null)
         {
             IoPolicy previousPolicy;
             IoStdio previousStdio;
@@ -163,10 +179,15 @@ namespace fire.Runtime
                 _stdio = stdio ?? IoStdio.SystemConsole;
                 Array.Clear(StdStreams);
             }
-            lock (Lambdas) { Lambdas.Clear(); _mainVm = null; }
+            // (the lambdas of programs that have ended go; those of a program that still runs - the editor's live view next to a program - stay)
+            lock (Lambdas)
+            {
+                foreach (var gone in Lambdas.Where(e => e.Value.Owner == null || e.Value.Owner.IsHalted).Select(e => e.Key).ToList()) Lambdas.Remove(gone);
+                if (_mainVm?.IsHalted == true) _mainVm = null;
+            }
             // the devices of the host are only touched (and their assembly loaded) by a program that imports the devices package
             object? previousDevices = usesDevices ? DeviceHost.Begin(deviceManager, Block) : null;
-            return new Scope(previousPolicy, previousStdio, previousDevices, previousNetPolicy);
+            return new Scope(previousPolicy, previousStdio, previousDevices, previousNetPolicy, libraries);
         }
 
         private sealed class Scope : IDisposable
@@ -175,15 +196,17 @@ namespace fire.Runtime
             private readonly IoStdio _previousStdio;
             private readonly object? _previousDevices;
             private readonly NetPolicy _previousNetPolicy;
+            private readonly IReadOnlyCollection<string>? _libraries;
             private bool _done;
 
-            public Scope(IoPolicy policy, IoStdio stdio, object? previousDevices, NetPolicy netPolicy) { _previousPolicy = policy; _previousStdio = stdio; _previousDevices = previousDevices; _previousNetPolicy = netPolicy; }
+            public Scope(IoPolicy policy, IoStdio stdio, object? previousDevices, NetPolicy netPolicy, IReadOnlyCollection<string>? libraries)
+            { _previousPolicy = policy; _previousStdio = stdio; _previousDevices = previousDevices; _previousNetPolicy = netPolicy; _libraries = libraries; }
 
             public void Dispose()
             {
                 if (_done) return;
                 _done = true;
-                PackageNativeBinding.ResetLibraries();   // what the program left open is closed
+                PackageNativeBinding.ResetLibraries(_libraries);   // what the program left open is closed
                 if (_previousDevices != null) DeviceHost.End(_previousDevices);
                 lock (Lock)
                 {

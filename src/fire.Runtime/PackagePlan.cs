@@ -30,10 +30,10 @@ namespace fire.Runtime
             [NativeImports.Print] = new(Array.Empty<string>(), Array.Empty<string>()),
             [NativeImports.Graphics] = new(
                 new[] { "fire.Terminal.Bridge" }, Array.Empty<string>()),
-            // the SDL window: own assembly together with SDL (`graphics` alone gets by without)
+            // the windows of the C# implementation (a program packed where the C library could not be built: they have no display - graphics and windows in C
+            // usually travel instead, see graphicsInC)
             [NativeImports.Windows] = new(
-                new[] { "fire.Windows.Bridge", "fire.Terminal.Windows", "fire.Terminal.Sdl" },
-                new[] { "SDL3.dll", "libSDL3.so.0", "libSDL3.dylib" }),
+                new[] { "fire.Windows.Bridge", "fire.Terminal.Windows" }, Array.Empty<string>()),
             // `devices` is a package (C++ in a library) that works with the device manager of the host: the manager and its serial driver come along
             [NativeImports.Devices] = new(
                 new[] { "fire.Device.Manager" },
@@ -57,7 +57,7 @@ namespace fire.Runtime
 
         public static PackagePlan Create(IEnumerable<string> nativeImports, string baseDir, IEnumerable<string>? extraNativeFiles = null, bool graphicsInC = false)
         {
-            // graphics and windows in C: their library travels in extraNativeFiles; neither the C# bridges nor SDL come along
+            // graphics and windows in C: their library travels in extraNativeFiles; the C# bridges do not come along
             if (graphicsInC) nativeImports = nativeImports.Where(i => i != NativeImports.Graphics && i != NativeImports.Windows).ToList();
             var plan = new PackagePlan();
             var searchDirs = SearchDirectories(baseDir);

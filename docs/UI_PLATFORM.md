@@ -155,7 +155,7 @@ Offen in Teil 1:
 * Wayland: Drag-out (`fire_dragout.h`) hört auf einer Verbindung - mit mehreren Fenstern auf verschiedenen Threads nur für das erste.
 * Win32: während der Nutzer das Fenster zieht oder seine Größe ändert (modale Schleife von Windows), zeichnet das Programm nicht nach.
 * Mit dem Emscripten 3.1.6 von Ubuntu laufen die wasm-Prüfungen der Suite nicht (schon ein Programm ohne Fenster startet nicht) - mit einem aktuellen emsdk prüfen.
-* Die VM benutzt noch SDL3-CS (Teil 2).
+* Die VM benutzte noch SDL3-CS - in Teil 2 entfernt.
 
 ## Stand Teil 2
 
@@ -171,10 +171,21 @@ Die VM benutzt für `graphics` und `windows` die C-Implementierung (Standard; `F
 * **Gepackte Programme** (`forge build`) tragen die Bibliothek in ihrer Payload; SDL3 und die C#-Grafik kommen nicht mehr mit (ein Fensterprogramm: ~0,8 MB).
 * Was der Host an Umgebungsvariablen für das Programm setzt (`FIRE_*`, `DISPLAY`, ...), bekommt auch die C-Laufzeit des Prozesses.
 
-Noch offen (Stufe 4):
+* **Editor-Werkzeuge auf der C-Schicht:** der UI-Designer (`UiPreview`) und der Circuit-Editor (`LiveSession`) lassen ihre Programme auf einer **Kopie** der
+  Bibliothek laufen (`GraphicsLibrary.Instance`, ein Pool: eine geladene Bibliothek hat einen Zustand je Prozess - ihre Framebuffer, Fenster, die Anzeige -, so
+  bleibt ein Programm daneben auf dem Desktop). Die Kopie bekommt eine **Anzeige, die der Host steuert** (`fire_gfx_host_display`, `FireDisplayHost` in
+  `fire_display_headless.h`): die Ereignisse holt das Fenster beim Pumpen vom Host, Bilder und Mauszeiger gehen an den Host (`IHostDisplay`); ohne Host ein
+  Fenster ohne Bildschirm (der Designer liest das Bild aus dem Framebuffer).
+* **Je Programm statt je Prozess:** der `fire_host` einer Bibliothek mit eigenen Diensten schickt `request_service` an die VM des Programms, das *diese*
+  Bibliothek benutzt; am Programmende werden nur die Bibliotheken des Programms zurückgesetzt (`PackageHost.Begin(..., libraries)`), Lambdas laufender Programme
+  bleiben gültig.
+* **SDL3-CS ist entfernt** (`fire.Terminal.Sdl`, `SdlFramebufferRenderer`, `SdlClipboard`): die Fenster des Desktops zeigt in der VM nur noch die C-Bibliothek. Die
+  C#-Implementierung (`fire.Terminal`, `fire.Terminal.Windows`) bleibt als Rückfall, wo die Bibliothek nicht gebaut werden kann (kein C-Compiler) oder
+  `FIRE_VM_GRAPHICS=cs` sie wählt: Grafik geht, Fenster nur mit einem Renderer des Hosts (die Tests, der Editor über `HostRenderer`); sonst meldet das Fenster,
+  dass es keine Anzeige gibt.
 
-* Der UI-Designer (`UiPreview`) und der Circuit-Editor (`LiveSession`) zeichnen ihre Programme noch mit der C#-Implementierung (sie rendern die Fenster selbst);
-  dafür braucht die Bibliothek eine Anzeige, die der Host steuert, und je Sitzung eine eigene Instanz (eine geladene Bibliothek = ein Programm zur Zeit -
-  zwei Programme gleichzeitig im Editor teilen sich sonst Fenster und Framebuffer).
-* Die Tests mit gefälschten Renderern (`FakeRenderer` u. a.) und die Unit-Tests der C#-Grafik laufen weiter gegen C#.
-* Danach: `fire.Terminal.Sdl` (SDL3-CS) und der C#-Zwilling für Programme entfernen.
+Noch offen:
+
+* Die Tests mit gefälschten Renderern (`FakeRenderer`, `ScriptedWindow` u. a.) und die Unit-Tests der C#-Grafik prüfen weiter die C#-Implementierung.
+* Der C#-Zwilling der Grafik für Programme fällt weg, sobald die Bibliothek vorgebaut mitgeliefert wird (dann braucht die VM keinen C-Compiler mehr dafür).
+* Holds am Programmende sind prozessweit (`FireRuntime.AddHostHold`): ein Fenster der Live-Ansicht hält auch ein Programm daneben am Ende auf (wie bisher in C#).

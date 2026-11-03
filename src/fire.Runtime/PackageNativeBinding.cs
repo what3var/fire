@@ -33,6 +33,8 @@ namespace fire.Runtime
             public CallFn Call = null!;
             public Action? Reset;
             public Action? Service;
+            public VM? MainVm;             // the main program's VM that calls it (its services run there)
+            public object? HostKeepAlive;
             public Dictionary<string, (int Index, int Arity)> Functions = new();
             public IntPtr Handle;
             public string? Failure;
@@ -94,10 +96,10 @@ namespace fire.Runtime
         }
 
         /// <summary>A program has ended: every loaded library forgets what the program left behind (`fire_pkg_reset`: open streams, ...).</summary>
-        internal static void ResetLibraries()
+        internal static void ResetLibraries(IReadOnlyCollection<string>? files = null)
         {
             Library[] loaded;
-            lock (Lock) loaded = Libraries.Values.ToArray();
+            lock (Lock) loaded = files == null ? Libraries.Values.ToArray() : Libraries.Where(l => files.Contains(l.Key, StringComparer.OrdinalIgnoreCase)).Select(l => l.Value).ToArray();
             foreach (var lib in loaded)
                 try { lib.Reset?.Invoke(); } catch (Exception) { /* a library that cannot reset is not the end of the host */ }
         }
@@ -121,13 +123,23 @@ namespace fire.Runtime
                     var nameOf = Marshal.GetDelegateForFunctionPointer<NameFn>(NativeLibrary.GetExport(handle, "fire_pkg_function_name"));
                     var arityOf = Marshal.GetDelegateForFunctionPointer<ArityFn>(NativeLibrary.GetExport(handle, "fire_pkg_function_arity"));
                     // optional exports: the host of the VM tells the library what it decides (policy, console), and a program's end resets it
-                    if (NativeLibrary.TryGetExport(handle, "fire_pkg_set_host", out var setHost))
-                        Marshal.GetDelegateForFunctionPointer<SetHostFn>(setHost)(PackageHost.Block);
-                    if (NativeLibrary.TryGetExport(handle, "fire_pkg_reset", out var reset))
-                        lib.Reset = Marshal.GetDelegateForFunctionPointer<VoidFn>(reset).Invoke;
-                    // what the library asks the VM for at a safe point (fire_host.request_service: a thread of its own, the windows' managers)
+                    // what the library asks the VM for at a safe point (fire_host.request_service: a thread of its own, the windows' managers) - on the VM of the program
+                    // that uses this library
                     if (NativeLibrary.TryGetExport(handle, "fire_pkg_service", out var service))
                         lib.Service = Marshal.GetDelegateForFunctionPointer<VoidFn>(service).Invoke;
+                    if (NativeLibrary.TryGetExport(handle, "fire_pkg_set_host", out var setHost))
+                    {
+                        IntPtr block = PackageHost.Block;
+                        if (lib.Service != null)
+                            block = PackageHost.BlockWithService(() =>
+                            {
+                                var vm = lib.MainVm;
+                                if (vm == null || !vm.PostHostAction(lib.Service)) { }
+                            }, out lib.HostKeepAlive);
+                        Marshal.GetDelegateForFunctionPointer<SetHostFn>(setHost)(block);
+                    }
+                    if (NativeLibrary.TryGetExport(handle, "fire_pkg_reset", out var reset))
+                        lib.Reset = Marshal.GetDelegateForFunctionPointer<VoidFn>(reset).Invoke;
                     lib.Handle = handle;
                     for (int i = 0, n = count(); i < n; i++)
                         if (Marshal.PtrToStringAnsi(nameOf(i)) is { } fn) lib.Functions[fn] = (i, arityOf(i));
@@ -144,6 +156,7 @@ namespace fire.Runtime
         {
             var lib = Load(file, locate);
             PackageHost.NoteCaller();
+            if (VM.CurrentThreadVm is { IsFireThreadVm: false } caller) lib.MainVm = caller;
             if (lib.Failure != null)
                 throw new InvalidOperationException($"The native function '{name}' of a package cannot run in the virtual machine: its library '{file}' could not be loaded ({lib.Failure}). " +
                     "The compiler builds it from the C++ source of the package with a C++ compiler (g++, clang++ or cl): install one, or use a native build.");

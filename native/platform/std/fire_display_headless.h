@@ -1,15 +1,46 @@
 /* fire native platform package "std": a display without a screen (fire_dhl_*, one of the displays of fire_display_desktop.h: FIRE_DISPLAY=headless) - for tests, servers
  * and as the simplest complete display (the starting point of a board display).
  * A window is only a size: what is shown stays in memory (fire_dhl_headlessFrame), events come from the tests (FIRE_DISPLAY_SELFTEST*, fire_display_common.h) or from
- * whoever drives the window (fire_dhl_headlessPush). The clipboard is the program's own; nothing can be dragged out. */
+ * whoever drives the window (fire_dhl_headlessPush). The clipboard is the program's own; nothing can be dragged out.
+ *
+ * A HOST can drive it (fire_display_host): the editor's live view of a program and its design view (the library of the VM, native/abi/fire_gfx_host.h). Then every window
+ * of the program is one of this display, whatever FIRE_DISPLAY says; its events come from the host (next_event, asked when the program pumps), its pictures and its mouse
+ * pointer go to the host (present, cursor; each may be NULL). */
 #ifndef FIRE_DISPLAY_HEADLESS_H
 #define FIRE_DISPLAY_HEADLESS_H
 
 #include "fire_display_common.h"
 
 
+/* An event from the host: `type` as FIRE_EV_* (mouse and keys, text, resize, close), positions in pixels of the window. MOUSE_DOWN/UP: button, x, y; MOUSE_MOVE: x, y;
+ * MOUSE_SCROLL: dx, dy (notches, y > 0: up), x, y; KEY_DOWN/UP: keyCode, modifiers (fire_display_keys.h); TEXT_INPUT: text (UTF-8); RESIZE: width, height; CLOSE. */
+typedef struct FireDisplayHostEvent {
+    int32_t type, button, buttons, keyCode, modifiers, width, height;
+    float x, y, dx, dy;
+    char text[32];
+} FireDisplayHostEvent;
+typedef struct FireDisplayHost {
+    int32_t size;                                                                                         /* sizeof(FireDisplayHost) */
+    void* ctx;
+    int32_t (*next_event)(void* ctx, int32_t window, FireDisplayHostEvent* out);                        /* 1: `out` is the next event of window `window`; 0: none */
+    void (*present)(void* ctx, int32_t window, const uint32_t* rgba, int32_t width, int32_t height, int32_t vsync);   /* a picture (on the window's thread) */
+    void (*cursor)(void* ctx, int32_t window, int32_t cursor);                                          /* the mouse pointer (FIRE_CURSOR_*) */
+} FireDisplayHost;
+static FireDisplayHost g_fireDisplayHost;
+static volatile int g_fireDisplayHosted;
+static int g_fireDhlSerial;
+
+/* The host takes the display over (before the program opens a window; `host` NULL: a display without a screen, no events, nothing goes anywhere). */
+static void fire_display_host(const FireDisplayHost* host) {
+    memset(&g_fireDisplayHost, 0, sizeof g_fireDisplayHost);
+    if (host != NULL) memcpy(&g_fireDisplayHost, host, (size_t)host->size < sizeof g_fireDisplayHost ? (size_t)host->size : sizeof g_fireDisplayHost);
+    g_fireDisplayHosted = 1;
+    g_fireDhlSerial = 0;   /* (the windows of the next program count from 1) */
+}
+
 typedef struct FireDhlWindow {
     int open, vsync, touchMouse, cursor;
+    int id;                       /* 1, 2, ...: the windows in the order they opened (what the host is told) */
     int winW, winH;
     FireDisplayQueue queue;
     uint32_t* frame;              /* the pixels shown last (R,G,B,A per 32-bit word) */
@@ -32,6 +63,7 @@ static int fire_dhl_open(FireDhlWindow* w, const char* title, int width, int hei
     if (width <= 0 || height <= 0) return 0;
     fire_display_queueInit(&w->queue);
     w->open = 1; w->vsync = vsync; w->winW = width; w->winH = height;
+    w->id = ++g_fireDhlSerial;
 #ifdef FIRE_DISPLAY_HAS_SELFTEST
     fire_display_selftest(&w->queue, width, height);
 #endif
@@ -49,7 +81,11 @@ static void fire_dhl_setVSync(FireDhlWindow* w, int v) { w->vsync = v; }
 static int fire_dhl_vsync(const FireDhlWindow* w) { return w->vsync; }
 /* (the program asks for the size: no resize event comes back, as on the desktop) */
 static void fire_dhl_setSize(FireDhlWindow* w, int width, int height) { if (width > 0 && height > 0) { w->winW = width; w->winH = height; } }
-static void fire_dhl_setCursor(FireDhlWindow* w, int c) { if (c >= 0 && c < FIRE_CURSOR_COUNT) w->cursor = c; }
+static void fire_dhl_setCursor(FireDhlWindow* w, int c) {
+    if (c < 0 || c >= FIRE_CURSOR_COUNT || c == w->cursor) return;
+    w->cursor = c;
+    if (g_fireDisplayHosted && g_fireDisplayHost.cursor != NULL) g_fireDisplayHost.cursor(g_fireDisplayHost.ctx, w->id, c);
+}
 static void fire_dhl_setTouchMouse(FireDhlWindow* w, int v) { w->touchMouse = v; }
 static int fire_dhl_touchMouse(const FireDhlWindow* w) { return w->touchMouse; }
 
@@ -68,8 +104,30 @@ static void fire_dhl_headlessPush(FireDhlWindow* w, const FireDisplayEvent* e) {
     fire_display_queuePush(&w->queue, &copy);
 }
 
+/* What the host has for the window. */
+static void fire_dhl_hostEvents(FireDhlWindow* w) {
+    FireDisplayHostEvent h;
+    int n;
+    for (n = 0; n < 4096; n++) {
+        memset(&h, 0, sizeof h);
+        if (!g_fireDisplayHost.next_event(g_fireDisplayHost.ctx, w->id, &h)) break;
+        switch (h.type) {
+            case FIRE_EV_MOUSE_DOWN: case FIRE_EV_MOUSE_UP: fire_display_queueButton(&w->queue, h.type == FIRE_EV_MOUSE_DOWN, h.button, h.x, h.y); break;
+            case FIRE_EV_MOUSE_MOVE: fire_display_queueMotion(&w->queue, h.x, h.y); break;
+            case FIRE_EV_MOUSE_SCROLL: fire_display_queueScroll(&w->queue, h.dx, h.dy, h.x, h.y); break;
+            case FIRE_EV_KEY_DOWN: case FIRE_EV_KEY_UP: fire_display_queueKey(&w->queue, h.type == FIRE_EV_KEY_DOWN, h.keyCode, 0, h.modifiers, 0); break;
+            case FIRE_EV_TEXT_INPUT: h.text[sizeof h.text - 1] = 0; fire_display_queueText(&w->queue, h.text, strlen(h.text)); break;
+            case FIRE_EV_RESIZE: if (h.width > 0 && h.height > 0) { w->winW = h.width; w->winH = h.height; fire_display_queueResize(&w->queue, h.width, h.height); } break;
+            case FIRE_EV_CLOSE: case FIRE_EV_CLOSE_REQUEST: case FIRE_EV_MOUSE_ENTER: case FIRE_EV_MOUSE_LEAVE: case FIRE_EV_FOCUS_GAINED: case FIRE_EV_FOCUS_LOST:
+                fire_display_queueSimple(&w->queue, h.type); break;
+            default: break;
+        }
+    }
+}
+
 static int fire_dhl_pump(FireDhlWindow* w, FireDisplayEvents* out, int fbWidth, int fbHeight) {
     if (!w->open) return 0;
+    if (g_fireDisplayHosted && g_fireDisplayHost.next_event != NULL && !w->queue.quit) fire_dhl_hostEvents(w);
     fire_display_queueTake(&w->queue, out, w->winW, w->winH, fbWidth, fbHeight);
     return !w->queue.quit;
 }
@@ -77,6 +135,12 @@ static int fire_dhl_pump(FireDhlWindow* w, FireDisplayEvents* out, int fbWidth, 
 static void fire_dhl_present(FireDhlWindow* w, const uint32_t* rgba, int width, int height) {
     size_t n;
     if (!w->open || rgba == NULL || width <= 0 || height <= 0) return;
+    if (g_fireDisplayHosted) {
+        /* (the host keeps the picture itself) */
+        w->frames++;
+        if (g_fireDisplayHost.present != NULL) g_fireDisplayHost.present(g_fireDisplayHost.ctx, w->id, rgba, width, height, w->vsync);
+        return;
+    }
     n = (size_t)width * (size_t)height;
     if (w->frame == NULL || w->frameW != width || w->frameH != height) {
         uint32_t* grown = (uint32_t*)realloc(w->frame, n * sizeof(uint32_t));

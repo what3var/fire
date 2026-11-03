@@ -50,12 +50,33 @@ namespace fire.Compiler
         /// manager (see DeviceBridge.RegisterAll).</summary>
         protected IDisposable? DeviceResources { get; set; }
 
+        /// <summary>The copy of the C library of graphics and windows that the program runs on when the host drives its windows (null: the library of the process, or C#).</summary>
+        public GraphicsLibrary.Instance? GraphicsInstance { get; private set; }
+
         public void CloseHostResources()
         {
             WindowManager?.StopManagers();   // the threads of fire's window managers end with the run
-            IoResources?.Dispose();
+            IoResources?.Dispose();          // (also resets the libraries of the program: the windows of the C library close)
+            IoResources = null;
             DeviceResources?.Dispose();
+            GraphicsInstance?.Dispose();     // free for the next program
+            GraphicsInstance = null;
         }
+
+        /// <summary>The pixels of framebuffer <paramref name="id"/> of the program (R,G,B,A per word), wherever graphics run (C# or C); null: there is none.</summary>
+        public uint[]? FramebufferPixels(int id, out int width, out int height)
+        {
+            if (FramebufferManager?.GetFramebuffer(id) is { } fb)
+            {
+                width = fb.Width; height = fb.Height;
+                return (uint[])fb.Pixels.Clone();
+            }
+            if (UsesGraphicsLibrary) return GraphicsLibrary.Pixels(id, out width, out height, GraphicsInstance);
+            width = height = 0;
+            return null;
+        }
+
+        private bool UsesGraphicsLibrary { get; set; }
 
         /// <summary>Runs the program on the calling thread to the end (normal end, `leave`,
         /// `terminate` or unhandled exception, see <see cref="VM.UnhandledException"/>) and afterwards closes the
@@ -129,7 +150,7 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, Func<IFramebufferRenderer>? windowRenderer = null, fire.Runtime.NetPolicy? netPolicy = null, fire.Projects.BuildPlan? plan = null, ExternRegistry? externs = null, IReadOnlyList<string?>? sourcePaths = null, fire.Standard.ProgramEnvironment? environment = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, Func<IFramebufferRenderer>? windowRenderer = null, fire.Runtime.NetPolicy? netPolicy = null, fire.Projects.BuildPlan? plan = null, ExternRegistry? externs = null, IReadOnlyList<string?>? sourcePaths = null, fire.Standard.ProgramEnvironment? environment = null, HostWindows? hostWindows = null)
         {
             // with a project: its files are the sources (`sources` is then the text of those files, see BuildPlan.SourceTexts) and its settings go before the tags
             // (`sourcePaths`: the files of `sources` - each `#include` is relative to the file that has it)
@@ -156,14 +177,27 @@ namespace fire.Compiler
 
             var session = new RuntimeSession(linkedProgram.Program);
             
-            if (linkedProgram.NativeImports.Contains(NativeImports.Graphics) && GraphicsLibrary.Wanted(windowRenderer != null))
+            // the C implementation of graphics and windows (the same as a native build: fire's own display, no SDL) - docs/UI_PLATFORM.md, part 2. Where the host drives the
+            // windows (`hostWindows`: the editor's live and design views), the program gets a copy of the library of its own; the C# implementation stays where the host
+            // renders them itself (`windowRenderer` alone: the tests' renderers), where FIRE_VM_GRAPHICS=cs asks for it, and where the library cannot be had (no C compiler)
+            string? graphicsFile = null;
+            bool graphics = linkedProgram.NativeImports.Contains(NativeImports.Graphics);
+            if (graphics && GraphicsLibrary.Wanted(windowRenderer != null && hostWindows == null))
             {
-                // the C implementation of graphics and windows (the same as a native build: fire's own display, no SDL) - docs/UI_PLATFORM.md, part 2
-                GraphicsLibrary.Register(natives, linkedProgram.NativeImports.Contains(NativeImports.Windows));
+                if (hostWindows != null)
+                {
+                    session.GraphicsInstance = GraphicsLibrary.Instance.Acquire();
+                    session.GraphicsInstance?.Attach(hostWindows.Display);
+                    if (session.GraphicsInstance != null)
+                        graphicsFile = GraphicsLibrary.Register(natives, linkedProgram.NativeImports.Contains(NativeImports.Windows), instance: session.GraphicsInstance);
+                }
+                else if (GraphicsLibrary.Locate() != null)
+                    graphicsFile = GraphicsLibrary.Register(natives, linkedProgram.NativeImports.Contains(NativeImports.Windows));
+                session.UsesGraphicsLibrary = graphicsFile != null;
             }
-            else if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
+            if (graphics && graphicsFile == null)
             {
-                PackageHost.GraphicsInC = false;
+                if (windowRenderer == null && hostWindows == null) PackageHost.GraphicsInC = false;
                 var font = new IntegratedGlyphFont();
                 fbManager = new FramebufferManager();
                 rendererManager = new RendererManager(fbManager, font);
@@ -181,7 +215,7 @@ namespace fire.Compiler
                 // `#import "windows"`: the SDL window for the framebuffer (registered directly behind graphics, as when translating)
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
-                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer, FireRuntime.AddHostHold);   // windowRenderer: null = a SDL window
+                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer ?? (hostWindows != null ? () => new HostRenderer(hostWindows.Display) : null), FireRuntime.AddHostHold);   // windowRenderer: null = a SDL window
                     fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
                 }
             }
@@ -192,8 +226,11 @@ namespace fire.Compiler
             // `ioPolicy`: what scripts may touch in the file system, `ioStdio`: where IO.Stdio leads - both decided by the HOST (see IoPolicy/IoStdio),
             // default: everything allowed, real console. The natives of `io` are C++ in a library and ask the host via PackageHost.
             IDisposable? ioResources = null;
-            if (linkedProgram.PackageNatives is { Count: > 0 })
-                ioResources = PackageHost.Begin(ioPolicy, ioStdio, linkedProgram.NativeImports.Contains("pkg:devices"), deviceManager, netPolicy);   // `deviceManager`: the manager of the host (e.g. the shared one of the editor); without it the program gets one with the built-in drivers, freed after the run
+            if (linkedProgram.PackageNatives is { Count: > 0 } || graphicsFile != null)
+            {
+                var libraries = (linkedProgram.PackageNativeLibraries ?? new List<string>()).Append(graphicsFile).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                ioResources = PackageHost.Begin(ioPolicy, ioStdio, linkedProgram.NativeImports.Contains("pkg:devices"), deviceManager, netPolicy, libraries);
+            }   // `deviceManager`: the manager of the host (e.g. the shared one of the editor); without it the program gets one with the built-in drivers, freed after the run
 
             PackageImports.RegisterForRun(natives, linkedProgram);   // the natives of imports of packages: names only (they are C++)
 
