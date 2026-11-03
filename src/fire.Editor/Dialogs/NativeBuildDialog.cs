@@ -29,6 +29,13 @@ namespace fire.Editor
 
         // build
         private readonly Segmented segEngine = new("Virtual machine", "Native");
+        // (the stripping levels, docs/NATIVE_BACKEND.md "Größe des Programms"; the first entry: not set - the default, 3)
+        private static readonly string[] StrippingChoices =
+        {
+            "Default (3 - all)", "0 - none: everything stays (like the VM)", "1 - protected: every class and public member stays",
+            "2 - methods: every class with constructors, fields and properties stays", "3 - all: only what the program reaches",
+        };
+        private readonly ComboBox cmbStripping = Combo();
         // target
         private readonly ComboBox cmbTarget = Combo();
         private readonly TextBlock txtTargetHint = Hint("");
@@ -92,6 +99,8 @@ namespace fire.Editor
             _nav.Show("build");
 
             segEngine.SelectedIndex = _config.Engine?.ToLowerInvariant() == "native" ? 1 : 0;
+            cmbStripping.ItemsSource = StrippingChoices;
+            cmbStripping.SelectedIndex = _config.Stripping is { } level ? (int)level + 1 : 0;
             segKind.SelectionChanged += Kind_SelectionChanged;
             cmbTarget.SelectionChanged += Target_SelectionChanged;
             cmbToolchain.SelectionChanged += Toolchain_SelectionChanged;
@@ -116,6 +125,10 @@ namespace fire.Editor
                 Row("Default engine", segEngine),
                 Hint("Virtual machine: one self-contained file with the interpreter. Native: C++ for the target, compiled with the toolchain. "
                     + "A project decides for itself in Project Properties > General > Runs as; this is the engine of the scripts and projects that do not.")),
+            Group("Size",
+                Row("Stripping", cmbStripping),
+                Hint("What a native build leaves out of what the program does not reach (\"stripping\" in fire.native.json; a project can decide for itself, the command line "
+                    + "with --stripping). Names given as literals to reflection always stay, [Keep] keeps a class or member; a debug build keeps everything.")),
             Group("File",
                 Row("Settings file", new SelectableTextBlock { Text = _config.Path, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center }),
                 Hint("The targets and toolchains below are kept in this file (fire.native.json); the built-in ones need no file.")));
@@ -415,6 +428,7 @@ namespace fire.Editor
             StoreTarget();
             StoreToolchain();
             _config.Engine = segEngine.SelectedIndex == 1 ? "native" : "vm";
+            _config.Stripping = cmbStripping.SelectedIndex > 0 ? (StrippingLevel)(cmbStripping.SelectedIndex - 1) : null;
             _config.Target = cmbTarget.SelectedItem as string;
             _config.Toolchain = cmbToolchain.SelectedItem as string;
             Close(true);

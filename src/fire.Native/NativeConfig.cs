@@ -19,10 +19,27 @@ namespace fire.Native
         public string? Target { get; set; }
         /// <summary>The default toolchain (a built-in name or a key of <see cref="Toolchains"/>) for targets that name none themselves; null: the first one found on this machine.</summary>
         public string? Toolchain { get; set; }
-        /// <summary>What a native build leaves out (docs/NATIVE_BACKEND.md, "Größe des Programms"): <see cref="TrimMode.Reached"/> (null, the default) keeps only what the program
-        /// reaches, <see cref="TrimMode.Reflection"/> keeps every class as soon as reflection looks a class up by its name (like the VM), <see cref="TrimMode.All"/> keeps everything
-        /// (`--keep-all`; a debug build always does).</summary>
-        public TrimMode? Trim { get; set; }
+        /// <summary>How much a native build leaves out (`"stripping"`, docs/NATIVE_BACKEND.md "Größe des Programms"): 0 `none` .. 3 `all` (null: the default, 3), as a
+        /// number or a name; a debug build always keeps everything (0).</summary>
+        [JsonConverter(typeof(StrippingJsonConverter))]
+        public StrippingLevel? Stripping { get; set; }
+        /// <summary>The old name of <see cref="Stripping"/> (`"trim"`): `"all"` is 0, `"reflection"` 1, `"reached"` 3. Read only - <see cref="Stripping"/> goes before it,
+        /// and saving writes `"stripping"`.</summary>
+        public string? Trim
+        {
+            get => null;
+            set
+            {
+                if (value == null || StrippingExplicit) return;
+                Stripping = Strippings.FromTrim(value) ?? throw new NativeConfigException($"{FileName}: \"trim\": '{value}' is not one of: all, reflection, reached (better: \"stripping\" 0-3).");
+                _strippingFromTrim = true;
+            }
+        }
+        private bool _strippingFromTrim;
+        /// <summary><see cref="Stripping"/> was given on the command line (`--stripping`, `--keep-all`): it goes before the project's setting. Not saved.</summary>
+        [JsonIgnore] public bool StrippingFromCommandLine { get; set; }
+        /// <summary>(`"stripping"` was given: it goes before `"trim"`, whatever comes first in the file)</summary>
+        private bool StrippingExplicit => Stripping != null && !_strippingFromTrim;
         /// <summary>How the libraries and packages are linked (ROADMAP 9): `source` (null, the default: everything is one C file) or `static` (each library a static library of
         /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
         public string? Linkage { get; set; }
@@ -127,16 +144,71 @@ namespace fire.Native
         }
     }
 
-    /// <summary>What a native build keeps of the program (`"trim"` in fire.native.json): the value names what stays.</summary>
-    public enum TrimMode
+    /// <summary>How much a native build leaves out (`"stripping"` in fire.native.json, in the settings of a project, `--stripping` on the command line;
+    /// docs/NATIVE_BACKEND.md "Größe des Programms"). Each level leaves out what the one before keeps, and more.</summary>
+    public enum StrippingLevel
     {
-        /// <summary>Only what the program reaches (the default): classes that are made or used, their members that are called, plus `[Keep]`. A lookup of a class by its
-        /// name (`Reflect.New("X")`, `Type.Named("X")`, `Reflect.Classes()`) sees only these classes.</summary>
-        Reached,
-        /// <summary>Like <see cref="Reached"/>, but as soon as reflection looks a class up by its name, every class of the program stays (the VM behaves so).</summary>
-        Reflection,
-        /// <summary>Everything: every class with all its members (`--keep-all`, debug builds).</summary>
-        All,
+        /// <summary>0 `none`: everything stays (as in the VM): every class with all its members (`--keep-all`, debug builds).</summary>
+        None = 0,
+        /// <summary>1 `protected`: every class and every public member stays; a private or protected member only when the program reaches it (the rule of a library
+        /// built on its own: its API and what it reaches).</summary>
+        Protected = 1,
+        /// <summary>2 `methods`: every class with its constructors, fields and properties stays; a method only when the program reaches it (or names it as a literal
+        /// to reflection).</summary>
+        Methods = 2,
+        /// <summary>3 `all` (the default): only what the program reaches - also a class the program never makes is left out - plus `[Keep]` and the names given
+        /// as literals to reflection.</summary>
+        All = 3,
+    }
+
+    /// <summary>The names and numbers of the <see cref="StrippingLevel"/>s.</summary>
+    public static class Strippings
+    {
+        public static readonly IReadOnlyList<string> Names = new[] { "none", "protected", "methods", "all" };
+
+        /// <summary>A level from its number (`0`-`3`) or its name (`none`, `protected`, `methods`, `all`); null: neither.</summary>
+        public static StrippingLevel? Parse(string? text)
+        {
+            text = text?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(text)) return null;
+            if (text.Length == 1 && text[0] is >= '0' and <= '3') return (StrippingLevel)(text[0] - '0');
+            int i = Names.ToList().IndexOf(text);
+            return i < 0 ? null : (StrippingLevel)i;
+        }
+
+        /// <summary>The old values of `"trim"`: `all` keeps everything (0), `reflection` (keep every class once one is looked up by name) is 1, `reached` is 3.</summary>
+        public static StrippingLevel? FromTrim(string text) => text.Trim().ToLowerInvariant() switch
+        {
+            "all" => StrippingLevel.None,
+            "reflection" => StrippingLevel.Protected,
+            "reached" => StrippingLevel.All,
+            _ => null,
+        };
+
+        public static string Name(StrippingLevel level) => Names[(int)level];
+    }
+
+    /// <summary>`"stripping"`: a number (0-3) or a name; written as the name.</summary>
+    public sealed class StrippingJsonConverter : JsonConverter<StrippingLevel?>
+    {
+        public override StrippingLevel? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            string? text = reader.TokenType switch
+            {
+                JsonTokenType.Null => null,
+                JsonTokenType.Number => reader.TryGetInt32(out int n) ? n.ToString(System.Globalization.CultureInfo.InvariantCulture) : "?",
+                JsonTokenType.String => reader.GetString(),
+                _ => "?",
+            };
+            if (text == null) return null;
+            return Strippings.Parse(text) ?? throw new JsonException($"\"stripping\": '{text}' is not one of 0-3 or {string.Join(", ", Strippings.Names)}.");
+        }
+
+        public override void Write(Utf8JsonWriter writer, StrippingLevel? value, JsonSerializerOptions options)
+        {
+            if (value is { } level) writer.WriteStringValue(Strippings.Name(level));
+            else writer.WriteNullValue();
+        }
     }
 
     public sealed class NativeConfigException : Exception

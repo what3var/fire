@@ -304,7 +304,7 @@ namespace fire.Native
 
         /// <summary>The program built from modules, in one file (phase A of ROADMAP 9: the same code as separate libraries, only not compiled apart): the library
         /// modules in dependency order, then the program, which defines what they declare. The switches every module is generated with are those of all of them.</summary>
-        public static NativeSources GenerateModular(LinkedProgram program, TargetProfile? target = null, Func<int>? chooseSdl = null, TrimMode? trim = null)
+        public static NativeSources GenerateModular(LinkedProgram program, TargetProfile? target = null, Func<int>? chooseSdl = null, StrippingLevel? stripping = null)
         {
             target ??= TargetProfile.Host;
             var specs = ModulesOf(program);
@@ -315,13 +315,13 @@ namespace fire.Native
                 var union = flags ?? default;
                 foreach (var spec in specs)
                 {
-                    var output = GenerateLibrary(program, spec, specs, target, trim, flags);
+                    var output = GenerateLibrary(program, spec, specs, target, stripping, flags);
                     outputs.Add(output);
                     union = union.Or(output.Flags);
                 }
                 var main = new CppGenerator(program, target)
                 {
-                    _chooseSdl = chooseSdl, _trim = EffectiveTrim(program, trim), _role = ModuleRole.Program, _forced = flags, _libraries = outputs,
+                    _chooseSdl = chooseSdl, _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs,
                     _moduleBodies = string.Concat(outputs.Select(o => o.Body)),
                 };
                 main.SetModules(specs, null);
@@ -334,10 +334,10 @@ namespace fire.Native
         }
 
         /// <summary>Generates one library module (its view of the program, its own classes kept).</summary>
-        internal static ModuleOutput GenerateLibrary(LinkedProgram program, ModuleSpec spec, IReadOnlyList<ModuleSpec> all, TargetProfile target, TrimMode? trim, ModuleFlags? flags, bool separate = false)
+        internal static ModuleOutput GenerateLibrary(LinkedProgram program, ModuleSpec spec, IReadOnlyList<ModuleSpec> all, TargetProfile target, StrippingLevel? stripping, ModuleFlags? flags, bool separate = false)
         {
             var view = LibraryView(program, spec);
-            var generator = new CppGenerator(view, target) { _trim = EffectiveTrim(program, trim), _role = ModuleRole.Library, _forced = flags, _self = spec, _separate = separate };
+            var generator = new CppGenerator(view, target) { _strip = LibraryStripping(program, stripping), _role = ModuleRole.Library, _forced = flags, _self = spec, _separate = separate };
             string body;
             try
             {
@@ -355,6 +355,11 @@ namespace fire.Native
                 NativesC = separate ? generator.LibraryNativesC() : "", JsonEngine = generator._callsJsonEngine, Exports = generator._funcs.Where(f => f.Export != null && !f.External).Select(f => f.Export!).Distinct().ToList(),
             };
         }
+
+        /// <summary>The level a library is built with: 0 keeps everything, every other level is 1 - a library keeps its API (its public and protected members, the
+        /// constructors of all its classes) and what that reaches, whatever the program uses of it (it is built once for every program, ROADMAP 9 with §11).</summary>
+        internal static StrippingLevel LibraryStripping(LinkedProgram program, StrippingLevel? stripping) =>
+            EffectiveStripping(program, stripping) == StrippingLevel.None ? StrippingLevel.None : StrippingLevel.Protected;
 
         /// <summary>The modules this generator knows: a library its own and those it needs, the program all.</summary>
         private void SetModules(IReadOnlyList<ModuleSpec> all, ModuleSpec? self)
@@ -508,9 +513,14 @@ namespace fire.Native
         private readonly SortedSet<string> _demandedClasses = new(StringComparer.Ordinal);
         private bool _keeping;
 
-        /// <summary>A private member stays all the same: everything is kept (`"trim": "all"`, debug builds), the class or the member is marked `[Keep]`.</summary>
-        private bool KeepsPrivate(RuntimeClass rc, string name) =>
-            _trim == TrimMode.All || rc.Keep || rc.KeptMembers is { } kept && (kept.Contains(name) || name.Length > 4 && name[3] == '_' && kept.Contains(name.Substring(4)));
+        /// <summary>A private member stays all the same: everything is kept (stripping 0, debug builds), the class or the member is marked `[Keep]` (or named as a literal
+        /// to reflection by the code of this generator - the program asks so about a class of a library only by `[Keep]`: the library decides by its own literals, the
+        /// program's table must not name a member the library left out).</summary>
+        private bool KeepsPrivate(RuntimeClass rc, string name)
+        {
+            if (_strip == StrippingLevel.None || rc.Keep || rc.KeptMembers is { } kept && (kept.Contains(name) || kept.Contains(PlainMemberName(name)))) return true;
+            return (LibraryRole || IsOwnClass(rc)) && (_literalClasses.Contains(rc.Name) || LiteralMember(name));
+        }
 
         private void KeepOwnMembers()
         {

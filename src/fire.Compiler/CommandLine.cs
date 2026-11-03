@@ -46,8 +46,10 @@ namespace fire.Compiler
         public IReadOnlyList<string>? ProgramArguments { get; init; }
         /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
         public bool KeepSources { get; init; }
-        /// <summary>`--keep-all`: a native build keeps every class and member, also what the program does not reach (`"trim": "all"` in fire.native.json).</summary>
+        /// <summary>`--keep-all`: a native build keeps every class and member, also what the program does not reach (`--stripping 0`).</summary>
         public bool KeepAll { get; init; }
+        /// <summary>`--stripping 0-3|none|protected|methods|all`: how much a native build leaves out (`"stripping"` in fire.native.json, the project's setting; docs/NATIVE_BACKEND.md).</summary>
+        public fire.Native.StrippingLevel? Stripping { get; init; }
         /// <summary>`--linkage source|static|shared`: how a native build links the libraries (`"linkage"` in fire.native.json, the project's setting; ROADMAP 9).</summary>
         public string? Linkage { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
@@ -78,8 +80,8 @@ namespace fire.Compiler
             """
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--keep-all] [--linkage source|static|shared]
-              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>] [--keep-all]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--linkage source|static|shared]
+              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>] [--stripping 0-3] [--keep-all]
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
               fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
@@ -98,8 +100,11 @@ namespace fire.Compiler
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
-            --keep-all  A native build keeps every class and member, also what the program does not reach (default: only what it reaches; "trim" in fire.native.json,
-                    docs/NATIVE_BACKEND.md). A debug build always keeps everything.
+            --stripping 0-3  How much a native build leaves out of what the program does not reach (docs/NATIVE_BACKEND.md; "stripping" in fire.native.json or the project):
+                    0 none (everything stays, as in the VM), 1 protected (every class and public member stays), 2 methods (every class with its constructors, fields
+                    and properties stays, a method only when it is used), 3 all (the default: only what the program reaches). Names work as well (--stripping methods).
+                    Names given as literals to reflection (Reflect.New("Dog")) always stay; a debug build always keeps everything.
+            --keep-all  The same as --stripping 0.
             --linkage source|static|shared  How a native build links the libraries and packages: source (the default) puts everything into one C file; static builds each
                     library once as a static library in the user-wide cache (ember cache clean) and links it; shared (Linux, macOS) builds them as shared libraries put next to the program ("linkage" in fire.native.json or the project).
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
@@ -144,6 +149,7 @@ namespace fire.Compiler
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
             bool keep = false, keepAll = false;
+            fire.Native.StrippingLevel? stripping = null;
             string? linkage = null;
             string? output = null;
             var defines = new List<string>();
@@ -219,6 +225,13 @@ namespace fire.Compiler
                     if (value is not ("source" or "static" or "shared")) return Fail(command, "--linkage must be followed by source, static or shared.");
                     linkage = value;
                 }
+                else if (string.Equals(arg, "--stripping", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--stripping is only available with build, native and test.");
+                    string? value = i + 1 < args.Count ? args[++i] : null;
+                    stripping = fire.Native.Strippings.Parse(value);
+                    if (stripping == null) return Fail(command, "--stripping must be followed by 0, 1, 2 or 3 (none, protected, methods, all).");
+                }
                 else if (string.Equals(arg, "--keep-all", StringComparison.OrdinalIgnoreCase))
                 {
                     if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--keep-all is only available with build, native and test.");
@@ -288,6 +301,7 @@ namespace fire.Compiler
                 ProgramArguments = programArguments,
                 KeepSources = keep,
                 KeepAll = keepAll,
+                Stripping = stripping,
                 Linkage = linkage,
                 ProjectName = projectName,
                 OutputGiven = output != null,
@@ -440,10 +454,11 @@ namespace fire.Compiler
             return KeepAll(fire.Native.NativeConfig.FindFor(options.Files[0]), options);
         }
 
-        /// <summary>`--keep-all` goes before the `"trim"` of the configuration.</summary>
+        /// <summary>`--keep-all` and `--stripping` go before the `"stripping"` of the configuration (and of the project, see NativeBuilder.StrippingOf).</summary>
         private static fire.Native.NativeConfig KeepAll(fire.Native.NativeConfig config, CommandLineOptions options)
         {
-            if (options.KeepAll) config.Trim = fire.Native.TrimMode.All;
+            if (options.KeepAll) { config.Stripping = fire.Native.StrippingLevel.None; config.StrippingFromCommandLine = true; }
+            else if (options.Stripping is { } level) { config.Stripping = level; config.StrippingFromCommandLine = true; }
             if (options.Linkage != null) config.Linkage = options.Linkage;
             return config;
         }
@@ -473,7 +488,7 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = NativeBuilder.WithRequestedSdl(config.ResolveTarget(options.TargetName), null);   // (only the sources: SDL2 for a window, unless FIRE_SDL or the target say 3)
-                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options), trim: config.Trim);
+                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options), stripping: config.Stripping);
                 string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
                 NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives);

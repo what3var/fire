@@ -31,10 +31,10 @@ namespace fire.Compiler
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
         /// <param name="chooseSdl">Which SDL a window is built with when the target does not say (<see cref="ChooseSdl"/>; null: SDL2).</param>
         public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null,
-            Func<int>? chooseSdl = null, TrimMode? trim = null)
+            Func<int>? chooseSdl = null, StrippingLevel? stripping = null)
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
-            var generated = CppGenerator.GenerateSources(linked, target, chooseSdl, trim);
+            var generated = CppGenerator.GenerateSources(linked, target, chooseSdl, stripping);
             return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
         }
 
@@ -82,6 +82,11 @@ namespace fire.Compiler
             return path;
         }
 
+        /// <summary>The stripping level of a build (docs/NATIVE_BACKEND.md "Größe des Programms"): the command line (`--stripping`, `--keep-all`), then the project's
+        /// setting, then fire.native.json; null: the default (3; a debug build keeps everything).</summary>
+        public static StrippingLevel? StrippingOf(NativeConfig config, fire.Projects.BuildPlan? plan) =>
+            !config.StrippingFromCommandLine && Strippings.Parse(plan?.Settings.Stripping) is { } fromProject ? fromProject : config.Stripping;
+
         /// <summary>Translates and builds. <paramref name="output"/> is the program, or the folder for a toolchain that only writes files.</summary>
         public static NativeBuildResult Build(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null,
@@ -105,7 +110,7 @@ namespace fire.Compiler
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
                 return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
-            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl, config.Trim);
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl, StrippingOf(config, plan));
             string cpp = program.C;
             bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
@@ -194,7 +199,7 @@ namespace fire.Compiler
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             var watch = Stopwatch.StartNew();
-            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), chooseSdl, config.Trim, shared: shared); }
+            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), chooseSdl, StrippingOf(config, plan), shared: shared); }
             catch (NativeNotSupportedException ex) { return AsSource($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\"."); }
             log.Append(staticPlan.Log);
             log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
@@ -300,7 +305,7 @@ namespace fire.Compiler
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
-            try { staticPlan = CppGenerator.GenerateStatic(linked, target, $"files|{toolchain.Layout}", null, config.Trim); }
+            try { staticPlan = CppGenerator.GenerateStatic(linked, target, $"files|{toolchain.Layout}", null, StrippingOf(config, plan)); }
             catch (NativeNotSupportedException ex)
             {
                 string? linkage = config.Linkage;

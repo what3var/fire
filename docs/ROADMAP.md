@@ -24,7 +24,7 @@ Leitlinien:
 | 4 | [Debugging nativer Builds](#8-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
-| 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB jetzt) |
+| 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -292,15 +292,23 @@ einziger Aufruf eines `__refl_*` erzeugte **jede** Klasse des Programms mit alle
 * **JSON** (B): Schreiben zieht nichts nach, Lesen die deklarierten Typen mit Unterklassen und Feldtypen, ein Slot ohne Klasse alle. `[NotSerializable]` (vererbt) und `"serializable": false`
   im Package (`ui`) schließen Klassen aus: Schreiben oder Lesen einer solchen ist eine `ArgumentException`, in VM und nativ gleich.
 * **Tabellen** (C): gleiche Zweige der Feldhelfer einmal, `fp_` nur bei genommener Adresse, Reflection- und Proben-Tabellen ohne die geerbten Mitglieder jeder Klasse, Namenslisten einmal.
-* **`[Keep]`** vor Klassen und Mitgliedern (nicht vererbt; SPEC 5.12 erlaubt Attribute jetzt auch vor Klassen ausdrücklich), **`"trim"`** in `fire.native.json`: `"reached"` (Standard),
-  `"reflection"` (jede Klasse, sobald eine per Name gesucht wird - wie die VM), `"all"` (`--keep-all`; ein Debug-Build behält immer alles, für Abschnitt 8).
+* **`[Keep]`** vor Klassen und Mitgliedern (nicht vererbt; SPEC 5.12 erlaubt Attribute jetzt auch vor Klassen ausdrücklich).
+* **Stufen des Weglassens** (`"stripping"` in `fire.native.json` und in den Einstellungen des Projekts, `--stripping` auf der Befehlszeile; Zahl oder Name; ersetzt `"trim"`,
+  das als Alias bleibt: `"all"` = 0, `"reflection"` = 1, `"reached"` = 3, `--keep-all` = 0): **0** `none` (alles, wie die VM; ein Debug-Build immer), **1** `protected` (jede Klasse
+  und jeder öffentliche Member; ein privater oder geschützter nur, wenn erreicht - die Regel einer vorgebauten Library), **2** `methods` (jede Klasse mit Konstruktoren, Feldern und
+  Properties; eine Methode nur, wenn benutzt - mit ihrer Beschreibung in den Reflection-Tabellen), **3** `all` (der Standard: nur das Erreichte). In jeder Stufe bleiben
+  **Namen, die das Programm als Literal an die Reflection gibt** (`Reflect.New("Dog")`, `Reflect.Call(o, "Bark")`, `Type.Named("X")`, `Reflect.Get(o, "f")` - jeder Text der
+  Funktion, die die Reflection ruft), und ein Zugriff auf etwas Weggelassenes ist ein klarer Fehler: „Class 'X' was left out of the build (stripping 3). Add [Keep] to 'X' or use
+  stripping <= 2.“ (ebenso für Member). Proben funktionieren in den Stufen 2 und 3 (sie halten die Felder und Properties der gemachten Klassen). Mit `"static"`/`"shared"`
+  behält eine Library in jeder Stufe außer 0 ihre Schnittstelle (Stufe 1); das Programm lässt weg wie mit `"source"`.
 * Statische Initialisierer aller Klassen laufen weiter (Semantik unverändert).
 
 Ergebnis: das minimale `ui`-Programm hat jetzt 2,29 MB C statt 7,85 MB (-71 %), `gcc -O2` braucht 49 s statt 140 s (-65 %); Messung für `graphics`, `scene3d`, JSON und Reflection in NATIVE_BACKEND.md.
 
-**VM und nativ:** Im Standard unterscheiden sich nur Suchen per Name nach einer Klasse, die das Programm nie erreicht (`Reflect.New("X")`, `Type.Named`, `Type.Of(text)`, `Reflect.Classes()`,
-JSON-`"$type"` außerhalb der deklarierten Typen): nativ eine unbekannte Klasse, in der VM gefunden - die VM kennt die Erreichbarkeit nicht. `[Keep]`, `"trim": "reflection"` oder `"all"`
-machen beides gleich; getestet in allen drei Stufen.
+**VM und nativ:** Die VM behält alles. Im Standard (Stufe 3) unterscheiden sich nur Suchen mit einem Namen, der erst zur Laufzeit entsteht, nach einer Klasse, die das Programm
+nie erreicht, oder einer Methode, die es nie benutzt (`Reflect.New(name)`, `Type.Named(name)`, `Reflect.Call(o, name)`; `Type.Names()` und `Type.Of(o).Methods()` listen, was da
+ist; JSON-`"$type"` außerhalb der deklarierten Typen): nativ der klare Fehler, in der VM gefunden. `[Keep]` oder eine kleinere Stufe machen beides gleich; getestet in allen
+vier Stufen gegen die VM ("Weglassen (stripping)" in der nativen Gruppe, mit `static` in `FIRE_TESTS_ONLY=linkage`).
 
 **Offen:**
 
@@ -309,7 +317,10 @@ machen beides gleich; getestet in allen drei Stufen.
 * **E - Natives der Bridges in `#if`-Abschnitten** (`graphics`, `windows`, Zwischenablage, Drag & Drop, Bilder, Slicer): nicht gebaut; gcc verwirft nicht benutzte `static`-Funktionen schon,
   der Gewinn läge bei TinyCC und der Größe der Datei.
 * **F - Weglassen in der VM** (kleinere Images, schnellerer Start, dann auch dieselben Klassen per Name wie nativ): offen.
-* Mit Abschnitt 9 abstimmen: eine Library, die als `"static"`/`"shared"` vorgebaut wird, behält ihre öffentliche Schnittstelle vollständig (sie ist dann Wurzel wie `[Keep]`); heute
-  sind alle Libraries `"source"` und werden mit dem Programm zusammen weggelassen.
+* ~~Mit Abschnitt 9 abstimmen~~: eine Library, die als `"static"`/`"shared"` vorgebaut wird, behält ihre Schnittstelle (öffentliche und geschützte Member, Stufe 1) - umgesetzt
+  mit B2 und den Stufen. Offen: eine Erreichbarkeit über die Modulgrenzen, damit auch eine vorgebaute Library weglässt, was das Programm nicht braucht (Abschnitt 9).
+* Die Stufen 1 und 2 sind für ein `ui`-Programm fast so groß wie 0: jeder öffentliche Member bzw. jeder Konstruktor jeder Klasse des Packages zieht seinen Code nach.
+* Die Erkennung der Literale ist grob (jeder Text der Funktion, die die Reflection ruft); ein Name, der über eine Variable einer anderen Funktion oder aus einer Datei
+  kommt, braucht `[Keep]` oder eine kleinere Stufe.
 * Was bleibt, ist beim `ui`-Programm echter Code (`UI.Root`: Ereignisse, Fokus, Popups, Ziehen und Ablegen); kleiner würde es nur durch weniger Code im Package oder ein `ui`, dessen
   Teile (Drag & Drop, Popups) erst beim Benutzen erreicht werden.

@@ -37,6 +37,10 @@ namespace fire.Projects
         /// <summary>How a native build links the libraries and packages (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): `source` (the default: all in one C file),
         /// `static` (each library once as a static library in the user-wide cache, linked into the program).</summary>
         public string? Linkage { get; set; }
+        /// <summary>How much a native build leaves out (docs/NATIVE_BACKEND.md "Größe des Programms"): `0`-`3` or `none`, `protected`, `methods`, `all` (the default 3);
+        /// in the file a number or a name.</summary>
+        [JsonConverter(typeof(StrippingTextConverter))]
+        public string? Stripping { get; set; }
         /// <summary>Where the result of a build is written (a path relative to the file that holds the setting; for a library the folder of the package).</summary>
         public string? Output { get; set; }
         /// <summary>`lax` (a type conflict is a warning, the default) or `strict` (an error); docs/TYPES.md. A `#lax` / `#strict` in a file decides for that file.</summary>
@@ -50,13 +54,15 @@ namespace fire.Projects
 
         [JsonIgnore]
         public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
-            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Output == null && TypeChecking == null && Arguments == null && Port == null && Baud == null;
+            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Stripping == null && Output == null && TypeChecking == null && Arguments == null && Port == null && Baud == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
         public static readonly IReadOnlyList<string> Engines = new[] { "vm", "native" };
         public static readonly IReadOnlyList<string> TypeCheckings = new[] { "lax", "strict" };
         public static readonly IReadOnlyList<string> Linkages = new[] { "source", "static", "shared" };
+        /// <summary>The stripping levels by their names (index = number; fire.Native.Strippings has the same).</summary>
+        public static readonly IReadOnlyList<string> Strippings = new[] { "none", "protected", "methods", "all" };
 
         /// <summary>`high` over `low`: every field that `high` sets, else the one of `low` (the defines of both are added up). Either may be null.</summary>
         public static ProjectSettings Merge(ProjectSettings? high, ProjectSettings? low)
@@ -78,6 +84,7 @@ namespace fire.Projects
             r.Target = high?.Target ?? low?.Target;
             r.Toolchain = high?.Toolchain ?? low?.Toolchain;
             r.Linkage = high?.Linkage ?? low?.Linkage;
+            r.Stripping = high?.Stripping ?? low?.Stripping;
             r.Output = high?.Output ?? low?.Output;
             r.TypeChecking = high?.TypeChecking ?? low?.TypeChecking;
             r.Arguments = high?.Arguments ?? low?.Arguments;
@@ -100,6 +107,25 @@ namespace fire.Projects
             return r;
         }
 
+        /// <summary>`"stripping"`: a number or a name in the file, kept as text (written as the file had it: a number as a number).</summary>
+        public sealed class StrippingTextConverter : JsonConverter<string?>
+        {
+            public override string? Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, System.Text.Json.JsonSerializerOptions options) => reader.TokenType switch
+            {
+                System.Text.Json.JsonTokenType.Null => null,
+                System.Text.Json.JsonTokenType.Number => reader.TryGetInt64(out long n) ? n.ToString(System.Globalization.CultureInfo.InvariantCulture) : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                System.Text.Json.JsonTokenType.String => reader.GetString(),
+                _ => throw new System.Text.Json.JsonException("settings.stripping: a number (0-3) or a name (none, protected, methods, all)."),
+            };
+
+            public override void Write(System.Text.Json.Utf8JsonWriter writer, string? value, System.Text.Json.JsonSerializerOptions options)
+            {
+                if (value == null) writer.WriteNullValue();
+                else if (value.Length == 1 && char.IsDigit(value[0])) writer.WriteNumberValue(value[0] - '0');
+                else writer.WriteStringValue(value);
+            }
+        }
+
         /// <summary>The problems of the values (empty: fine).</summary>
         public IReadOnlyList<string> Validate()
         {
@@ -109,6 +135,8 @@ namespace fire.Projects
             if (FloatWidth != null && FloatWidth != 32 && FloatWidth != 64) problems.Add("settings.floatWidth must be 32 or 64.");
             if (TypeChecking != null && !TypeCheckings.Contains(TypeChecking)) problems.Add("settings.typeChecking must be lax or strict.");
             if (Engine != null && !Engines.Contains(Engine)) problems.Add($"settings.engine '{Engine}' is not one of: {string.Join(", ", Engines)}.");
+            if (Stripping != null && !(Stripping.Length == 1 && Stripping[0] is >= '0' and <= '3') && !Strippings.Contains(Stripping.ToLowerInvariant()))
+                problems.Add($"settings.stripping '{Stripping}' is not one of: 0, 1, 2, 3, {string.Join(", ", Strippings)}.");
             if (Baud != null && Baud <= 0) problems.Add("settings.baud must be a positive number (e.g. 115200).");
             foreach (var d in Defines ?? new List<string>()) if (string.IsNullOrWhiteSpace(d) || d.Any(char.IsWhiteSpace)) problems.Add($"settings.defines: '{d}' is not a symbol name.");
             return problems;

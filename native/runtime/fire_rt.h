@@ -3144,6 +3144,7 @@ typedef struct RfClass {
     const char* const* ifaces; uint32_t nIfaces;
     const RfMember* members; uint32_t nMembers;
     Value (*attrs)(OwnList* list);    /* the attributes before the class (generated), null: none */
+    const char* const* stripped; uint32_t nStripped;   /* the methods stripping left out, after the highest level that keeps them ("1Bark"; docs/NATIVE_BACKEND.md) */
 } RfClass;
 
 /* Is the string equal to this UTF-8 text? */

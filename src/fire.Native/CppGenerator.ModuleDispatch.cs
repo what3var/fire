@@ -38,7 +38,8 @@ namespace fire.Native
         private readonly HashSet<(string Name, int Argc)> _libDispatchers = new();
         private readonly HashSet<string> _libFields = new(StringComparer.Ordinal);
         private readonly HashSet<string> _libFieldAddresses = new(StringComparer.Ordinal);
-        /// <summary>The program's tables list every member of its classes (Reflect.Call, Reflect.Get by any name).</summary>
+        /// <summary>The program's tables list every field and property of its classes (Reflect.Get/Set by any name; Reflect.Call: the methods that are there, by their
+        /// dispatchers - see RegisterReflectionTargets).</summary>
         private bool _tablesAll;
 
         /// <summary>The module of this generator as a C name in exported symbols (`prog` for the program).</summary>
@@ -94,7 +95,7 @@ namespace fire.Native
 
         /// <summary>Does the table of the program list the method (some module calls it by name)? A library lists all its members.</summary>
         private bool TableWants(string name, int argc) =>
-            LibraryRole || _tablesAll || _dispatchers.Contains((name, argc)) || _libDispatchers.Contains((name, argc))
+            LibraryRole || _dispatchers.Contains((name, argc)) || _libDispatchers.Contains((name, argc))
             || argc == 0 && name.StartsWith("get_", StringComparison.Ordinal) && WantsField(name.Substring(4))
             || argc == 1 && name.StartsWith("set_", StringComparison.Ordinal) && WantsField(name.Substring(4));
 
