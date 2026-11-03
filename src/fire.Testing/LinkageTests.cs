@@ -63,6 +63,90 @@ static class LinkageTests
         return new Built(result.Ok, exe, result.Log, watch.Elapsed.TotalSeconds, File.Exists(exe) ? new FileInfo(exe).Length : 0);
     }
 
+    /// <summary>The processes of this machine whose command line contains <paramref name="text"/> (Linux: /proc; elsewhere none are seen).</summary>
+    private static List<string> ProcessesWith(string text)
+    {
+        var found = new List<string>();
+        if (!OperatingSystem.IsLinux()) return found;
+        foreach (var dir in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(dir), out int pid) || pid == Environment.ProcessId) continue;
+            try
+            {
+                string cmd = File.ReadAllText(Path.Combine(dir, "cmdline")).Replace('\0', ' ');
+                string stat = File.ReadAllText(Path.Combine(dir, "stat"));
+                if (cmd.Contains(text, StringComparison.Ordinal) && !stat.Contains(") Z ", StringComparison.Ordinal)) found.Add($"{pid}: {cmd.Substring(0, Math.Min(cmd.Length, 160))}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        return found;
+    }
+
+    /// <summary>spark's build window (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"): a build with linkage "static" and an empty cache is cancelled while gcc compiles
+    /// its library modules side by side - gcc (with cc1, as) ends within seconds, the build says it was cancelled, the cache has no half library (no temporary file, every
+    /// library with its interface) and no program is left; the next build into the same cache works, its progress arrives in order (compile fire in steps, generate C,
+    /// compile C counting 0..N modules - N the modules that are new -, link) and its log has the commands as they ran.</summary>
+    private static void ProgressAndCancel(string root)
+    {
+        string? before = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
+        string cache = Path.Combine(root, "cancel-cache-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", cache);
+        try
+        {
+            var config = new NativeConfig { Linkage = "static" };
+            var target = TargetProfile.Host;
+            var toolchain = config.ResolveToolchain(target, "gcc");
+            string exe = Path.Combine(root, "cancel-cli");
+
+            // ---- cancelled while gcc compiles the library modules ----
+            using var cancel = new CancellationTokenSource();
+            using var compiling = new ManualResetEventSlim();
+            var cancelMonitor = new BuildMonitor(cancel.Token, p => { if (p.Phase == BuildPhase.CompileC && p.Done == 0) compiling.Set(); });
+            var build = Task.Run(() => NativeBuilder.BuildSafe(new[] { Cli }, config, target, toolchain, exe, monitor: cancelMonitor));
+            bool reached = compiling.Wait(TimeSpan.FromMinutes(3));
+            Thread.Sleep(800);   // (gcc runs: cc1 is at work on the modules)
+            var running = ProcessesWith(cache);
+            var watch = Stopwatch.StartNew();
+            cancel.Cancel();
+            bool ended = build.Wait(TimeSpan.FromSeconds(60));
+            double seconds = watch.Elapsed.TotalSeconds;
+            var cancelled = ended ? build.Result : null;
+            // (a process that is ending may still be listed for a moment)
+            var left = ProcessesWith(cache);
+            for (int i = 0; i < 20 && left.Count > 0; i++) { Thread.Sleep(100); left = ProcessesWith(cache); }
+            Console.WriteLine($"  (abgebrochen: {running.Count} Prozesse des Baus liefen, nach {seconds:0.0} s war der Bau zu Ende)");
+            Check("Abbrechen: der Bau erreicht die Phase \"C uebersetzen\" (gcc laeuft fuer die Module)", reached && (!OperatingSystem.IsLinux() || running.Count > 0), string.Join("\n", running));
+            Check("Abbrechen: der Bau endet binnen weniger Sekunden als abgebrochen, gcc/cc1 laufen nicht mehr", ended && cancelled is { Cancelled: true, Ok: false } && seconds < 6 && left.Count == 0,
+                $"{seconds:0.0} s, {cancelled?.Log}\n{string.Join("\n", left)}");
+            var files = Directory.Exists(cache) ? Directory.EnumerateFiles(cache, "*", SearchOption.AllDirectories).ToList() : new List<string>();
+            var temporaries = files.Where(f => f.EndsWith(".tmp", StringComparison.Ordinal) || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(f), "^[0-9a-f]{32}$")).ToList();
+            var orphans = files.Where(f => f.EndsWith(".a", StringComparison.Ordinal) && !File.Exists(Path.Combine(Path.GetDirectoryName(f)!, Path.GetFileNameWithoutExtension(f).Substring("fire_".Length) + NativeLibraryCache.InterfaceExtension))).ToList();
+            Check("Abbrechen: keine halbe Bibliothek im Cache (keine temporaere Datei, jede Bibliothek mit ihrer Schnittstelle) und kein Programm", temporaries.Count == 0 && orphans.Count == 0 && !File.Exists(exe),
+                string.Join("\n", temporaries.Concat(orphans)));
+
+            // ---- the next build into the same cache: works; its progress in order ----
+            var events = new List<BuildProgress>();
+            var lines = new List<string>();
+            var monitor = new BuildMonitor(default, p => { lock (events) events.Add(p); }, l => { lock (lines) lines.Add(l); });
+            var again = NativeBuilder.BuildSafe(new[] { Cli }, config, target, toolchain, exe, monitor: monitor);
+            string vm = Vm(new[] { Cli });
+            Check("Abbrechen: der naechste Bau in denselben Cache gelingt, das Programm gibt aus, was die VM ausgibt", again.Ok && !again.Cancelled && Exec(exe) == vm, again.Log);
+            var phases = events.Select(e => e.Phase).ToList();
+            var modules = events.Where(e => e.Phase == BuildPhase.CompileC).ToList();
+            int fresh = ModuleLines(again.Log, "built in").Count;
+            Check("Fortschritt: die Phasen kommen in Reihenfolge (fire uebersetzen, C erzeugen, C uebersetzen, linken)",
+                phases.Count > 0 && phases.Zip(phases.Skip(1)).All(z => z.First <= z.Second) && phases.Contains(BuildPhase.CompileFire) && phases.Contains(BuildPhase.GenerateC) && phases[^1] == BuildPhase.Link,
+                string.Join(" | ", events.Select(e => $"{e.Phase} {e.Done}/{e.Total} {e.Text}")));
+            Check("Fortschritt: \"C uebersetzen\" zaehlt die neuen Module von 0 bis N (der Reihe nach, N = die Module, die der Bau uebersetzt)",
+                fresh > 0 && modules.Count == fresh + 1 && modules.Select(m => m.Done).SequenceEqual(Enumerable.Range(0, fresh + 1)) && modules.All(m => m.Total == fresh),
+                $"{fresh} new: " + string.Join(" | ", modules.Select(e => $"{e.Done}/{e.Total}")));
+            Check("Fortschritt: das Protokoll hat die Befehle, wie sie liefen (gcc fuer jedes neue Modul und fuer das Programm)",
+                lines.Count(l => l.Contains(" -c ", StringComparison.Ordinal) && l.Contains(cache, StringComparison.Ordinal)) == fresh && lines.Any(l => l.Contains(exe, StringComparison.Ordinal)),
+                string.Join("\n", lines.Take(30)));
+        }
+        finally { Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", before); }
+    }
+
     private static List<string> ModuleLines(string log, string what) =>
         log.Split('\n').Where(l => l.StartsWith("module ", StringComparison.Ordinal) && l.Contains(what)).Select(l => l.Substring(7, l.IndexOf(": ", StringComparison.Ordinal) - 7)).ToList();
 
@@ -75,9 +159,13 @@ static class LinkageTests
         Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", Path.Combine(root, "cache"));
         try
         {
-            // (FIRE_TESTS_FILTER=plugin: only the fire plugins)
-            if (Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") is { } filter && filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
-            else RunIn(root);
+            // (FIRE_TESTS_FILTER=plugin: only the fire plugins; =library: only Library.Load/Get)
+            string filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") ?? "";
+            // (=cancel: only the progress and the cancelling of a build, spark's build window)
+            if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
+            else if (filter.Contains("library", StringComparison.OrdinalIgnoreCase)) LibraryLoad(root);
+            else if (filter.Contains("cancel", StringComparison.OrdinalIgnoreCase)) ProgressAndCancel(root);
+            else { RunIn(root); ProgressAndCancel(root); }
         }
         catch (Exception ex) { Check("ohne Ausnahme", false, ex.ToString()); }
         finally
@@ -375,7 +463,17 @@ static class LinkageTests
 
     // ---- fire plugins (ROADMAP 9 phase D b): a library module built on its own and loaded while the program runs ----
     private const string PluginApi = """
+        prefixed unit Watt: W
+        unit DecibelMilliwatt: dBm
+        {
+            coerce to mW => 10 ^ (value / 10)
+            coerce from mW => 10 * Math.Log10(value)
+        }
         namespace Api {
+            interface IGauge {
+                string Report()
+                any Convert(any x)
+            }
             interface IDriver {
                 string Name()
                 int Run(int x)
@@ -417,12 +515,21 @@ static class LinkageTests
             class KitError : Exception {
                 construct(string m) : base(m) { }
             }
+            class Settings {
+                string title = "kit"
+                int level = 3
+                List<int> marks = new List<int>()
+                Api.Device dev = undefined
+                construct() { marks.Add(1); marks.Add(2); dev = new Kit.FastDevice("j0") }
+                string Show() { return title + " " + level + " " + marks.Count + " " + marks[1] + " " + dev.Describe() + " " + dev.Speed() }
+            }
         }
         """;
 
     private const string PluginHost = """
         #import "Api"
         #import "reflection"
+        unit Foot: ft { coerce m => 0.3048 }
         class Mine : Api.Device {
             construct() : base("mine") { }
         }
@@ -447,10 +554,105 @@ static class LinkageTests
         print(Reflect.Get(dev, "id") + " " + Reflect.Call(d, "Run", [5]) + " " + Type.Of(dev).Name)
         print("again " + Library.Load(Environment.Get("FIRE_TEST_PLUGIN")).Classes().Length)
         try { Reflect.New("Kit.Nope", []) } catch (ReflectionException e) { print("nope: " + e.message) }
+        any up = Environment.Get("FIRE_TEST_UNITS")
+        if (up != undefined) {
+            Library.Load(up)
+            Api.IGauge g = Reflect.New("Meter.Gauge", [])
+            print(g.Report())
+            print(g.Convert(1.0m) + " " + g.Convert(254mm) + " " + g.Convert(3.0ft) + " " + g.Convert(2.0km):m)
+            any m = Reflect.Call(g, "Measure", [])
+            print(m + " " + m:mW + " " + (m * 2) + " " + (m * 1s) + " " + Reflect.Call(g, "Level", []):W + " " + (Reflect.Call(g, "Level", []) == 30.0dBm))
+            any c = Reflect.Call(g, "Pears", [])
+            print(Reflect.Call(g, "Native", [21]))
+            print(c + " " + (c * 4apples) + " " + (c * 1m / 1s) + " " + (4apples * 1s) + " " + "3mm".ToFloat() + " " + "2ft".ToFloat() + " " + (1.0ft + 1.0m) + " " + (m * c))
+        }
         """;
 
-    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
-        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 3\nnope: Unknown class 'Kit.Nope'.\n";
+    /// <summary>JSON of the plugins' objects (a program with `#import "json"`): Kit.Settings (a list, a field with an object of the plugin), a subclass of a class of
+    /// Api by "$type", Meter.Reading (fields with units of the plugin and of the program).</summary>
+    private const string PluginJsonChecks = """
+        if (Environment.Get("FIRE_TEST_JSON") != undefined) {
+            any st = Reflect.New("Kit.Settings", [])
+            string text = Json.Serialize(st)
+            print(text)
+            any back = Json.Deserialize(text, "Kit.Settings")
+            print(Reflect.Call(back, "Show", []) + " " + Type.Of(back).Name)
+            Api.Device dd = Json.Deserialize<Api.Device>("{\"$type\": \"Kit.FastDevice\", \"id\": \"j1\"}")
+            print(dd.Describe() + " " + dd.Speed())
+            any r = Reflect.New("Meter.Reading", [])
+            string rt = Json.Serialize(r)
+            print(rt)
+            print(Reflect.Call(Json.Deserialize(rt, "Meter.Reading"), "Show", []))
+        }
+        """;
+
+    /// <summary>The natives in C++ of the plugin Meter (its project's folder native/): the C++ library, state of its own.</summary>
+    private const string PluginMeterCpp = """
+        #include <string>
+        namespace fire {
+        static int mt_count = 0;
+        inline Value mt_twice(Value a) { mt_count++; return Int(a.i * 2); }
+        inline Value mt_label(Value a, OwnList* list) {
+            std::string text = "n=" + std::to_string((long long)a.i);
+            Str* s = allocStr((uint32_t)text.size(), list);
+            for (size_t i = 0; i < text.size(); i++) strChars(s)[i] = (fire_char16)text[i];
+            return StrV(s);
+        }
+        inline Value mt_calls() { return Int(mt_count); }
+        inline Value mt_check(Value a) { if (a.i < 0) return fireError("ArgumentException", "negative in C++"); return a; }
+        }
+        """;
+
+    /// <summary>A plugin with units (ROADMAP 9): its own (a new dimension, a factor, an offset, conversion functions of its own), those of a library (dBm of Api, with
+    /// conversion functions) and of fire, units of the program passed in and back, a text that names its units.</summary>
+    private const string PluginMeter = """
+        #import "Api"
+        prefixed unit Volt: V
+        unit Inch: in { coerce m => 0.0254 }
+        unit Kelvin: K
+        unit Celsius: C { coerce K => value + 273.15 }
+        unit Binary: bn
+        {
+            coerce to mW => 2 ^ value
+            coerce from mW => Math.Log(value) / Math.Log(2)
+        }
+        namespace Meter {
+            class Gauge : Api.IGauge {
+                construct() { }
+                string Report() {
+                    float t = 20.0C
+                    return (5V + 300mV) + " " + (1.0m:in) + " " + (10in + 2.54cm) + " " + t:K + " " + (30.0dBm:W) + " " + (3.0bn:mW) + " " + (3pears * 2m) + " " + (2km + 5m) + " " + "7in".ToFloat() + " " + "2kV".ToFloat() + " " + "5bn".ToFloat():mW
+                }
+                any Convert(any x) { return x:in }
+                any Measure() { return 4.0bn }
+                any Level() { return 30.0dBm }
+                any Pears() { return 3.0pears / 1kV }
+                string Native(int x) {
+                    var thrown = ""
+                    int before = __mt_calls()
+                    try { __mt_check(-1) } catch (ArgumentException e) { thrown = e.message }
+                    return __mt_twice(x) + " " + __mt_label(x) + " " + __mt_twice(1) + " " + (__mt_calls() - before) + " " + __mt_check(5) + " " + thrown
+                }
+            }
+            class Reading {
+                float level : pears = 3.0pears
+                float span : km = 2.5km
+                float heat : C = 20.0C
+                any loose = 4.0bn
+                construct() { }
+                string Show() { return level + " " + span + " " + heat + " " + heat:K + " " + loose }
+            }
+        }
+        """;
+
+    private const string PluginUnitsExpected = "5300mV 39.37007874015748in 11in 293.15K 1W 8mW 6pears*m 2005m 7in 2kV 32mW\n39.37007874015748in 10in 36in 2000.0000000000002m\n"
+        + "4bn 16mW 8bn 4s*W(×0.001) 1W True\n42 n=21 2 2 5 negative in C++\n3pears/kV 12pears*apples/kV 3pears*m/kV*s 4apples*s 3mm 2ft 4.2808398950131235ft 12pears*W/V(×1E-06)\n";
+
+    private const string PluginJsonExpected = "{\"$type\":\"Kit.Settings\",\"title\":\"kit\",\"level\":3,\"marks\":[1,2],\"dev\":{\"$type\":\"Kit.FastDevice\",\"id\":\"j0\"}}\n"
+        + "kit 3 2 2 fast j0 9 Kit.Settings\nfast j1 9\n{\"$type\":\"Meter.Reading\",\"level\":3.0,\"span\":2.5,\"heat\":20.0,\"loose\":{\"$value\":4.0,\"$unit\":\"bn\"}}\n3pears 2.5km 20C 293.15K 4bn\n";
+
+    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Settings True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
+        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 4\nnope: Unknown class 'Kit.Nope'.\n";
 
     /// <summary>fire plugins (ROADMAP 9 phase D b): a project with a library `Api` (an interface, a class, an exception), a program with linkage "shared" that loads the
     /// plugin `Kit` (built with `--linkage plugin --host`) and uses its classes through the interface, the base class, reflection and catch; the errors when the plugin does
@@ -462,13 +664,16 @@ static class LinkageTests
         Write(s, "Api/Api.fireproj", """{ "name": "Api", "type": "library" }""");
         Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
         Write(s, "Kit/kit.script", PluginKit);
+        Write(s, "Meter/Meter.fireproj", """{ "name": "Meter", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" }, "native": { } }""");
+        Write(s, "Meter/native/meter.hpp", PluginMeterCpp);
+        Write(s, "Meter/meter.script", PluginMeter);
         Write(s, "Host/Host.fireproj", """{ "name": "Host", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "shared" } }""");
         Write(s, "Host/main.script", PluginHost);
-        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Meter/Meter.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
         BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
-        Built BuildPlugin(string output, string? host, ToolchainDef? toolchain = null, TargetProfile? target = null)
+        Built BuildPlugin(string output, string? host, ToolchainDef? toolchain = null, TargetProfile? target = null, string project = "Kit")
         {
-            var plan = Plan("Kit");
+            var plan = Plan(project);
             var config = new NativeConfig { Linkage = "plugin", Host = host };
             target ??= TargetProfile.Host;
             toolchain ??= config.ResolveToolchain(target, "gcc");
@@ -476,6 +681,7 @@ static class LinkageTests
             return new Built(result.Ok, result.Output, result.Log, 0, 0);
         }
         string? before = Environment.GetEnvironmentVariable("FIRE_TEST_PLUGIN");
+        Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
         try
         {
             if (OperatingSystem.IsLinux())
@@ -496,6 +702,19 @@ static class LinkageTests
                 // (Library.Load of the .fireplugin file natively: the library next to it)
                 string viaBytecode = host.Ok && kit.Ok ? Exec(host.Exe) : "";
                 Check("Plugin: nativ laedt Library.Load(\"kit.fireplugin\") die Bibliothek daneben", viaBytecode == PluginExpected, viaBytecode);
+
+                // a plugin with units: its own, a library's, fire's, the program's - mapped to the program's by dimensions, scale and symbol (natively), by name (VM)
+                var meter = BuildPlugin(Path.Combine(root, "plug-meter", "meter"), host.Exe, project: "Meter");
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.so"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", Path.Combine(root, "plug-meter", "meter.so"));
+                string unitsNative = host.Ok && meter.Ok ? Exec(host.Exe) : "";
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", Path.Combine(root, "plug-meter", "meter.fireplugin"));
+                string unitsVm = Vm(hostPlan.SourceTexts, hostPlan);
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
+                Check("Plugin: Einheiten im Plugin (eigene, neue Dimension, Offset, eigene und Library-Umrechnungsfunktionen, Text) und des Programms - nativ",
+                    unitsNative == PluginExpected + PluginUnitsExpected, $"{unitsNative}\n{meter.Log}");
+                Check("Plugin: Einheiten im Plugin - die VM wie nativ", unitsVm == PluginExpected + PluginUnitsExpected, unitsVm);
 
                 // a plugin built against another interface of Api (a field more): readable error, in the VM too
                 string apiBefore = File.ReadAllText(apiSource);
@@ -520,17 +739,33 @@ static class LinkageTests
                 string noShared = hostStatic.Ok ? Exec(hostStatic.Exe) : "";
                 Check("Plugin: ein Programm ohne linkage shared sagt, dass es keine Plugins laden kann", noShared.Contains("this program cannot load fire plugins"), $"{noShared}\n{hostStatic.Log}");
 
-                // a plugin built for other switches (a program that uses threads)
+                // a plugin built for other switches (a program that uses JSON)
                 string threadsDir = Path.Combine(root, "plug-threads");
                 Directory.CreateDirectory(threadsDir);
                 string mainFile = Path.Combine(s, "Host", "main.script");
-                File.WriteAllText(mainFile, "#import \"json\"\nvar js = Json.Serialize(1)\n" + PluginHost);
+                File.WriteAllText(mainFile, "#import \"json\"\nvar js = Json.Serialize(1)\n" + PluginHost + PluginJsonChecks);
                 var threadsPlan = Plan("Host");
                 File.WriteAllText(mainFile, PluginHost);
                 var hostThreads = Build(threadsPlan.SourceTexts, "shared", Path.Combine(threadsDir, "host"), plan: threadsPlan);
                 string otherSwitches = hostThreads.Ok ? Exec(hostThreads.Exe) : "";
                 Check("Plugin: fuer andere Schalter gebaut - eine lesbare LibraryException (die Konfiguration der Runtime)",
                     otherSwitches.Contains("it was built for another configuration of the runtime") || otherSwitches.Contains("it needs the module"), $"{otherSwitches}\n{hostThreads.Log}");
+
+                // JSON of the plugins' objects: Kit and Meter built for that program (the JSON rows of their classes, the program's jsonClassAt asks the runtime)
+                var kitJson = hostThreads.Ok ? BuildPlugin(Path.Combine(root, "plug-json", "kit"), hostThreads.Exe) : new Built(false, "", "", 0, 0);
+                var meterJson = hostThreads.Ok ? BuildPlugin(Path.Combine(root, "plug-json", "meter"), hostThreads.Exe, project: "Meter") : new Built(false, "", "", 0, 0);
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-json", "kit.so"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", Path.Combine(root, "plug-json", "meter.so"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_JSON", "1");
+                string jsonNative = kitJson.Ok && meterJson.Ok ? Exec(hostThreads.Exe) : "";
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-json", "kit.fireplugin"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", Path.Combine(root, "plug-json", "meter.fireplugin"));
+                string jsonVm = Vm(threadsPlan.SourceTexts, threadsPlan);
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
+                Environment.SetEnvironmentVariable("FIRE_TEST_JSON", null);
+                Check("Plugin: JSON von Objekten der Plugins (Serialize, Deserialize mit $type und Klassenname, Felder mit Einheiten des Plugins) - nativ",
+                    jsonNative == PluginExpected + PluginUnitsExpected + PluginJsonExpected, $"{jsonNative}\n{kitJson.Log}\n{meterJson.Log}");
+                Check("Plugin: JSON von Objekten der Plugins - die VM wie nativ", jsonVm == PluginExpected + PluginUnitsExpected + PluginJsonExpected, jsonVm);
 
                 // Windows (MinGW, under Wine): the plugin's DLL imports from the runtime's DLL and those of the program's modules, its pointers to the program are filled
                 // by its fire_link function from the program's table
@@ -541,22 +776,103 @@ static class LinkageTests
                     _winePrefix ??= Path.Combine(root, "wineprefix");
                     string winDir = Path.Combine(root, "plug-win");
                     Directory.CreateDirectory(winDir);
-                    var winHost = Build(hostPlan.SourceTexts, "shared", Path.Combine(winDir, "host.exe"), mingw, TargetProfile.Windows, hostPlan);
+                    // (the program with JSON: the JSON rows of the plugins' classes are checked there too)
+                    var winHost = Build(threadsPlan.SourceTexts, "shared", Path.Combine(winDir, "host.exe"), mingw, TargetProfile.Windows, threadsPlan);
                     var winKit = winHost.Ok ? BuildPlugin(Path.Combine(winDir, "kit"), winHost.Exe, mingw, TargetProfile.Windows) : new Built(false, "", "", 0, 0);
+                    var winMeter = winHost.Ok ? BuildPlugin(Path.Combine(winDir, "meter"), winHost.Exe, mingw, TargetProfile.Windows, "Meter") : new Built(false, "", "", 0, 0);
                     Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", "kit.dll");
                     string winOut = winHost.Ok && winKit.Ok ? Exec(winHost.Exe, wine) : "";
                     Check("Plugin: Windows (MinGW, DLL des Plugins gegen die DLLs des Programms, fire_link) unter Wine wie die VM", winOut == PluginExpected, $"{winOut}\n{winHost.Log}\n{winKit.Log}");
+                    Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", "meter.dll");
+                    Environment.SetEnvironmentVariable("FIRE_TEST_JSON", "1");
+                    string winUnits = winHost.Ok && winMeter.Ok ? Exec(winHost.Exe, wine) : "";
+                    Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
+                    Environment.SetEnvironmentVariable("FIRE_TEST_JSON", null);
+                    Check("Plugin: Einheiten, Natives in C++ und JSON der Plugins unter Windows (MinGW, Wine) wie die VM", winUnits == PluginExpected + PluginUnitsExpected + PluginJsonExpected, $"{winUnits}\n{winMeter.Log}");
                     var noHost = BuildPlugin(Path.Combine(winDir, "nohost"), null, mingw, TargetProfile.Windows);
                     Check("Plugin: fuer Windows ohne --host - der Bau sagt, dass das Plugin fuer ein Programm gebaut wird", !noHost.Ok && noHost.Log.Contains("--host"), noHost.Log);
                 }
                 else Console.WriteLine("(Plugin unter Windows: uebersprungen - MinGW/Wine fehlt)");
+                PluginNativesC(root);
             }
         }
-        finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); }
+        finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null); Environment.SetEnvironmentVariable("FIRE_TEST_JSON", null); }
+    }
+
+    /// <summary>A plugin that calls natives in C of a library (they live in the program, `fire_cn_<function>`): one that neither the program nor the library calls
+    /// itself (a program that loads plugins exports every native in C of the packages in its file); one the program does not have (it was built before the package
+    /// got it) - a readable LibraryException. Linux, the VM, Windows (MinGW, Wine).</summary>
+    private static void PluginNativesC(string root)
+    {
+        string s = Path.Combine(root, "plugc");
+        Write(s, "CApi/CApi.fireproj", """{ "name": "CApi", "type": "library", "native": { "language": "c" } }""");
+        string header = Write(s, "CApi/native/capi.h", "static inline Value capi_up(Value x) { return Int(x.i + 1); }\nstatic inline Value capi_ten(Value x) { return Int(x.i * 10); }\n");
+        Write(s, "CApi/capi.script", "namespace CApi {\n    class Tool {\n        construct() { }\n        int Up(int x) { return __capi_up(x) }\n    }\n}\n");
+        Write(s, "CPlug/CPlug.fireproj", """{ "name": "CPlug", "references": [ { "project": "../CApi/CApi.fireproj" } ], "settings": { "linkage": "plugin" } }""");
+        string plugSource = Write(s, "CPlug/cplug.script", "#import \"CApi\"\nnamespace CPlug {\n    class P {\n        construct() { }\n        int Ten(int x) { return __capi_ten(x) }\n    }\n}\n");
+        Write(s, "CHost/CHost.fireproj", """{ "name": "CHost", "references": [ { "project": "../CApi/CApi.fireproj" } ], "settings": { "linkage": "shared" } }""");
+        Write(s, "CHost/main.script", """
+            #import "CApi"
+            #import "reflection"
+            print(new CApi.Tool().Up(1))
+            try { Library.Load(Environment.Get("FIRE_TEST_PLUGIN")) } catch (LibraryException e) { print("load: " + e.message); terminate(3) }
+            print(Reflect.Call(Reflect.New("CPlug.P", []), "Ten", [4]))
+            """);
+        string sln = Write(s, "C.firesln", """{ "name": "C", "projects": ["CApi/CApi.fireproj", "CPlug/CPlug.fireproj", "CHost/CHost.fireproj"], "startup": "CHost" }""");
+        BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
+        Built Plugin(string output, string host, ToolchainDef? toolchain = null, TargetProfile? target = null)
+        {
+            var config = new NativeConfig { Linkage = "plugin", Host = host };
+            target ??= TargetProfile.Host;
+            toolchain ??= config.ResolveToolchain(target, "gcc");
+            var result = NativeBuilder.BuildSafe(Plan("CPlug").SourceTexts, config, target, toolchain, output, plan: Plan("CPlug"));
+            return new Built(result.Ok, result.Output, result.Log, 0, 0);
+        }
+        string headerBefore = File.ReadAllText(header), plugBefore = File.ReadAllText(plugSource);
+        const string Missing = "cannot be loaded: it calls the native function 'capi_hundred' in C, which this program does not export to plugins";
+        var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
+        string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
+        bool windows = ToolchainDetector.Find(mingw) != null && wine != null;
+        try
+        {
+            var hostPlan = Plan("CHost");
+            Directory.CreateDirectory(Path.Combine(root, "plugc-host"));
+            var host = Build(hostPlan.SourceTexts, "shared", Path.Combine(root, "plugc-host", "host"), plan: hostPlan);
+            var plug = host.Ok ? Plugin(Path.Combine(root, "plugc-plug", "cplug"), host.Exe) : new Built(false, "", "", 0, 0);
+            string winDir = Path.Combine(root, "plugc-win");
+            Directory.CreateDirectory(winDir);
+            var winHost = windows ? Build(hostPlan.SourceTexts, "shared", Path.Combine(winDir, "host.exe"), mingw, TargetProfile.Windows, hostPlan) : new Built(false, "", "", 0, 0);
+            var winPlug = winHost.Ok ? Plugin(Path.Combine(winDir, "cplug"), winHost.Exe, mingw, TargetProfile.Windows) : new Built(false, "", "", 0, 0);
+            Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugc-plug", "cplug.so"));
+            string native = plug.Ok ? Exec(host.Exe) : "";
+            Check("Plugin: ruft ein Native in C einer Library, das weder das Programm noch die Library ruft (fire_cn_ des Programms) - nativ", native == "2\n40\n", $"{native}\n{host.Log}\n{plug.Log}");
+            Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugc-plug", "cplug.fireplugin"));
+            string vm = Vm(hostPlan.SourceTexts, hostPlan);
+            Check("Plugin: ein Native in C einer Library - die VM wie nativ", vm == "2\n40\n", vm);
+            // the package gets a native the program (built before) does not have
+            File.WriteAllText(header, headerBefore + "static inline Value capi_hundred(Value x) { return Int(x.i * 100); }\n");
+            File.WriteAllText(plugSource, plugBefore.Replace("__capi_ten(x)", "__capi_hundred(x)"));
+            var newer = host.Ok ? Plugin(Path.Combine(root, "plugc-newer", "cplug"), host.Exe) : new Built(false, "", "", 0, 0);
+            Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugc-newer", "cplug.so"));
+            string missing = newer.Ok ? Exec(host.Exe) : "";
+            Check("Plugin: ein Native in C, das das Programm nicht hat - eine lesbare LibraryException statt 'could not be loaded'", missing.Contains("load: The plugin library '") && missing.Contains(Missing), $"{missing}\n{newer.Log}");
+            if (windows)
+            {
+                var winNewer = winHost.Ok ? Plugin(Path.Combine(winDir, "cplug2"), winHost.Exe, mingw, TargetProfile.Windows) : new Built(false, "", "", 0, 0);
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", "cplug.dll");
+                string winOut = winHost.Ok && winPlug.Ok ? Exec(winHost.Exe, wine) : "";
+                Check("Plugin: ein Native in C einer Library unter Windows (MinGW, Wine)", winOut == "2\n40\n", $"{winOut}\n{winHost.Log}\n{winPlug.Log}");
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", "cplug2.dll");
+                string winMissing = winNewer.Ok ? Exec(winHost.Exe, wine) : "";
+                Check("Plugin: ein Native in C, das das Programm nicht hat, unter Windows - dieselbe Meldung", winMissing.Contains("load: The plugin '") && winMissing.Contains(Missing), $"{winMissing}\n{winNewer.Log}");
+            }
+        }
+        finally { File.WriteAllText(header, headerBefore); File.WriteAllText(plugSource, plugBefore); }
     }
 
     private const string CLibrary = """
         #include <stdint.h>
+        #include <stdlib.h>
         #include <string.h>
         #include <stdbool.h>
         #ifdef _WIN32
@@ -572,7 +888,79 @@ static class LinkageTests
         EXPORT bool isodd(int64_t x) { return x % 2 != 0; }
         EXPORT void twice(int64_t* p) { *p = *p * 2; }
         EXPORT uint16_t upper(uint16_t c) { return c >= 97 && c <= 122 ? c - 32 : c; }
+        /* release: (Get's release function) - every allocation counted */
+        static int live;
+        EXPORT int live_count(void) { return live; }
+        EXPORT void* obj_new(int64_t v) { int64_t* p = (int64_t*)malloc(sizeof *p); *p = v; live++; return p; }
+        EXPORT void* obj_none(void) { return NULL; }
+        EXPORT int64_t obj_get(void* p) { return *(int64_t*)p; }
+        EXPORT int64_t obj_sum(void* a, int64_t k, void* b) { return *(int64_t*)a + k + *(int64_t*)b; }
+        EXPORT void obj_free(void* p) { live--; free(p); }
+        EXPORT char* text_dup(const char* s) { char* r = (char*)malloc(strlen(s) + 1); strcpy(r, s); live++; return r; }
+        EXPORT char* text_none(void) { return NULL; }
         """;
+
+    private const string UseRelease = """
+        var lib = Library.Load(Environment.Get("FIRE_TEST_CLIB"))
+        var make = lib.Get("obj_new", "void*(int)", release: "obj_free")
+        var get = lib.Get("obj_get", "int(void*)")
+        var sum = lib.Get("obj_sum", "int(void*, int, void*)")
+        var live = lib.Get("live_count", "int[32]()")
+        class Holder { NativeHandle h }
+        {
+            var a = make(5)
+            var b = make(30)
+            print(get(a) + " " + sum(a, 7, b) + " " + live() + " " + (a is of NativeHandle) + " " + (a.Address != 0))
+        }
+        print("block " + live())
+        var h = make(7)
+        print(get(h) + " " + live())
+        delete h
+        print("delete " + live())
+        try { print(get(h)) } catch (DestroyedException e) { print("use: " + e.message) }
+        try { print(h.Address) } catch (DestroyedException e) { print("address: " + e.message) }
+        try { delete h; print("delete again: " + live()) } catch (DestroyedException e) { print("delete again: " + e.message) }
+        try { print(h is of NativeHandle) } catch (DestroyedException e) { print("is of: " + e.message) }
+        var one = make(3)
+        try { var two = copy one } catch (ArgumentException e) { print("copy: " + e.message) }
+        try { var two = flat one } catch (ArgumentException e) { print("flat: " + e.message) }
+        {
+            var hb = new Holder()
+            hb.h = make(4)
+            try { var hc = copy hb } catch (ArgumentException e) { print("deep: " + e.message) }
+            var hf = flat hb
+            print("flat shares " + (hf.h == hb.h) + " " + live())
+        }
+        delete one
+        print("no copies " + live())
+        {
+            var box = new Holder()
+            box.h = make(9)
+            print("holder " + get(box.h) + " " + live())
+        }
+        print("holder gone " + live())
+        var dup = lib.Get("text_dup", "string(string)", release: "obj_free")
+        print(dup("copied") + " " + live())
+        print(lib.Get("text_none", "string()", release: "obj_free")() == undefined)
+        print(lib.Get("obj_none", "void*()", release: "obj_free")() == undefined)
+        var raw = lib.Get("obj_new", "void*(int)")(1)
+        print((raw is of int) + " " + live())
+        lib.Get("obj_free", "void(void*)")(raw)
+        try { lib.Get("obj_new", "void*(int)", release: "nope") } catch (LibraryException e) { print("rel: " + e.message.Replace(lib.Path, "LIB")) }
+        try { lib.Get("add", "int(int, int)", release: "obj_free") } catch (LibraryException e) { print("kind: " + e.message) }
+        var g = make(11)
+        print("end " + live())
+        """;
+
+    /// <summary>The output of <see cref="UseRelease"/> - the same in the VM, natively (source, static, under ASan) and under Wine.</summary>
+    private const string ReleaseExpected = "5 42 2 True True\nblock 0\n7 1\ndelete 0\nuse: Access to a destroyed object.\naddress: Access to a destroyed object.\n"
+        + "delete again: 0\nis of: Access to a destroyed object.\n"
+        + "copy: 'NativeHandle' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.\n"
+        + "flat: 'NativeHandle' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.\n"
+        + "deep: 'NativeHandle' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.\n"
+        + "flat shares True 2\nno copies 0\nholder 9 1\nholder gone 0\ncopied 0\nTrue\nTrue\nTrue 1\n"
+        + "rel: The library 'LIB' has no function 'nope' (release:).\n"
+        + "kind: release: frees what a function returns - the signature 'int(int, int)' returns no pointer and no string.\nend 1\n";
 
     private const string UseLibrary = """
         var path = Environment.Get("FIRE_TEST_CLIB")
@@ -624,6 +1012,24 @@ static class LinkageTests
             var st = Build(new[] { UseLibrary }, "static", Path.Combine(root, "clib-static"));
             string stOut = st.Ok ? Exec(st.Exe) : "";
             Check("Library: mit linkage static (Library in core, die Thunks im Programm)", stOut == native, $"{stOut}\n{st.Log}");
+
+            // ---- release: (what the library returns, freed by its own function): a NativeHandle follows ownership, a string is copied and freed at once ----
+            string relVm = Vm(new[] { UseRelease });
+            Check("Library release: in der VM (NativeHandle: delete, Ende des Blocks und des Besitzers geben frei, einmal; danach DestroyedException; String kopiert und freigegeben)",
+                relVm == ReleaseExpected, relVm);
+            var relSrc = Build(new[] { UseRelease }, "source", Path.Combine(root, "rel-source"));
+            string relSrcOut = relSrc.Ok ? Exec(relSrc.Exe) : "";
+            Check("Library release: nativ (source) wie die VM", relSrcOut == ReleaseExpected, $"{relSrcOut}\n{relSrc.Log}");
+            var relSt = Build(new[] { UseRelease }, "static", Path.Combine(root, "rel-static"));
+            string relStOut = relSt.Ok ? Exec(relSt.Exe) : "";
+            Check("Library release: nativ (static) wie die VM", relStOut == ReleaseExpected, $"{relStOut}\n{relSt.Log}");
+            // under AddressSanitizer (LeakSanitizer at the end): no leak, no double free - the library's malloc/free are intercepted too
+            const string asanFlags = "-fsanitize=address,undefined";
+            var asanTool = new ToolchainDef { Kind = "gcc", Compiler = "g++", CCompiler = "gcc", Std = "c++17", CStd = "c11", Optimization = "-O1 -g", Strip = false, Args = new() { asanFlags }, Libs = new() { asanFlags } };
+            var relAsan = Build(new[] { UseRelease }, "source", Path.Combine(root, "rel-asan"), asanTool);
+            string relAsanOut = relAsan.Ok ? Exec(relAsan.Exe) : "";
+            Check("Library release: nativ unter AddressSanitizer (kein Leck, keine doppelte Freigabe)", relAsanOut == ReleaseExpected, $"{relAsanOut}\n{relAsan.Log}");
+
             var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
             string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
             if (ToolchainDetector.Find(mingw) != null && wine != null)
@@ -632,10 +1038,13 @@ static class LinkageTests
                 Directory.CreateDirectory(winDir);
                 var (dllOk, dllText) = NativeBuilderRun("x86_64-w64-mingw32-gcc", $"-shared -o \"{Path.Combine(winDir, "t.dll")}\" \"{cFile}\"", dir);
                 var win = Build(new[] { UseLibrary }, "static", Path.Combine(winDir, "use.exe"), mingw, TargetProfile.Windows);
-                _winePrefix ??= Path.Combine(root, "wineprefix");
+                _winePrefix ??= Environment.GetEnvironmentVariable("WINEPREFIX") ?? Path.Combine(root, "wineprefix");
                 Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", "t.dll");
                 string winOut = dllOk && win.Ok ? Exec(win.Exe, wine) : "";
                 Check("Library: Windows (MinGW, LoadLibrary) unter Wine wie nativ", winOut == native, $"{winOut}\n{dllText}\n{win.Log}");
+                var relWin = Build(new[] { UseRelease }, "static", Path.Combine(winDir, "rel.exe"), mingw, TargetProfile.Windows);
+                string relWinOut = dllOk && relWin.Ok ? Exec(relWin.Exe, wine) : "";
+                Check("Library release: Windows (MinGW, die Freigabe der DLL) unter Wine wie die VM", relWinOut == ReleaseExpected, $"{relWinOut}\n{relWin.Log}");
             }
         }
         finally { Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", before); }

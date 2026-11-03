@@ -277,7 +277,8 @@ namespace fire.Ast
         IReadOnlyList<TypeParam>? TypeParams = null,
         AccessModifier Access = AccessModifier.Public,
         bool IsStatic = false,
-        IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);
+        IReadOnlyList<AttributeDecl>? Attributes = null,
+        bool IsOverride = false) : Stmt(Source, Line);   // (IsOverride: `override` - it replaces a method of a base class, TypeChecker.CheckOverrides)
 
     /// <summary>`[Name arg1, arg2, ...]` before a method (SPEC "Attributes"): a name and expressions, known at compile time (the test runner reads
     /// `Test`, `Parameters`, `PrepareTest`, ...; reflection lists them). `ArgTexts` are the arguments as source text (a test driver evaluates them).</summary>
@@ -357,7 +358,7 @@ namespace fire.Ast
     /// ObjectInstance.Fields entry of their own name.</summary>
     public sealed record PropertyDecl(
         int Source, int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter,
-        AccessModifier Access = AccessModifier.Public, bool IsStatic = false, IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false, IReadOnlyList<AttributeDecl>? Attributes = null, bool IsOverride = false) : Stmt(Source, Line);
 
     /// <summary>`class extends Name { new members... }` - adds the
     /// members directly to the EXISTING class `Name` (Ruby-like

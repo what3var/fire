@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using fire.Bytecode;
 using fire.Values;
 
 namespace fire.Runtime
@@ -49,6 +50,8 @@ namespace fire.Runtime
                 // acquiring the lock.
                 if (target.IsDestroyed) return SyncResult.TargetGone;
 
+                // `[NoCopy]` (SPEC 5.12): before anything is written back (an InvalidOperationException, the VM makes the ArgumentException of it).
+                RequireNoCopyFields(copy, target, flat, new HashSet<ObjectInstance>(ReferenceEqualityComparer.Instance));
                 SyncFields(copy, target, flat, runner);
                 return SyncResult.Success;
             }
@@ -160,6 +163,41 @@ namespace fire.Runtime
 
             // Primitive values (bool/int/float/char/string/undefined) - value-like, taken over directly.
             return srcVal;
+        }
+
+        /// <summary>The walk of SyncFields without writing anything: would the write-back duplicate an instance of a `[NoCopy]` class? Case A (a new copy
+        /// for the original) of anything that reaches one, and case C of a full sync whose source is one (its fields would be written into another
+        /// instance) - both throw. Case C of the very same instance (a shared reference) and of `sync flat` (the reference stays, nothing is copied)
+        /// are fine, and so is case B. The same walk as the native syncNoCopyFields, so both engines refuse the same.</summary>
+        private static void RequireNoCopyFields(ObjectInstance source, ObjectInstance target, bool flat, HashSet<ObjectInstance> visited)
+        {
+            if (!visited.Add(source)) return;   // (a cycle: what it reaches was checked already)
+            foreach (var (name, srcVal) in new List<KeyValuePair<string, Value>>(source.Fields))
+            {
+                target.Fields.TryGetValue(name, out var tgtVal);
+                RequireNoCopyValue(srcVal, tgtVal, flat, visited);
+            }
+        }
+
+        private static void RequireNoCopyValue(Value srcVal, Value tgtVal, bool flat, HashSet<ObjectInstance> visited)
+        {
+            bool srcIsObj = srcVal.Kind == ValueKind.Class, tgtIsObj = tgtVal.Kind == ValueKind.Class;
+            if (srcIsObj && tgtIsObj)
+            {
+                var srcChild = (ObjectInstance)srcVal.AsObjectRef();
+                var tgtChild = (ObjectInstance)tgtVal.AsObjectRef();
+                if (flat || ReferenceEquals(srcChild, tgtChild) || srcChild.IsDestroyed) return;
+                if (srcChild.RtClass?.IsNoCopy() == true)
+                    throw new System.InvalidOperationException(RuntimeClass.NoCopyMessage(srcChild.ClassName, nested: true, "sync"));
+                RequireNoCopyFields(srcChild, tgtChild, flat: false, visited);
+                return;
+            }
+            if (srcIsObj) { ObjectCopier.RequireNoCopyFree(srcVal, "sync"); return; }
+            if (tgtIsObj || srcVal.Kind != ValueKind.Array) return;
+            var srcArr = (ScriptArray)srcVal.AsArray();
+            var oldArr = tgtVal.Kind == ValueKind.Array ? (ScriptArray)tgtVal.AsArray() : null;
+            for (int i = 0; i < srcArr.Length; i++)
+                RequireNoCopyValue(srcArr.Items[i], oldArr != null && i < oldArr.Length ? oldArr.Items[i] : Value.MakeUndefined(), flat, visited);
         }
 
         /// <summary>Pure, independent deep copy (without SyncOrigin/locking -

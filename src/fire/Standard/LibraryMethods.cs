@@ -10,17 +10,23 @@ namespace fire.Standard
     /// <summary>The functions behind the class `Library` (IDs for <see cref="LibraryMethods.NativeName"/>, fixed values - never renumber).</summary>
     public enum LibraryMethod
     {
-        /// <summary>`(1, path)`: loads a native library - its handle (an int), 0 when it cannot be loaded, -1 for a fire plugin the program cannot load (not linkage "shared").</summary>
+        /// <summary>`(1, path)`: loads a native library - its handle (an int), 0 when it cannot be loaded, -1 for a fire plugin the program cannot load (not linkage "shared"),
+        /// a text that says why a fire plugin does not load (natively: it calls a native in C the program does not export).</summary>
         Load = 1,
         /// <summary>`(2, handle, name)`: the address of a function of the library, 0 when it has none of that name.</summary>
         Symbol = 2,
         /// <summary>`(3, signature)`: the number of parameters of a C signature; -1: not a signature, -2: one the native build has no thunk for.</summary>
         Arity = 3,
-        /// <summary>`(4, address, signature, args)`: calls the function with the arguments converted as the signature says.</summary>
+        /// <summary>`(4, address, signature, args, release)`: calls the function with the arguments converted as the signature says; a string result is copied and then
+        /// freed with `release` (the address of a `void(void*)` function of the library; 0: never freed).</summary>
         Call = 4,
         /// <summary>`(5, handle, path)`: a fire plugin (ROADMAP 9 phase D b) - its classes registered: an array of their names; undefined: the library is no fire plugin;
         /// a string: why it does not fit the program.</summary>
         Plugin = 5,
+        /// <summary>`(6, signature)`: what Get needs to know of a valid signature (flags) - 1: the result is a pointer, 2: the result is a string, 4: a parameter is a pointer.</summary>
+        Shape = 6,
+        /// <summary>`(7, function, address)`: calls the release function of a `NativeHandle` (`void(void*)`) with its address.</summary>
+        Release = 7,
     }
 
     /// <summary>
@@ -49,7 +55,12 @@ namespace fire.Standard
             {
                 string ps = string.Join(", ", Enumerable.Range(0, n).Select(i => $"any a{i}"));
                 string xs = string.Join(", ", Enumerable.Range(0, n).Select(i => $"a{i}"));
-                sb.Append($"                    if (n == {n}) {{ return ({ps}) => {NativeName}({(int)LibraryMethod.Call}, fn, signature, [{xs}]) }}\n");
+                string hs = string.Join(", ", Enumerable.Range(0, n).Select(i => $"NativeHandle.Arg(a{i})"));
+                // plain: no pointer parameter and no handle to make - the arguments go as they are
+                sb.Append($"                    if (n == {n}) {{\n");
+                sb.Append($"                        if (plain) {{ return ({ps}) => {NativeName}({(int)LibraryMethod.Call}, fn, signature, [{xs}], rel) }}\n");
+                sb.Append($"                        return ({ps}) => NativeHandle.Result({NativeName}({(int)LibraryMethod.Call}, fn, signature, [{hs}], rel), wrap, rel)\n");
+                sb.Append("                    }\n");
             }
             return sb.ToString();
         }
@@ -59,6 +70,35 @@ namespace fire.Standard
             /// A native library that cannot be loaded, a function it does not have, a signature that is not one (`Library.Load`, `Get`).
             class LibraryException : Exception {
                 construct(string message) { this.message = message }
+            }
+
+            /// A pointer a native library returned with `release:` (`lib.Get("make", "void*(int)", release: "unmake")`): it follows ownership - `delete h` or the
+            /// end of its owner calls the release function, once; a function of the library that expects a pointer takes it (docs/language/18-native-code.md).
+            /// `[NoCopy]`: a copy would release the pointer twice - `flat`/`copy` refuse it (an ArgumentException), also of a class derived from it.
+            [NoCopy]
+            class NativeHandle {
+                private int address
+                private int release
+                construct(int address, int release) { this.address = address; this.release = release }
+
+                /// The address (a DestroyedException once it is released).
+                int Address { get { return this.address } }
+
+                destruct() { {{NativeName}}({{(int)LibraryMethod.Release}}, this.release, this.address) }
+
+                /// (an argument of a library function: a handle passes its address - a released one throws the DestroyedException here; `is of class`
+                /// only looks at the kind of the value, `is of NativeHandle` would throw it as well)
+                static any Arg(any a) {
+                    if (a is of class) { return a.Address }
+                    return a
+                }
+
+                /// (the result of a library function: with release: a pointer becomes a handle, NULL undefined)
+                static any Result(any r, bool wrap, int release) {
+                    if (!wrap) { return r }
+                    if (r == 0) { return undefined }
+                    return new NativeHandle(r, release)
+                }
             }
 
             /// A native library (C ABI) loaded while the program runs: its functions by name and C signature as lambdas (docs/language/18-native-code.md).
@@ -73,6 +113,7 @@ namespace fire.Standard
                 /// (Reflect.New, Type.Named, `is of`, catch) - a LibraryException when it does not fit the program.
                 static Library Load(string path) {
                     var handle = {{NativeName}}({{(int)LibraryMethod.Load}}, path)
+                    if (handle is of string) { throw new LibraryException(handle) }
                     if (handle == 0) { throw new LibraryException("The library '" + path + "' could not be loaded.") }
                     if (handle == -1) { throw new LibraryException("The library '" + path + "' is a fire plugin: this program cannot load fire plugins - build it with linkage \"shared\".") }
                     var lib = new Library(handle, path)
@@ -97,13 +138,24 @@ namespace fire.Standard
 
                 /// The function `name` of the library with the C signature `signature` - the result type, then the parameter types in parentheses:
                 /// "int[32](string, float)" (bool, int, int[8|16|32|64], float, float[32], char, string, pointers with `*`, void) - as a lambda that calls it.
-                any Get(string name, string signature) {
+                /// `release: "free"`: the library's own function (`void(void*)`) that frees what this one returns - a returned pointer becomes a NativeHandle
+                /// (`delete` or the end of its owner frees it, once; NULL is undefined), a returned string is copied and freed at once.
+                any Get(string name, string signature, string release = "") {
                     var n = {{NativeName}}({{(int)LibraryMethod.Arity}}, signature)
                     if (n == -1) { throw new LibraryException("The signature '" + signature + "' is not valid: write the result type and the parameter types in C order, like \"int[32](string, float)\" (bool, int, int[8|16|32|64], float, float[32], char, string, pointers with *, void).") }
                     if (n == -2) { throw new LibraryException("The signature '" + signature + "' is not known to this native build: pass it to Get as a text constant.") }
                     if (n > {{MaxParams}}) { throw new LibraryException("The signature '" + signature + "' has more than {{MaxParams}} parameters.") }
                     var fn = {{NativeName}}({{(int)LibraryMethod.Symbol}}, this.handle, name)
                     if (fn == 0) { throw new LibraryException("The library '" + this.path + "' has no function '" + name + "'.") }
+                    var shape = {{NativeName}}({{(int)LibraryMethod.Shape}}, signature)
+                    var rel = 0
+                    if (release != "" && release != undefined) {
+                        if ((shape & 3) == 0) { throw new LibraryException("release: frees what a function returns - the signature '" + signature + "' returns no pointer and no string.") }
+                        rel = {{NativeName}}({{(int)LibraryMethod.Symbol}}, this.handle, release)
+                        if (rel == 0) { throw new LibraryException("The library '" + this.path + "' has no function '" + release + "' (release:).") }
+                    }
+                    bool wrap = rel != 0 && (shape & 1) != 0
+                    bool plain = !wrap && (shape & 4) == 0
             {{Lambdas()}}                    return undefined
                 }
             }

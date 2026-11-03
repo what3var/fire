@@ -120,6 +120,29 @@ namespace fire.Bytecode
             return false;
         }
 
+        /// <summary>`[NoCopy]` before the class (SPEC 5.12): an instance stands for something that exists once (a NativeHandle) - `flat`/`copy` never duplicate
+        /// it (an ArgumentException); inherited by derived classes (see <see cref="IsNoCopy"/>).</summary>
+        public bool NoCopy { get; set; }
+
+        /// <summary>Is the class or one of its base classes `[NoCopy]`?</summary>
+        public bool IsNoCopy()
+        {
+            for (var c = this; c != null; c = c.Base)
+                if (c.NoCopy) return true;
+            return false;
+        }
+
+        /// <summary>The ArgumentException text of a `[NoCopy]` class that `flat`/`copy` would duplicate (VM and native the same). `op`: the copy of a thread
+        /// - `taking`, `fire global` (its arguments) or `sync` (what it writes back into the original) - instead of `flat`/`copy` (null); `sync` always
+        /// reaches it through a field or an element.</summary>
+        public static string NoCopyMessage(string className, bool nested, string? op = null) => op == null
+            ? (nested
+                ? $"'{className}' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead."
+                : $"'{className}' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.")
+            : (nested || op == "sync"
+                ? $"'{className}' cannot be copied ([NoCopy]) - '{op}' reaches an instance of it (a field or an element of the copied value), which exists only once."
+                : $"'{className}' cannot be copied ([NoCopy]) - '{op}' would copy an instance of it, which exists only once.");
+
         public List<(string Name, FunctionProto Init)> Fields { get; }
 
         /// <summary>Access modifier of each field declared in THIS class

@@ -347,6 +347,28 @@ static class SyntaxTests
             """) == "212F 0C 273.15K 7C True\n1W 30dBm 20dBm 40K*s\n26.850000000000023C");
         Check("unit: Einheiten eines Programms gelten nicht fuer das naechste", Output("print(5in)") == "5in");
 
+        // `override` (SPEC 5.1): after the access modifier, before the type; only methods, properties and operators of an object
+        Check("override: nach dem Zugriffsmodifikator, vor Methode, Property, Operator (auch generisch und mit Attribut)", Output("""
+            class A { protected string M() { return "a" } int P { get { return 1 } } bool operator==(any o) { return false } T Id<T>(T x) { return x } }
+            class B : A {
+                [Doc "x"]
+                protected override string M() { return "b" }
+                override int P { get { return 2 } }
+                override bool operator==(any o) { return true }
+                override T Id<T>(T x) { return x }
+                string Show() { return this.M() + this.P + (this == 1) + this.Id(5) }
+            }
+            print(new B().Show())
+            """) == "b2True5");
+        Check("override: vor dem Zugriffsmodifikator, mit static, an Feld, Konstruktor und Destruktor ist ein Syntaxfehler",
+            Output("class A { M() { } }\nclass B : A { override public M() { } }").Contains("The access modifier comes first")
+            && Output("class B { static override int M() { return 1 } }").Contains("do not go together")
+            && Output("class B { override static int M() { return 1 } }").Contains("cannot be 'override'")
+            && Output("class B { override int x }").Contains("A field cannot be 'override'")
+            && Output("class B { override construct() { } }").Contains("A constructor is not inherited")
+            && Output("class B { override destruct() { } }").Contains("both run"));
+        Check("override ist ein reserviertes Wort", Output("var override = 1").StartsWith("ERROR"));
+
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }
 }

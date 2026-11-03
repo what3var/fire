@@ -104,6 +104,10 @@ namespace fire.Runtime
                     if (!classes.TryGetValue(b.Name, out var hostBase)) return $"the program has no class '{b.Name}'.";
                     rc.Base = hostBase;
                 }
+            // its natives in C++ the program does not have: from the libraries next to its bytecode (C ABI, like those of a package)
+            if (plugin.PackageNatives.Count > 0)
+                PackageNativeBinding.Register(_natives, plugin.PackageNatives, plugin.PackageLibraries,
+                    file => Path.Combine(plugin.Directory, file) is var path && File.Exists(path) ? path : null);
             // the natives its code calls: the program's numbers (by name)
             var seen = new HashSet<Chunk>(ReferenceEqualityComparer.Instance);
             string? problem = null;
@@ -125,6 +129,9 @@ namespace fire.Runtime
             if (problem != null) return problem;
             foreach (var rc in own) classes[rc.Name] = rc;
             linked[plugin.Name] = plugin;
+            // its units: a unit of the VM carries its dimensions by name (and its conversion functions by the name of its hidden class, linked above) - only what a text
+            // may name (`"5in".ToFloat()`) needs the program to know them
+            if (host != null && program.Program.CustomUnits.Count > 0) Unit.AddCustomUnits(host.Program.CustomUnits, program.Program.CustomUnits);
             // the static initialisers of its classes, in the order of their declarations (as the top level of a program runs them first); what they make belongs to the
             // global scope (like the values of the top level)
             foreach (var rc in own)

@@ -11,7 +11,8 @@ namespace fire.Runtime
     /// <summary>
     /// The VM's side of `Library` (docs/language/18-native-code.md, <see cref="LibraryMethods"/>): `NativeLibrary` loads, a delegate made for the C signature calls
     /// (the same technique as `#extern`, BuildNonGenericDelegateType). The types are those of the native backend (fire_rt.h libCall, the generated thunks): `int` is 64
-    /// bits, `int[32]` a C int; `bool` is one byte, `char` UTF-16, `string` UTF-8 both ways (a returned string is copied, never freed), pointers are addresses.
+    /// bits, `int[32]` a C int; `bool` is one byte, `char` UTF-16, `string` UTF-8 both ways (a returned string is copied, freed only with `release:`), pointers are addresses
+    /// (a `NativeHandle`'s address is taken in the prelude, NativeHandle.Arg).
     /// </summary>
     public sealed partial class VM
     {
@@ -32,9 +33,21 @@ namespace fire.Runtime
                 case LibraryMethod.Arity:
                     return Value.MakeInt(LibraryMethods.Parse(a[1].AsString()) is { } parsed ? parsed.Params.Count : -1);
                 case LibraryMethod.Call:
-                    return LibraryInvoke(a[1].AsInt(), a[2].AsString(), a[3].Kind == ValueKind.Array ? a[3].AsArray().Items : Array.Empty<Value>());
+                    return LibraryInvoke(a[1].AsInt(), a[2].AsString(), a[3].Kind == ValueKind.Array ? a[3].AsArray().Items : Array.Empty<Value>(),
+                        a.Length > 4 && a[4].Kind == ValueKind.Int ? a[4].AsInt() : 0);
                 case LibraryMethod.Plugin:
                     return LibraryPlugin(a[1].AsInt());
+                case LibraryMethod.Shape:
+                {
+                    if (LibraryMethods.Parse(a[1].AsString()) is not { } sig) return Value.MakeInt(0);
+                    int shape = (sig.Return is { PointerDepth: > 0 } ? 1 : 0) | (sig.Return is { PointerDepth: 0, BaseName: "string" } ? 2 : 0)
+                        | (sig.Params.Exists(p => p.PointerDepth > 0) ? 4 : 0);
+                    return Value.MakeInt(shape);
+                }
+                case LibraryMethod.Release:
+                    // a NativeHandle is destroyed: the library's own function frees its pointer (once - the destructor runs once)
+                    if (a[1].AsInt() != 0) Marshal.GetDelegateForFunctionPointer<LibraryRelease>((IntPtr)a[1].AsInt())((IntPtr)a[2].AsInt());
+                    return Value.MakeUndefined();
                 default:
                     throw new InvalidOperationException($"{LibraryMethods.NativeName}: unknown function {a[0]}.");
             }
@@ -49,7 +62,11 @@ namespace fire.Runtime
                 _ => t.BitWidth switch { 8 => typeof(sbyte), 16 => typeof(short), 32 => typeof(int), _ => typeof(long) },
             };
 
-        private Value LibraryInvoke(long fn, string signature, Value[] args)
+        /// <summary>The release function of a `NativeHandle` (`release:` of Get): `void(void*)`.</summary>
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void LibraryRelease(IntPtr pointer);
+
+        private Value LibraryInvoke(long fn, string signature, Value[] args, long release)
         {
             var entry = LibraryDelegates.GetOrAdd((fn, LibraryMethods.Normalize(signature)), key =>
             {
@@ -100,7 +117,7 @@ namespace fire.Runtime
                 if (r.PointerDepth > 0) return Value.MakeInt((long)(IntPtr)result!);
                 return r.BaseName switch
                 {
-                    "string" => (IntPtr)result! == IntPtr.Zero ? Value.MakeUndefined() : Value.MakeString(Marshal.PtrToStringUTF8((IntPtr)result!) ?? ""),
+                    "string" => (IntPtr)result! == IntPtr.Zero ? Value.MakeUndefined() : LibraryString((IntPtr)result!, release),
                     "bool" => Value.MakeBool((byte)result! != 0),
                     "char" => Value.MakeChar((char)(ushort)result!),
                     "float" => Value.MakeFloat(result is float f ? f : (double)result!),
@@ -108,6 +125,14 @@ namespace fire.Runtime
                 };
             }
             finally { foreach (var cleanup in cleanups) cleanup(); }
+        }
+
+        /// <summary>A returned string, copied; with `release:` the library's function frees the C memory at once.</summary>
+        private static Value LibraryString(IntPtr s, long release)
+        {
+            var text = Value.MakeString(Marshal.PtrToStringUTF8(s) ?? "");
+            if (release != 0) Marshal.GetDelegateForFunctionPointer<LibraryRelease>((IntPtr)release)(s);
+            return text;
         }
 
         private static long LibraryInt(Value v) => v.Kind switch

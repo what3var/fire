@@ -37,11 +37,14 @@ namespace fire.Compiler
         }
 
         /// <summary>Packs a library as a package: checks it, writes its files as one prelude and forges `name-version.fpk` into `outputDirectory` (default: the `output` setting, else `bin` next to the
-        /// project). The package imports as `#import "Name"` and requires the libraries and packages the project references. Returns the path of the `.fpk`.</summary>
-        public static string PackLibrary(BuildPlan plan, string? outputDirectory = null)
+        /// project). The package imports as `#import "Name"` and requires the libraries and packages the project references. Returns the path of the `.fpk`.
+        /// <paramref name="monitor"/> gets the phases (compiling, packing); cancelled, the packing stops with <see cref="OperationCanceledException"/> and leaves no package behind.</summary>
+        public static string PackLibrary(BuildPlan plan, string? outputDirectory = null, fire.Native.BuildMonitor? monitor = null)
         {
+            using var watching = fire.Native.BuildMonitor.Use(monitor);
             if (plan.Type != OutputType.Library) throw new ProjectException($"'{plan.Name}' is a program: only a library is packed.");
             Check(plan);   // it has to compile (and have no entry point) before it is shipped
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.Pack, $"Packing {plan.Name} as a package");
 
             var project = plan.Project;
             string import = project.Project.ImportName;
@@ -84,7 +87,15 @@ namespace fire.Compiler
 
                 string forge = Path.Combine(workDir, "package.json");
                 manifest.Save(forge);
+                fire.Native.BuildMonitor.Checkpoint();
                 var result = Fpk.Forge(forge, outDir);
+                if (fire.Native.BuildMonitor.Current?.IsCancellationRequested == true)
+                {
+                    // (cancelled while it was written: the package is not one)
+                    try { File.Delete(result.PackagePath); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                    throw new OperationCanceledException(fire.Native.BuildMonitor.Current.Token);
+                }
+                fire.Native.BuildMonitor.LogLine($"Packed {result.PackagePath}");
                 return result.PackagePath;
             }
             finally

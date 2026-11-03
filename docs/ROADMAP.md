@@ -208,6 +208,10 @@ der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Wind
    öffnet die serielle Schnittstelle (`port`/`baud` aus Projekt oder Ziel, sonst erkannt) - Debug über `SerialFramedTransport`, Run mit der Konsole im Output-Panel
    und einer Eingabezeile darunter. Ein fire-Thread zeigt in der Scope-Ansicht seine eigenen Variablen der obersten Ebene (`globals` mit `thread`). Offen: die
    Oberfläche ist nicht von Hand durchgeklickt, kein echtes Board.
+9. ~~**Build-Fenster**~~ (umgesetzt): jeder Bau aus spark (F5 mit der VM, nativ, ESP32, Build, Pack) zeigt nach 0,5 s ein Fenster mit Phase, Fortschritt (die Library-Module
+   von linkage `static`/`shared` gezählt, sonst unbestimmt) und Log, *Hide* (Fortschritt in der Statusleiste) und *Cancel* (Prozessbaum der Compiler beendet, nichts
+   Halbes bleibt) - `BuildMonitor` (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"). Offen: das Fenster ist nicht von Hand durchgeklickt; `idf.py` abbrechen nur
+   ohne echtes ESP-IDF geprüft; die Natives eines Packages, die für die VM gebaut werden, melden keine eigene Phase (nur ihre Befehle im Log).
 
 Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 
@@ -229,10 +233,14 @@ nennt ihre Schnittstelle, das Programm prüft sie beim Start (eine lesbare Meldu
 für sich, die thread-lokalen Variablen hinter `fire_tl()`, was eine DLL vom Programm braucht über Zeiger, die ihre `fire_link_*`-Funktion beim Start füllt.
 Plugins (Phase D b, docs/NATIVE_BACKEND.md "Plugins"): `--linkage plugin` baut die Klassen eines Programms als Modul für sich (`.so`/`.dll` und `.fireplugin` für die
 VM), ein Programm mit `"shared"` lädt es mit `Library.Load` (Prüfung nur über Hashes: die Schnittstellen der Module, die Konfiguration der Runtime), die Runtime
-registriert seine Klassen (Deskriptoren, Typen von `catch` und Enums nach Namen, Reflection, statische Initialisierer); das Programm ist dann eine offene Welt;
+registriert seine Klassen (Deskriptoren, Typen von `catch` und Enums nach Namen, Reflection, statische Initialisierer) und seine Einheiten (nach Dimensionen, Faktor
+und Symbol, neue Dimensionen auf freien Plätzen); Natives in C++ des Plugins in seiner Bibliothek (eine eigene Kopie; für die VM eine Bibliothek mit der C-ABI neben
+dem Bytecode), Natives in C von Packages über die `fire_cn_` des Programms (es legt sie für alle an; fehlt eines, eine lesbare Meldung); JSON der Objekte der
+Plugins (ihre Zeilen `JsonClassInfo`, die Runtime fragt sie nach Id und Namen); das Programm ist dann eine offene Welt;
 Linux, Windows (MinGW, unter Wine) und die VM (sie lädt den Bytecode, Entscheidung 9.8).
 Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), in Plugins
-Einheiten, Natives in C++, `class extends` fremder Klassen, JSON ihrer Objekte und benannte Argumente im nativen Programm, Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
+`class extends` fremder Klassen, benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
+Reflect.Get/Set ihrer eigenen Felder nativ ohne `#import "reflection"` im Plugin (der Compiler legt `ClassMeta` nur mit den Natives von reflection an), Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
 Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur
@@ -254,7 +262,14 @@ Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heut
 Dynamisches Laden:
 
 * **umgesetzt** (Phase D a; docs/language/18-native-code.md): `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
-  das nur feste Namen kennt).
+  das nur feste Namen kennt). `Get(..., release: "free")`: die Freigabefunktion der Bibliothek - ein zurückgegebener Zeiger wird ein `NativeHandle`, das dem Besitz folgt
+  (`delete` oder das Ende des Besitzers gibt ihn einmal frei), ein zurückgegebener String wird kopiert und gleich freigegeben. `NativeHandle` ist `[NoCopy]` (SPEC 5.12,
+  vererbt): `flat`/`copy` verdoppeln es nie (eine `ArgumentException`, auch als Feld oder Element einer tiefen Kopie). Ebenso die Kopien der Threads
+  (VM und nativ gleich, vor jedem Kopieren): `fire taking x`/`fire M(args)` (der Thread startet nicht), die Objekt-Argumente von `fire global` (nativ wurde
+  der Auftrag vorher trotzdem eingereiht), `sync`/`sync flat` (Fall A, beim vollen `sync` auch Fall C; nichts wird zurückgeschrieben). Kein `taking` verschiebt
+  ein Objekt. Offen: ein verschiebendes `taking` (z.B. `fire taking take h`, das eine Ressource an den Thread übergibt); die isolierte Kopie der Globals für einen
+  Host-Callback, wenn das Hauptprogramm nicht mehr läuft, prüft `[NoCopy]` nicht (VM). `is of`/`!`/`throw` eines zerstörten Objekts
+  sind in VM und nativ eine `DestroyedException` (nativ las `isof_*` vorher den freigegebenen Speicher).
 * **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert
   ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie; Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.
   Offen: spark lädt so die Treiber installierter Packages.

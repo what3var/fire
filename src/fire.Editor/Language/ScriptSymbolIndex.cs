@@ -757,6 +757,7 @@ namespace fire.Editor
             {
                 var type = _tokens[i].Type;
                 if (type == TokenType.Static) { isStatic = true; i++; continue; }
+                if (type == TokenType.Override) { i++; continue; }   // (`override` changes nothing about the member itself)
                 if (type == TokenType.Public) { access = MemberAccess.Public; i++; continue; }
                 if (type == TokenType.Private) { access = MemberAccess.Private; i++; continue; }
                 if (type == TokenType.Protected) { access = MemberAccess.Protected; i++; continue; }

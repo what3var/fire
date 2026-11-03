@@ -8,7 +8,11 @@ namespace fire.Compiler
 {
     /// <summary>The result of a native build: where the program (or, for a toolchain that only writes files, the folder) is, what the tools said, and the errors and warnings of the compile
     /// (<see cref="Diagnostic"/>, with codes; <see cref="NativeBuilder.BuildSafe"/> fills them).</summary>
-    public sealed record NativeBuildResult(bool Ok, string Output, string Log, IReadOnlyList<Diagnostic>? Diagnostics = null);
+    public sealed record NativeBuildResult(bool Ok, string Output, string Log, IReadOnlyList<Diagnostic>? Diagnostics = null)
+    {
+        /// <summary>The build was cancelled (<see cref="BuildMonitor.Token"/>): its tools were ended, what it had half written is gone.</summary>
+        public bool Cancelled { get; init; }
+    }
 
     /// <summary>
     /// Builds a program natively: translate it to C++ (<see cref="CppGenerator"/>) for a target, write the runtime and the platform package of the target next to it,
@@ -34,6 +38,7 @@ namespace fire.Compiler
             Func<int>? chooseSdl = null, StrippingLevel? stripping = null)
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program");
             var generated = CppGenerator.GenerateSources(linked, target, chooseSdl, stripping);
             return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
         }
@@ -87,11 +92,14 @@ namespace fire.Compiler
         public static StrippingLevel? StrippingOf(NativeConfig config, fire.Projects.BuildPlan? plan) =>
             !config.StrippingFromCommandLine && Strippings.Parse(plan?.Settings.Stripping) is { } fromProject ? fromProject : config.Stripping;
 
-        /// <summary>Translates and builds. <paramref name="output"/> is the program, or the folder for a toolchain that only writes files.</summary>
+        /// <summary>Translates and builds. <paramref name="output"/> is the program, or the folder for a toolchain that only writes files. <paramref name="monitor"/> (else the
+        /// <see cref="BuildMonitor.Current"/> one) gets the progress and the commands as they run; when it is cancelled the build throws <see cref="OperationCanceledException"/>
+        /// (<see cref="BuildSafe"/> returns a result with <see cref="NativeBuildResult.Cancelled"/> instead).</summary>
         public static NativeBuildResult Build(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null,
-            IReadOnlyList<string?>? sourcePaths = null)
+            IReadOnlyList<string?>? sourcePaths = null, BuildMonitor? monitor = null)
         {
+            using var watching = BuildMonitor.Use(monitor);
             // the SDL of a window: what the environment, the target or the toolchain asks for, else SDL3 when the toolchain can build it (asked only for a program with a window)
             target = WithRequestedSdl(target, toolchain);
             Func<int>? chooseSdl = toolchain.EffectiveKind is "files" or "custom" or "emscripten" ? null : () => ChooseSdl(toolchain, target);
@@ -160,8 +168,13 @@ namespace fire.Compiler
                 if (ToolchainProvider.RequireLibraries(toolchain, cppFile) is { } missingLibrary)
                     return new NativeBuildResult(false, exe, missingLibrary, new[] { new Diagnostic(0, missingLibrary, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
                 bool ok = true;
-                foreach (var (exeName, arguments) in BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui))
+                var sourceCommands = BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui);
+                for (int c = 0; c < sourceCommands.Count; c++)
                 {
+                    var (exeName, arguments) = sourceCommands[c];
+                    // (one command compiles and links the C; with natives in C++ the C is compiled first, the second command links)
+                    if (c == sourceCommands.Count - 1) BuildMonitor.Step(BuildPhase.Link, sourceCommands.Count == 1 ? "Compiling and linking the program (C)" : "Compiling the natives (C++) and linking the program", c, sourceCommands.Count);
+                    else BuildMonitor.Step(BuildPhase.CompileC, "Compiling the program (C)", c, sourceCommands.Count);
                     log.AppendLine($"{exeName} {arguments}");
                     var (stepOk, text) = Run(exeName, arguments, workDir);
                     log.Append(text);
@@ -203,6 +216,7 @@ namespace fire.Compiler
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             var watch = Stopwatch.StartNew();
+            BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
             try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), chooseSdl, StrippingOf(config, plan), shared: shared); }
             catch (NativeNotSupportedException ex) { return AsSource($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\"."); }
             log.Append(staticPlan.Log);
@@ -225,7 +239,23 @@ namespace fire.Compiler
                 var logs = new string[missing.Count];
                 var failed = new string?[missing.Count];
                 var objects = new string[missing.Count];
+                var monitor = BuildMonitor.Current;
+                string Modules(int done) => $"Compiling the library modules (C): {done}/{missing.Count}";
+                if (missing.Count > 0) { monitor?.Token.ThrowIfCancellationRequested(); monitor?.BeginCount(BuildPhase.CompileC, Modules(0), missing.Count); }
+                // (the temporary files a library is made in, next to where it goes in the cache: a cancelled or failed build leaves none of them behind)
+                var temporaries = new System.Collections.Concurrent.ConcurrentDictionary<int, string>();
                 Parallel.For(0, missing.Count, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount) }, i =>
+                {
+                    if (monitor?.IsCancellationRequested == true) return;
+                    try { BuildLibrary(i); }
+                    catch (OperationCanceledException) { logs[i] ??= ""; }
+                    finally
+                    {
+                        if (temporaries.TryRemove(i, out var temp)) try { if (File.Exists(temp)) File.Delete(temp); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                        if (monitor?.IsCancellationRequested == false && failed[i] == null) monitor.Count(BuildPhase.CompileC, missing.Count, Modules);
+                    }
+                });
+                void BuildLibrary(int i)
                 {
                     var library = missing[i];
                     var libraryLog = new StringBuilder();
@@ -249,6 +279,7 @@ namespace fire.Compiler
                         // (the runtime's state, the tables) the program exports (-rdynamic)
                         string so = library.LibraryFile(ext);
                         string soTemp = Path.Combine(library.Directory, Guid.NewGuid().ToString("N") + ext);
+                        temporaries[i] = soTemp;
                         var link = CompilerCommand(toolchain, target, library.CFile, workDir, soTemp, sharedLibrary: true, language: "c");
                         string soName = OperatingSystem.IsMacOS() ? $" -Wl,-install_name,@rpath/{Path.GetFileName(so)} -undefined dynamic_lookup" : $" -Wl,-soname,{Path.GetFileName(so)}";
                         libraryLog.AppendLine($"{link.Executable} {link.Arguments}{soName} -lm");
@@ -268,6 +299,7 @@ namespace fire.Compiler
                     if (!ok) { failed[i] = $"The C compiler reported errors in the library module '{library.Module}' (see the build log)."; logs[i] = libraryLog.ToString(); return; }
                     string lib = library.LibraryFile(ext);
                     string temp = Path.Combine(library.Directory, Guid.NewGuid().ToString("N") + ext);
+                    temporaries[i] = temp;
                     var archive = ArchiveCommand(toolchain, temp, obj);
                     libraryLog.AppendLine($"{archive.Executable} {archive.Arguments}");
                     (ok, text) = Run(archive.Executable, archive.Arguments, workDir);
@@ -277,7 +309,8 @@ namespace fire.Compiler
                     CppGenerator.CommitStatic(library);
                     libraryLog.AppendLine($"module {library.Module}: built in {libraryWatch.ElapsedMilliseconds} ms -> {lib}");
                     logs[i] = libraryLog.ToString();
-                });
+                }
+                monitor?.Token.ThrowIfCancellationRequested();
                 foreach (var text in logs) log.Append(text);
                 if (failed.FirstOrDefault(f => f != null) is { } failure)
                     return new NativeBuildResult(false, exe, log.ToString(), new[] { new Diagnostic(0, failure, DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
@@ -291,6 +324,7 @@ namespace fire.Compiler
                 for (int c = 0; c < commands.Count; c++)
                 {
                     var (exeName, arguments) = commands[c];
+                    BuildMonitor.Step(BuildPhase.Link, c == commands.Count - 1 ? "Compiling the program (C) and linking it with its libraries" : "Compiling the program (C)", c, commands.Count);
                     // (shared: the program exports what the libraries need of it, and finds them next to itself)
                     if (shared && !dll && c == commands.Count - 1) arguments += OperatingSystem.IsMacOS() ? " -Wl,-export_dynamic -Wl,-rpath,@executable_path" : " -rdynamic -Wl,-rpath,$ORIGIN";
                     log.AppendLine($"{exeName} {arguments}");
@@ -350,7 +384,11 @@ namespace fire.Compiler
                     string temp = Path.Combine(tempDir, Path.GetFileName(file));
                     string arguments = $"-shared -static-libgcc -o \"{temp}\" \"{objects[i]}\"{string.Concat(before.Select(b => $" \"{b}\""))} -Wl,--export-all-symbols -s {string.Join(" ", libs)}";
                     log.AppendLine($"{cc} {arguments}");
-                    var (ok, text) = Run(cc, arguments, workDir);
+                    BuildMonitor.Step(BuildPhase.Link, $"Linking the DLL of the module {library.Module}", i, missing.Count);
+                    bool ok;
+                    string text;
+                    try { (ok, text) = Run(cc, arguments, workDir); }
+                    catch (OperationCanceledException) { try { Directory.Delete(tempDir, true); } catch (IOException) { } throw; }
                     log.Append(text);
                     if (!ok || !File.Exists(temp)) { try { Directory.Delete(tempDir, true); } catch (IOException) { } return $"The DLL of the module '{library.Module}' could not be linked (see the build log)."; }
                     File.Move(temp, file, true);
@@ -370,6 +408,7 @@ namespace fire.Compiler
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
+            BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
             try { staticPlan = CppGenerator.GenerateStatic(linked, target, $"files|{toolchain.Layout}", null, StrippingOf(config, plan)); }
             catch (NativeNotSupportedException ex)
             {
@@ -448,22 +487,46 @@ namespace fire.Compiler
         }
 
         /// <summary>Like <see cref="Build"/>, but what goes wrong (an error in the script, something the native backend cannot translate yet, a bad configuration) is in the result's log.</summary>
+        /// A cancelled build (<paramref name="monitor"/>) is a result with <see cref="NativeBuildResult.Cancelled"/>: its tools were ended, and a program it had begun to write is deleted
+        /// (a half-linked file would look like a program).</summary>
         public static NativeBuildResult BuildSafe(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
-            VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
+            VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null,
+            BuildMonitor? monitor = null)
         {
+            using var watching = BuildMonitor.Use(monitor);
             // the warnings of the code (`warn 123: "text"`) are collected while the parser reads it
             var warnings = new DiagnosticCollector();
             using var collecting = warnings.Begin();
             NativeBuildResult Failed(string log, IEnumerable<Diagnostic> errors) =>
                 new(false, output, log, errors.Concat(warnings.Items).ToList());
+            var started = DateTime.UtcNow.AddSeconds(-1);
             try
             {
                 var result = Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan);
                 return result with { Diagnostics = (result.Diagnostics ?? Array.Empty<Diagnostic>()).Concat(warnings.Items).ToList() };
             }
+            catch (OperationCanceledException)
+            {
+                string removed = DeletePartialOutput(output, started) ? $" ({Path.GetFileName(output)}, which it had begun to write, is deleted)" : "";
+                return new NativeBuildResult(false, output, $"Build cancelled{removed}.\n") { Cancelled = true };
+            }
             catch (NativeNotSupportedException ex) { return Failed("Not supported by the native backend yet: " + ex.Message, CompileDiagnostics.Of(ex)); }
             catch (NativeConfigException ex) { return Failed(ex.Message, new[] { new Diagnostic(0, ex.Message, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) }); }
             catch (Exception ex) when (CommandLineRunner.IsCompileError(ex)) { return Failed(CompileErrors.Describe(ex), CompileDiagnostics.Of(ex)); }
+        }
+
+        /// <summary>After a cancelled build: the program file when this build has written it (a linker that was stopped leaves a file that is not a program). A folder (the toolchain
+        /// "files") stays.</summary>
+        private static bool DeletePartialOutput(string output, DateTime started)
+        {
+            try
+            {
+                string path = Path.GetFullPath(output);
+                if (!File.Exists(path) || File.GetLastWriteTimeUtc(path) < started) return false;
+                File.Delete(path);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return false; }
         }
 
         /// <summary>The commands that build the program: the C file alone (one call of the C compiler), or - with natives in C++ - the C file compiled to an object
@@ -610,6 +673,8 @@ namespace fire.Compiler
             return Run(space < 0 ? command : command.Substring(0, space), space < 0 ? "" : command.Substring(space + 1), workDir);
         }
 
+        /// <summary>Runs a tool of the build. With a <see cref="BuildMonitor.Current"/> monitor the command and every line of its output go to its log as they come, and a
+        /// cancelled build ends the tool's whole process tree (<see cref="OperationCanceledException"/>).</summary>
         internal static (bool Ok, string Text) Run(string exe, string arguments, string workDir)
         {
             try
@@ -618,6 +683,12 @@ namespace fire.Compiler
                 // a portable toolchain (w64devkit) finds its other programs through the PATH: its folder comes first
                 if (Path.IsPathRooted(exe) && Path.GetDirectoryName(exe) is { Length: > 0 } toolDir)
                     psi.Environment["PATH"] = toolDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+                if (BuildMonitor.Current is { } monitor)
+                {
+                    monitor.Line($"{exe} {arguments}");
+                    var (code, stdout, stderr) = BuildProcess.Run(psi, monitor.Line, monitor.Token);
+                    return (code == 0, stdout + stderr);
+                }
                 using var p = Process.Start(psi)!;
                 var err = p.StandardError.ReadToEndAsync();
                 string output = p.StandardOutput.ReadToEnd();

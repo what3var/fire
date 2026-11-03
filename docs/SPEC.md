@@ -187,6 +187,18 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 - **Cycle protection:** `TakeTo(other)` checks whether `other` is transitively already a "descendant" (directly or indirectly owned) of `obj`. If so: run-time error instead of a cycle in the ownership tree.
 - **Race with an ongoing deletion:** If `other` (the target of `TakeTo`) is itself currently in cascade deletion (its own owner was just destroyed, its `destruct()` cascade is already running), the transfer is treated as if it had happened one second *before* the start of that deletion: `obj` is also taken into the running cascade immediately and deleted along with it (including the `destruct()` call), instead of remaining behind as an orphan with a half-destroyed owner.
 - Variable bindings (name → value) themselves do **not** move – only object ownership is transferable.
+- **Ownership in property accessors.** In the `get` and `set` bodies of a property of an object (not in methods, not in static properties, not in a lambda
+  inside the accessor) an assignment hands on what belongs to the running accessor call - an object, an array or a buffer whose owner is one of the
+  accessor's scopes (a local like `var it = new Item()`, also of an inner block), and in a setter also a value that another accessor handed to it this way:
+  - `this.field = it` / `field = it` - a **field of `this`**: `this` takes `it` over after the store (only the value itself, like `take`; what it owns goes along
+    anyway). Only fields of `this` count: `this.node.child = it` or `other.field = it` does not move anything (decided at run time: the target object must be `this`).
+  - `this.Prop = it` / `other.Prop = it` - a **property** (a setter call, of `this` or of another object): `it` goes to the setter call like `take it` - the setter
+    keeps it by assigning it to a field of its object (the same rule), else it dies when the setter returns (natively: right after the setter's own locals).
+  - **`return` wins in a getter:** a value that the getter's `this` took over in this call and that the getter returns (`this.cache = it; return it`, also
+    `return this.cache`) goes to the caller by the return rule (2.3), not to `this`. Only the returned value itself; other values the call gave to `this` stay there.
+  - An exception after the assignment does not undo it: the field keeps the object.
+  - Unchanged: what an accessor gets from outside (the setter's `value` passed by ordinary code, an object of the caller) stays with its owner and still needs
+    `take`/`TakeTo`; methods keep the rules above. An auto-property (`{ get; set; }`) behaves as before - its setter keeps a value that an accessor hands to it.
 
 ### 2.3 Lifetime / cascade deletion
 
@@ -219,7 +231,7 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
 - A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` still belongs to the scope and dies with it. The owner has to be changed explicitly:
-  `tmp.TakeTo(this)`. The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
+  `tmp.TakeTo(this)` (in a property accessor the assignment does that itself, 2.2). The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
 - **`delete expression`** destroys an object, an array or a buffer at once and detaches it from its owner: for an object the destructor runs and everything it owns is destroyed (2.3), exactly as if its owner
   had been left. Variables that still refer to it see a destroyed object (see above). `delete` on anything else is a run-time error. `delete` is a word only in front of a name on the same line.
 
@@ -273,9 +285,20 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 **Further rules**
 - **No constructor** runs - the field values are simply transferred. The destructor runs for the copy as for any object.
   Be careful with objects that hold an external resource (e.g. an `IO.FileStream` with its handle): the copy shares the
-  handle with the original, and both close it when destroyed.
+  handle with the original, and both close it when destroyed. A class marked **`[NoCopy]`** (5.12; `NativeHandle` is one) cannot be copied at all:
+  an instance of it as the operand of `flat`/`copy`, or reached by `copy` through a field or an array element, is an `ArgumentException`
+  ("'NativeHandle' cannot be copied ([NoCopy]) - ...") before anything is copied - also for a class derived from it, as an argument
+  (`f(copy h)`), assigned to a field and for the arguments of `fire global` (deep copies). `flat` of an object or array that only *refers* to one is fine
+  (the reference is shared, nothing is duplicated). The copies of the threads (no form of them moves an object): `fire taking x` / `fire M(args)`
+  (a copy of the tree, an array included) refuses one reached from any of its values at the `fire` - nothing is copied, the thread does not start
+  ("... - 'taking' would copy an instance of it, which exists only once." / "... - 'taking' reaches an instance of it (a field or an element of the copied
+  value), which exists only once."); `fire global { } taking x` refuses an object argument that reaches one before the job is queued (`'fire global'`; an
+  array argument is handed over as it is, not copied); `sync`/`try sync` refuses before anything is written back when case A (a new object, copied into
+  the original) reaches one or when case C of the full sync would write the fields of one into another instance (`'sync' reaches ...`), `sync flat` only
+  in case A (its case C keeps the reference). `fire with a` and the global variables (read directly, written in a section) share, they never copy.
 - An **actor** as an operand is an error; an actor inside a copy remains a shared reference (actor references are meant to be
-  passed around). Likewise an already destroyed object inside remains a shared reference; as an operand it is an error.
+  passed around). Likewise an already destroyed object inside remains a shared reference; as an operand it is an error (an `ArgumentException`
+  "An already destroyed object cannot be copied.").
 - Lambdas and pointers are shared in both cases, not copied.
 - Operands without content (number, text, `true`, `undefined`) simply yield themselves. An **array** as an operand: `flat` creates a new
   array with the same elements, `copy` also copies the elements; a **buffer** (`byte[]`) is copied byte by byte in both cases.
@@ -556,6 +579,15 @@ supported.
 - Single inheritance: `class Foo : Bar { ... }`
 - `base(...)` in the constructor calls the parent constructor.
 - `base.Method(...)` calls an overridden parent method.
+- **`override`:** a method, a property or an operator of an object that replaces one of a base class (any class up the chain; the rule of 5.4.3
+  "Overriding" decides which method replaces which) is marked `override`, after the access modifier: `override string Speak()`,
+  `protected override undefined Draw(UI.Root root, int x, int y)`, `override int Count { get { ... } }`, `override bool operator==(any o)`.
+  The type checker reports a missing `override` (`TC014`: a warning in lax mode, an error in strict mode) and an `override` that replaces nothing - a mistyped
+  name, other parameter types, a property the base classes do not have (`TC015`, an error in lax mode too). It changes nothing at run time: every method is
+  virtual as before. Not marked: the implementation of an interface method (only interfaces declare it: `override` there is `TC015`), a method with other
+  parameter types (another overload, 5.4.3), static members (they belong to their class; `static override` is a syntax error), constructors and destructors
+  (both chains run). Code generated from markup follows the same rule: the handlers of a `.fxml` code-behind and `OnBuilt` of a circuit replace those of the
+  generated base class (`override undefined Ok(any sender)`).
 
 ### 5.2 Constructor
 
@@ -734,8 +766,8 @@ The type checker reports `TC002` when there is no such generic method.
 
 **Overriding.** A method of a derived class overrides the one of a base class
 when it has the same number of parameters and, per parameter, the same type –
-or an untyped parameter or a type parameter on either side (`string Over(int
-x)` in the derived class overrides `string Over(any x)` of the base class).
+or an untyped parameter or a type parameter on either side (`override string Over(int
+x)` in the derived class overrides `string Over(any x)` of the base class; such a method is marked `override`, 5.1).
 With other parameter types it stands next to the inherited method as another
 overload: `Derived.Hello(int)` and the inherited `Base.Hello(string)` are both
 callable on a `Derived`.
@@ -1081,7 +1113,10 @@ properties - nowhere else. Reflection lists them for every member (`Member.Attri
 `Reflect.New(name)`; before a class: the class with all its members, before a member: that member and its class; not inherited; a name given as a literal to
 reflection - `Reflect.New("X")`, `Reflect.Call(o, "M")` - is kept the same way without it; the VM keeps everything anyway; how much a native build leaves out is its
 stripping level 0-3, docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
-derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md); `[NoCopy]` (before a class) -
+an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
+`ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
+`taking`, the arguments of `fire global`, what `sync` copies back - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
 and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
 editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
@@ -1094,6 +1129,9 @@ The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusi
 
 - **`value is in unit`** → `bool`. Checks whether `value` (int/float/undefined) carries a unit that is dimensionally compatible with `unit` (see 3.4), regardless of prefix/scaling factor. Example: `5mm is in m` → `true`, `5mm is in kg` → `false`.
 - **`value is of Type`** → `bool`. Checks type membership **recursively**: for base types a simple kind comparison; for `class` instances the inheritance chain is searched upwards (the instance itself or one of its parent classes matches `Type`). Example: `a is of float`. An **interface** is also allowed as a type (`value is of IEnumerable`): true if the class (or a base class) names it in `class X : IFoo`; **arrays and buffers** satisfy `IEnumerable`.
+  A **destroyed object** (2.3, 2.5) has no class any more: `x is of Dog` (a class, an interface or an enum), `x!Dog` and `throw x` throw the `DestroyedException`,
+  in the VM and natively; the kind tests (`x is of class`, `is of int`, ...) only look at the value and stay answerable (`is of class` is `true`).
+  `undefined is of Dog` stays `false`. `x is from`/`is under` of a destroyed object is `false` (it belongs to nothing).
 - **`object is from ownerExpression`** → `bool`. Checks whether the current owner of `object` is exactly `ownerExpression` (direct owner comparison). Example: `obj is from objList`.
 - **`object is under ownerExpression`** → `bool`. Like `is from`, but **transitive**: checks whether `ownerExpression` is anywhere in the ownership chain above `object` (direct owner, its owner, and so on, arbitrarily deep).
 

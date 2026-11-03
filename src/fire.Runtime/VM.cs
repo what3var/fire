@@ -2446,6 +2446,7 @@ namespace fire.Runtime
         private void DoReturn(Value retVal)
         {
         {
+            if (_accessorAdopted is { Count: > 0 }) PullBackAdopted(retVal);
             if (_handlers.Count > 0)
             {
                 int handlerFloor = _callbackBoundaries.Count > 0 ? _callbackBoundaries.Peek().HandlerFloor : 0;
@@ -2742,9 +2743,89 @@ namespace fire.Runtime
 
         private void OpSetField()
         {
+            int site = _ip - 1;
+            SetFieldAt(site, ReadU16());
+        }
+
+        /// <summary>`obj.name = value` in a property accessor (OpCode.SetFieldAccessor, SPEC 2.2 "Ownership in property accessors"): a value that belongs to
+        /// the running accessor call goes to the setter like `take x` when `name` is a property of `obj`; when it is a field of `this`, `this` takes it over after
+        /// the store (a getter remembers that: a `return` of the value gives it to the caller after all, see PullBackAdopted).</summary>
+        private void OpSetFieldAccessor()
         {
             int site = _ip - 1;
             int fieldNameIdx = ReadU16();
+            bool getter = (ReadByte() & 1) != 0;
+            var value = _stack[_sp - 1];
+            if (value.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer) || !IsCurrentCallOwner(OwnerOfLive(value)))
+            {
+                SetFieldAt(site, fieldNameIdx);
+                return;
+            }
+            string name = _constants[fieldNameIdx].AsString();
+            var target = _stack[_sp - 2].Kind == ValueKind.Class ? _stack[_sp - 2].AsObjectRef() as ObjectInstance : null;
+            if (target != null && !IsDeadObject(target) && !target.HasFieldLocked(name) && ResolveClass(target.ClassName).FindMethod("set_" + name, 1) != null)
+            {
+                // a property: the setter call owns the value (the setter's own field rule may keep it)
+                _takeSetterArg = true;
+                try { SetFieldSlow(name, -1); }
+                finally { _takeSetterArg = false; }
+                return;
+            }
+            if (!SetFieldSlow(name, -1)) return;
+            if (target == null || !ReferenceEquals(target, _currentThis) || !IsCurrentCallOwner(OwnerOfLive(value))) return;
+            OwnershipWalk.TakeValue(value, target, this);
+            if (getter) (_accessorAdopted ??= new List<(Value, int)>()).Add((value, _frames.Count));
+        }
+
+        /// <summary>The owner of a live object, array or buffer (null for anything else and for what is destroyed).</summary>
+        private static IOwner? OwnerOfLive(Value v) => v.Kind switch
+        {
+            ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o ? o.Owner : null,
+            ValueKind.Array => v.AsArray() is { IsDestroyed: false } a ? a.LeafOwner : null,
+            ValueKind.Buffer => v.AsBuffer() is { IsDestroyed: false } b ? b.LeafOwner : null,
+            _ => null,
+        };
+
+        // SetFieldAccessor: the next setter call that SetFieldSlowCore makes takes its argument like `take x`
+        private bool _takeSetterArg;
+        // ... the values a getter's `this` took over (the getter's frame depth): its `return` of one of them gives it to the caller (SPEC 2.2)
+        private List<(Value Value, int Depth)>? _accessorAdopted;
+
+        /// <summary>`return v` of a getter: a value its `this` took over in this call (the field rule of SetFieldAccessor) belongs to the call again, so that it
+        /// goes to the caller like any returned local (the return rule wins). Forgets what this call and the calls it made remembered.</summary>
+        private void PullBackAdopted(Value retVal)
+        {
+            var list = _accessorAdopted!;
+            int depth = _frames.Count;
+            for (int i = list.Count - 1; i >= 0 && list[i].Depth >= depth; i--)
+            {
+                if (list[i].Depth != depth || !SameReference(list[i].Value, retVal) || _currentThis is not ObjectInstance self) continue;
+                if (ReferenceEquals(OwnerOfLive(retVal), self)) OwnershipWalk.TakeValue(retVal, _currentScope, this);
+                break;
+            }
+            ForgetAdopted(depth);
+        }
+
+        /// <summary>Forgets what the calls from frame depth <paramref name="depth"/> on remembered (they end).</summary>
+        private void ForgetAdopted(int depth)
+        {
+            var list = _accessorAdopted!;
+            int keep = list.Count;
+            while (keep > 0 && list[keep - 1].Depth >= depth) keep--;
+            if (keep < list.Count) list.RemoveRange(keep, list.Count - keep);
+        }
+
+        private static bool SameReference(Value a, Value b) => a.Kind == b.Kind && a.Kind switch
+        {
+            ValueKind.Class => ReferenceEquals(a.AsObjectRef(), b.AsObjectRef()),
+            ValueKind.Array => ReferenceEquals(a.AsArray(), b.AsArray()),
+            ValueKind.Buffer => ReferenceEquals(a.AsBuffer(), b.AsBuffer()),
+            _ => false,
+        };
+
+        private void SetFieldAt(int site, int fieldNameIdx)
+        {
+        {
 
             // Schnellpfad (Inline-Cache, siehe OpGetField): Objekt derselben Klasse wie zuvor.
             if (_stack[_sp - 2] is { Kind: ValueKind.Class } cachedTarget
@@ -2864,7 +2945,9 @@ namespace fire.Runtime
             var rcSet = ResolveClass(obj.ClassName);
             if (rcSet.FindMethod("set_" + fieldName, 1) != null)
             {
-                var result = CallMethodNested(obj, "set_" + fieldName, new[] { value });
+                bool takeArg = _takeSetterArg;
+                _takeSetterArg = false;
+                var result = CallMethodNested(obj, "set_" + fieldName, new[] { value }, takeFirst: takeArg);
                 // Return value of the setter itself unused - an
                 // assignment always evaluates to the ASSIGNED value,
                 // not to what the setter returns. null ==
@@ -3983,6 +4066,7 @@ namespace fire.Runtime
                 {
                     string typeName = _constants[ReadU16()].AsString();
                     var v = Peek();
+                    if (ReadsDeadClass(v, typeName, out var deadCast)) { ThrowDestroyedObject(deadCast); break; }
                     if (v.Kind != ValueKind.Undefined && !IsOfType(v, typeName))
                     {
                         string have = v.Kind == ValueKind.Class ? ((ObjectInstance)v.AsObjectRef()).ClassName : v.Kind.ToString();
@@ -4220,6 +4304,10 @@ namespace fire.Runtime
 
                 case OpCode.SetField:
                     OpSetField();
+                    break;
+
+                case OpCode.SetFieldAccessor:
+                    OpSetFieldAccessor();
                     break;
 
                 case OpCode.LoadThis:
@@ -4555,6 +4643,7 @@ namespace fire.Runtime
                 {
                     string typeName = _constants[ReadU16()].AsString();
                     var v = Pop();
+                    if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); break; }
                     Push(Value.MakeBool(IsOfType(v, typeName)));
                     break;
                 }
@@ -4688,6 +4777,9 @@ namespace fire.Runtime
                     Value? withValue = hasWith ? Pop() : null;
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
+                    // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element) is the ArgumentException
+                    // here in the spawning thread, before anything is copied and before the thread starts (the copies are made in the new thread).
+                    foreach (var tv in takingValues) ObjectCopier.RequireNoCopyFree(tv, "taking");
 
                     // The globals of the main program are NOT copied: the thread reads them directly (under the lock) and changes them only in
                     // a section that the main program grants at `sync globals` (see Runtime.GlobalsBroker). At the first `fire`
@@ -4741,6 +4833,9 @@ namespace fire.Runtime
 
                     // The arguments belong to the job, not to this thread: objects are deeply copied, their owner is a holder scope that
                     // the main program releases after the run.
+                    // `[NoCopy]` (SPEC 5.12): checked for all of them first - nothing is copied or queued when one is refused (the ArgumentException).
+                    foreach (var ja in jobArgs)
+                        if (ja.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(ja, "fire global");
                     var holder = new Scope(null);
                     for (int i = 0; i < jobArgs.Length; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
@@ -5158,6 +5253,8 @@ namespace fire.Runtime
         private void ThrowException(Value exceptionValue)
         {
             var excInstance = RequireObjectInstance(exceptionValue, "throw");
+            // (a destroyed object cannot be thrown: what is thrown is the DestroyedException - natively its class is not known any more)
+            if (IsDeadObject(excInstance)) { ThrowDestroyedObject(excInstance); return; }
             if (CaptureErrorTrace) RecordThrowTrace();
 
             if (PauseOnUnhandled && _nestedDepth == 0 && _callbackBoundaries.Count == 0 && !WouldBeCaught(excInstance))
@@ -5378,6 +5475,15 @@ namespace fire.Runtime
             return false;
         }
 
+        /// <summary>`x is of Dog` / `x!Dog` on a destroyed object: the test needs its class, which a destroyed object does not have any more (natively its memory
+        /// is freed) - a DestroyedException. The kind tests (`is of class`, `is of int`, ...) only look at the value and stay answerable.</summary>
+        private bool ReadsDeadClass(Value v, string typeName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ObjectInstance? dead)
+        {
+            dead = v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)
+                && typeName is not ("bool" or "int" or "float" or "char" or "string" or "undefined" or "class") ? obj : null;
+            return dead != null;
+        }
+
         /// <summary>`value is of Type` (SPEC 6): for base-type names a simple
         /// kind comparison, for class names recursively over the base-class chain
         /// (InstanceMatchesClassName).</summary>
@@ -5409,6 +5515,7 @@ namespace fire.Runtime
         /// that recognises a frame boundary without having to carry it along separately.</summary>
         private void UnwindTo(int targetFrameDepth, Scope targetScope)
         {
+            if (_accessorAdopted is { Count: > 0 }) ForgetAdopted(targetFrameDepth + 1);
             while (_frames.Count > targetFrameDepth || !ReferenceEquals(_currentScope, targetScope))
             {
                 bool atFrameBase = ReferenceEquals(_currentScope.Parent, _globalScope);
@@ -5604,7 +5711,7 @@ namespace fire.Runtime
             return Pop();
         }
 
-        private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args)
+        private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args, bool takeFirst = false)
         {
             _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var rc = ResolveClass(obj.ClassName);
@@ -5636,6 +5743,7 @@ namespace fire.Runtime
 
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
+            if (takeFirst) TakeArgument(scope.SlotRef(0), scope);   // (SetFieldAccessor: a property assignment in an accessor passes the value on like `take`)
 
             _currentThis = obj;
             _currentScope = scope;

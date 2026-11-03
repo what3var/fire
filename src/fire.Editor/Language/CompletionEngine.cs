@@ -43,7 +43,7 @@ namespace fire.Editor
             "var", "func", "class", "construct", "destruct", "return",
             "if", "else", "while", "do", "for", "foreach", "in", "on", "new", "base", "this",
             "try", "catch", "finally", "throw", "is", "of", "from", "under",
-            "extern", "unsafe", "interface", "readonly", "enum",
+            "extern", "unsafe", "interface", "readonly", "enum", "override",
             "public", "private", "protected",
             "namespace",
             "with", "extends", "switch", "case", "default", "break", "continue", "where",

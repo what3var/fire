@@ -509,6 +509,14 @@ namespace fire.Editor
                 _ = ConfirmAllThenClose();
                 return;
             }
+            // a build that runs is cancelled first (its compilers end, nothing half-built is kept); the window closes when it has stopped
+            if (_buildJob is { } running)
+            {
+                e.Cancel = true;
+                _closeAfterBuild = true;
+                CancelBuild(running);
+                return;
+            }
             // a native program of a run ends with spark; the layout is saved with the stack panel as the user left it (not hidden for the native engine)
             StopNativeRun();
             if (_session.Target is fire.Debugging.NativeDebugTarget) _session.Reset();
@@ -1024,6 +1032,13 @@ namespace fire.Editor
             bool shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
             bool alt = (e.KeyModifiers & KeyModifiers.Alt) != 0;
 
+            // Ctrl+Break: cancels the build that runs (Shift+F5 does too, see Stop_Click)
+            if (BuildProgressWindow.IsCancelGesture(e) && _buildJob != null)
+            {
+                CancelBuild();
+                e.Handled = true;
+                return;
+            }
             switch (e.Key)
             {
                 case Key.Left when alt && ActiveDocument is { Markdown.IsReadOnly: true } mdDoc:

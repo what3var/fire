@@ -255,6 +255,25 @@ static class ProjectTests
         var coreManifest = fire.Package.Manager.Fpk.ReadManifest(corePack);
         Check("Pack: Version und Autor kommen aus den Einstellungen des Projekts (vor denen der Mappe)", Path.GetFileName(corePack) == "Core-2.1.0.fpk" && coreManifest.Version == "2.1.0" && coreManifest.Author == "core team", corePack + " " + coreManifest.Author);
         Check("Pack: ein Programm kann nicht gepackt werden", Throws(() => ProjectBuilder.PackLibrary(plan, outDir)));
+        {
+            // spark's build window: the phases of packing arrive in order (compile fire in its steps, then pack); a cancelled packing stops and leaves no package behind
+            var phases = new List<fire.Native.BuildProgress>();
+            var lines = new List<string>();
+            string watchedDir = Path.Combine(root, "packed-watched");
+            string watched = ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), watchedDir, new fire.Native.BuildMonitor(default, p => phases.Add(p), l => lines.Add(l)));
+            var compileSteps = phases.Where(x => x.Phase == fire.Native.BuildPhase.CompileFire).Select(x => x.Done).ToList();
+            Check("Pack: der Fortschritt kommt in Reihenfolge (fire uebersetzen in Schritten, dann packen) und das Protokoll nennt das Paket",
+                File.Exists(watched) && phases.Count >= 5 && phases[0].Phase == fire.Native.BuildPhase.CompileFire && phases[^1].Phase == fire.Native.BuildPhase.Pack
+                && phases.Zip(phases.Skip(1)).All(z => z.First.Phase <= z.Second.Phase) && compileSteps[0] == 0 && compileSteps.Contains(3) && compileSteps.Zip(compileSteps.Skip(1)).All(z => z.First <= z.Second)
+                && lines.Any(l => l.Contains(watched)), string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
+            string cancelledDir = Path.Combine(root, "packed-cancelled");
+            using var cancel = new CancellationTokenSource();
+            cancel.Cancel();
+            bool stopped = false;
+            try { ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), cancelledDir, new fire.Native.BuildMonitor(cancel.Token)); }
+            catch (OperationCanceledException) { stopped = true; }
+            Check("Pack: abgebrochen wird nicht gepackt (OperationCanceledException, kein .fpk)", stopped && (!Directory.Exists(cancelledDir) || !Directory.EnumerateFiles(cancelledDir, "*.fpk", SearchOption.AllDirectories).Any()));
+        }
         Check("Pack: eine Bibliothek mit Anweisungen oben wird nicht gepackt", Throws(() => ProjectBuilder.PackLibrary(BuildPlan.Create(bad, bad.Projects[0]), outDir)));
         Write(s, "Inc/Inc.fireproj", """{ "name": "Inc", "type": "library", "files": ["inc.script"] }""");
         Write(s, "Inc/inc.script", "#include \"part.script\"\nclass Whole { static int Two() { return Part.One() + 1 } }\n");

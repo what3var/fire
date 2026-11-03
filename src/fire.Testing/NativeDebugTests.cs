@@ -401,7 +401,7 @@ static class NativeDebugTests
                 }
             }
             class Dog : Animal {
-                string Sound() { return "wuff" }
+                override string Sound() { return "wuff" }
             }
             var animals = [new Animal(), new Dog()]
             foreach (a in animals) {

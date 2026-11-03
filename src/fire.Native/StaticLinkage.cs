@@ -163,6 +163,7 @@ namespace fire.Native
             if (!_separate || _libraries == null) return "";
             var all = new SortedDictionary<string, (int Argc, bool NeedsList, string Import)>(StringComparer.Ordinal);
             foreach (var lib in _libraries) foreach (var (f, sig) in lib.Needs.SharedNatives) all[f] = sig;
+            foreach (var (f, argc, needsList, import) in OpenWorldNativesC()) all.TryAdd(f, (argc, needsList, import));
             var sb = new StringBuilder();
             foreach (var (function, (argc, needsList, import)) in all)
             {
@@ -172,6 +173,16 @@ namespace fire.Native
             }
             foreach (var (function, (argc, needsList, _)) in _sharedNatives) sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)});");
             return sb.ToString();
+        }
+
+        /// <summary>A program that loads plugins (linkage "shared"): every native in C of the packages whose C is in its file (not in a module's) - a plugin may call one
+        /// that neither the program nor its libraries call; they get their `fire_cn_` functions too. (graphics and windows: only those the libraries call.)</summary>
+        private IEnumerable<(string Function, int Argc, bool NeedsList, string Import)> OpenWorldNativesC()
+        {
+            if (!_openWorld || !_separate) yield break;
+            foreach (var (import, key) in _packageImports)
+                if (import.Import.Native is { IsC: true } && !_standardNativesWritten.Contains(import.Name) && NativesOwner(key) == null)
+                    foreach (var (function, argc, needsList) in NativeFunctionsOf(key)) yield return (function, argc, needsList, key);
         }
 
         /// <summary>The imports whose natives in C the code of this generator calls (a library module's file gets their C).</summary>
@@ -557,6 +568,7 @@ namespace fire.Native
             {
                 // (what a plugin's DLL may use of the program: the bases of all modules, the reflection functions it defines)
                 foreach (var lib in _dllModules) names.TryAdd($"fire_mb_{lib.Spec.Id}", $"extern const uint32_t fire_mb_{lib.Spec.Id};");
+                foreach (var (f, argc, needsList, _) in OpenWorldNativesC()) names.TryAdd($"fire_cn_{f}", $"Value fire_cn_{f}({ThunkParams(argc, needsList)});");
                 foreach (var (rf, ps) in SharedReflectionFunctions)
                     if (programC.Contains($"\nFIRE_MAYBE_UNUSED Value {rf}(", StringComparison.Ordinal)) names.TryAdd(rf, $"Value {rf}{ps};");
             }

@@ -146,7 +146,7 @@ namespace fire.Editor
         /// debugger and does the first action, or - Release/Performance - runs it with its output in the Output panel.</summary>
         private async Task StartNativeAsync(NativeFirstAction first)
         {
-            if (_nativeStarting) return;
+            if (_nativeStarting || BuildRunning()) return;
             if (_nativeRun is { HasExited: false })
             {
                 UpdateStatus("The native program is running - Stop (Shift+F5) ends it.");
@@ -193,20 +193,29 @@ namespace fire.Editor
             _nativeStarting = true;
             BeginRun(input);
             _isBusy = true;
+            var job = BeginBuildJob($"{input.What} (native, {target.Name}, {modeName})");
             try
             {
                 UpdateStatus($"Building {input.What} natively for {target.Name} ({modeName})...");
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-                var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, buildToolchain, output, mode, null, false, input.BaseDirectory, null, input.Plan));
+                var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, buildToolchain, output, mode, null, false, input.BaseDirectory, null, input.Plan, job.Monitor));
                 if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+                if (result.Cancelled)
+                {
+                    _isBusy = false;
+                    EndBuildJob(job, BuildOutcome.Cancelled);
+                    return;
+                }
                 FinishBuild("Native build", result.Ok, result.Diagnostics ?? Array.Empty<Diagnostic>(), defaultFile, defaultPath);
                 if (!result.Ok)
                 {
                     _isBusy = false;
+                    EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
                     UpdateStatus("The native build failed (see the build log).");
                     RevealTool("buildlog");
                     return;
                 }
+                EndBuildJob(job, BuildOutcome.Succeeded);
 
                 var arguments = RunArguments(input);
                 string workingDirectory = input.Project?.Directory ?? input.BaseDirectory ?? Path.GetDirectoryName(result.Output)!;
@@ -241,12 +250,24 @@ namespace fire.Editor
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
                 _isBusy = false;
+                EndBuildJob(job, BuildOutcome.Failed, ex.Message);
                 UpdateStatus("The native run failed: " + ex.Message);
             }
             finally
             {
                 _nativeStarting = false;
+                EndBuildJob(job, job.Cancelling ? BuildOutcome.Cancelled : BuildOutcome.Failed);   // (when nothing above ended it)
             }
+        }
+
+        /// <summary>The errors of a failed native build for its window: the errors of the compiler, else the end of the log (what the C compiler said last).</summary>
+        private static string BuildErrorText(NativeBuildResult result)
+        {
+            var errors = (result.Diagnostics ?? Array.Empty<Diagnostic>()).Where(d => d.IsError).Select(d => d.ToLogLine()).Take(6).ToList();
+            var lines = result.Log.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var tail = lines.Where(l => l.Contains("error", StringComparison.OrdinalIgnoreCase)).Take(4).ToList();
+            if (tail.Count == 0) tail = lines.TakeLast(4).ToList();
+            return string.Join(Environment.NewLine, errors.Concat(tail).Distinct());
         }
         /// <summary>A native program under the debugger, connected and at its entry: the session takes it, then the first action.</summary>
         private void AttachNativeDebugTarget(NativeDebugTarget debugTarget, RunInput input, NativeFirstAction first)
@@ -280,6 +301,7 @@ namespace fire.Editor
         /// the debug build over the console UART; Release/Performance: the console in the Output panel.</summary>
         private async Task StartBoardAsync(RunInput input, fire.Native.NativeConfig config, fire.Runtime.TargetProfile target, NativeFirstAction first)
         {
+            if (BuildRunning()) return;
             string? idf = Esp32Launch.FindIdf(_settings.IdfPath);
             if (idf == null)
             {
@@ -300,16 +322,24 @@ namespace fire.Editor
             _nativeStarting = true;
             BeginRun(input);
             _isBusy = true;
+            var job = BeginBuildJob($"{input.What} (ESP32, {modeName})");
             try
             {
                 UpdateStatus($"Building {input.What} for the ESP32 ({modeName})...");
                 var toolchain = fire.Native.ToolchainDef.BuiltIn["esp-idf"];   // (the component; spark runs idf.py itself)
-                var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, toolchain, Path.Combine(projectDir, "main"), mode, null, false, input.BaseDirectory, null, input.Plan));
+                var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, toolchain, Path.Combine(projectDir, "main"), mode, null, false, input.BaseDirectory, null, input.Plan, job.Monitor));
                 if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+                if (result.Cancelled)
+                {
+                    _isBusy = false;
+                    EndBuildJob(job, BuildOutcome.Cancelled);
+                    return;
+                }
                 FinishBuild("Native build", result.Ok, result.Diagnostics ?? Array.Empty<Diagnostic>(), defaultFile, defaultPath);
                 if (!result.Ok)
                 {
                     _isBusy = false;
+                    EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
                     UpdateStatus("The native build failed (see the build log).");
                     RevealTool("buildlog");
                     return;
@@ -317,13 +347,30 @@ namespace fire.Editor
                 Esp32Launch.WriteProject(projectDir, Path.GetFileName(programPath));
                 UpdateStatus($"idf.py build flash{(port != null ? " on " + port : "")} (the first build of ESP-IDF takes minutes)...");
                 RevealTool("buildlog");
-                var (flashed, usedPort) = await Task.Run(() => Esp32Launch.BuildAndFlash(idf, projectDir, port, true, line => Dispatcher.UIThread.Post(() => _buildLog.AppendLine(line))));
+                bool flashed;
+                string? usedPort;
+                try
+                {
+                    (flashed, usedPort) = await Task.Run(() => Esp32Launch.BuildAndFlash(idf, projectDir, port, true, line =>
+                    {
+                        job.Monitor.Line(line);
+                        Dispatcher.UIThread.Post(() => _buildLog.AppendLine(line));
+                    }, job.Token, job.Monitor));
+                }
+                catch (OperationCanceledException)
+                {
+                    _isBusy = false;
+                    EndBuildJob(job, BuildOutcome.Cancelled);
+                    return;
+                }
                 if (!flashed)
                 {
                     _isBusy = false;
+                    EndBuildJob(job, BuildOutcome.Failed, "idf.py build flash failed (see the log above and the build log).");
                     UpdateStatus("idf.py build flash failed (see the build log).");
                     return;
                 }
+                EndBuildJob(job, BuildOutcome.Succeeded);
                 if (usedPort == null)
                 {
                     _isBusy = false;
@@ -382,11 +429,13 @@ namespace fire.Editor
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
                 _isBusy = false;
+                EndBuildJob(job, BuildOutcome.Failed, ex.Message);
                 UpdateStatus("The run on the ESP32 failed: " + ex.Message);
             }
             finally
             {
                 _nativeStarting = false;
+                EndBuildJob(job, job.Cancelling ? BuildOutcome.Cancelled : BuildOutcome.Failed);   // (when nothing above ended it)
             }
         }
     }
