@@ -714,8 +714,10 @@ static class NativeDebugTests
     {
         string flags = $"-pthread -O0 -g -Wall -Wextra {sanitize}";
         var selected = Cases.Where(c => TestSelectedName("Native-Debugger: " + c.Name)).ToList();
-        var tasks = selected.Select((c, index) => Task.Run(() =>
+        // (built and compared on the workers of TestJobs, reported in the order of the cases)
+        TestJobs.Ordered(selected.Count, index =>
         {
+            var c = selected[index];
             var results = new List<(string Title, bool Ok, string? Detail)>();
             string? exe = Build(c.Script, cxx, workDir, $"dbg{index}", flags, out string error);
             if (exe == null) { results.Add(($"Native-Debugger: {c.Name} (Bau)", false, error)); return results; }
@@ -738,9 +740,7 @@ static class NativeDebugTests
             }
             catch (Exception ex) { results.Add(($"Native-Debugger: {c.Name}", false, ex.ToString())); }
             return results;
-        })).ToArray();
-        Task.WaitAll(tasks);
-        foreach (var t in tasks) foreach (var (title, ok, detail) in t.Result) check(title, ok, detail);
+        }, (_, results) => { foreach (var (title, ok, detail) in results) check(title, ok, detail); });
     }
 
     static string RunTool(string tool, string arguments, string dir, out int exit, int timeoutMs = 120000)
@@ -908,28 +908,32 @@ static class NativeDebugTests
         if (wine != null && HasTool("x86_64-w64-mingw32-gcc"))
             Check("Windows (MinGW, Wine): der Agent verbindet sich, haelt am Haltepunkt, zeigt Scopes und Aufrufstapel", () =>
             {
-                var target = TargetProfile.TryGet("windows", out var windows) ? windows : throw new InvalidOperationException("no windows target");
-                var sources = Generate(lineScript, VmExecutionMode.Debug, target);
-                string cFile = Path.Combine(workDir, "dbgwin.c"), exe = Path.Combine(workDir, "dbgwin.exe");
-                File.WriteAllText(cFile, sources.Program);
-                string build = RunTool("x86_64-w64-mingw32-gcc", $"-std=c11 -O0 -g -Wall -Wextra \"{cFile}\" -I\"{workDir}\" -o \"{exe}\" -lws2_32", workDir, out int exit);
-                if (exit != 0 || build.Contains("warning")) return (false, build);
-                var environment = new Dictionary<string, string> { ["WINEPREFIX"] = Path.Combine(workDir, "wineprefix"), ["WINEDEBUG"] = "-all", ["LANG"] = "C.UTF-8" };
-                using var c = NativeDebugClient.Launch(exe, workDir, wine, environment);
-                int first = c.Hello.GetProperty("firstUserSource").GetInt32();
-                c.NextEvent("stopped");
-                c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 7 } } });
-                c.Request("continue", new() { ["thread"] = 1 });
-                var stop = c.NextEvent("stopped");
-                var scopes = c.Request("scopes", new() { ["thread"] = 1 });
-                var trace = c.Request("trace", new() { ["thread"] = 1 });
-                c.Request("continue", new() { ["thread"] = 1 });
-                var exited = c.NextEvent("exited");
-                c.WaitExit(NativeDebugClient.Timeout);
-                Thread.Sleep(50);
-                bool ok = stop.GetProperty("line").GetInt32() == 7 && stop.GetProperty("depth").GetInt32() == 1 && scopes.ToString().Contains("\"name\":\"x\",\"kind\":\"int\",\"display\":\"4\"")
-                    && trace.GetProperty("frames").GetArrayLength() == 2 && exited.GetProperty("code").GetInt32() == 0 && c.Output.Replace("\r", "").Contains("fertig 3 16\n");
-                return (ok, $"{c.Hello}\n{stop}\n{scopes}\n{trace}\n{c.Output}{c.Errors}");
+                // (the prefix is shared with the other cases under Wine: one at a time)
+                lock (TestJobs.Wine)
+                {
+                    var target = TargetProfile.TryGet("windows", out var windows) ? windows : throw new InvalidOperationException("no windows target");
+                    var sources = Generate(lineScript, VmExecutionMode.Debug, target);
+                    string cFile = Path.Combine(workDir, "dbgwin.c"), exe = Path.Combine(workDir, "dbgwin.exe");
+                    File.WriteAllText(cFile, sources.Program);
+                    string build = RunTool("x86_64-w64-mingw32-gcc", $"-std=c11 -O0 -g -Wall -Wextra \"{cFile}\" -I\"{workDir}\" -o \"{exe}\" -lws2_32", workDir, out int exit);
+                    if (exit != 0 || build.Contains("warning")) return (false, build);
+                    var environment = new Dictionary<string, string> { ["WINEPREFIX"] = Path.Combine(workDir, "wineprefix"), ["WINEDEBUG"] = "-all", ["LANG"] = "C.UTF-8" };
+                    using var c = NativeDebugClient.Launch(exe, workDir, wine, environment);
+                    int first = c.Hello.GetProperty("firstUserSource").GetInt32();
+                    c.NextEvent("stopped");
+                    c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 7 } } });
+                    c.Request("continue", new() { ["thread"] = 1 });
+                    var stop = c.NextEvent("stopped");
+                    var scopes = c.Request("scopes", new() { ["thread"] = 1 });
+                    var trace = c.Request("trace", new() { ["thread"] = 1 });
+                    c.Request("continue", new() { ["thread"] = 1 });
+                    var exited = c.NextEvent("exited");
+                    c.WaitExit(NativeDebugClient.Timeout);
+                    Thread.Sleep(50);
+                    bool ok = stop.GetProperty("line").GetInt32() == 7 && stop.GetProperty("depth").GetInt32() == 1 && scopes.ToString().Contains("\"name\":\"x\",\"kind\":\"int\",\"display\":\"4\"")
+                        && trace.GetProperty("frames").GetArrayLength() == 2 && exited.GetProperty("code").GetInt32() == 0 && c.Output.Replace("\r", "").Contains("fertig 3 16\n");
+                    return (ok, $"{c.Hello}\n{stop}\n{scopes}\n{trace}\n{c.Output}{c.Errors}");
+                }
             });
 
         Check("pause haelt eine Endlosschleife an, terminate beendet das Programm", () =>
