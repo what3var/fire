@@ -25309,23 +25309,26 @@ else
                 {
                     var said = new List<Action>();
                     Action Replay() => () => { foreach (var say in said) say(); };
-                    string label = version == 3 ? $"{title} [SDL3]" : title;
-                    var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
+                    // (version 0: fire's own display - native/platform/std/fire_display_desktop.h; headless for "dummy", X11 under Xvfb)
+                    string label = version == 3 ? $"{title} [SDL3]" : version == 0 ? $"{title} [fire]" : title;
+                    var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version == 0 ? null : version } };
                     fire.Native.NativeSources Generate(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target), target);
                     var generated = Generate(script);
                     string cpp = generated.Program;
                     bool asks = version == 3 ? cpp.Contains("// fire-link: SDL3") && cpp.Contains("#define FIRE_SDL3 1") && !cpp.Contains("// fire-link: SDL2")
-                                             : cpp.Contains("// fire-link: SDL2") && !cpp.Contains("FIRE_SDL3");
-                    said.Add(() => CheckNat($"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, ""));
-                    if ((version == 2 ? sdlExit : sdl3Exit) != 0) { said.Add(() => Console.WriteLine($"(SDL{version} nicht verfuegbar: {label} wird nicht ausgefuehrt)")); return Replay(); }
+                              : version == 2 ? cpp.Contains("// fire-link: SDL2") && !cpp.Contains("FIRE_SDL3")
+                              : !cpp.Contains("// fire-link: SDL") && !cpp.Contains("FIRE_DISPLAY_SDL") && cpp.Contains("// fire-link: dl");
+                    said.Add(() => CheckNat(version == 0 ? $"Fenster: {label}: das Programm braucht kein SDL" : $"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, ""));
+                    if (version != 0 && (version == 2 ? sdlExit : sdl3Exit) != 0) { said.Add(() => Console.WriteLine($"(SDL{version} nicht verfuegbar: {label} wird nicht ausgefuehrt)")); return Replay(); }
                     if (display != "dummy" && xvfbRun == null) { said.Add(() => Console.WriteLine($"(xvfb-run nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
                     string Build(fire.Native.NativeSources sources, string name, out string exe)
                     {
                         exe = Path.Combine(workDir, name + ".bin");
                         File.WriteAllText(Path.Combine(workDir, name + ".c"), sources.Program);
                         var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], target, Path.Combine(workDir, name + ".c"), workDir, exe);
-                        said.Add(() => CheckNat($"Fenster: {label}: der Build haengt -lSDL{version} an", command.Arguments.Contains($"-lSDL{version}") && !command.Arguments.Contains($"-lSDL{5 - version}"), command.Arguments));
-                        string log = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}{define}", exe, out int buildExit, $" -lSDL{version}");
+                        if (version == 0) said.Add(() => CheckNat($"Fenster: {label}: der Build linkt kein SDL", !command.Arguments.Contains("-lSDL") && command.Arguments.Contains("-ldl"), command.Arguments));
+                        else said.Add(() => CheckNat($"Fenster: {label}: der Build haengt -lSDL{version} an", command.Arguments.Contains($"-lSDL{version}") && !command.Arguments.Contains($"-lSDL{5 - version}"), command.Arguments));
+                        string log = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}{define}", exe, out int buildExit, version == 0 ? " -ldl -lpthread" : $" -lSDL{version}");
                         return buildExit != 0 || log.Contains("warning:") ? "C/C++-Compiler: " + log : "";
                     }
                     string name = $"window{version}_" + Math.Abs(title.GetHashCode());
@@ -25373,6 +25376,7 @@ else
                     if (!TestSelected(wc.Title)) continue;
                     windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 2));
                     windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 3));
+                    windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 0));
                 }
 
                 // ---- what only SDL3 has (and what SDL2 says instead): hover, pictures and files on the clipboard; the real clipboard of X11 (Xvfb), also between two programs
@@ -25513,6 +25517,7 @@ else
                     if (!TestSelected(sc.Title)) continue;
                     if (sc.Expected2 != null) windowSteps.Add(() => PrepareWindowCase(sc.Title, sc.Script, sc.Expected2, sc.Define, 2, sc.Display, sc.Second));
                     if (sc.Expected3 != null) windowSteps.Add(() => PrepareWindowCase(sc.Title, sc.Script, sc.Expected3, sc.Define, 3, sc.Display, sc.Second));
+                    if (sc.Expected3 != null) windowSteps.Add(() => PrepareWindowCase(sc.Title, sc.Script, sc.Expected3, sc.Define, 0, sc.Display, sc.Second));
                 }
                 windowRuns.Add(() => TestJobs.Ordered(windowSteps.Count, i => windowSteps[i](), (_, run) => run(), what: "Fenster: gebaut"));
 
@@ -25523,15 +25528,18 @@ else
                     int Choose() { asked++; return 3; }
                     const string withWindow = "#import \"windows\"\nvar fb = new Framebuffer(8, 8)\nvar w = new Window(fb, \"t\")\n";
                     var windowLinked = new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Host);
-                    string chosen3 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host, Choose).Program;
+                    // without "sdl" (and FIRE_SDL): fire's own display (nothing asked, nothing of SDL); "sdl": 0 (FIRE_SDL=auto): the build is asked (once, only with a window)
+                    var auto = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 0 } };
+                    string own = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host, Choose).Program;
                     string fixed2 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 2 } }, Choose).Program;
-                    string plain = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host).Program;
+                    string chosen3 = fire.Native.CppGenerator.GenerateSources(windowLinked, auto, Choose).Program;
                     int askedForWindows = asked;
-                    fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, TargetProfile.Host), TargetProfile.Host, Choose);
+                    fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, auto), auto, Choose);
                     string wasm = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Wasm), TargetProfile.Wasm, Choose).Program;
-                    CheckNat("SDL3 oder SDL2: der Build wird nur bei einem Fenster gefragt; 3 -> `// fire-link: SDL3` und FIRE_SDL3, das Ziel (sdl 2) geht vor, ohne Frage SDL2, wasm bleibt bei SDL2",
-                        chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("FIRE_SDL3")
-                        && plain.Contains("// fire-link: SDL2") && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3"), $"asked {asked}");
+                    CheckNat("Fenster: ohne \"sdl\" die eigene Anzeige (kein SDL, keine Frage); \"sdl\": 0 fragt den Build nur bei einem Fenster (3 -> `// fire-link: SDL3` und FIRE_SDL3), das Ziel (sdl 2) geht vor, wasm bleibt bei SDL2",
+                        !own.Contains("// fire-link: SDL") && !own.Contains("FIRE_DISPLAY_SDL") && own.Contains("// fire-link: dl")
+                        && chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("FIRE_SDL3")
+                        && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3"), $"asked {asked}");
                     var config3 = fire.Native.NativeConfig.Parse("{ \"targets\": { \"pc\": { \"extends\": \"linux\", \"sdl\": 3 } }, \"toolchains\": { \"old\": { \"extends\": \"gcc\", \"sdl\": 2 } } }");
                     var pc = config3.ResolveTarget("pc");
                     var old = config3.ResolveToolchain(pc, "old");

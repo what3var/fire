@@ -53,6 +53,10 @@ typedef struct FireWinShared {
     int vsyncReq, touchReq;       /* settings for the thread */
     int sizeReqW, sizeReqH;       /* a new size of the window for the thread (0: none) */
     int cursorReq;                /* a new cursor for the thread (-1: none) */
+    int textRect[4], textRectReq; /* where the program's text cursor is (Window.SetTextInputArea), for the thread (textRectReq: new) */
+    int backdropReq;              /* what the desktop should show behind the window (FIRE_BACKDROP_*; -1: nothing new) */
+    int backdrop;                 /* what it shows (the answer of the display) */
+    double scale;                 /* pixels of the screen per logical pixel (the display's answer, 0: not known yet) */
     int dragReq, dragDone, dragResult;   /* Window.StartDrag for the thread: what is dragged (UTF-8; the paths one per line), and its answer */
     char* dragText;
     char* dragFiles;
@@ -82,6 +86,7 @@ static FireWinShared* fire_winb_sharedNew(const char* title, int width, int heig
     s->width = width; s->height = height;
     s->vsyncReq = -1; s->touchReq = -1;
     s->cursorReq = -1;
+    s->backdropReq = -1;
     return s;
 }
 /* Shows a frame in the window (on the thread that owns it): through the presenter of the framebuffer (`fn`; it draws into the window itself and lays the frame over its picture),
@@ -291,6 +296,8 @@ static uint32_t fire_winb_callbackParams(int type) {
         case FIRE_EV_DROP_FILES: case FIRE_EV_DROP_TEXT: return 3;
         case FIRE_EV_DRAG_HOVER: return 2;
         case FIRE_EV_DRAG_LEAVE: return 0;
+        case FIRE_EV_TEXT_EDITING: return 3;
+        case FIRE_EV_SCALE: return 1;
         default: return 0;
     }
 }
@@ -339,6 +346,8 @@ static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
             case FIRE_EV_DROP_FILES: a[0] = fire_winb_paths(e->data, &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
             case FIRE_EV_DROP_TEXT: a[0] = fire_winb_utf8Str(e->data ? e->data : "", &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
             case FIRE_EV_DRAG_HOVER: a[0] = Float(e->x); a[1] = Float(e->y); n = 2; break;
+            case FIRE_EV_TEXT_EDITING: a[0] = fire_winb_utf8Str(e->data ? e->data : "", &scratch); a[1] = Int(e->cursor); a[2] = Int(e->selection); n = 3; break;
+            case FIRE_EV_SCALE: a[0] = Float(e->value); n = 1; break;
             default: break;
         }
         fire_winb_runCallback(mine[i].lam, n, a);
@@ -380,10 +389,26 @@ static void fire_winb_dropBlocked(FireWinState* w, FireDisplayEvents* events) {
 }
 
 /* Opens the OS window on the calling thread (once); 0 when it cannot be opened (no display). */
+/* What the program asked for of the window that only the display can do (on the thread that owns the window, under s->m when it is threaded): where the text cursor is,
+ * what lies behind the window; and what the display says about its scale. */
+static void fire_winb_applyRequests(FireWinShared* s) {
+#ifdef FIRE_DISPLAY_TEXT_INPUT_RECT
+    if (s->textRectReq) { fire_display_setTextInputRect(&s->display, s->textRect[0], s->textRect[1], s->textRect[2], s->textRect[3]); s->textRectReq = 0; }
+#endif
+#ifdef FIRE_DISPLAY_BACKDROP
+    if (s->backdropReq >= 0) { s->backdrop = fire_display_setBackdrop(&s->display, s->backdropReq); s->backdropReq = -1; }
+#else
+    s->backdropReq = -1;
+#endif
+#ifdef FIRE_DISPLAY_SCALE
+    s->scale = fire_display_scale(&s->display);
+#endif
+}
 static int fire_winb_ensureOpen(FireWinShared* s, int vsync) {
     if (s->opened) return !s->failed;
     s->opened = 1;
     if (!fire_display_open(&s->display, s->title, s->width, s->height, vsync)) s->failed = 1;
+    else fire_winb_applyRequests(s);
     return !s->failed;
 }
 
@@ -491,6 +516,7 @@ static void fire_winb_pumpThread(void* arg) {
             if (s->touchReq >= 0) { fire_display_setTouchMouse(&s->display, s->touchReq != 0); s->touchReq = -1; }
             if (s->sizeReqW > 0) { fire_display_setSize(&s->display, s->sizeReqW, s->sizeReqH); s->sizeReqW = s->sizeReqH = 0; }
             if (s->cursorReq >= 0) { fire_display_setCursor(&s->display, s->cursorReq); s->cursorReq = -1; }
+            fire_winb_applyRequests(s);
             if (s->dragReq) {
                 /* Window.StartDrag: the drag runs here, on the thread of the OS window, until the user lets go (the program waits for the answer) */
                 char* text = s->dragText;
@@ -767,6 +793,7 @@ static Value fire_win_WinPump(Value id) {
         if (w->mgr && fire_winb_started(w->mgr)) fire_atomic_store(&w->mgr->pending, 0);   /* (a cooperative manager: the same) */
         if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
         open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);
+        fire_winb_applyRequests(w->sh);
     }
     fire_winb_dropBlocked(w, &events);
     fire_winb_deliver(id, w, &events);
@@ -820,6 +847,7 @@ static Value fire_win_WinTick(Value id) {
     if (fire_winb_threaded(w)) { Value o = fire_win_WinPump(id); if (g_fireWinList[(size_t)(int32_t)id.i]) fire_win_WinPresent(id); return o; }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
     open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);
+    fire_winb_applyRequests(w->sh);
     if (w->autoResize)
         for (k = 0; k < events.count; k++)
             if (events.items[k].type == FIRE_EV_RESIZE && fire_gfx_validSize(events.items[k].width, events.items[k].height)) fire_gfx_fbResize(w->fb, events.items[k].width, events.items[k].height);
@@ -866,6 +894,8 @@ static Value fire_win_WinNextEvent(Value id, OwnList* list) {
         case FIRE_EV_DROP_FILES: items[n++] = fire_winb_paths(e.data, list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
         case FIRE_EV_DROP_TEXT: items[n++] = fire_winb_utf8Str(e.data ? e.data : "", list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
         case FIRE_EV_DRAG_HOVER: items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
+        case FIRE_EV_TEXT_EDITING: items[n++] = fire_winb_utf8Str(e.data ? e.data : "", list); items[n++] = Int(e.cursor); items[n++] = Int(e.selection); break;
+        case FIRE_EV_SCALE: items[n++] = Float(e.value); break;
         default: break;
     }
     free(e.data);
@@ -1118,6 +1148,53 @@ static Value fire_win_WinSetCursor(Value id, Value cursor) {
         fire_winb_unlock(&s->m);
     } else if (s->opened) fire_display_setCursor(&s->display, c);
     return Undef();
+}
+/* Window.SetTextInputArea: where the text cursor of the program is (framebuffer pixels) - an input method opens its window there. */
+static Value fire_win_WinSetTextInputRect(Value id, Value x, Value y, Value width, Value height) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    s->textRect[0] = (int)x.i; s->textRect[1] = (int)y.i; s->textRect[2] = (int)width.i; s->textRect[3] = (int)height.i;
+    s->textRectReq = 1;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.Backdrop = kind: what the desktop shows behind the window (FIRE_BACKDROP_*). The answer (what it gives) comes with the next cycle of a managed window. */
+static Value fire_win_WinSetBackdrop(Value id, Value kind) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    int k = (int)kind.i;
+    if (k < FIRE_BACKDROP_NONE) k = FIRE_BACKDROP_NONE;
+    if (k > FIRE_BACKDROP_MICA) k = FIRE_BACKDROP_MICA;
+    if (threaded) fire_winb_lock(&s->m);
+    s->backdropReq = k;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.Backdrop: what the desktop shows behind the window now. */
+static Value fire_win_WinGetBackdrop(Value id) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int k, threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    k = s->backdrop;
+    if (threaded) fire_winb_unlock(&s->m);
+    return Int(k);
+}
+/* Window.Scale: pixels of the screen per logical pixel where the window is (1 before it opened, or when the display does not know). */
+static Value fire_win_WinGetScale(Value id) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    double v;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    v = s->scale;
+    if (threaded) fire_winb_unlock(&s->m);
+    return Float((Real)(v > 0 ? v : 1.0));
 }
 /* SystemTheme.Current(): [embedded, scale, dark, accent 0xRRGGBB, font candidates "a;b;c", font size in logical pixels] (see fire_systheme.h). */
 static Value fire_win_WinSystemTheme(OwnList* list) {

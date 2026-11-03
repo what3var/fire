@@ -448,7 +448,8 @@ namespace fire.Compiler
                     if (line.StartsWith("// fire-link: ", StringComparison.Ordinal))
                     {
                         string lib = line.Substring("// fire-link: ".Length).Trim();
-                        string flag = kind == "msvc" ? lib + ".lib" : "-l" + lib;
+                        // (a framework of macOS: -framework Name, two arguments that stay together)
+                        string flag = lib.StartsWith("framework:", StringComparison.Ordinal) ? "-framework " + lib.Substring("framework:".Length) : kind == "msvc" ? lib + ".lib" : "-l" + lib;
                         if (!libs.Contains(flag)) libs.Add(flag);
                     }
             // a debug build (mode debug, `#define FIRE_DEBUG 1` at the top of the program): no optimization, debug information, not stripped - for the debugger of spark
