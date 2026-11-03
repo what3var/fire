@@ -1149,7 +1149,7 @@ namespace fire.Native
                 foreach (var name in _fieldNames.ToList()) FieldHelpers(name);
                 TArgTables();
                 // (the units a text may name, see textUnits below: registered here, so that the conversion functions of a unit (`coerce`) are generated too)
-                if (_usesStringCall)
+                if (_usesStringCall || _program.Program.CustomUnits.Count > 0)
                 {
                     foreach (var (symbol, _) in Unit.BuiltInSymbols) UnitId(Unit.Parse(symbol));
                     foreach (var own in _program.Program.CustomUnits) UnitId(Unit.OfCustom(own));
