@@ -511,10 +511,10 @@ static Value fire_gfx_SlcSlice(Value id, Value lineWidth, Value pixelSize, Value
     if (paths.failed) { fire_gfx_pathsFree(&paths); fire_gfxb_outOfMemory(); }
     outer = allocArr((uint32_t)paths.count, list);
     /* the VM hands out plain arrays that live as long as something refers to them (the prelude puts the points into objects that outlive the call): here they
-     * belong to the global scope */
+     * belong to the global scope (in the library for the VM there is none: they are copied to the VM with the result, the call's list keeps them until then) */
     for (k = 0; k < paths.count; k++) {
-        Arr* entry = allocArr(3, g_globalOwn);
-        Arr* points = allocArr((uint32_t)paths.items[k].count * 2, g_globalOwn);
+        Arr* entry = allocArr(3, g_globalOwn != NULL ? g_globalOwn : list);
+        Arr* points = allocArr((uint32_t)paths.items[k].count * 2, g_globalOwn != NULL ? g_globalOwn : list);
         for (j = 0; j < paths.items[k].count; j++) { arrItems(points)[2 * j] = Float((Real)paths.items[k].points[j].x); arrItems(points)[2 * j + 1] = Float((Real)paths.items[k].points[j].y); }
         arrItems(entry)[0] = Int(paths.items[k].kind);
         arrItems(entry)[1] = Bool(paths.items[k].closed != 0);

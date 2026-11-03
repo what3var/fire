@@ -1,6 +1,6 @@
 # Eigene Plattformschicht statt SDL, Effekte und ein modernerer Stil
 
-Status: **Teil 1 umgesetzt** (Branch `ui-platform`, siehe [Stand](#stand-teil-1)); Teile 2-4 sind Entwurf. Dieses Dokument legt fest, wie fire Fenster, Eingaben und Grafik ohne SDL auf allen Zielen
+Status: **Teil 1 umgesetzt**, **Teil 2 zum großen Teil** (Branch `ui-platform`, siehe [Stand Teil 1](#stand-teil-1) und [Stand Teil 2](#stand-teil-2)); Teile 3-4 sind Entwurf. Dieses Dokument legt fest, wie fire Fenster, Eingaben und Grafik ohne SDL auf allen Zielen
 betreibt, wie Glas und Acryl hineinkommen und in welcher Reihenfolge das gebaut wird.
 
 Inspiration: [Raven](https://github.com/oscar-soirey/Raven) (Apache-2.0) - wir haben uns dort die Aufteilung der Plattformschichten,
@@ -156,3 +156,25 @@ Offen in Teil 1:
 * Win32: während der Nutzer das Fenster zieht oder seine Größe ändert (modale Schleife von Windows), zeichnet das Programm nicht nach.
 * Mit dem Emscripten 3.1.6 von Ubuntu laufen die wasm-Prüfungen der Suite nicht (schon ein Programm ohne Fenster startet nicht) - mit einem aktuellen emsdk prüfen.
 * Die VM benutzt noch SDL3-CS (Teil 2).
+
+## Stand Teil 2
+
+Die VM benutzt für `graphics` und `windows` die C-Implementierung (Standard; `FIRE_VM_GRAPHICS=cs` nimmt die C#-Implementierung):
+
+* **Paket-ABI erweitert** (`native/abi/fire_pkg_abi.h`, abwärtskompatibel): ein Lambda geht als Handle hinüber (`FIRE_LAMBDA`); die Bibliothek ruft es mit
+  `fire_host.call_lambda` zurück - auf dem Thread der VM sofort (verschachtelt, mit den echten Globals), von einem anderen Thread am nächsten Safe Point.
+  `request_service` lässt die VM `fire_pkg_service` der Bibliothek auf ihrem Thread aufrufen (die Zyklen der Fenster-Manager), `hold` hält das Programmende
+  auf. Die Sperre der Aufrufe ist auf ihrem Thread wiedereintrittsfähig (ein Callback darf wieder Natives derselben Bibliothek rufen).
+* **Eine Bibliothek für beide** (`PackageLibrary.EnsureGraphics`, `libfire_gfx`): die Bridges von graphics und windows und die eigene Anzeige, die Natives aus
+  den Tabellen des Generators, Host-Funktionen in `native/abi/fire_gfx_host.h` (Pixel eines Framebuffers, Presenter für scene3d, Zurücksetzen am Programmende).
+  Die Fenster-Manager haben ihre Threads auch in der Bibliothek (die Thread-Dienste der Runtime kommen im Bibliotheksmodus vom Host).
+* **Gepackte Programme** (`forge build`) tragen die Bibliothek in ihrer Payload; SDL3 und die C#-Grafik kommen nicht mehr mit (ein Fensterprogramm: ~0,8 MB).
+* Was der Host an Umgebungsvariablen für das Programm setzt (`FIRE_*`, `DISPLAY`, ...), bekommt auch die C-Laufzeit des Prozesses.
+
+Noch offen (Stufe 4):
+
+* Der UI-Designer (`UiPreview`) und der Circuit-Editor (`LiveSession`) zeichnen ihre Programme noch mit der C#-Implementierung (sie rendern die Fenster selbst);
+  dafür braucht die Bibliothek eine Anzeige, die der Host steuert, und je Sitzung eine eigene Instanz (eine geladene Bibliothek = ein Programm zur Zeit -
+  zwei Programme gleichzeitig im Editor teilen sich sonst Fenster und Framebuffer).
+* Die Tests mit gefälschten Renderern (`FakeRenderer` u. a.) und die Unit-Tests der C#-Grafik laufen weiter gegen C#.
+* Danach: `fire.Terminal.Sdl` (SDL3-CS) und der C#-Zwilling für Programme entfernen.

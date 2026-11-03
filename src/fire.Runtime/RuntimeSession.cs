@@ -89,7 +89,14 @@ namespace fire.Runtime
 
             // IMPORTANT: native functions are jumped to via their INDEX - the order of registration must
             // exactly match that when translating (see ImportedPreludes.Insert): graphics, reflection, time, devices, io.
-            if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
+            if (linkedProgram.GraphicsNatives is { } graphicsNatives)
+            {
+                // graphics and windows in C: their library is in the payload (docs/UI_PLATFORM.md, part 2)
+                string file = (OperatingSystem.IsWindows() ? "" : "lib") + "fire_gfx" + (OperatingSystem.IsWindows() ? ".dll" : OperatingSystem.IsMacOS() ? ".dylib" : ".so");
+                PackageNativeBinding.Register(natives, graphicsNatives, graphicsNatives.Select(_ => file).ToList(), null);
+                PackageHost.GraphicsInC = true;
+            }
+            else if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
             {
                 // the manager travels as object: every method that names the type loads fire.Terminal when JIT-compiling (see class documentation)
                 object fbManager = RegisterGraphics(natives);
@@ -103,7 +110,7 @@ namespace fire.Runtime
             // File system/stdio policy: the packed runtime uses the default (everything allowed, real console) -
             // hosts with their own policy (editor) build their session via fire.Compiler.RuntimeSession.
             // what the natives of packages (the io package) ask of the host: the real console, everything allowed - the packed runtime has no other host
-            if (linkedProgram.PackageNatives is { Count: > 0 })
+            if (linkedProgram.PackageNatives is { Count: > 0 } || linkedProgram.GraphicsNatives != null)
                 session.IoResources = PackageHost.Begin(null, null, linkedProgram.NativeImports.Contains("pkg:devices"));
 
             // the natives of imports of packages (C++ in shared libraries, the libraries of a packed program come from its payload): same names, same order

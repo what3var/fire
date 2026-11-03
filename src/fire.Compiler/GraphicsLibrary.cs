@@ -39,9 +39,33 @@ namespace fire.Compiler
         /// <summary>Why the library cannot be had (null: it can).</summary>
         public static string? Failure => _failure;
 
+        [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "setenv")] private static extern int SetEnvC(string name, string value, int overwrite);
+        [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "unsetenv")] private static extern int UnsetEnvC(string name);
+        [System.Runtime.InteropServices.DllImport("msvcrt", EntryPoint = "_wputenv_s", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] private static extern int PutEnvW(string name, string value);
+
+        /// <summary>What the library reads of the environment (the display it talks to, the look of the desktop, the folders of the fonts): the host may have changed it for this
+        /// program (Environment.SetEnvironmentVariable changes .NET's copy only) - the C runtime of the process gets the same values.</summary>
+        private static void SyncEnvironment()
+        {
+            var names = Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(n => n.StartsWith("FIRE_", StringComparison.Ordinal))
+                .Concat(new[] { "FIRE_DISPLAY", "FIRE_SYSTEM_THEME", "FIRE_FONT_DIRS", "SDL_VIDEODRIVER", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" }).Distinct();
+            foreach (string name in names)
+            {
+                string? value = Environment.GetEnvironmentVariable(name);
+                try
+                {
+                    if (OperatingSystem.IsWindows()) PutEnvW(name, value ?? "");
+                    else if (value != null) SetEnvC(name, value, 1);
+                    else UnsetEnvC(name);
+                }
+                catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { return; }
+            }
+        }
+
         /// <summary>Registers the natives of graphics (and, with <paramref name="withWindows"/>, of windows) bound to the C library, in the order of the stubs.</summary>
         public static void Register(NativeRegistry natives, bool withWindows, Action<string>? log = null)
         {
+            SyncEnvironment();
             var stubs = new NativeRegistry();
             fire.Terminal.Bridge.GraphicsBridge.RegisterStubs(stubs);
             if (withWindows) fire.Windows.Bridge.WindowsBridge.RegisterStubs(stubs);

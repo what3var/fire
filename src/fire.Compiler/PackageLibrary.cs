@@ -307,14 +307,14 @@ namespace fire.Compiler
             sb.AppendLine("};");
             sb.AppendLine($"static const int kCount = {entries.Count};");
             sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_set_host(const fire_host* host) { g_libraryHost = host; }");
-            sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_reset(void) { }");
+            sb.AppendLine("#include \"fire_gfx_host.h\"");
+            sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_reset(void) { fire_pkgLock(); fire_gfx_host_reset(); fire_pkgUnlock(); }");
             sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_service(void) { fire_pkgService(); }");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_abi_version(void) { return FIRE_PKG_ABI_VERSION; }");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_function_count(void) { return kCount; }");
             sb.AppendLine("FIRE_PKG_EXPORT const char* fire_pkg_function_name(int i) { return i >= 0 && i < kCount ? kEntries[i].name : NULL; }");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_function_arity(int i) { return i >= 0 && i < kCount ? kEntries[i].arity : -1; }");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_call(int i, const fire_val* a, int n, fire_val* r, char* e, int es) { return fire_pkgCallEntry(kEntries, kCount, i, a, n, r, e, es); }");
-            sb.AppendLine("#include \"fire_gfx_host.h\"");
             return sb.ToString();
         }
 

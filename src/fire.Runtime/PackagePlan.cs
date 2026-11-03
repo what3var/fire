@@ -55,8 +55,10 @@ namespace fire.Runtime
         /// otherwise something is missing from the finished file at runtime).</summary>
         public SortedSet<string> Unresolved { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-        public static PackagePlan Create(IEnumerable<string> nativeImports, string baseDir, IEnumerable<string>? extraNativeFiles = null)
+        public static PackagePlan Create(IEnumerable<string> nativeImports, string baseDir, IEnumerable<string>? extraNativeFiles = null, bool graphicsInC = false)
         {
+            // graphics and windows in C: their library travels in extraNativeFiles; neither the C# bridges nor SDL come along
+            if (graphicsInC) nativeImports = nativeImports.Where(i => i != NativeImports.Graphics && i != NativeImports.Windows).ToList();
             var plan = new PackagePlan();
             var searchDirs = SearchDirectories(baseDir);
             var frameworkDir = RuntimeEnvironment.GetRuntimeDirectory();

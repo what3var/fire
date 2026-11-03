@@ -49,7 +49,7 @@ namespace fire.Runtime
             if (singleFile && !BundleWriter.IsBundle(File.ReadAllBytes(stubPath)))
                 throw new InvalidOperationException($"'{Path.GetFileName(stubPath)}' im Ordner des Compilers ({baseDir}) ist weder ein Apphost mit '{Path.GetFileName(runtimeDll)}' daneben noch eine Single-File-Veroeffentlichung.");
 
-            var plan = PackagePlan.Create(program.NativeImports, baseDir, program.PackageLibraryFiles);
+            var plan = PackagePlan.Create(program.NativeImports, baseDir, program.PackageLibraryFiles, program.GraphicsNatives != null);
             if (plan.Unresolved.Count > 0)
                 throw new InvalidOperationException("Dependencies required for packing are missing in the compiler folder: " + string.Join(", ", plan.Unresolved));
 
