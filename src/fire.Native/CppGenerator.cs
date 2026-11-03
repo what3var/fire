@@ -1148,6 +1148,12 @@ namespace fire.Native
                 // (made once more when the file is put together: the strings, units and type arguments they use are registered by now)
                 foreach (var name in _fieldNames.ToList()) FieldHelpers(name);
                 TArgTables();
+                // (the units a text may name, see textUnits below: registered here, so that the conversion functions of a unit (`coerce`) are generated too)
+                if (_usesStringCall)
+                {
+                    foreach (var (symbol, _) in Unit.BuiltInSymbols) UnitId(Unit.Parse(symbol));
+                    foreach (var own in _program.Program.CustomUnits) UnitId(Unit.OfCustom(own));
+                }
                 if (_version == before) break;
                 if (round > 40) throw new NativeNotSupportedException("code generation does not settle");
             }
