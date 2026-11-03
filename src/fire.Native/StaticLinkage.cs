@@ -19,7 +19,11 @@ namespace fire.Native
 
     /// <summary>The program of a build with linkage "static": its own C (it defines the runtime's state, the helpers and the tables every module needs), the natives in C++
     /// and the libraries, in dependency order (`core` first).</summary>
-    public sealed record StaticBuildPlan(string ProgramC, string? Natives, IReadOnlyList<StaticLibrary> Libraries, string Log);
+    public sealed record StaticBuildPlan(string ProgramC, string? Natives, IReadOnlyList<StaticLibrary> Libraries, string Log)
+    {
+        /// <summary>Linkage "shared": what the plugins built for the program need to know (`.firehost`; the names of the libraries without their extension).</summary>
+        public PluginHostInfo? Host { get; init; }
+    }
 
     public sealed partial class CppGenerator
     {
@@ -176,31 +180,7 @@ namespace fire.Native
 
         /// <summary>The hash of what other modules see of a module (ROADMAP 9.7): its classes with their bases, interfaces, fields (layout, declared kinds, units, types,
         /// access) and members (parameters, types, access, defaults). A module that only changes the code of its methods keeps it - the modules that need it are not built again.</summary>
-        internal static string AbiHash(LinkedProgram program, ModuleSpec spec)
-        {
-            var sb = new StringBuilder();
-            sb.Append("fire-abi ").Append(InterfaceFormat).Append('\n');
-            foreach (var name in spec.Classes)
-            {
-                var rc = program.Program.Classes[name];
-                sb.Append("class ").Append(rc.Name).Append(" : ").Append(rc.Base?.Name).Append(" [").Append(string.Join(",", rc.Interfaces)).Append("] <")
-                    .Append(string.Join(",", rc.BaseTypeArgs ?? Array.Empty<string>())).Append('>').Append(rc.IsActor ? " actor" : "").Append(rc.NotSerializable ? " ns" : "").Append('\n');
-                sb.Append(" layout ").Append(string.Join(",", rc.FlattenedFieldNames)).Append('\n');
-                foreach (var (field, info) in rc.OwnFieldInfo.OrderBy(f => f.Key, StringComparer.Ordinal))
-                    sb.Append(" field ").Append(field).Append(' ').Append(info.IsStatic).Append(' ').Append(info.AccessModifier).Append(' ').Append(info.RequiredKind).Append(' ')
-                        .Append(info.RequiredUnit).Append(' ').Append(info.RequiredType).Append(' ').Append(info.TypeText).Append('\n');
-                void Proto(string what, FunctionProto p) =>
-                    sb.Append(' ').Append(what).Append(" (").Append(p.ParamCount).Append(") ").Append(p.Access).Append(p.IsStatic ? " static" : "").Append(" t").Append(p.TypeParamCount)
-                        .Append(" r").Append(p.RefMask).Append(" [").Append(string.Join(",", (p.ParamTypes ?? Array.Empty<string?>()).Select(t => t ?? "?"))).Append("] d")
-                        .Append(string.Concat(p.ParamDefaults.Select(d => d == null ? '0' : '1'))).Append('\n');
-                foreach (var (method, protos) in rc.Methods.OrderBy(m => m.Key, StringComparer.Ordinal))
-                    foreach (var p in protos.Where(p => p.Chunk.FirstSourceIndex is not int src || spec.Sources.Contains(src))) Proto("method " + method, p);
-                foreach (var (argc, p) in rc.Constructors.OrderBy(c => c.Key)) Proto("ctor" + argc, p);
-                foreach (var p in rc.ExtraConstructors) Proto("xctor", p);
-                if (rc.Destructor != null) sb.Append(" dtor\n");
-            }
-            return Hash(sb.ToString());
-        }
+        internal static string AbiHash(LinkedProgram program, ModuleSpec spec) => ModuleInterface.Hash(program, spec.Classes, spec.Sources);
 
         private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
 
@@ -398,6 +378,7 @@ namespace fire.Native
                 {
                     _chooseSdl = chooseSdl, _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
                     _sharedAbis = shared ? specs.ToDictionary(s => s, s => $"{InterfaceFormat}:{abi[s]}") : null, _dll = dll, _dllModules = dll ? outputs : null, _toolchainStamp = toolchainStamp,
+                    _openWorld = shared,
                 };
                 main.SetModules(specs, null);
                 string c = main.Run();
@@ -443,7 +424,8 @@ namespace fire.Native
                         else log.AppendLine($"module {spec.Name}: from the cache ({keys[spec].Substring(0, 12)})");
                         libraries.Add(new StaticLibrary(spec.Name, keys[spec], dir, cFile, name, ifaceFile, cached));
                     }
-                    return new StaticBuildPlan(c, main._nativesCode, libraries, log.ToString());
+                    var files = specs.ToDictionary(s => s, s => libraries.First(l => l.Module == s.Name).LibraryName);
+                    return new StaticBuildPlan(c, main._nativesCode, libraries, log.ToString()) { Host = main.HostInfo(files, rtKey != null ? libraries[0].LibraryName : null) };
                 }
                 if (round > 4) throw new NativeNotSupportedException("the modules do not agree on the switches of the program");
                 flags = union;
@@ -571,6 +553,13 @@ namespace fire.Native
                 if (System.Text.RegularExpressions.Regex.IsMatch(programC, $@"^(?!static|extern)[A-Za-z_][^\n;=(]*[\s\*]{name}(\(|\[\] =)", System.Text.RegularExpressions.RegexOptions.Multiline))
                     names[name] = null;
             foreach (var lib in _dllModules) foreach (var (name, decl) in lib.HostImports) names[name] = decl;
+            if (_openWorld)
+            {
+                // (what a plugin's DLL may use of the program: the bases of all modules, the reflection functions it defines)
+                foreach (var lib in _dllModules) names.TryAdd($"fire_mb_{lib.Spec.Id}", $"extern const uint32_t fire_mb_{lib.Spec.Id};");
+                foreach (var (rf, ps) in SharedReflectionFunctions)
+                    if (programC.Contains($"\nFIRE_MAYBE_UNUSED Value {rf}(", StringComparison.Ordinal)) names.TryAdd(rf, $"Value {rf}{ps};");
+            }
             var sb = new StringBuilder();
             sb.AppendLine("/* ---- linkage \"shared\" on Windows: what the DLLs of the runtime and the modules use of the program (their fire_link_* functions ask by name) ---- */");
             foreach (var decl in names.Values.Where(d => d != null).Distinct()) sb.AppendLine(decl);

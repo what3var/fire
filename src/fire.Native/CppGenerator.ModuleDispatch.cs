@@ -75,7 +75,7 @@ namespace fire.Native
         /// <summary>The number of this module for the class of an object: a library's own classes are 0, 1, ... (`cls - fire_mb_M`), the program's are their ids.</summary>
         private string OwnLocal(string clsExpr) => LibraryRole ? $"({clsExpr} - {ModuleBase(_self!)})" : clsExpr;
         /// <summary>The test that a number of <see cref="OwnLocal"/> is a class of this module.</summary>
-        private string OwnRangeTest(string k) => LibraryRole ? $"{k} < {_self!.Classes.Count}u" : $"{k} >= {_progBase}u";
+        private string OwnRangeTest(string k) => LibraryRole ? $"{k} < {_self!.Classes.Count}u" : _openWorld ? $"({k} >= {_progBase}u && {k} < FIRE_PROG_END)" : $"{k} >= {_progBase}u";
 
         private static int RequiredArgs(FunctionProto p)
         {

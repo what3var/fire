@@ -43,6 +43,8 @@ namespace fire.Native
         /// <summary>How the libraries and packages are linked (ROADMAP 9): `source` (null, the default: everything is one C file) or `static` (each library a static library of
         /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
         public string? Linkage { get; set; }
+        /// <summary>`--linkage plugin`: the program the plugin is built for (its path, or its `.firehost` file) - its switches and the interfaces of its libraries.</summary>
+        public string? Host { get; set; }
         public Dictionary<string, TargetDef> Targets { get; set; } = new();
         public Dictionary<string, ToolchainDef> Toolchains { get; set; } = new();
 

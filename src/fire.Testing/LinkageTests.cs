@@ -73,7 +73,12 @@ static class LinkageTests
         Directory.CreateDirectory(root);
         string? before = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
         Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", Path.Combine(root, "cache"));
-        try { RunIn(root); }
+        try
+        {
+            // (FIRE_TESTS_FILTER=plugin: only the fire plugins)
+            if (Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") is { } filter && filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
+            else RunIn(root);
+        }
         catch (Exception ex) { Check("ohne Ausnahme", false, ex.ToString()); }
         finally
         {
@@ -327,6 +332,9 @@ static class LinkageTests
         // ---- Library.Load / Get (phase D): a C library loaded while the program runs ----
         LibraryLoad(root);
 
+        // ---- fire plugins (phase D b) ----
+        Plugins(root);
+
         // ---- a program that cannot be split (it declares a class of the prelude anew): linkage source, with a note ----
         const string own = "class Exception { string message; construct(string message = \"\") { this.message = message } }\ntry { throw new Exception(\"x\") } catch (e) { print(\"caught \" + e.message) }\n";
         var fallback = Build(new[] { own }, "static", Path.Combine(root, "own"));
@@ -364,6 +372,188 @@ static class LinkageTests
     }
 
     private static bool HasProgram(string name) => ToolchainSetup.FindProgram(name) != null;
+
+    // ---- fire plugins (ROADMAP 9 phase D b): a library module built on its own and loaded while the program runs ----
+    private const string PluginApi = """
+        namespace Api {
+            interface IDriver {
+                string Name()
+                int Run(int x)
+            }
+            class Device {
+                string id
+                construct(string id) { this.id = id }
+                string Describe() { return "device " + id }
+                int Speed() { return 1 }
+            }
+            class DriverError : Exception {
+                int code
+                construct(string m, int code) : base(m) { this.code = code }
+            }
+        }
+        """;
+
+    private const string PluginKit = """
+        #import "Api"
+        namespace Kit {
+            enum Mode { Slow, Fast }
+            class MyDriver : Api.IDriver {
+                static int made = 0
+                static List<string> log = new List<string>()
+                Kit.Mode mode = Kit.Mode.Fast
+                construct() { Kit.MyDriver.made = Kit.MyDriver.made + 1; Kit.MyDriver.log.Add("made") }
+                string Name() { return "my driver " + Kit.MyDriver.made + " " + mode + " " + Kit.MyDriver.log.Count }
+                int Run(int x) {
+                    if (x < 0) { throw new Api.DriverError("negative", x) }
+                    try { if (x == 0) { throw new Kit.KitError("zero") } } catch (Kit.KitError e) { return -100 }
+                    return x * 2
+                }
+            }
+            class FastDevice : Api.Device {
+                construct(string id) : base(id) { }
+                string Describe() { return "fast " + this.id }
+                int Speed() { return 9 }
+            }
+            class KitError : Exception {
+                construct(string m) : base(m) { }
+            }
+        }
+        """;
+
+    private const string PluginHost = """
+        #import "Api"
+        #import "reflection"
+        class Mine : Api.Device {
+            construct() : base("mine") { }
+        }
+        any lib = undefined
+        try { lib = Library.Load(Environment.Get("FIRE_TEST_PLUGIN")) } catch (LibraryException e) { print("load: " + e.message); terminate(3) }
+        var names = lib.Classes()
+        var listed = ""
+        foreach (var n in names) { listed = listed + " " + n }
+        print("classes" + listed + " " + lib.IsPlugin)
+        Api.IDriver d = Reflect.New("Kit.MyDriver", [])
+        print(d.Name())
+        print(d.Run(21) + " " + d.Run(0))
+        try { d.Run(-3) } catch (Api.DriverError e) { print("driver error " + e.message + " " + e.code) }
+        print(d is of Api.IDriver)
+        any again = Reflect.New("Kit.MyDriver", [])
+        print(again.Name())
+        Api.Device dev = Reflect.New("Kit.FastDevice", ["x1"])
+        var devices = new List<Api.Device>()
+        devices.Add(new Mine())
+        devices.Add(dev)
+        foreach (var one in devices) { print(one.Describe() + " " + one.Speed() + " " + (one is of Api.Device)) }
+        print(Reflect.Get(dev, "id") + " " + Reflect.Call(d, "Run", [5]) + " " + Type.Of(dev).Name)
+        print("again " + Library.Load(Environment.Get("FIRE_TEST_PLUGIN")).Classes().Length)
+        try { Reflect.New("Kit.Nope", []) } catch (ReflectionException e) { print("nope: " + e.message) }
+        """;
+
+    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
+        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 3\nnope: Unknown class 'Kit.Nope'.\n";
+
+    /// <summary>fire plugins (ROADMAP 9 phase D b): a project with a library `Api` (an interface, a class, an exception), a program with linkage "shared" that loads the
+    /// plugin `Kit` (built with `--linkage plugin --host`) and uses its classes through the interface, the base class, reflection and catch; the errors when the plugin does
+    /// not fit (another interface of Api, a program without linkage "shared", other switches).</summary>
+    private static void Plugins(string root)
+    {
+        string s = Path.Combine(root, "plug");
+        string apiSource = Write(s, "Api/api.script", PluginApi);
+        Write(s, "Api/Api.fireproj", """{ "name": "Api", "type": "library" }""");
+        Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
+        Write(s, "Kit/kit.script", PluginKit);
+        Write(s, "Host/Host.fireproj", """{ "name": "Host", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "shared" } }""");
+        Write(s, "Host/main.script", PluginHost);
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
+        BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
+        Built BuildPlugin(string output, string? host, ToolchainDef? toolchain = null, TargetProfile? target = null)
+        {
+            var plan = Plan("Kit");
+            var config = new NativeConfig { Linkage = "plugin", Host = host };
+            target ??= TargetProfile.Host;
+            toolchain ??= config.ResolveToolchain(target, "gcc");
+            var result = NativeBuilder.BuildSafe(plan.SourceTexts, config, target, toolchain, output, plan: plan);
+            return new Built(result.Ok, result.Output, result.Log, 0, 0);
+        }
+        string? before = Environment.GetEnvironmentVariable("FIRE_TEST_PLUGIN");
+        try
+        {
+            if (OperatingSystem.IsLinux())
+            {
+                string hostDir = Path.Combine(root, "plug-host");
+                Directory.CreateDirectory(hostDir);
+                var hostPlan = Plan("Host");
+                var host = Build(hostPlan.SourceTexts, "shared", Path.Combine(hostDir, "host"), plan: hostPlan);
+                var kit = BuildPlugin(Path.Combine(root, "plug-kit", "kit"), host.Exe);
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.so"));
+                string native = host.Ok && kit.Ok ? Exec(host.Exe) : "";
+                Check("Plugin: ein Programm mit linkage shared laedt das Plugin Kit (Interface, Basisklasse, Reflect.New/Get/Call, Type.Of, catch, Enum, statische Felder) - nativ",
+                    native == PluginExpected && File.Exists(Path.Combine(root, "plug-kit", "kit.fireplugin")), $"{native}\n{host.Log}\n{kit.Log}");
+                // the VM: the bytecode next to the library
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
+                string vm = Vm(hostPlan.SourceTexts, hostPlan);
+                Check("Plugin: die VM laedt den Bytecode des Plugins (.fireplugin) wie nativ", vm == PluginExpected, vm);
+                // (Library.Load of the .fireplugin file natively: the library next to it)
+                string viaBytecode = host.Ok && kit.Ok ? Exec(host.Exe) : "";
+                Check("Plugin: nativ laedt Library.Load(\"kit.fireplugin\") die Bibliothek daneben", viaBytecode == PluginExpected, viaBytecode);
+
+                // a plugin built against another interface of Api (a field more): readable error, in the VM too
+                string apiBefore = File.ReadAllText(apiSource);
+                try
+                {
+                    File.WriteAllText(apiSource, apiBefore.Replace("        string id\n", "        string id\n        int extra = 0\n"));
+                    var other = BuildPlugin(Path.Combine(root, "plug-other", "kit"), host.Exe);
+                    Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-other", "kit.so"));
+                    string mismatch = other.Ok ? Exec(host.Exe) : "";
+                    Check("Plugin: gegen eine andere Schnittstelle von Api gebaut - eine lesbare LibraryException statt eines Absturzes",
+                        mismatch.Contains("The plugin 'Kit' cannot be loaded: it was built against another interface of the module 'Api'"), $"{mismatch}\n{other.Log}");
+                    Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-other", "kit.fireplugin"));
+                    string vmMismatch = Vm(hostPlan.SourceTexts, hostPlan);
+                    Check("Plugin: die VM prueft die Schnittstelle genauso", vmMismatch.Contains("The plugin 'Kit' cannot be loaded: it was built against another interface of the module 'Api'"), vmMismatch);
+                }
+                finally { File.WriteAllText(apiSource, apiBefore); }
+
+                // a program with linkage "static" cannot load plugins
+                Directory.CreateDirectory(Path.Combine(root, "plug-static"));
+                var hostStatic = Build(hostPlan.SourceTexts, "static", Path.Combine(root, "plug-static", "host"), plan: hostPlan);
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.so"));
+                string noShared = hostStatic.Ok ? Exec(hostStatic.Exe) : "";
+                Check("Plugin: ein Programm ohne linkage shared sagt, dass es keine Plugins laden kann", noShared.Contains("this program cannot load fire plugins"), $"{noShared}\n{hostStatic.Log}");
+
+                // a plugin built for other switches (a program that uses threads)
+                string threadsDir = Path.Combine(root, "plug-threads");
+                Directory.CreateDirectory(threadsDir);
+                string mainFile = Path.Combine(s, "Host", "main.script");
+                File.WriteAllText(mainFile, "#import \"json\"\nvar js = Json.Serialize(1)\n" + PluginHost);
+                var threadsPlan = Plan("Host");
+                File.WriteAllText(mainFile, PluginHost);
+                var hostThreads = Build(threadsPlan.SourceTexts, "shared", Path.Combine(threadsDir, "host"), plan: threadsPlan);
+                string otherSwitches = hostThreads.Ok ? Exec(hostThreads.Exe) : "";
+                Check("Plugin: fuer andere Schalter gebaut - eine lesbare LibraryException (die Konfiguration der Runtime)",
+                    otherSwitches.Contains("it was built for another configuration of the runtime") || otherSwitches.Contains("it needs the module"), $"{otherSwitches}\n{hostThreads.Log}");
+
+                // Windows (MinGW, under Wine): the plugin's DLL imports from the runtime's DLL and those of the program's modules, its pointers to the program are filled
+                // by its fire_link function from the program's table
+                var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
+                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
+                if (ToolchainDetector.Find(mingw) != null && wine != null)
+                {
+                    _winePrefix ??= Path.Combine(root, "wineprefix");
+                    string winDir = Path.Combine(root, "plug-win");
+                    Directory.CreateDirectory(winDir);
+                    var winHost = Build(hostPlan.SourceTexts, "shared", Path.Combine(winDir, "host.exe"), mingw, TargetProfile.Windows, hostPlan);
+                    var winKit = winHost.Ok ? BuildPlugin(Path.Combine(winDir, "kit"), winHost.Exe, mingw, TargetProfile.Windows) : new Built(false, "", "", 0, 0);
+                    Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", "kit.dll");
+                    string winOut = winHost.Ok && winKit.Ok ? Exec(winHost.Exe, wine) : "";
+                    Check("Plugin: Windows (MinGW, DLL des Plugins gegen die DLLs des Programms, fire_link) unter Wine wie die VM", winOut == PluginExpected, $"{winOut}\n{winHost.Log}\n{winKit.Log}");
+                    var noHost = BuildPlugin(Path.Combine(winDir, "nohost"), null, mingw, TargetProfile.Windows);
+                    Check("Plugin: fuer Windows ohne --host - der Bau sagt, dass das Plugin fuer ein Programm gebaut wird", !noHost.Ok && noHost.Log.Contains("--host"), noHost.Log);
+                }
+                else Console.WriteLine("(Plugin unter Windows: uebersprungen - MinGW/Wine fehlt)");
+            }
+        }
+        finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); }
+    }
 
     private const string CLibrary = """
         #include <stdint.h>

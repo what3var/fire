@@ -339,10 +339,12 @@ namespace fire.Native
 
         /// <summary>Generates one library module (its view of the program, its own classes kept).</summary>
         internal static ModuleOutput GenerateLibrary(LinkedProgram program, ModuleSpec spec, IReadOnlyList<ModuleSpec> all, TargetProfile target, StrippingLevel? stripping, ModuleFlags? flags, bool separate = false,
-            bool dll = false)
+            bool dll = false, List<(string Module, string Abi)>? plugin = null)
         {
             var view = LibraryView(program, spec);
             var generator = new CppGenerator(view, target) { _strip = LibraryStripping(program, stripping), _role = ModuleRole.Library, _forced = flags, _self = spec, _separate = separate, _dll = dll };
+            // (a plugin: the tables a program defines for a library are its own; every member of its classes and of their bases is in their tables)
+            if (plugin != null) { generator._plugin = true; generator._pluginDeps = plugin; generator._tablesAll = true; }
             string body;
             try
             {
@@ -394,6 +396,13 @@ namespace fire.Native
                 _nextClassId = next;
                 _progBase = next;
                 foreach (var name in _libraries?.SelectMany(l => l.Needs.Classes) ?? Enumerable.Empty<string>()) if (_fixedIds.ContainsKey(name)) RegisterClass(name);
+                // (a program that loads plugins: a plugin may make objects of any class of the libraries - each gets its full descriptor - and call any member of the
+                // program's classes by name)
+                if (_openWorld)
+                {
+                    foreach (var m in all) foreach (var name in m.Classes) RegisterClass(name);
+                    _tablesAll = true;
+                }
             }
         }
 
@@ -510,7 +519,7 @@ namespace fire.Native
         private void KeepOwnModule()
         {
             _keeping = true;
-            try { KeepOwnMembers(); }
+            try { KeepOwnMembers(); RegisterPluginTargets(); }
             finally { _keeping = false; }
         }
 
@@ -582,7 +591,7 @@ namespace fire.Native
         private string LibraryBody()
         {
             var sb = new StringBuilder();
-            sb.Append(LibraryDeclarations());
+            sb.Append(_plugin ? PluginDeclarations() : LibraryDeclarations());
             foreach (var native in _reflNativesUsed)
                 if (SharedReflectionFunctions.TryGetValue("rf_" + native.Substring("__refl_".Length), out var ps)) sb.Append(HostDecl($"rf_{native.Substring("__refl_".Length)}", $"Value rf_{native.Substring("__refl_".Length)}{ps};"));
             // the natives in C++ it calls: thunks of its own in the file of the natives
@@ -616,6 +625,7 @@ namespace fire.Native
             sb.Append(ModularHelpers());
             sb.Append(LibraryReflectionRows());
             foreach (var f in _funcs) sb.AppendLine(f.Code);
+            sb.Append(PluginTrailer());
             return sb.ToString();   // (the resets of `#line` are resolved in the file it ends up in)
         }
 

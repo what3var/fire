@@ -47,6 +47,46 @@ print(add(40, 2))                                   // 42
   "The signature '...' is not known to this native build: pass it to Get as a text constant."
 - The boards and the browser have no dynamic loader: `Load` throws there.
 
+### fire plugins
+
+A **fire plugin** is a set of fire classes built on their own and loaded by a running program with the same `Library.Load`. Its classes then belong to the
+program: `Reflect.New("Kit.MyDriver", [])`, `Type.Of`, `is of`, `catch` and the calls through an interface or a base class find them.
+
+```
+// the interface: a library of the project (or a package) that the program and the plugin both import
+namespace Api {
+    interface IDriver { string Name() }
+}
+
+// the plugin (kit.fire, or a project with "linkage": "plugin"): forge build kit.fire --linkage plugin --host bin/app -o plugins/kit
+#import "Api"
+namespace Kit {
+    class MyDriver : Api.IDriver { string Name() { return "my driver" } }
+}
+
+// the program ("linkage": "shared" for a native build)
+#import "Api"
+#import "reflection"
+var kit = Library.Load("plugins/kit.fireplugin")
+print(kit.Classes()[0])                    // Kit.MyDriver
+Api.IDriver d = Reflect.New("Kit.MyDriver", [])
+print(d.Name())                            // my driver
+```
+
+- `forge build ... --linkage plugin` (or `"linkage": "plugin"` in the project) builds the classes of the program's own files as a plugin: `<output>.so`
+  (`.dll`, `.dylib`) for native programs and `<output>.fireplugin`, its bytecode, for the VM. `Library.Load` takes either file: the VM loads the bytecode, a
+  native program the library next to it. The plugin's top level does not run; the static fields of its classes are set when it is loaded.
+- A native program can load plugins when it is built with **linkage `"shared"`** (Linux, macOS, Windows with MinGW). The plugin is built for it:
+  `--host <program>` takes the switches of the program and (Windows) the DLLs it imports from (`<program>.firehost`, written next to the program).
+- The plugin is checked when it is loaded (only by hashes): the libraries and packages it was built against must have the same **interface** in the
+  program (classes, fields, members - not the code of the methods), and a native plugin must be built for the same configuration of the runtime (switches,
+  target, version of fire). Otherwise `Load` throws a `LibraryException` that says why ("The plugin 'Kit' cannot be loaded: it was built against another
+  interface of the module 'Api' ..."). A program without linkage "shared" says that it cannot load plugins.
+- `lib.Classes()` are the names of the plugin's classes (empty for a C library), `lib.IsPlugin` says whether it is one. Loading the same plugin again gives
+  the same classes; a plugin is never unloaded.
+- Not yet: plugins with units, with natives in C++ or with `class extends` of a class of the program or a library; in a native program JSON
+  (`Json.Serialize`) of objects of a plugin's classes and named arguments in calls of the program on them; debugging a plugin.
+
 ### Functions that can fail: `try Name(...)`
 
 Some functions of the host or of packages are registered as *tryable*: they can only be called with `try` and return `undefined` instead of
