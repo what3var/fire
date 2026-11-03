@@ -249,6 +249,41 @@ static class LinkageTests
         Check("Projekt: die Schnittstelle einer Bibliothek aendert sich - auch die Bibliothek, die sie braucht, wird neu gebaut",
             p3.Ok && ModuleLines(p3.Log, "built in").Contains("Lib") && ModuleLines(p3.Log, "built in").Contains("Lib2") && Exec(p3.Exe) == Vm(plan.SourceTexts, plan), p3.Log);
 
+        // ---- linkage "shared" (phase C, Linux/macOS): the libraries as shared libraries next to the program; two programs share them; a library that does not fit
+        // the program (another interface) is a readable error when the program starts ----
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        {
+            plan = Plan();
+            string shDir1 = Path.Combine(root, "shared1");
+            Directory.CreateDirectory(shDir1);
+            var sh1 = Build(plan.SourceTexts, "shared", Path.Combine(shDir1, "app"), plan: plan);
+            string sh1Vm = Vm(plan.SourceTexts, plan);
+            var soFiles = Directory.Exists(shDir1) ? Directory.GetFiles(shDir1, "libfire_*").Select(Path.GetFileName).ToList() : new List<string?>();
+            Check("Shared: Programm mit Bibliotheken des Projekts als Shared Libraries neben dem Programm, wie die VM",
+                sh1.Ok && Exec(sh1.Exe) == sh1Vm && soFiles.Any(f => f!.StartsWith("libfire_mLib_")) && soFiles.Any(f => f!.StartsWith("libfire_mcore_")) && !sh1.Log.Contains("only available"),
+                $"VM: {sh1Vm}\n{string.Join(" ", soFiles)}\n{sh1.Log}");
+            foreach (var dir in new[] { "sharedA", "sharedB", "shared2" }) Directory.CreateDirectory(Path.Combine(root, dir));
+            const string smallA = "#import \"json\"\nclass Q { int x = 4 }\nprint(Json.Serialize(new Q()))\n";
+            const string smallB = "#import \"json\"\nclass R { string t = \"r\" }\nprint(Json.Serialize(new R()) + \"!\")\n";
+            var shA = Build(new[] { smallA }, "shared", Path.Combine(root, "sharedA", "a"));
+            var shB = Build(new[] { smallB }, "shared", Path.Combine(root, "sharedB", "b"));
+            Check("Shared: zwei Programme teilen sich die Bibliotheken (das zweite baut keine), beide wie die VM",
+                shA.Ok && shB.Ok && ModuleLines(shB.Log, "built in").Count == 0 && ModuleLines(shB.Log, "from the cache").Contains("pkg:json")
+                && Exec(shA.Exe) == Vm(new[] { smallA }) && Exec(shB.Exe) == Vm(new[] { smallB }), shA.Log + "\n" + shB.Log);
+            // another layout of Lib (a field more): its library put in place of the one the first program was built with
+            string before = File.ReadAllText(libSource);
+            File.WriteAllText(libSource, before.Replace("        int n = 0\n", "        int n = 0\n        int extra = 1\n"));
+            plan = Plan();
+            var sh2 = Build(plan.SourceTexts, "shared", Path.Combine(root, "shared2", "app"), plan: plan);
+            string? newLib = sh2.Ok ? Directory.GetFiles(Path.Combine(root, "shared2"), "libfire_mLib_*").FirstOrDefault() : null;
+            string? oldLib = Directory.Exists(shDir1) ? Directory.GetFiles(shDir1, "libfire_mLib_*").FirstOrDefault() : null;
+            string mismatch = "";
+            if (newLib != null && oldLib != null) { File.Copy(newLib, oldLib, true); mismatch = Exec(sh1.Exe); }
+            Check("Shared: eine Bibliothek mit einer anderen Schnittstelle neben dem Programm ist beim Start ein lesbarer Fehler (kein Absturz)",
+                mismatch.Contains("does not fit this program") && mismatch.Contains("(exit 70)") && mismatch.Contains("'Lib'"), mismatch + "\n" + sh2.Log);
+            File.WriteAllText(libSource, before);
+        }
+
         // ---- a debug build: a breakpoint inside a static library ----
         DebugInLibrary(root, Plan(), libSource);
 
@@ -265,6 +300,8 @@ static class LinkageTests
         {
             var tcc = Build(new[] { small }, "static", Path.Combine(root, "tcc"), ToolchainDef.BuiltIn["tcc"]);
             Check("TinyCC: linkage static (Bibliotheken mit tcc -ar)", tcc.Ok && Exec(tcc.Exe) == smallVm, tcc.Log);
+            var tccShared = Build(new[] { small }, "shared", Path.Combine(root, "tcc-shared"), ToolchainDef.BuiltIn["tcc"]);
+            Check("TinyCC: linkage shared gibt es dort nicht - gebaut wird static, das Protokoll sagt es", tccShared.Ok && tccShared.Log.Contains("only available") && Exec(tccShared.Exe) == smallVm, tccShared.Log);
         }
         else Console.WriteLine("(TinyCC: uebersprungen - tcc fehlt)");
         var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };

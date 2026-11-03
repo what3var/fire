@@ -953,7 +953,15 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
 * **ESP32** (Toolchain `esp-idf`, nur Dateien): die Module stehen als eigene Übersetzungseinheiten (`fire_<modul>.c`, ihr C aus dem Cache) in der Komponente;
   `idf.py` übersetzt sie in die Bibliothek der Komponente. Ein fertiges `.a` aus dem Cache wird dort nicht benutzt (das übersetzt die Toolchain von ESP-IDF mit ihren
   eigenen Schaltern).
-* `"shared"` (Desktop) und das Laden zur Laufzeit sind Phase C/D (ROADMAP 9).
+* `"shared"` (Phase C): Linux und macOS mit gcc oder clang. Jede Library wird eine **Shared Library** (`libfire_<modul>_<schlüssel>.so`/`.dylib`, positionsunabhängig,
+  eine eigene Variante im Cache), das Programm wird gegen sie gebunden und exportiert, was sie von ihm brauchen (`-rdynamic`: der Zustand der Runtime - auch die
+  thread-lokalen Variablen -, die Tabellen und Thunks des Programms); die Bibliotheken liegen nach dem Bau **neben dem Programm** (`rpath $ORIGIN`). Jede Bibliothek
+  nennt die Schnittstelle, mit der sie gebaut ist (`fire_abi_<modul>`: Formatversion und ABI-Hash); das Programm prüft sie beim Start, vor allem anderen - liegt eine
+  andere daneben, endet es mit „The library of the module 'X' does not fit this program …“ (Exitcode 70) statt abzustürzen. Andere Ziele und Toolchains (Windows,
+  TinyCC, die Boards, wasm) bauen `static` und sagen es im Protokoll. Offen: Windows (DLLs können nichts aus dem Programm importieren: die Runtime müsste eine DLL
+  `libfire_rt` sein, ihre thread-lokalen Variablen hinter Zugriffsfunktionen - ohne Wine hier nicht zu testen); ein Debug-Build übersetzt die Shared Libraries mit
+  `-O2`.
+* Das Laden zur Laufzeit ist Phase D (ROADMAP 9).
 
 ### Debuggen
 
@@ -979,6 +987,7 @@ Gemessen auf dem Rechner dieser Sitzung (4 vCPUs, gcc 13 `-O2`, ohne ccache), Ze
 | **B2**: CLI | 9,7-10,4 s | 41-45 s | **6,5 s** | 226 KB / 2,7 MB |
 | **B2**: `ui`-Beispiel (Samples/Graphics and UI/UI) | 100 s | 237 s | **16 s** | 2,3 MB / 6,5 MB |
 | **B2**: `print("hi")` (nur `core`) | 2,7 s | 20 s | 3,6 s | 26 KB / 395 KB |
+| **C**: CLI mit `"shared"` | 9,7-10,4 s | 60 s | 6,2 s | 226 KB / 285 KB + 3,8 MB in 9 Shared Libraries |
 
 Die Ausgaben sind gleich. Die Bibliotheken eines ersten Baus werden nebeneinander übersetzt (so viele wie Kerne). Seit B2 übersetzt der zweite Bau nur noch,
 was das Programm selbst ist: das C des CLI-Programms ist von 1,2 MB auf 214 KB geschrumpft (Verteiler und Feld-Helfer nur für seine Klassen, keine Reflection-Helfer

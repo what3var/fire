@@ -1550,7 +1550,9 @@ namespace fire.Native
                 _initCode.AppendLine($"    g_enums = kEnums; g_enumCount = {_enumList.Count};");
             }
             if (DebugBuild) sb.Append(DebugProgramTables());
+            sb.Append(SharedLibraryChecks());
             sb.AppendLine("static void fire_init(void) {");
+            sb.Append(SharedLibraryCheckCalls());   // (linkage "shared": the libraries first)
             if (_usesThreads) sb.AppendLine("    fire_threadsInit();   // the locks of the threads, before anything else");
             sb.Append(_initCode);
             sb.AppendLine("}");

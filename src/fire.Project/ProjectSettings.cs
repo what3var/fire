@@ -56,7 +56,7 @@ namespace fire.Projects
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
         public static readonly IReadOnlyList<string> Engines = new[] { "vm", "native" };
         public static readonly IReadOnlyList<string> TypeCheckings = new[] { "lax", "strict" };
-        public static readonly IReadOnlyList<string> Linkages = new[] { "source", "static" };
+        public static readonly IReadOnlyList<string> Linkages = new[] { "source", "static", "shared" };
 
         /// <summary>`high` over `low`: every field that `high` sets, else the one of `low` (the defines of both are added up). Either may be null.</summary>
         public static ProjectSettings Merge(ProjectSettings? high, ProjectSettings? low)

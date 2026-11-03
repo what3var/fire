@@ -147,7 +147,7 @@ manager (docs/DEVICES.md).
 ### The cache of native libraries
 
 A native build with `"linkage": "static"` (docs/NATIVE_BACKEND.md "Getrennte Übersetzung") turns every package (and the prelude, every library of a project) into a static
-library and keeps it in a cache of the user: `~/.local/share/fire/cache/native` on Linux, `%LOCALAPPDATA%\fire\cache\native` on Windows, `~/Library/Application Support/fire/cache/native`
+library (`"shared"`: a shared library, on Linux and macOS) and keeps it in a cache of the user: `~/.local/share/fire/cache/native` on Linux, `%LOCALAPPDATA%\fire\cache\native` on Windows, `~/Library/Application Support/fire/cache/native`
 on macOS (`FIRE_NATIVE_CACHE` moves it). An entry is found by the content hash of everything its C depends on, so a stale entry is never used, only left behind.
 
 ```

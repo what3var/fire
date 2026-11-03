@@ -342,8 +342,12 @@ namespace fire.Native
         /// written next to where the library goes (the caller compiles it and puts the library there). The switches every module is built with are those of all of
         /// them; a module whose interface for these switches is in the cache is not generated at all.</summary>
         /// <param name="toolchainStamp">What identifies the compiler (its kind, path, version, arguments): part of every key.</param>
-        public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, Func<int>? chooseSdl = null, TrimMode? trim = null, string? cacheRoot = null)
+        /// <param name="shared">Linkage "shared" (ROADMAP 9, phase C): the libraries are shared libraries (position-independent code, a variant of their own in the cache); each
+        /// says the interface it was built with, the program checks it when it starts.</param>
+        public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, Func<int>? chooseSdl = null, TrimMode? trim = null, string? cacheRoot = null,
+            bool shared = false)
         {
+            if (shared) toolchainStamp += "|shared";
             var specs = ModulesOf(program);
             var abi = specs.ToDictionary(s => s, s => AbiHash(program, s));
             string root = Path.Combine(cacheRoot ?? NativeLibraryCache.Root, target.Name);
@@ -382,6 +386,7 @@ namespace fire.Native
                 var main = new CppGenerator(program, target)
                 {
                     _chooseSdl = chooseSdl, _trim = EffectiveTrim(program, trim), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
+                    _sharedAbis = shared ? specs.ToDictionary(s => s, s => $"{InterfaceFormat}:{abi[s]}") : null,
                 };
                 main.SetModules(specs, null);
                 string c = main.Run();
@@ -393,7 +398,7 @@ namespace fire.Native
                     foreach (var spec in specs)
                     {
                         string dir = Path.Combine(root, keys[spec]);
-                        string name = "fire_" + spec.Id;
+                        string name = shared ? $"libfire_{spec.Id}_{keys[spec].Substring(0, 8)}" : "fire_" + spec.Id;
                         string cFile = Path.Combine(dir, spec.Id + ".c");
                         string ifaceFile = Path.Combine(dir, spec.Id + NativeLibraryCache.InterfaceExtension);
                         bool cached = !fresh.ContainsKey(spec);
@@ -401,7 +406,9 @@ namespace fire.Native
                         {
                             string head = main._libraryHead!;
                             if (output.JsonEngine) head = head.Replace("#include \"fire_json.h\"", "#define FIRE_JSON_IMPLEMENTATION 1   // (the JSON engine: in the file of the module that calls it)\n#include \"fire_json.h\"");
-                            WriteAtomically(cFile, ResolveLineResets(head + output.NativesC + output.Body));
+                            // (shared: the interface it is built with - the program checks it when it starts)
+                            string abiText = shared ? $"const char* const fire_abi_{spec.Id} = {CString($"{InterfaceFormat}:{abi[spec]}")};\n" : "";
+                            WriteAtomically(cFile, ResolveLineResets(head + output.NativesC + output.Body + abiText));
                             // (the interface last: it says the library is there - the caller writes it after building the library, see CommitStatic)
                             WriteAtomically(ifaceFile + ".new", JsonSerializer.Serialize(InterfaceOf(output, keys[spec], abi[spec], output.Exports)));
                             log.AppendLine($"module {spec.Name}: new ({keys[spec].Substring(0, 12)})");
@@ -415,6 +422,27 @@ namespace fire.Native
                 flags = union;
             }
         }
+
+        /// <summary>Linkage "shared": the interfaces of the libraries the program is built with (ABI version and hash, ROADMAP 9.7) - it checks them when it starts.</summary>
+        private Dictionary<ModuleSpec, string>? _sharedAbis;
+
+        /// <summary>Linkage "shared": the check of the libraries at the start of the program (before anything of theirs runs) - a readable error instead of a crash when a
+        /// library next to the program is not the one it was built with.</summary>
+        private string SharedLibraryChecks()
+        {
+            if (_sharedAbis == null) return "";
+            var sb = new StringBuilder();
+            foreach (var m in _sharedAbis.Keys) sb.AppendLine($"extern const char* const fire_abi_{m.Id};");
+            sb.AppendLine("static void fire_checkModule(const char* module, const char* found, const char* expected) {");
+            sb.AppendLine("    if (strcmp(found, expected) == 0) return;");
+            sb.AppendLine("    fprintf(stderr, \"The library of the module '%s' does not fit this program: it has the interface %.12s, the program was built for %.12s. Build the program again or put the library it was built with next to it.\\n\", module, found, expected);");
+            sb.AppendLine("    exit(70);");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        private string SharedLibraryCheckCalls() =>
+            _sharedAbis == null ? "" : string.Concat(_sharedAbis.Select(kv => $"    fire_checkModule({CString(kv.Key.Name)}, fire_abi_{kv.Key.Id}, {CString(kv.Value)});\n"));
 
         /// <summary>After the library of a module is built: its interface says it is in the cache.</summary>
         public static void CommitStatic(StaticLibrary library)
