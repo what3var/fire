@@ -6695,6 +6695,80 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(words.length)
         """, new[] { "2", "7", "6", "2", "destroyed: Access to a destroyed array.", "after delete: Access to a destroyed array.", "len: Access to a destroyed array.", "9", "matrix gone", "5", "free r2", "end", "free kept", "last", "done", "5", "3", "8", "3" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
+    CheckPerf("Ownership in Property-Accessoren (SPEC 2.2): Feld von this, Property, Return gewinnt, Ausnahme, Setter, normale Methode unveraendert", """
+        class Item {
+            string n
+            construct(string n) { this.n = n }
+            destruct() { print("destroy " + this.n) }
+        }
+        class Node { Item child }
+        class Other {
+            Item kept
+            Item Slot { get { return this.kept } set { this.kept = value } }
+            Item AutoSlot { get; set; }
+        }
+        class Holder {
+            Item cache
+            Item other
+            int arr[]
+            Node node
+            Item slot
+            Other peer
+            construct() { this.node = new Node(); this.peer = new Other() }
+            Item Slot { get { return this.slot } set { this.slot = value } }
+            // field of this (explicit and implicit), in an inner block
+            int Field { get { var it = new Item("field"); this.cache = it; if (true) { var x = new Item("inner"); other = x } return 1 } }
+            // return wins: the returned object goes to the caller (directly and read back from the field)
+            Item Ret { get { var it = new Item("ret"); this.cache = it; return it } }
+            Item RetField { get { var it = new Item("retfield"); this.other = it; return this.other } }
+            // property of this and of another object, auto-property
+            int Prop { get { var it = new Item("prop"); this.Slot = it; return 2 } }
+            int PeerProp { get { var it = new Item("peer"); this.peer.Slot = it; return 3 } }
+            int PeerAuto { get { var it = new Item("auto"); this.peer.AutoSlot = it; return 4 } }
+            // a field of a field: no move (only fields of this)
+            int Nested { get { var it = new Item("nested"); this.node.child = it; return 5 } }
+            // an exception after the assignment: the field keeps the object
+            int Throws { get { var it = new Item("throws"); this.cache = it; throw new ArgumentException("boom") } }
+            // arrays too
+            int Array { get { var a = new int[3]; a[0] = 42; this.arr = a; return a.Length } }
+            // setter: field and forwarding to another property
+            int Make { get { return 0 } set { var it = new Item("made " + value); this.cache = it } }
+            int Forward { get { return 0 } set { var it = new Item("fwd " + value); this.peer.Slot = it } }
+            // return of something else in a try/finally
+            Item Fin { get { var it = new Item("fin"); try { this.other = it; return it } finally { print("finally: " + (it is from this)) } } }
+            // a normal method: unchanged (the object dies with the call)
+            undefined Method() { var it = new Item("method"); this.cache = it }
+        }
+        var h = new Holder()
+        print("field: " + h.Field + " " + (h.cache is from h) + " " + (h.other is from h) + " " + h.other.n)
+        var r = h.Ret
+        print("ret: " + (r is from h) + " " + (h.cache == r))
+        var rf = h.RetField
+        print("retfield: " + (rf is from h) + " " + h.other.n)
+        print("prop: " + h.Prop + " " + (h.slot is from h) + " " + h.slot.n)
+        print("peer: " + h.PeerProp + " " + (h.peer.kept is from h.peer) + " " + h.peer.kept.n)
+        print("auto: " + h.PeerAuto + " " + (h.peer.AutoSlot is from h.peer) + " " + h.peer.AutoSlot.n)
+        print("nested: " + h.Nested)
+        try { print(h.node.child.n) } catch (DestroyedException e) { print("nested destroyed") }
+        try { print(h.Throws) } catch (ArgumentException e) { print("caught " + e.message + " " + (h.cache is from h) + " " + h.cache.n) }
+        print("array: " + h.Array + " " + h.arr[0])
+        h.Make = 7
+        print("make: " + (h.cache is from h) + " " + h.cache.n)
+        h.Forward = 8
+        print("forward: " + (h.peer.kept is from h.peer) + " " + h.peer.kept.n)
+        var f = h.Fin
+        print("fin: " + (f is from h) + " " + f.n)
+        {
+            var outside = new Item("outside")
+            h.Slot = outside
+            print("outside: " + (h.slot is from h))
+        }
+        try { print(h.slot.n) } catch (DestroyedException e) { print("outside destroyed") }
+        h.Method()
+        try { print(h.cache.n) } catch (DestroyedException e) { print("method destroyed") }
+        print("end")
+        """, new[] { "field: 1 True True inner", "ret: False True", "retfield: False retfield", "prop: 2 True prop", "peer: 3 True peer", "auto: 4 True auto", "destroy nested", "nested: 5", "nested destroyed", "caught boom True throws", "array: 3 42", "make: True made 7", "forward: True fwd 8", "finally: False", "fin: False fin", "outside: False", "destroy outside", "outside destroyed", "destroy method", "method destroyed", "end", "destroy peer", "destroy auto", "destroy fwd 8", "destroy field", "destroy inner", "destroy prop", "destroy throws", "destroy made 7", "destroy ret", "destroy retfield", "destroy fin" }, new[] { VmExecutionMode.Release, VmExecutionMode.Performance });
+
     CheckPerf("Objekte: Ownership und Destruktor pro Schleifendurchlauf", """
         class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
         for (var i = 0; i < 3; i = i + 1) { var d = new D(i) }
@@ -18768,6 +18842,131 @@ else
             p.v = 5
             var pc = copy p
             print(pc.v)
+            print("end")
+            """),
+        ("Ownership in Property-Accessoren: Feld von this, Property (auch fremd, Auto), Return gewinnt, Feld eines Feldes nicht, Ausnahme, Arrays, Setter, finally (unter ASan)", """
+            class Item {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+            }
+            class Node { Item child }
+            class Other {
+                Item kept
+                Item Slot { get { return this.kept } set { this.kept = value } }
+                Item AutoSlot { get; set; }
+            }
+            class Holder {
+                Item cache
+                Item other
+                int arr[]
+                Node node
+                Item slot
+                Other peer
+                construct() { this.node = new Node(); this.peer = new Other() }
+                Item Slot { get { return this.slot } set { this.slot = value } }
+                // field of this (explicit and implicit), in an inner block
+                int Field { get { var it = new Item("field"); this.cache = it; if (true) { var x = new Item("inner"); other = x } return 1 } }
+                // return wins: the returned object goes to the caller (directly and read back from the field)
+                Item Ret { get { var it = new Item("ret"); this.cache = it; return it } }
+                Item RetField { get { var it = new Item("retfield"); this.other = it; return this.other } }
+                // property of this and of another object, auto-property
+                int Prop { get { var it = new Item("prop"); this.Slot = it; return 2 } }
+                int PeerProp { get { var it = new Item("peer"); this.peer.Slot = it; return 3 } }
+                int PeerAuto { get { var it = new Item("auto"); this.peer.AutoSlot = it; return 4 } }
+                // a field of a field: no move (only fields of this)
+                int Nested { get { var it = new Item("nested"); this.node.child = it; return 5 } }
+                // an exception after the assignment: the field keeps the object
+                int Throws { get { var it = new Item("throws"); this.cache = it; throw new ArgumentException("boom") } }
+                // arrays too
+                int Array { get { var a = new int[3]; a[0] = 42; this.arr = a; return a.Length } }
+                // setter: field and forwarding to another property
+                int Make { get { return 0 } set { var it = new Item("made " + value); this.cache = it } }
+                int Forward { get { return 0 } set { var it = new Item("fwd " + value); this.peer.Slot = it } }
+                // return of something else in a try/finally
+                Item Fin { get { var it = new Item("fin"); try { this.other = it; return it } finally { print("finally: " + (it is from this)) } } }
+                // a normal method: unchanged (the object dies with the call)
+                undefined Method() { var it = new Item("method"); this.cache = it }
+            }
+            var h = new Holder()
+            print("field: " + h.Field + " " + (h.cache is from h) + " " + (h.other is from h) + " " + h.other.n)
+            var r = h.Ret
+            print("ret: " + (r is from h) + " " + (h.cache == r))
+            var rf = h.RetField
+            print("retfield: " + (rf is from h) + " " + h.other.n)
+            print("prop: " + h.Prop + " " + (h.slot is from h) + " " + h.slot.n)
+            print("peer: " + h.PeerProp + " " + (h.peer.kept is from h.peer) + " " + h.peer.kept.n)
+            print("auto: " + h.PeerAuto + " " + (h.peer.AutoSlot is from h.peer) + " " + h.peer.AutoSlot.n)
+            print("nested: " + h.Nested)
+            try { print(h.node.child.n) } catch (DestroyedException e) { print("nested destroyed") }
+            try { print(h.Throws) } catch (ArgumentException e) { print("caught " + e.message + " " + (h.cache is from h) + " " + h.cache.n) }
+            print("array: " + h.Array + " " + h.arr[0])
+            h.Make = 7
+            print("make: " + (h.cache is from h) + " " + h.cache.n)
+            h.Forward = 8
+            print("forward: " + (h.peer.kept is from h.peer) + " " + h.peer.kept.n)
+            var f = h.Fin
+            print("fin: " + (f is from h) + " " + f.n)
+            {
+                var outside = new Item("outside")
+                h.Slot = outside
+                print("outside: " + (h.slot is from h))
+            }
+            try { print(h.slot.n) } catch (DestroyedException e) { print("outside destroyed") }
+            h.Method()
+            try { print(h.cache.n) } catch (DestroyedException e) { print("method destroyed") }
+            print("end")
+            """),
+        ("Ownership in Property-Accessoren: Name als Feld und Property, Ausnahme im inneren Getter, Setter gibt nur weiter, Setter wirft, is from (unter ASan)", """
+            class Item {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+            }
+            class A { Item v }
+            class B { Item v { get; set; } }
+            class Sink { static undefined Look(Item i) { print("look " + i.n) } }
+            class Holder {
+                Item cache
+                Item v
+                A a
+                B b
+                construct() { this.a = new A(); this.b = new B() }
+                // a name that is a field of one class and a property of another, the target's class unknown
+                int Mixed { get {
+                    any t = this.a
+                    any u = this.b
+                    any me = this
+                    var x = new Item("mixed field")
+                    var y = new Item("mixed prop")
+                    var z = new Item("mixed self")
+                    t.v = x
+                    u.v = y
+                    me.v = z
+                    print("in getter: " + (x is from this) + " " + (y is from this.b) + " " + (z is from this))
+                    return 1 } }
+                // an inner getter keeps an object and throws; the outer one returns it from the field: it stays with `this`
+                Item Inner { get { var it = new Item("inner"); this.cache = it; throw new ArgumentException("x") } }
+                Item Outer { get { try { var y = this.Inner } catch (ArgumentException e) { print("inner threw") } return this.cache } }
+                // a setter that hands its value only to a method: it dies with the setter call
+                Item Passing { get { return undefined } set { Sink.Look(value) } }
+                int ToPassing { get { var it = new Item("passing"); this.Passing = it; try { print(it.n) } catch (DestroyedException e) { print("passing destroyed") } return 2 } }
+                // a setter that keeps the value only after an exception
+                Item Strict { get { return this.cache } set { this.cache = value; if (value.n == "bad") { throw new ArgumentException("bad value") } } }
+                int ToStrict { get { var it = new Item("bad"); try { this.Strict = it } catch (ArgumentException e) { print("strict threw: " + (this.cache is from this)) } return 3 } }
+                // `is from` right after the assignment, inside the getter
+                bool Check { get { var it = new Item("check"); bool before = it is from this; this.cache = it; return !before && (it is from this) } }
+            }
+            var h = new Holder()
+            print("mixed: " + h.Mixed)
+            try { print(h.a.v.n) } catch (DestroyedException e) { print("a.v destroyed (a field of another object)") }
+            print("b.v from b: " + (h.b.v is from h.b))
+            print("self: " + (h.v is from h))
+            var o = h.Outer
+            print("outer: " + (o is from h) + " " + o.n)
+            print("to passing: " + h.ToPassing)
+            print("to strict: " + h.ToStrict + " " + h.cache.n)
+            print("check: " + h.Check)
             print("end")
             """),
         ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """

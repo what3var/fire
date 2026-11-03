@@ -151,6 +151,40 @@ Performance mode and native programs do not check.
 `Takes.This` (only the object), `Takes.Children` (also what it points to directly), `Takes.Locals` (everything reachable that belongs to the current
 call), `Takes.All` (everything reachable).
 
+## In property accessors
+
+In the `get` and `set` of a property, an assignment hands on what belongs to the accessor call itself (a local object, array or buffer of it):
+
+| Assignment in `get`/`set` | `it` (a local of the accessor) |
+|---|---|
+| `this.field = it` / `field = it` (a field of `this`) | `this` owns it |
+| `this.Prop = it` / `other.Prop = it` (a property) | goes to the setter like `take it` |
+| `this.cache = it; return it` in a getter | goes to the caller - `return` wins |
+
+```fire
+class Item {
+    string n
+    construct(string n) { this.n = n }
+}
+class Holder {
+    Item cache
+    int Count {
+        get {
+            var it = new Item("cached")
+            this.cache = it             // the holder owns it now
+            return 1
+        }
+    }
+}
+var h = new Holder()
+print(h.Count)
+print(h.cache is from h)            // True - without the rule it would have died with the getter
+```
+
+Only fields of `this` take an object over (`this.node.child = it` does not), and only what belongs to the accessor call: the setter's `value` from ordinary
+code, or an object of the caller, stays with its owner. Methods do not do this - there, use `take`/`TakeTo`. An exception thrown after the assignment does not
+undo it.
+
 ## `delete`
 
 `delete x` destroys an object, array or buffer at once:

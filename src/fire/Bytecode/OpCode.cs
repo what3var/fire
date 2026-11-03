@@ -232,6 +232,11 @@ namespace fire.Bytecode
         // `f(1, size: 2)`: the names of the last arguments of the call that follows (the string constant "size|name"); the callee puts them at the
         // parameters of these names and fills the others with their default values (VM.FillDefaultArgs).
         ArgNames,            // u16 namesConstIdx
+        // `obj.name = value` / `name = value` in a property accessor (get/set, not static; SPEC 2.2 "Ownership in property accessors"): like SetField, and
+        // when the value (object, array, buffer) belongs to a scope of the running accessor call: `name` a field and `obj` the accessor's `this` - the
+        // object takes it over after the store (bit 0 of flags: a getter - it remembers that, a `return` of it gives it to the caller after all);
+        // `name` a property - the value goes to the setter call like `take x`.
+        SetFieldAccessor,    // u16 fieldNameIdx, u8 flags
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the
