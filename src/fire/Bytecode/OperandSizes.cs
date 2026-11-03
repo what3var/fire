@@ -57,7 +57,7 @@ namespace fire.Bytecode
             [OpCode.IsInUnit] = new[] { 2 }, [OpCode.IsOfType] = new[] { 2 }, [OpCode.CastTo] = new[] { 2 }, [OpCode.ToEnum] = new[] { 2 }, [OpCode.ArgNames] = new[] { 2 }, [OpCode.ConvertWidth] = new[] { 1, 1 }, [OpCode.RebindLambda] = Array.Empty<int>(), [OpCode.IsFrom] = new[] { 1 },
             [OpCode.ResumeException] = Array.Empty<int>(), [OpCode.ClearPendingResume] = Array.Empty<int>(),
             [OpCode.CheckLambdaSignature] = new[] { 1 }, [OpCode.CheckUnit] = new[] { 2 },
-            [OpCode.Fire] = new[] { 2, 2, 1, 1 }, [OpCode.Sync] = new[] { 1 },
+            [OpCode.Fire] = new[] { 2, 2, 1, 1, 1 }, [OpCode.Sync] = new[] { 1 },
             [OpCode.Leave] = Array.Empty<int>(), [OpCode.Terminate] = Array.Empty<int>(),
             [OpCode.RegisterThreadsCatch] = new[] { 2, 1, 2 }, [OpCode.RegisterTerminateCatch] = new[] { 2 },
             [OpCode.Process] = Array.Empty<int>(), [OpCode.TryProcess] = Array.Empty<int>(),

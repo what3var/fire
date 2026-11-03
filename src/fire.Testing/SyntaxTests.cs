@@ -368,6 +368,31 @@ static class SyntaxTests
             && Output("class B { override construct() { } }").Contains("A constructor is not inherited")
             && Output("class B { override destruct() { } }").Contains("both run"));
         Check("override ist ein reserviertes Wort", Output("var override = 1").StartsWith("ERROR"));
+        // `fire handover x` (docs/language/15-threads-and-actors.md): a keyword, repeatable and mixed with `taking`, not for `fire global`, and in a thread
+        // only for the thread's own variables
+        string handover = Output("""
+            #import "time"
+            class Item { int v }
+            var a = new Item()
+            a.v = 1
+            var b = 2
+            var c = new Item()
+            c.v = 3
+            var done = 0
+            fire handover a taking b handover c { sync global { done = a.v + b + c.v } }
+            print((a == undefined) + " " + b + " " + (c == undefined))
+            while (done == 0) { Sleep(5ms) }
+            print(done)
+            """);
+        Check("fire handover: mehrfach, mit taking gemischt, die Variablen werden undefined", handover == "True 2 True\n6", handover);
+        string handoverGlobal = Output("var a = 1\nfire global handover a { }");
+        Check("fire handover: nicht bei fire global", handoverGlobal.StartsWith("ERROR E3000 'handover' does not exist for 'fire global'"), handoverGlobal);
+        string handoverTwice = Output("var a = 1\nfire taking a handover a { }");
+        Check("fire handover: derselbe Name zweimal ist ein Fehler", handoverTwice.Contains("'a' was already captured in this 'fire'"), handoverTwice);
+        string handoverMain = Output("var g = 1\nfire { var own = 2\n fire handover own { }\n fire handover g { } }");
+        Check("fire handover: im Thread nur eigene Variablen, kein Global des Hauptprogramms", handoverMain.Contains("'handover' needs a variable of this thread: 'g' is a global variable of the main program"), handoverMain);
+        string handoverWord = Output("var handover = 1");
+        Check("fire handover: 'handover' ist ein Schluesselwort", handoverWord.StartsWith("ERROR"), handoverWord);
 
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }

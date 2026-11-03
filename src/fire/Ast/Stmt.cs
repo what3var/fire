@@ -116,8 +116,10 @@ namespace fire.Ast
     /// that supplies it in the CALLING context (typically a simple
     /// identifier, but - see Parser.ParseFireCallForm - it can also be a
     /// synthetic `this` or an argument expression of the `fire MethodA(...)`
-    /// call form).</summary>
-    public sealed record FireTakingCapture(string VarName, Expr Source);
+    /// call form). `Handover` (`fire handover x`): no copy - the value itself (with everything reachable from it) goes to the new thread, whose root
+    /// scope owns it from then on, and the sender's variable becomes `undefined` (Source is then always an identifier). The parser puts the handover
+    /// captures after all `taking` captures (their sources are plain variables, so the order of evaluation does not matter).</summary>
+    public sealed record FireTakingCapture(string VarName, Expr Source, bool Handover = false);
 
     /// <summary>`fire { ... }` / `fire taking X { ... }` / `fire with actorA { ... }`
     /// / `fire MethodA(args) with actorA taking X` (docs/THREADING_DESIGN.md

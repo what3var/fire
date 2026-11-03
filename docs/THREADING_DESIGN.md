@@ -28,10 +28,22 @@ fire taking player { ... }
 fire MethodA() taking player
 fire with actorA { ... }
 fire MethodA() with actorA taking player
+fire handover conn { ... }
+fire MethodA() taking player handover conn
 ```
 
 - `taking X` (siehe Abschnitt 3): übergibt dem Kind-Thread eine isolierte
   Arbeitskopie von `X`.
+- `handover X`: übergibt `X` **ohne Kopie** - für das, was nicht verdoppelt werden darf oder kann (eine `[NoCopy]`-Ressource wie ein
+  `NativeHandle`). Wie bei `taking` geht alles mit, was von `X` aus über Felder und Elemente erreichbar ist (und was die Objekte besitzen): ein Teil,
+  dessen Besitzer mitgeht, behält ihn, jeder andere (auch `X`) gehört danach dem Wurzel-Scope des neuen Threads, egal wem er vorher gehörte
+  (wie bei `take`); die Teile verlassen den geteilten Bereich der Globals. Die Variable des Senders ist danach `undefined` (ein Zugriff auf ein
+  Feld ist der übliche Fehler); andere Verweise des Senders auf diese Objekte zeigen auf Objekte eines anderen Threads und dürfen nicht mehr benutzt
+  werden (das wird nicht geprüft). Am Ende des Threads werden sie zerstört, ihre Destruktoren laufen im Thread. Wiederholbar und mit `taking`
+  mischbar wie `taking` (`fire handover a handover b taking c`), auch in der Aufrufform. Abgelehnt wird vor jedem Kopieren und Verschieben (eine
+  `ArgumentException` am `fire`, der Thread startet nicht): ein Lambda oder Pointer in einem Feld/Element ("'handover' rejected: lambda values
+  cannot be handed to a thread."), und in einem Fire-Thread ein Teil der Globals des Hauptprogramms; eine Variable des Hauptprogramms im Thread
+  ist schon beim Übersetzen ein Fehler. Actors und zerstörte Objekte bleiben geteilte Verweise. Nicht bei `fire global`.
 - `with actorA` (siehe Abschnitt 2): bindet eine Actor-Referenz (Handle,
   keine Kopie) in den Fire-Block ein.
 - Beide Bindungen sind unabhängig voneinander kombinierbar.
@@ -86,16 +98,15 @@ Stattdessen:
 fire taking player { player.health -= 10 }
 ```
 
-- `taking X` erzeugt eine **vollständige, isolierte Tiefenkopie** von X's
-  gesamtem **eigenem** Ownership-Baum. Main-Thread-Objekt und Kind-Thread-
-  Kopie sind danach vollständig getrennt, kein Shared Memory.
-- **Harte Regel**: Enthält der kopierte Baum irgendwo eine Referenz auf
-  etwas, das **nicht** zum Ownership-Baum von X gehört (eine Referenz auf
-  ein unabhängig besessenes Objekt, oder ein roher Pointer via
-  `unsafe`/`&`, der aus dem kopierten Baum hinauszeigt), **schlägt
-  `taking` mit einem klaren Fehler fehl**. Kein stilles Kopieren des
-  Referenzwerts (das wäre ein verstecktes Shared-Memory-Loch), kein
-  stilles Nullen (stiller Datenverlust).
+- `taking X` erzeugt eine **vollständige, isolierte Tiefenkopie** von **allem, was von X aus erreichbar ist** (Felder, Array-Elemente:
+  Objekte, Arrays, Puffer) - egal, wem die Teile im Original gehören (ein Objekt, auf das X nur verweist, ein Array-Literal in einem Feld
+  samt seiner Objekte). Jeder Teil wird einmal kopiert (geteilte Teile und Zyklen bleiben es in der Kopie). Eine Kopie, deren Original einem
+  ebenfalls kopierten Objekt gehörte, gehört dessen Kopie; alle anderen Kopien (auch die Wurzel) gehören dem Wurzel-Scope des neuen Threads.
+  Main-Thread-Objekt und Kind-Thread-Kopie sind danach vollständig getrennt, kein Shared Memory. Kopiert wird beim `fire` im startenden
+  Thread (VM und nativ gleich), bevor der neue Thread läuft.
+- **Nicht kopierbar** sind Lambdas und rohe Pointer (`unsafe`/`&`) in einem Feld oder Element, und eine Instanz einer `[NoCopy]`-Klasse:
+  das `fire` wirft vorher eine `ArgumentException` ("'taking' rejected: lambda values cannot be copied for a thread." bzw. der
+  `[NoCopy]`-Text), nichts wird kopiert, der Thread startet nicht.
 - Jede `taking`-Kopie trägt eine **versteckte Rückverknüpfung** zu ihrem
   Original - notwendig, damit `sync`/`sync flat` (Abschnitt 4) überhaupt
   wissen, wohin zurückgeschrieben werden soll.
@@ -349,7 +360,9 @@ keinen Snapshot und keine Kopie mehr:
   `WaitForString`, die Netz-Wartefunktionen, die über `Sleep` pollen), gibt er seine Sektion für die Dauer des Wartens frei und nimmt sie danach
   wieder (sonst würde ein Thread, der in einer Methode pollt - z.B. `TryAccept` -, das Hauptprogramm aushungern, das Sektionen nur beim Warten
   vergibt). Atomar ist die Methode also nur bis zum nächsten Warten.
-- **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge) und gilt im Hauptprogramm; in einem Fire-Thread liefert es 0.
+- **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge - auch der `fire global`-Aufträge, die es selbst ausführt) und gilt
+  im Hauptprogramm; in einem Fire-Thread liefert es 0. Ein Auftrag läuft immer für sich: an den sicheren Punkten eines laufenden Auftrags wird die
+  Warteschlange nicht abgearbeitet (sonst liefe der nächste Auftrag vor dem Ende des vorigen).
   Wer es nie aufruft, lässt die Threads an ihrer ersten Änderung warten - das ist der Vertrag. Am **Programmende** (auch nach `leave`/`terminate`)
   bedient das Hauptprogramm die Warteschlange, solange Threads leben, und zerstört erst danach seine Globals; endet es, bevor ein Thread
   fertig ist (z.B. durch eine unbehandelte Exception), werden wartende und künftige Sektionen sofort gewährt.

@@ -122,7 +122,7 @@ namespace fire.Bytecode
                               //   (see VM.ThrowUnitMismatch) - does NOT consume (like CheckLambdaSignature), the caller pops if
                               //   needed (see Compiler.EmitLambdaParamChecks/CompileAssign/VarDeclStmt compilation)
 
-        Fire, // u16 functionProtoIdx, u16 globalSlotCount, u8 takingCount, u8 hasWith : spawns a real thread (see Runtime.FireRuntime) with a read-only globals snapshot, takingCount popped taking values and optionally a with value
+        Fire, // u16 functionProtoIdx, u16 globalSlotCount, u8 takingCount, u8 hasWith, u8 handoverCount : spawns a real thread (see Runtime.FireRuntime) with takingCount popped values (the last handoverCount of them are `handover`: moved, not copied) and optionally a with value
         Sync, // u8 flags (bit0=isTry, bit1=isFlat) : pop target; calls SyncEngine.Sync/SyncFlat; push true/false/undefined
         Leave, // calls VM.RequestLeave() on this VM instance (handling happens at the next check point)
         Terminate, // pop value; calls VM.RequestTerminate(value) (static, global)

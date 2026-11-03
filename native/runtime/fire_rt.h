@@ -4929,16 +4929,11 @@ FIRE_NORETURN FIRE_COLD FIRE_FN void takingViolation(const char* what) {
     exitNow(1);
 }
 
-/* Is `o` the object `root` or (transitively) owned by it? */
-FIRE_FN bool withinTree(Obj* o, Obj* root) {
-    Owned* x = &o->h;
-    for (;;) {
-        OwnList* l;
-        if (x == &root->h) return true;
-        l = x->owner;
-        if (!l || !l->holder) return false;
-        x = l->holder;
-    }
+/* ... the same reason found before anything is copied (the check of `fire ... taking x`): the ArgumentException, the thread does not start. */
+FIRE_COLD FIRE_FN Value takingRefused(const char* what) {
+    char text[200];
+    snprintf(text, sizeof text, "'taking' rejected: %s", what);
+    return fireError("ArgumentException", text);
 }
 
 /* A growing array of anything (`elem` bytes per item). */
@@ -4953,10 +4948,9 @@ FIRE_FN void* fire_growPush(void* items, uint32_t* count, uint32_t* cap, size_t 
 
 typedef struct DeepCopier {
     OwnList* owner;
-    bool taking;          /* a copy for a fire thread (`taking`): only the own ownership tree of treeRoot, copies are marked */
+    bool taking;          /* a copy for a fire thread (`taking`): everything reachable is copied (whoever owns it), copies are marked; no lambdas/pointers */
     bool noCopy;          /* `copy x` (and the arguments of a job): an instance of a `[NoCopy]` class is an ArgumentException */
     const char* noCopyOp; /* ... its text: NULL for copy, else "taking"/"fire global"/"sync" (noCopyErrorOp) */
-    Obj* treeRoot;
     CopyMap objects;      /* object -> copy (the objects found, which are copied) */
     CopyMap containers;   /* array/buffer -> copy */
     Obj** order;
@@ -4994,23 +4988,17 @@ FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
     copierPushPending(c, start);
     while (c->pendingCount) {
         Value v = c->pending[--c->pendingCount];
-        if (c->taking && v.kind == K_Lambda) takingViolation("lambda values cannot be copied for a thread.");
-        if (c->taking && v.kind == K_Pointer) takingViolation("raw pointers cannot be copied for a thread.");
+        if (c->taking && (v.kind == K_Lambda || v.kind == K_Pointer)) {
+            const char* what = v.kind == K_Lambda ? "lambda values cannot be copied for a thread." : "raw pointers cannot be copied for a thread.";
+            if (c->noCopy) { takingRefused(what); return false; }   /* the check before `taking` (noCopyFree): the ArgumentException */
+            takingViolation(what);
+        }
         if (v.kind == K_Class) {
             Obj* o;
             if (!leafAlive(v)) continue;
             o = asObj(v);
             if (copyMapFind(&c->objects, o)) continue;
             if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyErrorOp(o->cls, start.kind != K_Class || o != asObj(start), c->noCopyOp); return false; }
-            if (c->taking && c->treeRoot && !withinTree(o, c->treeRoot)) {
-#ifdef FIRE_THREADS
-                char text[200];
-                snprintf(text, sizeof text, "a field refers to an instance of '%s', which is not part of its own ownership tree.", className(o->cls));
-                takingViolation(text);
-#else
-                takingViolation("a field refers to an instance that is not part of its own ownership tree.");
-#endif
-            }
             copyMapPut(&c->objects, o, Undef());   /* marks it as found; the copy is made in phase 2 */
             c->order = (Obj**)fire_growPush(c->order, &c->orderCount, &c->orderCap, sizeof(Obj*));
             c->order[c->orderCount++] = o;
@@ -5119,6 +5107,7 @@ FIRE_FN bool noCopyFree(Value v, const char* op) {
     copierInit(&c, NULL);
     c.noCopy = true;
     c.noCopyOp = op;
+    c.taking = strcmp(op, "taking") == 0;   /* (a lambda or a pointer in it cannot be copied for a thread either) */
     ok = copierDiscover(&c, v);
     copierFree(&c);
     return ok;
@@ -6002,8 +5991,9 @@ FIRE_FN void originFree(Obj* o) {
     }
 }
 
-/* `fire ... taking x`: what the thread gets. An object, array or buffer is copied (isolated, THREADING_DESIGN 3), the copy goes to `travel`; a string or lambda
- * is shared (the thread gets a count of it), other values are plain. */
+/* `fire ... taking x`: what the thread gets. An object, array or buffer is copied with everything reachable from it, whoever owns the parts (isolated,
+ * THREADING_DESIGN 3); a copied object owned by another copied one belongs to its copy, every other copy to `travel` (the root scope of the thread). A string
+ * or lambda is shared (the thread gets a count of it), other values are plain. */
 FIRE_FN Value takeCopy(Value v, OwnList* travel) {
     DeepCopier c;
     Value copy;
@@ -6011,7 +6001,6 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
         case K_Class:
             copierInit(&c, travel);
             c.taking = true;
-            c.treeRoot = asObj(v);
             copy = copierRun(&c, v);
             copierFree(&c);
             originAdd(asObj(copy), asObj(v));
@@ -6034,6 +6023,105 @@ FIRE_FN bool takingNoCopyFree(const Value* vs, uint32_t n) {
     uint32_t i;
     for (i = 0; i < n; i++) if (!noCopyFree(vs[i], "taking")) return false;
     return true;
+}
+
+/* ---- `fire handover x`: x goes to the thread without a copy (the VM: Runtime.ObjectHandover). Everything reachable from x through fields and elements, and
+ * what the objects (and arrays) own, moves as it is: a part whose owner moves too keeps it, every other part belongs to `travel` (the root scope of the thread)
+ * from then on, whoever owned it before; the parts leave the shared domain of the globals. Actors and destroyed values stay shared references. */
+FIRE_FN Value ownedValue(Owned* h) { return h->okind == O_Object ? ObjV((Obj*)h) : h->okind == O_Array ? ArrV((Arr*)h) : BufV((Buf*)h); }
+FIRE_COLD FIRE_FN Value handoverRefused(const char* what) {
+    char text[200];
+    snprintf(text, sizeof text, "'handover' rejected: %s", what);
+    return fireError("ArgumentException", text);
+}
+/* The parts that move (`seen` marks them, `parts` lists them in discovery order); false - the ArgumentException is thrown - for a lambda or a pointer in a field
+ * or an element, and in a fire thread for a part of the main program's globals (the thread does not own it). Nothing is changed. */
+FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* count, uint32_t* cap) {
+    Value* pending = NULL;
+    uint32_t pn = 0, pcap = 0, i;
+    bool ok = true;
+    if (!ownedOf(v)) return true;
+    pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+    pending[pn++] = v;
+    while (pn) {
+        Value x = pending[--pn];
+        Owned* h;
+        Owned* k;
+        if (x.kind == K_Lambda || x.kind == K_Pointer) {
+            handoverRefused(x.kind == K_Lambda ? "lambda values cannot be handed to a thread." : "raw pointers cannot be handed to a thread.");
+            ok = false;
+            break;
+        }
+        h = ownedOf(x);
+        if (!h || copyMapFind(seen, h)) continue;
+        if (h->okind == O_Object && (h->flags & 8)) continue;   /* an actor stays a shared reference */
+        if (g_isThread && (h->flags & F_SHARED)) {
+            handoverRefused("it reaches an object of the main program's global variables, which this thread does not own.");
+            ok = false;
+            break;
+        }
+        copyMapPut(seen, h, Undef());
+        *parts = (Owned**)fire_growPush(*parts, count, cap, sizeof(Owned*));
+        (*parts)[(*count)++] = h;
+        if (h->okind == O_Object) {
+            Obj* o = (Obj*)h;
+            for (i = 0; i < o->nfields; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = objFields(o)[i];
+            }
+            for (k = o->owned.head; k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        } else if (h->okind == O_Array) {
+            Arr* a = (Arr*)h;
+            for (i = 0; i < a->length; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = arrItems(a)[i];
+            }
+            for (k = a->parts ? a->parts->head : NULL; k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        }
+    }
+    free(pending);
+    return ok;
+}
+/* The check before anything is copied or moved (for all `handover` values of a `fire`). */
+FIRE_FN bool handoverFree(const Value* vs, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        CopyMap seen = {0};
+        Owned** parts = NULL;
+        uint32_t count = 0, cap = 0;
+        bool ok = handoverDiscover(vs[i], &seen, &parts, &count, &cap);
+        copyMapFree(&seen);
+        free(parts);
+        if (!ok) return false;
+    }
+    return true;
+}
+/* What the thread gets for `handover x`: x itself, moved (see above); a string or lambda is shared as with `taking`. */
+FIRE_FN Value handOver(Value v, OwnList* travel) {
+    CopyMap seen = {0};
+    Owned** parts = NULL;
+    uint32_t count = 0, cap = 0, i;
+    if (v.kind == K_String || v.kind == K_Lambda) { retain(v); return v; }
+    if (!ownedOf(v)) return v;
+    handoverDiscover(v, &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
+    for (i = 0; i < count; i++) {
+        Owned* h = parts[i];
+        OwnList* l = h->owner;
+        if (!(l && l->holder && copyMapFind(&seen, l->holder))) {
+            if (l) ownUnlink(h);
+            ownLink(travel, h);
+        }
+    }
+    for (i = 0; i < count; i++) parts[i]->flags &= (uint8_t)~F_SHARED;
+    copyMapFree(&seen);
+    free(parts);
+    return v;
 }
 
 /* ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):
@@ -6252,7 +6340,8 @@ FIRE_FN void hostServe(void) {
 
 /* The main program at a safe point: what the fire threads left for it (their exceptions; sections and jobs unless `#nosync`). */
 extern FIRE_RT_DATA bool g_autoSync;
-FIRE_FN void mainPoll(void) {
+/* The exceptions of the fire threads (and of the jobs) that reached the main program: `catch threads`, or the program ends. */
+FIRE_FN void deliverThreadExceptions(void) {
     while (g_pendingExc.count && !g_unwind.active) {
         Value e = g_pendingExc.items[0];
         Value (*handler)(Value) = NULL;
@@ -6265,7 +6354,11 @@ FIRE_FN void mainPoll(void) {
         handler(e);
     }
     if (!g_pendingExc.count) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
-    if (g_autoSync && !g_unwind.active) { drainQueue(); hostServe(); }
+}
+FIRE_FN void mainPoll(void) {
+    deliverThreadExceptions();
+    /* (not inside a running job: its own safe points would run the next jobs nested, before it ends - out of order; the VM does not either) */
+    if (g_autoSync && !g_unwind.active && g_jobDepth == 0) { drainQueue(); hostServe(); }
 }
 
 FIRE_COLD FIRE_FN bool pollSlow(void) {
@@ -6286,7 +6379,8 @@ FIRE_FN bool pollSignals(void) {
 /* `sync globals`: serves the queue (main program) and gives the other threads a turn; a thread gets 0. */
 FIRE_FN int64_t syncGlobals(void) {
     int64_t handled = 0;
-    if (!g_isThread) { mainPoll(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
+    /* (not mainPoll: its automatic processing would run the queue without counting it - `sync globals` counts what it processes, as in the VM) */
+    if (!g_isThread) { deliverThreadExceptions(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
     gilYield();
     return handled;
 }

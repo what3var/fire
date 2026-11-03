@@ -5082,6 +5082,8 @@ namespace fire.Native
                     UseThreads();
                     int takingCount = ins.A[2];
                     bool hasWith = ins.A[3] != 0;
+                    int handoverCount = ins.A[4];   // the last ones of the taking values: `handover` (moved, not copied)
+                    int copyCount = takingCount - handoverCount;
                     int argc = takingCount + (hasWith ? 1 : 0);
                     Need(argc);
                     var body = GetFunc(chunk.Functions[ins.A[0]], FuncKind.FireBody);
@@ -5089,10 +5091,17 @@ namespace fire.Native
                     int first = d - argc;
                     var sbf = new StringBuilder();
                     // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - checked for all of them before the first is copied (the thread does not start)
+                    // (`handover`: no copy, but a lambda/pointer in it, or in a thread a part of the main program's globals, is refused the same way)
                     if (takingCount > 0)
-                        sbf.Append($"{{ Value tv[{takingCount}] = {{{string.Join(", ", Enumerable.Range(first, takingCount).Select(S))}}}; if (takingNoCopyFree(tv, {takingCount})) ");
+                    {
+                        sbf.Append($"{{ Value tv[{takingCount}] = {{{string.Join(", ", Enumerable.Range(first, takingCount).Select(S))}}}; if (");
+                        if (copyCount > 0) sbf.Append($"takingNoCopyFree(tv, {copyCount})");
+                        if (copyCount > 0 && handoverCount > 0) sbf.Append(" && ");
+                        if (handoverCount > 0) sbf.Append($"handoverFree(tv + {copyCount}, {handoverCount})");
+                        sbf.Append(") ");
+                    }
                     sbf.Append("{ OwnList* travel = newTravel(); Value av[" + Math.Max(1, argc) + "] = {}; ");
-                    for (int i = 0; i < takingCount; i++) sbf.Append($"av[{i}] = takeCopy({S(first + i)}, travel); ");
+                    for (int i = 0; i < takingCount; i++) sbf.Append(i < copyCount ? $"av[{i}] = takeCopy({S(first + i)}, travel); " : $"av[{i}] = handOver({S(first + i)}, travel); ");
                     if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
                     sbf.Append($"ensureDomain(); fireThread({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");
