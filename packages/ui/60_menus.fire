@@ -57,6 +57,8 @@ namespace UI {
 
         string StyleKey() { return "MenuPopup" }
 
+        int PopupRadius(Root root) { return root.theme.popupRadius }
+
         int RowHeight(Root root) { return this.TextHeight(root) + 8 }
 
         int HeightOf(Root root, any item) {
@@ -103,10 +105,8 @@ namespace UI {
             var r = root.renderer
             var back = this.Background
             if (back == undefined) { back = theme.menuBack }
-            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
-            var border = this.Pen
-            if (border == undefined) { border = theme.border }
-            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+            if (this.Pen != undefined) { root.Box(ax, ay, this.actualWidth, this.actualHeight, back, this.Pen, theme.popupRadius) }
+            else { root.PopupSurface(this, ax, ay, this.actualWidth, this.actualHeight, back) }
             var y = ay + 2
             for (var i = 0; i < this.entries.Count; i = i + 1) {
                 var item = this.entries[i]
@@ -120,7 +120,7 @@ namespace UI {
                 if (this.Foreground != undefined) { text = this.Foreground }
                 if (!item.Enabled) { text = theme.textDisabled }
                 if (i == this.hot && item.Enabled) {
-                    r.FillRect(ax + 2, y, this.actualWidth - 4, h, theme.selection)
+                    root.Box(ax + 3, y, this.actualWidth - 6, h, theme.selection, undefined, UI.M.Min(theme.radius, 4))
                     text = theme.selectionText
                 }
                 if (item.IsChecked) {
@@ -319,10 +319,10 @@ namespace UI {
                 var text = theme.text
                 if (this.Foreground != undefined) { text = this.Foreground }
                 if (i == this.openIndex) {
-                    root.renderer.FillRect(x, ay, w, this.actualHeight, theme.selection)
+                    root.Box(x + 1, ay + 2, w - 2, this.actualHeight - 4, theme.selection, undefined, UI.M.Min(theme.radius, 4))
                     text = theme.selectionText
                 } else if (i == this.hotIndex) {
-                    root.renderer.FillRect(x, ay, w, this.actualHeight, theme.faceHover)
+                    root.Box(x + 1, ay + 2, w - 2, this.actualHeight - 4, theme.faceHover, undefined, UI.M.Min(theme.radius, 4))
                 }
                 if (!item.Enabled) { text = theme.textDisabled }
                 this.DrawString(root, x + 8, ay + (this.actualHeight - this.TextHeight(root)) / 2, item.Header, text)

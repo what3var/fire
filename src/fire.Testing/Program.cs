@@ -11247,7 +11247,7 @@ uiDrawScript = """
         var t = ui.theme
         print("back " + (Px.Get(ui.renderer, 300, 190) == t.back.Color))
         print("face " + (Px.Get(ui.renderer, 12, 12) == t.face.Color))
-        print("border " + (Px.Get(ui.renderer, 10, 10) == t.border.Color))
+        print("border " + (Px.Get(ui.renderer, 10, 23) == t.border.Color && Px.Get(ui.renderer, 10, 10) != t.border.Color))   // (a straight edge; the corner is round)
         var textPixels = 0
         for (var y = 10; y < 36; y = y + 1) {
             for (var x = 10; x < 90; x = x + 1) {

@@ -1201,12 +1201,13 @@ static Value fire_win_WinGetScale(Value id) {
 static Value fire_win_WinSystemTheme(OwnList* list) {
     FireSystemTheme t;
     Arr* a;
-    Value items[6];
+    Value items[7];
     int k;
     fire_display_systemTheme(&t);
-    a = allocArr(6, list);
+    a = allocArr(7, list);
     items[0] = Bool(t.embedded != 0); items[1] = Float((Real)t.scale); items[2] = Bool(t.dark != 0); items[3] = Int(t.accent); items[4] = fire_winb_utf8Str(t.fonts, list); items[5] = Int(t.fontSize);
-    for (k = 0; k < 6; k++) { arrItems(a)[k] = items[k]; retain(items[k]); }
+    items[6] = Bool(t.transparency != 0);
+    for (k = 0; k < 7; k++) { arrItems(a)[k] = items[k]; retain(items[k]); }
     return ArrV(a);
 }
 /* The program runs the cycle the manager's thread asked for: the next one may be asked for (also when that cycle does nothing, see RunModal). */

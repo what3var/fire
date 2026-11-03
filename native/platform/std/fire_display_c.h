@@ -136,6 +136,7 @@ typedef struct FireSystemTheme {
     int accent;        /* 0xRRGGBB */
     char fonts[512];   /* candidates for the font of the interface, the best first, separated by ';' ("" = none known) */
     int fontSize;      /* the height of the letters in logical pixels (0 = not known) */
+    int transparency;  /* 1: the desktop allows transparency effects (Windows "Transparency effects", macOS "Reduce transparency" off); 0: the user switched them off */
 } FireSystemTheme;
 
 /* The defaults of a desktop (scale 1, light, the accent 0x0078D7, no font). */
@@ -146,6 +147,7 @@ static void fire_display_themeDefaults(FireSystemTheme* t) {
     t->accent = 0x0078D7;
     t->fonts[0] = 0;
     t->fontSize = 0;
+    t->transparency = 1;
 }
 
 /* ---- the clipboard beyond text ---- */

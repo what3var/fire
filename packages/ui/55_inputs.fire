@@ -534,7 +534,7 @@ namespace UI {
             var back = theme.inputBack
             if (!this.Enabled) { back = theme.faceDisabled }
             else if (this.Background != undefined) { back = this.Background }
-            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, back, undefined)
             // the button with the arrow on the right
             var bw = 18
             var bx = ax + this.actualWidth - bw
@@ -542,12 +542,11 @@ namespace UI {
             if (!this.Enabled) { face = theme.faceDisabled }
             else if (this.IsDropDownOpen()) { face = theme.facePressed }
             else if (this.Hover) { face = theme.faceHover }
-            r.FillRect(bx, ay + 1, bw - 1, this.actualHeight - 2, face)
+            root.Box(bx, ay + 2, bw - 2, this.actualHeight - 4, face, undefined, UI.M.Min(theme.radius, 3))
             var border = theme.border
             if (this.Pen != undefined) { border = this.Pen }
             if (this.Focused) { border = theme.borderFocus }
-            r.DrawLine(bx, ay + 1, bx, ay + this.actualHeight - 2, theme.border)
-            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, undefined, border)
             var color = theme.text
             if (this.Foreground != undefined) { color = this.Foreground }
             if (!this.Enabled) { color = theme.textDisabled }

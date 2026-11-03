@@ -1,5 +1,16 @@
 namespace UI {
     // The topmost element: draws into `framebuffer` and receives the events from `window` (queue, see Tick).
+    // The kept surface of a floating element (Root.PopupSurface): its picture in pixels of the framebuffer, where it was.
+    class Surface {
+        Element owner
+        Framebuffer picture
+        Renderer renderer
+        int x = 0
+        int y = 0
+        int w = 0
+        int h = 0
+    }
+
     class Root {
         Framebuffer framebuffer
         Window window
@@ -125,6 +136,28 @@ namespace UI {
         int accent = 0x0078D7
         // a board without a desktop: whole-number scaling, the fast built-in font
         bool embedded = false
+        // the materials of the floating elements, kept while nothing behind them is repainted (see PopupSurface)
+        List surfaces
+
+        // Glass and acrylic behind menus and popups. Starts with UI.Effects.Glass and the system (off where it switched transparency off, and on a board);
+        // setting it overrides that. Off: their plain background.
+        bool Glass {
+            get { return this.theme.glass }
+            set {
+                this.theme.glass = value
+                this.Invalidate()
+            }
+        }
+
+        // Translucent surfaces and shadows at all. Starts with UI.Effects.Transparency and the system; setting it overrides that. Off: everything opaque, no shadows
+        // (and no glass).
+        bool Transparency {
+            get { return this.theme.transparency }
+            set {
+                this.theme.transparency = value
+                this.Invalidate()
+            }
+        }
 
         // The scale of the interface: logical pixels -> pixels of the screen (1.5 = 150 %). Starts with the scaling of the system, like every other program on it;
         // setting it overrides that (`root.Scaling = 1.0`). The elements keep their sizes in logical pixels, the window and the framebuffer grow with it, text is
@@ -165,6 +198,7 @@ namespace UI {
             this.attached = new List()
             this.fontNames = new List()
             this.fontObjects = new List()
+            this.surfaces = new List()
             this.cw = this.renderer.CellWidth()
             this.ch = this.renderer.CellHeight()
             this.width = framebuffer.Width()
@@ -180,6 +214,8 @@ namespace UI {
                 if (system.fontSize > 0) { this.theme.fontSize = system.fontSize }
             }
             if (this.dark || this.accent != 0x0078D7) { this.theme.SetColors(this.dark, this.accent) }
+            this.theme.transparency = UI.Effects.Transparency && system.transparency && !this.embedded
+            this.theme.glass = UI.Effects.Glass && this.theme.transparency
             float systemScale = system.scale
             if (this.embedded) { systemScale = Math.Max(1.0, Math.Round(systemScale)) }
             this.content = new Panel(0, 0, this.width, this.height)
@@ -350,7 +386,7 @@ namespace UI {
                 var moved = this.layoutMoved
                 this.layoutMoved = false
                 popup.Arrange(this, popup.Left, popup.Top, popup.dw, popup.dh)
-                if (this.layoutMoved && !this.fullRedraw) { this.InvalidateRect(popup.rx, popup.ry, popup.actualWidth, popup.actualHeight) }
+                if (this.layoutMoved && !this.fullRedraw) { this.InvalidatePopup(popup, popup.rx, popup.ry) }
                 this.layoutMoved = moved
             }
         }
@@ -375,10 +411,114 @@ namespace UI {
             this.content.Draw(this, 0, 0)
             for (var i = 0; i < this.popups.Count; i = i + 1) {
                 var popup = this.popups[i]
+                this.PopupShadow(popup, popup.rx, popup.ry)
                 popup.Draw(this, popup.rx, popup.ry)
             }
             this.DrawDragImage()
             if (!this.fullRedraw) { this.PopClip() }
+        }
+
+        // ---- the style: boxes with the corners of the theme, the surfaces of floating elements ----
+
+        // A box of the style: filled with `fill` and outlined with `border` (either may be undefined), with the corners of the theme (`radius` -1) or `radius`.
+        // A radius of 0 is the plain rectangle, as before.
+        undefined Box(int x, int y, int w, int h, Brush fill, Pen border, int radius = -1) {
+            if (radius < 0) { radius = this.theme.radius }
+            if (radius == 0) {
+                if (fill != undefined) { this.renderer.FillRect(x, y, w, h, fill) }
+                if (border != undefined) { this.renderer.DrawRect(x, y, w, h, border) }
+                return
+            }
+            if (fill != undefined) { this.renderer.FillRoundRect(x, y, w, h, radius, fill) }
+            if (border != undefined) { this.renderer.DrawRoundRect(x, y, w, h, radius, border) }
+        }
+
+        // How far the shadow of a floating element reaches beyond it (0 without transparency).
+        int ShadowMargin() {
+            if (!this.theme.transparency) { return 0 }
+            return this.theme.shadowSize + 3
+        }
+
+        // A floating element and its shadow must be repainted.
+        undefined InvalidatePopup(Element popup, int x, int y) {
+            var m = this.ShadowMargin()
+            this.InvalidateRect(x - m, y - m, popup.actualWidth + 2 * m, popup.actualHeight + 2 * m)
+        }
+
+        // The fine shadow under a floating element (before it is drawn; the element says its corners, see Element.PopupRadius).
+        undefined PopupShadow(Element popup, int x, int y) {
+            if (!this.theme.transparency || !popup.Visible) { return }
+            var color = 0x1F000000
+            if (this.dark) { color = 0x48000000 }
+            this.renderer.DrawShadow(x, y, popup.actualWidth, popup.actualHeight, popup.PopupRadius(this), this.theme.shadowSize, color, 2)
+        }
+
+        // The surface of a floating element (a menu): acrylic over what lies behind it - or, without glass, its plain background `back` - with the corners of the
+        // theme and a hairline. The acrylic is kept (a framebuffer per element) and only made anew when what lies behind it was repainted around it: a row that
+        // changes inside the menu does not blur the menu itself again.
+        undefined PopupSurface(Element popup, int x, int y, int w, int h, Brush back) {
+            var t = this.theme
+            var radius = t.popupRadius
+            if (!t.glass || !t.transparency) {
+                this.Box(x, y, w, h, back, t.border, radius)
+                return
+            }
+            var r = this.renderer
+            var px = r.Px(x)
+            var py = r.Px(y)
+            var pw = r.Px(x + w) - px
+            var ph = r.Px(y + h) - py
+            var cache = this.SurfaceOf(popup)
+            var pad = 16
+            bool behindFresh = this.fullRedraw || (this.hasDirtyRect && this.dirtyX0 <= x - pad && this.dirtyY0 <= y - pad && this.dirtyX1 >= x + w + pad && this.dirtyY1 >= y + h + pad)
+            if (!behindFresh && cache.picture != undefined && cache.x == px && cache.y == py && cache.w == pw && cache.h == ph) {
+                var scale = r.scale
+                r.scale = 1.0
+                r.BlitRegion(cache.picture, 0, 0, pw, ph, px, py)
+                r.scale = scale
+                return
+            }
+            var options = MaterialOptions.Blur + MaterialOptions.Transparency
+            if (this.dark) { options = options + MaterialOptions.Dark }
+            var color = UI.Theme.ColorOf(back, UI.Theme.ColorOf(t.menuBack, 0xF8F8F8)) & 0xFFFFFF
+            var tint = color + 0xC8000000
+            if (this.dark) { tint = color + 0xC0000000 }
+            r.DrawMaterial(MaterialKind.Acrylic, x, y, w, h, radius, tint, color, options)
+            if (cache.picture == undefined || cache.w != pw || cache.h != ph) {
+                if (cache.picture != undefined) { delete cache.picture }
+                cache.picture = new Framebuffer(pw, ph)
+                cache.picture.TakeTo(cache)
+                cache.renderer = new Renderer(cache.picture)
+                cache.renderer.TakeTo(cache)
+            }
+            cache.x = px
+            cache.y = py
+            cache.w = pw
+            cache.h = ph
+            cache.renderer.AlphaBlending = false
+            cache.renderer.BlitRegion(this.framebuffer, px, py, pw, ph, 0, 0)
+        }
+
+        // The kept surface of a floating element (made when missing).
+        UI.Surface SurfaceOf(Element popup) {
+            for (var i = 0; i < this.surfaces.Count; i = i + 1) {
+                if (this.surfaces[i].owner == popup) { return this.surfaces[i] }
+            }
+            var s = new Surface()
+            s.owner = popup
+            s.TakeTo(this)
+            this.surfaces.Add(s)
+            return s
+        }
+
+        undefined ForgetSurface(Element popup) {
+            for (var i = 0; i < this.surfaces.Count; i = i + 1) {
+                if (this.surfaces[i].owner == popup) {
+                    delete this.surfaces[i]
+                    this.surfaces.RemoveAt(i)
+                    return
+                }
+            }
         }
 
         // Restricts drawing to the rectangle (intersected with the current one); PopClip restores the previous one. The elements call both
@@ -427,7 +567,8 @@ namespace UI {
             for (var i = 0; i < this.popups.Count; i = i + 1) {
                 if (this.popups[i] == popup) {
                     this.popups.RemoveAt(i)
-                    this.InvalidateRect(popup.ax, popup.ay, popup.actualWidth, popup.actualHeight)
+                    this.InvalidatePopup(popup, popup.ax, popup.ay)
+                    this.ForgetSurface(popup)
                     if (this.hoverElement == popup) { this.hoverElement = undefined }
                     if (this.pressedElement == popup) { this.pressedElement = undefined }
                     if (this.focusElement == popup) { this.focusElement = undefined }

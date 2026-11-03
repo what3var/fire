@@ -66,10 +66,10 @@ namespace UI {
             if (this.hover || this.dragging) { thumb = theme.scrollThumbHover }
             if (this.horizontal) {
                 root.renderer.FillRect(x, y, track, this.size, theme.scrollTrack)
-                root.renderer.FillRect(x + start + 1, y + 2, length - 2, this.size - 4, thumb)
+                root.Box(x + start + 1, y + 2, length - 2, this.size - 4, thumb, undefined, UI.M.Min(root.theme.radius, (this.size - 4) / 2))
             } else {
                 root.renderer.FillRect(x, y, this.size, track, theme.scrollTrack)
-                root.renderer.FillRect(x + 2, y + start + 1, this.size - 4, length - 2, thumb)
+                root.Box(x + 2, y + start + 1, this.size - 4, length - 2, thumb, undefined, UI.M.Min(root.theme.radius, (this.size - 4) / 2))
             }
         }
 

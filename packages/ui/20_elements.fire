@@ -286,6 +286,9 @@ namespace UI {
         // Can the element receive keyboard focus (Tab, click)?
         bool Focusable() { return false }
 
+        // The corners of the element when it floats (a menu, a popup): its shadow follows them (Root.PopupShadow). 0: square.
+        int PopupRadius(Root root) { return 0 }
+
         // The content (without margin): sets cw/ch. aw/ah: at most this much space (-1: unbounded). An element without content wants nothing.
         undefined MeasureCore(Root root, int aw, int ah) {
             this.cw = 0

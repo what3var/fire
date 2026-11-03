@@ -403,7 +403,7 @@ namespace UI {
             var back = this.Background
             if (back == undefined) { back = theme.inputBack }
             if (!this.Enabled) { back = theme.faceDisabled }
-            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, back, undefined)
             this.DrawHeader(root, ax + 1, ay + 1, this.viewW)
             var rows = this.Rows()
             var rh = this.RowHeight(root)
@@ -417,10 +417,10 @@ namespace UI {
                 if (this.Foreground != undefined) { text = this.Foreground }
                 if (!this.Enabled) { text = theme.textDisabled }
                 if (i == this.SelectedIndex) {
-                    r.FillRect(ax + 1, y, this.viewW, rh, theme.selection)
+                    root.Box(ax + 3, y, this.viewW - 4, rh, theme.selection, undefined, UI.M.Min(theme.radius, 3))
                     text = theme.selectionText
                 } else if (i == this.hotIndex && this.Enabled) {
-                    r.FillRect(ax + 1, y, this.viewW, rh, theme.faceHover)
+                    root.Box(ax + 3, y, this.viewW - 4, rh, theme.faceHover, undefined, UI.M.Min(theme.radius, 3))
                 }
                 this.DrawRow(root, i, rows[i], ax + 1, y, this.viewW, rh, text)
             }
@@ -429,7 +429,7 @@ namespace UI {
             var border = theme.border
             if (this.Pen != undefined) { border = this.Pen }
             if (this.Focused) { border = theme.borderFocus }
-            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, undefined, border)
         }
 
         // The index of the row at the screen position, -1 outside the rows.

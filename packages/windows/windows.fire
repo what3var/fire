@@ -281,6 +281,9 @@ class SystemTheme {
     string font = ""
     // the height of its letters in logical pixels (0 = not known)
     int fontSize = 0
+    // false: the user switched transparency effects off (Windows "Transparency effects", macOS "Reduce transparency", the browser's prefers-reduced-transparency) - the
+    // UI then draws no glass and no translucent surfaces; a board without a desktop has none either
+    bool transparency = true
     static SystemTheme cached
 
     construct() { }
@@ -295,6 +298,7 @@ class SystemTheme {
         t.dark = info[2]
         t.accent = info[3]
         t.fontSize = info[5]
+        if (info.length > 6) { t.transparency = info[6] }
         string candidates = info[4]
         if (candidates != "") {
             var names = candidates.Split(";")
