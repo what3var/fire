@@ -139,6 +139,16 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Generation, jeder Zugriff vergleicht (`leafAlive`: eine Ladung und ein Vergleich) und meldet sonst die fangbare `DestroyedException`, bevor freigegebener
   Speicher berührt wird. Mit `#performance` definiert der Generator `FIRE_UNCHECKED`: keine Tabelle, keine Prüfung (undefiniert, wie in der VM-Doku).
   **Objekte** haben dasselbe Handle (siehe oben).
+* **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
+  `char`, `byte`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
+  und die Daten - eine C-Zahl pro Element statt eines `Value`. `undefined` ist ein Merker (ein selten benutzter Wert des Typs: `INT8_MIN`, ein NaN mit
+  festem Payload, `0xFF`, `0xFFFF`, bei `bool` die 2); nur wenn er als echte Zahl gespeichert wird, setzt das ein Bit in `real` (dann angelegt). Gelesen wird
+  die Maske also nur, wenn der Merker gefunden wird (`arrPackedGet`). `OpCode.TypeArray` wird `typeArray(...)` (wandelt die Elemente um und packt);
+  steht es direkt hinter `NewArray`, entsteht das Array gleich gepackt in einem Block (`newTypedArray`). `arraySet` wandelt um (Abschneiden, Runden,
+  Einheit, sonst die Ausnahme) und liefert den gespeicherten Wert, der auch das Ergebnis der Zuweisung ist. Wer die `Value`s braucht (`arrItems`: die
+  Natives der Packages, JSON, `ref a[i]`), entpackt das Array einmal (`arrUnpack`); der Typ bleibt und wird weiter durchgesetzt (auch beim Schreiben
+  über einen Zeiger, dafür kennen Zeiger in Arrays ihr Array über die Slot-Tabelle, `FIRE_ELEMPTRS`). `copy`, `taking` und `sync` kopieren die Zahlen
+  (`arrCopyTyped`).
 * **Strings und Lambdas werden gezählt** (sie werden frei weitergegeben: `var t = s`, in Feldern und Arrays gespeichert, zurückgegeben):
   * **Speicherorte halten einen Zähler**: Variablen, Parameter, Felder, Array-Elemente und statische Felder (`retain` beim Speichern, `release` beim
     Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts.

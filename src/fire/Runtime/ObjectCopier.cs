@@ -113,6 +113,7 @@ namespace fire.Runtime
                 {
                     var arr = (ScriptArray)v.AsArray();
                     var newArr = new ScriptArray(arr.Length);
+                    newArr.CopyTypeOf(arr);   // (a copy of a typed array is typed)
                     for (int i = 0; i < arr.Length; i++)
                         newArr.Items[i] = CopyValue(arr.Items[i], treeRoot, copyOwner, map);
                     return Value.MakeArray(newArr);

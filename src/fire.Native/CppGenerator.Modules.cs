@@ -498,7 +498,7 @@ namespace fire.Native
             foreach (var method in _operators) sb.AppendLine($"Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list);");
             foreach (var name in _ovClassNames) sb.AppendLine($"int ovd_{Mangle(name)}(Value v);");
             sb.AppendLine("Value aget_g(Value a, Value i, OwnList* list);");
-            sb.AppendLine("void aset_g(Value a, Value i, Value v, OwnList* list);");
+            sb.AppendLine("Value aset_g(Value a, Value i, Value v, OwnList* list);");
             return sb.ToString();
         }
 

@@ -329,6 +329,8 @@ namespace fire.Compiler
             private readonly HashSet<string> _methodNames = new();
             private readonly HashSet<string> _lambdaFieldNames = new();
             private readonly Dictionary<string, int> _fieldWidths = new();
+            // the unit demand of the elements of typed array fields (`float:cm sizes[]`); names declared with different units are not typed (see _fieldWidths)
+            private readonly Dictionary<string, string?> _fieldUnits = new();
             private readonly HashSet<string> _typeParamNames = new();
             /// <summary>The interfaces of the program (CompileClasses): a declaration with one is checked like one with a class.</summary>
             public readonly HashSet<string> InterfaceNames = new();
@@ -356,7 +358,10 @@ namespace fire.Compiler
                         if (member is FieldDecl wd)
                         {
                             // the width of a field name; names declared with different widths in different classes are not cut (-1)
-                            int code = wd.ArrayRanks.Count == 0 ? wd.Type?.WidthCode ?? 0 : 0;
+                            // (a typed array field, `int[8] data[]`: the code of its element type, see TypeRef.ArrayWidthCode)
+                            int code = wd.ArrayRanks.Count == 0 ? wd.Type?.WidthCode ?? 0 : wd.Type?.ArrayWidthCode(wd.ArrayRanks.Count) ?? 0;
+                            if ((code & 0x10000) != 0 && table._fieldUnits.TryGetValue(wd.Name, out var knownUnit) && knownUnit != wd.Type?.UnitDemand) code = -1;
+                            if ((code & 0x10000) != 0) table._fieldUnits[wd.Name] = wd.Type?.UnitDemand;
                             table._fieldWidths[wd.Name] = table._fieldWidths.TryGetValue(wd.Name, out int known) && known != code ? -1 : code;
                         }
                         if (member is MethodDecl md) { table.Register(table._methods, md.Name, md.Params, md.Line, $"method '{md.Name}'"); table._methodNames.Add(md.Name); }
@@ -386,6 +391,8 @@ namespace fire.Compiler
             /// <summary>`obj.name(...)` where no class has a method `name`, but a field or property `name` can hold a lambda: the lambda in it is called.</summary>
             /// <summary>The bit width (TypeRef.WidthCode) of the fields called `name` - 0 when none declares one, or when classes declare it differently.</summary>
             public int FieldWidth(string name) => _fieldWidths.TryGetValue(name, out int code) && code > 0 ? code : 0;
+            /// <summary>The unit demand of the elements of a typed array field (null: none).</summary>
+            public string? FieldUnit(string name) => _fieldUnits.GetValueOrDefault(name);
             public bool IsLambdaField(string name) => _lambdaFieldNames.Contains(name) && !_methodNames.Contains(name);
             public bool[]? ForConstructor(string cls, int argc) => _constructors.TryGetValue((cls, argc), out var m) && m.Any(x => x) ? m : null;
         }
@@ -564,7 +571,7 @@ namespace fire.Compiler
                     // top-level code, without an OwnerClass context
                     // matching its own class). Unlike SetStaticField it also pushes
                     // nothing back, no pop needed.
-                    EmitWidthIfNeeded(compiler, compiler._refParams.FieldWidth(fieldName));
+                    EmitWidthIfNeeded(compiler, compiler._refParams.FieldWidth(fieldName), compiler._refParams.FieldUnit(fieldName));
                     compiler._chunk.EmitOp(OpCode.SetStaticFieldOnInit);
                     compiler._chunk.EmitU16(compiler._chunk.AddConstant(Value.MakeString(rc.Name)));
                     compiler._chunk.EmitU16(compiler._chunk.AddConstant(Value.MakeString(fieldName)));
@@ -1230,9 +1237,18 @@ namespace fire.Compiler
         /// still needs the value afterwards or pops it.</summary>
         /// <summary>A variable, parameter or field declared with a bit width (`int[8]`, `byte`, `float[32]`, see TypeRef.WidthCode): the value on top of
         /// the stack is cut to it (SPEC 8.2). Implicit (flag 4): only a number of the declared kind is cut, every other value stays as it is.</summary>
-        private static void EmitWidthIfNeeded(Compiler target, int widthCode)
+        private static void EmitWidthIfNeeded(Compiler target, int widthCode, string? unit = null)
         {
             if (widthCode == 0) return;
+            if ((widthCode & 0x10000) != 0)
+            {
+                // a typed array (`int[8] a[]`, TypeRef.ArrayWidthCode): the array stored becomes typed (SPEC 8.4.2)
+                target._chunk.EmitOp(OpCode.TypeArray);
+                target._chunk.EmitByte((byte)(widthCode & 0xFF));
+                target._chunk.EmitByte((byte)((widthCode >> 8) & 0xFF));
+                target._chunk.EmitU16(unit == null ? (ushort)0xFFFF : (ushort)target._chunk.AddConstant(Value.MakeString(unit)));
+                return;
+            }
             target._chunk.EmitOp(OpCode.ConvertWidth);
             target._chunk.EmitByte((byte)(widthCode & 0xFF));
             target._chunk.EmitByte((byte)(((widthCode & 0x100) != 0 ? 1 : 0) | ((widthCode & 0x200) != 0 ? 2 : 0) | 4));
@@ -1464,7 +1480,7 @@ namespace fire.Compiler
                 {
                     if (!fieldsMayBeTouched && constant.Kind == ValueKind.Undefined) continue;
                     inner.EmitLoadConst(constant);
-                    EmitWidthIfNeeded(inner, _refParams.FieldWidth(fieldName));
+                    EmitWidthIfNeeded(inner, _refParams.FieldWidth(fieldName), _refParams.FieldUnit(fieldName));
                     inner._chunk.EmitOp(OpCode.SetFieldOnThis);
                     inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(fieldName)));
                     continue;
@@ -1475,7 +1491,7 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.CallProtoWithThis);
                 inner._chunk.EmitU16(protoIdx);
                 inner._chunk.EmitByte(0);
-                EmitWidthIfNeeded(inner, _refParams.FieldWidth(fieldName));
+                EmitWidthIfNeeded(inner, _refParams.FieldWidth(fieldName), _refParams.FieldUnit(fieldName));
                 inner._chunk.EmitOp(OpCode.SetFieldOnThis);
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(fieldName)));
                 fieldsMayBeTouched = true;
@@ -1594,7 +1610,7 @@ namespace fire.Compiler
                     // CompileAssign, otherwise one could bypass the check through an
                     // "unsuitable" first assignment).
                     EmitCheckUnitIfNeeded(this, vd.Type?.UnitDemand);
-                    if (vd.ArrayRanks.Count == 0) EmitWidthIfNeeded(this, vd.Type?.WidthCode ?? 0);
+                    EmitWidthIfNeeded(this, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0, vd.Type?.UnitDemand);
 
                     _chunk.MarkDeclaredName(_chunk.Here, vd.Name);
                     _chunk.EmitOp(OpCode.DeclareLocal);
@@ -3159,7 +3175,7 @@ namespace fire.Compiler
                 if (_refs.TryGetValue(me, out var staticTargetRef) && staticTargetRef is ResolvedRef.StaticMember sm)
                 {
                     CompileExpr(a.Value);
-                    EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -3188,7 +3204,7 @@ namespace fire.Compiler
                     CompileExpr(a.Value);
                 }
 
-                EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 return;
@@ -3235,7 +3251,7 @@ namespace fire.Compiler
                 TryCompileOwnedCreation(a.Value);       // [new object]
                 _chunk.EmitOp(OpCode.LoadThis);         // [value, obj]
                 _chunk.EmitOp(OpCode.Swap);             // [obj, value]
-                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                 return;
@@ -3252,14 +3268,14 @@ namespace fire.Compiler
                     // initial check simply through a later, "wrong"
                     // assignment.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width);
+                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
                     // an assignment from an inner block to a variable of an outer one: the value must not die with the block (SPEC 2.1)
                     if (local.Depth > 0 && !local.ByRef) _chunk.EmitOp(OpCode.HoistValue);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width);
+                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
                     if (_currentScopeDepth > 0 && IsTopLevelCode) _chunk.EmitOp(OpCode.HoistValue);   // top-level block assigning to a global
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
@@ -3274,7 +3290,7 @@ namespace fire.Compiler
                     // SPEC "Static members" - bare name instead of
                     // 'ClassName.Name = ...' (see Resolver.
                     // ResolveIdentifierRef/ResolveAssignTarget).
-                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
@@ -3289,7 +3305,7 @@ namespace fire.Compiler
                     // value].
                     _chunk.EmitOp(OpCode.LoadThis); // [value, obj]
                     _chunk.EmitOp(OpCode.Swap);     // [obj, value]
-                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
@@ -3304,13 +3320,13 @@ namespace fire.Compiler
             {
                 case ResolvedRef.Local local:
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width);
+                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
                     EmitTakeToScope(local.ByRef ? 0 : local.Depth);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width);
+                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
                     EmitTakeToScope(0xFFFF);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
@@ -3319,7 +3335,7 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.LoadThis);         // [value, this]
                     _chunk.EmitOp(OpCode.Swap);             // [this, value]
                     _chunk.EmitOp(OpCode.TakeToObject);
-                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
@@ -3372,7 +3388,7 @@ namespace fire.Compiler
                     if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [oldVal, oldVal]
                     EmitLoadConst(Value.MakeInt(1));
                     _chunk.EmitOp(addSubOp); // Prefix: [newVal] / Postfix: [oldVal, newVal]
-                    EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(classNameConstIdx);
                     _chunk.EmitU16(fieldNameConstIdx);
@@ -3393,7 +3409,7 @@ namespace fire.Compiler
                 EmitLoadConst(Value.MakeInt(1));
                 _chunk.EmitOp(addSubOp);           // Prefix: [obj, newVal] / Postfix: [obj, oldVal, newVal]
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.RotateUnderTop); // [oldVal, obj, newVal]
-                EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name))); // [...,newVal]
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
@@ -3435,7 +3451,7 @@ namespace fire.Compiler
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [oldVal, oldVal]
                 EmitLoadConst(Value.MakeInt(1));
                 _chunk.EmitOp(addSubOp); // Prefix: [newVal] / Postfix: [oldVal, newVal]
-                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                 _chunk.EmitOp(OpCode.SetStaticField);
                 _chunk.EmitU16(classNameConstIdx);
                 _chunk.EmitU16(fieldNameConstIdx);
@@ -3458,7 +3474,7 @@ namespace fire.Compiler
                 EmitLoadConst(Value.MakeInt(1));
                 _chunk.EmitOp(addSubOp);           // Prefix: [obj, newVal] / Postfix: [obj, oldVal, newVal]
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.RotateUnderTop); // [oldVal, obj, newVal]
-                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name))); // [...,newVal]
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
@@ -3490,12 +3506,12 @@ namespace fire.Compiler
                         // `++`/`--` is after all only an (more compactly written)
                         // assignment.
                         EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width);
+                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
                         EmitStoreVariable(local);
                         break;
                     case ResolvedRef.Global global:
                         EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width);
+                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
                         _chunk.EmitOp(OpCode.StoreGlobal);
                         _chunk.EmitU16(global.Slot);
                         break;

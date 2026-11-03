@@ -145,6 +145,7 @@ namespace fire.Runtime
                 // are the "direct children" of an array, see SPEC/
                 // THREADING_DESIGN.md 4.4).
                 var newArr = new ScriptArray(srcArr.Length);
+                newArr.CopyTypeOf(srcArr);   // (a copy of a typed array is typed)
                 for (int i = 0; i < srcArr.Length; i++)
                 {
                     Value oldElem = (oldArr != null && i < oldArr.Length) ? oldArr.Items[i] : Value.MakeUndefined();

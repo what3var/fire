@@ -83,6 +83,12 @@ namespace fire.Ast
 
         /// <summary>What a declaration demands of the unit of a value (Value.AdaptToUnit): its RequiredUnit, with a leading `#` when the declared type is
         /// `float` (a whole number is taken as a float before it is converted: `float b : km = 1500m` is 1.5km); null when nothing is demanded.</summary>
+        /// <summary>The code of a declaration with <paramref name="rank"/> array brackets after its name (`int a[]`, `int[8] m[3][4]`, SPEC 8.4.2): an array
+        /// stored in it becomes a typed array (OpCode.TypeArray) - 0x10000 | rank &lt;&lt; 8 | the element type (Values.ArrayElem); 0 when the type has none
+        /// (`var`, `any`, strings, classes), the declaration has no array brackets or it is a pointer.</summary>
+        public int ArrayWidthCode(int rank) =>
+            rank > 0 && rank < 256 && PointerDepth == 0 && ArrayRank == 0 && fire.Values.ArrayElem.Of(this) is var elem and not 0 ? 0x10000 | (rank << 8) | elem : 0;
+
         [MemoryPack.MemoryPackIgnore] public string? UnitDemand => RequiredUnit is { } required && fire.Values.Unit.DemandText(required) is var unit ? (BaseName == "float" ? "#" + unit : unit) : null;
 
         [MemoryPackIgnore]

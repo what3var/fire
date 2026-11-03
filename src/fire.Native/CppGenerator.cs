@@ -1176,6 +1176,17 @@ namespace fire.Native
         }
 
         /// <summary>The C that converts `value` into the unit a declaration demands (fire_rt.h adaptUnit; a leading `#`: the declaration is a float).</summary>
+        /// <summary>The unit arguments of typeArray/newTypedArray for the unit demand constant of an OpCode.TypeArray (0xFFFF: none): `unit, flags, text`
+        /// (flags TU_UNIT 1, TU_DIMONLY 2, TU_ANY 4 of fire_rt.h; text as the messages show it).</summary>
+        private string TypeArrayUnitArgs(Chunk chunk, int constIdx)
+        {
+            if (constIdx == 0xFFFF) return $"0, 0, {Constant(Value.MakeString("(no unit)"))}";
+            string unit = chunk.Constants[constIdx].AsString().TrimStart('#');
+            if (unit == "any") return $"0, 4, {Constant(Value.MakeString("any"))}";
+            bool dimensionOnly = unit.StartsWith("any ", StringComparison.Ordinal);
+            return $"{UnitC(UnitId(DemandUnit(unit)))}, {(dimensionOnly ? 3 : 1)}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))}";
+        }
+
         private string AdaptUnitCall(string value, string demand)
         {
             bool toFloat = demand.StartsWith('#');
@@ -1244,6 +1255,7 @@ namespace fire.Native
             if (_usesThreads) sb.AppendLine("#define FIRE_THREADS 1");
             if (_usesReflection) sb.AppendLine("#define FIRE_REFLECTION 1");
             if (_usesElementPointers && _program.ExecutionMode != VmExecutionMode.Performance) sb.AppendLine("#define FIRE_PTRBOUNDS 1 // pointers into arrays and buffers (`ref a[i]`, `p + n`) know the bounds");
+            if (_usesElementPointers) sb.AppendLine("#define FIRE_ELEMPTRS 1 // pointers into arrays find their array (a typed one converts what is written through them)");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             // The units a text may name (`"5mm".ToFloat()`, Unit.ParseKnown): those of fire without a prefix, then those of the program by symbol and name
@@ -1473,7 +1485,7 @@ namespace fire.Native
             foreach (var (iface, name, argc) in _interfaceDispatchers) sb.AppendLine(InterfaceDispatcherSignature(iface, name, argc) + ";");
             foreach (var method in _operators) sb.AppendLine($"{HelperStorage}Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list);");
             sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperInline}Value aget_g(Value a, Value i, OwnList* list);");
-            sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperInline}void aset_g(Value a, Value i, Value v, OwnList* list);");
+            sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperInline}Value aset_g(Value a, Value i, Value v, OwnList* list);");
             sb.AppendLine();
 
             foreach (var selector in _overloadSelectors.Values) sb.AppendLine(SelectorSignature(selector) + ";");
@@ -2220,13 +2232,14 @@ namespace fire.Native
             else sb.AppendLine("    (void)list;");
             sb.AppendLine("    return arrayGet(a, i);");
             sb.AppendLine("}");
-            sb.AppendLine($"{HelperInline}void aset_g(Value a, Value i, Value v, OwnList* list) {{");
+            // (the result is the value stored: of a typed array the converted one, see arraySet)
+            sb.AppendLine($"{HelperInline}Value aset_g(Value a, Value i, Value v, OwnList* list) {{");
             string secEnd = _usesThreads ? " sectionScopeExit(ss_);" : "";
             if (_usesThreads) sb.AppendLine("    bool ss_ = sectionScopeEnterV(a);");
             if (_dispatchers.Contains(("SetIndex", 2)))
-                sb.AppendLine($"    if (a.kind == K_Class) {{ Value r = call_SetIndex_2(a, i, v{DispatchTail("SetIndex", 2, "list", "0xFFFFFFFFu")}); adopt(r, list);{secEnd} return; }}");
+                sb.AppendLine($"    if (a.kind == K_Class) {{ Value r = call_SetIndex_2(a, i, v{DispatchTail("SetIndex", 2, "list", "0xFFFFFFFFu")}); adopt(r, list);{secEnd} return v; }}");
             else sb.AppendLine("    (void)list;");
-            sb.AppendLine("    arraySet(a, i, v);" + secEnd);
+            sb.AppendLine(_usesThreads ? "    v = arraySet(a, i, v);" + secEnd + "\n    return v;" : "    return arraySet(a, i, v);");
             sb.AppendLine("}");
             return sb.ToString();
         }
@@ -4487,7 +4500,18 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.NewArray:
-                    Need(1); E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});"); SetR(d - 1, true); return Next();
+                {
+                    Need(1);
+                    // `int[8] a[] = new int[n]` (TypeArray right after): the packed array is made at once (its TypeArray then finds it typed already)
+                    int at = f.IndexOf[ins.Addr] + 1;
+                    if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
+                        E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {typed.A[0]}, {TypeArrayUnitArgs(chunk, typed.A[2])}, &{OwnerList()});");
+                    else
+                        E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});");
+                    SetR(d - 1, true); return Next();
+                }
+                case OpCode.TypeArray:
+                    Need(1); E($"typeArray({S(d - 1)}, {ins.A[0]}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2])}, 1);"); Check(); return Next();
                 case OpCode.MakeBuffer:
                     Need(1); E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});"); SetR(d - 1, true); return Next();
                 case OpCode.MakeArrayLiteral:
@@ -4581,14 +4605,14 @@ namespace fire.Native
                 case OpCode.ArrayGet:
                     Need(2); E($"{S(d - 2)} = aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true); return Next();
                 case OpCode.ArraySet:
-                    Need(3); E($"aset_g({S(d - 3)}, {S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); E($"{S(d - 3)} = {S(d - 1)};"); SetR(d - 3, R(d - 1)); d -= 2; return Next();
+                    Need(3); E($"{S(d - 1)} = aset_g({S(d - 3)}, {S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); E($"{S(d - 3)} = {S(d - 1)};"); SetR(d - 3, R(d - 1)); d -= 2; return Next();
                 case OpCode.IncDecIndex:
                 {
                     Need(2);
                     bool increment = ins.A[0] != 0, prefix = ins.A[1] != 0;
                     string list = "&" + OwnerList();
                     string guard = _usesExceptions ? $"if (FIRE_UNLIKELY(g_unwind.active)) goto {(sb == null ? "X" : ExitLabel(f, st, locals))}; " : "";
-                    E($"{{ Value o = aget_g({S(d - 2)}, {S(d - 1)}, {list}); {guard}Value n = {(increment ? "add" : "sub")}(o, stepOf(o, Int(1))); aset_g({S(d - 2)}, {S(d - 1)}, n, {list}); {S(d - 2)} = {(prefix ? "n" : "o")}; }}");
+                    E($"{{ Value o = aget_g({S(d - 2)}, {S(d - 1)}, {list}); {guard}Value n = {(increment ? "add" : "sub")}(o, stepOf(o, Int(1))); n = aset_g({S(d - 2)}, {S(d - 1)}, n, {list}); {S(d - 2)} = {(prefix ? "n" : "o")}; }}");
                     Check();
                     d--; SetR(d - 1, false); return Next();
                 }

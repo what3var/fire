@@ -1679,6 +1679,44 @@ an array return type on `extern` (the native interface knows no script arrays). 
 is not enforced at run time, the resolver only checks that the type name exists; the editor uses it for
 type inference (`k.Dogs()[0].` suggests the members of `Dog`, `k.Numbers().` suggests `Length`).
 
+### 8.4.2 Typed arrays
+
+```
+int a[] = new int[1000]      // only ints (and undefined)
+int[8] samples[256]          // only ints, cut to 8 bits like an int[8] variable
+float[32] coeffs[] = [1, 2.5] // floats, rounded to 32 bits; the int 1 becomes 1.0
+bool flags[8]
+char text[16]
+byte raw[64]                 // 0..255
+float:cm sizes[] = [1cm, 2m] // the elements are converted into cm
+```
+
+An array stored in a variable or a field declared with the element type `int`, `int[8|16|32|64]`, `float`,
+`float[8|16|32|64]`, `bool`, `char` or `byte` becomes a **typed array**: the array itself knows its element type, so
+every write through any reference to it (`var d = a; d[0] = 300`, `ref a[i]`, `a[i]++`) keeps it:
+
+* an `int` element is cut to the width (two's complement, `byte`: 0..255), a `float` element is rounded to it, an
+  `int` becomes a `float` in a float array;
+* `undefined` fits every element type (it is what a new array holds);
+* any other value is a catchable `ArgumentException` (`An element of an array of int[8] must be an int (or undefined),
+  not String.`), a number with another unit a `UnitMismatchException` (without a declared unit the elements have no
+  unit) - the type checker reports both as TC001/TC006 already;
+* the assignment yields the stored value (`print(a[0] = 300)` prints 44 for an `int[8]` array).
+
+It becomes typed where it is stored: the declaration's initializer, the automatic allocation (`int a[10]`), a later
+assignment to the variable or field. Its elements are converted then; one that does not fit is the exception. An array
+that is typed already stays as it is if the types agree, an array of another element type is an `ArgumentException`.
+Parameters do not type what they receive. A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
+Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, strings, classes and pointers
+declare no element type - such an array takes any value, as before.
+
+The native backend stores a typed array **packed**: one C number per element (`int8_t` ... `int64_t`, `float`,
+`double`, a byte for `bool`, two bytes for `char`) instead of a 16-byte value - an `int[8] a[100000]` needs 100 KB
+instead of 1.6 MB. `undefined` is kept as a rarely used value of the type (`INT8_MIN` ..., a NaN with a fixed payload,
+`0xFF` for `byte`, `0xFFFF` for `char`): only when that value is stored as a real number is a bit set in a mask of
+the array, which is allocated then - so a read looks at the mask only when it finds that value. When a native function
+of a package asks for the elements as values, the array is unpacked once (its type stays).
+
 ### 8.5 `IEnumerable`/`IEnumerator` & `interface`
 
 **Implemented.** Since `IEnumerable`/`IEnumerator` must be implementable by several otherwise

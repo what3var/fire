@@ -108,9 +108,10 @@ static class TypeTests
         Check("Rueckgabetypen: undefined fuer 'nichts', ein Wert- und undefined-Rueckgabe passt zu jedem Typ, ein falscher Typ ist TC003", Run("class A { undefined P() { return }\n    int Q(bool b) { if (b) { return 1 } return undefined }\n    int R() { return \"x\" }\n}\nprint(1)") == "TC003|1"
             && Run("class A { undefined P() { return }\n    int Q(bool b) { if (b) { return 1 } return }\n}\nvar a = new A()\nprint(a.Q(false))", TypeCheckMode.Strict) == "|undefined");
         Check("typisierte Operatoren: `bool operator==(any o)`", Run("class A { int v\n    construct(int v) { this.v = v }\n    bool operator==(any o) { return this.v == o.v }\n    A operator+(A o) { return new A(this.v + o.v) }\n}\nvar a = new A(1)\nvar b = new A(1)\nprint(a == b)\nprint((a + b).v)", TypeCheckMode.Strict) == "|True\n2");
+        // (an `int a[]` is a typed array: the string is TC001 and at run time an ArgumentException, SPEC 8.4.2)
         Check("Arrays: Elemente, Literale, new, length, foreach haben den Typ der Elemente", Run("""
             int a[] = [1, 2, 3]
-            a[0] = "x"
+            try { a[0] = "x" } catch (ArgumentException e) { print("A") }
             int whole = a
             var b = new float[3]
             bool flag = b[0]
@@ -118,7 +119,7 @@ static class TypeTests
             int n = a.length + "abc".Length
             float f[] = [1, 2.5]
             print(n)
-            """) == "TC001 TC001 TC001 TC001|6");
+            """) == "TC001 TC001 TC001 TC001|A\n6");
         Check("Lambdas: falsche Anzahl Argumente oder Parameter wird schon beim Uebersetzen gemeldet", Run("int lambda<int, int> add = (x, y) => x + y\nlambda<int> three = (x, y) => x\nadd(1)", TypeCheckMode.Strict) == "|ERROR TC001 TC002");
         Check("Strings und Indexer: s[i] ist ein char, operator[] liefert seinen Rueckgabetyp", Run("""
             class Box { int v

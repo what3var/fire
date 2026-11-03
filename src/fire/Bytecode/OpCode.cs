@@ -232,6 +232,11 @@ namespace fire.Bytecode
         // `f(1, size: 2)`: the names of the last arguments of the call that follows (the string constant "size|name"); the callee puts them at the
         // parameters of these names and fills the others with their default values (VM.FillDefaultArgs).
         ArgNames,            // u16 namesConstIdx
+        // An array goes into a variable or field declared as a typed array (`int a[]`, `int[8] a[]`, `float a[]`, `bool a[]`, `char a[]`, SPEC 8.4.2): the
+        // array on top of the stack - for `rank` > 1 the arrays at that depth (`int m[3][4]`: the inner ones) - becomes typed (Values.ArrayElem; its
+        // elements are converted, one that does not fit is the exception). An array that has this type already stays as it is, one of another type is
+        // an ArgumentException; every other value (undefined, a value of the wrong kind the type checker has warned about) is left alone. Peeks.
+        TypeArray,           // u8 elemType, u8 rank, u16 unitConstIdx (0xFFFF: the elements have no unit)
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

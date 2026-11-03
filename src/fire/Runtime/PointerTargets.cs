@@ -21,6 +21,19 @@ namespace fire.Runtime
         }
     }
 
+    /// <summary>`*p = v` through a pointer into a typed array (SPEC 8.4.2) with a value that does not fit the element type: the VM turns it into the same
+    /// exception as `a[i] = v` (ArgumentException, UnitMismatchException, OverflowException).</summary>
+    public sealed class ArrayElementException : Exception
+    {
+        public ArrayElem.Error Error { get; }
+        public string? ElemUnit { get; }
+        public Value Offending { get; }
+        public ArrayElementException(ArrayElem.Error error, string message, string? elemUnit, Value offending) : base(message)
+        {
+            Error = error; ElemUnit = elemUnit; Offending = offending;
+        }
+    }
+
     /// <summary>Points to a concrete slot in a concrete scope (local or global variable). A pointer to a variable is like a pointer to an array with exactly
     /// one element (C): `p + n` is allowed (also `p - 1 + 1`), only offset 0 may be used - otherwise `IndexOutOfBoundsException`. (Formerly the pointer moved to the neighbouring slot of the scope;
     /// that does not exist in natively translated code - there the variables are C++ variables.)</summary>
@@ -115,7 +128,9 @@ namespace fire.Runtime
         {
             if (_array != null)
             {
-                if (_array.IsDestroyed || !_array.TrySet(Index, v)) throw OutOfRange();
+                if (_array.IsDestroyed) throw OutOfRange();
+                if (!_array.TryConvertElement(v, out var stored, out var error, out var message)) throw new ArrayElementException(error, message!, _array.ElemUnit, v);
+                if (!_array.TrySet(Index, stored)) throw OutOfRange();
                 return;
             }
             if (_buffer!.IsDestroyed || !_buffer.TrySet(Index, (byte)v.AsInt())) throw OutOfRange();

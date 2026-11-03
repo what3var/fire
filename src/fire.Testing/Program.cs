@@ -21111,6 +21111,94 @@ else
             }
             print("end")
             """),
+        ("Typisierte Arrays: Breiten, undefined und der Merker (-128, NaN, 0xFF, 0xFFFF), strikte Typen, Einheiten, ++, Zuweisung liefert den gespeicherten Wert", """
+            int[8] a[] = new int[4]
+            a[0] = 300
+            a[1] = -129
+            print(a[0] + " " + a[1] + " " + a[2])
+            var d = a
+            d[2] = 1000
+            print(d[2])
+            a[3] = 127
+            a[3]++
+            print(a[3])
+            print(a[0] = 500)
+            try { a[0] = "x" } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = 2.5 } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = 5cm } catch (UnitMismatchException e) { print("U: " + e.message) }
+            a[0] = undefined
+            print(a[0])
+            a[0] = -128
+            print(a[0] + " " + a[1])
+            a[0] = undefined
+            a[2] = -128
+            a[2] = 5
+            print(a[0] + " " + a[2] + " " + a.length)
+            int big[3]
+            big[0] = -9223372036854775807 - 1
+            print(big[0] + " " + big[1])
+            char c[2]
+            c[0] = 'x'
+            print(c[0] + " " + c[1])
+            byte by[3]
+            by[0] = 300
+            by[1] = 255
+            print(by[0] + " " + by[1] + " " + by[2])
+            float[32] f[] = [1, 2.1, undefined]
+            print(f[0] + " " + f[1] + " " + f[2])
+            float[16] h[2]
+            h[0] = 0.1
+            print(h[0])
+            float n[2]
+            n[0] = 0.0 / 0.0
+            print(n[0] + " " + n[1])
+            bool b[3]
+            b[0] = true
+            try { b[1] = 1 } catch (ArgumentException e) { print("A: " + e.message) }
+            print(b[0] + " " + b[1])
+            float:cm w[] = [1cm, 2m]
+            print(w[1])
+            try { w[0] = 3s } catch (UnitMismatchException e) { print("U: " + e.message) }
+            try { int bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+            int[16] wide[] = [1, 2, 70000]
+            print(wide[2])
+            try { int[8] q[] = wide } catch (ArgumentException e) { print("A: " + e.message) }
+            """),
+        ("Typisierte Arrays: mehrdimensional, Felder, copy, ref auf Elemente, foreach, Json, Threads (taking)", """
+            #import "json"
+            class U { static Set(ref int x, int v) { x = v } }
+            class Sensor {
+                int[16] samples[]
+                float:cm sizes[]
+                construct() { this.samples = new int[4]; this.sizes = new float[2]; this.samples[0] = 70000 }
+            }
+            int m[2][3]
+            m[1][2] = 7
+            try { m[1][0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+            int[8] m8[2][2]
+            m8[0][1] = 200
+            print(m[1][2] + " " + m8[0][1])
+            var s = new Sensor()
+            s.samples[1] = 40000
+            s.sizes[0] = 2m
+            print(s.samples[0] + " " + s.samples[1] + " " + s.sizes[0])
+            s.samples = new int[2]
+            s.samples[0] = 70000
+            var t = copy s
+            t.samples[1] = 70000
+            print(s.samples[0] + " " + t.samples[1])
+            int[8] a[4]
+            U.Set(a[1], 1000)
+            print(a[1])
+            a[0] = -128
+            a[2] = 5
+            var sum = 0
+            foreach (x in a) { if (x != undefined) { sum += x } }
+            print(sum)
+            print(Json.Serialize(a))
+            int g[3]
+            fire taking g { g[0] = 300; print("thread " + g[0]) }
+            """),
         ("Zeiger (unsafe): Arithmetik ueber Array- und Puffer-Elemente (ref), Vergleich, Zeiger auf Zeiger", """
             class F {
               static Sum(ref int first, int n) {

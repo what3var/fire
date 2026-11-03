@@ -2055,6 +2055,7 @@ namespace fire.Runtime
                 }
                 var one = Value.StepOf(in oldVal, Value.MakeInt(1));
                 var newVal = isIncrement ? Value.Add(oldVal, one) : Value.Subtract(oldVal, one);
+                if (!ConvertArrayElement(arr, ref newVal)) return;   // (a typed array: 127 + 1 in an int[8] array is -128)
                 if (arr.IsShared) TrySetSharedElement(arr, idx, newVal); else arr.TrySet(idx, newVal);
                 Push(isPrefix ? newVal : oldVal);
             }
@@ -3715,6 +3716,8 @@ namespace fire.Runtime
             var indexVal = Pop();
             var target = Pop();
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
+            // a typed array (`int[8] a[]`): the value is converted (the assignment yields the stored value), or it is the exception - before the index is checked, as natively
+            if (target.Kind == ValueKind.Array && !ConvertArrayElement(target.AsArray(), ref value)) return;
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
             {
@@ -3974,6 +3977,14 @@ namespace fire.Runtime
                         break;
                     }
                     Push(Value.MakeLambda(((LambdaValue)lambdaValue.AsLambda()).WithOnTarget(BoxValueForOnTarget(onTarget))));
+                    break;
+                }
+                case OpCode.TypeArray:
+                {
+                    byte elemType = ReadByte();
+                    int rank = ReadByte();
+                    int unitIdx = ReadU16();
+                    TypeArrayValue(Peek(), elemType, rank, unitIdx == 0xFFFF ? null : _constants[unitIdx].AsString(), 1);
                     break;
                 }
                 case OpCode.ConvertWidth:
@@ -5840,6 +5851,7 @@ namespace fire.Runtime
         {
             try { ptr.AsPointer().Write(value); return true; }
             catch (PointerRangeException ex) { ThrowPointerRange(ex); return false; }
+            catch (ArrayElementException ex) { ThrowArrayElementError(ex.ElemUnit, ex.Offending, ex.Error, ex.Message); return false; }
         }
 
         private void ThrowPointerRange(PointerRangeException ex)
@@ -6372,6 +6384,50 @@ namespace fire.Runtime
             if (DeclaredKind.Accept(ref value, required, what) is not { } message) return true;
             ThrowArgumentError(message);
             return false;
+        }
+
+        /// <summary>OpCode.TypeArray: the array `value` (at depth `rank` its inner arrays) becomes typed. False when that is the exception: an element that
+        /// does not fit, or an array of another element type.</summary>
+        private bool TypeArrayValue(Value value, byte elemType, int rank, string? unit, int depth)
+        {
+            if (value.Kind != ValueKind.Array) return true;
+            var array = value.AsArray();
+            if (array.IsDestroyed || depth > 64) return true;   // (a destroyed array is reported where it is used)
+            if (depth < rank)
+            {
+                foreach (var inner in array.Items)
+                    if (!TypeArrayValue(inner, elemType, rank, unit, depth + 1)) return false;
+                return true;
+            }
+            if (array.ElemType == elemType && array.ElemUnit == unit) return true;
+            if (array.ElemType != ArrayElem.None)
+            {
+                ThrowArgumentError($"An array of {ArrayElem.Name(array.ElemType)} cannot be stored where an array of {ArrayElem.Name(elemType)} is declared.");   // (the same text natively)
+                return false;
+            }
+            if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) return true;
+            ThrowArrayElementError(unit, offending, error, message!);
+            return false;
+        }
+
+        /// <summary>`array[i] = value` on a typed array (SPEC 8.4.2): the value converted to the element type. A value that does not fit is the exception
+        /// (ArgumentException, UnitMismatchException, OverflowException) - then false, nothing is stored and nothing is pushed.</summary>
+        private bool ConvertArrayElement(ScriptArray array, ref Value value)
+        {
+            if (array.ElemType == ArrayElem.None) return true;
+            if (array.TryConvertElement(value, out var stored, out var error, out var message)) { value = stored; return true; }
+            ThrowArrayElementError(array.ElemUnit, value, error, message!);
+            return false;
+        }
+
+        private void ThrowArrayElementError(string? elemUnit, Value value, ArrayElem.Error error, string message)
+        {
+            switch (error)
+            {
+                case ArrayElem.Error.Unit: ThrowUnitMismatch(elemUnit != null ? Values.Unit.DemandDisplay(elemUnit) : "(no unit)", value.Unit ?? Values.Unit.Unitless); break;
+                case ArrayElem.Error.Overflow: ThrowOverflow(message); break;
+                default: ThrowArgumentError(message); break;
+            }
         }
 
         private void ThrowArgumentError(string message)
