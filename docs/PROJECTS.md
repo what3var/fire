@@ -49,7 +49,8 @@ it is compiled (docs/RESOURCES.md: the path is relative to the file that writes 
 them (in the virtual machine a shared library is built from the C++ for the machine; a native build puts the C++ into the generated file), and the package that is packed carries the C++.
 `native` can also name `sources` (files and patterns, default `native/**`), `platformSources`, `platforms`, `linkLibraries`, `exceptions`, `reset` and `functions` (to say more about a function,
 like `returnsReference`) - the same as in a package. `"discover": false` takes only the named `functions` (no search for `inline Value` functions in the files). `"standard": true` (top
-level of the project) is for the standard libraries of `Source/Packages.firesln` (docs/PACKAGES.md): their import names are those of the compiler.
+level of the project) is for the standard libraries of `Source/Packages.firesln` (docs/PACKAGES.md): their import names are those of the compiler. `"serializable": false` (top level
+of a library) excludes all classes of the library from JSON, like `[NotSerializable]` on each (docs/JSON.md; the package carries it in `package.json`, the standard library `ui` has it).
 
 **Settings** (all optional): `subsystem` (`console`/`gui`), `mode` (`debug`/`release`/`performance`), `floatWidth` (32/64), `name`, `codename`, `description`, `author`, `license`
 (a library that is packed), `comments`, `icon`, `version`, `fileVersion` (the assembly information), `defines` (symbols for `#if`), `engine` (`vm`/`native`), `target`, `toolchain`, `output`, `arguments` (what a run of the program gets as

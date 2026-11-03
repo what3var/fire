@@ -52,6 +52,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   solche Natives (auch eines mit JSON) ist reines C.
 * **JSON** (`#import "json"`): `native/runtime/fire_json.h` - die Engine in C (Schreiben, Parser, Lesen; dieselben Texte und Fehler wie `JsonMethods` der VM; was sie
   für sich braucht, kommt aus einer Arena des Aufrufs) und die Tabellen der Klassen des Programms, die der Generator dahinter schreibt (`kJsonClasses`, `jsonClassAt`, ...).
+  Schreiben zieht keine Klassen nach; Lesen die der deklarierten Typen (mit Unterklassen und Feldtypen), ein Slot ohne Klasse alle; nicht serialisierbare Klassen nie (docs/JSON.md).
 * **Bauen** (`NativeBuilder.BuildCommands`): ohne Natives in C ein Aufruf des C-Compilers (`gcc -std=c11 ... -lm`); mit Natives wird das Programm zur Objektdatei
   übersetzt und vom C++-Compiler zusammen mit `fire_natives.cpp` gelinkt. Der C-Compiler gehört zum C++-Compiler der Toolchain (`g++` -> `gcc`, `clang++` -> `clang`,
   `em++` -> `emcc`, `x86_64-w64-mingw32-g++` -> `...-gcc`; MSVC: `cl /TC`), oder `toolchain.cCompiler`/`cStd`. Ein ESP-IDF-Komponent listet beide Dateien.
@@ -297,9 +298,12 @@ einzigen Maschine, keine Garantie.
   deklariert, `int[32]` = 32 Bit, sonst Zeigerbreite), `float` (`float[32]` = `float`), `char`, `string` (UTF-8, nach dem Aufruf freigegeben), Zeiger (ein Zeiger auf eine Variable
   bekommt eine Kopie, die danach zurückgeschrieben wird, wie in der VM). Ohne `#extern` (Host-Registrierung in C#) ist die Funktion nicht übersetzbar; `try Name(...)` (Timeouts) auch nicht.
 
-* **Reflection und `probe`** (SPEC 8.13/8.14, `#import "reflection"`): ruft das Programm eine der `__refl_*`-Funktionen auf, erzeugt der Generator **alle** Klassen des Programms
-  (eine Klasse ist über ihren Namen erreichbar) mit ihren Konstruktoren, Methoden und den Feldhelfern aller Namen (`CppGenerator.Reflection.cs`). Die Beschreibungen sind Tabellen
-  (`RfClass`/`RfMember`, wie `ReflectionNatives.Members` sie aufbaut: eigene und geerbte Mitglieder, ein abgeleitetes verdeckt gleichnamige); `Reflect.Get/Set/Call/New/Has`
+* **Reflection und `probe`** (SPEC 8.13/8.14, `#import "reflection"`): was das Programm per Name erreichen kann, hängt davon ab, welche `__refl_*`-Funktionen es aufruft
+  (Stufen, `CppGenerator.Reflection.cs`, siehe "Größe des Programms"): Mitglieder eines Objekts per Name (`Reflect.Get/Set/Has`, Selektoren, Proben) brauchen die Felder und
+  Property-Zugriffe der Klassen, deren Objekte es gibt; `Reflect.Call` deren Instanzmethoden; `Reflect.New` die Konstruktoren der Klassen in den Tabellen. Die Tabellen beschreiben
+  die erreichten Klassen (gemacht, benutzt, ihre Basisklassen, `[Keep]`), mit `"trim": "reflection"` jede Klasse, sobald eine per Name gesucht wird, mit `"trim": "all"` immer jede.
+  Die Beschreibungen sind Tabellen (`RfClass`/`RfMember`: die eigenen Mitglieder jeder Klasse; die geerbten liest `rf_visible` aus den Zeilen der Basisklassen, ein abgeleitetes
+  verdeckt gleichnamige - dieselbe Liste wie `ReflectionNatives.Members` der VM); `Reflect.Get/Set/Call/New/Has`
   sind erzeugte Funktionen über die Feldhelfer und Dispatcher des Programms - mit denselben Zugriffs-, Einheiten- und Property-Regeln und denselben Fehlermeldungen
   (`ReflectionException`). Für private/protected zählt der Code, der die Bibliothek aufgerufen hat: ein Aufruf einer Methode der Bibliotheksklassen von außen setzt `g_reflCaller`.
   Ein Selektor (`c => c.radius`) trägt seine Mitgliedskette in der `Lam` (`sel`). `probe`/`silence`: ein Objekt mit Proben hat Flag 2 und eine `ProbeNode` (Seitentabelle);
@@ -523,6 +527,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
   "engine": "native",            // "vm" (Standard) oder "native": was `build` erzeugt
   "target": "my-board",          // Standardziel; sonst dieser Rechner
   "toolchain": "gcc",            // Standard-Toolchain für Ziele ohne eigene; sonst die erste gefundene
+  "trim": "reached",             // was bleibt: "reached" (Standard), "reflection" oder "all" (siehe "Größe des Programms")
   "targets": {
     "my-board": {
       "extends": "freertos",     // eingebautes Ziel oder anderes aus dieser Datei; nur Abweichungen stehen hier
@@ -552,14 +557,62 @@ Toolchains (`kind`): `gcc`, `clang`, `msvc` (Compiler, Standard, Optimierung, Ar
 **Größe des Programms.** Ein Programm wird beim Linken gestrippt (gcc/clang: `-s`, macOS `-Wl,-x`): Symbole und Debug-Informationen machen ohne Strippen etwa die Hälfte der Datei aus
 (MinGW: 945 KB → 468 KB). `"strip": false` in der Toolchain lässt sie stehen (zum Debuggen); eine Bibliothek für die VM wird nie gestrippt. `"optimization": "size"` wählt das kleine
 Profil: gcc/clang `-Os -ffunction-sections -fdata-sections` und beim Linken `--gc-sections` (macOS `-dead_strip`), msvc `/O1 /Gy /Gw` und `/OPT:REF /OPT:ICF` (Beispiel 3D-Szene unter Linux:
-464 KB → 404 KB gestrippt → 285 KB mit `size`). Der Generator selbst übersetzt schon nur, was vom Programm aus erreichbar ist (Funktionen werden erst beim ersten Aufruf nach Name und
-Argumentzahl angelegt, Klassen erst beim `new`), und der C++-Compiler wirft nicht erreichte `static`-Funktionen weg; im Beispiel führt eine Messung (gcov) nur etwa 9 % der erzeugten
-Zeilen nie aus, darunter Fehlerpfade. Ein weiterer Durchlauf über die Methoden des Preludes würde deshalb kaum etwas sparen und brächte Risiko (Dispatch nach Name, Reflection,
-Callbacks) – er ist nicht eingebaut. Der Editor kennt beides im Dialog „Toolchain Settings“ (Toolchain: Optimization, Strip symbols).
+464 KB → 404 KB gestrippt → 285 KB mit `size`). Was der Generator gar nicht erst übersetzt, steht im folgenden Abschnitt. Der Editor kennt beides im Dialog „Toolchain Settings“
+(Toolchain: Optimization, Strip symbols).
+
+### Größe des Programms: was der Generator weglässt
+
+Der Generator übersetzt nur, was vom Programm aus erreichbar ist: Funktionen werden erst beim ersten Aufruf nach Name und Argumentzahl angelegt, Klassen erst beim `new`
+(`RegisterClass`), ein Aufruf über den Verteiler (`call_Name_n`) zieht die Methode dieses Namens aller *gemachten* Klassen nach; der C-Compiler wirft nicht erreichte
+`static`-Funktionen weg. Die statischen Initialisierer aller Klassen laufen weiter am Anfang (wie in der VM). Was per Name erreichbar ist, hält Code fest:
+
+* **Reflection** (Stufen nach den aufgerufenen `__refl_*`): Mitglieder per Name (`Reflect.Get/Set/Has`, Selektoren, Proben) halten die Felder und Property-Zugriffe der gemachten
+  Klassen fest, `Reflect.Call` ihre Instanzmethoden, `Reflect.New` die Konstruktoren aller Klassen der Tabellen. Die Tabellen (`kRfClasses`, `Reflect.Classes()`, `Type.Named`)
+  beschreiben die **erreichten** Klassen: gemacht, mit benutztem Code oder statischen Feldern, ihre Basisklassen, `[Keep]`. Vorher erzeugte ein einziger Aufruf von `Reflect.Has`
+  (das `ui` tut das für Stile, Trigger und Bindungen) **alle** Klassen des Programms mit allen Konstruktoren und Methoden.
+* **JSON**: Schreiben zieht nichts nach; Lesen die Klassen der deklarierten Typen (`Json.Deserialize<T>`, ihre Feldtypen, Unterklassen, Klassen eines Interfaces), ein Slot ohne
+  Klasse (`any`, ein Typname als Text) alle; `[NotSerializable]` und `"serializable": false` (das Package `ui`) schließen Klassen aus (docs/JSON.md).
+* **`[Keep]`** (SPEC 5.12) vor einer Klasse behält sie mit allen Mitgliedern, vor einem Mitglied dieses und seine Klasse; nicht vererbt.
+* Tabellen: Feldhelfer und Verteiler nur für die Namen, die erreicht werden; gleiche Zweige eines `switch` über die Klassen stehen einmal (`case 3: case 9: ...`); `fp_` (die Adresse
+  eines Felds) nur für Namen, deren Adresse das Programm nimmt; die Reflection-Tabellen halten nur die eigenen Mitglieder jeder Klasse (die geerbten kommen zur Laufzeit aus der
+  Basisklasse) und jede Namensliste einmal; die Proben-Tabellen ebenso.
+
+`"trim"` in `fire.native.json` sagt, was bleibt:
+
+| `"trim"` | was bleibt |
+|---|---|
+| `"reached"` (Standard) | was das Programm erreicht, dazu `[Keep]`. Eine Suche per Name (`Reflect.New("X")`, `Type.Named("X")`, `Type.Of("X")`, `Reflect.Classes()`) sieht nur diese Klassen: eine nie erreichte ist eine unbekannte Klasse (`Unknown class 'X'.`) - die VM findet sie. |
+| `"reflection"` | wie `"reached"`, aber sobald das Programm eine Klasse per Name sucht (`Type`, `Reflect.New`, `Reflect.Classes`), bleibt jede Klasse in den Tabellen und `Reflect.New` kann jede machen: wie die VM. |
+| `"all"` | alles: jede Klasse mit allen Konstruktoren, Methoden (auch statischen) und Feldern. `--keep-all` auf der Befehlszeile (`build`, `native`, `test`) sagt dasselbe; ein **Debug-Build** (`#debug`, `-m DEBUG`) behält immer alles (der Debugger, ROADMAP Abschnitt 8). |
+
+**VM und nativ.** Die VM hat jede Klasse des gelinkten Programms; ob das Programm eine Klasse erreicht, weiß sie nicht (dafür bräuchte sie dieselbe Analyse, die der Generator
+nebenbei beim Übersetzen macht - und die hängt an seinem Verteiler nach Namen; ein Weglassen in der VM ist Abschnitt 11.6 der Roadmap, offen). Im Standard unterscheiden sich
+deshalb genau die Suchen nach einer Klasse per Name, die das Programm sonst nie erreicht (`Reflect.New`, `Type.Named`, `Type.Of(text)`, `Reflect.Classes()`, und JSON-`"$type"`
+außerhalb der deklarierten Typen); alles, was an einem vorhandenen Objekt arbeitet, ist gleich. `[Keep]`, `"trim": "reflection"` oder `"all"` machen die Ausgabe wieder gleich.
+Getestet in `fire.Testing` ("Weglassen (trim): ..." in allen drei Stufen gegen die VM, `[Keep]` und JSON als Fälle "Native == VM").
+
+**Messung** (gcc 13 `-std=c11 -O2 -c`, ohne ccache, derselbe Rechner, vorher = Stand vor Abschnitt 11):
+
+| Programm | C vorher | C nachher | gcc -O2 vorher | gcc -O2 nachher |
+|---|---|---|---|---|
+| minimales `ui` (Framebuffer, Window, `UI.Root`, ein `UI.Label`, `Run()`) | 7,85 MB (220.000 Zeilen, 1430 Funktionen) | 2,29 MB (65.800 Zeilen, 363 Funktionen) | 140 s | 49 s |
+| `graphics` + `windows` (Renderer, Rechteck, Linie, Text) | 417 KB | 412 KB | 5,2 s | 5,3 s |
+| `scene3d` (der Testfall "Scene3D") | 1,27 MB | 1,23 MB | 17,3 s | 17,5 s |
+| JSON (zwei Klassen, `Serialize` und `Deserialize<T>`) | 161 KB | 71 KB | 5,5 s | 3,8 s |
+| Reflection (`Type.Of`, `Get/Set/Call/Has`) | 680 KB | 348 KB | 15,5 s | 9,2 s |
+
+`graphics` und `scene3d` benutzen keine Reflection: dort war schon vorher nur das Erreichte übersetzt, der Rest ist echter Code und die C-Bridges. Mit `"trim": "all"` ist das
+`ui`-Programm 8,1 MB groß (alles, auch was vorher ohne Reflection-Zugriff wegfiel).
+
+Was im minimalen `ui`-Programm bleibt, ist im Wesentlichen echter Code: `UI.Root` bringt Ereignisse, Fokus, Popups, Ziehen und Ablegen mit (die Funktionen machen etwa die Hälfte
+aus, die Feldhelfer ein Fünftel, die C-Bridges von `graphics` und `windows` ein Achtel). Ein Filter für den Verteiler nach Rapid Type Analysis (eine Methode nur, wenn eine Aufrufstelle
+mit passendem statischen Typ sie erreichen kann) bringt hier wenig: 81 % der Aufrufstellen über den Verteiler kennen die Klasse des Empfängers schon, und die Methoden, die ein solcher
+Filter höchstens weglassen könnte, sind 4 % des Funktionscodes (die meisten davon gehören Unterklassen von `UI.Element` und blieben) - er ist nicht eingebaut. Ebenso nicht die Natives der Bridges in `#if`-Abschnitten: gcc verwirft ihre nicht benutzten
+`static`-Funktionen vor dem Optimieren (Gewinn nur bei TinyCC und an der Größe der Datei).
 
 ### Bauen: `build` zeigt auf nativ
 
-`fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
+`fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep] [--keep-all]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
 eigenständige Datei mit der VM, wie bisher). Mit `native` wird für das Ziel übersetzt (`NativeBuilder`: C++ erzeugen, Runtime und Plattformpaket daneben legen) und mit der Toolchain gebaut;
 bei `files` ist `-o` ein Ordner. `fire.Compiler native ...` erzeugt weiter nur das C++ (samt Runtime und Plattformpaket des Ziels). Der Editor hat denselben Weg:
 **Tools > Toolchain Settings...** (Seiten links: *Build* mit der Standard-Engine, *Target* mit Plattform/Includes/Defines/Einsprung, *Toolchain* mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript bzw. Projekt; auch erreichbar über *Project Properties > Native & Toolchain*), **Run > Build Native...**,

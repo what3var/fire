@@ -77,6 +77,19 @@ print(copy.friend.friend == copy)   // True: the cycle is back
 - **`char`** is a one-character string in a field declared `char`, `{"$char": "c"}` in an untyped slot; a **buffer** (`byte data[]`) is base64 text in a field
   declared `byte[]`, `{"$buffer": "..."}` otherwise. Reading also takes a byte array written as numbers (`[1, 2, 3]`).
 - An enum is its number. An actor cannot be written (a `JsonException`).
+- **Classes that are not serializable**: `[NotSerializable]` before a class excludes it and every class derived from it; a package excludes all its classes with
+  `"serializable": false` in its project file (the standard package `ui` does: its elements hold windows, renderers and handlers, not data). Writing an object of such a
+  class, or reading one (from `"$type"` or the declared type), is an `ArgumentException` - in the VM and natively the same:
+  `The class 'Secret' cannot be written to JSON: it is not serializable ([NotSerializable] on it or a base class, or "serializable": false in its package).`,
+  `$.shapes[0]: the class 'UI.Label' cannot be read from JSON: ...`.
+
+```fire
+#import "json"
+[NotSerializable]
+class Session { int token = 42 }
+class AdminSession : Session { }      // excluded as well
+try { Json.Serialize(new AdminSession()) } catch (ArgumentException e) { print(e.message) }
+```
 
 ## Reading
 
@@ -90,5 +103,16 @@ The class of an object comes from `"$type"`, else from the declared type of the 
 ## Native builds
 
 The native backend (docs/NATIVE_BACKEND.md) has the same functions in its runtime (`fire_json.h`, C, included by the program when it uses JSON) and writes a table
-of the program's classes for it: every class of the program is generated then, because `"$type"` can name any of them. It needs exceptions in the runtime (for
-`JsonException`), not C++ exceptions, so it also works on boards whose compiler has them switched off.
+of the program's classes for it. It needs exceptions in the runtime (for `JsonException`), not C++ exceptions, so it also works on boards whose compiler has them switched off.
+
+A native build only keeps the classes the program can reach (docs/NATIVE_BACKEND.md, "Größe des Programms"), and JSON adds what reading can make:
+
+- **Writing** (`Json.Serialize`) adds nothing: the objects it writes exist, so their classes are there.
+- **Reading** (`Json.Deserialize<T>`) adds the classes of the declared types: `T`, the types of its fields (transitively), and for each of them the derived classes and the
+  classes of an interface - `"$type"` may name any of them. `Json.Parse` adds `JsonObject`.
+- As soon as a slot without a class is read - a field declared `any` or without a type, `Json.Deserialize<any>`, `T` of a generic method, the class given as a text
+  (`Json.Deserialize(text, "Box<int>")`) - every class of the program is kept.
+- Classes that are not serializable are never added.
+
+So a `"$type"` that names a class outside the declared types (a class that is no subclass of the slot's type) is `unknown class 'X'` in a native build, while the
+VM makes it; `"trim": "all"` (`--keep-all`) keeps every class.

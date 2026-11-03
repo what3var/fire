@@ -134,6 +134,24 @@ print(t.Find("text").Flags(Access.Read))     // Write
 print(t.Find("text").Flags("Access"))       // 2
 ```
 
+### Reflection in native builds
+
+A native build (`forge build --engine native`) leaves out what the program does not reach: classes it never makes or uses, methods nothing calls. Reflection
+that works on an object (`Type.Of(obj)`, `Reflect.Get/Set/Call/Has`, probes) always finds everything of that object's class. A lookup **by name** -
+`Reflect.New("Ghost", [])`, `Type.Named("Ghost")`, `Type.Of("Ghost")`, `Type.Names()` - only sees the classes the program reaches; a class it never reaches is
+an unknown class there (`Unknown class 'Ghost'.`), while the VM finds it. To make such a class findable:
+
+- mark it `[Keep]` (see [Classes](08-classes.md#attributes)), or
+- set `"trim": "reflection"` in `fire.native.json` (every class stays as soon as the program looks a class up by its name), or `"trim": "all"` / `--keep-all` (everything
+  stays, as in a debug build).
+
+```fire
+#import "reflection"
+[Keep]
+class Plugin { construct() { } }       // made only by its name
+var p = Reflect.New("Plugin", [])      // works natively because of [Keep]
+```
+
 ### Selectors
 
 A parameter of a selector type takes a lambda that **selects a member** (`c => c.radius`); inside the method the parameter is a `Selector` that

@@ -24,7 +24,7 @@ Leitlinien:
 | 4 | [Debugging nativer Builds](#8-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
-| 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein leeres `ui`-Programm: ~7,4 MB C) |
+| 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB jetzt) |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -248,19 +248,33 @@ Ursprünglicher Plan:
 
 ## 11. Ungenutzten Code weglassen
 
-Anlass: Der Generator übersetzt heute alles, was importiert ist - ein minimales Programm mit `#import "ui"` ergibt rund 207.000 Zeilen bzw. 7,4 MB C, und
-`gcc -O2` braucht dafür über eine Minute (TinyCC ist schnell, das Programm wird aber trotzdem groß). Ziel: nur übersetzen, was das Programm erreichen kann -
-ungenutzte Methoden, Funktionen, Felder-Initialisierer und **ganze Klassen** fallen weg.
+**Umgesetzt (Phasen A-C, Stand und Messung: docs/NATIVE_BACKEND.md "Größe des Programms").** Anlass war, dass ein minimales Programm mit `#import "ui"` (ein Fenster, ein `UI.Root`,
+ein `UI.Label`) 7,85 MB C ergab und `gcc -O2` dafür über zwei Minuten brauchte. Die Ursache: `ui` benutzt die Reflection (Stile, Trigger, Bindungen setzen Properties per Name), und ein
+einziger Aufruf eines `__refl_*` erzeugte **jede** Klasse des Programms mit allen Konstruktoren und Methoden. Jetzt:
 
-* **Erreichbarkeit** vom Einstieg (`Main`, Tests, statische Initialisierer der erreichten Klassen) über Aufrufe, `new`, Basisklassen, Interfaces und Lambdas.
-  Virtuelle Aufrufe: eine Überschreibung bleibt, wenn die Methode der Basis erreicht **und** die Klasse instanziiert wird (Rapid Type Analysis).
-* **Dynamische Zugriffe** halten Code fest: `Reflect.New`/`Reflect.*`, JSON (`Json.Read<T>`), Markup des `ui` (Elemente nach Namen), Treiber und Plugins
-  (Abschnitt 9), Debugger (Abschnitt 8, Ausdrücke im Haltepunkt). Dafür ein Attribut zum Behalten (z. B. `[Keep]`) und ein Schalter, der alles behält
-  (Debug-Builds, Live-Sitzungen).
-* **Natives**: nur die Natives erreichter Methoden einbinden; die C-Bridges der Packages so schneiden, dass ungenutzte Teile (z. B. Zwischenablage,
-  Drag & Drop) gar nicht erst mitkompiliert werden.
-* Tabellen (Klassen-IDs, Methoden-Verteiler, Ausnahmen, Reflection, internierte Namen) nur für das, was bleibt.
-* Mit Abschnitt 9 abstimmen: Eine Library, die als `"static"`/`"shared"` vorgebaut wird, behält ihre öffentliche Schnittstelle vollständig; das Weglassen
-  wirkt dort nur auf Internes bzw. beim Linken des Programms (`"source"`).
-* Optional auch für die VM (kleinere Images, schnellerer Start).
-* Prüfen: die Testsuite mit und ohne Weglassen gleich; Messung von Codegröße und Bauzeit (`ui`, `graphics`, `scene3d`) vorher/nachher.
+* **Reflection nach Stufen** (A): Mitglieder per Name halten die Felder und Property-Zugriffe der gemachten Klassen fest, `Reflect.Call` deren Instanzmethoden, `Reflect.New` die Konstruktoren
+  der Klassen in den Tabellen; die Tabellen beschreiben die erreichten Klassen (gemacht, benutzt, Basisklassen, `[Keep]`).
+* **JSON** (B): Schreiben zieht nichts nach, Lesen die deklarierten Typen mit Unterklassen und Feldtypen, ein Slot ohne Klasse alle. `[NotSerializable]` (vererbt) und `"serializable": false`
+  im Package (`ui`) schließen Klassen aus: Schreiben oder Lesen einer solchen ist eine `ArgumentException`, in VM und nativ gleich.
+* **Tabellen** (C): gleiche Zweige der Feldhelfer einmal, `fp_` nur bei genommener Adresse, Reflection- und Proben-Tabellen ohne die geerbten Mitglieder jeder Klasse, Namenslisten einmal.
+* **`[Keep]`** vor Klassen und Mitgliedern (nicht vererbt; SPEC 5.12 erlaubt Attribute jetzt auch vor Klassen ausdrücklich), **`"trim"`** in `fire.native.json`: `"reached"` (Standard),
+  `"reflection"` (jede Klasse, sobald eine per Name gesucht wird - wie die VM), `"all"` (`--keep-all`; ein Debug-Build behält immer alles, für Abschnitt 8).
+* Statische Initialisierer aller Klassen laufen weiter (Semantik unverändert).
+
+Ergebnis: das minimale `ui`-Programm hat jetzt 2,29 MB C statt 7,85 MB (-71 %), `gcc -O2` braucht 49 s statt 140 s (-65 %); Messung für `graphics`, `scene3d`, JSON und Reflection in NATIVE_BACKEND.md.
+
+**VM und nativ:** Im Standard unterscheiden sich nur Suchen per Name nach einer Klasse, die das Programm nie erreicht (`Reflect.New("X")`, `Type.Named`, `Type.Of(text)`, `Reflect.Classes()`,
+JSON-`"$type"` außerhalb der deklarierten Typen): nativ eine unbekannte Klasse, in der VM gefunden - die VM kennt die Erreichbarkeit nicht. `[Keep]`, `"trim": "reflection"` oder `"all"`
+machen beides gleich; getestet in allen drei Stufen.
+
+**Offen:**
+
+* **D - Rapid Type Analysis für den Verteiler** (eine Methode nur, wenn eine Aufrufstelle mit passendem statischen Typ sie erreicht): gemessen, nicht gebaut - im `ui`-Programm kennen 81 %
+  der Aufrufstellen über den Verteiler die Klasse schon, der Filter spart höchstens 4 % des Funktionscodes.
+* **E - Natives der Bridges in `#if`-Abschnitten** (`graphics`, `windows`, Zwischenablage, Drag & Drop, Bilder, Slicer): nicht gebaut; gcc verwirft nicht benutzte `static`-Funktionen schon,
+  der Gewinn läge bei TinyCC und der Größe der Datei.
+* **F - Weglassen in der VM** (kleinere Images, schnellerer Start, dann auch dieselben Klassen per Name wie nativ): offen.
+* Mit Abschnitt 9 abstimmen: eine Library, die als `"static"`/`"shared"` vorgebaut wird, behält ihre öffentliche Schnittstelle vollständig (sie ist dann Wurzel wie `[Keep]`); heute
+  sind alle Libraries `"source"` und werden mit dem Programm zusammen weggelassen.
+* Was bleibt, ist beim `ui`-Programm echter Code (`UI.Root`: Ereignisse, Fokus, Popups, Ziehen und Ablegen); kleiner würde es nur durch weniger Code im Package oder ein `ui`, dessen
+  Teile (Drag & Drop, Popups) erst beim Benutzen erreicht werden.

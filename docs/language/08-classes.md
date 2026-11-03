@@ -356,6 +356,24 @@ class Account {
 }
 ```
 
+Two attributes before a class change what happens to it:
+
+- **`[Keep]`** (before a class, method, field or property): a native build keeps it even when the program never reaches it - for a class only made by its name
+  (`Reflect.New("Plugin", [])`, `Type.Named("Plugin")`) or read from JSON. Before a class it keeps the class with all its members; before a member that member
+  and its class. It is not inherited. The VM keeps everything anyway (see [Probes and reflection](16-probes-and-reflection.md#reflection-in-native-builds)).
+- **`[NotSerializable]`** (before a class): `#import "json"` neither writes nor reads objects of the class or of a class derived from it (an `ArgumentException`).
+
+```fire
+[Keep]
+class Plugin {
+    construct() { }
+    string Hello() { return "hello" }
+}
+
+[NotSerializable]
+class Session { int token }
+```
+
 An attribute whose name is a `flag enum` takes members of that enum as its arguments (`[Access Read, Write]`) and marks the declaration with
 these flags; reflection checks them with `HasFlag` (see [Enums](10-enums-and-namespaces.md#flag-enums-as-attributes)):
 
