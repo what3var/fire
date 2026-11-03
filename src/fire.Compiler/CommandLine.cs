@@ -50,8 +50,11 @@ namespace fire.Compiler
         public bool KeepAll { get; init; }
         /// <summary>`--stripping 0-3|none|protected|methods|all`: how much a native build leaves out (`"stripping"` in fire.native.json, the project's setting; docs/NATIVE_BACKEND.md).</summary>
         public fire.Native.StrippingLevel? Stripping { get; init; }
-        /// <summary>`--linkage source|static|shared`: how a native build links the libraries (`"linkage"` in fire.native.json, the project's setting; ROADMAP 9).</summary>
+        /// <summary>`--linkage source|static|shared|plugin`: how a native build links the libraries (`"linkage"` in fire.native.json, the project's setting; ROADMAP 9);
+        /// `plugin` builds the program's classes as a fire plugin.</summary>
         public string? Linkage { get; init; }
+        /// <summary>`--host <program>`: with `--linkage plugin`, the program (linkage "shared") the plugin is built for.</summary>
+        public string? Host { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
         public string? ProjectName { get; init; }
         /// <summary>Set if the command line is invalid (message for the user).</summary>
@@ -80,7 +83,7 @@ namespace fire.Compiler
             """
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--linkage source|static|shared]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--linkage source|static|shared|plugin] [--host <program>]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>] [--stripping 0-3] [--keep-all]
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
@@ -106,7 +109,9 @@ namespace fire.Compiler
                     Names given as literals to reflection (Reflect.New("Dog")) always stay; a debug build always keeps everything.
             --keep-all  The same as --stripping 0.
             --linkage source|static|shared  How a native build links the libraries and packages: source (the default) puts everything into one C file; static builds each
-                    library once as a static library in the user-wide cache (ember cache clean) and links it; shared (Linux, macOS, Windows with MinGW) builds them as shared libraries (DLLs) put next to the program ("linkage" in fire.native.json or the project).
+                    library once as a static library in the user-wide cache (ember cache clean) and links it; shared (Linux, macOS, Windows with MinGW) builds them as shared libraries (DLLs) put next to the program ("linkage" in fire.native.json or the project);
+                    plugin builds the classes of the program as a fire plugin (<output>.so/.dll and <output>.fireplugin for the VM) that a program with linkage shared loads with Library.Load.
+            --host <program>  With --linkage plugin: the program (built with linkage shared) the plugin is for - its switches and libraries (<program>.firehost next to it).
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
                     typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).
@@ -151,6 +156,7 @@ namespace fire.Compiler
             bool keep = false, keepAll = false;
             fire.Native.StrippingLevel? stripping = null;
             string? linkage = null;
+            string? host = null;
             string? output = null;
             var defines = new List<string>();
             List<string>? programArguments = null;
@@ -222,8 +228,15 @@ namespace fire.Compiler
                 {
                     if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--linkage is only available with build, native and test.");
                     string? value = i + 1 < args.Count ? args[++i].ToLowerInvariant() : null;
-                    if (value is not ("source" or "static" or "shared")) return Fail(command, "--linkage must be followed by source, static or shared.");
+                    if (value is not ("source" or "static" or "shared" or "plugin")) return Fail(command, "--linkage must be followed by source, static, shared or plugin.");
                     linkage = value;
+                }
+                else if (string.Equals(arg, "--host", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command is not CommandKind.Build) return Fail(command, "--host is only available with build (--linkage plugin).");
+                    string? value = i + 1 < args.Count ? args[++i] : null;
+                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--host must be followed by the program the plugin is built for.");
+                    host = Unquote(value);
                 }
                 else if (string.Equals(arg, "--stripping", StringComparison.OrdinalIgnoreCase))
                 {
@@ -303,6 +316,7 @@ namespace fire.Compiler
                 KeepAll = keepAll,
                 Stripping = stripping,
                 Linkage = linkage,
+                Host = host,
                 ProjectName = projectName,
                 OutputGiven = output != null,
                 OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
@@ -460,6 +474,7 @@ namespace fire.Compiler
             if (options.KeepAll) { config.Stripping = fire.Native.StrippingLevel.None; config.StrippingFromCommandLine = true; }
             else if (options.Stripping is { } level) { config.Stripping = level; config.StrippingFromCommandLine = true; }
             if (options.Linkage != null) config.Linkage = options.Linkage;
+            if (options.Host != null) config.Host = options.Host;
             return config;
         }
 

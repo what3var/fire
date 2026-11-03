@@ -22,14 +22,19 @@ namespace fire.Runtime
             switch ((LibraryMethod)a[0].AsInt())
             {
                 case LibraryMethod.Load:
+                    // (a fire plugin: its bytecode - VM.Plugins.cs)
+                    if (LoadPluginFile(a[1].AsString()) is var plugin and not 0) return Value.MakeInt(plugin);
                     try { return Value.MakeInt((long)NativeLibrary.Load(a[1].AsString())); }
                     catch (Exception ex) when (ex is DllNotFoundException or BadImageFormatException or ArgumentException or InvalidOperationException) { return Value.MakeInt(0); }
                 case LibraryMethod.Symbol:
+                    if (a[1].AsInt() < 0) return Value.MakeInt(0);   // (a fire plugin: no C functions)
                     return Value.MakeInt(NativeLibrary.TryGetExport((IntPtr)a[1].AsInt(), a[2].AsString(), out var address) ? (long)address : 0);
                 case LibraryMethod.Arity:
                     return Value.MakeInt(LibraryMethods.Parse(a[1].AsString()) is { } parsed ? parsed.Params.Count : -1);
                 case LibraryMethod.Call:
                     return LibraryInvoke(a[1].AsInt(), a[2].AsString(), a[3].Kind == ValueKind.Array ? a[3].AsArray().Items : Array.Empty<Value>());
+                case LibraryMethod.Plugin:
+                    return LibraryPlugin(a[1].AsInt());
                 default:
                     throw new InvalidOperationException($"{LibraryMethods.NativeName}: unknown function {a[0]}.");
             }

@@ -387,7 +387,7 @@ namespace fire.Native
                     foreach (var b in rc.Meta.BaseNames)
                         if (rc.Base == null || !(rc.Base.Name == b || rc.Base.Name.EndsWith("." + b, StringComparison.Ordinal))) interfaces.Add(b);
                 string classAttrs = Attributes((IReadOnlyList<AttributeMeta>?)rc.Meta?.Attributes ?? Array.Empty<AttributeMeta>());
-                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}, {classAttrs}, {Strings(stripped)}, {stripped.Count}}}");
+                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}, {classAttrs}, {Strings(stripped)}, {stripped.Count}, NULL}}");
             }
             _rfListIndex = listIndex;
             return classRows;
@@ -428,6 +428,13 @@ namespace fire.Native
             var sb = new StringBuilder();
             var own = _program.Program.Classes.Values.Where(IsOwnClass).OrderBy(c => c.Name, StringComparer.Ordinal).ToList();
             var rows = ReflectionRows(sb, own);
+            // (a plugin: Reflect.New of the program makes the objects of its classes through their rows)
+            if (_plugin)
+                for (int i = 0; i < own.Count; i++)
+                {
+                    sb.AppendLine($"Value {NewFunctionName(ModId, own[i])}(int argc, const Value* items, OwnList* list, uint32_t caller);");
+                    rows[i] = rows[i].Substring(0, rows[i].Length - "NULL}".Length) + $"{NewFunctionName(ModId, own[i])}}}";
+                }
             for (int i = 0; i < own.Count; i++) sb.AppendLine($"const RfClass {RfRowName(ModId, own[i])} = {rows[i]};");
             // Reflect.New of its classes (the program's rf_new calls them by the name of the class)
             foreach (var rc in own)
@@ -485,12 +492,15 @@ FIRE_MAYBE_UNUSED static Value rf_strippedClass(Value name) {
     return rfFail(t);
 }");
             sb.AppendLine($"#define RF_CLASS_AT(i) ({rfAt.Replace("[i]", "[(i)]")})");
+            if (_openWorld) sb.AppendLine("#define RF_PLUGIN_COUNT g_pluginRfCount   // (the classes of the plugins the program loaded)");
             sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_find(Value name) {");
             sb.AppendLine($"    for (uint32_t i = 0; i < kRfClassCount; i++) if (strIs(name, ({rfAt})->name)) return {rfAt};");
+            if (_openWorld) sb.AppendLine("    for (uint32_t i = 0; i < g_pluginRfCount; i++) if (strIs(name, ((const RfClass*)g_pluginRf[i])->name)) return (const RfClass*)g_pluginRf[i];   // (the classes of plugins)");
             sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
             sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_findC(const char* name) {");
             sb.AppendLine($"    for (uint32_t i = 0; i < kRfClassCount; i++) if (strcmp(name, ({rfAt})->name) == 0) return {rfAt};");
+            if (_openWorld) sb.AppendLine("    for (uint32_t i = 0; i < g_pluginRfCount; i++) if (strcmp(name, ((const RfClass*)g_pluginRf[i])->name) == 0) return (const RfClass*)g_pluginRf[i];");
             sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
             sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_classOf(uint32_t cls) { return rf_findC(className(cls)); }");
@@ -595,8 +605,9 @@ FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
     return ArrV(all);
 }
 FIRE_MAYBE_UNUSED static Value rf_classes(OwnList* list) {
-    Arr* names = allocArr(kRfClassCount, list);
+    Arr* names = allocArr(kRfClassCount + RF_PLUGIN_COUNT, list);
     for (uint32_t i = 0; i < kRfClassCount; i++) { Value s = strFromUtf8(RF_CLASS_AT(i)->name, list); arrItems(names)[i] = s; retain(s); }
+    for (uint32_t i = 0; i < RF_PLUGIN_COUNT; i++) { Value s = strFromUtf8(((const RfClass*)g_pluginRf[i])->name, list); arrItems(names)[kRfClassCount + i] = s; retain(s); }
     return ArrV(names);
 }
 FIRE_MAYBE_UNUSED static Value rf_is_sub(Value name, Value base) {
@@ -742,13 +753,19 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
     (void)caller; (void)list;
     int argc = args.kind == K_Array ? (int)arrOf(args)->length : 0;
     const Value* items = args.kind == K_Array ? arrItems(arrOf(args)) : NULL; (void)items;
-{newSb}    if (rf_isStripped(cname)) return rf_strippedClass(cname);
+{newSb}{(_openWorld ? "    { const RfClass* pc = rf_find(cname); if (pc && pc->make) return pc->make(argc, items, list, caller); }   // (a class of a plugin)\n" : "")}    if (rf_isStripped(cname)) return rf_strippedClass(cname);
     char n[200], t[500]; strToUtf8(cname, n, sizeof n);
     if (!rf_find(cname)) snprintf(t, sizeof t, ""Unknown class '%s'."", n);
     else snprintf(t, sizeof t, ""'%s' has no constructor with %d parameter(s)."", n, argc);
     return rfFail(t);
 }}");
             if (_usesProbes) sb.Append(ProbeCode(fieldNames));
+            if (!_openWorld)
+            {
+                // (no plugins: rf_classes lists the program's classes)
+                sb.Replace("    for (uint32_t i = 0; i < RF_PLUGIN_COUNT; i++) { Value s = strFromUtf8(((const RfClass*)g_pluginRf[i])->name, list); arrItems(names)[kRfClassCount + i] = s; retain(s); }\n", "");
+                sb.Replace("allocArr(kRfClassCount + RF_PLUGIN_COUNT, list)", "allocArr(kRfClassCount, list)");
+            }
             return sb.ToString();
         }
 

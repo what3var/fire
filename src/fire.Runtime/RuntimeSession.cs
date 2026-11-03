@@ -112,6 +112,7 @@ namespace fire.Runtime
             var globalScope = new Scope(null, isGlobal: true);
 
             fire.Values.Unit.UseCustomUnits(linkedProgram.Program.CustomUnits);   // the units the program declares (`unit Inch: in { ... }`)
+            VM.RegisterProgram(linkedProgram);   // (the interfaces of its modules: what a fire plugin is checked against)
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: executionMode);
 

@@ -1033,6 +1033,51 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
   ihn (mit Modulen im Programm, bei `"shared"` unter Windows ein Hook). Eine Signatur, die erst zur Laufzeit entsteht, hat keinen: `Get` sagt es. Die Fehler wirft
   der fire-Code der Klasse (`LibraryException`, in VM und nativ gleich).
 
+### Plugins (Phase D b)
+
+Ein **fire-Plugin** ist ein Library-Modul, das für sich gebaut und von einem laufenden Programm geladen wird (`Library.Load`, docs/language/18-native-code.md
+"fire plugins"). Gebaut wird es mit `--linkage plugin` (oder `"linkage": "plugin"` im Projekt): die Klassen der eigenen Dateien des Programms werden das Modul des
+Plugins (benannt nach dem Projekt bzw. der Ausgabe), alle anderen Module (core, die Imports, die Libraries des Projekts) sind die, die es braucht. Heraus kommen
+`<ausgabe>.so` (`.dll`, `.dylib`) und `<ausgabe>.fireplugin`, der Bytecode für die VM (Entscheidung 9.8; für die VM übersetzt - `#if vm` -, mit den Namen seiner
+Natives und den Schnittstellen der Module, wie die VM sie sieht).
+
+* **Das Plugin** ist ein Modul mit der Rolle einer Library (`_plugin`): es nummeriert seine Klassen ab einer Basis, ruft die anderen Module über ihre exportierten
+  Namen, bedient seine eigenen Klassen selbst. Was das Programm sonst für eine Library festlegt, legt es selbst an und füllt es beim Registrieren: `fire_mb_<p>`
+  (die Id seiner ersten Klasse), `fire_exct_<p>` (seine Typen von `catch`, nach Namen), `fire_enums_<p>` (seine Enums, nach Namen); Einheiten gibt es in einem
+  Plugin noch nicht (der Bau sagt es). Dazu schreibt es die Deskriptoren seiner Klassen (wie das Programm: Destruktoren der Kette, ToString, `message`/`ticks`, die
+  Namen der Kette und der Interfaces, die Tabellen der Member - seine eigenen und die exportierten `fire_mem_<m>_<Klasse>` der Module seiner Basisklassen -, die
+  Funktion der Typargumente), seine Reflection-Zeilen (mit Reflect.New: `RfClass.make`), eine Funktion mit den statischen Initialisierern seiner Klassen (was sie
+  anlegen, gehört dem globalen Scope) und `fire_module_info` (`FirePlugin` in fire_rt.h).
+* **Registrieren** (`fireRegisterPlugin`, `Library.Load` ruft es über `__LibCall(5, handle)`, wenn die Bibliothek `fire_module_info` exportiert): geprüft wird nur über
+  Hashes (Entscheidung 9.6) - die Schnittstelle jedes Moduls, das es braucht (`format:hash`, wie bei `"shared"`), muss die des Programms sein, und der Schlüssel der
+  Konfiguration der Runtime (Generator, Schalter der Module, Kopf der Dateien) der des Programms. Dann bekommen seine Klassen die nächsten Ids (`g_classDescs` wächst:
+  kopiert und angehängt, die alte Tabelle bleibt für andere Threads), seine Typen von `catch` die Ids des Programms (ein Typ, den das Programm nicht kennt, eine neue,
+  `excMatches` vergleicht ihn über den Namen der Klasse), seine Enums die Nummern des Programms (sonst neue), seine Reflection-Zeilen kommen in `g_pluginRf`, dann
+  laufen die statischen Initialisierer. Ein zweites `Load` desselben Plugins gibt dieselben Klassen; ein anderes Plugin mit demselben Namen oder eine Klasse, die das
+  Programm schon hat, ist ein Fehler. Die Fehler sind Texte, die `Library.Load` als `LibraryException` wirft („The plugin 'Kit' cannot be loaded: ...“).
+* **Das Programm** (nur mit `"shared"`) ist eine offene Welt (`_openWorld`): keine Devirtualisierung ohne Prüfung (`DirectMethod`, `DirectAccessor`), keine
+  Verteiler eines Interfaces (die allgemeinen gehen für eine fremde Klasse über die Runtime), `is of`, Feld-Helfer, Klassen-Wertungen fragen für Klassen nach den eigenen
+  (`FIRE_PROG_END`) die Runtime; jede Klasse der Libraries hat ihren vollen Deskriptor (ein Plugin kann Objekte jeder Klasse anlegen), die Tabellen der eigenen
+  Klassen nennen jeden Member (ein Plugin ruft sie beim Namen), `makeClassError` kennt jede Ausnahme der Libraries. Es sagt der Runtime, wogegen sie prüft
+  (`g_pluginHost`: der Schlüssel der Konfiguration, die Schnittstellen seiner Module, die Namen seiner Typen von `catch`, unter Windows `fire_hostFind`), und
+  `rf_find`/`rf_classes`/`rf_new` sehen die Klassen der Plugins. Neben das Programm schreibt der Bau `<programm>.firehost` (JSON: Ziel, Schalter, SDL, Schlüssel der
+  Runtime, die Module mit Schnittstelle und Datei ihrer Bibliothek); `--host <programm>` baut ein Plugin mit diesen Schaltern (braucht das Plugin einen weiteren,
+  sagt es der Bau). Ein Programm ohne `"shared"` exportiert nichts, was ein Plugin braucht: `Load` sagt, dass es keine Plugins laden kann.
+* **Linux/macOS**: das Plugin ist eine Shared Library ohne Abhängigkeiten beim Linken; was es vom Programm und den Libraries braucht, findet der Lader im Programm
+  (`-rdynamic`) und in den Bibliotheken, die es schon geladen hat.
+* **Windows** (MinGW): die DLL des Plugins importiert aus der DLL der Runtime und den DLLs der Module des Programms (ihre Namen aus `.firehost`, `--host` ist dort nötig);
+  was es vom Programm braucht, sind Zeiger, die seine `fire_link_<p>` beim Registrieren aus der Tabelle des Programms füllt (`fire_hostFind`; die Tabelle eines
+  Programms, das Plugins laden kann, nennt auch die Basen aller Module und seine Reflection-Funktionen).
+* **VM** (`VM.Plugins.cs`): `Library.Load` einer `.fireplugin`-Datei (oder einer Bibliothek, neben der eine liegt) liest den Bytecode; beim Registrieren werden die
+  Schnittstellen der Module verglichen (`ModuleInterface`, die Module des laufenden Programms - ein gepacktes Programm kennt sie nicht und prüft nicht), die Klassen
+  in die des Programms gehängt (ihre Basisklassen sind die des Programms), die Nummern der Natives im Code nach Namen umgeschrieben, die statischen Initialisierer
+  ausgeführt. Code, der Variablen der obersten Ebene seiner Datei oder `extern`/versuchbare Natives benutzt, lädt nicht (mit einer Meldung).
+* Noch nicht: Einheiten, Natives in C++ und `class extends` einer Klasse des Programms oder einer Library in einem Plugin; JSON von Objekten eines Plugins und benannte
+  Argumente auf ihnen im nativen Programm; Debuggen eines Plugins; msvc.
+* Getestet (`FIRE_TESTS_ONLY=linkage`, nur die Plugins mit `FIRE_TESTS_FILTER=plugin`): ein Projekt mit der Library `Api`, dem Programm (shared) und dem Plugin `Kit`
+  - Interface, Basisklasse mit überschriebenen Methoden, Reflect.New/Get/Call, Type.Of, Ausnahmen beider Richtungen, Enum, statische Felder - nativ, in der VM und
+  unter Windows (MinGW, Wine); eine andere Schnittstelle von `Api`, ein Programm ohne `"shared"`, andere Schalter.
+
 ### Debuggen
 
 Ein Debug-Build mit `static` debuggt wie sonst: jede Funktion einer Library hat ihre Tabellen (Variablen, Scopes) in ihrem Modul, ihre Zeilen melden die Quelle über
