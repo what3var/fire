@@ -61,8 +61,9 @@ Benchmarks vorher/nachher.
 Danach: ~~die Natives der Standard-Packages in C~~ - **umgesetzt**: process, time, io, net, tls (OpenSSL, mbedTLS, SChannel), gpio, i2c, spi, usb, wifi,
 devices, audio, tracker, graphics und windows sind C99 (`"language": "c"` im Manifest), ihre Plattformschichten ebenso (`native/platform/std/fire_<teil>_c.h`).
 Ein Programm mit diesen Packages ist reines C und lässt sich mit TinyCC bauen (`--toolchain tcc`). Auch die 3D-Engine `scene3d` ist C99 (Branch `scene-c`:
-derselbe Software-Renderer, bytegleiche Bilder wie vorher, dazu ein optionaler Hardware-Renderer über Vulkan, docs/SCENE3D.md "Hardware"). C++ bleibt bewusst der
-Simulator `circuits`; `fire_rt_cpp.hpp` und `fire_platform.hpp` gibt es nur noch für ihn. Geprüft: die Testsuite (VM == nativ, ASan/UBSan),
+derselbe Software-Renderer, bytegleiche Bilder wie vorher, dazu ein optionaler Hardware-Renderer über Vulkan, docs/SCENE3D.md "Hardware"), und der Simulator
+`circuits` (Branch `circuits-c`: derselbe Kern, jede Rechnung in derselben Reihenfolge - die Ausgaben der Tests sind bytegleich, auch ungerundet). Kein
+Standard-Package braucht mehr C++; `fire_rt_cpp.hpp` und `fire_platform.hpp` bleiben für Packages, die ihre Natives in C++ schreiben. Geprüft: die Testsuite (VM == nativ, ASan/UBSan),
 die Fälle der Packages zusätzlich mit TinyCC und - wo möglich - für Windows (MinGW) unter Wine; ESP32/FreeRTOS nur mit Ersatz-Headern übersetzt.
 
 ## 1. Echte Enums

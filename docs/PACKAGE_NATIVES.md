@@ -13,7 +13,7 @@ So the C# VM never needs to know your functions: it only knows the C ABI, and th
 ## 0. C or C++
 
 A package says in its manifest which language its natives are in: `"native": { "language": "c", ... }` or `"c++"` (the default). **C (C99) is the recommended
-choice** and what all standard packages use except the simulator `circuits`:
+choice** and what all standard packages use:
 
 * a C package goes straight into the generated program (`fire_program.c`), so a C compiler is enough - TinyCC (`--toolchain tcc`), a board without C++;
 * a function is named with `"c": "fire_sensor_Read"` (instead of `"cpp": "sensor::Read"`), `"reset"` names a C function, too; every function in the sources is
