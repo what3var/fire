@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using fire.Bytecode;
 using fire.Values;
 
 namespace fire.Runtime
@@ -132,6 +134,52 @@ namespace fire.Runtime
                     // bool/int/float/char/string/undefined - value-like, directly copyable.
                     return v;
             }
+        }
+
+        /// <summary>`[NoCopy]` (SPEC 5.12) before a copy for another thread - `taking` (`op` "taking") and the arguments of `fire global` ("fire global"):
+        /// an InvalidOperationException (the VM turns it into the ArgumentException) when an instance of a `[NoCopy]` class is reachable from `v` through
+        /// fields and array elements - checked before anything is copied, queued or locked, so that no thread starts and no job runs. Walks like the
+        /// discovery of the native DeepCopier (a stack, fields in their order; destroyed objects are skipped), so both engines name the same instance.
+        /// An array is walked too: natively `taking` copies it (the VM hands it over as it is), so in both engines it may not hold one.</summary>
+        public static void RequireNoCopyFree(Value v, string op)
+        {
+            if (v.Kind != ValueKind.Class && v.Kind != ValueKind.Array) return;
+            object? root = v.Kind == ValueKind.Class ? v.AsObjectRef() : null;
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var pending = new Stack<Value>();
+            pending.Push(v);
+            while (pending.Count > 0)
+            {
+                var x = pending.Pop();
+                if (x.Kind == ValueKind.Class)
+                {
+                    var obj = (ObjectInstance)x.AsObjectRef();
+                    if (obj.IsDestroyed || !seen.Add(obj)) continue;
+                    if (obj.RtClass?.IsNoCopy() == true)
+                        throw new InvalidOperationException(RuntimeClass.NoCopyMessage(obj.ClassName, !ReferenceEquals(obj, root), op));
+                    foreach (var (_, field) in FieldsOf(obj)) pending.Push(field);
+                }
+                else if (x.Kind == ValueKind.Array)
+                {
+                    var arr = (ScriptArray)x.AsArray();
+                    if (!seen.Add(arr)) continue;
+                    for (int i = 0; i < arr.Length; i++) pending.Push(arr.Items[i]);
+                }
+            }
+        }
+
+        /// <summary>The fields of `node`, read under its tree lock when it has one.</summary>
+        internal static List<KeyValuePair<string, Value>> FieldsOf(ObjectInstance node)
+        {
+            var fields = new List<KeyValuePair<string, Value>>();
+            if (node.ThreadLock != null)
+            {
+                node.ThreadLock.Enter();
+                try { fields.AddRange(node.Fields); }
+                finally { node.ThreadLock.Exit(); }
+            }
+            else fields.AddRange(node.Fields);
+            return fields;
         }
 
         /// <summary>`node` belongs to `treeRoot`'s own ownership tree if it

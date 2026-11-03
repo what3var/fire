@@ -277,7 +277,13 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
   an instance of it as the operand of `flat`/`copy`, or reached by `copy` through a field or an array element, is an `ArgumentException`
   ("'NativeHandle' cannot be copied ([NoCopy]) - ...") before anything is copied - also for a class derived from it, as an argument
   (`f(copy h)`), assigned to a field and for the arguments of `fire global` (deep copies). `flat` of an object or array that only *refers* to one is fine
-  (the reference is shared, nothing is duplicated).
+  (the reference is shared, nothing is duplicated). The copies of the threads (no form of them moves an object): `fire taking x` / `fire M(args)`
+  (a copy of the tree, an array included) refuses one reached from any of its values at the `fire` - nothing is copied, the thread does not start
+  ("... - 'taking' would copy an instance of it, which exists only once." / "... - 'taking' reaches an instance of it (a field or an element of the copied
+  value), which exists only once."); `fire global { } taking x` refuses an object argument that reaches one before the job is queued (`'fire global'`; an
+  array argument is handed over as it is, not copied); `sync`/`try sync` refuses before anything is written back when case A (a new object, copied into
+  the original) reaches one or when case C of the full sync would write the fields of one into another instance (`'sync' reaches ...`), `sync flat` only
+  in case A (its case C keeps the reference). `fire with a` and the global variables (read directly, written in a section) share, they never copy.
 - An **actor** as an operand is an error; an actor inside a copy remains a shared reference (actor references are meant to be
   passed around). Likewise an already destroyed object inside remains a shared reference; as an operand it is an error (an `ArgumentException`
   "An already destroyed object cannot be copied.").
@@ -1088,7 +1094,8 @@ reflection - `Reflect.New("X")`, `Reflect.Call(o, "M")` - is kept the same way w
 stripping level 0-3, docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
 derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md); `[NoCopy]` (before a class) -
 an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
-`ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+`ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
+`taking`, the arguments of `fire global`, what `sync` copies back - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
 and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
 editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
