@@ -6,82 +6,121 @@ using System.Text;
 using System.Text.Json;
 using fire.Bytecode;
 using fire.Compiler;
+using fire.Debugging;
 using fire.Runtime;
 using fire.Values;
 
 /// <summary>
-/// The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): a client that launches a native program with FIRE_DEBUG and drives it over the
-/// protocol, the same way spark drives the VM.
+/// The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): a client that launches a native program and drives it over the protocol, the same
+/// way spark drives the VM. The wire is one of spark's transports (fire.Debugging): TCP (FIRE_DEBUG=tcp:..., <see cref="Launch"/>), framed over the
+/// program's stdio (FIRE_DEBUG=stdio, the FreeRTOS simulator: <see cref="LaunchStdio"/>), or framed over any stream (QEMU's serial port: <see cref="Attach"/>).
 /// </summary>
 sealed class NativeDebugClient : IDisposable
 {
-    private readonly TcpListener _listener;
-    private readonly Process _process;
-    private TcpClient? _client;
-    private StreamWriter? _writer;
+    private readonly TcpListener? _listener;
+    private readonly Process? _process;
+    private INativeDebugTransport? _transport;
     private readonly BlockingCollection<JsonElement> _replies = new();
     private readonly BlockingCollection<JsonElement> _events = new();
     private readonly StringBuilder _stdout = new();
     private readonly StringBuilder _stderr = new();
     private int _nextId = 1;
     public JsonElement Hello { get; private set; }
+    /// <summary>The program's output: its stdout (TCP), or the console between the frames (framed).</summary>
     public string Output { get { lock (_stdout) return _stdout.ToString(); } }
     public string Errors { get { lock (_stderr) return _stderr.ToString(); } }
-    public int? ExitCode => _process.HasExited ? _process.ExitCode : null;
+    public int? ExitCode => _process is { HasExited: true } ? _process.ExitCode : null;
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
-    private NativeDebugClient(string exe, string workDir, string token, string? launcher, IDictionary<string, string>? environment)
+    private NativeDebugClient(string exe, string workDir, string? launcher, IDictionary<string, string>? environment, string? fireDebug, bool stdio)
     {
-        _listener = new TcpListener(IPAddress.Loopback, 0);
-        _listener.Start();
-        int port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        var start = new ProcessStartInfo(launcher ?? exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+        var start = new ProcessStartInfo(launcher ?? exe) { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = stdio, UseShellExecute = false, WorkingDirectory = workDir };
         if (launcher != null) start.ArgumentList.Add(exe);
         if (environment != null) foreach (var (k, v) in environment) start.Environment[k] = v;
-        start.Environment["FIRE_DEBUG"] = $"tcp:127.0.0.1:{port};token={token}";
+        if (!stdio)
+        {
+            _listener = new TcpListener(IPAddress.Loopback, 0);
+            _listener.Start();
+            fireDebug = fireDebug!.Replace("PORT", ((IPEndPoint)_listener.LocalEndpoint).Port.ToString());
+        }
+        if (fireDebug != null) start.Environment["FIRE_DEBUG"] = fireDebug;
         _process = Process.Start(start)!;
-        _process.OutputDataReceived += (_, e) => { if (e.Data != null) lock (_stdout) _stdout.Append(e.Data).Append('\n'); };
         _process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (_stderr) _stderr.Append(e.Data).Append('\n'); };
-        _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
+        if (stdio) _transport = new FramedDebugTransport(_process.StandardOutput.BaseStream, _process.StandardInput.BaseStream) { Console = ConsoleLine };
+        else
+        {
+            _process.OutputDataReceived += (_, e) => { if (e.Data != null) ConsoleLine(e.Data); };
+            _process.BeginOutputReadLine();
+        }
     }
 
-    /// <summary>Starts the program and waits for its hello (and the stop at the entry).</summary>
+    private NativeDebugClient(INativeDebugTransport transport)
+    {
+        _transport = transport;
+        transport.Console = ConsoleLine;
+    }
+
+    private void ConsoleLine(string line) { lock (_stdout) _stdout.Append(line).Append('\n'); }
+
+    /// <summary>Starts the program with FIRE_DEBUG=tcp:... and waits for its hello.</summary>
     public static NativeDebugClient Launch(string exe, string workDir, string? launcher = null, IDictionary<string, string>? environment = null)
     {
         string token = Guid.NewGuid().ToString("N");
-        var c = new NativeDebugClient(exe, workDir, token, launcher, environment);
-        var accept = c._listener.AcceptTcpClientAsync();
+        var c = new NativeDebugClient(exe, workDir, launcher, environment, $"tcp:127.0.0.1:PORT;token={token}", stdio: false);
+        var accept = c._listener!.AcceptTcpClientAsync();
         if (!accept.Wait(Timeout)) throw new TimeoutException("the program did not connect: " + c.Errors);
-        c._client = accept.Result;
-        c._client.NoDelay = true;
-        var stream = c._client.GetStream();
-        c._writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
-        var reader = new StreamReader(stream, new UTF8Encoding(false));
+        var client = accept.Result;
+        client.NoDelay = true;
+        c._transport = new TcpDebugTransport(client);
+        c.Start(token);
+        return c;
+    }
+
+    /// <summary>Starts the program with its stdio as the framed transport: FIRE_DEBUG=<paramref name="fireDebug"/> (null: none - a build whose transport is stdio,
+    /// like the FreeRTOS simulator), and waits for its hello.</summary>
+    public static NativeDebugClient LaunchStdio(string exe, string workDir, string? fireDebug = "stdio;token=TOKEN")
+    {
+        string token = Guid.NewGuid().ToString("N");
+        var c = new NativeDebugClient(exe, workDir, null, null, fireDebug?.Replace("TOKEN", token), stdio: true);
+        c.Start(fireDebug != null && fireDebug.Contains("TOKEN") ? token : null);
+        return c;
+    }
+
+    /// <summary>A program on the other end of a framed transport (QEMU's serial port, a board): waits for its hello (the console before it is in <see cref="Output"/>).</summary>
+    public static NativeDebugClient Attach(INativeDebugTransport transport)
+    {
+        var c = new NativeDebugClient(transport);
+        c.Start(null);
+        return c;
+    }
+
+    private void Start(string? token)
+    {
+        var transport = _transport!;
         new Thread(() =>
         {
             try
             {
                 string? line;
-                while ((line = reader.ReadLine()) != null)
+                while ((line = transport.ReadMessage()) != null)
                 {
                     var e = JsonDocument.Parse(line).RootElement.Clone();
-                    if (e.TryGetProperty("re", out _)) c._replies.Add(e); else c._events.Add(e);
+                    if (e.TryGetProperty("re", out _)) _replies.Add(e); else _events.Add(e);
                 }
             }
             catch (Exception) { }
-            c._replies.CompleteAdding();
-            c._events.CompleteAdding();
+            _replies.CompleteAdding();
+            _events.CompleteAdding();
         }) { IsBackground = true }.Start();
-        c.Hello = c.NextEvent("hello");
-        if (c.Hello.GetProperty("token").GetString() != token) throw new InvalidOperationException("wrong token");
-        return c;
+        Hello = NextEvent("hello");
+        if (token != null && Hello.GetProperty("token").GetString() != token) throw new InvalidOperationException("wrong token");
     }
 
     /// <summary>The next event (skipping none: an unexpected one is an error).</summary>
     public JsonElement NextEvent(string? name = null)
     {
-        if (!_events.TryTake(out var e, Timeout)) throw new TimeoutException($"no event ({name}); stderr: {Errors}");
+        if (!_events.TryTake(out var e, Timeout)) throw new TimeoutException($"no event ({name}); stderr: {Errors}; output: {Output}");
         if (name != null && e.GetProperty("event").GetString() != name) throw new InvalidOperationException($"expected {name}, got {e}");
         return e;
     }
@@ -101,24 +140,36 @@ sealed class NativeDebugClient : IDisposable
         int id = _nextId++;
         var message = new Dictionary<string, object?> { ["id"] = id, ["cmd"] = cmd };
         if (args != null) foreach (var (k, v) in args) message[k] = v;
-        _writer!.WriteLine(JsonSerializer.Serialize(message));
+        _transport!.WriteMessage(JsonSerializer.Serialize(message));
         if (!_replies.TryTake(out var reply, Timeout)) throw new TimeoutException($"no reply to {cmd}; stderr: {Errors}");
         if (reply.GetProperty("re").GetInt32() != id) throw new InvalidOperationException($"reply {reply} for {id}");
         return reply;
     }
 
+    /// <summary>A line for the program's standard input (a framed transport).</summary>
+    public bool SendInput(string line) => _transport!.WriteInput(line);
+
+    /// <summary>Raw bytes onto the wire of a framed transport (a garbled frame, ...): through its stream.</summary>
+    public void SendRaw(byte[] bytes)
+    {
+        var s = _process!.StandardInput.BaseStream;
+        s.Write(bytes);
+        s.Flush();
+    }
+
     public static bool Ok(JsonElement reply) => reply.GetProperty("ok").GetBoolean();
 
-    public bool WaitExit(TimeSpan timeout) => _process.WaitForExit((int)timeout.TotalMilliseconds);
+    public bool WaitExit(TimeSpan timeout) => _process == null || _process.WaitForExit((int)timeout.TotalMilliseconds);
 
     public void Dispose()
     {
-        try { if (!_process.HasExited) _process.Kill(); } catch (Exception) { }
-        _process.WaitForExit(5000);
-        _client?.Dispose();
-        _listener.Stop();
+        try { if (_process != null && !_process.HasExited) _process.Kill(); } catch (Exception) { }
+        _process?.WaitForExit(5000);
+        _transport?.Dispose();
+        _listener?.Stop();
     }
 }
+
 
 static class NativeDebugTests
 {
@@ -545,9 +596,13 @@ static class NativeDebugTests
     static IEnumerable<Op> Repeat(Func<Op?> next) { while (next() is Op op) yield return op; }
 
     /// <summary>The native program: the same plan over the protocol.</summary>
-    static (List<string> Stops, List<string> Output, string Errors) RunNative(string exe, string dir, int[] bps, IEnumerable<Op> plan, bool details, Func<Op?>? stepAll = null)
+    static (List<string> Stops, List<string> Output, string Errors) RunNative(string exe, string dir, int[] bps, IEnumerable<Op> plan, bool details, Func<Op?>? stepAll = null) =>
+        RunNative(() => NativeDebugClient.Launch(exe, dir), bps, plan, details, stepAll);
+
+    /// <summary>The same over a client the caller makes (another transport: stdio, the FreeRTOS simulator, QEMU).</summary>
+    static (List<string> Stops, List<string> Output, string Errors) RunNative(Func<NativeDebugClient> launch, int[] bps, IEnumerable<Op> plan, bool details, Func<Op?>? stepAll = null)
     {
-        using var c = NativeDebugClient.Launch(exe, dir);
+        using var c = launch();
         int first = c.Hello.GetProperty("firstUserSource").GetInt32();
         int main = c.Hello.GetProperty("mainThread").GetInt32();
         var entry = c.NextEvent("stopped");
@@ -652,6 +707,7 @@ static class NativeDebugTests
     {
         RunCases(check, cxx, workDir, sanitize);
         RunProtocol(check, cxx, workDir, sanitize);
+        RunTransports(check, cxx, workDir, sanitize);
     }
 
     static void RunCases(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)
@@ -988,6 +1044,252 @@ static class NativeDebugTests
             c.WaitExit(NativeDebugClient.Timeout);
             return (ok, log.ToString() + threads + c.Errors);
         });
+    }
+
+    /// <summary>The framed transports (docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): stdio on the desktop (FIRE_DEBUG=stdio) and on the FreeRTOS simulator
+    /// (native/sim: a FreeRTOS build, whose transport is stdio), the same plans as over TCP against the VM; the console between the frames, garbled frames,
+    /// the program's standard input through the agent, the wait of 3 s for a debugger; and an ESP32 on QEMU (the console UART on a socket).</summary>
+    static void RunTransports(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)
+    {
+        string flags = $"-pthread -O0 -g -Wall -Wextra {sanitize}";
+        void Check(string title, Func<(bool Ok, string Detail)> body)
+        {
+            string full = "Native-Debugger: " + title;
+            if (!TestSelectedName(full)) return;
+            try { var (ok, detail) = body(); check(full, ok, detail); }
+            catch (Exception ex) { check(full, false, ex.ToString()); }
+        }
+
+        // the same plans as over TCP: stdio, framed (desktop)
+        foreach (var name in new[] { "Schleifen und Aufrufe", "Objekte, this und Felder", "unbehandelte Ausnahme: anhalten und ignorieren (resume)" })
+        {
+            var c = Cases.First(x => x.Name == name);
+            Check($"stdio (Rahmen): {c.Name}: wie die VM", () =>
+            {
+                string? exe = Build(c.Script, cxx, workDir, "dbgstdio" + Math.Abs(c.Name.GetHashCode() % 1000), flags, out string error);
+                if (exe == null) return (false, error);
+                var (vmStops, vmOut) = RunVm(c.Script, c.Breakpoints, c.Plan, true);
+                var (natStops, natOut, natErr) = RunNative(() => NativeDebugClient.LaunchStdio(exe, workDir), c.Breakpoints, c.Plan, true);
+                return (vmStops.SequenceEqual(natStops) && vmOut.SequenceEqual(natOut), Diff(vmStops, natStops) + $"  Ausgabe VM: {string.Join("|", vmOut)}\n  Ausgabe nativ: {string.Join("|", natOut)}\n  stderr: {natErr}");
+            });
+        }
+
+        // the FreeRTOS simulator: a build for the target freertos (its agent talks framed over stdio, no FIRE_DEBUG), main calls the entry point
+        fire.Native.NativeRuntimeFiles.WriteSimulatorTo(Path.Combine(workDir, "sim"));
+        foreach (var name in new[] { "Schleifen und Aufrufe", "Rekursion" })
+        {
+            var c = Cases.First(x => x.Name == name);
+            Check($"FreeRTOS-Simulator (stdio, Rahmen): {c.Name}: wie die VM", () =>
+            {
+                var generated = Generate(c.Script, VmExecutionMode.Debug, TargetProfile.FreeRtos);
+                if (!generated.Program.Contains("#define FIRE_DEBUG_TRANSPORT_STDIO 1")) return (false, "no stdio transport in the FreeRTOS build");
+                generated = generated with { Program = generated.Program + "\nint main(void) { fire_start(); return 0; }\n" };
+                string exe = Path.Combine(workDir, "dbgrtos" + Math.Abs(c.Name.GetHashCode() % 1000) + ".bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, Path.GetFileNameWithoutExtension(exe), $"{flags} -I\"{Path.Combine(workDir, "sim")}\"", exe, out int exit);
+                if (exit != 0 || build.Contains("warning:")) return (false, "C-Compiler: " + build);
+                var (vmStops, vmOut) = RunVm(c.Script, c.Breakpoints, c.Plan, true);
+                var (natStops, natOut, natErr) = RunNative(() => NativeDebugClient.LaunchStdio(exe, workDir, null), c.Breakpoints, c.Plan, true);
+                return (vmStops.SequenceEqual(natStops) && vmOut.SequenceEqual(natOut), Diff(vmStops, natStops) + $"  Ausgabe VM: {string.Join("|", vmOut)}\n  Ausgabe nativ: {string.Join("|", natOut)}\n  stderr: {natErr}");
+            });
+        }
+
+        // the console between the frames, a text that looks like a frame, a garbled frame, the program's standard input (it waits for it)
+        const string stdinScript = "#import \"io\"\nprint(\"vorher\")\nvar a = IO.Stdio.ReadLine()\nprint(\"gelesen \" + a)\nvar n = 0\nfor (var i = 0; i < 3; i = i + 1) {\n    n = n + i\n    print(\"FD:{\\\"event\\\":\\\"stopped\\\"}*0000 \" + i)\n}\nvar b = IO.Stdio.ReadLine()\nprint(\"ende \" + n + \" \" + b)\n";
+        string? stdinExe = null;
+        string stdinError = "";
+        if (TestSelectedName("Native-Debugger: stdio (Rahmen): Eingabe") || TestSelectedName("Native-Debugger: stdio (Rahmen): ohne"))
+            stdinExe = Build(stdinScript, cxx, workDir, "dbgstdin", flags, out stdinError);
+        Check("stdio (Rahmen): Eingabe des Programms durch den Agenten, Ausgabe zwischen den Rahmen, verfaelschte Rahmen werden verworfen", () =>
+        {
+            if (stdinExe == null) return (false, stdinError);
+            using var c = NativeDebugClient.LaunchStdio(stdinExe, workDir);
+            int first = c.Hello.GetProperty("firstUserSource").GetInt32(), main = c.Hello.GetProperty("mainThread").GetInt32();
+            var log = new StringBuilder($"{c.Hello.GetProperty("transport")}\n");
+            bool ok = c.Hello.GetProperty("transport").GetString() == "stdio" && c.NextEvent("stopped").GetProperty("reason").GetString() == "entry";
+            c.SendRaw(Encoding.ASCII.GetBytes("\u001EFD:{\"id\":77,\"cmd\":\"threads\"}*0000\n"));   // (a wrong CRC: no answer - the next answer is that of the next request)
+            ok &= c.SendInput("eins");
+            ok &= NativeDebugClient.Ok(c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 7 } } }));
+            c.Request("continue", new() { ["thread"] = main });
+            var stop = c.NextEvent("stopped");
+            var globals = c.Request("globals").GetProperty("variables");
+            log.Append(stop).Append('\n').Append(globals).Append('\n');
+            ok &= stop.GetProperty("line").GetInt32() == 7 && Find(globals, "a").GetProperty("display").GetString() == "eins";
+            c.Request("breakpoints", new() { ["breakpoints"] = Array.Empty<int[]>() });
+            c.Request("continue", new() { ["thread"] = main });
+            Thread.Sleep(300);   // (the program waits for its second line now)
+            var threads = c.Request("threads").GetProperty("threads");
+            log.Append(threads).Append('\n');
+            ok &= threads[0].GetProperty("state").GetString() == "running" && !c.Output.Contains("ende");
+            ok &= c.SendInput("zwei");
+            var exited = c.NextEvent("exited");
+            c.WaitExit(NativeDebugClient.Timeout);
+            Thread.Sleep(50);
+            ok &= exited.GetProperty("code").GetInt32() == 0
+                && c.Output == "vorher\ngelesen eins\nFD:{\"event\":\"stopped\"}*0000 0\nFD:{\"event\":\"stopped\"}*0000 1\nFD:{\"event\":\"stopped\"}*0000 2\nende 3 zwei\n";
+            return (ok, log + c.Output + c.Errors);
+        });
+
+        Check("stdio (Rahmen): ohne ersten Befehl laeuft das Programm nach der Wartezeit ohne Debugger, die Eingabe geht weiter durch den Agenten", () =>
+        {
+            if (stdinExe == null) return (false, stdinError);
+            var start = new ProcessStartInfo(stdinExe) { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+            start.Environment["FIRE_DEBUG"] = "stdio;wait=700";
+            using var p = Process.Start(start)!;
+            var watch = Stopwatch.StartNew();
+            var transport = new FramedDebugTransport(p.StandardOutput.BaseStream, p.StandardInput.BaseStream);
+            var console = new BlockingCollection<string>();
+            transport.Console = console.Add;
+            var frames = new List<string>();
+            var reader = new Thread(() => { string? m; while ((m = transport.ReadMessage()) != null) lock (frames) frames.Add(m); console.CompleteAdding(); }) { IsBackground = true };
+            reader.Start();
+            var errTask = p.StandardError.ReadLineAsync();
+            bool first = console.TryTake(out var line1, NativeDebugClient.Timeout);
+            long firstAt = watch.ElapsedMilliseconds;
+            string? err = errTask.Wait(NativeDebugClient.Timeout) ? errTask.Result : null;
+            transport.WriteInput("x");
+            transport.WriteInput("y");
+            var rest = new List<string>();
+            while (console.TryTake(out var l, NativeDebugClient.Timeout)) rest.Add(l);
+            bool exitedInTime = p.WaitForExit(10000);
+            List<string> got;
+            lock (frames) got = frames.ToList();
+            // (the hello and the stop at the entry are framed; after the wait the program runs on its own: no exited for a debugger that never came)
+            bool ok = first && line1 == "vorher" && firstAt >= 650 && err == "fire debug: no debugger within 700 ms - running without one" && exitedInTime && p.ExitCode == 0
+                && string.Join("|", rest) == "gelesen x|FD:{\"event\":\"stopped\"}*0000 0|FD:{\"event\":\"stopped\"}*0000 1|FD:{\"event\":\"stopped\"}*0000 2|ende 3 y"
+                && got.Count == 2 && got[0].Contains("\"event\":\"hello\"") && got[1].Contains("\"reason\":\"entry\"");
+            return (ok, $"{line1} after {firstAt} ms | {err} | {string.Join("|", rest)} | frames: {string.Join(" ", got)}");
+        });
+
+        RunQemu(Check, workDir);
+    }
+
+    /// <summary>An ESP32 debug build on QEMU (ESP-IDF's qemu-system-xtensa, IDF_PATH): the console UART is a socket of QEMU, the client a SerialFramedTransport on
+    /// it - the boot log before the hello, a plan of breakpoints, steps, scopes and an unhandled exception against the VM, the program's standard input; then the
+    /// same program without a debugger: after 3 s it runs alone, reads its input from the UART and ends at its exception.</summary>
+    static void RunQemu(Action<string, Func<(bool Ok, string Detail)>> Check, string workDir)
+    {
+        const string titleVm = "ESP32 (QEMU, UART): Boot-Log vor dem hello, Haltepunkte, Schritte, Scopes, unbehandelte Ausnahme wie die VM, Eingabe ueber die UART";
+        const string titleWait = "ESP32 (QEMU, UART): ohne Debugger laeuft das Programm nach 3 s allein, liest seine Eingabe von der UART";
+        if (!TestSelectedName("Native-Debugger: " + titleVm) && !TestSelectedName("Native-Debugger: " + titleWait)) return;
+        string? idf = Esp32Launch.FindIdf(null);
+        if (idf == null) { Console.WriteLine("(Native-Debugger auf dem ESP32/QEMU: uebersprungen - IDF_PATH fehlt)"); return; }
+        string script = "#import \"io\"\n#if native\nprint(\"gelesen \" + IO.Stdio.ReadLine())\n#endif\nclass W {\n    int low\n    construct(int low) {\n        this.low = low\n    }\n"
+            + "    int Check(int n) {\n        var limit = this.low + 2\n        if (n > limit) {\n            throw new ArgumentException(\"zu gross: \" + n)\n        }\n        return n\n    }\n}\n"
+            + "var w = new W(0)\nvar total = 0\nfor (var i = 0; i < 4; i = i + 1) {\n    total = total + w.Check(i)\n}\nprint(\"total \" + total)\n";
+        int[] bps = { 19 };
+        var plan = new[] { Op.Continue, Op.StepOver, Op.StepOver, Op.StepInto, Op.StepOver, Op.StepOut, Op.Continue, Op.Resume, Op.StepOver, Op.Continue };
+        // the project (its own folder: the ESP32 test of the backend uses ~/.cache/fire-tests/esp32): the component main/, built by idf.py like spark does it
+        string project = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "fire-tests", "esp32-dbg");
+        Directory.CreateDirectory(project);
+        string scriptPath = Path.Combine(project, "dbg.fire");
+        File.WriteAllText(scriptPath, script);
+        Esp32Launch.WriteProject(project, "firedbg");
+        var buildOut = new StringWriter();
+        int code = CommandLineRunner.Run(new[] { "build", scriptPath, "-t", "esp32", "-m", "debug", "-o", Path.Combine(project, "main") }, buildOut, buildOut);
+        var idfLog = new StringBuilder();
+        var (built, _) = code == 0 ? Esp32Launch.BuildAndFlash(idf, project, null, false, l => { lock (idfLog) idfLog.AppendLine(l); }) : (false, null);
+        string idfText;
+        lock (idfLog) idfText = idfLog.ToString();
+        int warnings = System.Text.RegularExpressions.Regex.Matches(idfText, "warning:").Count;
+        if (!built || warnings > 0)
+        {
+            Check(titleVm, () => (false, $"build {code}: {buildOut}\n{string.Join("\n", idfText.Split('\n').TakeLast(40))}"));
+            return;
+        }
+        string flash = Path.Combine(project, "flash.bin");
+        string merge = RunTool("bash", $"-c \". \\\"{idf}/export.sh\\\" > /dev/null 2>&1; cd \\\"{project}/build\\\" && python -m esptool --chip esp32 merge_bin --fill-flash-size 4MB -o \\\"{flash}\\\" @flash_args\"", project, out int mergeExit);
+        if (mergeExit != 0) { Check(titleVm, () => (false, merge)); return; }
+        string? qemu = RunTool("bash", $"-c \". \\\"{idf}/export.sh\\\" > /dev/null 2>&1; command -v qemu-system-xtensa\"", project, out int whichExit).Trim();
+        if (whichExit != 0 || qemu.Length == 0) { Console.WriteLine("(Native-Debugger auf dem ESP32/QEMU: uebersprungen - qemu-system-xtensa fehlt)"); return; }
+
+        // QEMU waits with the start of the chip until the client is there (wait=on): the boot log is complete
+        (Process Qemu, SerialFramedTransport Transport) Boot()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+            var qp = Process.Start(new ProcessStartInfo(qemu, $"-nographic -machine esp32 -m 4M -drive file=\"{flash}\",if=mtd,format=raw -serial tcp:127.0.0.1:{port},server=on,wait=on -monitor none")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+            qp.OutputDataReceived += (_, _) => { };
+            qp.ErrorDataReceived += (_, _) => { };
+            qp.BeginOutputReadLine();
+            qp.BeginErrorReadLine();
+            for (int i = 0; i < 200; i++)
+            {
+                try
+                {
+                    var client = new TcpClient("127.0.0.1", port) { NoDelay = true };
+                    return (qp, new SerialFramedTransport(client.GetStream()));
+                }
+                catch (SocketException) { Thread.Sleep(50); }
+            }
+            try { qp.Kill(); } catch (Exception) { }
+            throw new TimeoutException("QEMU did not open its serial port");
+        }
+
+        if (TestSelectedName("Native-Debugger: " + titleVm))
+            Check(titleVm, () =>
+            {
+                var (vmStops, vmOut) = RunVm(script, bps, plan, true);
+                var (qp, transport) = Boot();
+                string boot = "";
+                try
+                {
+                    var (natStops, natOut, natErr) = RunNative(() =>
+                    {
+                        var c = NativeDebugClient.Attach(transport);
+                        boot = c.Output;
+                        c.SendInput("eingabe");   // (the agent keeps it until the program reads)
+                        return c;
+                    }, bps, plan, true);
+                    // the output: the console after the hello (the boot log came before it)
+                    int bootLines = boot.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+                    var programOut = natOut.Skip(bootLines).Where(l => !l.StartsWith("I (", StringComparison.Ordinal) && !l.StartsWith("W (", StringComparison.Ordinal)).ToList();
+                    bool bootLog = boot.Contains("rst:0x1 (POWERON_RESET)") && boot.Contains("main_task: Calling app_main()") && !boot.Contains("FD:");
+                    var expectedOut = new[] { "gelesen eingabe" }.Concat(vmOut).ToList();
+                    bool ok = bootLog && vmStops.SequenceEqual(natStops) && programOut.SequenceEqual(expectedOut) && vmStops.Count == plan.Length && vmStops.Contains("resumed") && vmStops[^1] == "end";
+                    return (ok, $"boot log {bootLog}\n  VM: {string.Join("\n  VM: ", vmStops)}\n" + Diff(vmStops, natStops) + $"  Ausgabe VM: {string.Join("|", expectedOut)}\n  Ausgabe ESP32: {string.Join("|", programOut)}\n  {natErr}");
+                }
+                finally { try { qp.Kill(); qp.WaitForExit(5000); } catch (Exception) { } }
+            });
+
+        if (TestSelectedName("Native-Debugger: " + titleWait))
+            Check(titleWait, () =>
+            {
+                var (qp, transport) = Boot();
+                try
+                {
+                    var console = new BlockingCollection<string>();
+                    transport.Console = console.Add;
+                    var helloAt = new TaskCompletionSource<long>();
+                    var watch = Stopwatch.StartNew();
+                    var reader = new Thread(() =>
+                    {
+                        string? m;
+                        while ((m = transport.ReadMessage()) != null) if (m.Contains("\"event\":\"hello\"")) helloAt.TrySetResult(watch.ElapsedMilliseconds);
+                        console.CompleteAdding();
+                    }) { IsBackground = true };
+                    reader.Start();
+                    var lines = new List<string>();
+                    long messageAt = -1;
+                    bool sent = false;
+                    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+                    while (DateTime.UtcNow < deadline && console.TryTake(out var l, TimeSpan.FromSeconds(30)))
+                    {
+                        lines.Add(l);
+                        if (l.Contains("no debugger within 3000 ms")) { messageAt = watch.ElapsedMilliseconds; transport.WriteInput("spaet"); sent = true; }
+                        if (l.Contains("zu gross: 3")) break;
+                    }
+                    long hello = helloAt.Task.IsCompleted ? helloAt.Task.Result : -1;
+                    int msg = lines.FindIndex(l => l.Contains("no debugger within 3000 ms"));
+                    int read = lines.FindIndex(l => l == "gelesen spaet");
+                    int thrown = lines.FindIndex(l => l.Contains("ArgumentException") && l.Contains("zu gross: 3"));
+                    bool ok = hello >= 0 && sent && messageAt - hello >= 2500 && msg >= 0 && read > msg && thrown > read;
+                    return (ok, $"hello at {hello} ms, message at {messageAt} ms\n" + string.Join("\n", lines.SkipWhile(l => !l.Contains("app_main"))));
+                }
+                finally { try { qp.Kill(); qp.WaitForExit(5000); } catch (Exception) { } }
+            });
     }
 
     static bool TestSelectedName(string name)

@@ -170,5 +170,11 @@ namespace fire.Runtime
         /// <summary>The name of the toolchain that builds for this target (a key of the configuration's `toolchains`, or `files`: only write the sources);
         /// null: the toolchain of the machine.</summary>
         public string? Toolchain { get; init; }
+
+        /// <summary>A board: the serial port it is on (spark flashes it and talks to its console there); null: found by itself (see Esp32Launch.ResolvePort).</summary>
+        public string? Port { get; init; }
+
+        /// <summary>A board: the baud rate of its console (null: 115200).</summary>
+        public int? Baud { get; init; }
     }
 }

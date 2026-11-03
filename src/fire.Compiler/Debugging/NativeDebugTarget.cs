@@ -82,19 +82,18 @@ namespace fire.Debugging
     }
 
     /// <summary>
-    /// A native debug build under the debugger, over the protocol of docs/NATIVE_DEBUG_PROTOCOL.md: one TCP connection, one JSON message per line.
-    /// A reader thread takes the answers (`re`) to their requests and the events (`stopped`, `thread`, `threadExited`, `exited`) to the threads.
-    /// The output of the program is the output of its process (<see cref="AttachProcess"/>), not part of the protocol.
+    /// A native debug build under the debugger, over the protocol of docs/NATIVE_DEBUG_PROTOCOL.md: a transport (<see cref="INativeDebugTransport"/>) - a
+    /// TCP connection with one JSON message per line (the desktop), or a framed one that carries the program's console too (the console UART of an ESP32,
+    /// stdio: <see cref="OpenFramed"/>). A reader thread takes the answers (`re`) to their requests and the events (`stopped`, `thread`, `threadExited`,
+    /// `exited`) to the threads. Over TCP the output of the program is the output of its process (<see cref="AttachProcess"/>); over a framed transport it
+    /// is the console between the frames.
     /// </summary>
     public sealed class NativeDebugTarget : IDebugTarget
     {
         /// <summary>How long a request waits for its answer.</summary>
         public static TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
-        private readonly TcpClient _client;
-        private readonly StreamReader _reader;
-        private readonly StreamWriter _writer;
-        private readonly object _writeLock = new();
+        private readonly INativeDebugTransport _transport;
         private readonly object _lock = new();
         private readonly ConcurrentDictionary<long, TaskCompletionSource<Dictionary<string, object?>>> _pending = new();
         private readonly Dictionary<long, NativeDebugThread> _threads = new();
@@ -106,12 +105,11 @@ namespace fire.Debugging
         private Action<IDebugThread?, string>? _output;
         private volatile bool _closed;
 
-        private NativeDebugTarget(TcpClient client, StreamReader reader, Dictionary<string, object?> hello)
+        private NativeDebugTarget(INativeDebugTransport transport, Dictionary<string, object?> hello)
         {
-            _client = client;
-            _reader = reader;
-            _writer = new StreamWriter(client.GetStream(), new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true };
+            _transport = transport;
             Hello = hello;
+            Transport = hello.Str("transport") ?? (transport.CarriesConsole ? "stdio" : "tcp");
             Pid = (int)(hello.Num("pid") ?? 0);
             TargetName = hello.Str("target");
             Mode = hello.Str("mode");
@@ -157,7 +155,7 @@ namespace fire.Debugging
                     throw new NativeDebugException($"The program speaks debug protocol {p}; spark knows protocol 1.");
                 }
                 stream.ReadTimeout = Timeout.Infinite;
-                var target = new NativeDebugTarget(client, reader, hello);
+                var target = new NativeDebugTarget(new TcpDebugTransport(client, reader), hello);
                 target.StartReader();
                 if (!target.Main.WaitForFirstStop(deadline - DateTime.UtcNow))
                 {
@@ -173,7 +171,84 @@ namespace fire.Debugging
             }
         }
 
+        /// <summary>
+        /// Opens a debug session over a framed transport (the console UART of a board, stdio of a process): reads until the program's `hello` (the console
+        /// before it - the boot log of a board - goes to <paramref name="console"/>), claims the program at once with a first command (it waits only
+        /// FIRE_DEBUG_WAIT_MS, 3 s, for one) and waits for its main thread at the entry. <paramref name="token"/>: the hello must carry it (null: any).
+        /// Throws <see cref="NativeDebugException"/>; the transport is disposed then.
+        /// </summary>
+        public static NativeDebugTarget OpenFramed(INativeDebugTransport transport, TimeSpan timeout, Action<string>? console = null, string? token = null)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            var early = new List<string>();
+            var gate = new object();
+            NativeDebugTarget? target = null;
+            transport.Console = line =>
+            {
+                NativeDebugTarget? t;
+                lock (gate) { t = target; if (t == null) early.Add(line); }
+                if (t != null) t.WriteOutput(line);
+                else console?.Invoke(line);
+            };
+            var helloTask = System.Threading.Tasks.Task.Run(() =>
+            {
+                while (true)
+                {
+                    string? line = transport.ReadMessage();
+                    if (line == null) return null;
+                    try
+                    {
+                        if (DebugJson.Parse(line) is Dictionary<string, object?> m && m.Str("event") == "hello" && (token == null || m.Str("token") == token)) return m;
+                    }
+                    catch (FormatException) { }
+                }
+            });
+            bool arrived;
+            try { arrived = helloTask.Wait(timeout); }
+            catch (AggregateException ex) { transport.Dispose(); throw new NativeDebugException("Reading the debug connection failed: " + ex.InnerException?.Message); }
+            if (!arrived || helloTask.Result == null)
+            {
+                transport.Dispose();
+                string said;
+                lock (gate) said = string.Join(Environment.NewLine, early.TakeLast(20));
+                throw new NativeDebugException((arrived ? "The connection ended before the program said hello." : $"The program did not say hello within {timeout.TotalSeconds:0} s - is it a debug build, and is it the program on the other end?")
+                    + (said.Length > 0 ? Environment.NewLine + said : ""));
+            }
+            var hello = helloTask.Result;
+            if (hello.Num("protocol") is long p && p != 1)
+            {
+                transport.Dispose();
+                throw new NativeDebugException($"The program speaks debug protocol {p}; spark knows protocol 1.");
+            }
+            var opened = new NativeDebugTarget(transport, hello);
+            lock (gate)
+            {
+                target = opened;
+                if (console == null) foreach (var line in early) opened._bufferedOutput.Add(line);   // (with a console callback it has them already)
+                early.Clear();
+            }
+            opened.StartReader();
+            try
+            {
+                opened.Request("threads");   // (the first command: the program now waits for the debugger, not only 3 s)
+                if (!opened.Main.WaitForFirstStop(deadline - DateTime.UtcNow)) throw new NativeDebugException("The program said hello but its main thread did not stop at its entry.");
+            }
+            catch (NativeDebugException)
+            {
+                opened.Dispose();
+                throw;
+            }
+            return opened;
+        }
+
         public Dictionary<string, object?> Hello { get; }
+        /// <summary>The transport the program named in its hello: `tcp`, `stdio` or `uart`.</summary>
+        public string Transport { get; }
+        /// <summary>The program's console comes over the debug connection (a framed transport): <see cref="WriteInput"/> reaches its standard input.</summary>
+        public bool CarriesConsole => _transport.CarriesConsole;
+
+        /// <summary>A line for the program's standard input (a framed transport only). false: not possible.</summary>
+        public bool WriteInput(string line) => !_closed && _transport.WriteInput(line);
         public int Pid { get; }
         public string? TargetName { get; }
         public string? Mode { get; }
@@ -275,7 +350,7 @@ namespace fire.Debugging
             _pending[id] = tcs;
             try
             {
-                lock (_writeLock) _writer.WriteLine(DebugJson.Write(message));
+                _transport.WriteMessage(DebugJson.Write(message));
             }
             catch (Exception ex) when (ex is IOException or ObjectDisposedException or SocketException)
             {
@@ -319,9 +394,10 @@ namespace fire.Debugging
         {
             try
             {
+                if (_transport.CarriesConsole) _transport.Console = WriteOutput;
                 while (true)
                 {
-                    string? line = _reader.ReadLine();
+                    string? line = _transport.ReadMessage();
                     if (line == null) break;
                     if (line.Length == 0) continue;
                     Dictionary<string, object?> message;
@@ -369,6 +445,11 @@ namespace fire.Debugging
                 case "exited":
                     MarkExited((int?)message.Num("code"));
                     break;
+                case "hello":
+                    // (a board that started again - a reset, a crash - and says hello anew: the program that was debugged is gone)
+                    WriteOutput("(the program started again)");
+                    MarkExited(null);
+                    break;
             }
         }
 
@@ -402,12 +483,13 @@ namespace fire.Debugging
                 try
                 {
                     long id = Interlocked.Increment(ref _nextId);
-                    lock (_writeLock) _writer.WriteLine(DebugJson.Write(new Dictionary<string, object?> { ["id"] = id, ["cmd"] = "terminate", ["code"] = 1L }));
+                    _transport.WriteMessage(DebugJson.Write(new Dictionary<string, object?> { ["id"] = id, ["cmd"] = "terminate", ["code"] = 1L }));
+                    if (_transport.CarriesConsole) Thread.Sleep(100);   // (a serial line: the frame is out before the port closes)
                 }
                 catch (Exception ex) when (ex is IOException or ObjectDisposedException or SocketException) { }
             }
             _closed = true;
-            try { _client.Dispose(); } catch (SocketException) { }
+            try { _transport.Dispose(); } catch (Exception ex) when (ex is IOException or SocketException) { }
             if (_process is { } p)
             {
                 try
@@ -655,9 +737,20 @@ namespace fire.Debugging
             catch (NativeDebugException) { return Array.Empty<DebugScope>(); }
         }
 
+        /// <summary>The globals as the thread sees them: a fire thread first its own variables of its top level (`globals` with its `thread`: refs
+        /// `T:THREAD:INDEX`), then the program's; the main thread the program's.</summary>
         public IReadOnlyList<DebugValue> Globals()
         {
-            try { return _target.ToValues(_target.RequestOk("globals").Arr("variables")); }
+            try
+            {
+                if (!IsMain && !IsEnded)
+                {
+                    var answer = _target.Request("globals", ("thread", Id));
+                    if (answer.Flag("ok")) return _target.ToValues(answer.Arr("variables"));
+                    // (the thread is not paused: the program's globals)
+                }
+                return _target.ToValues(_target.RequestOk("globals").Arr("variables"));
+            }
             catch (NativeDebugException) { return Array.Empty<DebugValue>(); }
         }
 

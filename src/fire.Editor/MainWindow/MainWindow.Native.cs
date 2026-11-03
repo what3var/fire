@@ -16,7 +16,9 @@ namespace fire.Editor
     // The engine of a run (ROADMAP 8.7): the virtual machine in spark, or a native build of the program. The engine box next to the mode box chooses it
     // (saved in the project's settings.engine, for a single script in spark's settings). Native + Debug: built with -O0 -g into bin/<target>-dbg, started
     // with FIRE_DEBUG and debugged over the protocol (NativeDebugTarget) - the same panels, without the operand stack. Native + Release/Performance: a
-    // plain run of the program, its output in the Output panel.
+    // plain run of the program, its output in the Output panel. Target esp32: the program becomes an ESP-IDF project in bin/esp32-<mode> (its component
+    // in main/), `idf.py build flash` puts it on the board, and spark opens the board's serial port itself - Debug: the debug agent of the debug build
+    // over its console UART (framed, SerialFramedTransport), Release/Performance: the console in the Output panel, a line below it is the board's input.
     public partial class MainWindow
     {
         /// <summary>What a native run does first, once the program is built and connected: the button that started it.</summary>
@@ -24,6 +26,9 @@ namespace fire.Editor
 
         /// <summary>A plain native run (Release/Performance) that is going on (null: none).</summary>
         private Process? _nativeRun;
+
+        /// <summary>The serial port of a plain run on a board (its console in the Output panel; null: none).</summary>
+        private SerialFramedTransport? _boardRun;
 
         /// <summary>A native run is being built/started right now (the steps wait for it).</summary>
         private bool _nativeStarting;
@@ -113,6 +118,10 @@ namespace fire.Editor
         /// <summary>Ends a plain native run that is still going on.</summary>
         private void StopNativeRun()
         {
+            _output.InputTarget = null;
+            var board = _boardRun;
+            _boardRun = null;
+            board?.Dispose();
             var run = _nativeRun;
             _nativeRun = null;
             if (run == null) return;
@@ -160,6 +169,11 @@ namespace fire.Editor
             catch (fire.Native.NativeConfigException ex)
             {
                 await Dialogs.Message(this, ex.Message, "Native run");
+                return;
+            }
+            if (target.Native.Platform == "esp32")
+            {
+                await StartBoardAsync(input, config, target, first);
                 return;
             }
             if (!NativeLaunch.CanRunHere(target, toolchain, out string why))
@@ -222,26 +236,153 @@ namespace fire.Editor
                     await Dialogs.Message(this, ex.Message, "Native debugging");
                     return;
                 }
-                _session.Attach(debugTarget);
-                _session.UpdateBreakpoints(BreakpointLocations());   // now with the source indexes of this program
-                var stale = debugTarget.SourcesNotMatching(input.Sources);
-                if (stale.Count > 0)
-                    _output.Append($"Warning: the program was built from other texts of {string.Join(", ", stale.Select(i => debugTarget.SourceFiles[i] is { } f ? Path.GetFileName(f) : $"source {i}"))} than the editor shows - lines may not match.{Environment.NewLine}");
-                _debugger.Refresh(BreakpointDescriptions());
-                _isBusy = false;
-                BeginStep();
-                switch (first)
-                {
-                    case NativeFirstAction.StepLine: _session.StepLine(); break;
-                    case NativeFirstAction.StepInto: _session.StepInto(); break;
-                    case NativeFirstAction.RunToEnd: _session.RunToCompletion(); break;
-                    default: _session.Continue(BreakpointLocations()); break;
-                }
+                AttachNativeDebugTarget(debugTarget, input, first);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
                 _isBusy = false;
                 UpdateStatus("The native run failed: " + ex.Message);
+            }
+            finally
+            {
+                _nativeStarting = false;
+            }
+        }
+        /// <summary>A native program under the debugger, connected and at its entry: the session takes it, then the first action.</summary>
+        private void AttachNativeDebugTarget(NativeDebugTarget debugTarget, RunInput input, NativeFirstAction first)
+        {
+            _session.Attach(debugTarget);
+            _session.UpdateBreakpoints(BreakpointLocations());   // now with the source indexes of this program
+            var stale = debugTarget.SourcesNotMatching(input.Sources);
+            if (stale.Count > 0)
+                _output.Append($"Warning: the program was built from other texts of {string.Join(", ", stale.Select(i => debugTarget.SourceFiles[i] is { } f ? Path.GetFileName(f) : $"source {i}"))} than the editor shows - lines may not match.{Environment.NewLine}");
+            if (debugTarget.CarriesConsole)
+                _output.InputTarget = line =>
+                {
+                    if (!debugTarget.WriteInput(line)) return false;
+                    OnScriptOutput(line);   // (like a terminal shows what was typed)
+                    return true;
+                };
+            _debugger.Refresh(BreakpointDescriptions());
+            _isBusy = false;
+            BeginStep();
+            switch (first)
+            {
+                case NativeFirstAction.StepLine: _session.StepLine(); break;
+                case NativeFirstAction.StepInto: _session.StepInto(); break;
+                case NativeFirstAction.RunToEnd: _session.RunToCompletion(); break;
+                default: _session.Continue(BreakpointLocations()); break;
+            }
+        }
+
+        /// <summary>Run/Debug on an ESP32: builds the ESP-IDF project (bin/esp32-&lt;mode&gt;), `idf.py build flash`, then opens the board's serial port (the
+        /// project's/target's `port` and `baud`, else the only USB serial port, else the one esptool used) and restarts the board - Debug: the debug agent of
+        /// the debug build over the console UART; Release/Performance: the console in the Output panel.</summary>
+        private async Task StartBoardAsync(RunInput input, fire.Native.NativeConfig config, fire.Runtime.TargetProfile target, NativeFirstAction first)
+        {
+            string? idf = Esp32Launch.FindIdf(_settings.IdfPath);
+            if (idf == null)
+            {
+                await Dialogs.Message(this, Esp32Launch.MissingIdfMessage, "ESP32");
+                return;
+            }
+            var mode = _session.ExecutionMode;
+            bool debug = mode == Runtime.VmExecutionMode.Debug;
+            string modeName = mode.ToString().ToLowerInvariant();
+            string programPath = NativeRunOutput(input, target.Name, modeName);
+            string projectDir = Path.GetDirectoryName(Path.GetFullPath(programPath))!;
+            var settings = input.Plan?.Settings;
+            string? port = Esp32Launch.ResolvePort(settings?.Port ?? target.Native.Port, out string portProblem);
+            int baud = settings?.Baud ?? target.Native.Baud ?? Esp32Launch.DefaultBaud;
+            string? defaultFile = input.Project != null ? null : input.Document?.DisplayName;
+            string? defaultPath = input.Project != null ? null : FullPathOf(input.Document);
+
+            _nativeStarting = true;
+            BeginRun(input);
+            _isBusy = true;
+            try
+            {
+                UpdateStatus($"Building {input.What} for the ESP32 ({modeName})...");
+                var toolchain = fire.Native.ToolchainDef.BuiltIn["esp-idf"];   // (the component; spark runs idf.py itself)
+                var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, toolchain, Path.Combine(projectDir, "main"), mode, null, false, input.BaseDirectory, null, input.Plan));
+                if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+                FinishBuild("Native build", result.Ok, result.Diagnostics ?? Array.Empty<Diagnostic>(), defaultFile, defaultPath);
+                if (!result.Ok)
+                {
+                    _isBusy = false;
+                    UpdateStatus("The native build failed (see the build log).");
+                    RevealTool("buildlog");
+                    return;
+                }
+                Esp32Launch.WriteProject(projectDir, Path.GetFileName(programPath));
+                UpdateStatus($"idf.py build flash{(port != null ? " on " + port : "")} (the first build of ESP-IDF takes minutes)...");
+                RevealTool("buildlog");
+                var (flashed, usedPort) = await Task.Run(() => Esp32Launch.BuildAndFlash(idf, projectDir, port, true, line => Dispatcher.UIThread.Post(() => _buildLog.AppendLine(line))));
+                if (!flashed)
+                {
+                    _isBusy = false;
+                    UpdateStatus("idf.py build flash failed (see the build log).");
+                    return;
+                }
+                if (usedPort == null)
+                {
+                    _isBusy = false;
+                    await Dialogs.Message(this, $"The program is on the board, but spark does not know its serial port ({portProblem}). Set \"port\" in the project settings or the target of fire.native.json.", "ESP32");
+                    return;
+                }
+                SerialFramedTransport transport;
+                try { transport = SerialFramedTransport.Open(usedPort, baud, reset: true); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+                {
+                    _isBusy = false;
+                    await Dialogs.Message(this, $"The serial port {usedPort} could not be opened: {ex.Message}", "ESP32");
+                    return;
+                }
+                RevealTool("output");
+                if (!debug)
+                {
+                    // plain Run: the board's console in the Output panel, its input below it
+                    _boardRun = transport;
+                    Esp32Launch.Monitor(transport, OnScriptOutput, () => Dispatcher.UIThread.Post(() =>
+                    {
+                        if (_boardRun != transport) return;
+                        FlushPendingOutput();
+                        UpdateStatus($"The serial port {usedPort} closed.");
+                    }));
+                    _output.InputTarget = line =>
+                    {
+                        if (!transport.WriteInput(line)) return false;
+                        OnScriptOutput(line);
+                        return true;
+                    };
+                    _isBusy = false;
+                    UpdateStatus($"Running on the ESP32 at {usedPort} ({baud} baud) - Stop (Shift+F5) closes the port.");
+                    return;
+                }
+                UpdateStatus($"Waiting for the debug build on the ESP32 at {usedPort}...");
+                NativeDebugTarget debugTarget;
+                try { debugTarget = await Task.Run(() => NativeDebugTarget.OpenFramed(transport, TimeSpan.FromSeconds(20), OnScriptOutput)); }
+                catch (NativeDebugException ex)
+                {
+                    _isBusy = false;
+                    UpdateStatus("The program on the ESP32 could not be debugged: " + ex.Message.Split('\n')[0]);
+                    await Dialogs.Message(this, ex.Message, "Debugging on the ESP32");
+                    return;
+                }
+                if (debugTarget.SourcesNotMatching(input.Sources).Count > 0)
+                {
+                    debugTarget.Dispose();
+                    _isBusy = false;
+                    UpdateStatus("The board runs another program.");
+                    await Dialogs.Message(this, $"The board at {usedPort} runs another program than the one spark built (its sources differ) - did flashing reach this board? Check \"port\" in the settings.", "Debugging on the ESP32");
+                    return;
+                }
+                AttachNativeDebugTarget(debugTarget, input, first);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                _isBusy = false;
+                UpdateStatus("The run on the ESP32 failed: " + ex.Message);
             }
             finally
             {

@@ -2,7 +2,12 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ae="using:AvaloniaEdit"
              x:Class="fire.Editor.OutputPanelControl">
-    <ae:TextEditor x:Name="Editor" IsReadOnly="True" ShowLineNumbers="False" WordWrap="True" Background="#242028" Foreground="#F4F0F2"
-                   FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="13"
-                   HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Padding="6,2"/>
+    <DockPanel>
+        <!-- the standard input of a program that runs on a board (ESP32: its console UART) - shown only while one runs -->
+        <TextBox x:Name="InputBox" DockPanel.Dock="Bottom" IsVisible="False" PlaceholderText="Input for the program (Enter sends the line)"
+                 FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="13" Margin="0,2,0,0"/>
+        <ae:TextEditor x:Name="Editor" IsReadOnly="True" ShowLineNumbers="False" WordWrap="True" Background="#242028" Foreground="#F4F0F2"
+                       FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="13"
+                       HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Padding="6,2"/>
+    </DockPanel>
 </UserControl>

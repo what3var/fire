@@ -20,8 +20,17 @@ namespace fire.Native
         /// <summary>The functions have a wrapper (`fN` calls `fN_b`): it counts the call depth (`try x.Take...`) or keeps the debug frame.</summary>
         private bool Wrapped => _usesTryDepth || DebugBuild;
 
-        /// <summary>The platforms with a debug agent (threads and TCP of the desktop).</summary>
-        private bool DebugAgent => _target.Native.Platform is "posix" or "windows";
+        /// <summary>The platforms with a debug agent: the desktop (TCP or stdio), ESP32 (the console UART) and FreeRTOS (stdio).</summary>
+        private bool DebugAgent => _target.Native.Platform is "posix" or "windows" or "esp32" or "freertos";
+
+        /// <summary>The transport of the agent that the build fixes (a board has no environment): the console UART of an ESP32, stdio on FreeRTOS; null: the
+        /// desktop, where FIRE_DEBUG chooses (docs/NATIVE_DEBUG_PROTOCOL.md "Transport").</summary>
+        private string? DebugTransportDefine => _target.Native.Platform switch
+        {
+            "esp32" => "FIRE_DEBUG_TRANSPORT_UART",
+            "freertos" => "FIRE_DEBUG_TRANSPORT_STDIO",
+            _ => null,
+        };
 
         /// <summary>The debug information of one function, made anew by every generation of its chunk.</summary>
         private sealed class FuncDebug

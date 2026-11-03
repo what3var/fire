@@ -40,10 +40,14 @@ namespace fire.Projects
         public string? TypeChecking { get; set; }
         /// <summary>The arguments a run of the program gets (`forge run`, *Run* in spark; `Environment.Args`); arguments after `--` on the command line replace them.</summary>
         public List<string>? Arguments { get; set; }
+        /// <summary>The serial port of a board (ESP32: Run and Debug in spark flash it and talk to it there); null: the only USB serial port, else the one esptool picks.</summary>
+        public string? Port { get; set; }
+        /// <summary>The baud rate of the board's console (null: 115200).</summary>
+        public int? Baud { get; set; }
 
         [JsonIgnore]
         public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
-            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Output == null && TypeChecking == null && Arguments == null;
+            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Output == null && TypeChecking == null && Arguments == null && Port == null && Baud == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
@@ -72,6 +76,8 @@ namespace fire.Projects
             r.Output = high?.Output ?? low?.Output;
             r.TypeChecking = high?.TypeChecking ?? low?.TypeChecking;
             r.Arguments = high?.Arguments ?? low?.Arguments;
+            r.Port = high?.Port ?? low?.Port;
+            r.Baud = high?.Baud ?? low?.Baud;
             var defines = new List<string>();
             foreach (var d in (high?.Defines ?? new List<string>()).Concat(low?.Defines ?? new List<string>())) if (!defines.Contains(d)) defines.Add(d);
             if (defines.Count > 0) r.Defines = defines;
@@ -98,6 +104,7 @@ namespace fire.Projects
             if (FloatWidth != null && FloatWidth != 32 && FloatWidth != 64) problems.Add("settings.floatWidth must be 32 or 64.");
             if (TypeChecking != null && !TypeCheckings.Contains(TypeChecking)) problems.Add("settings.typeChecking must be lax or strict.");
             if (Engine != null && !Engines.Contains(Engine)) problems.Add($"settings.engine '{Engine}' is not one of: {string.Join(", ", Engines)}.");
+            if (Baud != null && Baud <= 0) problems.Add("settings.baud must be a positive number (e.g. 115200).");
             foreach (var d in Defines ?? new List<string>()) if (string.IsNullOrWhiteSpace(d) || d.Any(char.IsWhiteSpace)) problems.Add($"settings.defines: '{d}' is not a symbol name.");
             return problems;
         }

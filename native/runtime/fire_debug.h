@@ -6,7 +6,8 @@
  * decides whether the thread stops there (breakpoint, step, pause), exactly like the stepping loops of the VM. A stopped thread waits (without the GIL) until
  * the debugger lets it go on.
  *
- * The agent (FIRE_DEBUG_AGENT, the desktop: posix and windows) is a thread of its own that talks to spark over TCP, one JSON message per line. It never runs
+ * The agent (FIRE_DEBUG_AGENT: the desktop - posix, windows -, FreeRTOS and ESP32) is a thread (a task) of its own that talks to spark: over TCP on the
+ * desktop, framed over the console UART on an ESP32, framed over stdio for tests and FreeRTOS boards (see "the transport" below), one JSON message per line. It never runs
  * fire code to show a value (no ToString()), never touches a reference count and never allocates on the fire heap; what changes the program (`set`) is done by
  * the stopped thread itself. */
 #ifndef FIRE_DEBUG_H
@@ -42,6 +43,11 @@ struct DbgFrame {
 
 extern volatile int g_dbgArmed;     /* a debugger is attached: the hooks look at the position */
 extern int32_t g_dbgGlobalCount;    /* the global variables declared so far (VM.DebugGlobals) */
+/* The program's standard input comes from the agent (a framed transport owns the input, docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): IO reads it with
+ * fire_dbgStdinRead (waits for input or its end, without the GIL; 0 at the end) and gives a byte back with fire_dbgStdinUnget. */
+extern volatile int g_dbgStdin;
+int64_t fire_dbgStdinRead(uint8_t* out, int64_t count);
+void fire_dbgStdinUnget(int c);
 
 /* (generated) the class `cls` for the debugger: its name and the names of its fields, base fields first */
 const DbgClass* fire_dbgClass(uint32_t cls);
@@ -77,6 +83,7 @@ FIRE_FN void fire_dbgLeave(DbgFrame* f) {
 #if defined(FIRE_RT_IMPLEMENTATION) && !defined(__cplusplus)
 volatile int g_dbgArmed = 0;
 int32_t g_dbgGlobalCount = 0;
+volatile int g_dbgStdin = 0;
 
 #ifndef FIRE_DEBUG_AGENT
 /* No agent on this platform (yet): the program runs without a debugger. */
@@ -87,9 +94,22 @@ void fire_dbgExited(int code) { (void)code; }
 int fire_dbgUnhandled(Value exception) { (void)exception; return 0; }
 void fire_dbgThreadBegin(void) {}
 void fire_dbgThreadEnd(void) {}
+int64_t fire_dbgStdinRead(uint8_t* out, int64_t count) { (void)out; (void)count; return 0; }
+void fire_dbgStdinUnget(int c) { (void)c; }
 #else
 
-/* ---- the system: threads, a lock with a condition, a TCP connection ---- */
+/* ---- the system: threads, a lock with a condition (also with a timeout), and the transport (docs/NATIVE_DEBUG_PROTOCOL.md "Transport") ----
+ * Three transports behind one small interface (open, send a message, receive bytes, close):
+ *   tcp    FIRE_DEBUG=tcp:HOST:PORT;token=T - the desktop: the program connects to spark; one JSON message per line.
+ *   stdio  FIRE_DEBUG=stdio[;token=T][;wait=MS] on the desktop, or FIRE_DEBUG_TRANSPORT_STDIO (a FreeRTOS board, the simulator native/sim): framed
+ *          messages on stdout between the output of the program, framed commands on stdin; the other lines of stdin are the program's standard input.
+ *   uart   FIRE_DEBUG_TRANSPORT_UART (ESP32, the generator defines it in a debug build): the same framing on the console UART, which also carries the output
+ *          of the program and the log of ESP-IDF; the agent owns its receiving side and passes what is not a frame on to the program's standard input.
+ * A frame is one line: \x1E "FD:" <json> "*" <CRC-16 of the json, 4 hex digits> "\n" (the JSON is pure ASCII). Over a framed transport the program waits
+ * FIRE_DEBUG_WAIT_MS (3 s) after `hello` for the first command; without one it runs without a debugger. */
+#ifndef FIRE_DEBUG_WAIT_MS
+#define FIRE_DEBUG_WAIT_MS 3000
+#endif
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -97,6 +117,8 @@ void fire_dbgThreadEnd(void) {}
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <io.h>
+#define DBG_HAS_TCP 1
 typedef SRWLOCK dbg_mutex;
 typedef CONDITION_VARIABLE dbg_cond;
 typedef SOCKET dbg_socket;
@@ -106,6 +128,8 @@ static void dbgLock(dbg_mutex* m) { AcquireSRWLockExclusive(m); }
 static void dbgUnlock(dbg_mutex* m) { ReleaseSRWLockExclusive(m); }
 static void dbgCondInit(dbg_cond* c) { InitializeConditionVariable(c); }
 static void dbgWait(dbg_cond* c, dbg_mutex* m) { SleepConditionVariableSRW(c, m, INFINITE, 0); }
+/* Waits at most `ms`; 0 when the time ran out. */
+static int dbgWaitMs(dbg_cond* c, dbg_mutex* m, int ms) { return SleepConditionVariableSRW(c, m, (DWORD)ms, 0) ? 1 : 0; }
 static void dbgBroadcast(dbg_cond* c) { WakeAllConditionVariable(c); }
 static DWORD WINAPI dbgThreadTrampoline(LPVOID arg);
 static bool dbgSpawn(void (*fn)(void)) {
@@ -115,18 +139,132 @@ static bool dbgSpawn(void (*fn)(void)) {
     return true;
 }
 static DWORD WINAPI dbgThreadTrampoline(LPVOID arg) { ((void (*)(void))arg)(); return 0; }
-static int dbgSend(dbg_socket s, const char* p, size_t n) { return send(s, p, (int)n, 0); }
-static int dbgRecv(dbg_socket s, char* p, size_t n) { return recv(s, p, (int)n, 0); }
+static int dbgSockSend(dbg_socket s, const char* p, size_t n) { return send(s, p, (int)n, 0); }
+static int dbgSockRecv(dbg_socket s, char* p, size_t n) { return recv(s, p, (int)n, 0); }
 static void dbgCloseSocket(dbg_socket s) { shutdown(s, SD_BOTH); closesocket(s); }
 static int dbgPid(void) { return (int)GetCurrentProcessId(); }
+static int dbgStdinRaw(char* p, size_t n) { return _read(0, p, (unsigned)n); }
+/* A frame onto stdout in one piece: the lock of the stream keeps the prints of the program out of it. */
+static int dbgStdoutWrite(const char* p, size_t n) {
+    int ok;
+    _lock_file(stdout);
+    ok = fwrite(p, 1, n, stdout) == n && fflush(stdout) == 0;
+    _unlock_file(stdout);
+    return ok;
+}
+#elif defined(FIRE_PLATFORM_FREERTOS_H)
+/* FreeRTOS (ESP-IDF, a board, the simulator): a mutex, a condition out of binary semaphores (like fire_cond of the platform package), the agent is a task */
+#include <unistd.h>
+#ifndef FIRE_DEBUG_STACK_BYTES
+#define FIRE_DEBUG_STACK_BYTES 8192
+#endif
+#ifndef FIRE_DEBUG_PRIORITY
+#define FIRE_DEBUG_PRIORITY (tskIDLE_PRIORITY + 2)
+#endif
+typedef SemaphoreHandle_t dbg_mutex;
+typedef struct DbgCondWaiter { SemaphoreHandle_t sem; struct DbgCondWaiter* next; int queued; } DbgCondWaiter;
+typedef struct { DbgCondWaiter* head; } dbg_cond;
+static void dbgMutexInit(dbg_mutex* m) { *m = xSemaphoreCreateMutex(); }
+static void dbgLock(dbg_mutex* m) { xSemaphoreTake(*m, portMAX_DELAY); }
+static void dbgUnlock(dbg_mutex* m) { xSemaphoreGive(*m); }
+static void dbgCondInit(dbg_cond* c) { c->head = NULL; }
+static int dbgCondBlock(dbg_cond* c, dbg_mutex* m, TickType_t ticks) {
+    DbgCondWaiter w;
+    int signalled;
+    w.sem = xSemaphoreCreateBinary();
+    w.next = c->head;
+    w.queued = 1;
+    c->head = &w;
+    dbgUnlock(m);
+    signalled = xSemaphoreTake(w.sem, ticks) == pdTRUE;
+    dbgLock(m);
+    if (!signalled) {
+        if (w.queued) {   /* timed out and nobody gave it: leave the queue */
+            DbgCondWaiter** at;
+            for (at = &c->head; *at; at = &(*at)->next)
+                if (*at == &w) { *at = w.next; break; }
+        } else signalled = xSemaphoreTake(w.sem, 0) == pdTRUE;
+    }
+    vSemaphoreDelete(w.sem);
+    return signalled;
+}
+static void dbgWait(dbg_cond* c, dbg_mutex* m) { dbgCondBlock(c, m, portMAX_DELAY); }
+static int dbgWaitMs(dbg_cond* c, dbg_mutex* m, int ms) { TickType_t t = pdMS_TO_TICKS(ms); return dbgCondBlock(c, m, t ? t : 1); }
+static void dbgBroadcast(dbg_cond* c) {
+    DbgCondWaiter* w = c->head;
+    while (w) {
+        DbgCondWaiter* next = w->next;
+        w->queued = 0;
+        xSemaphoreGive(w->sem);
+        w = next;
+    }
+    c->head = NULL;
+}
+static void dbgTaskBody(void* arg) {
+    void (*fn)(void);
+    memcpy(&fn, &arg, sizeof fn);
+    fn();
+    vTaskDelete(NULL);
+}
+static bool dbgSpawn(void (*fn)(void)) {
+    void* arg;
+    uint32_t depth = (uint32_t)FIRE_DEBUG_STACK_BYTES;
+#ifndef FIRE_FREERTOS_STACK_BYTES
+    depth /= (uint32_t)sizeof(StackType_t);
+#endif
+    memcpy(&arg, &fn, sizeof arg);
+    return xTaskCreate(dbgTaskBody, "fire_dbg", depth, arg, FIRE_DEBUG_PRIORITY, NULL) == pdPASS;
+}
+static int dbgPid(void) { return 0; }
+static int dbgStdinRaw(char* p, size_t n) { return (int)read(fileno(stdin), p, n); }
+static int dbgStdoutWrite(const char* p, size_t n) {
+    size_t off = 0;
+    flockfile(stdout);
+    fflush(stdout);   /* (what the program printed before; then the frame in one write: a write of the console is not split) */
+    while (off < n) {
+        ssize_t w = write(fileno(stdout), p + off, n - off);
+        if (w <= 0) break;
+        off += (size_t)w;
+    }
+    funlockfile(stdout);
+    return off == n;
+}
+#ifdef FIRE_DEBUG_TRANSPORT_UART
+/* ESP-IDF: the console UART. The agent installs its driver (the console then writes through it as well) and reads it; nobody else reads the console. */
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
+#include "esp_system.h"
+#ifndef FIRE_DEBUG_UART
+#ifdef CONFIG_ESP_CONSOLE_UART_NUM
+#define FIRE_DEBUG_UART CONFIG_ESP_CONSOLE_UART_NUM
+#else
+#define FIRE_DEBUG_UART 0
+#endif
+#endif
+static bool dbgUartOpen(void) {
+    fflush(stdout);
+    if (!uart_is_driver_installed(FIRE_DEBUG_UART) && uart_driver_install(FIRE_DEBUG_UART, 2048, 0, 0, NULL, 0) != ESP_OK) return false;
+    uart_vfs_dev_use_driver(FIRE_DEBUG_UART);
+    return true;
+}
+static int dbgUartRecv(char* p, size_t n) {
+    for (;;) {
+        int r = uart_read_bytes(FIRE_DEBUG_UART, p, (uint32_t)n, pdMS_TO_TICKS(20));
+        if (r != 0) return r;
+    }
+}
+#endif
 #else
 #include <pthread.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
+#define DBG_HAS_TCP 1
 typedef pthread_mutex_t dbg_mutex;
 typedef pthread_cond_t dbg_cond;
 typedef int dbg_socket;
@@ -136,6 +274,15 @@ static void dbgLock(dbg_mutex* m) { pthread_mutex_lock(m); }
 static void dbgUnlock(dbg_mutex* m) { pthread_mutex_unlock(m); }
 static void dbgCondInit(dbg_cond* c) { pthread_cond_init(c, NULL); }
 static void dbgWait(dbg_cond* c, dbg_mutex* m) { pthread_cond_wait(c, m); }
+static int dbgWaitMs(dbg_cond* c, dbg_mutex* m, int ms) {
+    struct timespec until;
+    struct timeval now;
+    gettimeofday(&now, NULL);   /* (the clock of a condition with default attributes) */
+    until.tv_sec = now.tv_sec + ms / 1000;
+    until.tv_nsec = (long)now.tv_usec * 1000L + (long)(ms % 1000) * 1000000L;
+    if (until.tv_nsec >= 1000000000L) { until.tv_sec++; until.tv_nsec -= 1000000000L; }
+    return pthread_cond_timedwait(c, m, &until) == 0;
+}
 static void dbgBroadcast(dbg_cond* c) { pthread_cond_broadcast(c); }
 static void* dbgThreadTrampoline(void* arg) { void (*fn)(void); memcpy(&fn, &arg, sizeof fn); fn(); return NULL; }
 static bool dbgSpawn(void (*fn)(void)) {
@@ -146,17 +293,98 @@ static bool dbgSpawn(void (*fn)(void)) {
     pthread_detach(t);
     return true;
 }
-static int dbgSend(dbg_socket s, const char* p, size_t n) {
+static int dbgSockSend(dbg_socket s, const char* p, size_t n) {
 #ifdef MSG_NOSIGNAL
     return (int)send(s, p, n, MSG_NOSIGNAL);
 #else
     return (int)send(s, p, n, 0);
 #endif
 }
-static int dbgRecv(dbg_socket s, char* p, size_t n) { return (int)recv(s, p, n, 0); }
+static int dbgSockRecv(dbg_socket s, char* p, size_t n) { return (int)recv(s, p, n, 0); }
 static void dbgCloseSocket(dbg_socket s) { shutdown(s, SHUT_RDWR); close(s); }
 static int dbgPid(void) { return (int)getpid(); }
+static int dbgStdinRaw(char* p, size_t n) { return (int)read(0, p, n); }
+static int dbgStdoutWrite(const char* p, size_t n) {
+    size_t off = 0;
+    flockfile(stdout);
+    fflush(stdout);
+    while (off < n) {
+        ssize_t w = write(fileno(stdout), p + off, n - off);
+        if (w <= 0) break;
+        off += (size_t)w;
+    }
+    funlockfile(stdout);
+    return off == n;
+}
 #endif
+
+/* the transport in use */
+enum { DBG_T_NONE, DBG_T_TCP, DBG_T_STDIO, DBG_T_UART };
+static int g_dbgTransport = DBG_T_NONE;
+#ifdef DBG_HAS_TCP
+static dbg_socket g_dbgSock = DBG_NO_SOCKET;
+#endif
+/* CRC-16/CCITT-FALSE (polynomial 0x1021, start 0xFFFF, no reflection, no final xor) of a frame's JSON */
+static unsigned dbgCrc16(const char* p, size_t n) {
+    unsigned crc = 0xFFFF;
+    size_t i;
+    int k;
+    for (i = 0; i < n; i++) {
+        crc ^= (unsigned)(unsigned char)p[i] << 8;
+        for (k = 0; k < 8; k++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+    }
+    return crc;
+}
+/* Sends one message (`n` bytes of JSON, no line break). 0: the debugger is gone. */
+static int dbgTransportSend(const char* p, size_t n) {
+    switch (g_dbgTransport) {
+#ifdef DBG_HAS_TCP
+        case DBG_T_TCP: {
+            size_t off = 0;
+            if (g_dbgSock == DBG_NO_SOCKET) return 0;
+            while (off < n) {
+                int w = dbgSockSend(g_dbgSock, p + off, n - off);
+                if (w <= 0) return 0;
+                off += (size_t)w;
+            }
+            return dbgSockSend(g_dbgSock, "\n", 1) == 1;
+        }
+#endif
+        case DBG_T_STDIO:
+        case DBG_T_UART: {
+            char* frame = (char*)malloc(n + 16);
+            int ok;
+            if (!frame) return 1;
+            frame[0] = 0x1E; frame[1] = 'F'; frame[2] = 'D'; frame[3] = ':';
+            memcpy(frame + 4, p, n);
+            snprintf(frame + 4 + n, 12, "*%04x\n", dbgCrc16(p, n));
+            ok = dbgStdoutWrite(frame, n + 10);
+            free(frame);
+            return ok;
+        }
+        default: return 0;
+    }
+}
+/* Reads what came (lines, framed or not); <= 0: the end. */
+static int dbgTransportRecv(char* p, size_t n) {
+    switch (g_dbgTransport) {
+#ifdef DBG_HAS_TCP
+        case DBG_T_TCP: return g_dbgSock == DBG_NO_SOCKET ? 0 : dbgSockRecv(g_dbgSock, p, n);
+#endif
+        case DBG_T_STDIO: return dbgStdinRaw(p, n);
+#ifdef FIRE_DEBUG_TRANSPORT_UART
+        case DBG_T_UART: return dbgUartRecv(p, n);
+#endif
+        default: return 0;
+    }
+}
+/* The end of the connection: a socket is closed; stdout and the UART stay what they are. */
+static void dbgTransportClose(void) {
+#ifdef DBG_HAS_TCP
+    if (g_dbgTransport == DBG_T_TCP && g_dbgSock != DBG_NO_SOCKET) { dbgCloseSocket(g_dbgSock); g_dbgSock = DBG_NO_SOCKET; }
+#endif
+    g_dbgTransport = DBG_T_NONE;
+}
 
 /* ---- the state ---- */
 enum { DBG_RUNNING, DBG_PAUSED };
@@ -191,12 +419,18 @@ struct DbgTask {
 
 static dbg_mutex g_dbgM;
 static dbg_cond g_dbgCv;
-static dbg_socket g_dbgSock = DBG_NO_SOCKET;
 static const DbgProgram* g_dbgProg;
 static DbgThread* g_dbgThreads;
 static DbgThread g_dbgMain;
 static int g_dbgNextId = 1, g_dbgFireCount = 0;
 static int g_dbgConnected = 0;
+/* A framed transport: the debugger has sent its first command (before that the main thread waits at most FIRE_DEBUG_WAIT_MS); it did not come in time. */
+static int g_dbgClaimed = 0, g_dbgGaveUp = 0;
+static int64_t g_dbgWaitUntil = 0;
+static int g_dbgWaitMs = FIRE_DEBUG_WAIT_MS;
+/* The program's standard input while the agent owns the input (a framed transport): what came that was no frame, read by IO (fire_dbgStdinRead). */
+typedef struct DbgInput { char* p; size_t n, cap, pos; int eof; } DbgInput;
+static DbgInput g_dbgIn;
 /* the breakpoints: an immutable list (source, line pairs), replaced as a whole (the old ones are kept: a hook may still read them) */
 typedef struct DbgBps { int32_t n; struct DbgBps* older; int32_t* pairs; } DbgBps;
 static DbgBps* volatile g_dbgBps;
@@ -263,14 +497,8 @@ static int dbgPutS16(DbgBuf* b, const fire_char16* p, uint32_t n, uint32_t max) 
 
 /* Sends a message (with the lock held); a failed write means the debugger is gone. */
 static void dbgSendLine(DbgBuf* b) {
-    size_t off = 0;
-    if (g_dbgSock == DBG_NO_SOCKET) return;
-    dbgPutN(b, "\n", 1);
-    while (off < b->n) {
-        int w = dbgSend(g_dbgSock, b->p + off, b->n - off);
-        if (w <= 0) { g_dbgArmed = 0; break; }
-        off += (size_t)w;
-    }
+    if (g_dbgTransport == DBG_T_NONE || !b->p) return;
+    if (!dbgTransportSend(b->p, b->n)) g_dbgArmed = 0;
 }
 
 /* ---- JSON in: a flat object of the command, read on demand ---- */
@@ -421,6 +649,17 @@ static void dbgPark(DbgThread* t, const char* reason, int gil) {
     (void)gil;
 #endif
     while (t->state == DBG_PAUSED && g_dbgArmed) {
+        if (!g_dbgClaimed) {
+            /* a framed transport, the main thread at its entry: the debugger has FIRE_DEBUG_WAIT_MS for its first command, else the program runs without it */
+            int64_t left = g_dbgWaitUntil - fire_plat_nowMs();
+            if (left > 0) dbgWaitMs(&g_dbgCv, &g_dbgM, (int)left);
+            if (!g_dbgClaimed && g_dbgWaitUntil - fire_plat_nowMs() <= 0) {
+                g_dbgGaveUp = 1;
+                g_dbgArmed = 0;
+                fprintf(stderr, "fire debug: no debugger within %d ms - running without one\n", g_dbgWaitMs);
+            }
+            continue;
+        }
         if (t->task) {
             DbgTask* task = t->task;
             dbgUnlock(&g_dbgM);
@@ -1037,11 +1276,15 @@ static void dbgCommand(const char* json) {
         free(b.p); b.p = NULL; b.n = 0; b.cap = 0;
         dbgPut(&b, "{\"event\":\"exited\",\"code\":"); dbgPutI(&b, code); dbgPut(&b, "}");
         dbgSendLine(&b);
-        dbgCloseSocket(g_dbgSock);
-        g_dbgSock = DBG_NO_SOCKET;
+        dbgTransportClose();
         fflush(stdout);
         fflush(stderr);
+#if defined(ESP_PLATFORM) && defined(FIRE_DEBUG_TRANSPORT_UART)
+        (void)code;
+        esp_restart();   /* (a board has no process to end: it starts again - and runs without the debugger once the wait for it is over) */
+#else
         _Exit(code);
+#endif
     }
     else if (strcmp(cmd, "detach") == 0) {
         dbgReplyHead(&b, id, 1); dbgPut(&b, "}"); dbgSendLine(&b);
@@ -1057,27 +1300,120 @@ done:
     free(b.p);
 }
 
-/* The thread of the agent: reads the commands. The end of the connection detaches: the program runs on without a debugger. */
+/* ---- the program's standard input over a framed transport (the agent reads it; IO reads from here) ---- */
+static void dbgInputPut(const char* p, size_t n, int eof) {
+    if (n > 0) {
+        if (g_dbgIn.pos > 0 && g_dbgIn.pos == g_dbgIn.n) { g_dbgIn.pos = 0; g_dbgIn.n = 0; }   /* (all read: start at the front again) */
+        if (g_dbgIn.n + n > g_dbgIn.cap) {
+            size_t cap = g_dbgIn.cap ? g_dbgIn.cap * 2 : 512;
+            char* q;
+            while (cap < g_dbgIn.n + n) cap *= 2;
+            q = (char*)realloc(g_dbgIn.p, cap);
+            if (!q) return;
+            g_dbgIn.p = q; g_dbgIn.cap = cap;
+        }
+        memcpy(g_dbgIn.p + g_dbgIn.n, p, n);
+        g_dbgIn.n += n;
+    }
+    if (eof) g_dbgIn.eof = 1;
+    dbgBroadcast(&g_dbgCv);
+}
+int64_t fire_dbgStdinRead(uint8_t* out, int64_t count) {
+    int64_t n;
+    if (count <= 0) return 0;
+#ifdef FIRE_THREADS
+    gilRelease();   /* (waiting for input: the other threads run) */
+#endif
+    dbgLock(&g_dbgM);
+    while (g_dbgIn.pos == g_dbgIn.n && !g_dbgIn.eof) dbgWait(&g_dbgCv, &g_dbgM);
+    n = (int64_t)(g_dbgIn.n - g_dbgIn.pos);
+    if (n > count) n = count;
+    if (n > 0) memcpy(out, g_dbgIn.p + g_dbgIn.pos, (size_t)n);
+    g_dbgIn.pos += (size_t)n;
+    dbgUnlock(&g_dbgM);
+#ifdef FIRE_THREADS
+    gilAcquire();
+#endif
+    return n;
+}
+void fire_dbgStdinUnget(int c) {
+    dbgLock(&g_dbgM);
+    if (c >= 0 && g_dbgIn.pos > 0) g_dbgIn.p[--g_dbgIn.pos] = (char)c;
+    dbgUnlock(&g_dbgM);
+}
+
+/* A frame that came: `FD:<json>*<crc>` (after the \x1E). A garbled one (no prefix, a wrong CRC) is dropped. */
+static void dbgFrame(char* line, size_t n) {
+    char* star;
+    unsigned crc;
+    if (n < 9 || memcmp(line, "FD:", 3) != 0) return;
+    line[n] = 0;
+    star = strrchr(line, '*');
+    if (!star || strlen(star + 1) != 4) return;
+    crc = (unsigned)strtoul(star + 1, NULL, 16);
+    *star = 0;
+    if (crc != dbgCrc16(line + 3, (size_t)(star - line - 3))) return;
+    dbgLock(&g_dbgM);
+    if (g_dbgGaveUp) { dbgUnlock(&g_dbgM); return; }   /* (too late: the program runs without a debugger) */
+    if (!g_dbgClaimed) { g_dbgClaimed = 1; dbgBroadcast(&g_dbgCv); }
+    dbgUnlock(&g_dbgM);
+    dbgCommand(line + 3);
+}
+
+/* The thread of the agent: reads the commands (and, framed, the program's standard input). The end of the connection detaches: the program runs on
+ * without a debugger. */
 static void dbgAgentMain(void) {
-    char chunk[4096];
+    char chunk[512];
     DbgBuf line = {NULL, 0, 0};
+    int framed = g_dbgTransport != DBG_T_TCP;
+    int inFrame = 0, lineStart = 1;
     for (;;) {
-        int n = dbgRecv(g_dbgSock, chunk, sizeof chunk);
+        int n = dbgTransportRecv(chunk, sizeof chunk);
         int i, start = 0;
         if (n <= 0) break;
-        for (i = 0; i < n; i++)
-            if (chunk[i] == '\n') {
-                dbgPutN(&line, chunk + start, (size_t)(i - start));
-                if (line.n > 0 && line.p) dbgCommand(line.p);
-                line.n = 0;
-                if (line.p) line.p[0] = 0;
-                start = i + 1;
+        if (!framed) {
+            for (i = 0; i < n; i++)
+                if (chunk[i] == '\n') {
+                    dbgPutN(&line, chunk + start, (size_t)(i - start));
+                    if (line.n > 0 && line.p) dbgCommand(line.p);
+                    line.n = 0;
+                    if (line.p) line.p[0] = 0;
+                    start = i + 1;
+                }
+            if (start < n) dbgPutN(&line, chunk + start, (size_t)(n - start));
+            continue;
+        }
+        /* framed: a line that begins with \x1E is a frame; every other byte is the program's input, passed on at once */
+        {
+            int plain = -1;   /* the start of the run of input bytes in this chunk */
+            for (i = 0; i < n; i++) {
+                char c = chunk[i];
+                if (inFrame) {
+                    if (c == '\n') {
+                        inFrame = 0;
+                        lineStart = 1;
+                        if (line.p && line.n < 8192) dbgFrame(line.p, line.n);
+                        line.n = 0;
+                    }
+                    else if (c != '\r') dbgPutN(&line, &c, 1);
+                    continue;
+                }
+                if (lineStart && c == 0x1E) {
+                    if (plain >= 0) { dbgLock(&g_dbgM); dbgInputPut(chunk + plain, (size_t)(i - plain), 0); dbgUnlock(&g_dbgM); plain = -1; }
+                    inFrame = 1;
+                    line.n = 0;
+                    continue;
+                }
+                if (plain < 0) plain = i;
+                lineStart = c == '\n';
             }
-        if (start < n) dbgPutN(&line, chunk + start, (size_t)(n - start));
+            if (plain >= 0) { dbgLock(&g_dbgM); dbgInputPut(chunk + plain, (size_t)(n - plain), 0); dbgUnlock(&g_dbgM); }
+        }
     }
     free(line.p);
     dbgLock(&g_dbgM);
     g_dbgArmed = 0;
+    if (framed) dbgInputPut(NULL, 0, 1);   /* (the end of the input) */
     dbgBroadcast(&g_dbgCv);
     dbgUnlock(&g_dbgM);
 }
@@ -1096,29 +1432,21 @@ static void dbgRegister(DbgThread* t, const char* name) {
     g_dbgSelf = t;
 }
 
-/* `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T`: connects to the debugger, says hello and waits (the main thread, before the first instruction). */
-void fire_dbgStart(const DbgProgram* program) {
-    const char* spec = getenv("FIRE_DEBUG");
-    char host[64] = "127.0.0.1", token[128] = "";
-    int port = 0, i;
-    const char* p;
-    DbgBuf b = {NULL, 0, 0};
+#ifdef DBG_HAS_TCP
+/* `tcp:HOST:PORT`: connects to the debugger. false: no connection (the program runs without one). */
+static bool dbgTcpOpen(const char* p) {
+    char host[64] = "127.0.0.1";
+    int port;
     struct sockaddr_in addr;
-    g_dbgProg = program;
-    if (!spec || strncmp(spec, "tcp:", 4) != 0) return;
-    p = spec + 4;
-    {
-        const char* colon = strrchr(p, ':');
-        const char* semi = strchr(p, ';');
-        if (!colon || (semi && colon > semi)) { fprintf(stderr, "fire debug: FIRE_DEBUG must be tcp:HOST:PORT;token=T\n"); return; }
-        if ((size_t)(colon - p) < sizeof host) { memcpy(host, p, (size_t)(colon - p)); host[colon - p] = 0; }
-        port = atoi(colon + 1);
-        if (semi && strncmp(semi + 1, "token=", 6) == 0) snprintf(token, sizeof token, "%s", semi + 7);
-    }
+    const char* colon = strrchr(p, ':');
+    const char* semi = strchr(p, ';');
+    if (!colon || (semi && colon > semi)) { fprintf(stderr, "fire debug: FIRE_DEBUG must be tcp:HOST:PORT;token=T\n"); return false; }
+    if ((size_t)(colon - p) < sizeof host) { memcpy(host, p, (size_t)(colon - p)); host[colon - p] = 0; }
+    port = atoi(colon + 1);
 #if defined(_WIN32)
     {
         WSADATA wsa;
-        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { fprintf(stderr, "fire debug: cannot start Winsock\n"); return; }
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { fprintf(stderr, "fire debug: cannot start Winsock\n"); return false; }
     }
 #endif
     g_dbgSock = socket(AF_INET, SOCK_STREAM, 0);
@@ -1129,23 +1457,82 @@ void fire_dbgStart(const DbgProgram* program) {
         fprintf(stderr, "fire debug: cannot connect to %s:%d - running without a debugger\n", host, port);
         if (g_dbgSock != DBG_NO_SOCKET) dbgCloseSocket(g_dbgSock);
         g_dbgSock = DBG_NO_SOCKET;
-        return;
+        return false;
     }
     {
         int one = 1;
         setsockopt(g_dbgSock, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
     }
+    g_dbgTransport = DBG_T_TCP;
+    return true;
+}
+#endif
+
+#if !defined(FIRE_DEBUG_TRANSPORT_UART) && !defined(FIRE_DEBUG_TRANSPORT_STDIO)
+/* The value of `;key=` in the FIRE_DEBUG text (up to the next `;`), into `out`. */
+static bool dbgOption(const char* spec, const char* key, char* out, size_t cap) {
+    size_t klen = strlen(key);
+    const char* p = spec;
+    while ((p = strchr(p, ';')) != NULL) {
+        p++;
+        if (strncmp(p, key, klen) == 0 && p[klen] == '=') {
+            size_t n = 0;
+            p += klen + 1;
+            while (p[n] && p[n] != ';' && n + 1 < cap) { out[n] = p[n]; n++; }
+            out[n] = 0;
+            return true;
+        }
+    }
+    return false;
+}
+#endif
+
+/* Starts the agent: opens the transport (FIRE_DEBUG on the desktop, the one the build chose on a board), says hello and waits at the entry of the main
+ * thread (a framed transport: at most FIRE_DEBUG_WAIT_MS for the first command). */
+void fire_dbgStart(const DbgProgram* program) {
+    char token[128] = "";
+    int i;
+    DbgBuf b = {NULL, 0, 0};
+    g_dbgProg = program;
+#if defined(FIRE_DEBUG_TRANSPORT_UART)
+    if (!dbgUartOpen()) { fprintf(stderr, "fire debug: cannot open the console UART - running without a debugger\n"); return; }
+    g_dbgTransport = DBG_T_UART;
+#elif defined(FIRE_DEBUG_TRANSPORT_STDIO)
+    g_dbgTransport = DBG_T_STDIO;
+#else
+    {
+        const char* spec = getenv("FIRE_DEBUG");
+        if (!spec) return;
+        if (strncmp(spec, "tcp:", 4) == 0) {
+#ifdef DBG_HAS_TCP
+            if (!dbgTcpOpen(spec + 4)) return;
+#else
+            return;
+#endif
+        }
+        else if (strncmp(spec, "stdio", 5) == 0 && (spec[5] == 0 || spec[5] == ';')) {
+            char wait[16];
+            g_dbgTransport = DBG_T_STDIO;
+            if (dbgOption(spec, "wait", wait, sizeof wait)) g_dbgWaitMs = atoi(wait);
+        }
+        else { fprintf(stderr, "fire debug: FIRE_DEBUG must be tcp:HOST:PORT;token=T or stdio[;token=T][;wait=MS]\n"); return; }
+        dbgOption(spec, "token", token, sizeof token);
+    }
+#endif
     dbgMutexInit(&g_dbgM);
     dbgCondInit(&g_dbgCv);
     dbgLock(&g_dbgM);
     g_dbgConnected = 1;
     g_dbgArmed = 1;
+    g_dbgClaimed = g_dbgTransport == DBG_T_TCP || g_dbgWaitMs <= 0;   /* (over TCP the debugger is there: it accepted the connection) */
+    if (g_dbgTransport != DBG_T_TCP) g_dbgStdin = 1;   /* (the agent owns the input: IO reads what it passes on) */
     dbgRegister(&g_dbgMain, "Main");
     g_dbgMain.atEntry = 1;
     dbgPut(&b, "{\"event\":\"hello\",\"protocol\":1,\"token\":"); dbgPutS(&b, token);
     dbgPut(&b, ",\"engine\":\"native\",\"pid\":"); dbgPutI(&b, dbgPid());
     dbgPut(&b, ",\"target\":"); dbgPutS(&b, program->target);
-    dbgPut(&b, ",\"mode\":\"debug\",\"firstUserSource\":"); dbgPutI(&b, program->firstUser);
+    dbgPut(&b, ",\"mode\":\"debug\",\"transport\":"); dbgPutS(&b, g_dbgTransport == DBG_T_TCP ? "tcp" : g_dbgTransport == DBG_T_UART ? "uart" : "stdio");
+    dbgPut(&b, ",\"firstUserSource\":"); dbgPutI(&b, program->firstUser);
     dbgPut(&b, ",\"mainThread\":"); dbgPutI(&b, g_dbgMain.id);
     dbgPut(&b, ",\"sources\":[");
     for (i = 0; i < program->nsources; i++) {
@@ -1158,8 +1545,9 @@ void fire_dbgStart(const DbgProgram* program) {
     dbgPut(&b, "]}");
     dbgSendLine(&b);
     free(b.p);
+    g_dbgWaitUntil = fire_plat_nowMs() + g_dbgWaitMs;
     dbgUnlock(&g_dbgM);
-    if (!dbgSpawn(dbgAgentMain)) { g_dbgArmed = 0; fprintf(stderr, "fire debug: cannot start the agent thread\n"); return; }
+    if (!dbgSpawn(dbgAgentMain)) { g_dbgArmed = 0; g_dbgStdin = 0; fprintf(stderr, "fire debug: cannot start the agent thread\n"); return; }
     dbgPark(&g_dbgMain, "entry", 0);
 }
 
@@ -1168,11 +1556,10 @@ void fire_dbgExited(int code) {
     DbgBuf b = {NULL, 0, 0};
     if (!g_dbgConnected) return;
     dbgLock(&g_dbgM);
-    if (g_dbgSock != DBG_NO_SOCKET) {
+    if (g_dbgTransport != DBG_T_NONE && !g_dbgGaveUp) {
         dbgPut(&b, "{\"event\":\"exited\",\"code\":"); dbgPutI(&b, code); dbgPut(&b, "}");
         dbgSendLine(&b);
-        dbgCloseSocket(g_dbgSock);
-        g_dbgSock = DBG_NO_SOCKET;
+        dbgTransportClose();
     }
     g_dbgArmed = 0;
     dbgUnlock(&g_dbgM);
