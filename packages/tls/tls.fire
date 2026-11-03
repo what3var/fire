@@ -108,8 +108,8 @@ namespace Tls {
 
         destruct() { try { this.Close() } catch (Net.NetException e) { } }
 
-        bool CanRead { get { return !this.closed } }
-        bool CanWrite { get { return !this.closed } }
+        override bool CanRead { get { return !this.closed } }
+        override bool CanWrite { get { return !this.closed } }
         bool IsClosed { get { return this.closed } }
 
         undefined Check() {
@@ -150,7 +150,7 @@ namespace Tls {
         }
 
         // Up to `count` bytes (at least one unless the other side has ended the connection: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-        int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], int offset, int count) {
             this.Check()
             var deadline = Net.Clock.Deadline(this.readLimit)
             var tries = 0
@@ -165,7 +165,7 @@ namespace Tls {
         }
 
         // All `count` bytes.
-        int Write(byte buffer[], int offset, int count) {
+        override int Write(byte buffer[], int offset, int count) {
             this.Check()
             var done = 0
             while (done < count) {
@@ -191,10 +191,10 @@ namespace Tls {
             this.Write(bytes, 0, bytes.length)
         }
 
-        undefined Flush() { }
+        override undefined Flush() { }
 
         // Ends the TLS session (close_notify) and closes the TCP connection.
-        undefined Close() {
+        override undefined Close() {
             if (this.closed) { return }
             this.closed = true
             if (this.handle >= 0) { __TlsClose(this.handle) }

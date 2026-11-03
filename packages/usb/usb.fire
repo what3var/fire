@@ -413,8 +413,8 @@ namespace Usb {
             this.writeLimit = undefined
         }
 
-        bool CanRead { get { return !this.closed && this.inEndpoint >= 0 } }
-        bool CanWrite { get { return !this.closed && this.outEndpoint >= 0 } }
+        override bool CanRead { get { return !this.closed && this.inEndpoint >= 0 } }
+        override bool CanWrite { get { return !this.closed && this.outEndpoint >= 0 } }
 
         any ReadTimeout {
             get { return this.readLimit }
@@ -432,7 +432,7 @@ namespace Usb {
         // How many bytes have come and wait to be read.
         int Available { get { return this.pendingCount } }
 
-        int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], int offset, int count) {
             if (this.closed) { throw new IO.StreamClosedException("The USB stream is closed.") }
             if (this.inEndpoint < 0) { throw new IO.IOException("This USB stream has no IN endpoint.", 8) }
             if (count <= 0) { return 0 }
@@ -448,7 +448,7 @@ namespace Usb {
             return n
         }
 
-        int Write(byte buffer[], int offset, int count) {
+        override int Write(byte buffer[], int offset, int count) {
             if (this.closed) { throw new IO.StreamClosedException("The USB stream is closed.") }
             if (this.outEndpoint < 0) { throw new IO.IOException("This USB stream has no OUT endpoint.", 8) }
             return this.device.BulkWrite(this.outEndpoint, buffer, offset, count, this.writeLimit)
@@ -460,7 +460,7 @@ namespace Usb {
             this.Write(bytes, 0, bytes.length)
         }
 
-        undefined Close() { this.closed = true }
+        override undefined Close() { this.closed = true }
     }
 
     /// <summary>A USB device as one device of the device framework (`usb:sim`, `usb:001:004`): Connect opens it and takes the first interface with bulk endpoints
@@ -483,7 +483,7 @@ namespace Usb {
         /// <summary>The opened device while connected (undefined otherwise): for control and interrupt transfers of your own.</summary>
         Usb.Device Opened { get { return this.device } }
 
-        string Description() {
+        override string Description() {
             var text = Usb.Format.Hex(this.info.VendorId) + ":" + Usb.Format.Hex(this.info.ProductId)
             var names = (this.info.Manufacturer + " " + this.info.Product).Trim()
             if (names != "") { text = text + " " + names }
@@ -491,9 +491,9 @@ namespace Usb {
             return text
         }
 
-        bool Connected() { return this.device != undefined }
+        override bool Connected() { return this.device != undefined }
 
-        bool Connect() {
+        override bool Connect() {
             if (this.device != undefined) { return true }
             try {
                 var d = new Usb.Device(this.info.Id)
@@ -517,7 +517,7 @@ namespace Usb {
             return true
         }
 
-        undefined Disconnect() {
+        override undefined Disconnect() {
             var s = this.stream
             this.stream = undefined
             if (s != undefined) {
@@ -533,7 +533,7 @@ namespace Usb {
         }
 
         /// <summary>What came on the bulk IN endpoint (waits about a millisecond; an empty buffer when nothing came).</summary>
-        any Read() {
+        override any Read() {
             if (this.stream == undefined || !this.stream.CanRead) { return new byte[0] }
             var buffer = new byte[512]
             var n = 0
@@ -545,7 +545,7 @@ namespace Usb {
         }
 
         /// <summary>Sends a byte buffer (or a text, one byte per character) to the bulk OUT endpoint.</summary>
-        bool Write(any data) {
+        override bool Write(any data) {
             if (this.stream == undefined || !this.stream.CanWrite) { return false }
             byte bytes[] = undefined
             if (data is of string) { bytes = data.ToBytes() } else { bytes = data }
@@ -569,7 +569,7 @@ namespace Usb {
 class UsbDriver : Driver {
     construct() : base("usb") { }
 
-    undefined Refresh(bool fastScan = true) {
+    override undefined Refresh(bool fastScan = true) {
         List found = undefined
         try { found = Usb.Bus.Devices() } catch (Usb.UsbException e) { return }
         foreach (info in found) {

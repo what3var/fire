@@ -990,7 +990,7 @@ namespace fire.Compiler
                             // no mixed static/non-static accessors).
                             if (pd.Getter != null)
                             {
-                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand);
+                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand, accessor: 1);
                                 // `int Count { get { return this.count } }`: the VM reads the field directly (FunctionProto.FieldGetterOf)
                                 if (!pd.IsStatic && pd.Type?.UnitDemand == null && pd.Getter.Statements is [ReturnStmt { Value: MemberExpr { Target: ThisExpr, Name: var backing } }])
                                     getterProto.FieldGetterOf = backing;
@@ -999,7 +999,7 @@ namespace fire.Compiler
                             if (pd.Setter != null)
                             {
                                 var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
-                                rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access, pd.IsStatic));
+                                rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access, pd.IsStatic, accessor: 2));
                             }
                             break;
                     }
@@ -1363,9 +1363,10 @@ namespace fire.Compiler
         }
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false, string? returnUnit = null,
-            IReadOnlyList<TypeParam>? typeParams = null)
+            IReadOnlyList<TypeParam>? typeParams = null, int accessor = 0)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
+            inner._accessor = isStatic ? 0 : accessor;
             inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
@@ -2308,6 +2309,9 @@ namespace fire.Compiler
         /// <summary>The unit a method with a unit at its return type (`float:m Len()`) or the getter of a property with a unit (`float X : m { get ... }`)
         /// converts its return values into, otherwise null.</summary>
         private string? _returnUnit;
+        /// <summary>The body of a property accessor of an object (SPEC 2.2 "Ownership in property accessors"): 1 a getter, 2 a setter, 0 anything else - its
+        /// assignments to members take SetFieldAccessor.</summary>
+        private int _accessor;
 
         private void CompileExpr(Expr expr)
         {
@@ -3187,6 +3191,12 @@ namespace fire.Compiler
                 else
                 {
                     CompileExpr(a.Value);
+                    if (_accessor != 0)
+                    {
+                        EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
+                        EmitSetFieldAccessor(me.Name);
+                        return;
+                    }
                 }
 
                 EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
@@ -3291,10 +3301,20 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.LoadThis); // [value, obj]
                     _chunk.EmitOp(OpCode.Swap);     // [obj, value]
                     EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
+                    if (_accessor != 0) { EmitSetFieldAccessor(id.Name); break; }
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
             }
+        }
+
+        /// <summary>A member assignment in a property accessor (SPEC 2.2 "Ownership in property accessors"): what belongs to the accessor call goes to `this`
+        /// (a field of it) or to the setter (a property).</summary>
+        private void EmitSetFieldAccessor(string name)
+        {
+            _chunk.EmitOp(OpCode.SetFieldAccessor);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(name)));
+            _chunk.EmitByte((byte)(_accessor == 1 ? 1 : 0));
         }
 
         /// <summary>`name = take x` (SPEC 2.2): x belongs to whoever holds `name` - the scope of the variable, or the object for a field.</summary>

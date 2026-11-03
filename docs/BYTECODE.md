@@ -1845,3 +1845,16 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
   Alle laufen über `OwnershipWalk.TakeValue(wert, halter, runner)` (Zyklenprüfung, ein Ziel in Zerstörung nimmt den Wert mit).
 - **Zeiger-Bereiche.** `ScopeSlotPointerTarget`/`FieldPointerTarget` tragen einen Versatz (`Advance` addiert nur), benutzbar ist nur Versatz 0; `ElementPointerTarget` prüft Index und Zerstörtheit. Sie werfen `PointerRangeException`, die
   `TryReadPointer`/`TryWritePointer` der VM in `IndexOutOfBoundsException`/`DestroyedException` verwandeln. `ptr - ptr` ist `PointerTarget.DistanceTo`.
+
+## 47. Besitz in Property-Accessoren: `SetFieldAccessor`
+
+- **`SetFieldAccessor u16 name, u8 flags`** (SPEC 2.2 "Ownership in property accessors"): im Rumpf eines `get`/`set` einer Objekt-Property (`Compiler._accessor`, nicht statisch, nicht in Lambdas) übersetzt
+  der Compiler `obj.name = wert` und `name = wert` (Feld/Property von `this`) mit diesem Befehl statt `SetField` - außer bei `new`/Aufruf/`copy`/`take` rechts (die haben ihre eigenen Regeln). Stack `[obj, wert]` wie
+  `SetField`. Gehört der Wert (Objekt, Array, Puffer) einem Scope des laufenden Accessor-Aufrufs (`IsCurrentCallOwner`), dann: ist `name` eine Property von `obj` (kein Feld, ein `set_name`), geht der Wert wie `take` an den
+  Setter-Aufruf (`_takeSetterArg` -> `CallMethodNested(..., takeFirst)` -> `TakeArgument`); sonst wird gespeichert und, wenn `obj` das `this` des Accessors ist, übernimmt `this` den Wert (`OwnershipWalk.TakeValue`).
+  Bit 0 von `flags` (ein Getter): die Übernahme wird mit der Rahmentiefe gemerkt (`_accessorAdopted`); `DoReturn` holt einen zurückgegebenen gemerkten Wert in die Scope des Aufrufs zurück (`PullBackAdopted`), damit die
+  Return-Regel ihn zum Aufrufer bringt ("return gewinnt"); `DoReturn`/`UnwindTo` vergessen die Einträge beendeter Aufrufe.
+- **Nativ** (`CppGenerator`, `accMine`/`accKeep`/`accReturn`/`accHandOver`/`accHandEnd` in fire_rt.h): ein Feld (bekannte Klasse oder ein Name, der nirgends Property ist) - speichern, dann `accKeep`; eine Property - der Wert
+  wandert in der Argumentliste `AL` des Aufrufers (`takeArg`), `g_acc.handOff` zeigt auf sie, jeder Setter übernimmt sie beim Eintritt (`MYAL = accTakeHandOff()`) und zählt sie zu seinen Scopes; nach dem Aufruf
+  `finishArgs` (was der Setter nicht behielt, stirbt). Ein Name, der in einer Klasse Feld und in einer anderen Property ist: hat kein Setter die Übergabe genommen, geht der Wert zurück (`accHandEnd(..., giveBack)`).
+  Ein Getter mit Übernahmen merkt sie in `g_acc.items` ab `ACCB` (Stand beim Eintritt); `ReturnSeq` ruft `accReturn` (zurück in die Funktions-Scope), Rückkehr und Ausnahme-Ausgang setzen `g_acc.top = ACCB`.

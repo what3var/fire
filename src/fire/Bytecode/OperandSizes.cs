@@ -40,7 +40,7 @@ namespace fire.Bytecode
             [OpCode.Call] = new[] { 1 },
             [OpCode.Return] = Array.Empty<int>(),
             [OpCode.NewObject] = new[] { 2, 1 }, [OpCode.NewObjectOwned] = new[] { 2, 1 },
-            [OpCode.GetField] = new[] { 2 }, [OpCode.SetField] = new[] { 2 },
+            [OpCode.GetField] = new[] { 2 }, [OpCode.SetField] = new[] { 2 }, [OpCode.SetFieldAccessor] = new[] { 2, 1 },
             [OpCode.LoadThis] = Array.Empty<int>(),
             [OpCode.SetFieldOnThis] = new[] { 2 },
             [OpCode.CallMethod] = new[] { 2, 1 },

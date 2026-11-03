@@ -369,5 +369,7 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC011` | '…' has no parameter '…' / The parameter '…' of '…' gets no value (it has no default value) (named arguments, `f(size: 2)`; an error also in lax mode) |
 | `TC012` | Field '…' of '…' is private and cannot be accessed from here. / Method '…' of '…' is protected and cannot be called from here. / Constructor of '…' is … (a `private`/`protected` member used where the class of the object is known; the text of the `AccessDeniedException` at run time; an error also in lax mode) |
 | `TC013` | A value of type '…' can never be a '…': the cast '!…' always fails at run time (only undefined passes) (`x!Dog` where the static type of `x` and `Dog` are unrelated classes, or a class and an interface that no class of the program joins) |
+| `TC014` | The method/property/operator '…' of '…' replaces the one of its base class '…' - mark it 'override' (…) (a member that replaces an inherited one without `override`, SPEC 5.1) |
+| `TC015` | The method '…' of '…' is marked 'override', but no base class of '…' has a method '…' [with these parameters] - nothing is overridden (`override` on a member that replaces nothing: a mistyped name, other parameter types, an interface method; an error also in lax mode) |
 
 `…` stands for a part of the message that varies (a name, a number).

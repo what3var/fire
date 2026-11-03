@@ -446,17 +446,17 @@ class SerialPort : Device {
         this.handle = handle
     }
 
-    string Identifier() { return __DEVIdentifier(this.handle) }
-    bool Connected() { return __DEVIsConnected(this.handle) }
-    bool Shared() { return __DEVIsShared(this.handle) }
-    string PortName() { return __DEVPortName(this.handle) }
-    int Availability() { return __DEVAvailability(this.handle) }
-    int TestAvailability() { return __DEVTestAvailability(this.handle) }
-    bool Connect() { return __DEVConnect(this.handle) }
-    undefined Disconnect() { __DEVDisconnect(this.handle) }
+    override string Identifier() { return __DEVIdentifier(this.handle) }
+    override bool Connected() { return __DEVIsConnected(this.handle) }
+    override bool Shared() { return __DEVIsShared(this.handle) }
+    override string PortName() { return __DEVPortName(this.handle) }
+    override int Availability() { return __DEVAvailability(this.handle) }
+    override int TestAvailability() { return __DEVTestAvailability(this.handle) }
+    override bool Connect() { return __DEVConnect(this.handle) }
+    override undefined Disconnect() { __DEVDisconnect(this.handle) }
 
     /// <summary>A text goes out as a line (with a line ending, in the device's encoding); a command object is executed with the device as its context.</summary>
-    bool DoCommand(any command) {
+    override bool DoCommand(any command) {
         if (command is of string) { return __DEVDoCommand(this.handle, command) }
         var result = command.Execute(this)
         if (result is of bool) { return result }
@@ -464,22 +464,22 @@ class SerialPort : Device {
     }
 
     /// <summary>Is received data waiting? Data is read one packet at a time (after a WaitFor: the rest of the packet that was cut).</summary>
-    bool HasData() { return __DEVHasData(this.handle) }
+    override bool HasData() { return __DEVHasData(this.handle) }
     /// <summary>The next received packet as text, one character per byte (Latin1); "" if nothing is waiting.</summary>
-    string ReadString() { return __DEVReadString(this.handle) }
+    override string ReadString() { return __DEVReadString(this.handle) }
     /// <summary>The next received packet as a byte buffer (empty if nothing is waiting).</summary>
-    any Read() { return __DEVRead(this.handle) }
-    bool WriteString(string text) { return __DEVWriteString(this.handle, text) }
-    bool Write(any data) { return __DEVWrite(this.handle, data) }
+    override any Read() { return __DEVRead(this.handle) }
+    override bool WriteString(string text) { return __DEVWriteString(this.handle, text) }
+    override bool Write(any data) { return __DEVWrite(this.handle, data) }
 
     /// <summary>Waits until the characters appear in the receive buffer (also across packets) and cuts the buffer behind them. Without a time limit the program's
     /// `#timeout` applies, otherwise 30 seconds.</summary>
-    bool WaitForString(string text, any timeout = undefined) {
+    override bool WaitForString(string text, any timeout = undefined) {
         var r = __DEVWaitForString(this.handle, text, timeout)
         if (r < 0) { throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)") }
         return r == 1
     }
-    bool WaitFor(any data, any timeout = undefined) {
+    override bool WaitFor(any data, any timeout = undefined) {
         var r = __DEVWaitFor(this.handle, data, timeout)
         if (r < 0) { throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)") }
         return r == 1
@@ -491,7 +491,7 @@ class SerialPort : Device {
 class SerialDriver : Driver {
     construct() : base("serial") { }
 
-    undefined Refresh(bool fastScan = true) {
+    override undefined Refresh(bool fastScan = true) {
         __DEVMgrRefresh(fastScan)
         var n = __DEVMgrCount()
         for (int i = 0; i < n; i++) {
@@ -505,7 +505,7 @@ class SerialDriver : Driver {
         }
     }
 
-    Device Find(string name) {
+    override Device Find(string name) {
         foreach (d in this.devices) {
             if (d.Name == name || d.Identifier() == "serial:" + name) { return d }
         }

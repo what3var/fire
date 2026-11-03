@@ -330,7 +330,7 @@ namespace Circuits {
 
         Circuits.Circuit Circuit { get { return this.circuit } }
 
-        undefined Advance() {
+        override undefined Advance() {
             var now = DateTime.UtcNow.Ticks
             var target = this.startTime + (now - this.startTicks) / 10000000.0 * this.speed
             var at = this.circuit.TimeRaw()

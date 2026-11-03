@@ -187,6 +187,18 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 - **Cycle protection:** `TakeTo(other)` checks whether `other` is transitively already a "descendant" (directly or indirectly owned) of `obj`. If so: run-time error instead of a cycle in the ownership tree.
 - **Race with an ongoing deletion:** If `other` (the target of `TakeTo`) is itself currently in cascade deletion (its own owner was just destroyed, its `destruct()` cascade is already running), the transfer is treated as if it had happened one second *before* the start of that deletion: `obj` is also taken into the running cascade immediately and deleted along with it (including the `destruct()` call), instead of remaining behind as an orphan with a half-destroyed owner.
 - Variable bindings (name → value) themselves do **not** move – only object ownership is transferable.
+- **Ownership in property accessors.** In the `get` and `set` bodies of a property of an object (not in methods, not in static properties, not in a lambda
+  inside the accessor) an assignment hands on what belongs to the running accessor call - an object, an array or a buffer whose owner is one of the
+  accessor's scopes (a local like `var it = new Item()`, also of an inner block), and in a setter also a value that another accessor handed to it this way:
+  - `this.field = it` / `field = it` - a **field of `this`**: `this` takes `it` over after the store (only the value itself, like `take`; what it owns goes along
+    anyway). Only fields of `this` count: `this.node.child = it` or `other.field = it` does not move anything (decided at run time: the target object must be `this`).
+  - `this.Prop = it` / `other.Prop = it` - a **property** (a setter call, of `this` or of another object): `it` goes to the setter call like `take it` - the setter
+    keeps it by assigning it to a field of its object (the same rule), else it dies when the setter returns (natively: right after the setter's own locals).
+  - **`return` wins in a getter:** a value that the getter's `this` took over in this call and that the getter returns (`this.cache = it; return it`, also
+    `return this.cache`) goes to the caller by the return rule (2.3), not to `this`. Only the returned value itself; other values the call gave to `this` stay there.
+  - An exception after the assignment does not undo it: the field keeps the object.
+  - Unchanged: what an accessor gets from outside (the setter's `value` passed by ordinary code, an object of the caller) stays with its owner and still needs
+    `take`/`TakeTo`; methods keep the rules above. An auto-property (`{ get; set; }`) behaves as before - its setter keeps a value that an accessor hands to it.
 
 ### 2.3 Lifetime / cascade deletion
 
@@ -219,7 +231,7 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
 - A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` still belongs to the scope and dies with it. The owner has to be changed explicitly:
-  `tmp.TakeTo(this)`. The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
+  `tmp.TakeTo(this)` (in a property accessor the assignment does that itself, 2.2). The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
 - **`delete expression`** destroys an object, an array or a buffer at once and detaches it from its owner: for an object the destructor runs and everything it owns is destroyed (2.3), exactly as if its owner
   had been left. Variables that still refer to it see a destroyed object (see above). `delete` on anything else is a run-time error. `delete` is a word only in front of a name on the same line.
 
@@ -567,6 +579,15 @@ supported.
 - Single inheritance: `class Foo : Bar { ... }`
 - `base(...)` in the constructor calls the parent constructor.
 - `base.Method(...)` calls an overridden parent method.
+- **`override`:** a method, a property or an operator of an object that replaces one of a base class (any class up the chain; the rule of 5.4.3
+  "Overriding" decides which method replaces which) is marked `override`, after the access modifier: `override string Speak()`,
+  `protected override undefined Draw(UI.Root root, int x, int y)`, `override int Count { get { ... } }`, `override bool operator==(any o)`.
+  The type checker reports a missing `override` (`TC014`: a warning in lax mode, an error in strict mode) and an `override` that replaces nothing - a mistyped
+  name, other parameter types, a property the base classes do not have (`TC015`, an error in lax mode too). It changes nothing at run time: every method is
+  virtual as before. Not marked: the implementation of an interface method (only interfaces declare it: `override` there is `TC015`), a method with other
+  parameter types (another overload, 5.4.3), static members (they belong to their class; `static override` is a syntax error), constructors and destructors
+  (both chains run). Code generated from markup follows the same rule: the handlers of a `.fxml` code-behind and `OnBuilt` of a circuit replace those of the
+  generated base class (`override undefined Ok(any sender)`).
 
 ### 5.2 Constructor
 
@@ -745,8 +766,8 @@ The type checker reports `TC002` when there is no such generic method.
 
 **Overriding.** A method of a derived class overrides the one of a base class
 when it has the same number of parameters and, per parameter, the same type –
-or an untyped parameter or a type parameter on either side (`string Over(int
-x)` in the derived class overrides `string Over(any x)` of the base class).
+or an untyped parameter or a type parameter on either side (`override string Over(int
+x)` in the derived class overrides `string Over(any x)` of the base class; such a method is marked `override`, 5.1).
 With other parameter types it stands next to the inherited method as another
 overload: `Derived.Hello(int)` and the inherited `Base.Hello(string)` are both
 callable on a `Derived`.

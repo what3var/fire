@@ -36,6 +36,14 @@ static class TypeTests
         return string.Join(" ", warnings.Items.Select(d => d.Code)) + "|" + errors + string.Join("\n", lines);
     }
 
+    /// <summary>The messages of the errors of a strict build ("" when it compiles).</summary>
+    private static string CompileTextStrict(string source)
+    {
+        Linker.ProcessDefaultTypeChecking = TypeCheckMode.Strict;
+        try { return CompileText(source); }
+        finally { Linker.ProcessDefaultTypeChecking = null; }
+    }
+
     /// <summary>The messages of the errors of a build ("" when it compiles).</summary>
     private static string CompileText(string source)
     {
@@ -401,7 +409,7 @@ static class TypeTests
             """) == "|2");
         Check("Ueberladung: ein typisierter Parameter in der Ableitung ueberschreibt einen untypisierten der Basis", Run("""
             class B { string Over(any x) { return "base" } }
-            class D : B { string Over(int x) { return "derived" } }
+            class D : B { override string Over(int x) { return "derived" } }
             print(new D().Over(2))
             new D().Over("a")
             """, TypeCheckMode.Strict) == "|ERROR TC002");
@@ -435,7 +443,7 @@ static class TypeTests
                     construct(string s) { }
                 }
                 class SubShow : Show {
-                    string Me(int x) { return "sub int" }
+                    override string Me(int x) { return "sub int" }
                 }
                 print(Show.Of(1) + " " + Show.Of("s") + " " + Show.Of(new Dog()) + " " + Show.Of(2.5))
                 var s = new Show(3)
@@ -521,7 +529,7 @@ static class TypeTests
                 && dynamic == "|Field 'secret' of 'Base' is private and cannot be accessed from here.\nMethod 'Hidden' of 'Base' is private and cannot be called from here.", dynamic);
             Check("Zugriff: eine Unterklasse deklariert den Namen oeffentlich - die Laufzeit entscheidet nach dem Objekt", Run("""
                 class B { private int M() { return 1 } }
-                class D : B { int M() { return 2 } }
+                class D : B { override int M() { return 2 } }
                 B b = new D()
                 print(b.M())
                 B b2 = new B()
@@ -592,6 +600,56 @@ static class TypeTests
                 try { print(x!Dog) } catch (ArgumentException e) { print("any") }
                 print(65!char)
                 """) is var fine && fine == "|Rex\n<object Puppy>\n<object Puppy>\nRex <object Puppy>\nundefined\nany\nA", fine);
+        }
+
+        // `override` (SPEC 5.1): a member that replaces an inherited one says so (TC014: lax a warning, strict an error); `override` that replaces nothing is TC015
+        {
+            const string ovBase = """
+                interface ISpeaker { string Speak() }
+                class Animal {
+                    string Speak() { return "..." }
+                    string Hello(string s) { return s }
+                    int Legs { get { return 4 } }
+                    bool operator==(any o) { return false }
+                    static string Kind() { return "animal" }
+                }
+                class Box<T> { string Put(T x) { return "box" } }
+
+                """;
+            Check("override: fehlt bei Methode, Property, Operator - lax TC014-Warnungen, das Programm laeuft", Run(ovBase + """
+                class Dog : Animal {
+                    string Speak() { return "Woof" }
+                    int Legs { get { return 4 } }
+                    bool operator==(any o) { return true }
+                }
+                print(new Dog().Speak())
+                """) is var missing && missing == "TC014 TC014 TC014|Woof", missing);
+            Check("override: strikt ist TC014 ein Fehler", Run(ovBase + "class Dog : Animal { string Speak() { return \"Woof\" } }\nprint(1)", TypeCheckMode.Strict) is var strictMissing && strictMissing == "|ERROR TC014", strictMissing);
+            Check("override: markiert ohne Befund (auch geerbt ueber zwei Stufen, generische Basis, andere Ueberladung, statisch ohne override, Interface ohne override)", Run(ovBase + """
+                class Dog : Animal, ISpeaker {
+                    override string Speak() { return "Woof" }
+                    override int Legs { get { return 3 } }
+                    override bool operator==(any o) { return true }
+                    string Hello(int i) { return "int" }
+                    static string Kind() { return "dog" }
+                }
+                class Puppy : Dog { override string Speak() { return "Yip" } }
+                class IntBox : Box<int> { override string Put(int x) { return "int box" } }
+                class Robot : ISpeaker { string Speak() { return "beep" } }
+                Animal a = new Puppy()
+                print(a.Speak() + " " + a.Legs + " " + new IntBox().Put(1) + " " + new Robot().Speak() + " " + new Dog().Hello(1) + " " + new Dog().Hello("s"))
+                """, TypeCheckMode.Strict) is var marked && marked == "|Yip 3 int box beep int s", marked);
+            Check("override: ohne passendes Basis-Mitglied ist TC015 (auch lax ein Fehler): Tippfehler, andere Parameter, Property, nur Interface", Run(ovBase + """
+                class Dog : Animal, ISpeaker {
+                    override string Speek() { return "typo" }
+                    override string Hello(int i) { return "int" }
+                    override int Tail { get { return 1 } }
+                }
+                class Robot : ISpeaker { override string Speak() { return "beep" } }
+                print(1)
+                """) is var nothing && nothing == "|ERROR TC015 TC015 TC015 TC015", nothing);
+            Check("override: die Meldung nennt die Basisklasse und wie es geht", CompileTextStrict(ovBase + "class Dog : Animal { string Hello(string name) { return name } }")
+                is var text && text.Contains("The method 'Hello' of 'Dog' replaces the one of its base class 'Animal' - mark it 'override' (override string Hello(string name))"), text);
         }
 
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode

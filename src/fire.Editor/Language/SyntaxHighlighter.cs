@@ -65,7 +65,7 @@ namespace fire.Editor
             TokenType.Try, TokenType.Catch, TokenType.Finally, TokenType.Throw,
             TokenType.Is, TokenType.Of, TokenType.From, TokenType.Under,
             TokenType.Extern, TokenType.Unsafe, TokenType.Interface,
-            TokenType.Readonly, TokenType.Enum,
+            TokenType.Readonly, TokenType.Enum, TokenType.Override,
             TokenType.Public, TokenType.Private, TokenType.Protected,
             TokenType.Namespace,
             TokenType.With, TokenType.Extends,

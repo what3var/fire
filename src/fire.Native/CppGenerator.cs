@@ -73,6 +73,9 @@ namespace fire.Native
             public readonly List<(int Target, int[] Sources)> Hoists = new();
             /// <summary>A call passes the result of another call on (`f(g())`): the function has the argument list `AL` (see finishArgs in fire_rt.h).</summary>
             public bool NeedsArgList;
+            /// <summary>A getter whose `this` takes over what belongs to the call (SetFieldAccessor): it remembers that from `ACCB` on, for its `return`
+            /// (accReturn in fire_rt.h).</summary>
+            public bool AccTrack;
             /// <summary>A generic method: it takes the type arguments of its call (TakeCallTypeArgs) into `ctargs`.</summary>
             public bool HasCallTArgs;
             /// <summary>A copy of a generic method for constant type arguments (the hybrid of generics): their SetTypeArgs text, and the parameters
@@ -2283,6 +2286,22 @@ namespace fire.Native
             $"guardKind({value}, {KindConstant(declared)}, {(DeclaredKind.IsUnitless(declared) ? "true" : "false")}, {CString(what)}, {Constant(Value.MakeString(Unit.DemandDisplay("unitless")))})";
         private static byte KindOfDeclared(byte declared) => DeclaredKind.TagOf(declared) switch { TypeTag.Int => KindInt, TypeTag.Float => KindFloat, _ => KindBool };
 
+        private HashSet<FunctionProto>? _setterProtos;
+        /// <summary>Is the function the setter of a property (`set_name`)? It takes what a property assignment of an accessor hands to it (SPEC 2.2).</summary>
+        private bool IsSetterFunc(Func f)
+        {
+            if (f.Kind != FuncKind.Method || f.Proto == null) return false;
+            if (_setterProtos == null)
+            {
+                _setterProtos = new HashSet<FunctionProto>();
+                foreach (var rc in _program.Program.Classes.Values)
+                    foreach (var (name, protos) in rc.Methods)
+                        if (name.StartsWith("set_", StringComparison.Ordinal))
+                            foreach (var p in protos) if (!p.IsStatic && p.ParamCount == 1) _setterProtos.Add(p);
+            }
+            return _setterProtos.Contains(f.Proto);
+        }
+
         /// <summary>Does some class of the program declare a property of this name (`get_name`/`set_name`)? Then reading and writing it takes the scope list
         /// of the caller (the getter's result belongs to it).</summary>
         private bool HasProperty(string name) =>
@@ -2844,6 +2863,16 @@ namespace fire.Native
             if (_usesTryDepth && f.Kind == FuncKind.Main) pre.AppendLine("    ++g_callDepth;");
             pre.Append(Trampoline(f));
             if (f.HasSelf) pre.AppendLine("    (void)self;");
+            // property accessors (SPEC 2.2): a setter takes what a property assignment of an accessor handed to it; a getter that keeps what belongs to it
+            // in fields of `this` notes where its notes start
+            if (IsSetterFunc(f))
+            {
+                if (framed) Var("OwnList*", "MYAL", "accTakeHandOff()"); else decl.AppendLine("    OwnList* const MYAL = accTakeHandOff(); (void)MYAL;");
+            }
+            if (f.AccTrack)
+            {
+                if (framed) Var("uint32_t", "ACCB", "g_acc.top"); else decl.AppendLine("    uint32_t const ACCB = g_acc.top;");
+            }
             if (f.Kind == FuncKind.FireBody) pre.AppendLine("    (void)args;");
             if (!f.IsTop && _usesThreads) pre.AppendLine("    if (FIRE_UNLIKELY(pollSignals())) return Undef();");
             if (f.Kind == FuncKind.Lambda)
@@ -3110,7 +3139,7 @@ namespace fire.Native
             if (local != null) E($"goto LAND{local.Value.Region.Template};");
             else if (st.Region != null) E("return;");
             else if (f.IsTop) { HaltCode(f, E); E("return;"); }
-            else E("return Undef();");
+            else { if (f.AccTrack) E("if (g_acc.top > ACCB) g_acc.top = ACCB;"); E("return Undef();"); }
             string text = body.ToString();
             if (!o.Exits.TryGetValue(text, out int id))
             {
@@ -3131,6 +3160,10 @@ namespace fire.Native
             bool isCtor = f.Kind == FuncKind.Ctor;
             string? transfer = isCtor ? null : "r";
             if (retain && rIsRef && !isCtor) E("retain(r);");
+            // a getter: what its `this` took over in this call and returns belongs to the call again - it goes to the caller (SPEC 2.2), also when a
+            // `finally` runs first
+            bool accPull = f.AccTrack && !isCtor && st.Scopes.Count > 0;
+            if (accPull) E($"accReturn(r, self, ACCB, &{ListName(st.Scopes[0].Id)}, false);");
             for (int hi = st.Handlers.Count - 1; hi >= 0 && st.Handlers[hi].Region.Outer == st.Region; hi--)
             {
                 var region = st.Handlers[hi].Region;
@@ -3150,6 +3183,7 @@ namespace fire.Native
             }
             if (st.Region == null)
             {
+                if (f.AccTrack) E("if (g_acc.top > ACCB) g_acc.top = ACCB;");
                 ReleaseScopes(f, st, st.Scopes.Count, 0, false, locals, E, transfer);
                 E(isCtor ? "return self;" : "return r;");
             }
@@ -4229,6 +4263,45 @@ namespace fire.Native
                     else E($"{FieldFn("sf", field)}({S(d - 2)}, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
+                    SetR(d - 2, R(d - 1));
+                    d--; return Next();
+                }
+                case OpCode.SetFieldAccessor:
+                {
+                    // `obj.name = v` in a property accessor (SPEC 2.2 "Ownership in property accessors"): what belongs to the call goes to `this` (a field of
+                    // `this`, after the store) or to the setter (a property, like `take x` - in the argument list AL, which the setter finds in g_acc.handOff)
+                    Need(2);
+                    string field = Str(ins.A[0]);
+                    _fieldNames.Add(field);
+                    foreach (var sc in st.Scopes) f.NeedsList.Add(sc.Id);
+                    bool track = (ins.A[1] & 1) != 0 && f.HasSelf;
+                    if (track) f.AccTrack = true;
+                    string obj = S(d - 2), v = S(d - 1);
+                    string lists = st.Scopes.Count == 0 ? "NULL, 0" : $"(OwnList* const[]){{{string.Join(", ", st.Scopes.Select(sc => "&" + ListName(sc.Id)))}}}, {st.Scopes.Count}";
+                    string mine = IsSetterFunc(f) ? "MYAL" : "NULL";
+                    string keep = f.HasSelf ? $"accKeep(self, {obj}, {v}, {lists}, {mine}, {(track ? "true" : "false")});" : "";
+                    string? direct = ObjSlot(d - 2) ? DirectSetField(ObjClass(Ty(d - 2)), field, obj, v, Ty(d - 1), f, IsNullable(Ty(d - 2))) : null;
+                    var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
+                    string store = direct ?? (setter != null
+                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
+                        : $"{FieldFn("sf", field)}({obj}, {v}{FieldTail(field, f, () => "&" + OwnerList())});");
+                    if (direct != null || setter == null && !HasProperty(field))
+                    {
+                        E(store);
+                        Check();
+                        if (keep.Length > 0) E(keep);
+                    }
+                    else
+                    {
+                        // a property (or a name that is a field of some classes and a property of others: no setter took it - it goes back, the field rule)
+                        f.NeedsArgList = true;
+                        bool giveBack = setter == null && (Modular || _openWorld || LibraryRole || _classList.Any(c => c.Rc.FieldIndex.ContainsKey(field)));
+                        E($"{{ OwnList* W_ = accHandOver({v}, {lists}, {mine}, &{OwnerList()}, &AL);");
+                        E("  " + store);
+                        E($"  accHandEnd({v}, W_, &AL, {(giveBack ? "true" : "false")});{(giveBack && keep.Length > 0 ? " " + keep : "")} finishArgs(Undef(), &AL); }}");
+                        Check();
+                    }
+                    E($"{obj} = {v};");
                     SetR(d - 2, R(d - 1));
                     d--; return Next();
                 }

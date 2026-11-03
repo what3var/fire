@@ -238,6 +238,10 @@ typedef struct Owned Owned;
 /* The objects that are destroyed while a destroy batch runs (see `destroy`): their memory is freed when the batch ends, so that a destructor can still look at an
  * object that was destroyed before it (the order in a scope is the order of creation: a writer's destructor flushes a stream that is already destroyed). */
 typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
+/* Property accessors (SPEC 2.2 "Ownership in property accessors"): what the `this` of the running getters took over (a `return` of it goes to the caller after
+ * all), and the argument list in which a property assignment of an accessor hands a value to the setter it calls (the setter takes it on entry). */
+typedef struct AccEntry { Owned* o; uint32_t slot; uint16_t gen; } AccEntry;
+typedef struct AccState { AccEntry* items; uint32_t top, cap; OwnList* handOff; } AccState;
 #ifdef __cplusplus
 #define FIRE_ZERO_INIT {}
 #else
@@ -281,7 +285,8 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
     X(Zombies, g_zombies, FIRE_ZERO_INIT)          /* destroyed objects whose memory is freed at the end of the batch */ \
     X(BridgeError, g_ioError, FIRE_ZERO_INIT)      /* the IO bridge: the last error of this thread */ \
     X(BridgeError, g_deviceError, FIRE_ZERO_INIT)  /* the device bridge */ \
-    X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */
+    X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */ \
+    X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */
 
 #if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL))
 typedef struct ThreadLocals {
@@ -344,6 +349,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_ioError FIRE_TLV(g_ioError)
 #define g_deviceError FIRE_TLV(g_deviceError)
 #define g_gfxError FIRE_TLV(g_gfxError)
+#define g_acc FIRE_TLV(g_acc)
 #ifdef FIRE_DEBUG
 #define g_dbgTop FIRE_TLV(g_dbgTop)
 #define g_dbgNest FIRE_TLV(g_dbgNest)
@@ -4556,6 +4562,68 @@ FIRE_FN void finishArgs(Value result, OwnList* al) {
     transferOut(result, al);
     if (al->head) destroyList(al);
 }
+
+/* ---- Ownership in property accessors (SPEC 2.2): what belongs to the running accessor call - in one of its scopes `lists`, or handed to a setter by the
+ * property assignment of another accessor (`mine`, the argument list it found in g_acc.handOff on entry) - goes to `this` when it is assigned to a field of
+ * `this`, and to the setter like `take x` when it is assigned to a property. */
+FIRE_FN Owned* accMine(Value v, OwnList* const* lists, int n, OwnList* mine) {
+    Owned* o = ownedOf(v);
+    int i;
+    if (!o || !o->owner) return NULL;
+    if (mine && o->owner == mine) return o;
+    for (i = 0; i < n; i++) if (o->owner == lists[i]) return o;
+    return NULL;
+}
+/* `this.field = v` (after the store): `this` takes v over; a getter (`track`) remembers it for its `return` (accReturn). */
+FIRE_FN void accKeep(Value self, Value obj, Value v, OwnList* const* lists, int n, OwnList* mine, bool track) {
+    Owned* o;
+    if (obj.kind != K_Class || self.kind != K_Class || obj.p != self.p || !leafAlive(self)) return;
+    o = accMine(v, lists, n, mine);
+    if (!o || o == &asObj(self)->h) return;
+    takeToObject(o, asObj(self));
+    if (!track || o->owner != &asObj(self)->owned) return;
+    if (g_acc.top == g_acc.cap) {
+        g_acc.cap = g_acc.cap ? g_acc.cap * 2 : 16;
+        g_acc.items = (AccEntry*)realloc(g_acc.items, g_acc.cap * sizeof(AccEntry));
+        if (!g_acc.items) allocFailed();
+    }
+    g_acc.items[g_acc.top].o = o;
+    g_acc.items[g_acc.top].slot = o->slot;
+    g_acc.items[g_acc.top].gen = o->gen;
+    g_acc.top++;
+}
+/* `return r` of a getter (`base`: g_acc.top when it started): a value its `this` took over in this call belongs to the call again (`to`: its function scope),
+ * so that it goes to the caller like a returned local. `done`: the function ends now (not a `finally` first) - it forgets what this call remembered. */
+FIRE_FN void accReturn(Value r, Value self, uint32_t base, OwnList* to, bool done) {
+    Owned* o = ownedOf(r);
+    uint32_t i;
+    if (o && self.kind == K_Class && leafAlive(self) && o->owner == &asObj(self)->owned)
+        for (i = base; i < g_acc.top; i++)
+            if (g_acc.items[i].o == o && g_acc.items[i].slot == o->slot && g_acc.items[i].gen == o->gen) { ownUnlink(o); ownLink(to, o); break; }
+    if (done && g_acc.top > base) g_acc.top = base;
+}
+/* `obj.Prop = v`: v travels in the argument list `al` of the setter call (like `take x`); the setter finds `al` in g_acc.handOff. Returns where v was (NULL:
+ * not the accessor's, nothing handed over). */
+FIRE_FN OwnList* accHandOver(Value v, OwnList* const* lists, int n, OwnList* mine, OwnList* from, OwnList* al) {
+    Owned* o = accMine(v, lists, n, mine);
+    OwnList* was;
+    if (!o) return NULL;
+    was = o->owner;
+    takeArg(v, from, al);
+    g_acc.handOff = al;
+    return was;
+}
+/* ... after the call: when no setter took the hand-over (the name was a field of that object), v goes back to where it was (`giveBack`). The caller then
+ * finishes `al` (finishArgs): what the setter did not keep dies. */
+FIRE_FN void accHandEnd(Value v, OwnList* was, OwnList* al, bool giveBack) {
+    if (giveBack && was && g_acc.handOff == al) {
+        Owned* o = ownedOf(v);
+        if (o && o->owner == al) { ownUnlink(o); ownLink(was, o); }
+    }
+    g_acc.handOff = NULL;
+}
+/* The start of a setter: the hand-over is its own (NULL: none). */
+FIRE_FN OwnList* accTakeHandOff(void) { OwnList* l = g_acc.handOff; g_acc.handOff = NULL; return l; }
 
 /* ---------------------------------------------------------------------------------------------------------------------
  * What travels along: `return` and `Takes.*` (SPEC 2.2, 2.3)
