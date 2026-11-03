@@ -49,7 +49,7 @@ namespace fire.Compiler
         public bool KeepSources { get; init; }
         /// <summary>`--keep-all`: a native build keeps every class and member, also what the program does not reach (`"trim": "all"` in fire.native.json).</summary>
         public bool KeepAll { get; init; }
-        /// <summary>`--linkage source|static`: how a native build links the libraries (`"linkage"` in fire.native.json, the project's setting; ROADMAP 9).</summary>
+        /// <summary>`--linkage source|static|shared`: how a native build links the libraries (`"linkage"` in fire.native.json, the project's setting; ROADMAP 9).</summary>
         public string? Linkage { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
         public string? ProjectName { get; init; }
@@ -79,7 +79,7 @@ namespace fire.Compiler
             """
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--keep-all] [--linkage source|static]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--keep-all] [--linkage source|static|shared]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--keep-all]
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
@@ -101,8 +101,8 @@ namespace fire.Compiler
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
             --keep-all  A native build keeps every class and member, also what the program does not reach (default: only what it reaches; "trim" in fire.native.json,
                     docs/NATIVE_BACKEND.md). A debug build always keeps everything.
-            --linkage source|static  How a native build links the libraries and packages: source (the default) puts everything into one C file; static builds each
-                    library once as a static library in the user-wide cache (ember cache clean) and links it ("linkage" in fire.native.json or the project).
+            --linkage source|static|shared  How a native build links the libraries and packages: source (the default) puts everything into one C file; static builds each
+                    library once as a static library in the user-wide cache (ember cache clean) and links it; shared (Linux, macOS) builds them as shared libraries put next to the program ("linkage" in fire.native.json or the project).
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             -i      Width of int in bits: 32 or 64 (default: whatever the script sets with #intwidth, otherwise 64 - also on small targets).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
@@ -219,7 +219,7 @@ namespace fire.Compiler
                 {
                     if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--linkage is only available with build, native and test.");
                     string? value = i + 1 < args.Count ? args[++i].ToLowerInvariant() : null;
-                    if (value is not ("source" or "static")) return Fail(command, "--linkage must be followed by source or static.");
+                    if (value is not ("source" or "static" or "shared")) return Fail(command, "--linkage must be followed by source, static or shared.");
                     linkage = value;
                 }
                 else if (string.Equals(arg, "--keep-all", StringComparison.OrdinalIgnoreCase))

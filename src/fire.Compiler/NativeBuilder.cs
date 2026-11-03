@@ -90,6 +90,17 @@ namespace fire.Compiler
             // the SDL of a window: what the environment, the target or the toolchain asks for, else SDL3 when the toolchain can build it (asked only for a program with a window)
             target = WithRequestedSdl(target, toolchain);
             Func<int>? chooseSdl = toolchain.EffectiveKind is "files" or "custom" or "emscripten" ? null : () => ChooseSdl(toolchain, target);
+            // linkage "shared" (ROADMAP 9, phase C): Linux and macOS with gcc or clang; elsewhere (Windows, the boards, wasm, TinyCC) it is "static" and the log says so
+            if (string.Equals(config.Linkage, "shared", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
+            {
+                bool can = toolchain.EffectiveKind is "gcc" or "clang" && target.Native.Platform == "posix" && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) && target.Name == TargetProfile.Host.Name;
+                if (can) return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl, shared: true);
+                config.Linkage = "static";
+                NativeBuildResult r;
+                try { r = Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths); }
+                finally { config.Linkage = "shared"; }
+                return r with { Log = $"Linkage \"shared\" is only available on Linux and macOS with gcc or clang (not for the target '{target.Name}' with '{toolchain.EffectiveKind}'): built with linkage \"static\".\n" + r.Log };
+            }
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
@@ -164,7 +175,8 @@ namespace fire.Compiler
         /// static library in the user-wide cache, built once for its content and the switches of the program; the program's own C is compiled and linked with them. A module
         /// that cannot be built on its own yet: the build falls back to linkage "source" and says so.</summary>
         private static NativeBuildResult BuildStatic(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
-            VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths, Func<int>? chooseSdl)
+            VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths, Func<int>? chooseSdl,
+            bool shared = false)
         {
             var log = new StringBuilder();
             NativeBuildResult AsSource(string? why)
@@ -182,7 +194,7 @@ namespace fire.Compiler
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             var watch = Stopwatch.StartNew();
-            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), chooseSdl, config.Trim); }
+            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), chooseSdl, config.Trim, shared: shared); }
             catch (NativeNotSupportedException ex) { return AsSource($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\"."); }
             log.Append(staticPlan.Log);
             log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
@@ -196,7 +208,7 @@ namespace fire.Compiler
                 string exe = Path.GetFullPath(output);
                 if (ToolchainProvider.RequireLibraries(toolchain, cFile) is { } missingLibrary)
                     return new NativeBuildResult(false, exe, missingLibrary, new[] { new Diagnostic(0, missingLibrary, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
-                string ext = toolchain.EffectiveKind == "msvc" ? ".lib" : ".a";
+                string ext = shared ? (OperatingSystem.IsMacOS() ? ".dylib" : ".so") : toolchain.EffectiveKind == "msvc" ? ".lib" : ".a";
                 // the libraries that are not in the cache, side by side: each its C (the generator wrote it there) to an object file, that into the library, then its interface
                 var missing = staticPlan.Libraries.Where(l => !l.Cached).ToList();
                 var logs = new string[missing.Count];
@@ -207,7 +219,25 @@ namespace fire.Compiler
                     var libraryLog = new StringBuilder();
                     var libraryWatch = Stopwatch.StartNew();
                     string obj = Path.Combine(workDir, library.LibraryName + (toolchain.EffectiveKind == "msvc" ? ".obj" : ".o"));
-                    var compile = CompilerCommand(toolchain, target, library.CFile, workDir, obj, language: "c", compileOnly: true);
+                    if (shared)
+                    {
+                        // a shared library: position-independent, its own name inside (the program asks for it by that name next to itself); what it needs of the program
+                        // (the runtime's state, the tables) the program exports (-rdynamic)
+                        string so = library.LibraryFile(ext);
+                        string soTemp = Path.Combine(library.Directory, Guid.NewGuid().ToString("N") + ext);
+                        var link = CompilerCommand(toolchain, target, library.CFile, workDir, soTemp, sharedLibrary: true, language: "c");
+                        string soName = OperatingSystem.IsMacOS() ? $" -Wl,-install_name,@rpath/{Path.GetFileName(so)} -undefined dynamic_lookup" : $" -Wl,-soname,{Path.GetFileName(so)}";
+                        libraryLog.AppendLine($"{link.Executable} {link.Arguments}{soName} -lm");
+                        var (soOk, soText) = Run(link.Executable, link.Arguments + soName + " -lm", workDir);
+                        libraryLog.Append(soText);
+                        if (!soOk || !File.Exists(soTemp)) { failed[i] = $"The C compiler reported errors in the library module '{library.Module}' (see the build log)."; logs[i] = libraryLog.ToString(); return; }
+                        File.Move(soTemp, so, true);
+                        CppGenerator.CommitStatic(library);
+                        libraryLog.AppendLine($"module {library.Module}: built in {libraryWatch.ElapsedMilliseconds} ms -> {so}");
+                        logs[i] = libraryLog.ToString();
+                        return;
+                    }
+                    var compile = CompilerCommand(toolchain, target, library.CFile, workDir, obj, language: "c", compileOnly: true, sections: true);
                     libraryLog.AppendLine($"{compile.Executable} {compile.Arguments}");
                     var (ok, text) = Run(compile.Executable, compile.Arguments, workDir);
                     libraryLog.Append(text);
@@ -231,8 +261,12 @@ namespace fire.Compiler
                 var libraries = staticPlan.Libraries.AsEnumerable().Reverse().Select(l => l.LibraryFile(ext)).ToList();
                 bool linkedOk = true;
                 watch.Restart();
-                foreach (var (exeName, arguments) in BuildCommands(toolchain, target, cFile, nativesFile, workDir, exe, program.Gui, libraries))
+                var commands = BuildCommands(toolchain, target, cFile, nativesFile, workDir, exe, program.Gui, libraries);
+                for (int c = 0; c < commands.Count; c++)
                 {
+                    var (exeName, arguments) = commands[c];
+                    // (shared: the program exports what the libraries need of it, and finds them next to itself)
+                    if (shared && c == commands.Count - 1) arguments += OperatingSystem.IsMacOS() ? " -Wl,-export_dynamic -Wl,-rpath,@executable_path" : " -rdynamic -Wl,-rpath,$ORIGIN";
                     log.AppendLine($"{exeName} {arguments}");
                     var (stepOk, text) = Run(exeName, arguments, workDir);
                     log.Append(text);
@@ -241,6 +275,14 @@ namespace fire.Compiler
                 log.AppendLine($"program built in {watch.ElapsedMilliseconds} ms");
                 bool built = linkedOk && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
+                // (shared: the libraries next to the program - it finds them there, wherever the cache is)
+                if (built && shared)
+                    foreach (var library in staticPlan.Libraries)
+                    {
+                        string next = Path.Combine(Path.GetDirectoryName(exe)!, Path.GetFileName(library.LibraryFile(ext)));
+                        File.Copy(library.LibraryFile(ext), next, true);
+                        log.AppendLine($"{Path.GetFileName(next)} next to the program");
+                    }
                 int sdlVersion = SdlSetup.RequiredVersion(cFile);
                 if (built && toolchain.EffectiveKind != "emscripten" && sdlVersion > 0 && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain, sdlVersion))) log.AppendLine($"SDL{sdlVersion}.dll copied next to the program.");
                 return new NativeBuildResult(built, exe, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C++ compiler of the native build reported errors (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
@@ -301,7 +343,7 @@ namespace fire.Compiler
             string compiler = ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler;
             string file = "";
             try { var info = new FileInfo(compiler); if (info.Exists) file = $"{info.Length}@{info.LastWriteTimeUtc.Ticks}"; } catch (Exception) { }
-            return string.Join("|", toolchain.EffectiveKind, compiler, file, toolchain.CStd ?? "", toolchain.Optimization ?? "", string.Join(" ", toolchain.Args ?? new()), string.Join(" ", toolchain.IncludeDirs ?? new()));
+            return string.Join("|", "sections", toolchain.EffectiveKind, compiler, file, toolchain.CStd ?? "", toolchain.Optimization ?? "", string.Join(" ", toolchain.Args ?? new()), string.Join(" ", toolchain.IncludeDirs ?? new()));
         }
 
         /// <summary>The command that puts an object file into a static library: `ar rcs` next to the compiler (`x86_64-w64-mingw32-ar`, `emar`, `llvm-ar`), `tcc -ar`, `lib` of msvc.</summary>
@@ -387,7 +429,7 @@ namespace fire.Compiler
         /// compiler, the program). <paramref name="compileOnly"/>: an object file. <paramref name="extraInputs"/>: object files that are linked too. The libraries the program asks
         /// for (`// fire-link: ...`) are read from <paramref name="programFile"/> (default: the compiled file).</summary>
         public static (string Executable, string Arguments) CompilerCommand(ToolchainDef toolchain, TargetProfile target, string cppFile, string includeDir, string exe, bool sharedLibrary = false, IEnumerable<string>? extraIncludeDirs = null, bool gui = false,
-            string language = "c++", bool compileOnly = false, IEnumerable<string>? extraInputs = null, string? programFile = null, string? natives = null)
+            string language = "c++", bool compileOnly = false, IEnumerable<string>? extraInputs = null, string? programFile = null, string? natives = null, bool sections = false)
         {
             string kind = toolchain.EffectiveKind;
             bool isC = language == "c";
@@ -456,6 +498,9 @@ namespace fire.Compiler
                 bool tcc = kind == "tcc";
                 bool small = IsSizeProfile(toolchain.Optimization) && !tcc && !debugBuild;   // (TinyCC keeps every function anyway: no sections to drop)
                 args.Append($"-std={std} {(debugBuild ? "-O0 -g" : small ? "-Os -ffunction-sections -fdata-sections" : toolchain.Optimization ?? "-O2")} ");
+                // a library of linkage "static" (ROADMAP 9): every function in its own section - the program's link drops what it does not reach
+                if (sections && !small && !tcc && !debugBuild && kind != "emscripten") args.Append("-ffunction-sections -fdata-sections ");
+                bool gcLibraries = !tcc && !debugBuild && (extraInputs ?? Array.Empty<string>()).Any(i => i.EndsWith(".a", StringComparison.OrdinalIgnoreCase));
                 if (compileOnly) args.Append("-c ");
                 // a library for the VM carries its C++ runtime (MinGW: no libgcc/libstdc++ DLLs next to it), so that it also runs on a machine without the toolchain
                 if (sharedLibrary) args.Append(tcc ? "-shared " : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "-shared -static-libgcc -static-libstdc++ " : "-shared -fPIC ");
@@ -477,7 +522,7 @@ namespace fire.Compiler
                 if (!sharedLibrary && kind != "emscripten")
                 {
                     bool apple = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
-                    if (small) args.Append(apple ? " -Wl,-dead_strip" : " -Wl,--gc-sections");
+                    if (small || gcLibraries) args.Append(apple ? " -Wl,-dead_strip" : " -Wl,--gc-sections");
                     if (toolchain.Strip != false && !debugBuild) args.Append(apple ? " -Wl,-x" : " -s");
                 }
             }

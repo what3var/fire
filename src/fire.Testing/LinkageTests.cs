@@ -109,6 +109,70 @@ static class LinkageTests
         try { Json.Deserialize<Store>("{") } catch (JsonException e) { print("bad: " + e.message) }
         """;
 
+    /// <summary>The classes of the program and of the libraries meet (ROADMAP 9 B2): a library calls members of objects of the program (OrderBy, Reflect.Get/Set/Call/New,
+    /// probes), the program extends a generic List of core, overrides an operator, throws its own subclass of an exception of core, calls by name what a class
+    /// lacks.</summary>
+    private const string Meet = """
+        #import "json"
+        #import "linq"
+        #import "reflection"
+        class Pt {
+            int x
+            int y
+            construct(int x, int y) { this.x = x; this.y = y }
+            int CompareTo(Pt o) { return this.x - o.x }
+            string ToString() { return "(" + x + "," + y + ")" }
+            Pt operator+(Pt o) { return new Pt(x + o.x, y + o.y) }
+            int Sum { get { return x + y } }
+        }
+        class MyError : ArgumentException {
+            int code
+            construct(string m, int c) : base(m) { code = c }
+        }
+        class Bag<T> : List<T> {
+            string label = "bag"
+            construct() : base() { }
+            int Twice() { return Count * 2 }
+        }
+        var pts = new List<Pt>()
+        pts.Add(new Pt(3, 1)); pts.Add(new Pt(1, 5)); pts.Add(new Pt(2, 2))
+        pts = pts.OrderBy((Pt p) => p.x).ToList()
+        print(pts[0].ToString() + " " + pts[2])
+        print("sum " + (pts[0] + pts[1]))
+        var big = pts.Where(p => p.Sum > 3).Select(p => p.x).ToList()
+        print("big " + big.Count + " " + big[0])
+        print("get " + Reflect.Get(pts[0], "y") + " " + Reflect.Get(pts[1], "Sum"))
+        Reflect.Set(pts[0], "y", 42)
+        print("set " + pts[0].y)
+        print("call " + Reflect.Call(pts[1], "CompareTo", [pts[2]]))
+        var b = new Bag<int>()
+        b.Add(4); b.Add(5)
+        print("bag " + b.Count + " " + b.Twice() + " " + b.label + " " + (b is of List) + " " + (b is of IEnumerable))
+        var any = b
+        var total = 0
+        foreach (var v in any) { total += v }
+        print("total " + total)
+        try { throw new MyError("bad", 7) } catch (ArgumentException e) { print("caught " + e.message) }
+        try { b.Add(Untyped.Text()) } catch (Exception e) { print("type " + e.message) }
+        var o = pts[1]
+        var holder = new List()
+        holder.Add(o)
+        var d = holder[0]
+        print("dyn " + d.x + " " + d.Sum)
+        try { d.Nope() } catch (Exception e) { print("miss " + e.message) }
+        try { d.CompareTo() } catch (Exception e) { print("arity " + e.message) }
+        print(Json.Serialize(pts[2]))
+        print(Type.Of(pts[0]).Name)
+        var np = Reflect.New("Pt", [7, 8])
+        print("new " + np)
+        var h = Reflect.Probe(np, "x", "changed", (any ob, any n, any ov, any nv) => print("probe " + n + " " + ov + "->" + nv))
+        np.x = 9
+        Reflect.Set(np, "x", 10)
+        class Untyped {
+            static any Text() { return "x" }
+        }
+        """;
+
     private static void RunIn(string root)
     {
         // ---- a program with several packages: the same output as "source" and the VM; the second build takes every library from the cache ----
@@ -144,6 +208,20 @@ static class LinkageTests
             shared.Ok && ModuleLines(shared.Log, "new").Count == 0 && ModuleLines(shared.Log, "from the cache").Contains("core") && ModuleLines(shared.Log, "from the cache").Contains("pkg:json") && sharedOut == sharedVm,
             $"{shared.Log}\nnativ:\n{sharedOut}\nVM:\n{sharedVm}");
 
+        // ---- every module serves its own classes (ROADMAP 9 B2): the program's C has no helpers for the classes of the libraries - the libraries reach the objects of
+        // the program, and the program those of the libraries it does not know by type, through the tables of the members in the class descriptors ----
+        string meetVm = Vm(new[] { Meet });
+        var meet = Build(new[] { Meet }, "static", Path.Combine(root, "meet"));
+        string meetOut = meet.Ok ? Exec(meet.Exe) : "";
+        Check("Module: Klassen des Programms und der Libraries treffen sich (OrderBy, Reflect.Get/Set/Call/New, Probe, Operator, List<T> erweitert, Ausnahme, fehlende Methode) wie die VM",
+            meet.Ok && meetOut == meetVm && !meet.Log.Contains("not possible"), $"{meet.Log}\nnativ:\n{meetOut}\nVM:\n{meetVm}");
+        var linkedCli = new Linker { Engine = "native" }.CompileAndLink(new[] { Cli });
+        string sourceC = CppGenerator.Generate(linkedCli);
+        var cliPlan = CppGenerator.GenerateStatic(linkedCli, TargetProfile.Host, "linkage-test", cacheRoot: Path.Combine(root, "plan-cache"));
+        Check("Module: das C des Programms ist kleiner als zwei Drittel von dem mit source (es bedient nur seine eigenen Klassen; Natives in C und die JSON-Engine in den Bibliotheken)",
+            cliPlan.ProgramC.Length * 3 < sourceC.Length * 2 && !cliPlan.ProgramC.Contains("FIRE_JSON_IMPLEMENTATION 1") && !cliPlan.ProgramC.Contains("fire_bridge_hash.h"),
+            $"Programm {cliPlan.ProgramC.Length} Zeichen, source {sourceC.Length}");
+
         // ---- a project with two libraries: a change of the code of a library builds only it, a change of its interface also the libraries that need it ----
         string s = Path.Combine(root, "sln");
         string libFile = Write(s, "Lib/Lib.fireproj", """{ "name": "Lib", "type": "library" }""");
@@ -171,6 +249,41 @@ static class LinkageTests
         Check("Projekt: die Schnittstelle einer Bibliothek aendert sich - auch die Bibliothek, die sie braucht, wird neu gebaut",
             p3.Ok && ModuleLines(p3.Log, "built in").Contains("Lib") && ModuleLines(p3.Log, "built in").Contains("Lib2") && Exec(p3.Exe) == Vm(plan.SourceTexts, plan), p3.Log);
 
+        // ---- linkage "shared" (phase C, Linux/macOS): the libraries as shared libraries next to the program; two programs share them; a library that does not fit
+        // the program (another interface) is a readable error when the program starts ----
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        {
+            plan = Plan();
+            string shDir1 = Path.Combine(root, "shared1");
+            Directory.CreateDirectory(shDir1);
+            var sh1 = Build(plan.SourceTexts, "shared", Path.Combine(shDir1, "app"), plan: plan);
+            string sh1Vm = Vm(plan.SourceTexts, plan);
+            var soFiles = Directory.Exists(shDir1) ? Directory.GetFiles(shDir1, "libfire_*").Select(Path.GetFileName).ToList() : new List<string?>();
+            Check("Shared: Programm mit Bibliotheken des Projekts als Shared Libraries neben dem Programm, wie die VM",
+                sh1.Ok && Exec(sh1.Exe) == sh1Vm && soFiles.Any(f => f!.StartsWith("libfire_mLib_")) && soFiles.Any(f => f!.StartsWith("libfire_mcore_")) && !sh1.Log.Contains("only available"),
+                $"VM: {sh1Vm}\n{string.Join(" ", soFiles)}\n{sh1.Log}");
+            foreach (var dir in new[] { "sharedA", "sharedB", "shared2" }) Directory.CreateDirectory(Path.Combine(root, dir));
+            const string smallA = "#import \"json\"\nclass Q { int x = 4 }\nprint(Json.Serialize(new Q()))\n";
+            const string smallB = "#import \"json\"\nclass R { string t = \"r\" }\nprint(Json.Serialize(new R()) + \"!\")\n";
+            var shA = Build(new[] { smallA }, "shared", Path.Combine(root, "sharedA", "a"));
+            var shB = Build(new[] { smallB }, "shared", Path.Combine(root, "sharedB", "b"));
+            Check("Shared: zwei Programme teilen sich die Bibliotheken (das zweite baut keine), beide wie die VM",
+                shA.Ok && shB.Ok && ModuleLines(shB.Log, "built in").Count == 0 && ModuleLines(shB.Log, "from the cache").Contains("pkg:json")
+                && Exec(shA.Exe) == Vm(new[] { smallA }) && Exec(shB.Exe) == Vm(new[] { smallB }), shA.Log + "\n" + shB.Log);
+            // another layout of Lib (a field more): its library put in place of the one the first program was built with
+            string before = File.ReadAllText(libSource);
+            File.WriteAllText(libSource, before.Replace("        int n = 0\n", "        int n = 0\n        int extra = 1\n"));
+            plan = Plan();
+            var sh2 = Build(plan.SourceTexts, "shared", Path.Combine(root, "shared2", "app"), plan: plan);
+            string? newLib = sh2.Ok ? Directory.GetFiles(Path.Combine(root, "shared2"), "libfire_mLib_*").FirstOrDefault() : null;
+            string? oldLib = Directory.Exists(shDir1) ? Directory.GetFiles(shDir1, "libfire_mLib_*").FirstOrDefault() : null;
+            string mismatch = "";
+            if (newLib != null && oldLib != null) { File.Copy(newLib, oldLib, true); mismatch = Exec(sh1.Exe); }
+            Check("Shared: eine Bibliothek mit einer anderen Schnittstelle neben dem Programm ist beim Start ein lesbarer Fehler (kein Absturz)",
+                mismatch.Contains("does not fit this program") && mismatch.Contains("(exit 70)") && mismatch.Contains("'Lib'"), mismatch + "\n" + sh2.Log);
+            File.WriteAllText(libSource, before);
+        }
+
         // ---- a debug build: a breakpoint inside a static library ----
         DebugInLibrary(root, Plan(), libSource);
 
@@ -187,14 +300,18 @@ static class LinkageTests
         {
             var tcc = Build(new[] { small }, "static", Path.Combine(root, "tcc"), ToolchainDef.BuiltIn["tcc"]);
             Check("TinyCC: linkage static (Bibliotheken mit tcc -ar)", tcc.Ok && Exec(tcc.Exe) == smallVm, tcc.Log);
+            var tccShared = Build(new[] { small }, "shared", Path.Combine(root, "tcc-shared"), ToolchainDef.BuiltIn["tcc"]);
+            Check("TinyCC: linkage shared gibt es dort nicht - gebaut wird static, das Protokoll sagt es", tccShared.Ok && tccShared.Log.Contains("only available") && Exec(tccShared.Exe) == smallVm, tccShared.Log);
         }
         else Console.WriteLine("(TinyCC: uebersprungen - tcc fehlt)");
         var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
-        if (ToolchainDetector.Find(mingw) != null && HasProgram("wine"))
+        // (Debian/Ubuntu's wine64 package puts the loader into /usr/lib/wine without a `wine` on the PATH)
+        string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? (HasProgram("wine") ? "wine" : null);
+        if (ToolchainDetector.Find(mingw) != null && wine != null)
         {
             var win = Build(new[] { small }, "static", Path.Combine(root, "win.exe"), mingw, TargetProfile.Windows);
             _winePrefix = Path.Combine(root, "wineprefix");
-            Check("MinGW: linkage static fuer Windows (x86_64-w64-mingw32-ar), unter Wine wie die VM", win.Ok && Exec(win.Exe, "wine") == smallVm, win.Log);
+            Check("MinGW: linkage static fuer Windows (x86_64-w64-mingw32-ar), unter Wine wie die VM", win.Ok && Exec(win.Exe, wine) == smallVm, win.Log);
         }
         else Console.WriteLine("(MinGW/Wine: uebersprungen)");
 
