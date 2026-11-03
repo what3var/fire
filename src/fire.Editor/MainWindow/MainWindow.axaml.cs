@@ -283,6 +283,7 @@ namespace fire.Editor
             RefreshCircuitUi();
             _nativeTargetChoice = _settings.NativeTarget;
             RefreshTargetCombo();
+            RefreshEngineCombo();
 
             // Files passed on the command line; without any the editor starts empty (new files come from the welcome window or File > New).
             foreach (var arg in (Environment.GetCommandLineArgs()).Skip(1))
@@ -508,6 +509,10 @@ namespace fire.Editor
                 _ = ConfirmAllThenClose();
                 return;
             }
+            // a native program of a run ends with spark; the layout is saved with the stack panel as the user left it (not hidden for the native engine)
+            StopNativeRun();
+            if (_session.Target is fire.Debugging.NativeDebugTarget) _session.Reset();
+            if (_stackHiddenForNative) ApplyEngineToPanels(false);
             SaveLayout();
             SaveToolStrips();
             _strips.CloseFloatingWindows();
@@ -845,6 +850,7 @@ namespace fire.Editor
             UpdateSaveCommands();
             RefreshProjectUi();
             RefreshTargetCombo();
+            RefreshEngineCombo();
             _debugger.Refresh(BreakpointDescriptions());
             if (!ReferenceEquals(doc, _testsActiveDocument)) { _testsActiveDocument = doc; ScheduleTestDiscovery(activeDocumentChanged: true); }
             RefreshTodo();

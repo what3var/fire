@@ -15,6 +15,7 @@ static partial class DebuggerTests
         VmRun();
         TargetRun();
         SessionRun();
+        NativeRun();
     }
 
     /// <summary>The run of the editor's debugger on the VM: VM.RunUntilBreakpoint/RunUntilEnd (F5), line table (binary search), native forwarding.</summary>
