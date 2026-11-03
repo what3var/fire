@@ -1183,7 +1183,9 @@ namespace fire.Native
             }
             if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
             if (DebugBuild) sb.AppendLine("#define FIRE_DEBUG 1   // a debug build: the shadow stack and the hooks of the debugger (fire_debug.h)");
-            if (DebugBuild && DebugAgent) sb.AppendLine("#define FIRE_DEBUG_AGENT 1   // the debug agent (TCP, FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T)");
+            if (DebugBuild && DebugAgent) sb.AppendLine("#define FIRE_DEBUG_AGENT 1   // the debug agent (docs/NATIVE_DEBUG_PROTOCOL.md; the desktop: FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T)");
+            if (DebugBuild && DebugAgent && DebugTransportDefine is { } transport)
+                sb.AppendLine($"#define {transport} 1   // the agent talks framed over {(transport.EndsWith("UART", StringComparison.Ordinal) ? "the console UART" : "stdio")} (docs/NATIVE_DEBUG_PROTOCOL.md, Transport)");
             if (_usesThreads) sb.AppendLine("#define FIRE_THREADS 1");
             if (_usesReflection) sb.AppendLine("#define FIRE_REFLECTION 1");
             if (_usesElementPointers && _program.ExecutionMode != VmExecutionMode.Performance) sb.AppendLine("#define FIRE_PTRBOUNDS 1 // pointers into arrays and buffers (`ref a[i]`, `p + n`) know the bounds");
@@ -1472,8 +1474,13 @@ namespace fire.Native
             {
                 // ESP-IDF calls app_main on its main task, whose stack is small (3.5 KB by default): the program runs on a task of its own with a stack that
                 // FIRE_MAIN_STACK_BYTES chooses (bytes, like xTaskCreate of ESP-IDF counts them); app_main returns at once, the task ends with the program
-                sb.AppendLine("#ifndef FIRE_MAIN_STACK_BYTES\n#define FIRE_MAIN_STACK_BYTES 16384\n#endif");
-                sb.AppendLine("static void fire_mainTask(void* arg) {\n    (void)arg;\n    fire_init();\n    fire_main();\n    fflush(stdout);\n    vTaskDelete(NULL);\n}");
+                // (a debug build: frames without optimisation and the shadow stack need more)
+                sb.AppendLine($"#ifndef FIRE_MAIN_STACK_BYTES\n#define FIRE_MAIN_STACK_BYTES {(DebugBuild ? 32768 : 16384)}\n#endif");
+                if (DebugBuild)
+                    sb.AppendLine("static void fire_mainTask(void* arg) {\n    (void)arg;\n    fire_init();\n    fire_dbgStart(&kDbgProgram);   // the debugger on the console UART: hello, then at most 3 s for its first command\n    fire_main();\n    fflush(stdout);\n"
+                        + (_usesThreads ? "    fire_dbgExited(mainExitCode());\n" : "    fire_dbgExited(g_unwind.active ? 1 : 0);\n") + "    vTaskDelete(NULL);\n}");
+                else
+                    sb.AppendLine("static void fire_mainTask(void* arg) {\n    (void)arg;\n    fire_init();\n    fire_main();\n    fflush(stdout);\n    vTaskDelete(NULL);\n}");
                 sb.AppendLine($"{externC}void {entry.Name}(void) {{");
                 sb.AppendLine("    if (xTaskCreate(fire_mainTask, \"fire_main\", FIRE_MAIN_STACK_BYTES, NULL, 1, NULL) != pdPASS) { fire_init(); fire_main(); fflush(stdout); }   // (no memory for the task: on the main task)");
                 sb.AppendLine("}");
@@ -1481,8 +1488,11 @@ namespace fire.Native
             else if (entry.Kind == EntryKind.Function)
             {
                 sb.AppendLine($"{externC}void {entry.Name}(void) {{");
-                sb.AppendLine("    fire_init();\n    fire_main();");
+                sb.AppendLine("    fire_init();");
+                if (DebugBuild) sb.AppendLine("    fire_dbgStart(&kDbgProgram);   // the debugger (FreeRTOS: framed over stdio)");
+                sb.AppendLine("    fire_main();");
                 sb.AppendLine("    fflush(stdout);");
+                if (DebugBuild) sb.AppendLine(_usesThreads ? "    fire_dbgExited(mainExitCode());" : "    fire_dbgExited(g_unwind.active ? 1 : 0);");
                 sb.AppendLine("}");
             }
             else if (DebugBuild)

@@ -168,6 +168,10 @@ namespace fire.Native
         public int? Sdl { get; set; }
         /// <summary>`#line` directives in the generated C (null: on, see NativeTarget.LineDirectives).</summary>
         public bool? LineDirectives { get; set; }
+        /// <summary>A board: its serial port (ESP32: Run and Debug in spark).</summary>
+        public string? Port { get; set; }
+        /// <summary>A board: the baud rate of its console.</summary>
+        public int? Baud { get; set; }
 
         internal TargetProfile Apply(TargetProfile b, string name)
         {
@@ -183,6 +187,8 @@ namespace fire.Native
                 Toolchain = Toolchain ?? b.Native.Toolchain,
                 Sdl = Sdl ?? b.Native.Sdl,
                 LineDirectives = LineDirectives ?? b.Native.LineDirectives,
+                Port = Port ?? b.Native.Port,
+                Baud = Baud ?? b.Native.Baud,
                 Entry = Entry == null ? b.Native.Entry : b.Native.Entry with
                 {
                     Name = Entry.Name ?? b.Native.Entry.Name,

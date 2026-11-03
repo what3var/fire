@@ -1,21 +1,57 @@
 # Debug-Protokoll nativer Programme
 
 Ein nativer Debug-Build (Modus `debug`, siehe docs/NATIVE_BACKEND.md "Debug-Builds") enthält einen Debug-Agenten (`fire_debug.h`, Teil der Runtime). Ist beim Start
-die Umgebungsvariable `FIRE_DEBUG` gesetzt, verbindet sich das Programm mit dem Debugger (spark) und lässt sich von dort genauso steuern wie die VM
+die Umgebungsvariable `FIRE_DEBUG` gesetzt (auf einem ESP32: immer, über die Konsolen-UART, siehe "Transport"), verbindet sich das Programm mit dem Debugger (spark) und lässt sich von dort genauso steuern wie die VM
 (`VM.StepLine`/`StepInto`/`StepOut`/`RunUntilBreakpoint`, `DebugScopeChain`, `DebugGlobals`, `DebugThisValue`, `PauseOnUnhandled`/`TryResumeUnhandled`). Dieses Dokument beschreibt
 das Protokoll; die Semantik ist die der VM (unten, "Semantik").
 
-Ohne `FIRE_DEBUG` läuft ein Debug-Build ohne Agent (die Haken im Code sind dann nur ein nicht genommener Sprung).
+Ohne `FIRE_DEBUG` läuft ein Debug-Build für den Desktop ohne Agent (die Haken im Code sind dann nur ein nicht genommener Sprung).
 
 ## Transport
 
-* `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T` - der Debugger lauscht auf `PORT` (nur localhost), das **Programm verbindet sich** als Client. `token` ist ein
-  beliebiger Text ohne `;`, den das Programm in `hello` zurückschickt (der Debugger erkennt daran seinen Prozess).
-* Kommt keine Verbindung zustande, schreibt das Programm `fire debug: cannot connect to ...` nach stderr und läuft ohne Debugger.
-* **Eine JSON-Nachricht pro Zeile** (UTF-8, Ende `\n`, keine Zeilenumbrüche in der Nachricht). Das Programm schreibt Zeichen außerhalb von ASCII als `\uXXXX`
-  (UTF-16-Einheiten, auch einzelne Surrogate - ein fire-String ist UTF-16); der Debugger darf UTF-8 oder `\u` schicken.
-* Die Ausgabe des Programms (stdout/stderr) bleibt die Ausgabe des Prozesses; sie geht nicht über die Verbindung.
-* Später (nicht in dieser Phase): ESP32 über UART/USB-CDC mit Rahmen, TCP über WLAN.
+Drei Wege, eine Schnittstelle im Agenten (öffnen, Nachricht senden, Bytes empfangen, schließen; `fire_debug.h`) und in spark (`INativeDebugTransport`,
+`src/fire.Compiler/Debugging/NativeDebugTransport.cs`):
+
+| Transport | gewählt durch | Leitung |
+|---|---|---|
+| **tcp** | `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T` (Desktop) | eine TCP-Verbindung, nur Nachrichten, eine pro Zeile |
+| **stdio** | `FIRE_DEBUG=stdio[;token=T][;wait=MS]` (Desktop, für Tests), fest `FIRE_DEBUG_TRANSPORT_STDIO` (Ziel `freertos`, der Simulator `native/sim`) | stdout/stdin des Programms, gerahmt |
+| **uart** | fest `FIRE_DEBUG_TRANSPORT_UART` (Ziel `esp32`, der Generator setzt es im Debug-Build) | die Konsolen-UART (UART0 hinter dem USB-Seriell-Chip), gerahmt |
+
+* **tcp**: der Debugger lauscht auf `PORT` (nur localhost), das **Programm verbindet sich** als Client. `token` ist ein beliebiger Text ohne `;`, den das
+  Programm in `hello` zurückschickt (der Debugger erkennt daran seinen Prozess). Kommt keine Verbindung zustande, schreibt das Programm
+  `fire debug: cannot connect to ...` nach stderr und läuft ohne Debugger. Die Ausgabe des Programms (stdout/stderr) bleibt die Ausgabe des Prozesses.
+* **Eine JSON-Nachricht pro Zeile** (UTF-8, keine Zeilenumbrüche in der Nachricht). Das Programm schreibt Zeichen außerhalb von ASCII als `\uXXXX`
+  (UTF-16-Einheiten, auch einzelne Surrogate - ein fire-String ist UTF-16): jede Nachricht des Programms ist reines ASCII. Der Debugger darf über TCP UTF-8
+  oder `\u` schicken, gerahmt schickt spark nur ASCII.
+* `hello` nennt den Transport (`"transport": "tcp"`, `"stdio"`, `"uart"`).
+
+### Gerahmt (stdio, uart)
+
+Über **eine** Leitung laufen die Ausgabe des Programms, das Boot-Log und die Meldungen von ESP-IDF **und** die Nachrichten. Eine Nachricht ist eine Zeile für sich:
+
+```
+\x1E FD: <json> * <crc> \n          (ohne Leerzeichen; z.B.  \x1EFD:{"event":"exited","code":0}*2a5a)
+```
+
+* `\x1E` (Record Separator) und `FD:` beginnen den Rahmen, `<crc>` ist die **CRC-16/CCITT-FALSE** (Polynom 0x1021, Start 0xFFFF, ohne Spiegelung und ohne
+  Schluss-XOR; Prüfwert von `123456789`: `29b1`) der Bytes von `<json>`, vier Hex-Ziffern. Ein Rahmen, dessen Form oder CRC nicht stimmt (auf der Leitung
+  verfälscht), wird **verworfen** - auf beiden Seiten. `\r` vor dem `\n` wird ignoriert (ESP-IDF schreibt `\r\n`).
+* Alles andere ist **Konsole**: spark trennt (Demultiplexer) - Rahmen zum Debugger, der Rest zeilenweise ins Output-Panel; ein Rahmen mitten in einer Zeile der
+  Konsole wird aus ihr herausgeschnitten. Das Programm schreibt einen Rahmen **am Stück** unter der Sperre von stdout (`flockfile`): erst wird ausgegeben, was das
+  Programm vorher schrieb (`fflush`), dann der Rahmen mit einem `write` - ein `print` eines anderen Threads zerteilt ihn nie.
+* **Richtung Programm**: Befehle als Rahmen; jede andere Zeile ist **Standardeingabe des Programms**. Der Agent liest die Leitung (auf dem ESP32 gehört ihm die
+  Empfangsseite der UART: `uart_driver_install`, die Konsole schreibt dann über den Treiber), ein Rahmen beginnt mit `\x1E` am Anfang einer Zeile, alle anderen
+  Bytes gehen sofort in einen Puffer, aus dem `IO.Stdio.ReadLine`/`ReadAll`/`Read` des Programms lesen (`fire_dbgStdinRead`, wartet ohne GIL, bis etwas da ist;
+  das Ende der Leitung ist das Ende der Eingabe). spark schickt die Zeilen des Eingabefelds unter dem Output-Panel so.
+* **Warten auf den Debugger**: nach `hello` (und dem `stopped` mit Grund `entry`) wartet der Hauptthread **höchstens 3 s** (`FIRE_DEBUG_WAIT_MS`, auf dem Desktop
+  `;wait=MS`; 0: ohne Grenze) auf den **ersten Befehl** des Debuggers. Kommt keiner, schreibt das Programm `fire debug: no debugger within 3000 ms - running without
+  one` nach stderr und läuft ohne Debugger (Haken aus; später kommende Rahmen werden übergangen, die Eingabe geht weiter durch den Agenten). Kommt einer, bleibt es
+  wie über TCP stehen, bis der Debugger es laufen lässt. spark schickt deshalb gleich nach dem `hello` einen Befehl (`threads`).
+* Ein Board kennt kein Token und keine Umgebung: spark erkennt sein Programm an den **Hashes der Quellen** im `hello` (passen sie nicht: "das Board führt ein
+  anderes Programm aus"). Ein zweites `hello` heißt: das Board ist neu gestartet (Reset, Absturz) - die Sitzung ist zu Ende.
+* `terminate` startet ein ESP32 neu (`esp_restart`; ein Board hat keinen Prozess, der endet) - das Programm wartet dann wieder 3 s und läuft ohne Debugger.
+* Später: TCP über WLAN, andere Chips (USB-Serial-JTAG der C3/S3) als eigene Ziele.
 
 ## Nachrichten
 
@@ -36,7 +72,7 @@ Programm mit `ok: false`.
 **`hello`** - das erste, was das Programm schickt:
 
 ```json
-{"event": "hello", "protocol": 1, "token": "T", "engine": "native", "pid": 4711, "target": "linux", "mode": "debug",
+{"event": "hello", "protocol": 1, "token": "T", "engine": "native", "pid": 4711, "target": "linux", "mode": "debug", "transport": "tcp",
  "firstUserSource": 3, "mainThread": 1,
  "sources": [{"index": 0, "file": null, "hash": null}, {"index": 3, "file": "/home/me/p/main.fire", "hash": "9f86d08..."}]}
 ```
@@ -47,7 +83,8 @@ Quelltexts, wie ihn der Compiler bekommen hat (`Convert.ToHexString(SHA256.HashD
 und die Libraries. Der Debugger vergleicht damit, ob seine Dateien zum Programm passen.
 
 Direkt danach hält der Hauptthread an (`stopped`, Grund `entry`) und wartet auf den Debugger (wie der Hauptthread der VM in spark, der erst mit dem ersten
-Befehl losläuft). Nichts vom Programm ist gelaufen, auch der Prelude nicht.
+Befehl losläuft). Nichts vom Programm ist gelaufen, auch der Prelude nicht. Gerahmt wartet er nur 3 s auf den ersten Befehl (siehe "Transport"). `pid` ist auf
+einem Board 0, `token` dort leer.
 
 **`stopped`** - ein Thread hat angehalten:
 

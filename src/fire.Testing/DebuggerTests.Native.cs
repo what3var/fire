@@ -34,9 +34,17 @@ static partial class DebuggerTests
             public volatile bool PauseRequested;
         }
 
-        private readonly TcpClient _client;
-        private readonly StreamReader _reader;
-        private readonly StreamWriter _writer;
+        // the wire: TCP (one message per line), or framed over a stream (a board's console UART: frames between console lines)
+        private readonly TcpClient? _client;
+        private readonly StreamReader? _reader;
+        private readonly StreamWriter? _writer;
+        private readonly Stream? _wire;
+        private readonly FramedDebugTransport? _framedIn;
+        private readonly object _sendLock = new();
+        /// <summary>Framed: the plain lines that came (the program's standard input).</summary>
+        public readonly ConcurrentQueue<string> Input = new();
+        /// <summary>Framed: write a console line before every message (the log of a board between the frames).</summary>
+        public bool Chatty;
         private readonly object _lock = new();
         private readonly Dictionary<long, FakeThread> _threads = new();
         private HashSet<(int, int)> _breakpoints = new();
@@ -60,6 +68,36 @@ static partial class DebuggerTests
             _reader = new StreamReader(_client.GetStream(), new UTF8Encoding(false));
             _writer = new StreamWriter(_client.GetStream(), new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true };
             _threadSteps = threadSteps ?? new List<FakeStep>();
+            (_loop, _runner) = Begin(mainSteps, token, loopFrom);
+        }
+
+        /// <summary>A board on a serial line (framed, docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): first the boot log and a garbled frame, then the hello
+        /// (in two pieces, the second after a pause), between the messages console lines, and one frame in the middle of a console line.</summary>
+        public FakeAgent(Stream wire, List<FakeStep> mainSteps, List<FakeStep>? threadSteps = null)
+        {
+            FirstUser = 1;
+            _wire = wire;
+            _framedIn = new FramedDebugTransport(wire, wire) { Console = Input.Enqueue };
+            _threadSteps = threadSteps ?? new List<FakeStep>();
+            Raw("ets Jul 29 2019 12:21:46\r\n\r\nrst:0x1 (POWERON_RESET),boot:0x12 (SPI_FAST_FLASH_BOOT)\r\n");
+            Raw("I (938) boot: ESP-IDF v5.5 2nd stage bootloader\r\n");
+            var garbled = FramedDebugTransport.Frame("{\"event\":\"hello\",\"protocol\":2}");
+            garbled[10] ^= 0x20;   // (a bit flipped on the wire: the CRC does not match)
+            RawBytes(garbled);
+            Raw("I (4464) main_task: Calling app_main()\r\n");
+            (_loop, _runner) = Begin(mainSteps, "", -1);
+        }
+
+        private void Raw(string text) => RawBytes(Encoding.UTF8.GetBytes(text));
+
+        private void RawBytes(byte[] bytes)
+        {
+            try { lock (_sendLock) { _wire!.Write(bytes); _wire.Flush(); } }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+        }
+
+        private (Thread Loop, Thread Runner) Begin(List<FakeStep> mainSteps, string token, int loopFrom)
+        {
             _threads[1] = new FakeThread { Id = 1, Name = "Main", Steps = mainSteps, Pc = 0, LoopFrom = loopFrom };
             _values["l:1:0:0"] = ("int", "3");
             _values["l:1:0:1"] = ("object", "Point");
@@ -72,26 +110,57 @@ static partial class DebuggerTests
             Send(new Dictionary<string, object?>
             {
                 ["event"] = "hello", ["protocol"] = 1L, ["token"] = token, ["engine"] = "native", ["pid"] = 4711L, ["target"] = "linux", ["mode"] = "debug",
-                ["firstUserSource"] = (long)firstUser, ["mainThread"] = 1L,
+                ["firstUserSource"] = (long)FirstUser, ["mainThread"] = 1L,
                 ["sources"] = new List<object?>
                 {
                     new Dictionary<string, object?> { ["index"] = 0L, ["file"] = null, ["hash"] = null },
-                    new Dictionary<string, object?> { ["index"] = (long)firstUser, ["file"] = "/tmp/fake/main.fire", ["hash"] = NativeDebugTarget.HashOf("print(1)\n") },
+                    new Dictionary<string, object?> { ["index"] = (long)FirstUser, ["file"] = "/tmp/fake/main.fire", ["hash"] = NativeDebugTarget.HashOf("print(1)\n") },
                 },
             });
             var main = _threads[1];
             main.Last = (mainSteps[0].Source, mainSteps[0].Line);
             Stopped(main, "entry");
-            _loop = new Thread(Loop) { IsBackground = true };
-            _loop.Start();
-            _runner = new Thread(Runner) { IsBackground = true };
-            _runner.Start();
+            var loop = new Thread(Loop) { IsBackground = true };
+            loop.Start();
+            var runner = new Thread(Runner) { IsBackground = true };
+            runner.Start();
+            return (loop, runner);
         }
+
+        private int _sent;
 
         private void Send(Dictionary<string, object?> message)
         {
-            try { lock (_writer) _writer.WriteLine(DebugJson.Write(message)); }
-            catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+            string json = DebugJson.Write(message);
+            if (_wire == null)
+            {
+                try { lock (_sendLock) _writer!.WriteLine(json); }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+                return;
+            }
+            var frame = FramedDebugTransport.Frame(json);
+            lock (_sendLock)
+            {
+                int n = _sent++;
+                if (n == 0)
+                {
+                    // the hello in two pieces
+                    RawBytes(frame[..20]);
+                    Thread.Sleep(30);
+                    RawBytes(frame[20..]);
+                    return;
+                }
+                if (n == 1)
+                {
+                    // a frame in the middle of a console line: the console gets "half one, half two"
+                    Raw("half one, ");
+                    RawBytes(frame);
+                    Raw("half two\r\n");
+                    return;
+                }
+                if (Chatty) Raw($"I ({n}) app: line {n}\r\n");
+                RawBytes(frame);
+            }
         }
 
         private void Stopped(FakeThread t, string reason, Dictionary<string, object?>? exception = null)
@@ -110,7 +179,7 @@ static partial class DebuggerTests
             {
                 while (!_done)
                 {
-                    string? line = _reader.ReadLine();
+                    string? line = _framedIn != null ? _framedIn.ReadMessage() : _reader!.ReadLine();
                     if (line == null) break;
                     Received.Enqueue(line);
                     var cmd = DebugJson.ParseObject(line);
@@ -185,7 +254,18 @@ static partial class DebuggerTests
                         if (t == null || !t.Paused) return Err("thread is not paused");
                         return Ok(("scopes", new List<object?> { new Dictionary<string, object?> { ["depth"] = 0L, ["functionTop"] = true, ["variables"] = new List<object?> { V("count", "l:1:0:0"), V("p", "l:1:0:1") } } }));
                     case "globals":
-                        return Ok(("variables", new List<object?> { V("g", "g:0"), V("xs", "g:1") }));
+                    {
+                        var list = new List<object?>();
+                        if (t != null && t.Id != 1)
+                        {
+                            if (!t.Paused) return Err("the thread is not paused");
+                            _values.TryAdd($"T:{t.Id}:0", ("int", "77"));
+                            list.Add(V("k", $"T:{t.Id}:0"));
+                        }
+                        list.Add(V("g", "g:0"));
+                        list.Add(V("xs", "g:1"));
+                        return Ok(("variables", list));
+                    }
                     case "this":
                         if (t == null || !t.Paused) return Err("thread is not paused");
                         return Ok(("value", t.Steps[t.Pc].Depth > 0 ? V("this", "l:1:0:1") : null));
@@ -227,7 +307,8 @@ static partial class DebuggerTests
             foreach (var t in _threads.Values) t.Ended = true;
             Send(new Dictionary<string, object?> { ["event"] = "exited", ["code"] = (long)code });
             _done = true;
-            try { _client.Close(); } catch (SocketException) { }
+            try { _client?.Close(); } catch (SocketException) { }
+            try { _wire?.Dispose(); } catch (IOException) { }
         }
 
         /// <summary>Advances every running thread by one step per millisecond.</summary>
@@ -287,7 +368,8 @@ static partial class DebuggerTests
         public void Dispose()
         {
             _done = true;
-            try { _client.Close(); } catch (SocketException) { }
+            try { _client?.Close(); } catch (SocketException) { }
+            try { _wire?.Dispose(); } catch (IOException) { }
         }
     }
 
@@ -296,6 +378,147 @@ static partial class DebuggerTests
     {
         new(s, 1, 0), new(s, 2, 0, SpawnThread: spawnAt2), new(s, 3, 0), new(s, 10, 1), new(s, 11, 1), new(s, 3, 0), new(s, 4, 0, Throws: throwAt4 ? "ArgumentException" : null), new(s, 5, 0),
     };
+
+    /// <summary>An in-memory serial line: two ends, what one writes the other reads (blocking; the end of one end ends the reading of the other).</summary>
+    internal sealed class SerialLine
+    {
+        private sealed class Queue
+        {
+            private readonly System.Collections.Generic.Queue<byte> _bytes = new();
+            private bool _closed;
+            public void Put(ReadOnlySpan<byte> data)
+            {
+                lock (_bytes)
+                {
+                    foreach (byte b in data) _bytes.Enqueue(b);
+                    Monitor.PulseAll(_bytes);
+                }
+            }
+            public int Take(Span<byte> into)
+            {
+                lock (_bytes)
+                {
+                    while (_bytes.Count == 0 && !_closed) Monitor.Wait(_bytes);
+                    int n = 0;
+                    while (n < into.Length && _bytes.Count > 0) into[n++] = _bytes.Dequeue();
+                    return n;
+                }
+            }
+            public void Close() { lock (_bytes) { _closed = true; Monitor.PulseAll(_bytes); } }
+        }
+
+        private sealed class End : Stream
+        {
+            private readonly Queue _in, _out;
+            public End(Queue @in, Queue @out) { _in = @in; _out = @out; }
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override void Flush() { }
+            public override int Read(byte[] buffer, int offset, int count) => _in.Take(buffer.AsSpan(offset, count));
+            public override void Write(byte[] buffer, int offset, int count) => _out.Put(buffer.AsSpan(offset, count));
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            protected override void Dispose(bool disposing) { _in.Close(); _out.Close(); base.Dispose(disposing); }
+        }
+
+        public readonly Stream Host, Device;
+
+        public SerialLine()
+        {
+            var toDevice = new Queue();
+            var toHost = new Queue();
+            Host = new End(toHost, toDevice);
+            Device = new End(toDevice, toHost);
+        }
+    }
+
+    /// <summary>spark's SerialFramedTransport against a fake board (an in-memory serial line): the boot log before the hello and the console between the frames
+    /// go to the Output, a garbled frame is dropped, a frame in the middle of a console line is cut out of it, input lines reach the board as plain lines; a fire
+    /// thread's globals (its own variables of its top level first, `globals` with its thread).</summary>
+    private static void FramedChecks()
+    {
+        var line = new SerialLine();
+        var steps = FakeMain(spawnAt2: true);
+        var threadSteps = new List<FakeStep> { new(1, 20, 0), new(1, 21, 0), new(1, 22, 0) };
+        var agent = new FakeAgent(line.Device, steps, threadSteps) { Chatty = true };
+        var transport = new SerialFramedTransport(line.Host);
+        var early = new ConcurrentQueue<string>();
+        NativeDebugTarget? target = null;
+        try { target = NativeDebugTarget.OpenFramed(transport, TimeSpan.FromSeconds(20), early.Enqueue); }
+        catch (NativeDebugException ex) { Check(false, "SerialFramedTransport: hello ueber die serielle Leitung", ex.Message); agent.Dispose(); return; }
+        using var targetScope = target;
+        var output = new ConcurrentQueue<string>();
+        target.Output += (_, text) => output.Enqueue(text);
+        var main = target.MainThread;
+        string earlyText = string.Join("|", early);
+        Check(early.Any(l => l == "rst:0x1 (POWERON_RESET),boot:0x12 (SPI_FAST_FLASH_BOOT)") && early.Any(l => l == "I (4464) main_task: Calling app_main()") && !earlyText.Contains("FD:")
+            && transport.DroppedFrames == 1 && target.Transport == "stdio" && target.CarriesConsole && main.CurrentLocation == (1, 1)
+            && agent.Received.FirstOrDefault()?.Contains("\"cmd\":\"threads\"") == true,
+            "SerialFramedTransport: das Boot-Log vor dem hello geht in die Ausgabe (ohne \\r), ein verfaelschter Rahmen wird verworfen, der erste Befehl kommt sofort (threads)",
+            $"{earlyText} | dropped {transport.DroppedFrames} | {target.Transport} | {string.Join(" ", agent.Received)}");
+        // (the second message - the stop at the entry - came in the middle of a console line)
+        Check(early.Contains("half one, half two") || output.Contains("half one, half two"), "SerialFramedTransport: ein Rahmen mitten in einer Konsolenzeile wird herausgeschnitten",
+            string.Join("|", early.Concat(output)));
+
+        var started = new BlockingCollection<IDebugThread>();
+        target.ThreadStarted += started.Add;
+        var bps = new HashSet<(int, int)> { (1, 21), (1, 4) };
+        bool mainStopped = main.RunUntilBreakpoint(bps, () => false);
+        bool got = started.TryTake(out var fireThread, TimeSpan.FromSeconds(20));
+        Thread.Sleep(100);
+        bool threadStopped = got && fireThread!.RunUntilBreakpoint(bps, () => false);
+        var threadGlobals = threadStopped ? fireThread!.Globals() : Array.Empty<DebugValue>();
+        var mainGlobals = main.Globals();
+        Check(mainStopped && main.CurrentLocation == (1, 4) && threadStopped && Show(threadGlobals) == "k=77,g=5,xs=Array[2]" && Show(mainGlobals) == "g=5,xs=Array[2]"
+            && agent.Received.Any(l => l.Contains("\"cmd\":\"globals\"") && l.Contains("\"thread\":2")) && output.Any(l => l.StartsWith("I (", StringComparison.Ordinal)),
+            "Rahmen: Haltepunkte in zwei Threads; die Globals eines fire-Threads zeigen zuerst seine eigenen Variablen (globals mit thread, T:2:0), die Konsole dazwischen kommt an",
+            $"{mainStopped} {main.CurrentLocation} {threadStopped} {Show(threadGlobals)} | {Show(mainGlobals)}");
+        var k = threadGlobals.FirstOrDefault(v => v.Name == "k");
+        bool setK = k != null && fireThread!.TrySetValue(k, "5", out _) && agent.Received.Any(l => l.Contains("\"ref\":\"T:2:0\""));
+        Check(setK && Show(fireThread!.Globals()).StartsWith("k=5,", StringComparison.Ordinal), "Rahmen: set einer eigenen Variable des Threads (T:2:0)", Show(fireThread?.Globals() ?? Array.Empty<DebugValue>()));
+
+        bool sent = target.WriteInput("eine Eingabe") && target.WriteInput("\u001Ekein Rahmen");
+        string? input1 = null, input2 = null;
+        for (int i = 0; i < 100 && agent.Input.Count < 2; i++) Thread.Sleep(20);
+        agent.Input.TryDequeue(out input1);
+        agent.Input.TryDequeue(out input2);
+        Check(sent && input1 == "eine Eingabe" && input2 == "kein Rahmen", "Rahmen: Eingabezeilen gehen als einfache Zeilen zum Board (ein \\x1E am Anfang macht keinen Rahmen daraus)", $"{input1} | {input2}");
+        fireThread?.RunUntilEnd(() => false);
+        bool ended = !main.RunUntilEnd(() => false);
+        Check(ended && target.HasExited && target.ExitCode == 0, "Rahmen: das Programm endet (exited)");
+        target.Dispose();
+        agent.Dispose();
+
+        // a board that starts again (a reset): a second hello ends the session
+        var line2 = new SerialLine();
+        var agent2 = new FakeAgent(line2.Device, FakeMain());
+        var target2 = NativeDebugTarget.OpenFramed(new SerialFramedTransport(line2.Host), TimeSpan.FromSeconds(20));
+        var exited = new TaskCompletionSource<int?>();
+        target2.Exited += code => exited.TrySetResult(code);
+        line2.Device.Write(FramedDebugTransport.Frame("{\"event\":\"hello\",\"protocol\":1,\"token\":\"\",\"mainThread\":1,\"sources\":[]}"));
+        Check(exited.Task.Wait(TimeSpan.FromSeconds(10)) && target2.HasExited, "Rahmen: ein neues hello (das Board startete neu) beendet die Sitzung");
+        target2.Dispose();
+        agent2.Dispose();
+
+        // no hello: a clear message (with what the board said)
+        var line3 = new SerialLine();
+        line3.Device.Write(Encoding.ASCII.GetBytes("I (100) app: some other program\r\n"));
+        try
+        {
+            NativeDebugTarget.OpenFramed(new SerialFramedTransport(line3.Host), TimeSpan.FromSeconds(1));
+            Check(false, "Rahmen: ohne hello eine klare Meldung");
+        }
+        catch (NativeDebugException ex) { Check(ex.Message.Contains("did not say hello") && ex.Message.Contains("some other program"), "Rahmen: ohne hello eine klare Meldung (mit der Konsole des Boards)", ex.Message); }
+
+        // the CRC of the agent (CRC-16/CCITT-FALSE): the check value of "123456789" is 0x29B1
+        Check(FramedDebugTransport.Crc16(Encoding.ASCII.GetBytes("123456789")) == 0x29B1, "CRC-16/CCITT-FALSE: Pruefwert");
+        Check(SerialFramedTransport.PortFromFlashLog("esptool.py v4.8\nSerial port /dev/ttyUSB1\nConnecting....\nSerial port /dev/ttyUSB1:\n") == "/dev/ttyUSB1"
+            && Esp32Launch.ProjectName("my-app 2") == "my_app_2" && Esp32Launch.ProjectName("3d") == "fire_3d",
+            "ESP32: der Port aus der Ausgabe von esptool, der Name des ESP-IDF-Projekts");
+    }
 
     private static (NativeDebugTarget Target, FakeAgent Agent) ConnectFake(List<FakeStep> main, List<FakeStep>? threadSteps = null, int loopFrom = -1, bool strayFirst = false)
     {
@@ -424,6 +647,7 @@ static partial class DebuggerTests
             agent.Dispose();
         }
 
+        FramedChecks();
         SessionOverNative();
         LaunchChecks();
         EndToEndNative();

@@ -101,6 +101,9 @@ namespace fire.Projects
         /// <summary>The engine of a run of a single script (`vm` or `native`; null: the one of the native build configuration, else the VM). A project keeps its own in settings.engine.</summary>
         public string? Engine { get; set; }
 
+        /// <summary>The ESP-IDF folder for Run and Debug on an ESP32 (null: the environment variable IDF_PATH).</summary>
+        public string? IdfPath { get; set; }
+
         public static string DefaultPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "spark-settings.json");
 
         private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };

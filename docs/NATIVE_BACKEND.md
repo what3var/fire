@@ -231,14 +231,19 @@ Im Modus `debug` (`#debug`, `-m DEBUG`) wird das Programm für den Debugger von 
   Quellen mit Datei und SHA-256 (`LinkedProgram.SourceHashes`) und ein Setter je Feld für `set` (`fire_dbgSetField`).
 * Ein Debug-Build hat immer Ausnahmen (`FIRE_EXCEPTIONS`): jeder Laufzeitfehler ist eine Ausnahme, an der der Debugger anhalten kann. Eine Ausnahme, die kein
   `catch` des Threads nehmen würde (`wouldBeCaught`), hält vor dem Abrollen an; `resume` lässt den `throw` `undefined` ergeben.
-* **Der Agent** (`fire_debug.h`, nur posix und windows: `FIRE_DEBUG_AGENT`) ist ein eigener Thread. Mit `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T` verbindet
-  sich das Programm beim Start mit spark und wartet vor der ersten Instruktion; ohne die Variable läuft es ohne Debugger. Er liest Werte nur, solange ihr
+* **Der Agent** (`fire_debug.h`, `FIRE_DEBUG_AGENT`: posix, windows, freertos, esp32) ist ein eigener Thread (auf FreeRTOS eine Task mit
+  `FIRE_DEBUG_STACK_BYTES`, Standard 8192, Priorität `FIRE_DEBUG_PRIORITY`). Mit `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T` verbindet sich das Programm beim Start
+  mit spark und wartet vor der ersten Instruktion; ohne die Variable läuft es ohne Debugger. Weitere Transporte (Protokoll, "Transport"): `FIRE_DEBUG=stdio`
+  (gerahmt über stdout/stdin), auf dem ESP32 fest die Konsolen-UART (`FIRE_DEBUG_TRANSPORT_UART`), auf FreeRTOS fest stdio (`FIRE_DEBUG_TRANSPORT_STDIO`) -
+  gerahmt wartet das Programm höchstens 3 s auf den Debugger. Er liest Werte nur, solange ihr
   Thread steht (mit Threads unter der GIL), ruft nie fire-Code zum Anzeigen auf und fasst keinen Zähler an; `set` führt der angehaltene Thread selbst aus.
   Ein angehaltener Thread wartet ohne GIL, die anderen laufen weiter; neue fire-Threads melden sich und laufen mit den Haltepunkten los.
 * Getestet in `fire.Testing` (`NativeDebugTests.cs`, Fälle "Native-Debugger"): 22 Skripte (Schleifen, Rekursion, Objekte, Properties, Destruktoren, Lambdas,
   try/catch/finally/resume, Strings, Einheiten, Arrays, statische Felder, Vererbung, Operatoren/ToString, Standardwerte, break/continue, Listen,
   unbehandelte Ausnahmen), je Haltepunkte/Schritte mit Aufrufstapel, Scopes, `this` und Globals sowie jeder Step Into und Step Over vom Start bis zum
   Ende gegen die VM; dazu `#line`, gcc/clang/tcc ohne Warnung, gdb, `expand`/`set`, `pause`, `detach`, Threads, unter AddressSanitizer/UBSan; der Agent für Windows mit MinGW unter Wine.
+  Gerahmt: drei Fälle über `FIRE_DEBUG=stdio` und zwei auf dem FreeRTOS-Simulator (`native/sim`, Ziel `freertos`) mit denselben Plänen gegen die VM, die Eingabe
+  des Programms durch den Agenten, Text, der wie ein Rahmen aussieht, ein verfälschter Rahmen, die Wartezeit ohne Debugger; ein ESP32 unter QEMU (siehe "ESP32").
 
 ## Messwerte
 
@@ -677,10 +682,37 @@ Toolchain, die ein Programm macht) in den Ordner `bin/<ziel>-<modus>` des Projek
 * **Release/Performance**: nicht debugbar (Entscheidung 8.4) - das Programm läuft einfach; stdout und stderr kommen zeilenweise ins Output-Panel, das Ende mit
   Exitcode in die Statusleiste. *Stop* beendet den Prozess.
 
-Die Ausgabe des Programms läuft immer über seinen Prozess, nicht über die Debug-Verbindung. Getestet ohne die Runtime gegen einen Schein-Agenten in C#
+Auf dem Desktop läuft die Ausgabe des Programms über seinen Prozess, nicht über die Debug-Verbindung (ein ESP32: siehe unten). Getestet ohne die Runtime gegen einen Schein-Agenten in C#
 (`FIRE_TESTS_ONLY=debugger`, Block "Natives Debug-Ziel"), dazu Start eines Prozesses mit `FIRE_DEBUG` (ein Programm in bash, das das Protokoll spricht) und - sobald die
 Runtime den Debug-Agenten hat - Ende-zu-Ende mit einem echten Debug-Build gegen die VM (Haltepunkt in einer Methode, Tiefe, Locals, `this`, `set`, Step Over bis
 zur unbehandelten Ausnahme mit Meldung und Ort, `resume`, die Ausgabe des Prozesses); ohne Agenten in der Runtime wird dieser Teil übersprungen.
+
+#### Ziel `esp32`: Run und Debug auf dem Board (ROADMAP 8.6)
+
+Mit dem Ziel `esp32` (Build-Leiste bzw. `settings.target`) machen F5/F10/F11 aus dem Programm ein **ESP-IDF-Projekt** in `bin/esp32-<modus>` (die Komponente, die
+`build -t esp32` schreibt, in `main/`, daneben die `CMakeLists.txt` des Projekts, `Esp32Launch.WriteProject`) und rufen `idf.py [-p PORT] build flash` (mit
+`export.sh`/`export.bat` von ESP-IDF; der Ordner kommt aus `IDF_PATH` bzw. `idfPath` der spark-Einstellungen - fehlt er, sagt spark das; die Ausgabe steht im
+Build-Log, der erste Bau von ESP-IDF dauert Minuten). Danach öffnet spark die **serielle Schnittstelle** selbst (System.IO.Ports, `SerialFramedTransport`) und
+startet das Board neu (RTS, wie `idf.py monitor`):
+
+* **Port**: `"port"` in den Einstellungen des Projekts (`settings.port`) oder im Ziel von `fire.native.json` (`"targets": {"esp32": {"port": "/dev/ttyUSB0"}}`),
+  sonst `ESPPORT`, sonst die einzige USB-Seriell-Schnittstelle des Rechners (Linux `/dev/ttyUSB*`, `/dev/ttyACM*`; macOS `/dev/cu.usbserial*`, ...; Windows die
+  COM-Ports), sonst die, die esptool beim Flashen nimmt und nennt (`Serial port ...`). **Baud**: `"baud"` (Standard 115200).
+* **Run** (Release/Performance): die Konsole des Boards im Output-Panel (Rahmen eines Debug-Builds werden ausgefiltert); unter dem Output-Panel ist eine
+  **Eingabezeile**, deren Zeilen das Board als Standardeingabe bekommt. *Stop* schließt die Schnittstelle.
+* **Debug**: ein Debug-Build (`FIRE_DEBUG_TRANSPORT_UART`, Hauptstack der Task 32 KB statt 16 KB) sagt beim Start `hello` über die Konsolen-UART und wartet 3 s auf
+  den Debugger; spark wartet auf das `hello` (das Boot-Log davor kommt ins Output-Panel), schickt sofort den ersten Befehl und vergleicht die Hashes der Quellen
+  (passen sie nicht: "das Board führt ein anderes Programm aus"). Dann ist es eine gewöhnliche Sitzung über `NativeDebugTarget.OpenFramed` - Haltepunkte,
+  Schritte, Threads, Scopes, *Set Value...*, unbehandelte Ausnahmen; die Konsole zwischen den Rahmen und die Eingabezeile wie bei Run. *Stop* schickt
+  `terminate` (das Board startet neu).
+
+Getestet: `SerialFramedTransport` gegen ein Schein-Board über eine serielle Leitung im Speicher (`FIRE_TESTS_ONLY=debugger`: Boot-Log, verfälschter Rahmen, Rahmen
+mitten in einer Konsolenzeile, Threads mit ihren eigenen Globals, Eingabe, ein zweites `hello`, kein `hello`), und Ende-zu-Ende ein Debug-Build auf
+**QEMU** (`qemu-system-xtensa` von ESP-IDF, `-serial tcp:...,server=on,wait=on`: die Konsolen-UART ist ein Socket; Fälle "Native-Debugger: ESP32 (QEMU, UART)",
+mit `IDF_PATH`, Projekt in `~/.cache/fire-tests/esp32-dbg`): das Boot-Log vor dem `hello`, ein Plan aus Haltepunkt, Step Over/Into/Out, Scopes, `this`,
+Globals, unbehandelter Ausnahme mit `resume` gegen die VM, die Eingabe über die UART; dasselbe Programm ohne Debugger läuft nach 3 s allein, liest seine
+Eingabe von der UART und endet an seiner Ausnahme. **Nicht geprüft**: ein echtes Board (USB-Seriell-Chip, RTS-Reset, Port-Erkennung, `idf.py flash`) und
+die Klicks in spark.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
@@ -846,6 +878,9 @@ Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emsc
 * **Speicher**: `Value` hat 16 Byte. Objektlayouts pro Klasse halten den Heap klein. Kein GC - die Ownership-Kaskade ist deterministisch.
 * **Code im Flash**: erzeugtes C++ landet als normaler Code im Flash; String-Konstanten sind `static const` (Flash/DROM).
 * `#extern "lib"` (dynamisches Laden) entfällt dort; `extern` wird zum statischen Bindungspunkt.
+* **Debuggen**: ein Debug-Build hat den Agenten auf der Konsolen-UART (gerahmt, 3 s Wartezeit, die Standardeingabe des Programms geht durch den Agenten);
+  spark baut, flasht und debuggt über `idf.py` und die serielle Schnittstelle - siehe "Ziel `esp32`: Run und Debug auf dem Board" und NATIVE_DEBUG_PROTOCOL.md.
+  Ein generisches FreeRTOS-Ziel (`freertos`) debuggt gerahmt über stdio.
 
 ## Natives von Packages in der VM (Shared Library, C-ABI)
 
