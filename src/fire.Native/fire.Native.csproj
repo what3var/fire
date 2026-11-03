@@ -22,6 +22,7 @@
     <EmbeddedResource Include="..\..\native\runtime\fire_rt_cpp.hpp" LogicalName="fire_rt_cpp.hpp" />
     <!-- JSON (`#import "json"`): the engine in C, written next to the program (it includes it when it uses JSON). -->
     <EmbeddedResource Include="..\..\native\runtime\fire_json.h" LogicalName="fire_json.h" />
+    <EmbeddedResource Include="..\..\native\runtime\fire_debug.h" LogicalName="fire_debug.h" />
     <!-- The C ABI between the virtual machine and the natives of packages, and its C++ wrapper (native/abi/). -->
     <EmbeddedResource Include="..\..\native\abi\*" LogicalName="abi/%(Filename)%(Extension)" />
     <!-- The platform packages (native/platform/<name>/): everything that depends on the operating system or the board. -->

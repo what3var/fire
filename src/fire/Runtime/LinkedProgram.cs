@@ -59,6 +59,11 @@ namespace fire.Runtime
         [MemoryPackIgnore]
         public IReadOnlyList<string?>? SourceFiles { get; init; }
 
+        /// <summary>The SHA-256 (hex, lower case) of the UTF-8 text of each source of the program as the compiler got it, by source index; null for the prelude, the libraries and
+        /// the preludes of imports. Only known while linking (not serialized): a native debug build sends them to the debugger (docs/NATIVE_DEBUG_PROTOCOL.md).</summary>
+        [MemoryPackIgnore]
+        public IReadOnlyList<string?>? SourceHashes { get; init; }
+
         public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports, int firstUserSource, VmExecutionMode executionMode = VmExecutionMode.Release)
         {
             Program = program;
