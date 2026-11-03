@@ -167,6 +167,18 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung nur für Basic Latin, Latin-1, Griechisch und Kyrillisch
 (`char.IsDigit` nur ASCII-Ziffern). Zahlenformate: `X`, `D`, `B`, `F`, `E` wie in der VM (jedes andere ist dort ein Laufzeitfehler, nativ ein Fehler beim Erzeugen).
 
+### Breite von `int` und Größe eines Werts (`#intwidth 32`, SPEC 8.2.2)
+
+* `FIRE_INT32` (der Generator schreibt es bei `#intwidth 32`): `Value::i` ist ein `int32_t` (`FireInt`). Die Operationen bleiben, wie sie
+  sind - sie rechnen mit den auf 64 Bit erweiterten Operanden, und das Ergebnis wird beim Speichern in den `int32_t` abgeschnitten. Genau so
+  schneidet die VM jeden Int ab, den sie erzeugt (`Value.Ints32`); auch die Sonderfälle (`INT_MIN / -1`, Schieben um 32 und mehr) geben in
+  beiden dasselbe.
+* `FIRE_COMPACT` (von selbst, wenn `FIRE_INT32`, `FIRE_FLOAT32` und 32-Bit-Zeiger zusammenkommen; `FIRE_WIDE_VALUE` schaltet es ab): der
+  Kopf eines Werts sind 32 Bit als Bitfelder - `kind` 4, `reserved` 12 (Enum, Generation des Handles; die Generationen laufen dann modulo
+  4096, `FIRE_GEN_MASK`), `unit` 16 (Einheit, Slot des Handles, Versatz eines Zeigers auf eine Variable: `FIRE_UNIT_OFFSET` liest ihn mit
+  Vorzeichen) - dazu 32 Bit Nutzlast: 8 statt 16 Byte. Mehr als 65535 Einheiten oder gleichzeitig lebende Objekte/Arrays/Puffer beenden
+  das Programm mit einer Meldung. Geprüft wird es auf dem Rechner als 32-Bit-Build (`gcc -m32`, gcc-multilib).
+
 ### Regeln für die Runtime (gelernt)
 
 * **Alle Funktionen nehmen `Value` per Wert**, nie per Referenz, und die Fehlerpfade nur die Operandenarten. Eine Referenz auf eine
@@ -629,7 +641,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
 ```
 
 Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines` (`NAME` oder `NAME=WERT`), `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`,
-`supportsThreads`, `floatWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+`supportsThreads`, `floatWidth`, `intWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
 **ESP32:** `build -t esp32 -o <projekt>/main` schreibt den Komponenten `main` eines ESP-IDF-Projekts (dazu eine `CMakeLists.txt` mit `include($ENV{IDF_PATH}/tools/cmake/project.cmake)`,
 dann `idf.py build`). `app_main` startet das Programm auf einem eigenen Task, weil der Main-Task von ESP-IDF nur 3,5 KB Stack hat: `FIRE_MAIN_STACK_BYTES` (Standard 16384, als `defines`
 des Ziels). Geprüft mit ESP-IDF 5.5 im Emulator (`qemu-system-xtensa`, Testfall "ESP32 (ESP-IDF, QEMU)", läuft, wenn `IDF_PATH` gesetzt ist).

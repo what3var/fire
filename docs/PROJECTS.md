@@ -52,7 +52,7 @@ like `returnsReference`) - the same as in a package. `"discover": false` takes o
 level of the project) is for the standard libraries of `Source/Packages.firesln` (docs/PACKAGES.md): their import names are those of the compiler. `"serializable": false` (top level
 of a library) excludes all classes of the library from JSON, like `[NotSerializable]` on each (docs/JSON.md; the package carries it in `package.json`, the standard library `ui` has it).
 
-**Settings** (all optional): `subsystem` (`console`/`gui`), `mode` (`debug`/`release`/`performance`), `floatWidth` (32/64), `name`, `codename`, `description`, `author`, `license`
+**Settings** (all optional): `subsystem` (`console`/`gui`), `mode` (`debug`/`release`/`performance`), `floatWidth` (32/64), `intWidth` (32/64, default 64), `name`, `codename`, `description`, `author`, `license`
 (a library that is packed), `comments`, `icon`, `version`, `fileVersion` (the assembly information), `defines` (symbols for `#if`), `engine` (`vm`/`native`), `target`, `toolchain`, `linkage` (`source`, the default, or `static`: every library and package of a native build becomes a static library in the user-wide cache and is built only once - docs/NATIVE_BACKEND.md "Getrennte Übersetzung"; `--linkage` on the command line wins), `output`, `arguments` (what a run of the program gets as
 `Environment.Args`, e.g. `["input.txt", "--verbose"]`; `forge run app.fireproj -- a b` replaces them), `port` and `baud` (the serial port of a board and the baud rate of its
 console: Run and Debug on an ESP32 in spark, see docs/NATIVE_BACKEND.md; default: the only USB serial port, 115200). Paths are relative to the

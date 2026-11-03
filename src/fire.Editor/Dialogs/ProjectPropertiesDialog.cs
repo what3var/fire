@@ -26,7 +26,7 @@ namespace fire.Editor
         /// <summary>What a setting is when nobody sets it.</summary>
         private static readonly Dictionary<string, string> Defaults = new()
         {
-            ["subsystem"] = "console", ["mode"] = "debug", ["floatWidth"] = "64", ["engine"] = "vm", ["typeChecking"] = "lax",
+            ["subsystem"] = "console", ["mode"] = "debug", ["floatWidth"] = "64", ["intWidth"] = "64", ["engine"] = "vm", ["typeChecking"] = "lax",
         };
 
         private readonly Workspace _workspace;
@@ -350,6 +350,7 @@ namespace fire.Editor
             var s = _settings;
             string? modeInh = InheritedOf(x => x.Mode, "mode", out string modeFrom);
             string? floatInh = InheritedOf(x => x.FloatWidth?.ToString(), "floatWidth", out string floatFrom);
+            string? intInh = InheritedOf(x => x.IntWidth?.ToString(), "intWidth", out string intFrom);
             string defines = s.Defines == null ? "" : string.Join(", ", s.Defines);
             var definesBox = new TextBox { Text = defines, Background = Field, Watermark = _inherited?.Defines is { Count: > 0 } d ? $"{string.Join(", ", d)}   (from solution, added)" : "names, separated by commas" };
             definesBox.TextChanged += (_, _) =>
@@ -361,6 +362,7 @@ namespace fire.Editor
                 Group("Compiling",
                     Row("Configuration", Choice(new[] { ("Debug", "debug"), ("Release", "release"), ("Performance", "performance") }, () => s.Mode, v => s.Mode = v, modeInh, modeFrom)),
                     Row("Float precision", Choice(new[] { ("32 bit", "32"), ("64 bit", "64") }, () => s.FloatWidth?.ToString(), v => s.FloatWidth = v == null ? null : int.Parse(v), floatInh, floatFrom)),
+                    Row("Int width", Choice(new[] { ("32 bit", "32"), ("64 bit", "64") }, () => s.IntWidth?.ToString(), v => s.IntWidth = v == null ? null : int.Parse(v), intInh, intFrom)),
                     Row("Symbols for #if", definesBox)),
                 Group("Output",
                     Row("Output folder", Text(() => s.Output, v => s.Output = v, InheritedOf(x => x.Output, null, out string oFrom), oFrom, "bin/<target>-<mode>/")),

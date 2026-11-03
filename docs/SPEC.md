@@ -1571,6 +1571,23 @@ The build can override the directive: `fire.Compiler run|build|native ... -f 32|
 hosts that call `RuntimeSession.Build` / `Linker.CompileAndLink`). Any other value is an error. The precision is process-wide while a
 program runs (`Value.SingleFloats`); explicit widths (`float[16]`, `float[64]`) keep their meaning.
 
+#### 8.2.2 Program-wide int width (`#intwidth`)
+
+```
+#intwidth 32        // every `int` without an explicit bit width is a 32-bit int (default: 64)
+```
+
+Without a directive `int` has 64 bits - on every target, the small ones included. `#intwidth 32` makes it a 32-bit two's
+complement number for the whole program: every operation computes as before and its result is cut to 32 bits
+(`2147483647 + 1` is `-2147483648`, `65536 * 65536` is 0, `1 << 32` is 0, `-2147483648 / -1` is `-2147483648`), and so is
+every int constant (`3000000000` is `-1294967296`). The VM cuts every int it makes (`Value.Ints32`, process-wide while a program
+runs), the native backend stores an int in an `int32_t` (`FIRE_INT32`) - the same results in every engine. Explicit widths
+(`int[8]`, `int[64]`) keep their meaning. Overrides: `-i 32|64` on the command line (wins), the project setting `intWidth`, a
+target's `intWidth` in `fire.native.json`; `#if int32` sees the width the command line or the target gives (the directive is read
+later than the symbols). Natively, `#intwidth 32` together with `#floatwidth 32` on a target with 32-bit pointers (a
+microcontroller) makes every value 8 bytes instead of 16 (`FIRE_COMPACT`): fields, array elements, variables and stack slots take
+half the memory - such a program can have up to 65535 objects, arrays and buffers alive at once and up to 65535 different units.
+
 ### 8.3 Pointers & `unsafe`
 
 ```

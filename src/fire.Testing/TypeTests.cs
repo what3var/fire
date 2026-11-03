@@ -32,7 +32,7 @@ static class TypeTests
         {
             errors = "ERROR " + string.Join(" ", CompileDiagnostics.Of(ex).Select(d => d.Code));
         }
-        finally { Linker.ProcessDefaultTypeChecking = null; Value.SingleFloats = false; }
+        finally { Linker.ProcessDefaultTypeChecking = null; Value.SingleFloats = false; Value.Ints32 = false; }
         return string.Join(" ", warnings.Items.Select(d => d.Code)) + "|" + errors + string.Join("\n", lines);
     }
 
@@ -629,7 +629,7 @@ static class TypeTests
                     int line = text.Substring(0, m.Index).Count(c => c == '\n') + 1;
                     Console.WriteLine($"{Path.GetFileName(file)}:{line}: {codes[0].Code} {codes[0].Message}");
                 }
-                finally { Value.SingleFloats = false; }
+                finally { Value.SingleFloats = false; Value.Ints32 = false; }
             }
         }
         Console.WriteLine($"{total} Ausschnitte, {bad} mit Feld-/Property-/var-Fehler");

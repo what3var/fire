@@ -28,7 +28,7 @@ static class ProjectTests
         var output = new StringBuilder();
         var session = RuntimeSession.Build(plan.SourceTexts, null, args => { output.AppendLine(args.Length > 0 ? args[0].ToString() : ""); return Value.MakeUndefined(); }, plan: plan);
         session.Run();
-        Value.SingleFloats = false;
+        Value.SingleFloats = false; Value.Ints32 = false;
         return output.ToString().Replace("\r\n", "\n");
     }
 

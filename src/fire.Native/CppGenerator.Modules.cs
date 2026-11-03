@@ -294,7 +294,7 @@ namespace fire.Native
             var compiled = new CompiledProgram { TopLevel = new Chunk(), Classes = classes, ExternSignatures = program.Program.ExternSignatures, Resources = program.Program.Resources, CustomUnits = new() };
             return new LinkedProgram(compiled, program.NativeImports, program.FirstUserSource, program.ExecutionMode)
             {
-                NativeNames = program.NativeNames, FloatWidth = program.FloatWidth, PackageNatives = program.PackageNatives, PackageNativeLibraries = program.PackageNativeLibraries,
+                NativeNames = program.NativeNames, FloatWidth = program.FloatWidth, IntWidth = program.IntWidth, PackageNatives = program.PackageNatives, PackageNativeLibraries = program.PackageNativeLibraries,
                 SourceFiles = program.SourceFiles, SourceHashes = program.SourceHashes, SourceModules = program.SourceModules, ModuleDeps = program.ModuleDeps, SourceTextHashes = program.SourceTextHashes,
             };
         }

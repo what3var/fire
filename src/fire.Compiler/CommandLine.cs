@@ -21,6 +21,7 @@ namespace fire.Compiler
         public VmExecutionMode? Mode { get; init; }
         /// <summary>`-f`: precision of `float` (32 or 64); null = the one in the script (`#floatwidth`) or 64.</summary>
         public int? FloatWidth { get; init; }
+        public int? IntWidth { get; init; }
         /// <summary>`--types lax|strict`: how a type conflict is reported (docs/TYPES.md); null = the project's setting, else lax.</summary>
         public TypeCheckMode? TypeChecking { get; init; }
 
@@ -77,14 +78,14 @@ namespace fire.Compiler
         public static string Usage =>
             """
             Usage:
-              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--keep-all] [--linkage source|static]
-              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>] [--keep-all]
+              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [-- <arguments of the program>...]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--keep-all] [--linkage source|static]
+              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--keep-all]
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
               fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
               fire.Compiler run|build <project.fireproj | solution.firesln> [-p <project>] [...]
-              fire.Compiler test  [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m ...] [-f 32|64]
+              fire.Compiler test  [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m ...] [-f 32|64] [-i 32|64]
 
             run     compiles the files into one program and runs it. What follows `--` goes to the program (Environment.Args; for a project instead of its settings.arguments).
             build   turns them into a program (a project without -o or "output": <project>/bin/<target>-<mode>/<name>, target vm or the native one, mode dbg/rel/perf):
@@ -103,6 +104,7 @@ namespace fire.Compiler
             --linkage source|static  How a native build links the libraries and packages: source (the default) puts everything into one C file; static builds each
                     library once as a static library in the user-wide cache (ember cache clean) and links it ("linkage" in fire.native.json or the project).
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
+            -i      Width of int in bits: 32 or 64 (default: whatever the script sets with #intwidth, otherwise 64 - also on small targets).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
                     typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
@@ -140,6 +142,7 @@ namespace fire.Compiler
             var files = new List<string>();
             VmExecutionMode? mode = null;
             int? floatWidth = null;
+            int? intWidth = null;
             TypeCheckMode? typeChecking = null;
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
@@ -243,6 +246,14 @@ namespace fire.Compiler
                         return Fail(command, $"Unknown float precision '{value}' (allowed: 32, 64).");
                     floatWidth = int.Parse(Unquote(value));
                 }
+                else if (TryOption(arg, "-i", "--int", out var intInline))
+                {
+                    string? value = intInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (value == null) return Fail(command, "-i must be followed by the width of int (32 or 64).");
+                    if (Unquote(value) is not ("32" or "64"))
+                        return Fail(command, $"Unknown int width '{value}' (allowed: 32, 64).");
+                    intWidth = int.Parse(Unquote(value));
+                }
                 else if (TryOption(arg, "-D", "--define", out var defineInline) || (arg.Length > 2 && arg.StartsWith("-D", StringComparison.Ordinal) && (defineInline = arg.Substring(2)) != null))
                 {
                     string? value = defineInline ?? (i + 1 < args.Count ? args[++i] : null);
@@ -277,6 +288,7 @@ namespace fire.Compiler
                 Files = files,
                 Mode = mode,
                 FloatWidth = floatWidth,
+                IntWidth = intWidth,
                 TypeChecking = typeChecking,
                 Defines = defines,
                 Target = target,
@@ -359,6 +371,7 @@ namespace fire.Compiler
                 return ExitUsage;
             }
             Linker.ProcessDefaultTypeChecking = options.TypeChecking;
+            Linker.ProcessIntWidth = options.IntWidth;
             if (options.Command == CommandKind.Help)
             {
                 stdout.WriteLine(CommandLineParser.Usage);

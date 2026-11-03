@@ -1258,6 +1258,7 @@ namespace fire.Native
             if (_usesElementPointers) sb.AppendLine("#define FIRE_ELEMPTRS 1 // pointers into arrays find their array (a typed one converts what is written through them)");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
+            if (_program.IntWidth == 32) sb.AppendLine("#define FIRE_INT32 1 // #intwidth 32: int is a 32-bit int, like in the VM (with FIRE_FLOAT32 and 32-bit pointers a value takes 8 bytes)");
             // The units a text may name (`"5mm".ToFloat()`, Unit.ParseKnown): those of fire without a prefix, then those of the program by symbol and name
             var textUnits = new List<(string Symbol, int Unit, bool Prefixable)>();
             if (_usesStringCall || _program.Program.CustomUnits.Count > 0)   // (the names of combined units look at the symbols of the program too)

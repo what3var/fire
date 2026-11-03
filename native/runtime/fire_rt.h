@@ -135,19 +135,57 @@ FIRE_NORETURN FIRE_FN void exitNow(int code) {
 enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_PtrByte, K_PtrElem, K_Array, K_Buffer, K_Undefined };
 #define FIRE_IS_PTR_KIND(k) ((unsigned)(k) - (unsigned)K_PtrVar <= (unsigned)(K_PtrElem - K_PtrVar))
 
-/* A runtime value: 16 bytes, trivially copyable. `unit` indexes the program's unit table (0 = unitless). */
+/* The width of `int`: 64 bits, 32 when the program is generated with `#intwidth 32` (FIRE_INT32; SPEC 8.2.1). An operation computes in 64 bits (the
+ * operands of an int32 are widened) and the result is cut when it is stored - like the VM, which cuts every int it makes. */
+#ifdef FIRE_INT32
+typedef int32_t FireInt;
+#else
+typedef int64_t FireInt;
+#endif
+
+/* A runtime value, trivially copyable. `kind` says what it is; `unit` indexes the program's unit table (0 = unitless) - for an object, array or buffer it
+ * is the slot of its handle and `reserved` the generation (for an enum value `reserved` is its enum). Usually 16 bytes; with `#intwidth 32`,
+ * `#floatwidth 32` and 32-bit pointers (FIRE_COMPACT: a microcontroller) 8 bytes - the head is packed into 32 bits (kind 4, reserved 12, unit 16 bits:
+ * up to 65535 units and live objects/arrays/buffers, 4095 enums, generations wrap at 4096) and the payload has 32 bits. */
+#if defined(FIRE_INT32) && defined(FIRE_FLOAT32) && UINTPTR_MAX == 0xFFFFFFFFu && !defined(FIRE_WIDE_VALUE)
+#define FIRE_COMPACT 1
+#endif
+#ifdef FIRE_COMPACT
+typedef struct Value {
+    uint32_t kind : 4;
+    uint32_t reserved : 12;
+    uint32_t unit : 16;
+    union {
+        FireInt i;
+        Real f;
+        const void* p;
+    };
+} Value;
+FIRE_STATIC_ASSERT(sizeof(Value) == 8, "A compact Value takes 8 bytes");
+#define FIRE_PAD0(r)
+#define FIRE_GEN_MASK 0xFFFu
+#define FIRE_UNIT_MAX 0xFFFFu
+#define FIRE_SLOT_MAX 0xFFFFu
+#define FIRE_UNIT_OFFSET(v) ((int32_t)(int16_t)(uint16_t)(v).unit)   /* (the offset of a K_PtrVar pointer: signed) */
+#else
 typedef struct Value {
     uint8_t kind;
     uint8_t pad;        /* unused, always 0 */
     uint16_t reserved;
     uint32_t unit;
     union {
-        int64_t i;
+        FireInt i;
         Real f;
         const void* p;
     };
 } Value;
 FIRE_STATIC_ASSERT(sizeof(Value) == 16, "Value must stay 16 bytes");
+#define FIRE_PAD0(r) (r).pad = 0;
+#define FIRE_GEN_MASK 0xFFFFu
+#define FIRE_UNIT_MAX 0xFFFFFFFFu
+#define FIRE_SLOT_MAX 0xFFFFFFFEu
+#define FIRE_UNIT_OFFSET(v) ((int32_t)(v).unit)
+#endif
 FIRE_FN bool isPtr(Value v) { return FIRE_IS_PTR_KIND(v.kind); }
 
 /* The size of a header that values follow (arrays, objects, lambdas): rounded up so that the values behind it are aligned. */
@@ -156,13 +194,13 @@ FIRE_FN bool isPtr(Value v) { return FIRE_IS_PTR_KIND(v.kind); }
 /* ---------------------------------------------------------------------------------------------------------------------
  * Construction
  * --------------------------------------------------------------------------------------------------------------------- */
-FIRE_FN Value fire_IntU(int64_t v, uint32_t unit) { Value r; r.kind = K_Int; r.pad = 0; r.reserved = 0; r.unit = unit; r.i = v; return r; }
+FIRE_FN Value fire_IntU(int64_t v, uint32_t unit) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.i = v; return r; }
 FIRE_FN Value fire_Int1(int64_t v) { return fire_IntU(v, 0); }
-FIRE_FN Value fire_FloatU(Real v, uint32_t unit) { Value r; r.kind = K_Float; r.pad = 0; r.reserved = 0; r.unit = unit; r.f = v; return r; }
+FIRE_FN Value fire_FloatU(Real v, uint32_t unit) { Value r; r.kind = K_Float; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.f = v; return r; }
 FIRE_FN Value fire_Float1(Real v) { return fire_FloatU(v, 0); }
-FIRE_FN Value Bool(bool v) { Value r; r.kind = K_Bool; r.pad = 0; r.reserved = 0; r.unit = 0; r.i = v ? 1 : 0; return r; }
-FIRE_FN Value Char(uint32_t c) { Value r; r.kind = K_Char; r.pad = 0; r.reserved = 0; r.unit = 0; r.i = c; return r; }
-FIRE_FN Value UndefU(uint32_t unit) { Value r; r.kind = K_Undefined; r.pad = 0; r.reserved = 0; r.unit = unit; r.i = 0; return r; }
+FIRE_FN Value Bool(bool v) { Value r; r.kind = K_Bool; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.i = v ? 1 : 0; return r; }
+FIRE_FN Value Char(uint32_t c) { Value r; r.kind = K_Char; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.i = c; return r; }
+FIRE_FN Value UndefU(uint32_t unit) { Value r; r.kind = K_Undefined; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.i = 0; return r; }
 FIRE_FN Value Undef(void) { return UndefU(0); }
 
 /* ---- Enums (docs/language/10-enums-and-namespaces.md): a value of an enum is an Int that carries the number of its enum (1-based) in `reserved`; the generated
@@ -172,11 +210,15 @@ typedef struct FireEnum { const char* name; uint8_t flags; const FireEnumMember*
 extern const FireEnum* g_enums;
 extern uint32_t g_enumCount;
 /* A value of the enum `index` (1-based, the generated table). */
-FIRE_FN Value EnumV(int64_t v, uint16_t index) { Value r; r.kind = K_Int; r.pad = 0; r.reserved = index; r.unit = 0; r.i = v; return r; }
+FIRE_FN Value EnumV(int64_t v, uint16_t index) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = index; r.unit = 0; r.i = v; return r; }
 /* The enum of a value (null: none). */
 FIRE_FN const FireEnum* enumOf(Value v) { return v.kind == K_Int && v.reserved != 0 && v.reserved <= g_enumCount ? &g_enums[v.reserved - 1] : NULL; }
 /* `undefined` as a constant initializer (a global or static of the generated program: C has no dynamic initialization) */
+#ifdef FIRE_COMPACT
+#define FIRE_UNDEF_INIT {K_Undefined, 0, 0, {0}}
+#else
 #define FIRE_UNDEF_INIT {K_Undefined, 0, 0, 0, {0}}
+#endif
 #define Int(...) FIRE_EXPAND(FIRE_PICK2(__VA_ARGS__, fire_IntU, fire_Int1, 0)(__VA_ARGS__))
 #define Float(...) FIRE_EXPAND(FIRE_PICK2(__VA_ARGS__, fire_FloatU, fire_Float1, 0)(__VA_ARGS__))
 
@@ -575,6 +617,7 @@ FIRE_FN uint32_t unitIntern(const int32_t* dims, double scale, const char* displ
         const UnitDef* e = &g_ud[i];
         if (e->scale == scale && e->offset == 0 && e->conv < 0 && e->ulconv < 0 && memcmp(e->dims, dims, sizeof e->dims) == 0 && ((e->display == NULL) == (display == NULL)) && (!display || strcmp(e->display, display) == 0)) return i;
     }
+    if (FIRE_UNLIKELY(g_udCount >= FIRE_UNIT_MAX)) fatal("Too many units (a compact value holds 65535).");
     if (g_udCount == g_udCap) {
         g_udCap *= 2;
         g_ud = (UnitDef*)realloc(g_ud, sizeof(UnitDef) * g_udCap);
@@ -1225,6 +1268,7 @@ FIRE_FN void slotAcquire(Owned* o) {
     if (g_slots.nfree) slot = g_slots.freed[--g_slots.nfree];
     else {
         if (FIRE_UNLIKELY(g_slots.count == g_slots.cap)) slotGrow();
+        if (FIRE_UNLIKELY(g_slots.count >= FIRE_SLOT_MAX)) fatal("Too many objects, arrays and buffers at once (a compact value holds 65535).");
         slot = g_slots.count++;
     }
     o->slot = slot;
@@ -1235,7 +1279,7 @@ FIRE_FN void slotAcquire(Owned* o) {
 }
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
-    g_slots.gen[slot] = (uint16_t)(g_slots.gen[slot] + 1);
+    g_slots.gen[slot] = (uint16_t)((g_slots.gen[slot] + 1) & FIRE_GEN_MASK);
     if (g_slots.nfree == g_slots.freedCap) {
         uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
         uint32_t* freed = (uint32_t*)realloc(g_slots.freed, cap * sizeof(uint32_t));
@@ -1260,9 +1304,9 @@ FIRE_FN bool leafAlive(Value v) {
 #endif
 }
 
-FIRE_FN Value StrV(const Str* s) { Value r; r.kind = K_String; r.pad = 0; r.reserved = 0; r.unit = 0; r.p = s; return r; }
-FIRE_FN Value ArrV(Arr* a) { Value r; r.kind = K_Array; r.pad = 0; r.reserved = a->h.gen; r.unit = a->h.slot; r.p = a; return r; }
-FIRE_FN Value BufV(Buf* b) { Value r; r.kind = K_Buffer; r.pad = 0; r.reserved = b->h.gen; r.unit = b->h.slot; r.p = b; return r; }
+FIRE_FN Value StrV(const Str* s) { Value r; r.kind = K_String; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.p = s; return r; }
+FIRE_FN Value ArrV(Arr* a) { Value r; r.kind = K_Array; FIRE_PAD0(r) r.reserved = a->h.gen; r.unit = a->h.slot; r.p = a; return r; }
+FIRE_FN Value BufV(Buf* b) { Value r; r.kind = K_Buffer; FIRE_PAD0(r) r.reserved = b->h.gen; r.unit = b->h.slot; r.p = b; return r; }
 
 FIRE_FN bool isRef(Value v) { return ((0x50u >> v.kind) & 1u) != 0; }  /* String, Lambda (counted values) */
 FIRE_FN Ref* refOf(Value v) { return (Ref*)v.p; }
@@ -1270,7 +1314,7 @@ FIRE_FN const Str* strOf(Value v) { return (const Str*)v.p; }
 FIRE_FN Arr* arrOf(Value v) { return (Arr*)v.p; }
 FIRE_FN Buf* bufOf(Value v) { return (Buf*)v.p; }
 FIRE_FN Lam* lamOf(Value v) { return (Lam*)v.p; }
-FIRE_FN Value LamV(Lam* l) { Value r; r.kind = K_Lambda; r.pad = 0; r.reserved = 0; r.unit = 0; r.p = l; return r; }
+FIRE_FN Value LamV(Lam* l) { Value r; r.kind = K_Lambda; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.p = l; return r; }
 
 FIRE_FN void freeRef(Ref* r);
 
@@ -1505,7 +1549,7 @@ FIRE_COLD FIRE_FN Value divUnits(Value a, Value b) {
 FIRE_FN Value ptrOffset(Value p, int64_t n) {
     Value r = p;
     if (n == 0) return p;
-    if (p.kind == K_PtrVar) r.unit = (uint32_t)((int32_t)p.unit + (int32_t)n);   /* a variable or a field: an "array" with one element, the offset travels in `unit` */
+    if (p.kind == K_PtrVar) r.unit = (uint32_t)(FIRE_UNIT_OFFSET(p) + (int32_t)n);   /* a variable or a field: an "array" with one element, the offset travels in `unit` */
     else r.p = (const void*)((uintptr_t)p.p + (uintptr_t)((intptr_t)n * (p.kind == K_PtrByte ? 1 : (intptr_t)sizeof(Value))));
     return r;
 }
@@ -1850,7 +1894,7 @@ extern uint32_t g_classDescCount;
 /* Runs the destructors of the object's class chain, derived class first (the descriptor of its class). */
 void runDestructors(Obj* o);
 
-FIRE_FN Value ObjV(Obj* o) { Value r; r.kind = K_Class; r.pad = 0; r.reserved = o->h.gen; r.unit = o->h.slot; r.p = o; return r; }
+FIRE_FN Value ObjV(Obj* o) { Value r; r.kind = K_Class; FIRE_PAD0(r) r.reserved = o->h.gen; r.unit = o->h.slot; r.p = o; return r; }
 FIRE_FN Obj* asObj(Value v) {
     if (FIRE_UNLIKELY(v.kind != K_Class)) fatal("A member was accessed on something that is not an object.");
     return (Obj*)v.p;
@@ -2413,7 +2457,7 @@ FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
         case K_Undefined: setPiece(out, "undefined"); if (v.unit && !unitIsUnitless(v.unit)) { out->buf[out->n++] = (fire_char16)':'; } break;
         case K_Class: {
             Value text;
-            text.kind = K_Undefined; text.pad = 0; text.reserved = 0; text.unit = 0; text.i = 0;   /* (the compiler cannot see that userToString sets it) */
+            text.kind = K_Undefined; FIRE_PAD0(text) text.reserved = 0; text.unit = 0; text.i = 0;   /* (the compiler cannot see that userToString sets it) */
             if (userToString(v, list, &text)) {
                 if (FIRE_UNLIKELY(g_unwind.active || text.kind != K_String)) { out->p = out->buf; out->n = 0; return; }   /* ToString() threw */
                 out->p = strOf(text)->data; out->n = strOf(text)->length;
@@ -4315,9 +4359,9 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
  * A pointer has one of three kinds: K_PtrVar a variable or a field (`unit` = the offset in elements: such a pointer is an "array" with one element), K_PtrByte
  * an element of a byte buffer, K_PtrElem an element of an array (both carry the handle of the buffer or array: `unit` = slot, `reserved` = generation).
  * --------------------------------------------------------------------------------------------------------------------- */
-FIRE_FN Value PtrV(Value* p) { Value r; r.kind = K_PtrVar; r.pad = 0; r.reserved = 0; r.unit = 0; r.p = p; return r; }
-FIRE_FN Value BytePtrV(uint8_t* p, const Owned* buf) { Value r; r.kind = K_PtrByte; r.pad = 0; r.reserved = buf->gen; r.unit = buf->slot; r.p = p; return r; }
-FIRE_FN Value ElemPtrV(Value* p, const Owned* arr) { Value r; r.kind = K_PtrElem; r.pad = 0; r.reserved = arr->gen; r.unit = arr->slot; r.p = p; return r; }
+FIRE_FN Value PtrV(Value* p) { Value r; r.kind = K_PtrVar; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.p = p; return r; }
+FIRE_FN Value BytePtrV(uint8_t* p, const Owned* buf) { Value r; r.kind = K_PtrByte; FIRE_PAD0(r) r.reserved = buf->gen; r.unit = buf->slot; r.p = p; return r; }
+FIRE_FN Value ElemPtrV(Value* p, const Owned* arr) { Value r; r.kind = K_PtrElem; FIRE_PAD0(r) r.reserved = arr->gen; r.unit = arr->slot; r.p = p; return r; }
 
 /* May the pointer be used (dereferenced)? Not outside its range: a pointer to a variable or a field only at offset 0, a pointer into an array or a buffer only
  * inside it - and not when the array or buffer is destroyed. Otherwise the exception is thrown (`err` has the value of the throw) and false is returned. With
@@ -4328,7 +4372,7 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
     return true;
 #else
     if (p.kind == K_PtrVar) {
-        if (FIRE_UNLIKELY((int32_t)p.unit != 0)) { *err = indexError("Pointer offset", (int32_t)p.unit, 1); return false; }
+        if (FIRE_UNLIKELY(FIRE_UNIT_OFFSET(p) != 0)) { *err = indexError("Pointer offset", FIRE_UNIT_OFFSET(p), 1); return false; }
         return true;
     }
 #ifdef FIRE_PTRBOUNDS
@@ -4364,7 +4408,7 @@ FIRE_FN Value ptrRead(Value p) {
 FIRE_FN Value ptrDiff(Value a, Value b) {
     if (a.kind != b.kind || (a.kind == K_PtrVar ? a.p != b.p : (a.unit != b.unit || a.reserved != b.reserved)))
         fatal("Pointer difference ('ptr1 - ptr2') needs two pointers into the same array or the same variable.");
-    if (a.kind == K_PtrVar) return Int((int64_t)(int32_t)a.unit - (int64_t)(int32_t)b.unit);
+    if (a.kind == K_PtrVar) return Int((int64_t)FIRE_UNIT_OFFSET(a) - (int64_t)FIRE_UNIT_OFFSET(b));
     return Int((int64_t)(((intptr_t)a.p - (intptr_t)b.p) / (a.kind == K_PtrByte ? (intptr_t)1 : (intptr_t)sizeof(Value))));
 }
 
@@ -5289,7 +5333,7 @@ FIRE_FN void externPtrInit(ExternPtr* e, Value v) {
     if (v.kind == K_Int) { e->raw = (void*)(intptr_t)v.i; return; }   /* an address that was handed over as a number */
     if (!isPtr(v)) fatal("A pointer argument of an extern function expects a pointer.");
     if (v.kind == K_PtrByte) { e->raw = (void*)v.p; return; }   /* a pointer into a byte buffer: its bytes */
-    if (v.kind == K_PtrVar && (int32_t)v.unit != 0) fatal("A pointer argument of an extern function points outside of its variable.");
+    if (v.kind == K_PtrVar && FIRE_UNIT_OFFSET(v) != 0) fatal("A pointer argument of an extern function points outside of its variable.");
     e->target = (Value*)v.p;
     cur = *e->target;
     e->kind = cur.kind;

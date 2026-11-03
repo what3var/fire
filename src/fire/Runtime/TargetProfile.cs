@@ -27,6 +27,9 @@ namespace fire.Runtime
         /// <summary>Default precision of `float` in bits (32 or 64); `#floatwidth` in the program and `-f` override it.</summary>
         public int FloatWidth { get; init; } = 64;
 
+        /// <summary>Default width of `int` in bits (32 or 64; 64 on every built-in target); `#intwidth` in the program and `-i` override it.</summary>
+        public int IntWidth { get; init; } = 64;
+
         /// <summary>Default stack size of a fire thread in bytes (used when `#stacksize` is not given and cannot be derived).</summary>
         public int DefaultStackBytes { get; init; } = 64 * 1024;
 
