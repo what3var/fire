@@ -1199,7 +1199,7 @@ namespace fire.Compiler
                 case TypeCheckDirective:
                     break; // read by the type checker
 
-                case NoSyncDirective:
+                case GlobalJobsDirective:
                     break; // takes effect only at runtime (see Compiler.Compile: SetAutoSync)
 
                 case TimeoutDirective td:

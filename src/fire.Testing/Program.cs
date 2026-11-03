@@ -12969,12 +12969,24 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
         print("nie")
         """, new[] { "~G" });
 
-    CheckCb("Host-Thread-Callback wird dem Hauptprogramm eingereiht und automatisch an einem sicheren Punkt ausgefuehrt (echte Globals)", cbHead + """
+    CheckCb("Host-Thread-Callback wird dem Hauptprogramm eingereiht und automatisch an einem sicheren Punkt ausgefuehrt (echte Globals; Ruecksprung einer Schleife, nicht nach der nativen Funktion)", cbHead + """
         var counter = 0
         __Keep(func () => { counter = counter + 1; print("cb " + counter) })
         __RunKeptOnOtherThread()
+        print("nach dem Aufruf " + counter)
+        for (var i = 0; i < 1; i++) { }
         print("counter " + counter)
-        """, new[] { "cb 1", "counter 1" });
+        """, new[] { "nach dem Aufruf 0", "cb 1", "counter 1" });
+
+    CheckCb("#globaljobs sleep: der Host-Thread-Callback wartet nicht an der Schleife (erst Sleep oder sync globals)", "#globaljobs sleep\n" + cbHead + """
+        var counter = 0
+        __Keep(func () => { counter = counter + 1; print("cb " + counter) })
+        __RunKeptOnOtherThread()
+        for (var i = 0; i < 3; i++) { }
+        print("nach der Schleife " + counter)
+        var n = sync globals
+        print("counter " + counter + " " + n)
+        """, new[] { "nach der Schleife 0", "cb 1", "counter 1 1" });
 
     CheckCb("Mit #nosync wartet der Host-Thread-Callback auf `sync globals`", "#nosync\n" + cbHead + """
         var counter = 0
@@ -12988,6 +13000,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
     CheckCb("Host-Thread-Callback: eine unbehandelte Exception geht als Text an den Host, das Hauptprogramm laeuft weiter", cbHead + """
         __Keep(func () => { throw new Exception("kaputt") })
         __RunKeptOnOtherThread()
+        for (var i = 0; i < 1; i++) { }
         print("weiter")
         """, new[] { "CB: Unhandled exception of type 'Exception': kaputt", "weiter" });
 
@@ -19111,6 +19124,199 @@ else
             var n = sync globals
             print(n + " " + x)
             print(sync globals)
+            """),
+        ("Threads: #globaljobs safepoints (Standard) - Auftraege beim Ruecksprung einer Schleife und bei Sleep(0), nicht bei Aufruf/print; in Property, Operator, Lambda einer Bibliotheksfunktion ja, im Destruktor nein", """
+            #globaljobs safepoints
+            #import "time"
+            #import "linq"
+            class P {
+                int v
+                construct(int v) { this.v = v }
+                int Count {
+                    get {
+                        var s = 0
+                        for (var i = 0; i < 2; i++) { print("get " + i); s = s + 1 }
+                        return s
+                    }
+                }
+                P operator+(P o) {
+                    for (var i = 0; i < 2; i++) { print("op " + i) }
+                    return new P(this.v + o.v)
+                }
+                destruct() { for (var i = 0; i < 2; i++) { print("destruct " + this.v + " " + i) } }
+                static undefined Call() { print("call") }
+            }
+            fire global { print("job1") }
+            print("after post")
+            for (var i = 0; i < 2; i++) { print("loop " + i) }
+            fire global { print("job2") }
+            P.Call()
+            print("before sleep")
+            Sleep(0)
+            print("after sleep")
+            var p = new P(1)
+            fire global { print("job3") }
+            print("count " + p.Count)
+            fire global { print("job4") }
+            var q = p + new P(2)
+            print("sum " + q.v)
+            fire global { print("job5") }
+            if (true) {
+                var t = new P(5)
+                print("block " + t.v)
+            }
+            print("after block")
+            var nums = new List<int>()
+            nums.Add(3)
+            nums.Add(1)
+            print("small " + nums.Where((int n) => { for (var i = 0; i < 1; i++) { print("where " + n) }; return n < 2 }).Count())
+            print("synced " + (sync globals))
+            fire global { print("job6") }
+            print("end")
+            """),
+        ("Threads: #globaljobs sleep - Auftraege nur bei Sleep (und sync globals, Programmende), nicht beim Ruecksprung", """
+            #globaljobs sleep
+            #import "time"
+            #import "linq"
+            class P {
+                int v
+                construct(int v) { this.v = v }
+                int Count {
+                    get {
+                        var s = 0
+                        for (var i = 0; i < 2; i++) { print("get " + i); s = s + 1 }
+                        return s
+                    }
+                }
+                P operator+(P o) {
+                    for (var i = 0; i < 2; i++) { print("op " + i) }
+                    return new P(this.v + o.v)
+                }
+                destruct() { for (var i = 0; i < 2; i++) { print("destruct " + this.v + " " + i) } }
+                static undefined Call() { print("call") }
+            }
+            fire global { print("job1") }
+            print("after post")
+            for (var i = 0; i < 2; i++) { print("loop " + i) }
+            fire global { print("job2") }
+            P.Call()
+            print("before sleep")
+            Sleep(0)
+            print("after sleep")
+            var p = new P(1)
+            fire global { print("job3") }
+            print("count " + p.Count)
+            fire global { print("job4") }
+            var q = p + new P(2)
+            print("sum " + q.v)
+            fire global { print("job5") }
+            if (true) {
+                var t = new P(5)
+                print("block " + t.v)
+            }
+            print("after block")
+            var nums = new List<int>()
+            nums.Add(3)
+            nums.Add(1)
+            print("small " + nums.Where((int n) => { for (var i = 0; i < 1; i++) { print("where " + n) }; return n < 2 }).Count())
+            print("synced " + (sync globals))
+            fire global { print("job6") }
+            print("end")
+            """),
+        ("Threads: #globaljobs sync - Auftraege nur bei sync globals (und am Programmende)", """
+            #globaljobs sync
+            #import "time"
+            #import "linq"
+            class P {
+                int v
+                construct(int v) { this.v = v }
+                int Count {
+                    get {
+                        var s = 0
+                        for (var i = 0; i < 2; i++) { print("get " + i); s = s + 1 }
+                        return s
+                    }
+                }
+                P operator+(P o) {
+                    for (var i = 0; i < 2; i++) { print("op " + i) }
+                    return new P(this.v + o.v)
+                }
+                destruct() { for (var i = 0; i < 2; i++) { print("destruct " + this.v + " " + i) } }
+                static undefined Call() { print("call") }
+            }
+            fire global { print("job1") }
+            print("after post")
+            for (var i = 0; i < 2; i++) { print("loop " + i) }
+            fire global { print("job2") }
+            P.Call()
+            print("before sleep")
+            Sleep(0)
+            print("after sleep")
+            var p = new P(1)
+            fire global { print("job3") }
+            print("count " + p.Count)
+            fire global { print("job4") }
+            var q = p + new P(2)
+            print("sum " + q.v)
+            fire global { print("job5") }
+            if (true) {
+                var t = new P(5)
+                print("block " + t.v)
+            }
+            print("after block")
+            var nums = new List<int>()
+            nums.Add(3)
+            nums.Add(1)
+            print("small " + nums.Where((int n) => { for (var i = 0; i < 1; i++) { print("where " + n) }; return n < 2 }).Count())
+            print("synced " + (sync globals))
+            fire global { print("job6") }
+            print("end")
+            """),
+        ("Threads: #globaljobs sleep - Auftrag und Sektion eines Threads: eine Schleife ohne Sleep laesst sie liegen, Sleep arbeitet sie ab", """
+            #globaljobs sleep
+            #import "time"
+            var n = 0
+            fire { fire global { n = n + 1 } }
+            var spins = 0
+            for (var i = 0; i < 100000; i++) { spins = spins + 1 }
+            print("after loop " + n)
+            while (n == 0) { Sleep(1ms) }
+            print("after sleep " + n)
+            print("synced " + (sync globals))
+            fire { sync global { n = n + 10 } }
+            while (n < 11) { Sleep(1ms) }
+            print("section " + n)
+            """),
+        ("Threads: #globaljobs sync - Auftrag und Sektion eines Threads: Sleep laesst sie liegen, erst sync globals", """
+            #globaljobs sync
+            #import "time"
+            var n = 0
+            fire { fire global { n = n + 1 } }
+            Sleep(50ms)
+            for (var i = 0; i < 1000; i++) { }
+            print("after sleep " + n)
+            var got = 0
+            while (got == 0) { got = sync globals; Sleep(1ms) }
+            print("synced " + got + " n " + n)
+            fire { sync global { n = n + 10 } }
+            Sleep(50ms)
+            print("before section " + n)
+            while (n < 11) { sync globals }
+            print("section " + n)
+            """),
+        ("Threads: #globaljobs safepoints - eine leere Schleife arbeitet Auftrag und Sektion eines Threads ab; Auftraege am Programmende in ihrer Reihenfolge", """
+            var n = 0
+            fire { fire global { n = n + 1 } }
+            while (n == 0) { }
+            print("after loop " + n)
+            print("synced " + (sync globals))
+            fire { sync global { n = n + 10 } }
+            while (n < 11) { }
+            print("section " + n)
+            fire {
+                fire global { print("job a") }
+                fire global { print("job b") }
+            }
             """),
         ("Threads: fire handover - [NoCopy]-Objekt samt allem Erreichbaren geht ohne Kopie an den Thread, die Variable wird undefined, der Thread zerstoert es; mit taking gemischt", """
             #nosync

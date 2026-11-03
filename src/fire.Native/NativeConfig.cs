@@ -40,6 +40,21 @@ namespace fire.Native
         [JsonIgnore] public bool StrippingFromCommandLine { get; set; }
         /// <summary>(`"stripping"` was given: it goes before `"trim"`, whatever comes first in the file)</summary>
         private bool StrippingExplicit => Stripping != null && !_strippingFromTrim;
+        /// <summary>When the main program runs the `fire global` jobs by itself (`"globalJobs"`: `safepoints`, `sleep` or `sync`; docs/THREADING_DESIGN.md section 7): the default of a
+        /// native build whose program says nothing (`#globaljobs`, `#nosync`); the project and `--global-jobs` go before it. Null: safepoints.</summary>
+        public string? GlobalJobs
+        {
+            get => _globalJobs;
+            set
+            {
+                if (value != null && GlobalJobsModes.Parse(value) == null)
+                    throw new NativeConfigException($"{FileName}: \"globalJobs\": '{value}' is not one of: {string.Join(", ", GlobalJobsModes.Names)}.");
+                _globalJobs = value;
+            }
+        }
+        private string? _globalJobs;
+        /// <summary><see cref="GlobalJobs"/> as a mode.</summary>
+        [JsonIgnore] public GlobalJobsMode? GlobalJobsValue => GlobalJobsModes.Parse(_globalJobs);
         /// <summary>How the libraries and packages are linked (ROADMAP 9): `source` (null, the default: everything is one C file) or `static` (each library a static library of
         /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
         public string? Linkage { get; set; }

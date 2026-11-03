@@ -35,9 +35,9 @@ namespace fire.Compiler
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
         /// <param name="chooseSdl">Which SDL a window is built with when the target does not say (<see cref="ChooseSdl"/>; null: SDL2).</param>
         public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null,
-            Func<int>? chooseSdl = null, StrippingLevel? stripping = null)
+            Func<int>? chooseSdl = null, StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null)
         {
-            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = globalJobs }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program");
             var generated = CppGenerator.GenerateSources(linked, target, chooseSdl, stripping);
             return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
@@ -122,7 +122,7 @@ namespace fire.Compiler
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
                 return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
-            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl, StrippingOf(config, plan));
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl, StrippingOf(config, plan), config.GlobalJobsValue);
             string cpp = program.C;
             bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
@@ -213,7 +213,7 @@ namespace fire.Compiler
                 finally { config.Linkage = linkage; }
             }
             if (ToolchainDetector.Find(toolchain) == null) return AsSource(null);   // (no compiler: the normal build offers one)
-            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             var watch = Stopwatch.StartNew();
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
@@ -406,7 +406,7 @@ namespace fire.Compiler
         private static NativeBuildResult WriteStaticFiles(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode, int? floatWidth, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths)
         {
-            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
             try { staticPlan = CppGenerator.GenerateStatic(linked, target, $"files|{toolchain.Layout}", null, StrippingOf(config, plan)); }

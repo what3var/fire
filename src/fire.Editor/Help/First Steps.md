@@ -387,7 +387,7 @@ Sleep(300ms)
 print(total)                                // 3
 ```
 
-The main program serves the waiting threads by itself at safe points, for example after `Sleep` or a window event. If you want to decide where globals may change, write `#nosync` at the top of the program; then only an explicit `sync globals` (and the end of the program) lets the threads in. `fire global { ... }` is the non-waiting variant: the thread queues a job that the main program runs at its next `sync globals`.
+The main program serves the waiting threads by itself at safe points: at the jump back of a loop and while it waits in `Sleep`. If you want to decide where globals may change, write `#globaljobs sleep` (only at `Sleep`) or `#globaljobs sync` (the same as `#nosync`) at the top of the program; with `sync` only an explicit `sync globals` (and the end of the program) lets the threads in. `fire global { ... }` is the non-waiting variant: the thread queues a job that the main program runs at its next safe point.
 
 **Ending threads.** `leave` ends the thread that executes it (its `finally` blocks and destructors still run); `terminate()` or `terminate(42)` ends **all** threads and the program, from anywhere. An exception that nobody catches in a thread does not vanish: it is delivered to the main program, where you can catch it with `catch threads(...)` (without it the program stops):
 

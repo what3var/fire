@@ -3571,7 +3571,7 @@ namespace fire.Native
             if (_usesThreads && sb != null && ins.A.Length > 0 && ins.A[0] <= ins.Addr
                 && ins.Op is OpCode.Jump or OpCode.JumpIfFalse or OpCode.JumpIfFalsePeek or OpCode.JumpIfTruePeek
                     or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq)
-                E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
+                E($"if (FIRE_UNLIKELY(pollLoop())) goto {ExitLabel(f, st, locals)};");   // (and the main program's queue: docs/THREADING_DESIGN.md section 7)
 
             switch (ins.Op)
             {
@@ -4205,9 +4205,10 @@ namespace fire.Native
                     return new StepResult(false, null);
                 case OpCode.SetTimeout:
                 case OpCode.SetAutoSync:
-                    // `#timeout` sets the wait time of the waiting functions of the devices; `#nosync` only matters for programs with threads
+                    // `#timeout` sets the wait time of the waiting functions of the devices; `#globaljobs`/`#nosync` only matter for programs with threads
+                    // (`sleep`, `sync`: a loop's jump back no longer looks at the queue - ATTN_SECT leaves the main program's mask)
                     if (ins.Op == OpCode.SetTimeout) { Need(1); E($"setDefaultTimeout({S(d - 1)});"); NeedTimeObj(); d--; }
-                    else if (_usesThreads && ins.A[0] == 0) E("g_autoSync = false; g_attnMask &= ~ATTN_SECT;");
+                    else if (_usesThreads && ins.A[0] != (int)fire.Runtime.GlobalJobsMode.Safepoints) E($"g_globalJobs = {ins.A[0]}; g_attnMask &= ~ATTN_SECT;");
                     return Next();
 
                 // ---------------------------------------------------------------------------------------------------

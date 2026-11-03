@@ -146,7 +146,7 @@ namespace fire.Bytecode
         SectionEnter,   //                : `sync global { ` - a fire thread registers and waits until the main program grants the section
                         //                  (no effect in the main program); counterpart SectionExit sits in the `finally` of the block
         SectionExit,    //                : ends the section
-        SetAutoSync,    // u8 on        : `#nosync` (on = 0) turns off the automatic processing of the queue at safe points (emitted at program start)
+        SetAutoSync,    // u8 mode      : when the main program processes its queue by itself (GlobalJobsMode: 0 sync = `#nosync`, 1 safepoints, 2 sleep; emitted at program start)
         PostGlobal,     // u8 argCount   : `fire global { ... }`: pop lambda, pop argCount arguments; enqueues the lambda (object arguments as a copy)
                         //                  as a job for the main program that runs at its next `sync globals`; the caller does not wait
         EnterFinallyNormal, //            : pushes the completion "normal" (undefined, 0) - the normal entry into a finally block precedes it

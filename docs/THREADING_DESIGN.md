@@ -375,15 +375,34 @@ keinen Snapshot und keine Kopie mehr:
   Threads nicht (nur die `taking`-Erfassungen) und kein `this`. Im Hauptprogramm ist es ein Auftrag an sich selbst für das nächste `sync globals`.
 - **Grenzen:** Ein Zeiger (`&`) auf ein Global ist im Thread nicht möglich. `x++` auf ein Array-Element der Globals braucht einen
   `sync global`-Block. Mit der Direktive `#noshadow` sieht der Thread keine Globals.
-- **Automatisches Abarbeiten (Standard).** Das Hauptprogramm arbeitet die Warteschlange (Sektionen der Fire-Threads, `fire global`-Aufträge,
-  Host-Callbacks) **selbst** ab, ohne dass es `sync globals` schreibt: an seinen sicheren Punkten (dieselben, an denen `leave`/`terminate` anderer
-  Threads wirken) und damit auch direkt nach einem nativen Aufruf wie `Window.Tick` (DoEvents-Prinzip). Wer bewusst eine Stelle festlegen will,
-  an der sich Globals ändern dürfen, schreibt `#nosync` an den Programmanfang: dann arbeitet **nur** `sync globals` (und das Programmende) die
-  Warteschlange ab. Zu beachten: die automatische Variante kann zwischen zwei beliebigen Anweisungen eingreifen (nicht in Destruktoren, Properties
-  und anderen verschachtelten Ausführungen), ein Wert, den das Hauptprogramm gerade gelesen hat, kann sich also danach ändern - wer das nicht will,
-  nutzt `#nosync`.
+- **Automatisches Abarbeiten: `#globaljobs safepoints|sleep|sync`.** Das Hauptprogramm arbeitet die Warteschlange (Sektionen der Fire-Threads,
+  `fire global`-Aufträge, Host-Callbacks) **selbst** ab, ohne dass es `sync globals` schreibt - wo genau, legt die Build-Einstellung fest; VM und
+  nativer Build verhalten sich in jedem Modus **gleich** (dieselben Stellen, also auch derselbe Rückgabewert von `sync globals`):
+
+  | Modus | sichere Punkte für die Warteschlange |
+  |---|---|
+  | `safepoints` (Standard) | der **Rücksprung einer Schleife** (nach jedem Durchlauf von `while`/`do`/`for`/`foreach`), **`Sleep`** (auch `Sleep(0)`), die **Wartefunktionen** (`WaitFor`, `WaitForString`, `WaitUntil`, während sie warten), `sync globals`, Programmende |
+  | `sleep` | nur `Sleep` und die Wartefunktionen, `sync globals`, Programmende |
+  | `sync` | nur `sync globals` und das Programmende (`#nosync` ist der alte Name dafür) |
+
+  **Kein** sicherer Punkt für die Warteschlange: ein Aufruf (Funktion, Methode, Konstruktor, Lambda), ein `return`, eine native Funktion (`print`,
+  `Window.Tick`, ein Lesen vom Gerät), eine einzelne Anweisung. Die Liste ist bewusst klein und billig: der Rücksprung prüft einen Zähler (VM) bzw. ein
+  Bit (nativ), nur wenn etwas eingereiht wurde, wird abgearbeitet. `leave`/`terminate` anderer Threads und die Ausnahmen der Fire-Threads
+  (`catch threads`) wirken weiter auch beim Aufruf und nach einer nativen Funktion. **Nicht** automatisch abgearbeitet wird in einem Destruktor
+  (er läuft mitten in einer Anweisung), in einem laufenden Auftrag oder Host-Callback (jeder läuft für sich, der nächste beginnt nie in ihm) und im
+  Handler von `catch threads`/`catch terminate`; in einer Property, einem Operator, einem Lambda, das eine Bibliotheksfunktion ruft (`Where`, `Sort`),
+  und in der Nachricht eines Aktors schon (ihre Schleifen und `Sleep` sind sichere Punkte wie sonst). Der Modus gilt für die Warteschlange des
+  Hauptprogramms, egal wer einreiht (das Hauptprogramm selbst, ein Fire-Thread, ein Host-Thread). Ein Thread, dessen Sektion nicht drankommt, wartet -
+  in `sleep` also bis zum nächsten `Sleep` des Hauptprogramms, in `sync` bis zum nächsten `sync globals`.
+  **Wo eingestellt:** `#globaljobs <modus>` im Quelltext (Top-Level, gilt fürs ganze Programm; mehrere: die letzte), `"globalJobs"` in den
+  Einstellungen eines Projekts (docs/PROJECTS.md), `"globalJobs"` in fire.native.json (Standard eines nativen Builds), `--global-jobs <modus>` auf der
+  Kommandozeile. **Rangfolge** wie bei `#floatwidth`: Kommandozeile > Projekt > Direktive im Quelltext > fire.native.json > `safepoints`.
+  Zu beachten: `safepoints` kann bei jedem Schleifendurchlauf eingreifen, ein Wert, den das Hauptprogramm gerade gelesen hat, kann sich danach also
+  ändern - wer das nicht will, nimmt `sleep` oder `sync`. Umsetzung: VM `VM.AutoSyncAt`/`PollQueueAtLoop`/`PollWhileWaiting` (Zähler `s_queued`,
+  `_noAutoSyncDepth`), nativ `pollLoop`/`mainPoll(waiting)`/`g_globalJobs`/`g_noSyncDepth` in fire_rt.h; der Compiler setzt `SetAutoSync <modus>`
+  an den Programmanfang (0 = sync, 1 = safepoints, 2 = sleep; nur wenn nicht `safepoints`).
 - **Host-Callbacks.** Ein Callback von einem fremden Thread (z.B. ein Seriell-Ereignis) läuft nicht mehr auf einer isolierten Kopie, sondern wird dem
-  Hauptprogramm eingereiht (`VM.PostCallback`) und dort mit den echten Globals ausgeführt - automatisch oder bei `sync globals` (`#nosync`). Eine
+  Hauptprogramm eingereiht (`VM.PostCallback`) und dort mit den echten Globals ausgeführt - automatisch (wie `#globaljobs` sagt) oder bei `sync globals`. Eine
   unbehandelte Exception darin geht als Text an den Host. Läuft das Hauptprogramm nicht (mehr), gilt weiter die isolierte Kopie. Callbacks, die beim
   Programmende noch eingereiht sind, verfallen.
 

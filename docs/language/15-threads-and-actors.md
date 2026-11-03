@@ -102,9 +102,28 @@ Sleep(300ms)
 print(total)                                // 3
 ```
 
-The main program lets waiting threads in at safe points (after `Sleep`, a window event, ...). With `#nosync` at the top of the program it does so only
-at an explicit `sync globals` (and at the end of the program). `fire global { ... }` does not start a thread: it queues a job that the main program
-runs at its next `sync globals`.
+`fire global { ... }` does not start a thread: it queues a **job** that the main program runs with the real globals. When the main program lets the
+waiting threads in and runs the jobs is a build setting, `#globaljobs` (the same in the VM and in a native build):
+
+| `#globaljobs` | the main program processes its queue at |
+|---|---|
+| `safepoints` (default) | the jump back of every loop, `Sleep` (also `Sleep(0)`) and the wait functions, `sync globals`, the end of the program |
+| `sleep` | `Sleep` and the wait functions, `sync globals`, the end of the program |
+| `sync` | only `sync globals` and the end of the program (`#nosync` means the same) |
+
+```fire
+#globaljobs sleep
+#import "time"
+fire global { print("job") }
+for (var i = 0; i < 2; i++) { print("loop " + i) }   // loop 0, loop 1 - a loop is no safe point in this mode
+Sleep(1ms)                                           // job
+print(sync globals)                                  // 0: nothing left
+```
+
+- A call and a native function (`print`) are never such a point; with `safepoints` the job above would run after `loop 0`.
+- `sync globals` runs everything that is queued and returns how many entries that were.
+- Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
+- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive (docs/PROJECTS.md).
 
 ## Actors
 

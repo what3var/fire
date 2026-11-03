@@ -516,7 +516,8 @@ namespace fire.Compiler
                 : ne.ClassRef.BaseName;
 
         public static CompiledProgram Compile(
-            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives, bool classMeta = false)
+            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives, bool classMeta = false,
+            GlobalJobsMode? globalJobsForced = null, GlobalJobsMode? globalJobsDefault = null)
         {
             s_unitChecks = resolveResult.UnitChecks;
             s_methodTypeArgs = resolveResult.MethodTypeArgs;
@@ -525,11 +526,14 @@ namespace fire.Compiler
             var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
             var classes = compiler.CompileClasses(program);
 
-            // `#nosync` (no matter where in the top-level code it stands): right at the start, before any code runs
-            if (program.Any(s => s is NoSyncDirective))
+            // When the main program processes its queue by itself (docs/THREADING_DESIGN.md section 7): the command line and the project (`globalJobsForced`) go before
+            // `#globaljobs`/`#nosync` (the last one in the top-level code, no matter where it stands), that before fire.native.json (`globalJobsDefault`); right at the
+            // start, before any code runs. The default (safepoints) needs no instruction.
+            var globalJobs = globalJobsForced ?? program.OfType<GlobalJobsDirective>().LastOrDefault()?.Mode ?? globalJobsDefault ?? GlobalJobsMode.Safepoints;
+            if (globalJobs != GlobalJobsMode.Safepoints)
             {
                 compiler._chunk.EmitOp(OpCode.SetAutoSync);
-                compiler._chunk.EmitByte(0);
+                compiler._chunk.EmitByte((byte)globalJobs);
             }
 
             // `#timeout value`: likewise right at the start (the value is an expression without reference to variables, e.g. `10s`)
@@ -1552,8 +1556,8 @@ namespace fire.Compiler
                 case TypeCheckDirective:
                     break;
 
-                case NoSyncDirective:
-                    break; // see Compile: `SetAutoSync 0` already stands at the program start
+                case GlobalJobsDirective:
+                    break; // see Compile: `SetAutoSync mode` already stands at the program start
 
                 case TimeoutDirective:
                     break; // see Compile: `SetTimeout` already stands at the program start

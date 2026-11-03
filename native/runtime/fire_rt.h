@@ -269,6 +269,7 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
     X(uint64_t, g_throwToken, 0) \
     X(uint8_t, g_isThread, 0)           /* 1 on a fire thread */ \
     X(int32_t, g_jobDepth, 0)           /* a `fire global` job is running on this thread */ \
+    X(int32_t, g_noSyncDepth, 0)        /* something runs for itself (a destructor, a host service, `catch threads`/`catch terminate`): no automatic queue in it */ \
     X(uint32_t, g_attnMask, 7u)         /* the signals this thread looks at (ATTN_ALL|ATTN_MAIN|ATTN_SECT); fire threads clear all but ATTN_ALL */ \
     X(int32_t, g_tick, 4096) \
     X(uint8_t, g_leaving, 0)            /* unwinding because of leave/terminate (or an unhandled exception): no more signals */ \
@@ -332,6 +333,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_throwToken FIRE_TLV(g_throwToken)
 #define g_isThread FIRE_TLV(g_isThread)
 #define g_jobDepth FIRE_TLV(g_jobDepth)
+#define g_noSyncDepth FIRE_TLV(g_noSyncDepth)
 #define g_attnMask FIRE_TLV(g_attnMask)
 #define g_tick FIRE_TLV(g_tick)
 #define g_leaving FIRE_TLV(g_leaving)
@@ -5555,7 +5557,7 @@ FIRE_FN void notifyEvent(void) {
 }
 
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
- * wait for it; not looked at with `#nosync`). */
+ * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4 };
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 
@@ -6335,11 +6337,16 @@ FIRE_FN void hostHold(int32_t delta) {
 FIRE_FN void hostServe(void) {
     uint32_t i;
     if (fire_atomic_exchange(&g_hostPending, 0) == 0) return;
+    g_noSyncDepth++;   /* (what a service runs - a window's event handler - runs for itself: its own safe points do not serve the queue) */
     for (i = 0; i < g_hostServiceCount; i++) g_hostServices[i]();
+    g_noSyncDepth--;
 }
 
-/* The main program at a safe point: what the fire threads left for it (their exceptions; sections and jobs unless `#nosync`). */
-extern FIRE_RT_DATA bool g_autoSync;
+/* When the main program serves its queue by itself (docs/THREADING_DESIGN.md section 7; `SetAutoSync`, the same values as fire.Runtime.GlobalJobsMode):
+ * GJ_SAFEPOINTS (the default) at a loop's jump back and while waiting (`Sleep`, the wait functions), GJ_SLEEP only while waiting, GJ_SYNC never (`#nosync`);
+ * `sync globals` and the end of the program always. A call (function entry) and a native call (`print`) are no safe points for it - as in the VM. */
+enum { GJ_SYNC = 0, GJ_SAFEPOINTS = 1, GJ_SLEEP = 2 };
+extern FIRE_RT_DATA uint8_t g_globalJobs;
 /* The exceptions of the fire threads (and of the jobs) that reached the main program: `catch threads`, or the program ends. */
 FIRE_FN void deliverThreadExceptions(void) {
     while (g_pendingExc.count && !g_unwind.active) {
@@ -6351,29 +6358,42 @@ FIRE_FN void deliverThreadExceptions(void) {
         for (i = 0; i < g_threadsCatchCount; i++)
             if (g_threadsCatches[i].typeId < 0 || excMatches(e, g_threadsCatches[i].typeId)) { handler = g_threadsCatches[i].fn; break; }
         if (!handler) { reportUnhandled(e); exitNow(1); }
+        g_noSyncDepth++;   /* (a handler runs for itself, as in the VM) */
         handler(e);
+        g_noSyncDepth--;
     }
     if (!g_pendingExc.count) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
 }
-FIRE_FN void mainPoll(void) {
+/* The main program at a safe point: what the fire threads left for it - their exceptions, and (as the mode says: `waiting` = Sleep or a wait function, else a loop's
+ * jump back) the sections, jobs and host services. */
+FIRE_FN void mainPoll(bool waiting) {
     deliverThreadExceptions();
-    /* (not inside a running job: its own safe points would run the next jobs nested, before it ends - out of order; the VM does not either) */
-    if (g_autoSync && !g_unwind.active && g_jobDepth == 0) { drainQueue(); hostServe(); }
+    if (!(g_globalJobs == GJ_SAFEPOINTS || (waiting && g_globalJobs == GJ_SLEEP))) return;
+    /* (not inside a running job: its own safe points would run the next jobs nested, before it ends - out of order; not in a destructor, a host service, a
+     * `catch threads` handler; the VM does not either) */
+    if (!g_unwind.active && g_jobDepth == 0 && g_noSyncDepth == 0) { drainQueue(); hostServe(); }
 }
 
-FIRE_COLD FIRE_FN bool pollSlow(void) {
+FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
     if (g_leaving) return false;
     if (g_terminate.requested) { startLeave(); return true; }
-    if (g_attnMask & ATTN_MAIN) mainPoll();
+    if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
     return g_unwind.active != 0;
 }
 
-/* A safe point (loop back edge, function entry, after a native call): now and then the GIL is offered to the other threads, and the signals are looked at.
- * True when a leave/an exception is unwinding because of it. */
+/* A safe point for the signals (function entry, after a native function that waits): now and then the GIL is offered to the other threads, and the signals are
+ * looked at - not the queue (ATTN_SECT). True when a leave/an exception is unwinding because of it. */
 FIRE_FN bool pollSignals(void) {
     if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
+    if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask & ~(uint32_t)ATTN_SECT))) return false;
+    return pollSlow(false);
+}
+
+/* A loop's jump back: like pollSignals, and the main program serves its queue there (ATTN_SECT is in its mask only in the mode `safepoints`). */
+FIRE_FN bool pollLoop(void) {
+    if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
     if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask))) return false;
-    return pollSlow();
+    return pollSlow(true);
 }
 
 /* `sync globals`: serves the queue (main program) and gives the other threads a turn; a thread gets 0. */
@@ -6389,13 +6409,27 @@ FIRE_FN int64_t syncGlobals(void) {
  * threads leave for it (sections, jobs, their exceptions) while it sleeps; whatever that raises ends the sleep. */
 FIRE_FN bool fire_sleepWake(void* ctx) {
     (void)ctx;
-    if (!g_isThread) mainPoll();
+    if (!g_isThread) mainPoll(true);
     return g_unwind.active != 0;
+}
+/* A wait function of a device (or any wait that is not `Sleep`): waits with blockUntil until `pred(ctx)`, and the main program serves meanwhile, like `Sleep`. */
+typedef struct FireWaitServing { bool (*pred)(void*); void* ctx; } FireWaitServing;
+FIRE_FN bool fire_waitServingPred(void* c) {
+    FireWaitServing* w = (FireWaitServing*)c;
+    if (!g_isThread) { mainPoll(true); if (g_unwind.active) return true; }
+    return w->pred(w->ctx);
+}
+FIRE_FN bool blockUntilServing(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs) {
+    FireWaitServing w;
+    w.pred = pred;
+    w.ctx = ctx;
+    return blockUntil(fire_waitServingPred, &w, stopOnTerminate, deadlineMs);
 }
 FIRE_FN void sleepTicks(int64_t ticks) {
     int32_t held;
     int64_t deadline;
-    if (ticks <= 0) { gilYield(); return; }
+    /* (`Sleep(0)` is a safe point too: the main program serves its queue once, as in the VM) */
+    if (ticks <= 0) { if (!g_isThread) fire_sleepWake(NULL); gilYield(); return; }
     /* a thread sleeping inside a method of a shared object gives its section back for the sleep */
     held = sectionYieldBegin();
     deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
@@ -6407,7 +6441,7 @@ FIRE_FN void sleepTicks(int64_t ticks) {
  * globals are destroyed. */
 FIRE_FN bool fire_mainDone(void* ctx) {
     (void)ctx;
-    mainPoll();
+    deliverThreadExceptions();
     drainQueue();
     if (!g_unwind.active) hostServe();
     return g_threadsLive == 0 && g_pendingExc.count == 0 && g_reqs.count == 0 && ((int32_t)fire_atomic_load(&g_hostHolds) <= 0 || g_terminate.requested);
@@ -6418,7 +6452,9 @@ FIRE_FN void mainFinish(void) {
     g_leaving = 0;
     if (g_terminate.requested && g_terminateFn) {
         g_leaving = 1;   /* no more signals while the handler runs */
+        g_noSyncDepth++;
         g_terminateFn(g_terminate.value);
+        g_noSyncDepth--;
         clearUnwind();
         g_leaving = 0;
     }
@@ -6512,7 +6548,7 @@ fire_atomic32 g_hostPending;
 fire_atomic32 g_hostHolds;
 HostService* g_hostServices = NULL;
 uint32_t g_hostServiceCount = 0, g_hostServiceCap = 0;
-bool g_autoSync = true;
+uint8_t g_globalJobs = GJ_SAFEPOINTS;
 #endif
 #endif  /* FIRE_RT_IMPLEMENTATION */
 
@@ -6546,7 +6582,8 @@ const char* className(uint32_t cls) {
 
 void runDestructors(Obj* o) {
     const FireClassDesc* d = classDescOf(o->cls);
-    if (d && d->destroy) d->destroy(o);
+    /* (a destructor runs in the middle of something: the main program does not serve its queue in it, as in the VM) */
+    if (d && d->destroy) { g_noSyncDepth++; d->destroy(o); g_noSyncDepth--; }
 }
 
 int32_t excMessageIndex(uint32_t cls) {

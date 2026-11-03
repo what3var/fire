@@ -462,7 +462,7 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   (Thunk `msg_...`, Argumente referenzgezählt) in die Mailbox, `process`/`try process` führt eine aus (blockierend: Warten ohne GIL).
   **Globals** (THREADING_DESIGN 7): ab dem ersten `fire` gehört alles, was der globale Scope des Hauptprogramms besitzt, zum geteilten Bereich (Flag 64, `link` hält ihn aktuell).
   Ein Thread liest direkt; eine Zuweisung an ein Global, ein Feld/Array-Element/statisches Feld des Bereichs und der Aufruf einer Methode eines Objekts des Bereichs laufen in einer
-  **Sektion** (`SectionScope`): Anmeldung in der Warteschlange, Warten (ohne GIL), bis das Hauptprogramm sie an einem sicheren Punkt (oder bei `sync globals` mit `#nosync`) erteilt;
+  **Sektion** (`SectionScope`): Anmeldung in der Warteschlange, Warten (ohne GIL), bis das Hauptprogramm sie an einem sicheren Punkt (wie `#globaljobs` sagt; bei `sync`/`#nosync` erst bei `sync globals`) erteilt;
   es wartet dann, bis sie endet. `sync global { }` ist `sectionEnterOp`/`sectionExitOp`, `fire global { }` ein Auftrag (`postJob`, Objekt-Argumente als Kopie), den das
   Hauptprogramm auf seinem Strang mit den echten Globals ausführt (eine Ausnahme darin geht an `catch threads`).
   Abweichungen von der VM: Actor-Referenzen und Objekt-Argumente von Nachrichten gelten als Referenzen (ein Actor muss die Threads überleben, die ihn benutzen); `try sync`
@@ -606,6 +606,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
   "target": "my-board",          // Standardziel; sonst dieser Rechner
   "toolchain": "gcc",            // Standard-Toolchain für Ziele ohne eigene; sonst die erste gefundene
   "stripping": 3,                // was wegfällt: 0 "none" .. 3 "all" (Standard), Zahl oder Name (siehe "Größe des Programms")
+  "globalJobs": "safepoints",    // wann das Hauptprogramm `fire global`-Aufträge abarbeitet: "safepoints" (Standard), "sleep", "sync" (THREADING_DESIGN.md 7)
   "targets": {
     "my-board": {
       "extends": "freertos",     // eingebautes Ziel oder anderes aus dieser Datei; nur Abweichungen stehen hier
@@ -854,6 +855,13 @@ Präprozessor lesen dasselbe:
 Eingebaut: `windows`, `linux`, `macos`, `esp32`, `freertos`, `wasm`; `TargetProfile.Host` ist das Ziel der VM im Editor.
 
 * **Rangfolge der Float-Genauigkeit:** `-f` > `#floatwidth` im Programm > Standard des Ziels > 64.
+* **Rangfolge von `globalJobs`** (wann das Hauptprogramm seine Warteschlange abarbeitet, THREADING_DESIGN.md Abschnitt 7) genauso: `--global-jobs` >
+  `globalJobs` des Projekts > `#globaljobs`/`#nosync` im Programm > `"globalJobs"` in fire.native.json > `safepoints`. Der Compiler schreibt den Modus als
+  `SetAutoSync` an den Programmanfang; der Generator macht daraus `g_globalJobs = n` (und nimmt `ATTN_SECT` aus der Maske des Hauptprogramms, damit der
+  Rücksprung einer Schleife in `sleep`/`sync` nichts prüft). Sichere Punkte nativ wie in der VM: `pollLoop()` am Rücksprung (Warteschlange nur in
+  `safepoints`), `pollSignals()` am Funktionsanfang und nach einer wartenden Funktion des Hosts (nur Signale), `mainPoll(true)` in `Sleep` (auch
+  `Sleep(0)`) und in den Wartefunktionen der Geräte (`blockUntilServing`); `g_noSyncDepth` sperrt sie in Destruktoren, Host-Diensten und
+  `catch threads`/`catch terminate`, `g_jobDepth` in einem laufenden Auftrag.
 * `Linker.CompileAndLink(..., target:)` lehnt `#import` einer Bibliothek ab, die es auf dem Ziel nicht gibt (Fehler beim Übersetzen, nicht
   erst auf dem Gerät).
 * Der Generator schreibt `FIRE_TARGET`, `FIRE_TARGET_<NAME>`, `FIRE_HAL_<PAKET>` und `FIRE_DEFAULT_STACK_BYTES` in die Datei; für

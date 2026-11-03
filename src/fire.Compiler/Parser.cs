@@ -1704,7 +1704,18 @@ namespace fire.Compiler
             {
                 Advance();
                 ExpectStatementTerminator();
-                return new NoSyncDirective(_sourceIndex, line);
+                return new GlobalJobsDirective(_sourceIndex, line, fire.Runtime.GlobalJobsMode.Sync);   // (the old name of `#globaljobs sync`)
+            }
+
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "globaljobs")
+            {
+                Advance();
+                // (`sync` is a keyword token: the word is taken by its text)
+                if (fire.Runtime.GlobalJobsModes.Parse(Peek().Lexeme) is not { } mode)
+                    throw Error("'#globaljobs' expects safepoints, sleep or sync", Peek());
+                Advance();
+                ExpectStatementTerminator();
+                return new GlobalJobsDirective(_sourceIndex, line, mode);
             }
 
             if (Check(TokenType.Identifier) && Peek().Lexeme == "timeout")
@@ -1719,7 +1730,7 @@ namespace fire.Compiler
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - a
             // '#using' line is already recognised there and removed from the text,
             // the parser never sees it any more. No case for it needed here any more.
-            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout value', '#lax', '#strict')", Peek());
+            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#lax', '#strict')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()

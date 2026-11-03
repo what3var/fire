@@ -45,6 +45,9 @@ namespace fire.Projects
         public string? Output { get; set; }
         /// <summary>`lax` (a type conflict is a warning, the default) or `strict` (an error); docs/TYPES.md. A `#lax` / `#strict` in a file decides for that file.</summary>
         public string? TypeChecking { get; set; }
+        /// <summary>When the main program runs the `fire global` jobs (and lets in the sections of its threads, the host callbacks) by itself: `safepoints` (the default),
+        /// `sleep` or `sync` (docs/THREADING_DESIGN.md section 7; the tag `#globaljobs`). The same in the VM and in a native build.</summary>
+        public string? GlobalJobs { get; set; }
         /// <summary>The arguments a run of the program gets (`forge run`, *Run* in spark; `Environment.Args`); arguments after `--` on the command line replace them.</summary>
         public List<string>? Arguments { get; set; }
         /// <summary>The serial port of a board (ESP32: Run and Debug in spark flash it and talk to it there); null: the only USB serial port, else the one esptool picks.</summary>
@@ -54,12 +57,13 @@ namespace fire.Projects
 
         [JsonIgnore]
         public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
-            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Stripping == null && Output == null && TypeChecking == null && Arguments == null && Port == null && Baud == null;
+            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Stripping == null && Output == null && TypeChecking == null && GlobalJobs == null && Arguments == null && Port == null && Baud == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
         public static readonly IReadOnlyList<string> Engines = new[] { "vm", "native" };
         public static readonly IReadOnlyList<string> TypeCheckings = new[] { "lax", "strict" };
+        public static readonly IReadOnlyList<string> GlobalJobsModes = new[] { "safepoints", "sleep", "sync" };
         public static readonly IReadOnlyList<string> Linkages = new[] { "source", "static", "shared" };
         /// <summary>The stripping levels by their names (index = number; fire.Native.Strippings has the same).</summary>
         public static readonly IReadOnlyList<string> Strippings = new[] { "none", "protected", "methods", "all" };
@@ -87,6 +91,7 @@ namespace fire.Projects
             r.Stripping = high?.Stripping ?? low?.Stripping;
             r.Output = high?.Output ?? low?.Output;
             r.TypeChecking = high?.TypeChecking ?? low?.TypeChecking;
+            r.GlobalJobs = high?.GlobalJobs ?? low?.GlobalJobs;
             r.Arguments = high?.Arguments ?? low?.Arguments;
             r.Port = high?.Port ?? low?.Port;
             r.Baud = high?.Baud ?? low?.Baud;
@@ -134,6 +139,7 @@ namespace fire.Projects
             if (Mode != null && !Modes.Contains(Mode)) problems.Add($"settings.mode '{Mode}' is not one of: {string.Join(", ", Modes)}.");
             if (FloatWidth != null && FloatWidth != 32 && FloatWidth != 64) problems.Add("settings.floatWidth must be 32 or 64.");
             if (TypeChecking != null && !TypeCheckings.Contains(TypeChecking)) problems.Add("settings.typeChecking must be lax or strict.");
+            if (GlobalJobs != null && !GlobalJobsModes.Contains(GlobalJobs.ToLowerInvariant())) problems.Add($"settings.globalJobs '{GlobalJobs}' is not one of: {string.Join(", ", GlobalJobsModes)}.");
             if (Engine != null && !Engines.Contains(Engine)) problems.Add($"settings.engine '{Engine}' is not one of: {string.Join(", ", Engines)}.");
             if (Stripping != null && !(Stripping.Length == 1 && Stripping[0] is >= '0' and <= '3') && !Strippings.Contains(Stripping.ToLowerInvariant()))
                 problems.Add($"settings.stripping '{Stripping}' is not one of: 0, 1, 2, 3, {string.Join(", ", Strippings)}.");

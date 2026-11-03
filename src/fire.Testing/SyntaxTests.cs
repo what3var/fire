@@ -394,6 +394,47 @@ static class SyntaxTests
         string handoverWord = Output("var handover = 1");
         Check("fire handover: 'handover' ist ein Schluesselwort", handoverWord.StartsWith("ERROR"), handoverWord);
 
+        // ---- `#globaljobs safepoints|sleep|sync` (docs/THREADING_DESIGN.md section 7): when the main program runs its `fire global` jobs ----
+        const string jobsBody = "#import \"time\"\nfire global { print(\"job1\") }\nfor (var i = 0; i < 2; i++) { print(\"loop \" + i) }\nfire global { print(\"job2\") }\nH.f()\nSleep(1ms)\nprint(\"n \" + (sync globals))\nclass H { static undefined f() { print(\"call\") } }\n";
+        const string atSafepoints = "loop 0\njob1\nloop 1\ncall\njob2\nn 0", atSleep = "loop 0\nloop 1\ncall\njob1\njob2\nn 0", atSync = "loop 0\nloop 1\ncall\njob1\njob2\nn 2";
+        string jobsDefault = Output(jobsBody);
+        Check("#globaljobs: ohne Angabe safepoints - Ruecksprung einer Schleife und Sleep, kein Aufruf", jobsDefault == atSafepoints, jobsDefault);
+        string jobsSleep = Output("#globaljobs sleep\n" + jobsBody);
+        Check("#globaljobs sleep: nur Sleep (und sync globals)", jobsSleep == atSleep, jobsSleep);
+        string jobsSync = Output("#globaljobs sync\n" + jobsBody);
+        Check("#globaljobs sync: nur sync globals", jobsSync == atSync, jobsSync);
+        string jobsNoSync = Output("#nosync\n" + jobsBody);
+        Check("#nosync ist #globaljobs sync", jobsNoSync == atSync, jobsNoSync);
+        string jobsLast = Output("#globaljobs sync\n#globaljobs safepoints\n" + jobsBody);
+        Check("#globaljobs: die letzte Angabe gilt", jobsLast == atSafepoints, jobsLast);
+        string jobsBad = Output("#globaljobs often\nprint(1)");
+        Check("#globaljobs: ein unbekannter Modus ist E3160", jobsBad.StartsWith("ERROR E3160 '#globaljobs' expects safepoints, sleep or sync"), jobsBad);
+        string jobsMissing = Output("#globaljobs\nprint(1)");
+        Check("#globaljobs: ohne Modus ist E3160", jobsMissing.StartsWith("ERROR E3160"), jobsMissing);
+        Linker.ProcessGlobalJobs = GlobalJobsMode.Sleep;
+        string jobsCli;
+        try { jobsCli = Output("#globaljobs sync\n" + jobsBody); }
+        finally { Linker.ProcessGlobalJobs = null; }
+        Check("#globaljobs: --global-jobs geht vor die Direktive", jobsCli == atSleep, jobsCli);
+        var cli = CommandLineParser.Parse(new[] { "run", "a.fire", "--global-jobs", "SLEEP" });
+        var cliInline = CommandLineParser.Parse(new[] { "build", "a.fire", "--global-jobs=sync" });
+        var cliBad = CommandLineParser.Parse(new[] { "run", "a.fire", "--global-jobs", "often" });
+        Check("--global-jobs: Kommandozeile (auch mit =, Gross/Klein egal), ungueltig ist ein Fehler",
+            cli.Error == null && cli.GlobalJobs == GlobalJobsMode.Sleep && cliInline.GlobalJobs == GlobalJobsMode.Sync && CommandLineParser.Parse(new[] { "run", "a.fire" }).GlobalJobs == null
+            && cliBad.Error == "--global-jobs must be followed by safepoints, sleep or sync.", cliBad.Error);
+        var config = fire.Native.NativeConfig.Parse("""{ "globalJobs": "sleep" }""");
+        string configBad;
+        try { fire.Native.NativeConfig.Parse("""{ "globalJobs": "often" }"""); configBad = "(no error)"; }
+        catch (fire.Native.NativeConfigException ex) { configBad = ex.Message; }
+        Check("fire.native.json: \"globalJobs\" wird gelesen, ein unbekannter Wert gemeldet, geschrieben wie gelesen",
+            config.GlobalJobsValue == GlobalJobsMode.Sleep && configBad.Contains("\"globalJobs\": 'often' is not one of: safepoints, sleep, sync") && config.ToJson().Contains("\"globalJobs\": \"sleep\""), configBad);
+        string threadsBody = "var n = 0\nfire global { n = n + 1 }\nprint(n)\n";
+        string cConfig = fire.Compiler.NativeBuilder.GenerateLinked(new[] { threadsBody }, TargetProfile.Host, globalJobs: GlobalJobsMode.Sleep).C;
+        string cDirective = fire.Compiler.NativeBuilder.GenerateLinked(new[] { "#globaljobs sync\n" + threadsBody }, TargetProfile.Host, globalJobs: GlobalJobsMode.Sleep).C;
+        string cDefault = fire.Compiler.NativeBuilder.GenerateLinked(new[] { threadsBody }, TargetProfile.Host).C;
+        Check("fire.native.json: \"globalJobs\" gilt fuer ein Programm ohne Direktive; die Direktive geht vor; ohne alles nichts (safepoints)",
+            cConfig.Contains("g_globalJobs = 2;") && cDirective.Contains("g_globalJobs = 0;") && !cDirective.Contains("g_globalJobs = 2;") && !cDefault.Contains("g_globalJobs ="));
+
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }
 }

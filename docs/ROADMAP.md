@@ -269,9 +269,11 @@ Dynamisches Laden:
   der Auftrag vorher trotzdem eingereiht), `sync`/`sync flat` (Fall A, beim vollen `sync` auch Fall C; nichts wird zurückgeschrieben). Kein `taking` verschiebt
   ein Objekt; **umgesetzt**: `fire handover x` übergibt es ohne Kopie (alles Erreichbare, die Variable wird `undefined`, VM und nativ gleich, THREADING_DESIGN.md
   Abschnitt 1). `taking` kopiert alles Erreichbare, egal wem es gehört (auch ein Array-Literal in einem Feld; ein Array auch in der VM), beim `fire` im
-  startenden Thread; Lambdas/Pointer darin sind eine `ArgumentException`. Offen: andere Verweise des Senders auf übergebene Objekte werden nicht erkannt;
-  wann `fire global`-Aufträge ohne `#nosync` automatisch laufen, hängt an den sicheren Punkten, die VM und nativ verschieden setzen (die VM auch nach
-  `print`) - der Rückgabewert von `sync globals` ist ohne `#nosync` deshalb nicht in beiden gleich, sobald ein Aufruf dazwischen liegt; die isolierte Kopie der Globals für einen
+  startenden Thread; Lambdas/Pointer darin sind eine `ArgumentException`. **Umgesetzt:** wann `fire global`-Aufträge (und Sektionen, Host-Callbacks)
+  automatisch laufen, ist eine Build-Einstellung (`#globaljobs safepoints|sleep|sync`, `#nosync` = `sync`, Projekt `globalJobs`, fire.native.json, `--global-jobs`)
+  mit EINER Liste sicherer Punkte für VM und nativ (Rücksprung einer Schleife, `Sleep`/Wartefunktionen, `sync globals`, Programmende; THREADING_DESIGN.md
+  Abschnitt 7) - der Rückgabewert von `sync globals` ist in beiden gleich. Offen: andere Verweise des Senders auf übergebene Objekte werden nicht erkannt;
+  die isolierte Kopie der Globals für einen
   Host-Callback, wenn das Hauptprogramm nicht mehr läuft, prüft `[NoCopy]` nicht (VM). `is of`/`!`/`throw` eines zerstörten Objekts
   sind in VM und nativ eine `DestroyedException` (nativ las `isof_*` vorher den freigegebenen Speicher).
 * **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert

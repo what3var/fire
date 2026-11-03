@@ -33,10 +33,10 @@ namespace fire.Ast
     /// the top of the file).</summary>
     public sealed record NoShadowDirective(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>`#nosync` (docs/THREADING_DESIGN.md section 7): the main program NO LONGER processes the queue of its fire threads (and incoming
-    /// host callbacks) itself at safe points, but only at an explicit `sync globals`. Applies to the whole
-    /// program (the compiler emits `SetAutoSync 0` at the very start for this); must be a top-level statement.</summary>
-    public sealed record NoSyncDirective(int Source, int Line) : Stmt(Source, Line);
+    /// <summary>`#globaljobs safepoints|sleep|sync` and its old form `#nosync` (= `sync`), docs/THREADING_DESIGN.md section 7: when the main program processes the
+    /// queue of its fire threads (`fire global` jobs, sections) and the incoming host callbacks by itself. Applies to the whole program (the compiler emits
+    /// `SetAutoSync mode` at the very start; the command line and the project go before it); must be a top-level statement.</summary>
+    public sealed record GlobalJobsDirective(int Source, int Line, fire.Runtime.GlobalJobsMode Mode) : Stmt(Source, Line);
 
     /// <summary>`#lax` / `#strict` (docs/TYPES.md): the type checking mode of the file this stands in (`Strict` false = lax: a type conflict is a warning, true = strict: an error). Read by the
     /// type checker only; it takes the place of the project's setting for the statements of its file that follow.</summary>

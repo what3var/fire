@@ -26,7 +26,7 @@ namespace fire.Editor
         /// <summary>What a setting is when nobody sets it.</summary>
         private static readonly Dictionary<string, string> Defaults = new()
         {
-            ["subsystem"] = "console", ["mode"] = "debug", ["floatWidth"] = "64", ["engine"] = "vm", ["typeChecking"] = "lax",
+            ["subsystem"] = "console", ["mode"] = "debug", ["floatWidth"] = "64", ["engine"] = "vm", ["typeChecking"] = "lax", ["globalJobs"] = "safepoints",
         };
 
         private readonly Workspace _workspace;
@@ -221,6 +221,7 @@ namespace fire.Editor
 
             string? subsystemInh = InheritedOf(x => x.Subsystem, "subsystem", out string subsystemFrom);
             string? typeInh = InheritedOf(x => x.TypeChecking, "typeChecking", out string typeFrom);
+            string? jobsInh = InheritedOf(x => x.GlobalJobs, "globalJobs", out string jobsFrom);
             string? engineInh = InheritedOf(x => x.Engine, "engine", out string engineFrom);
             var entry = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Background = Field };
             entry.Items.Add("(the last file)");
@@ -238,6 +239,7 @@ namespace fire.Editor
                 importRow,
                 Row("Application", Choice(new[] { ("Desktop", "gui"), ("Console", "console") }, () => s.Subsystem, v => s.Subsystem = v, subsystemInh, subsystemFrom, "Desktop: no console window")),
                 Row("Type checking", Choice(new[] { ("Lax", "lax"), ("Strict", "strict") }, () => s.TypeChecking, v => s.TypeChecking = v, typeInh, typeFrom, "Strict: a type conflict is an error")),
+                Row("Global jobs", Choice(new[] { ("Safe points", "safepoints"), ("Sleep", "sleep"), ("Sync", "sync") }, () => s.GlobalJobs, v => s.GlobalJobs = v, jobsInh, jobsFrom, "When the main program runs `fire global` jobs by itself")),
                 Row("Runs as", Choice(new[] { ("Virtual machine", "vm"), ("Native", "native") }, () => s.Engine, v => s.Engine = v, engineInh, engineFrom, "Native: see Native & Toolchain")));
 
             var content = new List<Control> { Columns(identity, icon), program };
@@ -462,6 +464,7 @@ namespace fire.Editor
                 Group("Program",
                     Row("Application", Choice(new[] { ("Desktop", "gui"), ("Console", "console") }, () => s.Subsystem, v => s.Subsystem = v, D("subsystem"), "default")),
                     Row("Type checking", Choice(new[] { ("Lax", "lax"), ("Strict", "strict") }, () => s.TypeChecking, v => s.TypeChecking = v, D("typeChecking"), "default")),
+                    Row("Global jobs", Choice(new[] { ("Safe points", "safepoints"), ("Sleep", "sleep"), ("Sync", "sync") }, () => s.GlobalJobs, v => s.GlobalJobs = v, D("globalJobs"), "default")),
                     Row("Runs as", Choice(new[] { ("Virtual machine", "vm"), ("Native", "native") }, () => s.Engine, v => s.Engine = v, D("engine"), "default")),
                     Row("Configuration", Choice(new[] { ("Debug", "debug"), ("Release", "release"), ("Performance", "performance") }, () => s.Mode, v => s.Mode = v, D("mode"), "default"))),
                 Group("Native",

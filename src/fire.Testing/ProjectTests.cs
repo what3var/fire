@@ -179,6 +179,18 @@ static class ProjectTests
         Check("Lauf: Projekt mit zwei Dateien und zwei Bibliotheken; Einstellungen des Projekts vor den Tags im Quelltext", ran == "Hello, projects!\n42\n0.3\nPRJ\n", ran);
         var tagsOnly = BuildPlan.Create(ws, ws.FindByName("Tool")!);
         Check("Lauf: ein Projekt ohne Einstellungen folgt den Tags", RunPlan(tagsOnly) == "tool\n");
+        // settings.globalJobs (docs/THREADING_DESIGN.md section 7): goes before `#globaljobs` in the source; --global-jobs goes before it
+        Write(s, "Jobs/Jobs.fireproj", """{ "name": "Jobs", "settings": { "globalJobs": "sync" } }""");
+        Write(s, "Jobs/main.script", "#globaljobs safepoints\nfire global { print(\"job\") }\nfor (var i = 0; i < 2; i++) { print(\"loop \" + i) }\nprint(\"n \" + (sync globals))\n");
+        var jobsWs = Workspace.Open(Path.Combine(s, "Jobs", "Jobs.fireproj"));
+        string jobsRan = RunPlan(BuildPlan.Create(jobsWs, jobsWs.Projects[0]));
+        Check("Einstellungen: globalJobs des Projekts geht vor #globaljobs im Quelltext", jobsRan == "loop 0\nloop 1\njob\nn 1\n", jobsRan);
+        Linker.ProcessGlobalJobs = GlobalJobsMode.Safepoints;
+        try { jobsRan = RunPlan(BuildPlan.Create(jobsWs, jobsWs.Projects[0])); }
+        finally { Linker.ProcessGlobalJobs = null; }
+        Check("Einstellungen: --global-jobs geht vor globalJobs des Projekts", jobsRan == "loop 0\njob\nloop 1\nn 0\n", jobsRan);
+        Check("Einstellungen: globalJobs - ungueltig gemeldet, die Mappe erbt das Projekt", new ProjectSettings { GlobalJobs = "often" }.Validate().Count == 1 && new ProjectSettings { GlobalJobs = "Sleep" }.Validate().Count == 0
+            && ProjectSettings.Merge(new ProjectSettings(), new ProjectSettings { GlobalJobs = "sleep" }).GlobalJobs == "sleep" && !new ProjectSettings { GlobalJobs = "sleep" }.IsEmpty);
         var info = Linker.ExtractAssemblyInfo(new[] { "#debug\n#name \"FromTag\"\n#author \"tag\"\n" }, null, new ProjectSettings { Name = "FromProject", Mode = "performance" });
         Check("Einstellungen: im Dialog gilt, was das Projekt festlegt, sonst das Tag", info.ProductName == "FromProject" && info.ExecutionMode == VmExecutionMode.Performance && info.CompanyName == "tag");
         var noTagLib = BuildPlan.Create(ws, ws.FindByName("Util")!);

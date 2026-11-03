@@ -299,7 +299,7 @@ namespace fire.Runtime
         ///   reading and writing, without a copy. There is no concurrent execution, so nothing to isolate.
         /// - On a thread without a running VM (a host thread, e.g. a serial event) access to the globals would be a data race:
         ///   there it is queued to the owner VM (`owner`, the main program) and executed by it at a safe point
-        ///   (`sync globals` or - without `#nosync` - automatically, see <see cref="VM.PostCallback"/>). If the main program is no longer running
+        ///   (`sync globals` or - as `#globaljobs` says - automatically, see <see cref="VM.PostCallback"/>). If the main program is no longer running
         ///   or there is no owner, it runs like <see cref="CallCallback"/> on an isolated copy (`snapshotGlobals` supplies it).
         ///
         /// An unhandled exception in the callback never goes to the caller, but as text to `onUnhandled`.</summary>

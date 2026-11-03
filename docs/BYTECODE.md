@@ -1618,7 +1618,12 @@ Siehe docs/THREADING_DESIGN.md Abschnitt 7. Umsetzung (alles in `VM.cs`, Besitze
 - `GlobalsBroker.EnterSection`/`PostJob` rufen `VM.RaiseSignal()` (globale Epoche), damit der Besitzer es an seinem nächsten sicheren Punkt bemerkt.
 - `AutoSyncNow()` (nicht in verschachtelter Ausführung, nur bei `_autoSync`) wird von `PollSignalsAfterOp` und `PollSignalsSlow` gerufen, also an denselben Punkten wie die Shutdown-Signale, und im Einzelschritt
   nach jeder Instruktion (`StepInstruction`). Kein Mehraufwand im Normalfall: dieselbe Epochen-Prüfung wie bisher (Benchmark vor/nach 852/866 ms vs. 854/855 ms, Performance).
-- `#nosync` = `NoSyncDirective` (AST) -> der Compiler setzt am Programmanfang `SetAutoSync 0` -> `_autoSync = false`.
+- `#globaljobs safepoints|sleep|sync` (und `#nosync` = `sync`) = `GlobalJobsDirective` (AST) -> der Compiler setzt am Programmanfang `SetAutoSync <modus>`
+  (0 = sync, 1 = safepoints, 2 = sleep; nichts bei safepoints; Kommandozeile/Projekt gehen vor, fire.native.json danach) -> `_globalJobs`. Abgearbeitet
+  wird nur am Rücksprung einer Schleife (`Jump` rückwärts: `PollQueueAtLoop`, ein Vergleich mit dem Zähler `s_queued`; nur `safepoints`) und beim Warten
+  (`SleepTicks`/`WaitUntilTicks`: `PollWhileWaiting`; `safepoints`, `sleep`) - nicht mehr nach jeder nativen Funktion, nicht beim Aufruf, nicht im
+  Einzelschritt nach jeder Instruktion (THREADING_DESIGN.md Abschnitt 7). Gesperrt in Destruktoren, Aufträgen, Host-Callbacks und den Handlern von
+  `catch threads`/`catch terminate` (`_noAutoSyncDepth`); in Properties, Operatoren, Callbacks von Bibliotheksfunktionen nicht mehr (wie nativ).
 
 Tests: Suite-Blöcke "Callbacks auf dem VM-Thread" (Host-Thread-Callback automatisch/`#nosync`/Exception) und "Globals und Fire-Threads" (Standard-Automatik, `fire global` ohne `sync globals`, `#nosync`).
 
