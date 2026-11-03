@@ -11187,6 +11187,34 @@ uiDrawScript = """
         print("hover " + (Px.Get(ui.renderer, 12, 12) == t.faceHover.Color))
         """, new[] { "back True", "face True", "border True", "text True", "hover True" });
 
+    // rounded rectangles and effects of the C library (packages/graphics/native/fire_gfx_fx.h)
+    CheckUi("Zeichnen: abgerundete Rechtecke (Kanten weich, gerade Kanten scharf), Umriss, feiner Schatten, Blur, Materialien mit ihren Schaltern", uiHead + """
+        var r = ui.renderer
+        var white = UI.Color.Rgb(255, 255, 255)
+        var red = UI.Color.Rgb(200, 0, 0)
+        r.ClearTo(white)
+        r.FillRoundRect(10, 10, 60, 40, 10, new SolidBrush(red))
+        var soft = Px.Get(r, 12, 13)
+        print("fuellen " + (Px.Get(r, 40, 30) == red) + " " + (Px.Get(r, 10, 30) == red) + " " + (Px.Get(r, 10, 10) == white) + " " + (soft != white && soft != red))
+        r.DrawRoundRect(80, 10, 60, 40, 8, new Pen(red, 2))
+        print("umriss " + (Px.Get(r, 80, 30) == red) + " " + (Px.Get(r, 81, 30) == red) + " " + (Px.Get(r, 82, 30) == white) + " " + (Px.Get(r, 110, 30) == white))
+        r.DrawShadow(160, 20, 60, 40, 8, 8, 0x40000000, 0)
+        var shade = Px.Get(r, 157, 40)
+        print("schatten " + (Px.Get(r, 190, 40) == white) + " " + (shade != white && (shade & 255) > 200) + " " + (Px.Get(r, 190, 95) == white))
+        r.FillRect(240, 10, 10, 40, new SolidBrush(UI.Color.Rgb(0, 0, 0)))
+        r.Blur(230, 10, 40, 40, 6)
+        var g = Px.Get(r, 251, 30) & 255
+        print("blur " + (g > 0 && g < 255))
+        r.DrawMaterial(MaterialKind.Glass, 10, 70, 60, 40, 6, 0x80000000, 0xC8C8C8, 0)
+        print("deckend " + (Px.Get(r, 40, 90) == UI.Color.Rgb(100, 100, 100)))
+        r.DrawMaterial(MaterialKind.Acrylic, 80, 70, 60, 40, 6, 0x40000000, 0xC8C8C8, MaterialOptions.Transparency)
+        print("ohne blur " + (Px.Get(r, 110, 90) == UI.Color.Rgb(96, 96, 96)))
+        r.FillRect(160, 70, 30, 40, new SolidBrush(UI.Color.Rgb(0, 0, 0)))
+        r.DrawMaterial(MaterialKind.Glass, 150, 70, 60, 40, 6, 0x30FFFFFF, 0xF0F0F0)
+        var glass = Px.Get(r, 190, 90) & 255
+        print("glas " + (glass > 20 && glass < 235))
+        """, new[] { "fuellen True True True True", "umriss True True True True", "schatten True True True", "blur True", "deckend True", "ohne blur True", "glas True" });
+
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
         var c = new UI.CheckBox("Option", 10, 10)
         ui.Add(c)
