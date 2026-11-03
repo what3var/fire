@@ -41,22 +41,22 @@ struct DbgFrame {
     uint8_t hidden;   /* called the way the VM runs it nested (a getter, a destructor, ...): no stops inside */
 };
 
-extern volatile int g_dbgArmed;     /* a debugger is attached: the hooks look at the position */
-extern int32_t g_dbgGlobalCount;    /* the global variables declared so far (VM.DebugGlobals) */
+extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached: the hooks look at the position */
+extern FIRE_RT_DATA int32_t g_dbgGlobalCount;    /* the global variables declared so far (VM.DebugGlobals) */
 /* The program's standard input comes from the agent (a framed transport owns the input, docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): IO reads it with
  * fire_dbgStdinRead (waits for input or its end, without the GIL; 0 at the end) and gives a byte back with fire_dbgStdinUnget. */
-extern volatile int g_dbgStdin;
-int64_t fire_dbgStdinRead(uint8_t* out, int64_t count);
-void fire_dbgStdinUnget(int c);
+extern FIRE_RT_DATA volatile int g_dbgStdin;
+FIRE_RT_FN int64_t fire_dbgStdinRead(uint8_t* out, int64_t count);
+FIRE_RT_FN void fire_dbgStdinUnget(int c);
 
 /* (generated) the class `cls` for the debugger: its name and the names of its fields, base fields first */
 const DbgClass* fire_dbgClass(uint32_t cls);
 /* (generated) `set` of field `index` of an object: through the setter of the field, as the class itself would assign it */
 void fire_dbgSetField(Value o, uint32_t index, Value x);
 
-void fire_dbgLine(DbgFrame* f);
-void fire_dbgRet(DbgFrame* caller);
-void fire_dbgStart(const DbgProgram* program);
+FIRE_RT_FN void fire_dbgLine(DbgFrame* f);
+FIRE_RT_FN void fire_dbgRet(DbgFrame* caller);
+FIRE_RT_FN void fire_dbgStart(const DbgProgram* program);
 
 FIRE_FN void fire_dbgEnter(DbgFrame* f, const DbgFunc* fn, int hidden) {
     DbgFrame* prev = g_dbgTop;

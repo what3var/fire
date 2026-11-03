@@ -349,6 +349,7 @@ static class LinkageTests
             var win = Build(new[] { small }, "static", Path.Combine(root, "win.exe"), mingw, TargetProfile.Windows);
             _winePrefix = Path.Combine(root, "wineprefix");
             Check("MinGW: linkage static fuer Windows (x86_64-w64-mingw32-ar), unter Wine wie die VM", win.Ok && Exec(win.Exe, wine) == smallVm, win.Log);
+            WindowsShared(root, mingw, wine, Plan, libSource);
         }
         else Console.WriteLine("(MinGW/Wine: uebersprungen)");
 
@@ -360,6 +361,64 @@ static class LinkageTests
     }
 
     private static bool HasProgram(string name) => ToolchainSetup.FindProgram(name) != null;
+
+    /// <summary>Linkage "shared" on Windows (MinGW, under Wine): the runtime and every library a DLL next to the program, the program like the VM; two programs share the
+    /// DLLs; a DLL with another interface next to the program is the readable error at the start (exit code 70), like on Linux.</summary>
+    private static void WindowsShared(string root, ToolchainDef mingw, string wine, Func<BuildPlan> makePlan, string libSource)
+    {
+        var plan = makePlan();
+        string dir1 = Path.Combine(root, "win-shared1");
+        Directory.CreateDirectory(dir1);
+        var sh1 = Build(plan.SourceTexts, "shared", Path.Combine(dir1, "app.exe"), mingw, TargetProfile.Windows, plan);
+        string vm = Vm(plan.SourceTexts, plan);
+        var dlls = Directory.GetFiles(dir1, "libfire_*.dll").Select(Path.GetFileName).ToList();
+        string out1 = sh1.Ok ? Exec(sh1.Exe, wine) : "";
+        Check("MinGW: linkage shared fuer Windows - die Runtime und jede Library eine DLL neben dem Programm, unter Wine wie die VM",
+            sh1.Ok && out1 == vm && dlls.Any(f => f!.StartsWith("libfire_rt_")) && dlls.Any(f => f!.StartsWith("libfire_mLib_")) && dlls.Any(f => f!.StartsWith("libfire_mcore_")) && !sh1.Log.Contains("only available"),
+            $"VM: {vm}\nnativ: {out1}\n{string.Join(" ", dlls)}\n{sh1.Log}");
+        // (threads: the thread-local state of the runtime through fire_tl(); reflection, JSON and an exception in a thread through the DLLs)
+        const string threads = """
+            #import "json"
+            #import "reflection"
+            class Box { int n = 0 }
+            var counter = 0
+            var results = new List<string>()
+            fire {
+                try { throw new ArgumentException("in thread") } catch (ArgumentException e) { sync global { results.Add("caught " + e.message) } }
+                sync global { counter = counter + 1 }
+            }
+            fire {
+                var b = new Box()
+                Reflect.Set(b, "n", 41)
+                sync global { results.Add(Json.Serialize(b)); counter = counter + 1 }
+            }
+            while (counter < 2) { sync globals }
+            if (results[0].StartsWith("{")) { var t = results[0]; results[0] = results[1]; results[1] = t }
+            print(results[0] + " " + results[1] + " " + counter)
+            """;
+        foreach (var d in new[] { "win-sharedA", "win-sharedB", "win-shared2" }) Directory.CreateDirectory(Path.Combine(root, d));
+        var shA = Build(new[] { threads }, "shared", Path.Combine(root, "win-sharedA", "a.exe"), mingw, TargetProfile.Windows);
+        var shB = Build(new[] { threads.Replace("41", "42") }, "shared", Path.Combine(root, "win-sharedB", "b.exe"), mingw, TargetProfile.Windows);
+        string outA = shA.Ok ? Exec(shA.Exe, wine) : "", outB = shB.Ok ? Exec(shB.Exe, wine) : "";
+        Check("MinGW: shared - Threads (thread-lokaler Zustand ueber fire_tl), Reflection, JSON; ein zweites Programm baut keine DLL, beide wie die VM",
+            shA.Ok && shB.Ok && ModuleLines(shB.Log, "built in").Count == 0 && outA == Vm(new[] { threads }) && outB == Vm(new[] { threads.Replace("41", "42") }),
+            $"{outA}\n{outB}\n{shA.Log}\n{shB.Log}");
+        // another layout of Lib (a field more): its DLL put in place of the one the first program was built with
+        string before = File.ReadAllText(libSource);
+        try
+        {
+            File.WriteAllText(libSource, before.Replace("        int n = 0\n", "        int n = 0\n        int extra = 1\n"));
+            var plan2 = makePlan();
+            var sh2 = Build(plan2.SourceTexts, "shared", Path.Combine(root, "win-shared2", "app.exe"), mingw, TargetProfile.Windows, plan2);
+            string? newLib = sh2.Ok ? Directory.GetFiles(Path.Combine(root, "win-shared2"), "libfire_mLib_*.dll").FirstOrDefault() : null;
+            string? oldLib = Directory.GetFiles(dir1, "libfire_mLib_*.dll").FirstOrDefault();
+            string mismatch = "";
+            if (newLib != null && oldLib != null) { File.Copy(newLib, oldLib, true); mismatch = Exec(sh1.Exe, wine); }
+            Check("MinGW: shared - eine DLL mit einer anderen Schnittstelle neben dem Programm ist beim Start ein lesbarer Fehler (Exitcode 70)",
+                mismatch.Contains("does not fit this program") && mismatch.Contains("(exit 70)") && mismatch.Contains("'Lib'"), mismatch + "\n" + sh2.Log);
+        }
+        finally { File.WriteAllText(libSource, before); }
+    }
 
     /// <summary>A debug build with linkage "static": the debugger sets a breakpoint in a file of a library of the project and the program stops there (ROADMAP 9.9: the
     /// tables of each module, the sources of the program).</summary>

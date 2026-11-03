@@ -1273,6 +1273,7 @@ namespace fire.Native
             if (_separate && dimNames.Count > SeparateDims) throw new NativeNotSupportedException($"the program uses {dimNames.Count} dimensions of units; with linkage \"static\" at most {SeparateDims}");
             sb.AppendLine($"#define FIRE_NDIMS {(_separate ? SeparateDims : Math.Max(1, dimNames.Count))}");
             foreach (var include in _target.Native.Includes) sb.AppendLine($"#include <{include}>");
+            if (_dll) sb.AppendLine("#define FIRE_DLL 1   // linkage \"shared\" on Windows: the runtime and the modules are DLLs (fire_rt.h)");
             // what both files say first (the natives in C++ see the same configuration of the runtime as the program)
             string prelude = sb.ToString();
             // the system libraries that packages need on this platform (`linkLibraries`): the build links them
@@ -1294,14 +1295,17 @@ namespace fire.Native
                 var head = new StringBuilder(prelude);
                 if (_usesWindows && _target.Native.Platform is "posix" or "windows" && (_target.Native.Sdl ?? _sdlChosen ?? 2) == 3) head.AppendLine("#define FIRE_SDL3 1");
                 head.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
+                if (_dll) head.Append(DllHead());
                 head.AppendLine("#include \"fire_rt.h\"");
                 head.AppendLine("#if defined(__GNUC__) || defined(__clang__)\n#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif");
                 foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) head.AppendLine(line);
                 if (_usesJson) head.AppendLine("#include \"fire_json.h\"");
                 _libraryHead = head.ToString();
+                if (_dll) _runtimeKey = RuntimeDllKey(_libraryHead, _toolchainStamp);
             }
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
-            sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the runtime's global state lives in this file");
+            if (!_dll) sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the runtime's global state lives in this file");
+            else sb.AppendLine("// (the runtime's global state lives in its DLL)");
             sb.AppendLine("#include \"fire_rt.h\"");
             // (generated code: a slot that is written and not read again, or a helper nothing calls, is no mistake)
             sb.AppendLine("#if defined(__GNUC__) || defined(__clang__)");
@@ -1553,6 +1557,7 @@ namespace fire.Native
             }
             if (DebugBuild) sb.Append(DebugProgramTables());
             sb.Append(SharedLibraryChecks());
+            sb.Append(HostTable(sb.ToString()));
             sb.AppendLine("static void fire_init(void) {");
             sb.Append(SharedLibraryCheckCalls());   // (linkage "shared": the libraries first)
             if (_usesThreads) sb.AppendLine("    fire_threadsInit();   // the locks of the threads, before anything else");

@@ -225,8 +225,9 @@ Klassen-Deskriptoren (der Rückfall der Runtime, auch die Basis für Plugins), p
 Reflect.New je Modul, Natives in C, die für sich stehen, und die JSON-Engine in der Bibliothek ihres Moduls, Sections + `--gc-sections` (B2: der zweite Bau mit
 `static` ist schneller als `source`, siehe Messwerte).
 `"linkage": "shared"` (C, Linux und macOS mit gcc/clang): die Libraries als Shared Libraries neben dem Programm, das den Zustand der Runtime exportiert; jede
-nennt ihre Schnittstelle, das Programm prüft sie beim Start (eine lesbare Meldung statt eines Absturzes).
-Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` unter Windows (Runtime als DLL, Zugriffsfunktionen für thread-lokale Variablen), `Library.Load` und Plugins (Phase D); **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
+nennt ihre Schnittstelle, das Programm prüft sie beim Start (eine lesbare Meldung statt eines Absturzes). Windows (MinGW, unter Wine getestet): die Runtime eine DLL
+für sich, die thread-lokalen Variablen hinter `fire_tl()`, was eine DLL vom Programm braucht über Zeiger, die ihre `fire_link_*`-Funktion beim Start füllt.
+Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), `Library.Load` und Plugins (Phase D); **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
 Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur

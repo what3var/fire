@@ -113,8 +113,9 @@ namespace fire.Native
         private string LibraryNativesC()
         {
             var sb = new StringBuilder();
-            foreach (var (function, (argc, needsList, _)) in _sharedNatives.OrderBy(n => n.Key, StringComparer.Ordinal))
-                sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)});");
+            // (linkage "shared" on Windows: those of the program are pointers of this DLL - see HostDecl)
+            foreach (var (function, (argc, needsList, import)) in _sharedNatives.OrderBy(n => n.Key, StringComparer.Ordinal))
+                sb.Append(NativesOwner(import) == null ? HostDecl($"fire_cn_{function}", $"Value fire_cn_{function}({ThunkParams(argc, needsList)});") : $"Value fire_cn_{function}({ThunkParams(argc, needsList)});\n");
             string own = _self!.Name;
             if (!ReferenceEquals(NativesOwner(own), _self)) return sb.ToString();
             bool standard = string.Equals(own, NativeImports.Graphics, StringComparison.OrdinalIgnoreCase) || string.Equals(own, NativeImports.Windows, StringComparison.OrdinalIgnoreCase);
@@ -265,6 +266,8 @@ namespace fire.Native
             public List<string[]> SharedNatives { get; set; } = new();
             public string NativeThunks { get; set; } = "";
             public bool JsonEngine { get; set; }
+            /// <summary>Linkage "shared" on Windows: what the DLL uses of the program (name, C declaration).</summary>
+            public List<string[]> HostImports { get; set; } = new();
         }
         private sealed class EnumEntry
         {
@@ -297,6 +300,7 @@ namespace fire.Native
                 Enums = n.Enums.Select(e => new EnumEntry { Name = e.Name, Flags = e.IsFlags, Members = e.Members.Select(m => m.Name).ToList(), Values = e.Members.Select(m => m.Value).ToList() }).ToList(),
                 ExcTypes = n.ExcTypes.ToList(), ReflectionNatives = n.ReflectionNatives.ToList(), Made = n.Classes.ToList(), NativeThunks = output.NativeThunks, JsonEngine = output.JsonEngine,
                 SharedNatives = n.SharedNatives.Select(x => new[] { x.Key, x.Value.Argc.ToString(CultureInfo.InvariantCulture), x.Value.NeedsList ? "1" : "0", x.Value.Import }).ToList(),
+                HostImports = output.HostImports.Select(h => new[] { h.Key, h.Value }).ToList(),
             };
         }
 
@@ -319,7 +323,9 @@ namespace fire.Native
             n.ReflectionNatives.UnionWith(f.ReflectionNatives);
             n.Classes.UnionWith(f.Made);
             foreach (var x in f.SharedNatives) n.SharedNatives[x[0]] = (int.Parse(x[1], CultureInfo.InvariantCulture), x[2] == "1", x.Length > 3 ? x[3] : "");
-            return new ModuleOutput { Spec = spec, Body = "", NativeThunks = f.NativeThunks, Needs = n, Flags = ParseFlags(f.Flags), JsonEngine = f.JsonEngine };
+            var hostImports = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            foreach (var h in f.HostImports) hostImports[h[0]] = h[1];
+            return new ModuleOutput { Spec = spec, Body = "", NativeThunks = f.NativeThunks, Needs = n, Flags = ParseFlags(f.Flags), JsonEngine = f.JsonEngine, HostImports = hostImports };
         }
 
         private static InterfaceFile? ReadInterface(string path, string key)
@@ -350,7 +356,9 @@ namespace fire.Native
         public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, Func<int>? chooseSdl = null, StrippingLevel? stripping = null, string? cacheRoot = null,
             bool shared = false)
         {
-            if (shared) toolchainStamp += "|shared";
+            // (linkage "shared" for Windows: DLLs - the runtime a DLL of its own, what a DLL uses of the program through pointers)
+            bool dll = shared && target.Native.Platform == "windows";
+            if (shared) toolchainStamp += dll ? "|shared|dll" : "|shared";
             var specs = ModulesOf(program);
             var abi = specs.ToDictionary(s => s, s => AbiHash(program, s));
             string root = Path.Combine(cacheRoot ?? NativeLibraryCache.Root, target.Name);
@@ -378,7 +386,7 @@ namespace fire.Native
                     }
                     else
                     {
-                        output = GenerateLibrary(program, spec, specs, target, stripping, flags, separate: true);
+                        output = GenerateLibrary(program, spec, specs, target, stripping, flags, separate: true, dll: dll);
                         fresh[spec] = output;
                         if (flags == null)   // (the module's own switches: only its interface is kept)
                             WriteAtomically(iface, JsonSerializer.Serialize(InterfaceOf(output, key, abi[spec], output.Exports)));
@@ -389,7 +397,7 @@ namespace fire.Native
                 var main = new CppGenerator(program, target)
                 {
                     _chooseSdl = chooseSdl, _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
-                    _sharedAbis = shared ? specs.ToDictionary(s => s, s => $"{InterfaceFormat}:{abi[s]}") : null,
+                    _sharedAbis = shared ? specs.ToDictionary(s => s, s => $"{InterfaceFormat}:{abi[s]}") : null, _dll = dll, _dllModules = dll ? outputs : null, _toolchainStamp = toolchainStamp,
                 };
                 main.SetModules(specs, null);
                 string c = main.Run();
@@ -398,10 +406,26 @@ namespace fire.Native
                 if (flags is { } final && final.Equals(union))
                 {
                     var libraries = new List<StaticLibrary>();
+                    string? rtKey = dll ? main._runtimeKey : null;
+                    if (rtKey != null)
+                    {
+                        // the runtime's DLL: built once for its head (the switches, the target) - the program checks that the one next to it is that one
+                        string dir = Path.Combine(root, rtKey);
+                        string cFile = Path.Combine(dir, "rt.c"), ifaceFile = Path.Combine(dir, "rt" + NativeLibraryCache.InterfaceExtension), name = $"libfire_rt_{rtKey.Substring(0, 8)}";
+                        bool cached = ReadInterface(ifaceFile, rtKey) != null;
+                        if (!cached)
+                        {
+                            WriteAtomically(cFile, RuntimeDllC(main._libraryHead!, $"{InterfaceFormat}:{rtKey}"));
+                            WriteAtomically(ifaceFile + ".new", JsonSerializer.Serialize(new InterfaceFile { Format = InterfaceFormat, Module = "runtime", Key = rtKey, Abi = rtKey }));
+                        }
+                        log.AppendLine($"module runtime: {(cached ? "from the cache" : "new")} ({rtKey.Substring(0, 12)})");
+                        libraries.Add(new StaticLibrary("runtime", rtKey, dir, cFile, name, ifaceFile, cached));
+                    }
                     foreach (var spec in specs)
                     {
                         string dir = Path.Combine(root, keys[spec]);
-                        string name = shared ? $"libfire_{spec.Id}_{keys[spec].Substring(0, 8)}" : "fire_" + spec.Id;
+                        // (a DLL: named by its interface and the runtime, not its key - the DLLs that need it import it by that name, a new build of its code keeps it)
+                        string name = dll ? $"libfire_{spec.Id}_{Hash(abi[spec] + "|" + rtKey).Substring(0, 8)}" : shared ? $"libfire_{spec.Id}_{keys[spec].Substring(0, 8)}" : "fire_" + spec.Id;
                         string cFile = Path.Combine(dir, spec.Id + ".c");
                         string ifaceFile = Path.Combine(dir, spec.Id + NativeLibraryCache.InterfaceExtension);
                         bool cached = !fresh.ContainsKey(spec);
@@ -410,8 +434,8 @@ namespace fire.Native
                             string head = main._libraryHead!;
                             if (output.JsonEngine) head = head.Replace("#include \"fire_json.h\"", "#define FIRE_JSON_IMPLEMENTATION 1   // (the JSON engine: in the file of the module that calls it)\n#include \"fire_json.h\"");
                             // (shared: the interface it is built with - the program checks it when it starts)
-                            string abiText = shared ? $"const char* const fire_abi_{spec.Id} = {CString($"{InterfaceFormat}:{abi[spec]}")};\n" : "";
-                            WriteAtomically(cFile, ResolveLineResets(head + output.NativesC + output.Body + abiText));
+                            string abiText = shared ? $"{(dll ? "__declspec(dllexport) " : "")}const char* const fire_abi_{spec.Id} = {CString($"{InterfaceFormat}:{abi[spec]}")};\n" : "";
+                            WriteAtomically(cFile, ResolveLineResets(head + output.NativesC + output.Body + abiText + output.LinkC));
                             // (the interface last: it says the library is there - the caller writes it after building the library, see CommitStatic)
                             WriteAtomically(ifaceFile + ".new", JsonSerializer.Serialize(InterfaceOf(output, keys[spec], abi[spec], output.Exports)));
                             log.AppendLine($"module {spec.Name}: new ({keys[spec].Substring(0, 12)})");
@@ -426,6 +450,14 @@ namespace fire.Native
             }
         }
 
+        /// <summary>The key of the runtime's DLL (linkage "shared" on Windows): the generator, the toolchain and the head of the files (the switches, the target).</summary>
+        private static string RuntimeDllKey(string head, string toolchainStamp) =>
+            Hash($"fire-rt {InterfaceFormat} {typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId}\n{toolchainStamp}\n{head}").Substring(0, 40);
+
+        /// <summary>Linkage "shared" on Windows: the key of the runtime's DLL (known once the head of the files is) and the toolchain it is built with.</summary>
+        private string? _runtimeKey;
+        private string _toolchainStamp = "";
+
         /// <summary>Linkage "shared": the interfaces of the libraries the program is built with (ABI version and hash, ROADMAP 9.7) - it checks them when it starts.</summary>
         private Dictionary<ModuleSpec, string>? _sharedAbis;
 
@@ -435,7 +467,8 @@ namespace fire.Native
         {
             if (_sharedAbis == null) return "";
             var sb = new StringBuilder();
-            foreach (var m in _sharedAbis.Keys) sb.AppendLine($"extern const char* const fire_abi_{m.Id};");
+            foreach (var m in _sharedAbis.Keys) sb.AppendLine($"extern FIRE_RT_DATA const char* const fire_abi_{m.Id};");
+            if (_dll) sb.AppendLine("extern FIRE_RT_DATA const char* const fire_abi_rt;");
             sb.AppendLine("static void fire_checkModule(const char* module, const char* found, const char* expected) {");
             sb.AppendLine("    if (strcmp(found, expected) == 0) return;");
             sb.AppendLine("    fprintf(stderr, \"The library of the module '%s' does not fit this program: it has the interface %.12s, the program was built for %.12s. Build the program again or put the library it was built with next to it.\\n\", module, found, expected);");
@@ -445,7 +478,125 @@ namespace fire.Native
         }
 
         private string SharedLibraryCheckCalls() =>
-            _sharedAbis == null ? "" : string.Concat(_sharedAbis.Select(kv => $"    fire_checkModule({CString(kv.Key.Name)}, fire_abi_{kv.Key.Id}, {CString(kv.Value)});\n"));
+            _sharedAbis == null ? "" : (_dll && _runtimeKey != null ? $"    fire_checkModule(\"runtime\", fire_abi_rt, {CString($"{InterfaceFormat}:{_runtimeKey}")});\n" : "")
+                + string.Concat(_sharedAbis.Select(kv => $"    fire_checkModule({CString(kv.Key.Name)}, fire_abi_{kv.Key.Id}, {CString(kv.Value)});\n"))
+                + HostLinkCalls();
+
+        // ---- linkage "shared" on Windows: DLLs ------------------------------------------------------------------------------------------------------
+        // A DLL can only import from other DLLs, by their file names, not from the program: the runtime is a DLL of its own (libfire_rt_*, its state and functions -
+        // fire_rt.h with FIRE_DLL_RUNTIME, the thread-local variables behind fire_tl()), the modules import it and each other; what the runtime and a module use of the
+        // program (the hooks of the headers, the tables the program defines for the modules, its reflection functions and natives) are pointers of the DLL that its
+        // `fire_link_<m>` fills from the program's table (by name) when the program starts, after the check of the interfaces and before anything else runs.
+
+        /// <summary>Linkage "shared" on Windows: the modules are DLLs (see above).</summary>
+        private bool _dll;
+        /// <summary>A library in a DLL: what it uses of the program (name -> its C declaration as without DLLs).</summary>
+        private readonly SortedDictionary<string, string> _hostImports = new(StringComparer.Ordinal);
+
+        /// <summary>What the program defines that the headers of the runtime use (fire_rt.h, fire_json.h, fire_debug.h), with the condition under which they declare it.</summary>
+        internal static readonly (string Name, string? Guard)[] HostHooks =
+        {
+            ("g_dimNames", null), ("makeIndexError", null), ("makeUnitError", null), ("makeAccessError", null), ("makeDestroyedError", null), ("makeDivideError", null),
+            ("makeClassError", "defined(FIRE_EXCEPTIONS)"), ("makeReflectError", "defined(FIRE_REFLECTION)"),
+            ("jsonClassAt", "defined(FIRE_JSON_H)"), ("jsonClassNamed", "defined(FIRE_JSON_H)"), ("jsonExcludedNamed", "defined(FIRE_JSON_H)"), ("jsonSpecial", "defined(FIRE_JSON_H)"),
+            ("jsonTArgFor", "defined(FIRE_JSON_H)"), ("jsonTArgText", "defined(FIRE_JSON_H)"),
+            ("fire_dbgClass", "defined(FIRE_DEBUG)"), ("fire_dbgSetField", "defined(FIRE_DEBUG)"),
+        };
+
+        /// <summary>The head of a file in a DLL (the runtime, a module): the hooks of the program are pointers of the DLL (before fire_rt.h declares them).</summary>
+        internal static string DllHead() =>
+            "#define FIRE_DLL_LINKED 1   // what this DLL uses of the program: pointers, filled by fire_link_*\n"
+            + string.Concat(HostHooks.Select(h => $"#define {h.Name} (*fire_hp_{h.Name})\n"));
+
+        /// <summary>A declaration of something the program defines: in a DLL a pointer of its own instead (`(*fire_hp_name)`, filled by its fire_link_* function).</summary>
+        private string HostDecl(string name, string decl)
+        {
+            if (!_dll) return decl + "\n";
+            _hostImports[name] = decl;
+            string own = decl.StartsWith("extern ", StringComparison.Ordinal) ? decl.Substring("extern ".Length) : decl;
+            return $"#define {name} (*fire_hp_{name})\n{own}\n";
+        }
+
+        /// <summary>A table of numbers the program defines for a library (`fire_exct_M`, ...): in a DLL an array of its own (static tables of the module point into it), the
+        /// link function copies the program's.</summary>
+        private string HostArray(string name, string type, int count)
+        {
+            string decl = $"extern const {type} {name}[];";
+            if (!_dll) return decl + "\n";
+            _hostImports[name] = decl;
+            _hostArrays.Add(name);
+            return $"{type} {name}[{count}];\n";
+        }
+        private readonly HashSet<string> _hostArrays = new(StringComparer.Ordinal);
+
+        /// <summary>The `fire_link_<m>` function of a DLL: its pointers from the program's table; it returns the name the program lacks (null: all there). A hook of the headers
+        /// the program does not define stays null (nothing calls it - the program would define it).</summary>
+        private static string LinkFunction(string id, IEnumerable<string> strict, ISet<string>? arrays = null)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("/* linkage \"shared\" on Windows: the pointers of this DLL to the program's functions and data (see fire_rt.h, FIRE_DLL) */");
+            sb.AppendLine($"__declspec(dllexport) const char* fire_link_{id}(const void* (*find)(const char*)) {{");
+            sb.AppendLine("    const void* p_;");
+            foreach (var (name, guard) in HostHooks)
+            {
+                if (guard != null) sb.AppendLine($"#if {guard}");
+                sb.AppendLine($"    p_ = find(\"{name}\"); memcpy(&fire_hp_{name}, &p_, sizeof p_);");
+                if (guard != null) sb.AppendLine("#endif");
+            }
+            foreach (var name in strict)
+                sb.AppendLine($"    if (!(p_ = find(\"{name}\"))) return \"{name}\";\n    " + (arrays != null && arrays.Contains(name) ? $"memcpy({name}, p_, sizeof {name});" : $"memcpy(&fire_hp_{name}, &p_, sizeof p_);"));
+            sb.AppendLine("    return NULL;");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        private string LibraryLinkC() => LinkFunction(_self!.Id, _hostImports.Keys, _hostArrays);
+
+        /// <summary>The C of the runtime's DLL: the head of the modules with the runtime's state and functions (FIRE_DLL_RUNTIME), its link function and the interface it
+        /// is built with (the hash of its head).</summary>
+        internal static string RuntimeDllC(string head, string abi) =>
+            head.Replace("#include \"fire_rt.h\"", "#define FIRE_DLL_RUNTIME 1   // this DLL is the runtime: its state and functions\n#define FIRE_RT_IMPLEMENTATION 1\n#include \"fire_rt.h\"")
+            + LinkFunction("rt", Array.Empty<string>()) + $"__declspec(dllexport) const char* const fire_abi_rt = {CString(abi)};\n";
+
+        /// <summary>The program, linkage "shared" on Windows: the libraries' DLLs (null: none).</summary>
+        private IReadOnlyList<ModuleOutput>? _dllModules;
+
+        /// <summary>The program, linkage "shared" on Windows: the table of what the DLLs use of it (sorted by name: `fire_hostFind`) and the calls of their link functions.
+        /// A hook goes in only when the program defines it (<paramref name="programC"/>).</summary>
+        private string HostTable(string programC)
+        {
+            if (_dllModules == null) return "";
+            var names = new SortedDictionary<string, string?>(StringComparer.Ordinal);
+            foreach (var (name, _) in HostHooks)
+                if (System.Text.RegularExpressions.Regex.IsMatch(programC, $@"^(?!static|extern)[A-Za-z_][^\n;=(]*[\s\*]{name}(\(|\[\] =)", System.Text.RegularExpressions.RegexOptions.Multiline))
+                    names[name] = null;
+            foreach (var lib in _dllModules) foreach (var (name, decl) in lib.HostImports) names[name] = decl;
+            var sb = new StringBuilder();
+            sb.AppendLine("/* ---- linkage \"shared\" on Windows: what the DLLs of the runtime and the modules use of the program (their fire_link_* functions ask by name) ---- */");
+            foreach (var decl in names.Values.Where(d => d != null).Distinct()) sb.AppendLine(decl);
+            sb.AppendLine("typedef struct FireHostSym { const char* name; const void* p; } FireHostSym;");
+            sb.AppendLine("static const FireHostSym kHostSyms[] = {");
+            foreach (var name in names.Keys) sb.AppendLine($"    {{{CString(name)}, (const void*)&{name}}},");
+            sb.AppendLine("    {NULL, NULL}");
+            sb.AppendLine("};");
+            sb.AppendLine("static const void* fire_hostFind(const char* name) {");
+            sb.AppendLine($"    int lo = 0, hi = {names.Count};");
+            sb.AppendLine("    while (lo < hi) { int mid = lo + (hi - lo) / 2, c = strcmp(name, kHostSyms[mid].name); if (c == 0) return kHostSyms[mid].p; if (c < 0) hi = mid; else lo = mid + 1; }");
+            sb.AppendLine("    return NULL;");
+            sb.AppendLine("}");
+            sb.AppendLine("const char* fire_link_rt(const void* (*find)(const char*));");
+            foreach (var lib in _dllModules) sb.AppendLine($"const char* fire_link_{lib.Spec.Id}(const void* (*find)(const char*));");
+            sb.AppendLine("static void fire_linkModule(const char* module, const char* missing) {");
+            sb.AppendLine("    if (!missing) return;");
+            sb.AppendLine("    fprintf(stderr, \"The library of the module '%s' does not fit this program: it needs '%s', which the program does not have. Build the program again or put the library it was built with next to it.\\n\", module, missing);");
+            sb.AppendLine("    exit(70);");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        private string HostLinkCalls() =>
+            _dllModules == null ? "" : "    fire_linkModule(\"runtime\", fire_link_rt(fire_hostFind));\n"
+                + string.Concat(_dllModules.Select(m => $"    fire_linkModule({CString(m.Spec.Name)}, fire_link_{m.Spec.Id}(fire_hostFind));\n"));
 
         /// <summary>After the library of a module is built: its interface says it is in the cache.</summary>
         public static void CommitStatic(StaticLibrary library)

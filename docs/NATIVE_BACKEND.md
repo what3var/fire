@@ -998,10 +998,33 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
   eine eigene Variante im Cache), das Programm wird gegen sie gebunden und exportiert, was sie von ihm brauchen (`-rdynamic`: der Zustand der Runtime - auch die
   thread-lokalen Variablen -, die Tabellen und Thunks des Programms); die Bibliotheken liegen nach dem Bau **neben dem Programm** (`rpath $ORIGIN`). Jede Bibliothek
   nennt die Schnittstelle, mit der sie gebaut ist (`fire_abi_<modul>`: Formatversion und ABI-Hash); das Programm prüft sie beim Start, vor allem anderen - liegt eine
-  andere daneben, endet es mit „The library of the module 'X' does not fit this program …“ (Exitcode 70) statt abzustürzen. Andere Ziele und Toolchains (Windows,
-  TinyCC, die Boards, wasm) bauen `static` und sagen es im Protokoll. Offen: Windows (DLLs können nichts aus dem Programm importieren: die Runtime müsste eine DLL
-  `libfire_rt` sein, ihre thread-lokalen Variablen hinter Zugriffsfunktionen - ohne Wine hier nicht zu testen); ein Debug-Build übersetzt die Shared Libraries mit
-  `-O2`.
+  andere daneben, endet es mit „The library of the module 'X' does not fit this program …“ (Exitcode 70) statt abzustürzen. Andere Ziele und Toolchains (msvc,
+  TinyCC, die Boards, wasm) bauen `static` und sagen es im Protokoll. Ein Debug-Build übersetzt die Shared Libraries mit `-O2`.
+* `"shared"` unter **Windows** (MinGW: gcc oder clang, auch von Linux aus): jede Library wird eine **DLL**, die **Runtime eine DLL für sich**
+  (`libfire_rt_<schlüssel>.dll`: der Zustand und die Funktionen von fire_rt.h - `FIRE_DLL_RUNTIME`; ihr Schlüssel ist der Hash des Kopfs der Dateien, also der
+  Schalter und des Ziels). Eine DLL kann nur aus anderen DLLs importieren, über deren Dateinamen - nicht aus dem Programm:
+  * Das Programm und die Module importieren den Zustand der Runtime (`FIRE_RT_DATA`: `__declspec(dllimport)`, in der Runtime `dllexport`; Funktionen `FIRE_RT_FN`).
+  * Die **thread-lokalen Variablen** (`__declspec(thread)`/`_Thread_local` lassen sich nicht importieren) liegen in der Runtime-DLL in einem Block je Thread
+    (`ThreadLocals`, wie bei `FIRE_TLS_STRUCT`); das Programm und die Module fragen sie mit `fire_tl()` danach (`g_unwind` ist dort `fire_tl()->g_unwind`;
+    `__attribute__((const))`: einmal je Funktion).
+  * Was die Runtime und ein Modul **vom Programm** brauchen - die Hooks der Header (`makeClassError`, `make…Error`, die JSON-Tabellen `jsonClassAt` …, die Klassen
+    für den Debugger, `g_dimNames`), die Tabellen, die das Programm für ein Modul anlegt (`fire_mb_M`, `fire_units_M`, `fire_enums_M`, `fire_exct_M`, `fire_dbgsrc_M`),
+    die Reflection-Funktionen `rf_*`, die Thunks der Natives in C++ und die `fire_cn_` der Natives im Programm -, sind **Zeiger der DLL** (`FIRE_DLL_LINKED`: der Kopf
+    der Datei schreibt `#define makeClassError (*fire_hp_makeClassError)`, eine Tabelle von Zahlen ist ein Array der DLL, auf das ihre statischen Tabellen zeigen).
+    Jede DLL hat eine Funktion `fire_link_<modul>(find)`, die sie füllt: das Programm hat eine nach Namen sortierte Tabelle (`kHostSyms`, `fire_hostFind`) und ruft
+    beim Start - nach der Prüfung der Schnittstellen, vor allem anderen - erst `fire_link_rt`, dann die der Module. Fehlt dem Programm etwas, das eine DLL braucht
+    (eine fremde DLL daneben), endet es mit „… it needs 'X', which the program does not have …“ (Exitcode 70). Was eine Library vom Programm braucht, steht in ihrer
+    Schnittstelle (`HostImports`).
+  * Eine DLL wird nach ihrer Schnittstelle und der Runtime benannt (`libfire_<modul>_<hash>.dll`), nicht nach ihrem Schlüssel: die DLLs, die sie brauchen, importieren
+    sie mit diesem Namen, ein neuer Bau ihres Codes behält ihn. Gebaut werden die Objektdateien nebeneinander, gebunden in der Reihenfolge des Plans (die Runtime
+    zuerst, ein Modul nach denen, die es braucht; `-shared -static-libgcc -Wl,--export-all-symbols`); alle DLLs liegen nach dem Bau neben dem Programm, die Prüfung beim
+    Start ist die von Linux (auch für die Runtime-DLL).
+  * Ein Modul ruft Member, die ein Modul hinzufügt, das es nicht kennt (`Join` von linq auf `List` von core), über die Runtime (`miss_`, die Tabellen der Klasse) -
+    nicht direkt: die Datei eines Moduls hängt nicht davon ab, welche Module das Programm sonst hat (sonst gäbe es einen Kreis core <-> linq).
+  * Getestet mit MinGW (x86_64-w64-mingw32-gcc) unter Wine (`FIRE_TESTS_ONLY=linkage`: ein Projekt mit Libraries, Threads, Reflection, JSON, zwei Programme teilen sich
+    die DLLs, eine DLL mit anderer Schnittstelle). **msvc** baut `static`: der C-Code hält sich an das, was msvc braucht (`dllimport` für Daten, Exporte der
+    Runtime), aber die Tabellen des Programms zeigen in statischen Initialisierern auf Daten der Modul-DLLs (MinGW löst das mit seinen Pseudo-Relocations, msvc nicht),
+    und die Exporte der Modul-DLLs bräuchten eine `.def`-Datei - nicht umgesetzt, ohne msvc hier nicht zu testen.
 * Das Laden zur Laufzeit ist Phase D (ROADMAP 9).
 
 ### Debuggen

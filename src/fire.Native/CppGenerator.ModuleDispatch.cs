@@ -88,6 +88,15 @@ namespace fire.Native
         private static bool HasCase(RuntimeClass rc, string name, int argc) =>
             rc.IsTypeOverloaded(name, argc) ? rc.Candidates(name, argc).Protos.Any(p => !p.IsStatic) : rc.FindMethodWithAccess(name, argc).Proto is { IsStatic: false };
 
+        /// <summary>Can this module call `name(argc)` of the class directly: its code is in this module or one it needs (a library does not know the modules that add
+        /// members to its classes - `Join` of linq on List is not known to core: its file must not depend on which modules the program has)? The program knows all.</summary>
+        private bool VisibleMember(RuntimeClass rc, string name, int argc)
+        {
+            if (!LibraryRole) return true;
+            var protos = rc.IsTypeOverloaded(name, argc) ? rc.Candidates(name, argc).Protos : rc.FindMethodWithAccess(name, argc).Proto is { } p ? new[] { p } : Array.Empty<FunctionProto>();
+            return protos.All(p => !ProtoKey(p, out var owner, out _) || ReferenceEquals(owner, _self) || owner != null && _self!.Deps.Contains(owner));
+        }
+
         /// <summary>Is the member of this module (a library: its own code; the program: code of the program)?</summary>
         private bool OwnsProto(FunctionProto p) => ProtoKey(p, out var owner, out _) && ReferenceEquals(owner, _self);
 
@@ -210,7 +219,8 @@ namespace fire.Native
             var byFunc = new Dictionary<Func, List<int>>();
             var overloaded = new List<(FunctionProto[] Protos, RuntimeClass[] Declaring, List<ClassInfo> Classes)>();
             foreach (var cls in served)
-                if (cls.Rc.IsTypeOverloaded(name, argc) && cls.Rc.Candidates(name, argc) is var set && set.Protos.Any(p => !p.IsStatic))
+                if (!VisibleMember(cls.Rc, name, argc)) continue;   // (a member another module adds that this one does not know: through the runtime, `miss_`)
+                else if (cls.Rc.IsTypeOverloaded(name, argc) && cls.Rc.Candidates(name, argc) is var set && set.Protos.Any(p => !p.IsStatic))
                 {
                     int group = overloaded.FindIndex(o => o.Protos.SequenceEqual(set.Protos) && o.Declaring.SequenceEqual(set.Declaring));
                     if (group < 0) overloaded.Add((set.Protos, set.Declaring, new List<ClassInfo> { cls }));

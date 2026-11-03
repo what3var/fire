@@ -106,7 +106,7 @@ namespace fire.Compiler
                     Names given as literals to reflection (Reflect.New("Dog")) always stay; a debug build always keeps everything.
             --keep-all  The same as --stripping 0.
             --linkage source|static|shared  How a native build links the libraries and packages: source (the default) puts everything into one C file; static builds each
-                    library once as a static library in the user-wide cache (ember cache clean) and links it; shared (Linux, macOS) builds them as shared libraries put next to the program ("linkage" in fire.native.json or the project).
+                    library once as a static library in the user-wide cache (ember cache clean) and links it; shared (Linux, macOS, Windows with MinGW) builds them as shared libraries (DLLs) put next to the program ("linkage" in fire.native.json or the project).
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
                     typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).

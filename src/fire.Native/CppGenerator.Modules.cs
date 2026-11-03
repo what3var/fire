@@ -79,6 +79,10 @@ namespace fire.Native
             public IReadOnlyList<string> Exports = Array.Empty<string>();
             /// <summary>Its code calls the JSON engine: linkage "static" compiles the engine into its file (once, not with every program).</summary>
             public bool JsonEngine;
+            /// <summary>Linkage "shared" on Windows: what it uses of the program (name -> the C declaration): pointers of its DLL that its `fire_link_` function fills.</summary>
+            public SortedDictionary<string, string> HostImports = new(StringComparer.Ordinal);
+            /// <summary>Linkage "shared" on Windows: its `fire_link_` function (the end of its file).</summary>
+            public string LinkC = "";
         }
 
         /// <summary>The switches of the generator that hold for the whole program (they change what every module's code has to do): a module is generated with
@@ -334,10 +338,11 @@ namespace fire.Native
         }
 
         /// <summary>Generates one library module (its view of the program, its own classes kept).</summary>
-        internal static ModuleOutput GenerateLibrary(LinkedProgram program, ModuleSpec spec, IReadOnlyList<ModuleSpec> all, TargetProfile target, StrippingLevel? stripping, ModuleFlags? flags, bool separate = false)
+        internal static ModuleOutput GenerateLibrary(LinkedProgram program, ModuleSpec spec, IReadOnlyList<ModuleSpec> all, TargetProfile target, StrippingLevel? stripping, ModuleFlags? flags, bool separate = false,
+            bool dll = false)
         {
             var view = LibraryView(program, spec);
-            var generator = new CppGenerator(view, target) { _strip = LibraryStripping(program, stripping), _role = ModuleRole.Library, _forced = flags, _self = spec, _separate = separate };
+            var generator = new CppGenerator(view, target) { _strip = LibraryStripping(program, stripping), _role = ModuleRole.Library, _forced = flags, _self = spec, _separate = separate, _dll = dll };
             string body;
             try
             {
@@ -349,10 +354,12 @@ namespace fire.Native
                 if (Environment.GetEnvironmentVariable("FIRE_MODULES_TRACE") == "1") Console.Error.WriteLine($"in {(generator._cur?.Proto is { } cp ? generator.Describe(cp) : "?")} (source {generator._cur?.Chunk.FirstSourceIndex}): {ex}");
                 throw new NativeNotSupportedException($"module '{spec.Name}': {ex.Message}");
             }
+            string nativesC = separate ? generator.LibraryNativesC() : "";
             return new ModuleOutput
             {
                 Spec = spec, Body = body, NativeThunks = generator._libraryThunks ?? "", Needs = generator.CollectNeeds(), Flags = generator.CurrentFlags,
-                NativesC = separate ? generator.LibraryNativesC() : "", JsonEngine = generator._callsJsonEngine, Exports = generator._funcs.Where(f => f.Export != null && !f.External).Select(f => f.Export!).Distinct().ToList(),
+                NativesC = nativesC, JsonEngine = generator._callsJsonEngine, Exports = generator._funcs.Where(f => f.Export != null && !f.External).Select(f => f.Export!).Distinct().ToList(),
+                HostImports = new SortedDictionary<string, string>(generator._hostImports, StringComparer.Ordinal), LinkC = dll ? generator.LibraryLinkC() : "",
             };
         }
 
@@ -487,12 +494,13 @@ namespace fire.Native
             var sb = new StringBuilder();
             string id = _self!.Id;
             sb.AppendLine($"/* ---- module {_self.Name} (ROADMAP 9): what the program defines for it ---- */");
-            sb.AppendLine($"extern const uint32_t fire_mb_{id};");
-            foreach (var m in _usedModules.OrderBy(m => m.Index)) sb.AppendLine($"extern const uint32_t fire_mb_{m.Id};");
-            sb.AppendLine($"extern const uint16_t fire_units_{id}[];");
-            sb.AppendLine($"extern const uint8_t fire_enums_{id}[];");
-            sb.AppendLine($"extern const int32_t fire_exct_{id}[];");
-            sb.AppendLine($"extern const int32_t fire_dbgsrc_{id}[];");
+            sb.Append(HostDecl($"fire_mb_{id}", $"extern const uint32_t fire_mb_{id};"));
+            foreach (var m in _usedModules.OrderBy(m => m.Index)) sb.Append(HostDecl($"fire_mb_{m.Id}", $"extern const uint32_t fire_mb_{m.Id};"));
+            // (as many entries as the program writes for it - see ModuleTables)
+            sb.Append(HostArray($"fire_units_{id}", "uint16_t", Math.Max(1, _units.Count)));
+            sb.Append(HostArray($"fire_enums_{id}", "uint8_t", _enumList.Count + 1));
+            sb.Append(HostArray($"fire_exct_{id}", "int32_t", Math.Max(1, _excTypes.Count)));
+            sb.Append(HostArray($"fire_dbgsrc_{id}", "int32_t", Math.Max(1, _self.Sources.Count)));
             return sb.ToString();
         }
 
@@ -576,14 +584,14 @@ namespace fire.Native
             var sb = new StringBuilder();
             sb.Append(LibraryDeclarations());
             foreach (var native in _reflNativesUsed)
-                if (SharedReflectionFunctions.TryGetValue("rf_" + native.Substring("__refl_".Length), out var ps)) sb.AppendLine($"Value rf_{native.Substring("__refl_".Length)}{ps};");
+                if (SharedReflectionFunctions.TryGetValue("rf_" + native.Substring("__refl_".Length), out var ps)) sb.Append(HostDecl($"rf_{native.Substring("__refl_".Length)}", $"Value rf_{native.Substring("__refl_".Length)}{ps};"));
             // the natives in C++ it calls: thunks of its own in the file of the natives
             var thunks = new StringBuilder();
             foreach (var (function, (index, argc, needsList)) in _nativeThunks.OrderBy(t => t.Value.Index))
             {
                 string ps = ThunkParams(argc, needsList);
                 string args = string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").Concat(needsList ? new[] { "list" } : Array.Empty<string>()));
-                sb.AppendLine($"Value fire_nat_{Px}{index}({ps});   // {function}");
+                sb.Append(HostDecl($"fire_nat_{Px}{index}", $"Value fire_nat_{Px}{index}({ps});   // {function}"));
                 thunks.AppendLine($"extern \"C\" fire::Value fire_nat_{Px}{index}({ps.Replace("Value", "fire::Value").Replace("OwnList", "fire::OwnList")}) {{ using namespace fire; return {function}({args}); }}");
             }
             _libraryThunks = thunks.ToString();
