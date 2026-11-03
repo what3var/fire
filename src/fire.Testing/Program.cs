@@ -21164,7 +21164,7 @@ else
             print(wide[2])
             try { int[8] q[] = wide } catch (ArgumentException e) { print("A: " + e.message) }
             """),
-        ("Typisierte Arrays: mehrdimensional, Felder, copy, ref auf Elemente, foreach, Json, Threads (taking)", """
+        ("Typisierte Arrays: mehrdimensional, Felder (int x[4] legt das Array mit dem Objekt an), copy, ref auf Elemente, foreach, Json, Threads (taking)", """
             #import "json"
             class U { static Set(ref int x, int v) { x = v } }
             class Sensor {
@@ -21196,6 +21196,20 @@ else
             foreach (x in a) { if (x != undefined) { sum += x } }
             print(sum)
             print(Json.Serialize(a))
+            class Holder {
+                int[8] x[4]
+                int y[]
+                float m[2][3]
+                static int s[3]
+            }
+            var h1 = new Holder()
+            print(h1.x.length + " " + h1.x[0] + " " + h1.y + " " + h1.m[1].length + " " + Holder.s.length)
+            h1.x[0] = 300
+            var h2 = new Holder()
+            h2.x[0] = 1
+            print(h1.x[0] + " " + h2.x[0])
+            delete h1
+            print(h2.m[0][2])
             int g[3]
             fire taking g { g[0] = 300; print("thread " + g[0]) }
             """),

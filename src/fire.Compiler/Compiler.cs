@@ -940,7 +940,7 @@ namespace fire.Compiler
                     {
                         case FieldDecl fd:
                         {
-                            var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer, fd.IsStatic, fd.Line);
+                            var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer, fd.IsStatic, fd.Line, fd.ArrayRanks);
                             rc.OwnFieldInfo[fd.Name] = new FieldInfo()
                             {
                                 AccessModifier = fd.Access,
@@ -1079,7 +1079,7 @@ namespace fire.Compiler
             return true;
         }
 
-        private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false, int line = 0)
+        private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false, int line = 0, IReadOnlyList<Expr?>? arrayRanks = null)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
             inner._chunk.OwnerClass = rc;
@@ -1100,6 +1100,15 @@ namespace fire.Compiler
                     inner.CompileExpr(initializer);
                 }
                 inner.EmitCheckLambdaSignatureIfNeeded(type);
+            }
+            // `int data[16]` as a field: the array is made with the object (like a variable `int data[16]`; `int data[]` stays undefined)
+            else if (arrayRanks is { Count: > 0 } && arrayRanks[0] != null)
+            {
+                if (line > 0) inner._chunk.MarkLine(inner.CurrentSourceIndex, line);
+                // (it belongs to the object - [this] -> [this, array] -> [array], as for `int data[] = new int[16]`; a static field's to the program)
+                if (!isStatic) inner._chunk.EmitOp(OpCode.LoadThis);
+                inner.CompileArrayAlloc(arrayRanks, 0);
+                if (!isStatic) inner._chunk.EmitOp(OpCode.OwnValue);
             }
             else inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);

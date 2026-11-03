@@ -1618,6 +1618,10 @@ int matrix[][]            // multidimensional (array of arrays)
 var a = new int[10]       // array allocation
 ```
 
+A declaration with a size (`int fixedArr[10]`, `int m[3][4]`) makes the array right away - a local or global variable
+where it is declared, a field with its object (a static field at program start); the elements are `undefined`. Without
+a size (`int arr[]`) the variable or field is `undefined` until an array is assigned.
+
 The array brackets stand **after the identifier**, not after the type
 (deliberately different from C#, where `int[] arr` is usual) – this avoids a collision
 with the bit width bracket, which stands after the type. Several `[...]` groups
