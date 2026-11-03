@@ -33,40 +33,139 @@ namespace fire.Native
         /// <summary>The format of the interface files (ROADMAP 9.7): a changed format is a different key.</summary>
         public const int InterfaceFormat = 1;
 
-        /// <summary>A library module, linkage "static": the natives in C of its own import (graphics, windows, a package in C) - they live in its file.</summary>
+        /// <summary>The library module whose import the natives in C belong to (linkage "static": they live in its file, ROADMAP 9 B2) - null: the program has them (no module
+        /// of that name, or one file).</summary>
+        /// (Only natives that stand alone: the C of an import that uses no other import's natives in C and whose natives no other import's C uses - the bridge of windows
+        /// uses the framebuffers of graphics, scene3d those too: such natives stay together in the program's file.)
+        private ModuleSpec? NativesOwner(string import)
+        {
+            if (!_separate) return null;
+            var module = _moduleOfSource.Values.Distinct().FirstOrDefault(m => string.Equals(m.Name, import, StringComparison.OrdinalIgnoreCase));
+            return module != null && NativesStandAlone(_program, module.Name, _target) ? module : null;
+        }
+
+        /// <summary>Is the import one with natives in C whose C neither uses nor is used by the C of another import of the program (it can live in the file of its module)?
+        /// Its C uses another's when it names a function of it (`fire_gfx_` of graphics in the bridge of windows). The same answer for every module (part of the key).</summary>
+        internal static bool NativesStandAlone(LinkedProgram program, string import, TargetProfile target)
+        {
+            var imports = NativeCImports(program);
+            if (!imports.Contains(import, StringComparer.OrdinalIgnoreCase)) return false;
+            string own = NativeCText(import, target), ownPrefix = NativePrefix(import);
+            foreach (var other in imports.Where(i => !string.Equals(i, import, StringComparison.OrdinalIgnoreCase)))
+            {
+                string prefix = NativePrefix(other);
+                if (prefix.Length > 0 && own.Contains(prefix, StringComparison.Ordinal)) return false;
+                if (ownPrefix.Length > 0 && NativeCText(other, target).Contains(ownPrefix, StringComparison.Ordinal)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>The imports of the program with natives in C: graphics and windows (their modules), the packages in C.</summary>
+        private static List<string> NativeCImports(LinkedProgram program)
+        {
+            var result = new List<string>();
+            var modules = program.SourceModules?.Where(m => m != null).Select(m => m!).Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>();
+            foreach (var standard in new[] { NativeImports.Graphics, NativeImports.Windows })
+                if (modules.Contains(standard, StringComparer.OrdinalIgnoreCase) || program.NativeImports.Contains(standard)) result.Add(standard);
+            foreach (var key in program.NativeImports.Where(k => k.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)))
+                if (PackageStore.Default.FindKey(key)?.Import.Native is { IsC: true }) result.Add(key);
+            return result;
+        }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, string), string> NativeCTexts = new();
+
+        /// <summary>The C of the natives of an import (empty: none).</summary>
+        private static string NativeCText(string import, TargetProfile target) => NativeCTexts.GetOrAdd((import.ToLowerInvariant(), target.Name), _ =>
+        {
+            InstalledImport? found = import.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal) ? PackageStore.Default.FindKey(import)
+                : PackageStore.Default.Installed().SelectMany(p => p.Manifest.Imports.Select(i => new InstalledImport(p, i)))
+                    .FirstOrDefault(i => string.Equals(i.Name, import, StringComparison.OrdinalIgnoreCase) && i.Import.Native != null);
+            if (found?.Import.Native == null) return "";
+            try { return string.Concat(found.ReadNativeSources(new[] { target.Native.Platform, target.Name }).Select(s => s.Text + "\n")); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return ""; }
+        });
+
+        /// <summary>The prefix of the C functions of an import's natives (`fire_hash_`, `fire_gfx_`, `fire_win_`).</summary>
+        private static string NativePrefix(string import)
+        {
+            if (string.Equals(import, NativeImports.Graphics, StringComparison.OrdinalIgnoreCase)) return "fire_gfx_";
+            if (string.Equals(import, NativeImports.Windows, StringComparison.OrdinalIgnoreCase)) return "fire_win_";
+            var symbol = PackageStore.Default.FindKey(import)?.Import.Native?.Functions.Select(f => f.Symbol).FirstOrDefault(s => s.StartsWith("fire_", StringComparison.Ordinal));
+            if (symbol == null) return "";
+            int second = symbol.IndexOf('_', 5);
+            return second > 5 ? symbol.Substring(0, second + 1) : "";
+        }
+
+        /// <summary>The natives in C of an import with their signatures (the C function, arguments, the scope list): those of a package from its manifest, of graphics
+        /// and windows from the generator's tables.</summary>
+        private IEnumerable<(string Function, int Argc, bool NeedsList)> NativeFunctionsOf(string import)
+        {
+            if (string.Equals(import, NativeImports.Graphics, StringComparison.OrdinalIgnoreCase))
+                return GraphicsBridgeNatives.Select(n => ($"fire_gfx_{n.Key}", n.Value.Argc, GraphicsNeedsList.Contains(n.Key)));
+            if (string.Equals(import, NativeImports.Windows, StringComparison.OrdinalIgnoreCase))
+                return WindowsBridgeNatives.Select(n => ($"fire_win_Win{n.Key}", n.Value.Argc, n.Value.Reference));
+            var package = _packageImports.FirstOrDefault(p => string.Equals(p.Key, import, StringComparison.Ordinal)).Import;
+            return package?.Import.Native is { IsC: true } native ? native.Functions.Select(fn => (fn.Symbol, fn.Arguments, fn.NeedsList)) : Enumerable.Empty<(string, int, bool)>();
+        }
+
+        /// <summary>A library module, linkage "static": the natives in C of its own import (graphics, windows, a package in C) - they live in its file (their state once),
+        /// every other module and the program call them through its `fire_cn_` functions - and the declarations of those of other modules it calls.</summary>
         private string LibraryNativesC()
         {
-            // (the natives in C - static functions with state of their own, the handles of the graphics bridge, ... - live in the program's file only: a library module calls
-            // them through the program's `fire_cn_` functions, see SharedNative)
             var sb = new StringBuilder();
-            foreach (var (function, (argc, needsList)) in _sharedNatives.OrderBy(n => n.Key, StringComparer.Ordinal))
+            foreach (var (function, (argc, needsList, _)) in _sharedNatives.OrderBy(n => n.Key, StringComparer.Ordinal))
                 sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)});");
-            return sb.ToString();
-        }
-
-        /// <summary>A library module, linkage "static": the natives in C it calls (function -> arguments, scope list) - the program defines a `fire_cn_` function for each.</summary>
-        private readonly SortedDictionary<string, (int Argc, bool NeedsList)> _sharedNatives = new(StringComparer.Ordinal);
-
-        /// <summary>The C function a call of a native in C goes to: itself, or in a library module with linkage "static" the program's `fire_cn_` function for it.</summary>
-        private string SharedNative(string function, int argc, bool needsList)
-        {
-            if (!(LibraryRole && _separate)) return function;
-            _sharedNatives[function] = (argc, needsList);
-            return "fire_cn_" + function;
-        }
-
-        /// <summary>The program, linkage "static": the `fire_cn_` functions of the natives in C the library modules call.</summary>
-        private string SharedNativeThunks()
-        {
-            if (!_separate || _libraries == null) return "";
-            var all = new SortedDictionary<string, (int Argc, bool NeedsList)>(StringComparer.Ordinal);
-            foreach (var lib in _libraries) foreach (var (f, sig) in lib.Needs.SharedNatives) all[f] = sig;
-            var sb = new StringBuilder();
-            foreach (var (function, (argc, needsList)) in all)
+            string own = _self!.Name;
+            if (!ReferenceEquals(NativesOwner(own), _self)) return sb.ToString();
+            bool standard = string.Equals(own, NativeImports.Graphics, StringComparison.OrdinalIgnoreCase) || string.Equals(own, NativeImports.Windows, StringComparison.OrdinalIgnoreCase);
+            var package = _packageImports.FirstOrDefault(p => string.Equals(p.Key, own, StringComparison.Ordinal)).Import;
+            if (standard) AppendStandardNatives(sb, own.ToLowerInvariant());
+            else if (package?.Import.Native is { IsC: true })
+                foreach (var (name, text) in package.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
+                {
+                    sb.AppendLine($"// ---- package {package.Package.Name} {package.Package.Version}, import \"{package.Name}\" (C): {name}");
+                    sb.AppendLine(text);
+                    sb.AppendLine($"// ---- end of {name}");
+                }
+            else return sb.ToString();
+            foreach (var (function, argc, needsList) in NativeFunctionsOf(own))
             {
                 string args = string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").Concat(needsList ? new[] { "list" } : Array.Empty<string>()));
                 sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)}) {{ return {function}({args}); }}");
             }
+            return sb.ToString();
+        }
+
+        /// <summary>Linkage "static": the natives in C of other files this generator calls (function -> arguments, scope list, import) - the `fire_cn_` functions of their
+        /// module (or of the program).</summary>
+        private readonly SortedDictionary<string, (int Argc, bool NeedsList, string Import)> _sharedNatives = new(StringComparer.Ordinal);
+
+        /// <summary>The C function a call of a native in C goes to: itself when it is part of this file, otherwise (linkage "static") the `fire_cn_` function of the module
+        /// whose import it belongs to, or of the program.</summary>
+        private string SharedNative(string function, int argc, bool needsList, string import)
+        {
+            if (!_separate) return function;
+            var owner = NativesOwner(import);
+            if (owner == null ? !LibraryRole : ReferenceEquals(owner, _self)) return function;
+            _sharedNatives[function] = (argc, needsList, import);
+            return "fire_cn_" + function;
+        }
+
+        /// <summary>The program, linkage "static": the `fire_cn_` functions of its natives in C that the library modules call, and the declarations of those of the
+        /// modules it calls.</summary>
+        private string SharedNativeThunks()
+        {
+            if (!_separate || _libraries == null) return "";
+            var all = new SortedDictionary<string, (int Argc, bool NeedsList, string Import)>(StringComparer.Ordinal);
+            foreach (var lib in _libraries) foreach (var (f, sig) in lib.Needs.SharedNatives) all[f] = sig;
+            var sb = new StringBuilder();
+            foreach (var (function, (argc, needsList, import)) in all)
+            {
+                if (NativesOwner(import) != null) continue;   // (in the file of their module)
+                string args = string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").Concat(needsList ? new[] { "list" } : Array.Empty<string>()));
+                sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)}) {{ return {function}({args}); }}");
+            }
+            foreach (var (function, (argc, needsList, _)) in _sharedNatives) sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)});");
             return sb.ToString();
         }
 
@@ -129,6 +228,8 @@ namespace fire.Native
             foreach (var dep in spec.Deps) sb.Append(" needs ").Append(dep.Name).Append(' ').Append(abi[dep]).Append('\n');
             // (the natives in C of its import and of those it needs go into its file: a changed native is a new library)
             foreach (var m in spec.Deps.Append(spec)) sb.Append(" natives ").Append(m.Name).Append(' ').Append(NativeSourcesHash(m.Name, target)).Append('\n');
+            // (whether its natives in C live in its file depends on the other imports of the program: a variant of its own)
+            sb.Append("natives-here ").Append(NativesStandAlone(program, spec.Name, target)).Append('\n');
             sb.Append("flags ").Append(flags?.ToString() ?? "own").Append('\n');
             return Hash(sb.ToString()).Substring(0, 40);
         }
@@ -160,6 +261,7 @@ namespace fire.Native
             public List<string> Made { get; set; } = new();
             public List<string[]> SharedNatives { get; set; } = new();
             public string NativeThunks { get; set; } = "";
+            public bool JsonEngine { get; set; }
         }
         private sealed class EnumEntry
         {
@@ -190,8 +292,8 @@ namespace fire.Native
                 StaticFields = n.StaticFields.Select(f => new[] { f.Class, f.Field }).ToList(),
                 Units = n.Units.Select(u => Convert.ToBase64String(MemoryPackSerializer.Serialize(u))).ToList(),
                 Enums = n.Enums.Select(e => new EnumEntry { Name = e.Name, Flags = e.IsFlags, Members = e.Members.Select(m => m.Name).ToList(), Values = e.Members.Select(m => m.Value).ToList() }).ToList(),
-                ExcTypes = n.ExcTypes.ToList(), ReflectionNatives = n.ReflectionNatives.ToList(), Made = n.Classes.ToList(), NativeThunks = output.NativeThunks,
-                SharedNatives = n.SharedNatives.Select(x => new[] { x.Key, x.Value.Argc.ToString(CultureInfo.InvariantCulture), x.Value.NeedsList ? "1" : "0" }).ToList(),
+                ExcTypes = n.ExcTypes.ToList(), ReflectionNatives = n.ReflectionNatives.ToList(), Made = n.Classes.ToList(), NativeThunks = output.NativeThunks, JsonEngine = output.JsonEngine,
+                SharedNatives = n.SharedNatives.Select(x => new[] { x.Key, x.Value.Argc.ToString(CultureInfo.InvariantCulture), x.Value.NeedsList ? "1" : "0", x.Value.Import }).ToList(),
             };
         }
 
@@ -213,8 +315,8 @@ namespace fire.Native
             n.ExcTypes.AddRange(f.ExcTypes);
             n.ReflectionNatives.UnionWith(f.ReflectionNatives);
             n.Classes.UnionWith(f.Made);
-            foreach (var x in f.SharedNatives) n.SharedNatives[x[0]] = (int.Parse(x[1], CultureInfo.InvariantCulture), x[2] == "1");
-            return new ModuleOutput { Spec = spec, Body = "", NativeThunks = f.NativeThunks, Needs = n, Flags = ParseFlags(f.Flags) };
+            foreach (var x in f.SharedNatives) n.SharedNatives[x[0]] = (int.Parse(x[1], CultureInfo.InvariantCulture), x[2] == "1", x.Length > 3 ? x[3] : "");
+            return new ModuleOutput { Spec = spec, Body = "", NativeThunks = f.NativeThunks, Needs = n, Flags = ParseFlags(f.Flags), JsonEngine = f.JsonEngine };
         }
 
         private static InterfaceFile? ReadInterface(string path, string key)
@@ -297,7 +399,9 @@ namespace fire.Native
                         bool cached = !fresh.ContainsKey(spec);
                         if (fresh.TryGetValue(spec, out var output))
                         {
-                            WriteAtomically(cFile, ResolveLineResets(main._libraryHead + output.NativesC + output.Body));
+                            string head = main._libraryHead!;
+                            if (output.JsonEngine) head = head.Replace("#include \"fire_json.h\"", "#define FIRE_JSON_IMPLEMENTATION 1   // (the JSON engine: in the file of the module that calls it)\n#include \"fire_json.h\"");
+                            WriteAtomically(cFile, ResolveLineResets(head + output.NativesC + output.Body));
                             // (the interface last: it says the library is there - the caller writes it after building the library, see CommitStatic)
                             WriteAtomically(ifaceFile + ".new", JsonSerializer.Serialize(InterfaceOf(output, keys[spec], abi[spec], output.Exports)));
                             log.AppendLine($"module {spec.Name}: new ({keys[spec].Substring(0, 12)})");

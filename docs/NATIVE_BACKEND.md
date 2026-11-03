@@ -889,26 +889,46 @@ der Import-Name für die Dateien einer Library des Projekts, `null` für das Pro
 Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code steht: die Methoden einer `class extends List` von `linq` gehören zu `linq`, nicht zu `core`
 (der Compiler merkt sich dafür die Quelle des Members, nicht die der Klasse - auch der Debugger zeigt sie jetzt in der richtigen Datei).
 
-* Eine **Library** wird von einem Generator erzeugt, der nur ihre Klassen und die der Module sieht, die sie braucht (`LibraryView`). Sie behält **alle** ihre Klassen und
-  Member (ihre öffentliche Schnittstelle ist die Wurzel dessen, was bleibt - §11), nummeriert ihre Klassen selbst (nach Namen sortiert) und schreibt ihre Ids als
-  `fire_mb_<modul> + k`. Member anderer Module ruft sie über **exportierte Namen** (`fx_<modul>_<Klasse>__<Member>_<i>`, aus dem Namen des Members abgeleitet - jedes
-  Modul kommt auf denselben Namen). Was das ganze Programm kennen müsste - die Verteiler (`call_X_n`), die Feld-Helfer (`gf_x`/`sf_x`), `is of` (`isof_X`), die
-  Operatoren, die Typargumente von Objekten (`targOf_C_k`), die Klassen-Wertungen von Überladungen (`ovd_X`), die Reflection-Funktionen, die Tabellen der Runtime -,
-  **erzeugt sie nicht**, sondern deklariert es nur. Statische Felder heißen `SFx_<modul>_<Klasse>_<Feld>`; das Modul der Klasse definiert sie.
-* Das **Programm** ist das einzige Modul, das alle Klassen kennt (eine geschlossene Welt wie bisher): es definiert die Helfer für alle Module - mit **einer Signatur für
-  alle** (jeder Verteiler nimmt die Liste des Scopes und die Klasse des Aufrufers, jeder Feld-Helfer beide; die Helfer sind nicht `static`), die Klassen-Deskriptoren
-  (A0), JSON-, Reflection- und Debug-Tabellen. Was eine Library von ihm braucht, steht in ihren **Needs** (welche Verteiler, Feldnamen, `is of`-Typen, Operatoren,
-  Reflection-Funktionen, welche Klassen ihr Code anlegt, ...). Klassen einer Library, von denen kein Modul Objekte anlegt, behalten ihre Id, bekommen aber keine Zweige
-  in den Helfern (wie eine nicht erreichte Klasse).
+* Eine **Library** wird von einem Generator erzeugt, der nur ihre Klassen und die der Module sieht, die sie braucht (`LibraryView`). Sie behält, was andere Module
+  benutzen können - die öffentlichen und geschützten Member ihrer Klassen (ihre Schnittstelle ist die Wurzel dessen, was bleibt - §11; `protected` zählt dazu, eine
+  Klasse eines anderen Moduls kann davon erben) -, ein privater Member bleibt nur, wenn ihr eigener Code ihn erreicht (mit `"trim": "all"`, in Debug-Builds und mit
+  `[Keep]` alle). Sie nummeriert ihre Klassen selbst (nach Namen sortiert) und schreibt ihre Ids als `fire_mb_<modul> + k`. Member anderer Module ruft sie über
+  **exportierte Namen** (`fx_<modul>_<Klasse>__<Member>_<i>`, aus dem Namen des Members abgeleitet - jedes Modul kommt auf denselben Namen). Statische Felder
+  heißen `SFx_<modul>_<Klasse>_<Feld>`; das Modul der Klasse definiert sie.
+* **Jedes Modul bedient seine eigenen Klassen** (Phase B2): seine Verteiler (`<modul>_call_X_n`), Feld-Helfer (`gf_x`/`sf_x`/`fp_x`), `is of` (`isof_X`), Operatoren,
+  Klassen-Wertungen von Überladungen (`ovd_X`) und Typargumente von Objekten (`targOf_C_k`) erzeugt es für die Aufrufe seines eigenen Codes, mit einem `switch` nur über
+  seine eigenen Klassen (eine Library zählt sie ab 0: `cls - fire_mb_M`; die Klassen anderer Module, die es mit Membern erweitert - `class extends List` von `linq` -
+  hinter ihnen). Ein Objekt einer Klasse, die das Modul nicht kennt - einer Library, die es braucht, des Programms (auch eine Klasse des Programms, die von einer Klasse
+  der Library erbt), später eines Plugins -, geht über die **Runtime**: jedes Modul schreibt für jede seiner Klassen eine Tabelle der Member, die sie selbst deklariert
+  (`FireMembers` in fire_rt.h: Methoden nach Name und Zahl der Argumente, Felder nach Name - sortiert, binär gesucht), das Programm hängt sie in die
+  Klassen-Deskriptoren (die Klasse zuerst, dann ihre Basen; zu einer Klasse auch die Tabellen der Module, die sie erweitern), dazu die Namen ihrer Kette und Interfaces
+  und eine Funktion für ihre Typargumente. `fireFindMethod`/`fireGetField`/`fireSetField`/`fireIsOf`/`fireClassScore`/`fireTArgOf` gehen sie durch. Eine Zeile einer
+  Tabelle ruft den Verteiler ihres Moduls für diese Klasse (`disp_X_n(k, ...)`): Überladungen, Defaults und Zugriffsprüfungen gelten wie bei eigenen Aufrufen
+  (die Prüfung von `protected` fragt die Kette der Klasse des Aufrufers zur Laufzeit). Fehlt der Member, kommen die Fehler der VM (eine Klasse mit dem Member mit
+  anderen Zahlen von Argumenten: ArgumentException mit ihrer Liste).
+* Das **Programm** kennt als einziges Modul alle Klassen (eine geschlossene Welt): es ruft Member von Libraries direkt, wo der Typ es sagt (Devirtualisierung mit dem
+  Wissen aller Klassen), erzeugt aber Verteiler und Feld-Helfer nur für seine eigenen Klassen. Es definiert die Klassen-Deskriptoren (A0, mit den Spalten oben), die
+  JSON-Tabellen, die Liste der Reflection-Zeilen und die Debug-Tabellen. Die Tabellen seiner Klassen nennen nur die Member, die ein Modul beim Namen ruft (die **Needs**
+  der Libraries: ihre Verteiler und Feldnamen; mit Reflect.Get/Call alle). Die Klassen, von denen eine Library Objekte anlegt, stehen in ihren Needs.
+* **Reflection** je Modul: die Zeilen der Reflection-Tabellen (`RfClass` mit Membern und Attributen) und Reflect.New einer Klasse (`fire_new_<modul>_<Klasse>`) stehen
+  in der Datei ihres Moduls; das Programm listet die Klassen, die es erreicht. Reflect.Get/Set/Call gehen über die Tabellen der Member (`fireGetField`, ...); Probes
+  sehen die Setter jedes Moduls selbst nach, Reflect.Set auf ein Objekt mit Probes schreibt über den Namen (`probedSet` ohne Rohfunktion).
 * **Zahlen, die erst das Programm festlegt**, liest eine Library aus Tabellen des Programms: Einheiten (`fire_units_<m>[k]`), Enums (`fire_enums_<m>[k]`), die Typen
   von `catch` (`fire_exct_<m>`, `HandlerInfo.typeMap`), die Quellen für den Debugger (`fire_dbgsrc_<m>[k]`, k ist die Stelle unter den Quellen des Moduls),
   die Basis ihrer Klassen-Ids (`fire_mb_<m>`). `FIRE_NDIMS` ist mit `static` fest 16.
-* **Natives in C** (Packages in C, die Bridges von graphics und windows) stehen nur in der Datei des Programms (ihr Zustand - die Handles der Bridges - gibt es so einmal);
-  eine Library ruft sie über `fire_cn_<funktion>` des Programms. Die Natives in C++ bleiben in `fire_natives.cpp` (die Thunks der Libraries kommen dazu).
+* **Natives in C** (Packages in C, die Bridges von graphics und windows) stehen in der Datei des Moduls ihres Imports, wenn sie für sich stehen: ihr C ruft keine
+  Funktion der Natives eines anderen Imports des Programms und keiner ruft ihre (hash, compression, io, time; nicht graphics und windows zusammen - die Bridge von
+  windows benutzt die Framebuffer von graphics -, nicht scene3d). Ihr Zustand gibt es so einmal; jedes andere Modul und das Programm rufen sie über die
+  `fire_cn_<funktion>` ihres Moduls. Die anderen stehen in der Datei des Programms (die Libraries rufen sie über `fire_cn_` des Programms); ob sie in der Datei ihres
+  Moduls stehen, ist Teil seines Schlüssels. Die **JSON-Engine** (`FIRE_JSON_IMPLEMENTATION`) steht in der Datei des Moduls, das sie ruft (`json`). Die Natives in
+  C++ bleiben in `fire_natives.cpp` (die Thunks der Libraries kommen dazu).
 * **Schalter des Programms** (Ausnahmen, Threads, Reflection, Probes, Zeiger mit Grenzen, `try x.Take...`, JSON, ...) gelten für alle Module: jedes Modul wird mit
-  der Vereinigung aller Schalter erzeugt (Fixpunkt über die Module); für jede Menge von Schaltern gibt es eine eigene Variante im Cache (Entscheidung 9.4).
-* Kein Inlining über Modulgrenzen, keine Devirtualisierung in einer Library (eine Klasse des Programms kann überschreiben): Aufrufe in einer Library gehen über die
-  Verteiler des Programms; nur das Programm ruft Member von Libraries direkt (es kennt alle Klassen). Eine LTO gibt es nicht (Entscheidung 9.5: optional, nicht umgesetzt).
+  der Vereinigung aller Schalter erzeugt (Fixpunkt über die Module); für jede Menge von Schaltern gibt es eine eigene Variante im Cache (Entscheidung 9.4). Was ein
+  Schalter im Programm kostet, kostet er nur noch dort: die Reflection einer Library (`linq` benutzt sie) erzeugt im Programm keine Helfer mehr für die Klassen der
+  Libraries.
+* Kein Inlining über Modulgrenzen; eine Library ruft auch ihre eigenen Klassen über ihre Verteiler (eine Klasse eines anderen Moduls kann überschreiben). Eine LTO gibt
+  es nicht (Entscheidung 9.5: optional, nicht umgesetzt). Die Bibliotheken werden mit einer Section je Funktion übersetzt (`-ffunction-sections -fdata-sections`),
+  das Programm mit `--gc-sections` gebunden: der Linker lässt weg, was nichts erreicht.
 * Ein Member, den das Ziel nicht übersetzen kann (fire-Threads auf wasm), wird in einer Library zu einer Funktion, die beim Aufruf mit dem Grund endet (mit `source`
   wäre er nicht erreicht worden).
 
@@ -954,16 +974,21 @@ Gemessen auf dem Rechner dieser Sitzung (4 vCPUs, gcc 13 `-O2`, ohne ccache), Ze
 
 | Programm | `source` | `static`, erster Bau (leerer Cache) | `static`, zweiter Bau | Größe `source` / `static` |
 |---|---:|---:|---:|---:|
-| CLI mit `json`, `linq`, `hash`, `compression` (9 Module) | 9-10,5 s | 51 s (94 s, die Bibliotheken nacheinander) | 27-29 s | 226 KB / 2,5 MB |
-| `ui`-Beispiel (5 Module) | 98 s | 223 s (nacheinander) | 85 s | 2,3 MB / 5,7 MB |
+| Phase B: CLI mit `json`, `linq`, `hash`, `compression` (9 Module) | 9-10,5 s | 51 s | 27-29 s | 226 KB / 2,5 MB |
+| Phase B: `ui`-Beispiel (5 Module) | 98 s | 223 s | 85 s | 2,3 MB / 5,7 MB |
+| **B2**: CLI | 9,7-10,4 s | 41-45 s | **6,5 s** | 226 KB / 2,7 MB |
+| **B2**: `ui`-Beispiel (Samples/Graphics and UI/UI) | 100 s | 237 s | **16 s** | 2,3 MB / 6,5 MB |
+| **B2**: `print("hi")` (nur `core`) | 2,7 s | 20 s | 3,6 s | 26 KB / 395 KB |
 
-Die Ausgaben sind gleich. Die Bibliotheken eines ersten Baus werden nebeneinander übersetzt (so viele wie Kerne). Ehrlich gesagt: so, wie es heute ist, spart
-`static` keine Zeit, außer bei sehr großen Libraries (`ui`: 13 % schneller im zweiten Bau).
-Zwei Gründe: (1) Eine Library behält **alles** - sie wird einmal für alle Programme gebaut -, und was ihr Code benutzt (Reflection in `linq`, Probes, JSON), gilt
-dann für das ganze Programm; (2) das Programm erzeugt die Helfer der geschlossenen Welt (Verteiler, Feld-Helfer, Reflection-Tabellen) für die Klassen **aller**
-Module, die angelegt werden können - sie sind ein großer Teil des C und werden bei jedem Bau übersetzt. Der nächste Schritt wäre, dass eine Library ihre eigenen
-Klassen selbst bedient (ein Verteiler je Modul, das Programm nur noch für fremde Klassen). Die Programme sind größer, weil
-ein Modul ein Objekt ist (der Linker nimmt es ganz) und die Libraries nichts weglassen.
+Die Ausgaben sind gleich. Die Bibliotheken eines ersten Baus werden nebeneinander übersetzt (so viele wie Kerne). Seit B2 übersetzt der zweite Bau nur noch,
+was das Programm selbst ist: das C des CLI-Programms ist von 1,2 MB auf 214 KB geschrumpft (Verteiler und Feld-Helfer nur für seine Klassen, keine Reflection-Helfer
+für die Klassen der Libraries, Natives von hash/compression/io/time und die JSON-Engine in ihren Bibliotheken), das des `ui`-Beispiels enthält im Wesentlichen
+noch die Bridges von graphics und windows (sie gehören zusammen und stehen im Programm). Ein Programm nur mit `core` bleibt etwas langsamer als `source`: es
+bindet eine Bibliothek, `source` übersetzt die paar Funktionen, die es braucht.
+Die Programme sind größer: eine Library behält ihre Schnittstelle, ihre Tabellen nennen alle Member ihrer Klassen, und das Programm legt die Deskriptoren aller
+Klassen an, von denen irgendein Code einer Library Objekte anlegt (ob dieser Code erreicht wird, weiß es nicht) - der Linker (`--gc-sections`) kann nur weglassen,
+was keine Tabelle nennt. Näher an `source` käme `static` mit einer Erreichbarkeit über die Modulgrenzen (die Schnittstelle sagt je Export, was er ruft und anlegt)
+oder einer LTO.
 
 ## WebAssembly (`wasm`) - Programme im Browser
 

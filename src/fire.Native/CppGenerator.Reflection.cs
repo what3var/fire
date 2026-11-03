@@ -133,6 +133,7 @@ namespace fire.Native
         private void KeepConstructors(RuntimeClass rc)
         {
             RegisterClass(rc.Name);
+            if (Modular && !LibraryRole && !IsOwnClass(rc)) return;   // (a library keeps the constructors of its classes and makes their objects for Reflect.New)
             foreach (var ctor in rc.AllConstructors)
             {
                 GetFunc(ctor, FuncKind.Ctor);
@@ -159,6 +160,9 @@ namespace fire.Native
             if (_reflNew)
                 foreach (var rc in ReflectionTableClasses()) KeepConstructors(rc);
             if (!_reflMembers && !_reflCall) return;
+            // (modules: Get/Set/Call by name go through the tables of the runtime - the program's tables list every member of its classes, a library's all of theirs)
+            if (Modular && !_tablesAll) { _tablesAll = true; _version++; }
+            if (Modular) return;   // (the setters of every module look for probes themselves)
             foreach (var cls in _classList.ToList())
             {
                 if (_reflMembers) foreach (var field in cls.Rc.FieldIndex.Keys) AddFieldName(field);
@@ -179,6 +183,13 @@ namespace fire.Native
         {
             foreach (var rc in _program.Program.Classes.Values.ToList())
             {
+                // (modules: a library keeps all of its classes itself - the program only makes the kept classes of the libraries known)
+                if (Modular && !IsOwnClass(rc))
+                {
+                    if (_trim == TrimMode.All || rc.Keep) KeepConstructors(rc);
+                    else if (rc.KeptMembers != null) RegisterClass(rc.Name);
+                    continue;
+                }
                 if (_trim == TrimMode.All || rc.Keep)
                 {
                     KeepConstructors(rc);
@@ -212,13 +223,13 @@ namespace fire.Native
             items.Count == 0 ? "NULL" : name;
 
         /// <summary>Tables, the functions behind the `__refl_*` natives and the hooks - written after the dispatchers.</summary>
-        private string ReflectionCode()
-        {
-            var sb = new StringBuilder();
-            var classes = ReflectionTableClasses();
+        private int _rfListIndex;
 
+        /// <summary>The rows of the reflection tables (RfClass) of these classes, in their order; their lists and functions go into `sb` first.</summary>
+        private List<string> ReflectionRows(StringBuilder sb, IEnumerable<RuntimeClass> classes)
+        {
             // ---- tables ----------------------------------------------------------------------------------------------------
-            int listIndex = 0;
+            int listIndex = _rfListIndex;
             // (a list of names is written once: the parameters of many methods are the same)
             var stringLists = new Dictionary<string, string>(StringComparer.Ordinal);
             string Strings(IReadOnlyList<string> items)
@@ -226,7 +237,7 @@ namespace fire.Native
                 if (items.Count == 0) return "NULL";
                 string text = string.Join(", ", items.Select(CStr));
                 if (stringLists.TryGetValue(text, out var known)) return known;
-                string name = stringLists[text] = $"kRfS{listIndex++}";
+                string name = stringLists[text] = $"{Px}kRfS{listIndex++}";
                 sb.AppendLine($"static const char* const {name}[] = {{{text}}};");
                 return name;
             }
@@ -234,7 +245,7 @@ namespace fire.Native
             string Attributes(IReadOnlyList<AttributeMeta> attributes)
             {
                 if (attributes.Count == 0) return "NULL";
-                string name = $"rf_attrs{listIndex++}";
+                string name = $"{Px}rf_attrs{listIndex++}";
                 var body = new StringBuilder();
                 int temp = 0;
                 string Json(System.Text.Json.Nodes.JsonNode? node)
@@ -288,7 +299,7 @@ namespace fire.Native
                 string membersName = "NULL";
                 if (memberRows.Count > 0)
                 {
-                    membersName = $"kRfM{listIndex++}";
+                    membersName = $"{Px}kRfM{listIndex++}";
                     sb.AppendLine($"static const RfMember {membersName}[] = {{{string.Join(", ", memberRows)}}};");
                 }
                 var interfaces = new List<string>();
@@ -298,14 +309,90 @@ namespace fire.Native
                 string classAttrs = Attributes((IReadOnlyList<AttributeMeta>?)rc.Meta?.Attributes ?? Array.Empty<AttributeMeta>());
                 classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}, {classAttrs}}}");
             }
+            _rfListIndex = listIndex;
+            return classRows;
+        }
+
+        /// <summary>The constructors of a class for Reflect.New: an arm per number of arguments.</summary>
+        private List<string> NewCases(RuntimeClass rc, ClassInfo info)
+        {
+            var byArgc = new List<string>();
+            foreach (var ctor in rc.AllConstructors)
+            {
+                int required = ctor.ParamCount;
+                while (required > 0 && required - 1 < ctor.ParamDefaults.Count && ctor.ParamDefaults[required - 1] != null) required--;
+                for (int argc = required; argc <= ctor.ParamCount; argc++)
+                {
+                    if (rc.FindConstructor(argc) != ctor) continue;
+                    var (pre, defaults) = DefaultArgs(ctor, argc, "o", "list");
+                    string items = string.Concat(Enumerable.Range(0, argc).Select(i => $", items[{i}]"));
+                    var access = ctor.Access ?? AccessModifier.Public;
+                    string guard = CheckAccess && access != AccessModifier.Public
+                        ? $"if (!{AllowedExpr(rc, access)}) return {(LibraryRole ? "rfFail" : "accessDeniedNew")}({CStr($"The constructor of '{rc.Name}' is {DescribeAccess(access)} and cannot be called from here.")}); "
+                        : "";
+                    byArgc.Add($"            case {argc}: {{ {guard}Value o = newObject({ClassIdExpr(info)}, {info.Fields.Count}, list); {pre}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); return o; }}");
+                }
+            }
+            return byArgc;
+        }
+
+        private static string NewFunctionName(string module, RuntimeClass rc) => $"fire_new_{module}_{Mangle(rc.Name)}";
+
+        /// <summary>The name of the reflection row of a class (modules: every module writes those of its classes).</summary>
+        private static string RfRowName(string module, RuntimeClass rc) => $"fire_rf_{module}_{Mangle(rc.Name)}";
+
+        /// <summary>A library module of a program with reflection: the rows of all of its classes (the program lists those its tables have).</summary>
+        private string LibraryReflectionRows()
+        {
+            if (!_usesReflection) return "";
+            var sb = new StringBuilder();
+            var own = _program.Program.Classes.Values.Where(IsOwnClass).OrderBy(c => c.Name, StringComparer.Ordinal).ToList();
+            var rows = ReflectionRows(sb, own);
+            for (int i = 0; i < own.Count; i++) sb.AppendLine($"const RfClass {RfRowName(ModId, own[i])} = {rows[i]};");
+            // Reflect.New of its classes (the program's rf_new calls them by the name of the class)
+            foreach (var rc in own)
+            {
+                sb.AppendLine($"Value {NewFunctionName(ModId, rc)}(int argc, const Value* items, OwnList* list, uint32_t caller) {{");
+                sb.AppendLine("    (void)items; (void)list; (void)caller;");
+                sb.AppendLine("    switch (argc) {");
+                foreach (var row in NewCases(rc, RegisterClass(rc.Name))) sb.AppendLine(row);
+                sb.AppendLine("        default: break;");
+                sb.AppendLine("    }");
+                sb.AppendLine($"    {{ char t[300]; snprintf(t, sizeof t, \"'%s' has no constructor with %d parameter(s).\", {CStr(rc.Name)}, argc); return rfFail(t); }}");
+                sb.AppendLine("}");
+            }
+            return sb.ToString();
+        }
+
+        private string ReflectionCode()
+        {
+            var sb = new StringBuilder();
+            var classes = ReflectionTableClasses();
+
+            // ---- tables ----------------------------------------------------------------------------------------------------
+            // (modules: the rows of the classes of a library are in its file, the program lists them)
+            string rfAt = Modular ? "kRfClassList[i]" : "&kRfClasses[i]";
+            if (Modular)
+            {
+                var own = classes.Where(IsOwnClass).ToList();
+                var ownRows = ReflectionRows(sb, own);
+                for (int i = 0; i < own.Count; i++) sb.AppendLine($"static const RfClass {RfRowName("prog", own[i])} = {ownRows[i]};");
+                foreach (var rc in classes.Where(c => !IsOwnClass(c))) sb.AppendLine($"extern const RfClass {RfRowName(ModIdOf(rc), rc)};");
+                sb.AppendLine($"static const RfClass* const kRfClassList[] = {{{string.Join(", ", classes.Select(rc => "&" + RfRowName(ModIdOf(rc), rc)).DefaultIfEmpty("NULL"))}}};");
+            }
+            else
+            {
+            var classRows = ReflectionRows(sb, classes);
             sb.AppendLine($"static const RfClass kRfClasses[] = {{{string.Join(",\n    ", classRows)}}};");
+            }
             sb.AppendLine($"static const uint32_t kRfClassCount = {classes.Count};");
+            sb.AppendLine($"#define RF_CLASS_AT(i) ({rfAt.Replace("[i]", "[(i)]")})");
             sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_find(Value name) {");
-            sb.AppendLine("    for (uint32_t i = 0; i < kRfClassCount; i++) if (strIs(name, kRfClasses[i].name)) return &kRfClasses[i];");
+            sb.AppendLine($"    for (uint32_t i = 0; i < kRfClassCount; i++) if (strIs(name, ({rfAt})->name)) return {rfAt};");
             sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
             sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_findC(const char* name) {");
-            sb.AppendLine("    for (uint32_t i = 0; i < kRfClassCount; i++) if (strcmp(name, kRfClasses[i].name) == 0) return &kRfClasses[i];");
+            sb.AppendLine($"    for (uint32_t i = 0; i < kRfClassCount; i++) if (strcmp(name, ({rfAt})->name) == 0) return {rfAt};");
             sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
             sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_classOf(uint32_t cls) { return rf_findC(className(cls)); }");
@@ -399,7 +486,7 @@ FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
 }
 FIRE_MAYBE_UNUSED static Value rf_classes(OwnList* list) {
     Arr* names = allocArr(kRfClassCount, list);
-    for (uint32_t i = 0; i < kRfClassCount; i++) { Value s = strFromUtf8(kRfClasses[i].name, list); arrItems(names)[i] = s; retain(s); }
+    for (uint32_t i = 0; i < kRfClassCount; i++) { Value s = strFromUtf8(RF_CLASS_AT(i)->name, list); arrItems(names)[i] = s; retain(s); }
     return ArrV(names);
 }
 FIRE_MAYBE_UNUSED static Value rf_is_sub(Value name, Value base) {
@@ -436,7 +523,13 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             string tail(string name, bool setter) => (FieldHasList(name) ? ", list" : "") + (FieldHasCaller(name) ? ", caller" : "");
             var get = new StringBuilder();
             var set = new StringBuilder();
-            foreach (var name in fieldNames)
+            if (Modular)
+            {
+                get.AppendLine("    { char n_[200]; strToUtf8(name, n_, sizeof n_); return fireGetField(obj, n_, list, caller); }");
+                // (an object with probes: they hear of it - the member is written by its name)
+                set.AppendLine("    { char n_[200]; strToUtf8(name, n_, sizeof n_);" + (_usesProbes ? " if (FIRE_UNLIKELY(asObj(obj)->h.flags & 2)) { probedSet(obj, n_, value, NULL, NULL, caller); return Undef(); }" : "") + " fireSetField(obj, value, n_, list, caller); return Undef(); }");
+            }
+            foreach (var name in Modular ? new List<string>() : fieldNames)
             {
                 get.AppendLine($"    if (strIs(name, {CStr(name)})) return gf_{Mangle(name)}(obj{tail(name, false)});");
                 set.AppendLine($"    if (strIs(name, {CStr(name)})) {{ sf_{Mangle(name)}(obj, value{tail(name, true)}); return Undef(); }}");
@@ -472,7 +565,13 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
 
             // calls: one entry per (name, number of arguments) that some class has
             var callSb = new StringBuilder();
-            foreach (var (name, argc) in _dispatchers.Where(d => !d.Name.StartsWith("operator")))
+            if (Modular)
+                callSb.AppendLine(@"    { char n_[200]; uint32_t k_; const FireMethod* m_; const RfMember* sm_; strToUtf8(name, n_, sizeof n_);
+      m_ = fireFindMethod(asObj(obj)->cls, n_, argc, &k_);
+      if (m_) return m_->fn(k_, obj, items, list, caller);
+      sm_ = rf_member(rf_classOf(asObj(obj)->cls), name, ""method"");
+      if (sm_ && (sm_->flags & 1) && sm_->pcount == (uint32_t)argc) { char u[400]; snprintf(u, sizeof u, ""'%s' is a static method - Reflect.Call only calls instance methods."", n_); return rfFail(u); } }");
+            foreach (var (name, argc) in Modular ? new List<(string Name, int Argc)>() : _dispatchers.Where(d => !d.Name.StartsWith("operator")).ToList())
             {
                 var inst = new List<int>();
                 var stat = new List<int>();
@@ -508,23 +607,15 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             {
                 // (without Reflect.New the constructors are not kept: rf_new is not called)
                 if (!_reflNew || !_classes.TryGetValue(rc.Name, out var info)) continue;
-                var byArgc = new List<string>();
-                foreach (var ctor in rc.AllConstructors)
+                // (modules: the class of a library makes its objects in its own file)
+                if (Modular && !IsOwnClass(rc))
                 {
-                    int required = ctor.ParamCount;
-                    while (required > 0 && required - 1 < ctor.ParamDefaults.Count && ctor.ParamDefaults[required - 1] != null) required--;
-                    for (int argc = required; argc <= ctor.ParamCount; argc++)
-                    {
-                        if (rc.FindConstructor(argc) != ctor) continue;
-                        var (pre, defaults) = DefaultArgs(ctor, argc, "o", "list");
-                        string items = string.Concat(Enumerable.Range(0, argc).Select(i => $", items[{i}]"));
-                        var access = ctor.Access ?? AccessModifier.Public;
-                        string guard = CheckAccess && access != AccessModifier.Public
-                            ? $"if (!{AllowedExpr(rc, access)}) return accessDeniedNew({CStr($"The constructor of '{rc.Name}' is {DescribeAccess(access)} and cannot be called from here.")}); "
-                            : "";
-                        byArgc.Add($"            case {argc}: {{ {guard}Value o = newObject({info.Id}, {info.Fields.Count}, list); {pre}{_funcByProto[ctor].Name}(o{items}{defaults}); return o; }}");
-                    }
+                    string fn = NewFunctionName(ModIdOf(rc), rc);
+                    sb.Insert(0, $"Value {fn}(int argc, const Value* items, OwnList* list, uint32_t caller);\n");
+                    newSb.AppendLine($"    if (strIs(cname, {CStr(rc.Name)})) return {fn}(argc, items, list, caller);");
+                    continue;
                 }
+                var byArgc = NewCases(rc, info);
                 if (byArgc.Count == 0) continue;
                 newSb.AppendLine($"    if (strIs(cname, {CStr(rc.Name)})) {{");
                 newSb.AppendLine("        switch (argc) {");

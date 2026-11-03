@@ -278,7 +278,7 @@ namespace fire.Native
                         string field = cls.Fields[i];
                         if (!_fieldNames.Contains(field)) continue;
                         string tail = (FieldHasList(field) ? ", &scratch_" : "") + (FieldHasCaller(field) ? $", {cls.Id}u" : "");
-                        sb.AppendLine($"            case {i}: sf_{Mangle(field)}(o, x{tail}); leave(&scratch_); return;");
+                        sb.AppendLine($"            case {i}: {FieldFn("sf", field)}(o, x{tail}); leave(&scratch_); return;");
                     }
                     sb.AppendLine("            default: break;");
                     sb.AppendLine("        } break;");

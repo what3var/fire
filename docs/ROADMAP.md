@@ -215,14 +215,19 @@ Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 
 Zwei Teile: **getrennte Übersetzung** (Code teilen, schneller bauen) und **dynamisches Laden** (Plugins, Treiber, Natives in einer VM in fire).
 
-Stand: **Phasen A0, A und B umgesetzt** (docs/NATIVE_BACKEND.md "Klassen-Deskriptoren" und "Getrennte Übersetzung: `linkage`"): Klassen-Deskriptoren statt
+Stand: **Phasen A0, A, B und B2 umgesetzt** (docs/NATIVE_BACKEND.md "Klassen-Deskriptoren" und "Getrennte Übersetzung: `linkage`"): Klassen-Deskriptoren statt
 `switch` in den Hooks der Runtime (A0); Module mit eigener Registrierung der Zahlen über Tabellen des Programms, in einer Datei hinter `FIRE_MODULES=1` (A);
 `"linkage": "static"` (Projekt, `fire.native.json`, `--linkage`) mit Schnittstellendatei (Formatversion + ABI-Hash), Cache des Benutzers nach Inhalts-Hash,
 `ember cache clean`, Varianten je Menge von Schaltern, öffentliche Schnittstelle einer Library als Wurzel (§11), Debug-Tabellen je Modul (ein Haltepunkt in einer
-statischen Library hält); Desktop (gcc, clang, TinyCC, MinGW), wasm (Emscripten, `emar`) und ESP32 (die Module als eigene Übersetzungseinheiten der Komponente).
-Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` (Phase C), `Library.Load` und Plugins (Phase D); eine Library bedient ihre eigenen Klassen noch nicht selbst
-(alle Verteiler erzeugt das Programm - darum spart `static` heute kaum Bauzeit, siehe Messwerte); LTO; ein fertiges `.a` aus dem Cache für ESP-IDF; ein Programm,
-das eine Klasse einer Library neu deklariert, wird mit `source` gebaut.
+statischen Library hält); Desktop (gcc, clang, TinyCC, MinGW), wasm (Emscripten, `emar`) und ESP32 (die Module als eigene Übersetzungseinheiten der Komponente) (B);
+jedes Modul bedient seine eigenen Klassen (Verteiler, Feld-Helfer, `is of`, Operatoren, Typargumente), fremde über Tabellen der Member in den
+Klassen-Deskriptoren (der Rückfall der Runtime, auch die Basis für Plugins), private Member einer Library nur, wenn sie erreicht werden, Reflection-Zeilen und
+Reflect.New je Modul, Natives in C, die für sich stehen, und die JSON-Engine in der Bibliothek ihres Moduls, Sections + `--gc-sections` (B2: der zweite Bau mit
+`static` ist schneller als `source`, siehe Messwerte).
+Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` (Phase C), `Library.Load` und Plugins (Phase D); die Größe: mit `static` ist ein Programm noch
+deutlich größer als mit `source` (eine Library behält ihre Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt -
+eine Erreichbarkeit über die Modulgrenzen fehlt); Schalter wie Reflection und Probes gelten noch für alle Module (eine Variante je Menge); LTO; ein fertiges `.a`
+aus dem Cache für ESP-IDF; ein Programm, das eine Klasse einer Library neu deklariert, wird mit `source` gebaut.
 
 Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heute, Standard; `"static"`; `"shared"`):
 

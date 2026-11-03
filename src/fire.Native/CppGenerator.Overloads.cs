@@ -194,7 +194,7 @@ namespace fire.Native
         {
             _isOfTypes.Add(name);
             string enumerable = isInterface && GenericClassNames.PlainName(name) == "IEnumerable" ? $"{v}.kind == K_Array || {v}.kind == K_Buffer || {v}.kind == K_String || " : "";
-            return $"({enumerable}({v}.kind == K_Class && isof_{Mangle(name)}({v})))";
+            return $"({enumerable}({v}.kind == K_Class && {IsOfFn(name)}({v})))";
         }
 
         /// <summary>The C++ expression of the score of the value `v` for a parameter with this descriptor (Overloads.Score).</summary>
@@ -219,12 +219,12 @@ namespace fire.Native
             {
                 case 'c':
                     _ovClassNames.Add(name);
-                    return $"({v}.kind == K_Class ? ovd_{Mangle(name)}({v}) : {orUndefined})";
+                    return $"({v}.kind == K_Class ? {OvdFn(name)}({v}) : {orUndefined})";
                 case 'i':
                 {
                     _isOfTypes.Add(name);
                     string enumerable = GenericClassNames.PlainName(name) == "IEnumerable" ? $"{v}.kind == K_Array || {v}.kind == K_Buffer || {v}.kind == K_String || " : "";
-                    return $"({enumerable}isof_{Mangle(name)}({v}) ? {Overloads.InterfaceScore} : {orUndefined})";
+                    return $"({enumerable}{IsOfFn(name)}({v}) ? {Overloads.InterfaceScore} : {orUndefined})";
                 }
                 case 'g':
                 {
@@ -261,6 +261,7 @@ namespace fire.Native
                 sb.AppendLine($"FIRE_MAYBE_UNUSED static bool {testName}(Value ovc, Obj* own) {body}");
             foreach (var name in classScores ? _ovClassNames : new SortedSet<string>())
             {
+                if (Modular) { sb.Append(ModClassScore(name)); continue; }
                 sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}int ovd_{Mangle(name)}(Value v) {{");
                 sb.AppendLine($"    if (!leafAlive(v)) return {Overloads.UndefinedScore};");
                 var cases = new StringBuilder();

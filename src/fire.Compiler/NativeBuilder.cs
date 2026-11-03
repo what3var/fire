@@ -207,7 +207,7 @@ namespace fire.Compiler
                     var libraryLog = new StringBuilder();
                     var libraryWatch = Stopwatch.StartNew();
                     string obj = Path.Combine(workDir, library.LibraryName + (toolchain.EffectiveKind == "msvc" ? ".obj" : ".o"));
-                    var compile = CompilerCommand(toolchain, target, library.CFile, workDir, obj, language: "c", compileOnly: true);
+                    var compile = CompilerCommand(toolchain, target, library.CFile, workDir, obj, language: "c", compileOnly: true, sections: true);
                     libraryLog.AppendLine($"{compile.Executable} {compile.Arguments}");
                     var (ok, text) = Run(compile.Executable, compile.Arguments, workDir);
                     libraryLog.Append(text);
@@ -301,7 +301,7 @@ namespace fire.Compiler
             string compiler = ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler;
             string file = "";
             try { var info = new FileInfo(compiler); if (info.Exists) file = $"{info.Length}@{info.LastWriteTimeUtc.Ticks}"; } catch (Exception) { }
-            return string.Join("|", toolchain.EffectiveKind, compiler, file, toolchain.CStd ?? "", toolchain.Optimization ?? "", string.Join(" ", toolchain.Args ?? new()), string.Join(" ", toolchain.IncludeDirs ?? new()));
+            return string.Join("|", "sections", toolchain.EffectiveKind, compiler, file, toolchain.CStd ?? "", toolchain.Optimization ?? "", string.Join(" ", toolchain.Args ?? new()), string.Join(" ", toolchain.IncludeDirs ?? new()));
         }
 
         /// <summary>The command that puts an object file into a static library: `ar rcs` next to the compiler (`x86_64-w64-mingw32-ar`, `emar`, `llvm-ar`), `tcc -ar`, `lib` of msvc.</summary>
@@ -387,7 +387,7 @@ namespace fire.Compiler
         /// compiler, the program). <paramref name="compileOnly"/>: an object file. <paramref name="extraInputs"/>: object files that are linked too. The libraries the program asks
         /// for (`// fire-link: ...`) are read from <paramref name="programFile"/> (default: the compiled file).</summary>
         public static (string Executable, string Arguments) CompilerCommand(ToolchainDef toolchain, TargetProfile target, string cppFile, string includeDir, string exe, bool sharedLibrary = false, IEnumerable<string>? extraIncludeDirs = null, bool gui = false,
-            string language = "c++", bool compileOnly = false, IEnumerable<string>? extraInputs = null, string? programFile = null, string? natives = null)
+            string language = "c++", bool compileOnly = false, IEnumerable<string>? extraInputs = null, string? programFile = null, string? natives = null, bool sections = false)
         {
             string kind = toolchain.EffectiveKind;
             bool isC = language == "c";
@@ -456,6 +456,9 @@ namespace fire.Compiler
                 bool tcc = kind == "tcc";
                 bool small = IsSizeProfile(toolchain.Optimization) && !tcc && !debugBuild;   // (TinyCC keeps every function anyway: no sections to drop)
                 args.Append($"-std={std} {(debugBuild ? "-O0 -g" : small ? "-Os -ffunction-sections -fdata-sections" : toolchain.Optimization ?? "-O2")} ");
+                // a library of linkage "static" (ROADMAP 9): every function in its own section - the program's link drops what it does not reach
+                if (sections && !small && !tcc && !debugBuild && kind != "emscripten") args.Append("-ffunction-sections -fdata-sections ");
+                bool gcLibraries = !tcc && !debugBuild && (extraInputs ?? Array.Empty<string>()).Any(i => i.EndsWith(".a", StringComparison.OrdinalIgnoreCase));
                 if (compileOnly) args.Append("-c ");
                 // a library for the VM carries its C++ runtime (MinGW: no libgcc/libstdc++ DLLs next to it), so that it also runs on a machine without the toolchain
                 if (sharedLibrary) args.Append(tcc ? "-shared " : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "-shared -static-libgcc -static-libstdc++ " : "-shared -fPIC ");
@@ -477,7 +480,7 @@ namespace fire.Compiler
                 if (!sharedLibrary && kind != "emscripten")
                 {
                     bool apple = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
-                    if (small) args.Append(apple ? " -Wl,-dead_strip" : " -Wl,--gc-sections");
+                    if (small || gcLibraries) args.Append(apple ? " -Wl,-dead_strip" : " -Wl,--gc-sections");
                     if (toolchain.Strip != false && !debugBuild) args.Append(apple ? " -Wl,-x" : " -s");
                 }
             }

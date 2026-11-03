@@ -14,6 +14,10 @@ namespace fire.Native
     public sealed partial class CppGenerator
     {
         private bool _usesJson;
+        /// <summary>The code of this generator calls the JSON engine (fire_jsonCall): with linkage "static" a library that does gets the engine into its file.</summary>
+        private bool _callsJsonEngine;
+        /// <summary>The program, linkage "static": a library module has the JSON engine (it is not compiled with the program).</summary>
+        private bool JsonEngineInLibrary => _separate && _libraries != null && _libraries.Any(l => l.JsonEngine);
 
         private void UseJson()
         {
@@ -147,11 +151,13 @@ namespace fire.Native
         {
             var sb = new StringBuilder();
             // the engine (C, fire_json.h), then the tables of the program's classes and the functions that read them
-            if (_moduleBodies == null)   // (with library modules it is included before their code)
+            // (with library modules in one file it is included before their code; linkage "static": the engine is in the file of the module that calls it)
+            if (_moduleBodies == null && !JsonEngineInLibrary)
             {
                 sb.AppendLine("#define FIRE_JSON_IMPLEMENTATION 1");
                 sb.AppendLine("#include \"fire_json.h\"");
             }
+            else if (_moduleBodies == null) sb.AppendLine("#include \"fire_json.h\"   // (the engine: in the library of the module that calls it)");
             var rows = new List<string>();
             int listCls = -1, listItems = -1, listCount = -1, objCls = -1, objKeys = -1, objValues = -1, objCount = -1;
             var jsonById = _classList.ToDictionary(c => c.Id);
