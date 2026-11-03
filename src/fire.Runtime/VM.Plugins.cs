@@ -104,6 +104,10 @@ namespace fire.Runtime
                     if (!classes.TryGetValue(b.Name, out var hostBase)) return $"the program has no class '{b.Name}'.";
                     rc.Base = hostBase;
                 }
+            // its natives in C++ the program does not have: from the libraries next to its bytecode (C ABI, like those of a package)
+            if (plugin.PackageNatives.Count > 0)
+                PackageNativeBinding.Register(_natives, plugin.PackageNatives, plugin.PackageLibraries,
+                    file => Path.Combine(plugin.Directory, file) is var path && File.Exists(path) ? path : null);
             // the natives its code calls: the program's numbers (by name)
             var seen = new HashSet<Chunk>(ReferenceEqualityComparer.Instance);
             string? problem = null;

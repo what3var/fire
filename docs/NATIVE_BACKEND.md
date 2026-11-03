@@ -1071,6 +1071,15 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   `rf_find`/`rf_classes`/`rf_new` sehen die Klassen der Plugins. Neben das Programm schreibt der Bau `<programm>.firehost` (JSON: Ziel, Schalter, SDL, Schlüssel der
   Runtime, die Module mit Schnittstelle und Datei ihrer Bibliothek); `--host <programm>` baut ein Plugin mit diesen Schaltern (braucht das Plugin einen weiteren,
   sagt es der Bau). Ein Programm ohne `"shared"` exportiert nichts, was ein Plugin braucht: `Load` sagt, dass es keine Plugins laden kann.
+* **Natives in C++** (der Ordner `native/` des Projekts des Plugins, ein Package in C++, das es importiert): eine Datei für sich (`fire_plugin_natives.cpp`: der
+  Kopf seiner C-Datei, `fire_rt_cpp.hpp`, das C++ der Packages, deren Natives sein Code ruft, seine Thunks `fire_nat_<p>_k` - nicht die des Programms), mit dem
+  C++-Compiler übersetzt und in dieselbe Bibliothek gebunden (Linux mit `-lstdc++`, MinGW mit `-static-libstdc++`). Sie sind die **eigene Kopie** des Plugins: ihr
+  Zustand ist nicht der des Programms, auch wenn das Programm dasselbe Package importiert (Linux: mit `-fvisibility=hidden` übersetzt, wie es eine DLL ohnehin ist).
+  Unter Windows sind die Zeiger auf das Programm (`makeClassError`, ...) die der C-Datei des Plugins: der Kopf der C++-Datei sagt `FIRE_DLL_LINKED_ELSEWHERE`, dann
+  deklariert `FIRE_HOST_EXTERN` sie `extern` (die Hooks der Header sind dafür `FIRE_HOST_EXTERN` deklariert). Eine Ausnahme eines Natives (`fireError`) macht
+  `makeClassError` des Programms - eine Klasse, die nur das Plugin kennt, wird so nicht geworfen (das Programm endet mit ihr). Für die VM baut der Bau ihre
+  Bibliothek mit der C-ABI (`PackageLibrary`, wie für ein Package) und legt sie neben die `.fireplugin`-Datei; die nennt die Natives und ihre Bibliotheken
+  (`PluginBytecode.PackageNatives`/`PackageLibraries`), die VM registriert beim Laden die, die das Programm nicht hat (`PackageNativeBinding`).
 * **Linux/macOS**: das Plugin ist eine Shared Library ohne Abhängigkeiten beim Linken; was es vom Programm und den Libraries braucht, findet der Lader im Programm
   (`-rdynamic`) und in den Bibliotheken, die es schon geladen hat.
 * **Windows** (MinGW): die DLL des Plugins importiert aus der DLL der Runtime und den DLLs der Module des Programms (ihre Namen aus `.firehost`, `--host` ist dort nötig);
@@ -1082,13 +1091,14 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   ausgeführt. Code, der Variablen der obersten Ebene seiner Datei oder `extern`/versuchbare Natives benutzt, lädt nicht (mit einer Meldung). Eine Einheit der VM
   trägt ihre Dimensionen und die versteckte Klasse ihrer Umrechnung beim Namen - nur die Einheiten, die ein Text nennen darf, kommen zu denen des Programms
   (`Unit.AddCustomUnits`; ein gepacktes Programm kennt seine Liste nicht und nimmt sie nicht auf).
-* Noch nicht: Natives in C++ und `class extends` einer Klasse des Programms oder einer Library in einem Plugin; JSON von Objekten eines Plugins und benannte
+* Noch nicht: `class extends` einer Klasse des Programms oder einer Library in einem Plugin; JSON von Objekten eines Plugins und benannte
   Argumente auf ihnen im nativen Programm; Debuggen eines Plugins; msvc.
 * Getestet (`FIRE_TESTS_ONLY=linkage`, nur die Plugins mit `FIRE_TESTS_FILTER=plugin`): ein Projekt mit der Library `Api`, dem Programm (shared) und dem Plugin `Kit`
   - Interface, Basisklasse mit überschriebenen Methoden, Reflect.New/Get/Call, Type.Of, Ausnahmen beider Richtungen, Enum, statische Felder - nativ, in der VM und
   unter Windows (MinGW, Wine); eine andere Schnittstelle von `Api`, ein Programm ohne `"shared"`, andere Schalter. Das Plugin `Meter` mit Einheiten: eigene (neue
   Dimension, Faktor, Offset, eigene Umrechnungsfunktionen), dBm von `Api` (Umrechnungsfunktionen einer Library, auch im Programm), die von fire, Einheiten des
-  Programms hinein und zurück (`ft`, `apples`), Texte mit seinen Einheiten, ein Name aus einer hinzugefügten und einer Dimension des Programms.
+  Programms hinein und zurück (`ft`, `apples`), Texte mit seinen Einheiten, ein Name aus einer hinzugefügten und einer Dimension des Programms; dazu Natives in C++ im Ordner `native/` des Projekts
+  (`std::string`, eigener Zustand, eine Ausnahme aus C++).
 
 ### Debuggen
 

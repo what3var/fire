@@ -467,7 +467,25 @@ static class LinkageTests
             any m = Reflect.Call(g, "Measure", [])
             print(m + " " + m:mW + " " + (m * 2) + " " + (m * 1s) + " " + Reflect.Call(g, "Level", []):W + " " + (Reflect.Call(g, "Level", []) == 30.0dBm))
             any c = Reflect.Call(g, "Pears", [])
+            print(Reflect.Call(g, "Native", [21]))
             print(c + " " + (c * 4apples) + " " + (c * 1m / 1s) + " " + (4apples * 1s) + " " + "3mm".ToFloat() + " " + "2ft".ToFloat() + " " + (1.0ft + 1.0m) + " " + (m * c))
+        }
+        """;
+
+    /// <summary>The natives in C++ of the plugin Meter (its project's folder native/): the C++ library, state of its own.</summary>
+    private const string PluginMeterCpp = """
+        #include <string>
+        namespace fire {
+        static int mt_count = 0;
+        inline Value mt_twice(Value a) { mt_count++; return Int(a.i * 2); }
+        inline Value mt_label(Value a, OwnList* list) {
+            std::string text = "n=" + std::to_string((long long)a.i);
+            Str* s = allocStr((uint32_t)text.size(), list);
+            for (size_t i = 0; i < text.size(); i++) strChars(s)[i] = (fire_char16)text[i];
+            return StrV(s);
+        }
+        inline Value mt_calls() { return Int(mt_count); }
+        inline Value mt_check(Value a) { if (a.i < 0) return fireError("ArgumentException", "negative in C++"); return a; }
         }
         """;
 
@@ -495,12 +513,17 @@ static class LinkageTests
                 any Measure() { return 4.0bn }
                 any Level() { return 30.0dBm }
                 any Pears() { return 3.0pears / 1kV }
+                string Native(int x) {
+                    var thrown = ""
+                    try { __mt_check(-1) } catch (ArgumentException e) { thrown = e.message }
+                    return __mt_twice(x) + " " + __mt_label(x) + " " + __mt_twice(1) + " " + __mt_calls() + " " + __mt_check(5) + " " + thrown
+                }
             }
         }
         """;
 
     private const string PluginUnitsExpected = "5300mV 39.37007874015748in 11in 293.15K 1W 8mW 6pears*m 2005m 7in 2kV 32mW\n39.37007874015748in 10in 36in 2000.0000000000002m\n"
-        + "4bn 16mW 8bn 4s*W(×0.001) 1W True\n3pears/kV 12pears*apples/kV 3pears*m/kV*s 4apples*s 3mm 2ft 4.2808398950131235ft 12pears*W/V(×1E-06)\n";
+        + "4bn 16mW 8bn 4s*W(×0.001) 1W True\n42 n=21 2 2 5 negative in C++\n3pears/kV 12pears*apples/kV 3pears*m/kV*s 4apples*s 3mm 2ft 4.2808398950131235ft 12pears*W/V(×1E-06)\n";
 
     private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
         + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 3\nnope: Unknown class 'Kit.Nope'.\n";
@@ -515,7 +538,8 @@ static class LinkageTests
         Write(s, "Api/Api.fireproj", """{ "name": "Api", "type": "library" }""");
         Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
         Write(s, "Kit/kit.script", PluginKit);
-        Write(s, "Meter/Meter.fireproj", """{ "name": "Meter", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
+        Write(s, "Meter/Meter.fireproj", """{ "name": "Meter", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" }, "native": { } }""");
+        Write(s, "Meter/native/meter.hpp", PluginMeterCpp);
         Write(s, "Meter/meter.script", PluginMeter);
         Write(s, "Host/Host.fireproj", """{ "name": "Host", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "shared" } }""");
         Write(s, "Host/main.script", PluginHost);

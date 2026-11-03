@@ -100,9 +100,9 @@
 #define FIRE_RT_DATA
 #define FIRE_RT_FN
 #endif
-#ifdef FIRE_DLL_LINKED
+#if defined(FIRE_DLL_LINKED) && !defined(FIRE_DLL_LINKED_ELSEWHERE)
 #define FIRE_HOST_EXTERN   /* (a pointer of this DLL, see above) */
-#else
+#else   /* (FIRE_DLL_LINKED_ELSEWHERE: the natives in C++ of a fire plugin - the pointers are those of its C file) */
 #define FIRE_HOST_EXTERN extern
 #endif
 #if defined(__GNUC__) || defined(__clang__)
@@ -3300,7 +3300,7 @@ FIRE_FN Value strArrayOf(const char* const* items, uint32_t n, OwnList* list) {
     return ArrV(a);
 }
 /* Generated: builds a ReflectionException (message) owned by the global scope. */
-Value makeReflectError(Value message);
+FIRE_HOST_EXTERN Value makeReflectError(Value message);
 #endif
 
 FIRE_FN const char* kindName(Value v) {
@@ -3522,9 +3522,9 @@ struct Handler {
 /* Does the exception match the catch type (`typeId` as stored in HandlerInfo.types; FIRE_EXC_ANY: `Exception`)? The descriptor of its class lists its types. */
 FIRE_RT_FN bool excMatches(Value exception, int32_t typeId);
 /* Generated: builds an IndexOutOfBoundsException (message, index, length) owned by the global scope. */
-Value makeIndexError(Value message, int64_t index, int64_t length);
+FIRE_HOST_EXTERN Value makeIndexError(Value message, int64_t index, int64_t length);
 /* Generated: builds a UnitMismatchException (message, expected unit, actual unit) owned by the global scope. */
-Value makeUnitError(Value message, Value expected, Value actual);
+FIRE_HOST_EXTERN Value makeUnitError(Value message, Value expected, Value actual);
 
 FIRE_FN void pushHandler(Handler* h) { h->prev = g_handlers; h->origin = h; h->finallyOnly = 0; g_handlers = h; }
 FIRE_FN void popHandler(void) { g_handlers = g_handlers->prev; }
@@ -3742,7 +3742,7 @@ FIRE_FN void unitMismatch(Value v, Value expectedText) {
 #ifdef FIRE_EXCEPTIONS
 /* Generated: the exception object of the class `cls` (a class that natives of packages throw: `exceptions` of the package) with the message, or an undefined
  * value. */
-Value makeClassError(const char* cls, Value message);
+FIRE_HOST_EXTERN Value makeClassError(const char* cls, Value message);
 #endif
 /* An exception of the program that a native of a package throws (`fireError("TimeException", "text")`): thrown, or - when the program has no exceptions - the
  * end of the program. */
@@ -4005,7 +4005,7 @@ FIRE_FN Value fire_asciiMessage(const char* text) {
 }
 
 /* Generated: builds an AccessDeniedException (message) owned by the global scope. */
-Value makeAccessError(Value message);
+FIRE_HOST_EXTERN Value makeAccessError(Value message);
 
 /* A private or protected member used from where it may not be (SPEC 5.7): an AccessDeniedException, or the end of the program when there are no exceptions. */
 FIRE_FN Value accessDenied(const char* text) {
@@ -4066,10 +4066,10 @@ FIRE_FN void setDefaultTimeout(Value t) {
 }
 
 /* Generated: builds a DestroyedException (message) owned by the global scope. */
-Value makeDestroyedError(Value message);
+FIRE_HOST_EXTERN Value makeDestroyedError(Value message);
 
 /* Generated: builds a DivideByZeroException (message) owned by the global scope. */
-Value makeDivideError(Value message);
+FIRE_HOST_EXTERN Value makeDivideError(Value message);
 
 FIRE_FN Value divideByZero(void) {
 #ifdef FIRE_EXCEPTIONS
@@ -5149,7 +5149,7 @@ FIRE_FN void externPtrFree(ExternPtr* e) {
  * The system's part is the platform layer's (fire_plat_dlopen, fire_plat_dlsym); a call goes through the thunk the program generated for the signature - one for
  * every text of the program that is a signature (fire_libThunk, NULL for any other). The errors are thrown by the fire code of the class (the same as in the VM). ---- */
 typedef Value (*FireLibThunk)(void* fn, const Value* args, OwnList* list);
-FireLibThunk fire_libThunk(const char* signature);   /* (generated: by the signature without white space) */
+FIRE_HOST_EXTERN FireLibThunk fire_libThunk(const char* signature);   /* (generated: by the signature without white space) */
 
 /* The signature without white space; 0 when it does not fit. */
 FIRE_FN int fire_libSigNorm(Value text, char* out, uint32_t cap) {

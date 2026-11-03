@@ -71,6 +71,8 @@ namespace fire.Native
             public required ModuleSpec Spec;
             public required string Body;
             public required string NativeThunks;
+            /// <summary>The C++ functions of the natives in C++ its thunks call.</summary>
+            public IReadOnlyList<string> CppNatives = Array.Empty<string>();
             public required ModuleNeeds Needs;
             public required ModuleFlags Flags;
             /// <summary>Linkage "static": the natives in C of the module's own import (they go into its file).</summary>
@@ -361,7 +363,7 @@ namespace fire.Native
             string nativesC = separate ? generator.LibraryNativesC() : "";
             return new ModuleOutput
             {
-                Spec = spec, Body = body, NativeThunks = generator._libraryThunks ?? "", Needs = generator.CollectNeeds(), Flags = generator.CurrentFlags,
+                Spec = spec, Body = body, NativeThunks = generator._libraryThunks ?? "", CppNatives = generator._nativeThunks.Keys.ToList(), Needs = generator.CollectNeeds(), Flags = generator.CurrentFlags,
                 NativesC = nativesC, JsonEngine = generator._callsJsonEngine, Exports = generator._funcs.Where(f => f.Export != null && !f.External).Select(f => f.Export!).Distinct().ToList(),
                 HostImports = new SortedDictionary<string, string>(generator._hostImports, StringComparer.Ordinal), LinkC = dll ? generator.LibraryLinkC() : "",
             };
@@ -602,7 +604,9 @@ namespace fire.Native
             {
                 string ps = ThunkParams(argc, needsList);
                 string args = string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").Concat(needsList ? new[] { "list" } : Array.Empty<string>()));
-                sb.Append(HostDecl($"fire_nat_{Px}{index}", $"Value fire_nat_{Px}{index}({ps});   // {function}"));
+                // (a plugin: in its own file of natives - not the program's)
+                string thunkDecl = $"Value fire_nat_{Px}{index}({ps});   // {function}";
+                sb.Append(_plugin ? thunkDecl + "\n" : HostDecl($"fire_nat_{Px}{index}", thunkDecl));
                 thunks.AppendLine($"extern \"C\" fire::Value fire_nat_{Px}{index}({ps.Replace("Value", "fire::Value").Replace("OwnList", "fire::OwnList")}) {{ using namespace fire; return {function}({args}); }}");
             }
             _libraryThunks = thunks.ToString();

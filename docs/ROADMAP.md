@@ -230,10 +230,11 @@ für sich, die thread-lokalen Variablen hinter `fire_tl()`, was eine DLL vom Pro
 Plugins (Phase D b, docs/NATIVE_BACKEND.md "Plugins"): `--linkage plugin` baut die Klassen eines Programms als Modul für sich (`.so`/`.dll` und `.fireplugin` für die
 VM), ein Programm mit `"shared"` lädt es mit `Library.Load` (Prüfung nur über Hashes: die Schnittstellen der Module, die Konfiguration der Runtime), die Runtime
 registriert seine Klassen (Deskriptoren, Typen von `catch` und Enums nach Namen, Reflection, statische Initialisierer) und seine Einheiten (nach Dimensionen, Faktor
-und Symbol, neue Dimensionen auf freien Plätzen); das Programm ist dann eine offene Welt;
+und Symbol, neue Dimensionen auf freien Plätzen); Natives in C++ des Plugins in seiner Bibliothek (eine eigene Kopie; für die VM eine Bibliothek mit der C-ABI neben
+dem Bytecode); das Programm ist dann eine offene Welt;
 Linux, Windows (MinGW, unter Wine) und die VM (sie lädt den Bytecode, Entscheidung 9.8).
 Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), in Plugins
-Natives in C++, `class extends` fremder Klassen, JSON ihrer Objekte und benannte Argumente im nativen Programm, Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
+`class extends` fremder Klassen, JSON ihrer Objekte und benannte Argumente im nativen Programm, Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
 Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur

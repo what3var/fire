@@ -87,7 +87,10 @@ print(d.Name())                            // my driver
 - A plugin may declare **units** of its own (`unit`, `prefixed unit`, `coerce`) and use those of fire, of its libraries and the program's values with
   theirs: a unit is the program's when it has the same dimensions, factor and symbol; a new dimension of the plugin (`3pears`) takes a free place - a native
   program has room for 16 dimensions in all, more and `Load` says so.
-- Not yet: plugins with natives in C++ or with `class extends` of a class of the program or a library; in a native program JSON
+- A plugin may have **natives in C++** (the folder `native/` of its project, a package in C++): they are built into the plugin's library (and, for the VM,
+  into a library next to its `.fireplugin` file). They are the plugin's own copy: their state is not the program's, even when the program imports the same
+  package. An exception they throw (`fireError`) must be a class the program knows (`ArgumentException`, a class of a library).
+- Not yet: plugins with `class extends` of a class of the program or a library; in a native program JSON
   (`Json.Serialize`) of objects of a plugin's classes and named arguments in calls of the program on them; debugging a plugin.
 
 ### Functions that can fail: `try Name(...)`
