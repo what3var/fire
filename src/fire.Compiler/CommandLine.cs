@@ -46,6 +46,8 @@ namespace fire.Compiler
         public IReadOnlyList<string>? ProgramArguments { get; init; }
         /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
         public bool KeepSources { get; init; }
+        /// <summary>`--keep-all`: a native build keeps every class and member, also what the program does not reach (`"trim": "all"` in fire.native.json).</summary>
+        public bool KeepAll { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
         public string? ProjectName { get; init; }
         /// <summary>Set if the command line is invalid (message for the user).</summary>
@@ -74,8 +76,8 @@ namespace fire.Compiler
             """
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
-              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--keep-all]
+              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>] [--keep-all]
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
               fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
@@ -94,6 +96,8 @@ namespace fire.Compiler
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
+            --keep-all  A native build keeps every class and member, also what the program does not reach (default: only what it reaches; "trim" in fire.native.json,
+                    docs/NATIVE_BACKEND.md). A debug build always keeps everything.
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
                     typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).
@@ -135,7 +139,7 @@ namespace fire.Compiler
             TypeCheckMode? typeChecking = null;
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
-            bool keep = false;
+            bool keep = false, keepAll = false;
             string? output = null;
             var defines = new List<string>();
             List<string>? programArguments = null;
@@ -203,6 +207,11 @@ namespace fire.Compiler
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "-p must be followed by the name of a project.");
                     projectName = Unquote(value);
                 }
+                else if (string.Equals(arg, "--keep-all", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--keep-all is only available with build, native and test.");
+                    keepAll = true;
+                }
                 else if (string.Equals(arg, "--keep", StringComparison.OrdinalIgnoreCase))
                 {
                     if (command != CommandKind.Build) return Fail(command, "--keep is only available with build.");
@@ -266,6 +275,7 @@ namespace fire.Compiler
                 ConfigFile = configFile,
                 ProgramArguments = programArguments,
                 KeepSources = keep,
+                KeepAll = keepAll,
                 ProjectName = projectName,
                 OutputGiven = output != null,
                 OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
@@ -412,9 +422,16 @@ namespace fire.Compiler
             if (options.ConfigFile != null)
             {
                 if (!File.Exists(options.ConfigFile)) throw new fire.Native.NativeConfigException($"Configuration not found: {options.ConfigFile}");
-                return fire.Native.NativeConfig.Load(options.ConfigFile);
+                return KeepAll(fire.Native.NativeConfig.Load(options.ConfigFile), options);
             }
-            return fire.Native.NativeConfig.FindFor(options.Files[0]);
+            return KeepAll(fire.Native.NativeConfig.FindFor(options.Files[0]), options);
+        }
+
+        /// <summary>`--keep-all` goes before the `"trim"` of the configuration.</summary>
+        private static fire.Native.NativeConfig KeepAll(fire.Native.NativeConfig config, CommandLineOptions options)
+        {
+            if (options.KeepAll) config.Trim = fire.Native.TrimMode.All;
+            return config;
         }
 
         /// <summary>`build` with the native engine: translate for the target and let the toolchain build the program (or write the files of a project).</summary>
@@ -442,7 +459,7 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = NativeBuilder.WithRequestedSdl(config.ResolveTarget(options.TargetName), null);   // (only the sources: SDL2 for a window, unless FIRE_SDL or the target say 3)
-                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options));
+                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options), trim: config.Trim);
                 string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
                 NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives);
@@ -494,7 +511,7 @@ namespace fire.Compiler
             string engine = options.Engine ?? "vm";
             if (engine == "native")
             {
-                try { config = options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(files[0]); }
+                try { config = KeepAll(options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(files[0]), options); }
                 catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
             }
 
@@ -637,7 +654,7 @@ namespace fire.Compiler
                     stdout.WriteLine($"{package} (package, import \"{plan.Project.Project.ImportName}\")");
                     return ExitOk;
                 }
-                fire.Native.NativeConfig config = options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(plan.Project.FilePath);
+                fire.Native.NativeConfig config = KeepAll(options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(plan.Project.FilePath), options);
                 string? engine = ChooseEngine(options.Engine, plan.Settings.Engine ?? config.Engine, options.TargetName ?? plan.Settings.Target, config, stderr);
                 if (engine == null) return ExitUsage;
                 string? output = options.OutputGiven ? options.OutputFile : plan.Settings.Output;

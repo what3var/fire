@@ -25,7 +25,11 @@ namespace fire.Compiler
     /// "pure text splicing" semantics of `#include` (SPEC 8.1.5): after
     /// insertion it can no longer be distinguished whether a line originally
     /// came from the root file or an inserted file.</summary>
-    public sealed record ProcessedSource(string Source, IReadOnlyList<string> Usings, string? Name = null);
+    public sealed record ProcessedSource(string Source, IReadOnlyList<string> Usings, string? Name = null)
+    {
+        /// <summary>The prelude of a package that says `"serializable": false` (docs/JSON.md): its classes are excluded from JSON.</summary>
+        public bool NotSerializable { get; init; }
+    }
 
     /// <summary>The files embedded in a program while it is preprocessed: the same file is stored once (the id of a resource is its index).</summary>
     public sealed class ResourceTable

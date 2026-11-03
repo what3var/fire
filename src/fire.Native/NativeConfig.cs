@@ -19,6 +19,10 @@ namespace fire.Native
         public string? Target { get; set; }
         /// <summary>The default toolchain (a built-in name or a key of <see cref="Toolchains"/>) for targets that name none themselves; null: the first one found on this machine.</summary>
         public string? Toolchain { get; set; }
+        /// <summary>What a native build leaves out (docs/NATIVE_BACKEND.md, "Größe des Programms"): <see cref="TrimMode.Reached"/> (null, the default) keeps only what the program
+        /// reaches, <see cref="TrimMode.Reflection"/> keeps every class as soon as reflection looks a class up by its name (like the VM), <see cref="TrimMode.All"/> keeps everything
+        /// (`--keep-all`; a debug build always does).</summary>
+        public TrimMode? Trim { get; set; }
         public Dictionary<string, TargetDef> Targets { get; set; } = new();
         public Dictionary<string, ToolchainDef> Toolchains { get; set; } = new();
 
@@ -118,6 +122,18 @@ namespace fire.Native
             if (ToolchainSetup.Detect() is { } detected) return detected.Toolchain;
             return ToolchainDef.BuiltIn["gcc"];
         }
+    }
+
+    /// <summary>What a native build keeps of the program (`"trim"` in fire.native.json): the value names what stays.</summary>
+    public enum TrimMode
+    {
+        /// <summary>Only what the program reaches (the default): classes that are made or used, their members that are called, plus `[Keep]`. A lookup of a class by its
+        /// name (`Reflect.New("X")`, `Type.Named("X")`, `Reflect.Classes()`) sees only these classes.</summary>
+        Reached,
+        /// <summary>Like <see cref="Reached"/>, but as soon as reflection looks a class up by its name, every class of the program stays (the VM behaves so).</summary>
+        Reflection,
+        /// <summary>Everything: every class with all its members (`--keep-all`, debug builds).</summary>
+        All,
     }
 
     public sealed class NativeConfigException : Exception

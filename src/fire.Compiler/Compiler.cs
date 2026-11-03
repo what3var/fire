@@ -755,6 +755,25 @@ namespace fire.Compiler
             return meta;
         }
 
+        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/NATIVE_BACKEND.md) and `[NotSerializable]` before the class (docs/JSON.md).</summary>
+        private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
+        {
+            static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;
+            rc.Keep = Has(cd.Attributes, "Keep");
+            if (Has(cd.Attributes, "NotSerializable")) rc.NotSerializable = true;
+            foreach (var member in cd.Members)
+            {
+                (string? name, IReadOnlyList<AttributeDecl>? attributes) = member switch
+                {
+                    FieldDecl f => (f.Name, f.Attributes),
+                    PropertyDecl p => (p.Name, p.Attributes),
+                    MethodDecl m => (m.Name, m.Attributes),
+                    _ => ((string?)null, (IReadOnlyList<AttributeDecl>?)null),
+                };
+                if (name != null && Has(attributes, "Keep")) (rc.KeptMembers ??= new()).Add(name);
+            }
+        }
+
         private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program)
         {
             // the run-time types of the enums first: the attributes of the classes may name a flag enum
@@ -764,6 +783,7 @@ namespace fire.Compiler
                 if (stmt is ClassDecl cd)
                 {
                     classes[cd.Name] = new RuntimeClass(cd.Name, cd);
+                    MarkKeepAndSerializable(classes[cd.Name], cd);
                     if (Reflection)
                     {
                         classes[cd.Name].Meta = BuildClassMeta(cd);

@@ -486,6 +486,11 @@ namespace fire.Compiler
             }
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             var compiled = Compiler.Compile(program, resolveResult, natives);
+            // the classes of a package with `"serializable": false` (docs/JSON.md)
+            var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));
+            if (notSerializable.Count > 0)
+                foreach (var rc in compiled.Classes.Values)
+                    if (rc.Decl != null && notSerializable.Contains(rc.Decl.Source)) rc.NotSerializable = true;
             compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)
             compiled.CustomUnits = fire.Values.Unit.CustomUnits.ToList();   // (read by Parser.ParseMultiple)
 

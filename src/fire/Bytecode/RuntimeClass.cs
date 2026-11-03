@@ -101,6 +101,25 @@ namespace fire.Bytecode
         /// <summary>Class of the reflection library (`Reflect`, `Type`, `Member`, `Selector`): for the access check the caller BEFORE it counts.</summary>
         public bool IsReflectionHelper { get; set; }
 
+        /// <summary>`[Keep]` before the class (SPEC 5.12): a native build keeps the class with all its members even when the program does not reach it
+        /// (not inherited by derived classes). The VM keeps everything anyway.</summary>
+        public bool Keep { get; set; }
+
+        /// <summary>The members of THIS class that are marked `[Keep]` (fields, properties, methods by name); null: none.</summary>
+        public List<string>? KeptMembers { get; set; }
+
+        /// <summary>The class itself is excluded from JSON (`[NotSerializable]` before it, or `"serializable": false` in the package that declares it, docs/JSON.md);
+        /// a derived class is excluded as well (see <see cref="IsNotSerializable"/>).</summary>
+        public bool NotSerializable { get; set; }
+
+        /// <summary>Is the class or one of its base classes excluded from JSON?</summary>
+        public bool IsNotSerializable()
+        {
+            for (var c = this; c != null; c = c.Base)
+                if (c.NotSerializable) return true;
+            return false;
+        }
+
         public List<(string Name, FunctionProto Init)> Fields { get; }
 
         /// <summary>Access modifier of each field declared in THIS class

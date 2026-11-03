@@ -31,10 +31,10 @@ namespace fire.Compiler
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
         /// <param name="chooseSdl">Which SDL a window is built with when the target does not say (<see cref="ChooseSdl"/>; null: SDL2).</param>
         public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null,
-            Func<int>? chooseSdl = null)
+            Func<int>? chooseSdl = null, TrimMode? trim = null)
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
-            var generated = CppGenerator.GenerateSources(linked, target, chooseSdl);
+            var generated = CppGenerator.GenerateSources(linked, target, chooseSdl, trim);
             return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
         }
 
@@ -90,7 +90,7 @@ namespace fire.Compiler
             // the SDL of a window: what the environment, the target or the toolchain asks for, else SDL3 when the toolchain can build it (asked only for a program with a window)
             target = WithRequestedSdl(target, toolchain);
             Func<int>? chooseSdl = toolchain.EffectiveKind is "files" or "custom" or "emscripten" ? null : () => ChooseSdl(toolchain, target);
-            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl);
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl, config.Trim);
             string cpp = program.C;
             bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);

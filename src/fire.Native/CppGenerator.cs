@@ -195,6 +195,8 @@ namespace fire.Native
         private bool _usesWindows;
         /// <summary>Which SDL the window is built with when the target does not say (see <see cref="GenerateSources"/>).</summary>
         private Func<int>? _chooseSdl;
+        /// <summary>What is left out (see <see cref="EffectiveTrim"/>).</summary>
+        private TrimMode _trim;
         private int? _sdlChosen;
         /// <summary>A `Takes` mode is used: `Takes.Children` needs the enumerator of the IEnumerable classes (fire_enumerateItems).</summary>
         private bool _usesTakeEnumerate;
@@ -238,6 +240,7 @@ namespace fire.Native
         /// <summary>The program declares actors (classes with IsActor): calls of their methods are messages.</summary>
         private bool _usesActors;
         private Func _cur = null!;   // the function that is being generated
+        private Func? _main;   // the top level (not in _funcs)
         private readonly List<string> _excTypes = new();
         /// <summary>The program uses TakeUpwards: every scope then knows its parent scope (and has an owner list).</summary>
         private bool _usesTakeUpwards;
@@ -289,15 +292,20 @@ namespace fire.Native
 
         /// <summary>Generates the C++ source of the program for <paramref name="target"/> (default: the machine this runs on).
         /// Link the program with the same target (<c>Linker.CompileAndLink(..., target:)</c>) so that its libraries are checked.</summary>
-        public static string Generate(LinkedProgram program, TargetProfile? target = null) => GenerateSources(program, target).Program;
+        public static string Generate(LinkedProgram program, TargetProfile? target = null, TrimMode? trim = null) => GenerateSources(program, target, trim: trim).Program;
+
+        /// <summary>A debug build keeps everything (the debugger sees every class and member, docs/ROADMAP.md section 8); otherwise what is asked for, by default only what is reached.</summary>
+        public static TrimMode EffectiveTrim(LinkedProgram program, TrimMode? trim) =>
+            program.ExecutionMode == VmExecutionMode.Debug ? TrimMode.All : trim ?? TrimMode.Reached;
 
         /// <summary>The program as C (<see cref="NativeSources.Program"/>) and its natives in C++ (<see cref="NativeSources.Natives"/>, null when it has none; written as
         /// <see cref="NativesFileName"/> next to the program, compiled with a C++ compiler and linked with it).</summary>
         /// <param name="chooseSdl">Asked once when the program shows a window on a desktop and the target does not name the SDL (<see cref="NativeTarget.Sdl"/>): 2 or 3
         /// (the build probes the toolchain); null: SDL2.</param>
-        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, Func<int>? chooseSdl = null)
+        /// <param name="trim">What is left out (<see cref="TrimMode"/>); null: what the program does not reach - a debug build (`#debug`, `-m DEBUG`) keeps everything.</param>
+        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, Func<int>? chooseSdl = null, TrimMode? trim = null)
         {
-            var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _chooseSdl = chooseSdl };
+            var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _chooseSdl = chooseSdl, _trim = EffectiveTrim(program, trim) };
             string c = generator.Run();
             return new NativeSources(c, generator._nativesCode);
         }
@@ -1134,7 +1142,7 @@ namespace fire.Native
         private string Run()
         {
             CollectPackages();
-            var main = new Func { Proto = null, Chunk = _program.Program.TopLevel, Kind = FuncKind.Main };
+            var main = _main = new Func { Proto = null, Chunk = _program.Program.TopLevel, Kind = FuncKind.Main };
             if (_program.Program.Classes.Values.Any(rc => rc.IsActor)) { _usesActors = true; UseThreads(); }
 
             // Fixpoint: generating code can create classes, functions and method calls, and can show that a variable may
@@ -1531,8 +1539,9 @@ namespace fire.Native
                 foreach (var cls in _classList.ToList())
                 {
                     if (cls.Rc.FieldIndex.ContainsKey(field)) continue;
-                    if (cls.Rc.FindMethodWithAccess("get_" + field, 0).Proto is { } getter) GetFunc(getter, FuncKind.Method);
-                    if (cls.Rc.FindMethodWithAccess("set_" + field, 1).Proto is { } setter) GetFunc(setter, FuncKind.Method);
+                    // (a static property is not a member of the object, see PropertyHelpers)
+                    if (cls.Rc.FindMethodWithAccess("get_" + field, 0).Proto is { IsStatic: false } getter) GetFunc(getter, FuncKind.Method);
+                    if (cls.Rc.FindMethodWithAccess("set_" + field, 1).Proto is { IsStatic: false } setter) GetFunc(setter, FuncKind.Method);
                 }
             if (_usesTakeEnumerate && _classList.Any(c => ClassIs(c.Rc, "IEnumerable")))
             {
@@ -1578,6 +1587,7 @@ namespace fire.Native
                     }
             }
             RegisterReflectionTargets();
+            RegisterKeptTargets();
             RegisterJsonTargets();
             foreach (var cls in _classList.ToList())
                 for (var rc = cls.Rc; rc != null; rc = rc.Base)
@@ -3598,6 +3608,7 @@ namespace fire.Native
                     if (native.StartsWith("__refl_") && ReflectionNatives.Contains(native))
                     {
                         UseReflection();
+                        UseReflectionLevel(native);
                         if (native is "__refl_probe" or "__refl_silence" or "__refl_silence_handle") UseProbes();
                         int first = d - argc;
                         string callerArg = "g_reflCaller";

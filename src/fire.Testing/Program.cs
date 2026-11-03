@@ -18955,6 +18955,8 @@ else
                 float Scale(float k) { return this.radius * k }
                 Grow() { this.radius = this.radius + 1 }
             }
+            // (made only by its name: a native build keeps it because of [Keep])
+            [Keep]
             class Ring : Circle {
                 float hole
                 construct(float r, float h) : base(r) { this.hole = h }
@@ -19040,6 +19042,73 @@ else
             probe c2.volume changed { print("c2 " + value) }
             c2.volume = 4
             delete c2
+            """),
+        ("Weglassen: [Keep] auf Klasse und Member - per Name gemacht, gelesen und gerufen wie in der VM (nicht vererbt, Basis bleibt)", """
+            #import "reflection"
+            [Keep]
+            class Plugin {
+                int level = 7
+                construct() { }
+                construct(int l) { this.level = l }
+                string Hello(string who) { return "hello " + who + " " + this.level }
+                int Area { get { return this.level * this.level } }
+                static int Twice(int x) { return 2 * x }
+            }
+            class Base {
+                int id = 1
+                construct() { }
+            }
+            [Keep]
+            class Derived : Base {
+                string tag = "d"
+                construct() { }
+            }
+            class Tool {
+                [Keep] static int Version() { return 4 }
+                int unused = 0
+            }
+            class Used {
+                int n = 3
+                int Plain() { return this.n }
+            }
+            any p = Reflect.New("Plugin", [5])
+            print(Reflect.Call(p, "Hello", ["x"]))
+            print(Reflect.Get(Reflect.New("Plugin", []), "level") + " " + Reflect.Get(p, "Area"))
+            any d = Reflect.New("Derived", [])
+            print(Type.Of(d).Base.Name + " " + Reflect.Get(d, "id") + " " + Reflect.Get(d, "tag"))
+            any b = Reflect.New("Base", [])
+            print(Type.Of(b).Name + " " + Reflect.Get(b, "id"))
+            var u = new Used()
+            print(u.Plain())
+            print(Type.Named("Plugin").Methods().Count + " " + Type.Named("Tool").Methods().Count + " " + (Type.Named("Used") != undefined))
+            print(Type.Named("Plugin").Find("Twice").IsStatic)
+            """),
+        ("Weglassen: JSON - [NotSerializable] (geerbt) und ein Package mit \"serializable\": false sind eine ArgumentException; Deserialize<T> macht die Unterklassen aus $type", """
+            #import "json"
+            #import "ui"
+            class Shape { string name = "s" }
+            class Square : Shape { int side = 2 }
+            class Circle : Shape { float r = 1.5 }
+            class Drawing {
+                List<Shape> shapes = new List<Shape>()
+                construct() { }
+            }
+            [NotSerializable]
+            class Secret { int pin = 1234 }
+            class MoreSecret : Secret { }
+            var d = new Drawing()
+            d.shapes.Add(new Square())
+            print(Json.Serialize(d))
+            var back = Json.Deserialize<Drawing>("{\"shapes\":[{\"$type\":\"Circle\",\"r\":2.5},{\"$type\":\"Square\",\"side\":4}]}")
+            any first = back.shapes[0]
+            any second = back.shapes[1]
+            print(back.shapes.Count + " " + first.r + " " + second.side + " " + first.name)
+            try { print(Json.Serialize(new Secret())) } catch (ArgumentException e) { print(e.message) }
+            try { print(Json.Serialize(new MoreSecret())) } catch (ArgumentException e) { print(e.message) }
+            try { print(Json.Serialize(new UI.Thickness(3))) } catch (ArgumentException e) { print(e.message) }
+            try { Json.Deserialize<Drawing>("{\"shapes\":[{\"$type\":\"Secret\"}]}") } catch (ArgumentException e) { print(e.message) }
+            try { Json.Deserialize<Drawing>("{\"shapes\":[{\"$type\":\"MoreSecret\"}]}") } catch (ArgumentException e) { print(e.message) }
+            try { Json.Deserialize<Drawing>("{\"shapes\":[{\"$type\":\"UI.Label\"}]}") } catch (ArgumentException e) { print(e.message) }
             """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance
@@ -24801,6 +24870,119 @@ else
         {
             var (name, expected, actual) = task.Result;
             CheckNat($"Native == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
+        }
+
+        // Leaving out what the program does not reach (docs/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): by default ("trim": "reached") a class the
+        // program never reaches is not there for a lookup by its name - the VM has every class, so the outputs differ by design; "trim": "reflection" (once a
+        // class is looked up by name) and "trim": "all" (--keep-all, debug builds) keep them, then the output is the VM's again.
+        const string trimTitle = "Weglassen (trim): Reflection und JSON per Name in den drei Stufen, keep-trAll, Debug, Groesse des ui-Programms";
+        if (TestSelected(trimTitle))
+        {
+            string trRunTrim(string source, fire.Native.TrimMode? trim, string tag)
+            {
+                fire.Native.NativeSources generated;
+                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release), trim: trim); }
+                catch (fire.Native.NativeNotSupportedException ex) { return "nicht uebersetzbar: " + ex.Message; }
+                string exe = Path.Combine(workDir, $"trim_{tag}.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"trim_{tag}", $"-pthread -O1 -Wall -Wextra {sanitize}", exe, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return "C/C++-Compiler: " + build;
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
+                var err = p.StandardError.ReadToEndAsync();
+                string output = p.StandardOutput.ReadToEnd();
+                p.WaitForExit();
+                return p.ExitCode == 0 ? output : $"Exitcode {p.ExitCode}: {output}{err.Result}";
+            }
+            const string trByName = """
+                #import "reflection"
+                class Seen {
+                    int a
+                    construct() { this.a = 1 }
+                }
+                class Ghost {
+                    int b
+                    construct() { this.b = 2 }
+                }
+                [Keep]
+                class Kept {
+                    int c
+                    construct() { this.c = 3 }
+                }
+                class Tool {
+                    [Keep] static int Version() { return 4 }
+                }
+                var s = new Seen()
+                print(Type.Of(s).Name + " " + Reflect.Get(s, "a"))
+                try { any g = Reflect.New("Ghost", []); print("ghost " + g.b) } catch (ReflectionException e) { print("ghost: " + e.message) }
+                print(Type.Named("Ghost") == undefined)
+                any k = Reflect.New("Kept", [])
+                print("kept " + k.c)
+                print(Type.Named("Tool") != undefined)
+                var has = ""
+                foreach (n in Type.Names()) { if (n == "Seen" || n == "Ghost" || n == "Kept" || n == "Tool") { has = has + n + " " } }
+                print(has)
+                """;
+            string trVmByName = vmOutput(trByName);
+            CheckNat("Weglassen (trim): die VM findet jede Klasse per Name", trVmByName == "Seen 1\nghost 2\nFalse\nkept 3\nTrue\nGhost Kept Seen Tool \n", trVmByName);
+            string trReached = trRunTrim(trByName, null, "reached");
+            CheckNat("Weglassen (trim): reached (Standard) - eine nie erreichte Klasse ist per Name unbekannt, [Keep] auf Klasse und Member bleibt",
+                trReached == "Seen 1\nghost: Unknown class 'Ghost'.\nTrue\nkept 3\nTrue\nKept Seen Tool \n", trReached);
+            string trReflection = trRunTrim(trByName, fire.Native.TrimMode.Reflection, "reflection");
+            CheckNat("Weglassen (trim): reflection - sobald eine Klasse per Name gesucht wird, bleibt jede (wie die VM)", trReflection == trVmByName, trReflection);
+            string trAll = trRunTrim(trByName, fire.Native.TrimMode.All, "all");
+            CheckNat("Weglassen (trim): all - alles bleibt (wie die VM)", trAll == trVmByName, trAll);
+
+            // JSON: "$type" names only the classes of the declared types (with their subclasses); a class outside them is unknown natively, unless everything is kept
+            const string trJson = """
+                #import "json"
+                class Shape { string name = "s" }
+                class Square : Shape { int side = 2 }
+                class Lonely { int never = 5 }
+                class Box {
+                    Shape shape
+                    construct() { }
+                }
+                print(Json.Serialize(new Square()))
+                try {
+                    var b = Json.Deserialize<Box>("{\"shape\":{\"$type\":\"Lonely\"}}")
+                    any x = b.shape
+                    print("lonely " + x.never)
+                } catch (JsonException e) { print("json: " + e.message) }
+                """;
+            string trVmJson = vmOutput(trJson);
+            CheckNat("Weglassen (trim): JSON in der VM - $type darf jede Klasse nennen", trVmJson == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\nlonely undefined\n", trVmJson);
+            string trJsonReached = trRunTrim(trJson, null, "json_reached");
+            CheckNat("Weglassen (trim): JSON reached - $type ausserhalb der deklarierten Typen (und ihrer Unterklassen) ist eine unbekannte Klasse",
+                trJsonReached == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\njson: $.shape: unknown class 'Lonely'.\n", trJsonReached);
+            string trJsonAll = trRunTrim(trJson, fire.Native.TrimMode.All, "json_all");
+            CheckNat("Weglassen (trim): JSON all - wie die VM", trJsonAll == trVmJson, trJsonAll);
+            // what JSON pulls in: writing only the objects the program makes; reading the declared classes, their subclasses and the classes of their fields
+            string trGenerated(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release)).Program;
+            string trWriteOnly = trGenerated("#import \"json\"\nclass P { int x = 1 }\nclass Unused { int y = 2 }\nclass Other : P { }\nprint(Json.Serialize(new P()))");
+            string trReading = trGenerated("#import \"json\"\nclass P { int x = 1\n Q q }\nclass Q { int z }\nclass Unused { int y = 2 }\nclass Other : P { }\nprint(Json.Deserialize<P>(\"{}\").x)");
+            string trAnySlot = trGenerated("#import \"json\"\nclass P { int x = 1\n any free }\nclass Unused { int y = 2 }\nprint(Json.Deserialize<P>(\"{}\").x)");
+            CheckNat("Weglassen (trim): JSON - Schreiben zieht keine Klassen nach, Lesen die deklarierten (mit Unterklassen und Feldtypen), ein any-Feld alle",
+                !trWriteOnly.Contains("{\"Unused\"") && !trWriteOnly.Contains("{\"Other\"") && trWriteOnly.Contains("{\"P\"")
+                && trReading.Contains("{\"Other\"") && trReading.Contains("{\"Q\"") && !trReading.Contains("{\"Unused\"") && trAnySlot.Contains("{\"Unused\""), "");
+
+            // a debug build keeps everything (the debugger, ROADMAP section 8); the configuration and the command line
+            var trDebugLinked = new Linker().CompileAndLink(new[] { "#debug\nprint(1)" }, null, null, null);
+            var trReleaseLinked = new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release);
+            CheckNat("Weglassen (trim): ein Debug-Build behaelt alles; \"trim\" in fire.native.json und --keep-all",
+                fire.Native.CppGenerator.EffectiveTrim(trDebugLinked, null) == fire.Native.TrimMode.All
+                && fire.Native.CppGenerator.EffectiveTrim(trReleaseLinked, null) == fire.Native.TrimMode.Reached
+                && fire.Native.CppGenerator.EffectiveTrim(trReleaseLinked, fire.Native.TrimMode.Reflection) == fire.Native.TrimMode.Reflection
+                && fire.Native.NativeConfig.Parse("{\"trim\": \"all\"}").Trim == fire.Native.TrimMode.All
+                && fire.Native.NativeConfig.Parse("{\"trim\": \"reflection\"}").Trim == fire.Native.TrimMode.Reflection
+                && fire.Native.NativeConfig.Parse("{}").Trim == null
+                && CommandLineParser.Parse(new[] { "build", "a.fire", "--keep-all" }).KeepAll
+                && CommandLineParser.Parse(new[] { "run", "a.fire", "--keep-all" }).Error != null);
+
+            // the size: the minimal ui program (a window, a root, one label) - 7.85 MB of C before section 11
+            const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
+            var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
+            int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
+            int trUiAll = fire.Native.CppGenerator.GenerateSources(trUiLinked, trim: fire.Native.TrimMode.All).Program.Length;
+            CheckNat("Weglassen (trim): das minimale ui-Programm bleibt klein (unter 3 MB C; keep-all ist mehr als doppelt so gross)", trUiSize < 3_000_000 && trUiAll > 2 * trUiSize, $"{trUiSize} / keep-all {trUiAll}");
         }
 
         // SChannel, the TLS of the Windows platform: the TLS case built for Windows with MinGW and run under Wine (when both are on this machine) must print what the VM prints

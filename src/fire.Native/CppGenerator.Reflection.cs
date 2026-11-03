@@ -8,16 +8,26 @@ using fire.Values;
 namespace fire.Native
 {
     /// <summary>
-    /// Reflection (`#import "reflection"`, SPEC 8.13) and `probe`/`silence` (SPEC 8.14) in the native backend. When a program calls one of the `__refl_*`
-    /// functions every class of the program is generated (a class can be reached by its name), with its constructors, methods and the field helpers of
-    /// all its names; the descriptions are tables, the access by name is generated code over the field helpers and dispatchers.
+    /// Reflection (`#import "reflection"`, SPEC 8.13) and `probe`/`silence` (SPEC 8.14) in the native backend. What a program can reach by name depends on the
+    /// `__refl_*` functions it calls (levels, docs/NATIVE_BACKEND.md "Größe des Programms"): the members of an object by name (Get/Set/Has, probes) need the fields
+    /// and property accessors of the classes whose objects exist, Reflect.Call their instance methods, Reflect.New the constructors of the classes in the tables.
+    /// The tables describe the classes the program reaches (made, used, their bases, `[Keep]`); with `"trim": "reflection"` every class as soon as a class is looked up
+    /// by its name, with `"trim": "all"` always every class. The descriptions are tables, the access by name is generated code over the field helpers and dispatchers.
     /// </summary>
     public sealed partial class CppGenerator
     {
-        /// <summary>The program uses reflection: all classes are generated and the tables are written.</summary>
+        /// <summary>The program uses reflection: the tables are written.</summary>
         private bool _usesReflection;
         /// <summary>The program uses `probe`: the field setters look for probes.</summary>
         private bool _usesProbes;
+        /// <summary>Members of objects by name (Reflect.Get/Set/Has, Selector, probes): the fields and property accessors of every class whose objects exist.</summary>
+        private bool _reflMembers;
+        /// <summary>Reflect.Call: every instance method of the classes whose objects exist.</summary>
+        private bool _reflCall;
+        /// <summary>Reflect.New: the constructors of every class of the tables.</summary>
+        private bool _reflNew;
+        /// <summary>A class is looked up by its name (Type, Reflect.New, Reflect.Classes): with `"trim": "reflection"` the tables then have every class.</summary>
+        private bool _reflByName;
 
         private void UseReflection()
         {
@@ -30,9 +40,30 @@ namespace fire.Native
         private void UseProbes()
         {
             UseReflection();
+            UseReflectionLevel("__refl_probe");   // (a probe on a computed property calls its getter: the accessors are needed as for Reflect.Get)
             if (_usesProbes) return;
             _usesProbes = true;
             _version++;
+        }
+
+        /// <summary>What a reflection native needs of the program (see the fields above).</summary>
+        private void UseReflectionLevel(string native)
+        {
+            void Raise(ref bool level)
+            {
+                if (level) return;
+                level = true;
+                _version++;
+            }
+            switch (native)
+            {
+                case "__refl_get": case "__refl_set": case "__refl_has": case "__refl_member_kind": case "__refl_probe": case "__refl_silence": case "__refl_silence_handle":
+                    Raise(ref _reflMembers); break;
+                case "__refl_call": Raise(ref _reflCall); break;
+                case "__refl_new": Raise(ref _reflNew); Raise(ref _reflByName); break;
+                case "__refl_class_name": case "__refl_class_info": case "__refl_members": case "__refl_classes": case "__refl_is_sub":
+                    Raise(ref _reflByName); break;
+            }
         }
 
         private static readonly string[] ReflectionNatives =
@@ -61,33 +92,118 @@ namespace fire.Native
         /// <summary>The call of a library method from code outside the library: it tells the library the class of the caller (g_reflCaller).</summary>
         private string ReflectionCallerAssign(Func f) => _usesReflection && CheckAccess && !IsReflectionHelperClass(f.Chunk.OwnerClass) ? $"g_reflCaller = {CallerId(f)}; " : "";
 
-        /// <summary>Every class, constructor, method and member name of the program is reachable by name now.</summary>
+        /// <summary>A dispatcher for a method name and number of arguments (a call by name can reach it).</summary>
+        private void AddDispatcher(string name, int argc)
+        {
+            if (_dispatchers.Add((name, argc))) _version++;
+        }
+
+        /// <summary>A name that is read or written by name (the field helpers gf_/sf_ of the name).</summary>
+        private void AddFieldName(string name)
+        {
+            if (_fieldNames.Add(name)) _version++;
+        }
+
+        /// <summary>The classes the program reaches: those whose objects exist, those whose code or static fields are used, the classes marked `[Keep]` (or with a
+        /// member marked so), each with its base classes.</summary>
+        private HashSet<RuntimeClass> ReachedClasses()
+        {
+            var set = new HashSet<RuntimeClass>(ReferenceEqualityComparer.Instance);
+            void Add(RuntimeClass? rc)
+            {
+                for (var c = rc; c != null && set.Add(c); c = c.Base) { }
+            }
+            foreach (var cls in _classList) Add(cls.Rc);
+            foreach (var f in _funcs) Add(f.Chunk.OwnerClass);
+            foreach (var key in _staticFields.Keys) Add(_program.Program.Classes.GetValueOrDefault(key.Class));
+            foreach (var rc in _program.Program.Classes.Values) if (rc.Keep || rc.KeptMembers != null) Add(rc);
+            return set;
+        }
+
+        /// <summary>The classes the reflection tables describe (Reflect.Classes, Type.Named, Reflect.New by name), sorted by name.</summary>
+        private List<RuntimeClass> ReflectionTableClasses()
+        {
+            IEnumerable<RuntimeClass> classes = _trim == TrimMode.All || _trim == TrimMode.Reflection && _reflByName
+                ? _program.Program.Classes.Values
+                : ReachedClasses().Where(rc => _program.Program.Classes.TryGetValue(rc.Name, out var known) && ReferenceEquals(known, rc));
+            return classes.OrderBy(c => c.Name, StringComparer.Ordinal).ToList();
+        }
+
+        /// <summary>The constructors of a class (with the functions of their default values, `Reflect.New` with fewer arguments evaluates them): it can be made.</summary>
+        private void KeepConstructors(RuntimeClass rc)
+        {
+            RegisterClass(rc.Name);
+            foreach (var ctor in rc.AllConstructors)
+            {
+                GetFunc(ctor, FuncKind.Ctor);
+                int needed = ctor.ParamCount;
+                while (needed > 0 && needed - 1 < ctor.ParamDefaults.Count && ctor.ParamDefaults[needed - 1] != null) needed--;
+                for (int argc = needed; argc < ctor.ParamCount; argc++) DefaultArgs(ctor, argc, "self", "list");
+            }
+        }
+
+        /// <summary>An instance method that a call by name may reach: its dispatchers for every number of arguments it takes.</summary>
+        private void KeepInstanceMethod(string name, FunctionProto m)
+        {
+            GetFunc(m, FuncKind.Method);
+            int required = m.ParamCount;
+            while (required > 0 && required - 1 < m.ParamDefaults.Count && m.ParamDefaults[required - 1] != null) required--;
+            for (int argc = required; argc <= m.ParamCount; argc++) AddDispatcher(name, argc);
+            if (name.StartsWith("get_") || name.StartsWith("set_")) AddFieldName(name.Substring(4));
+        }
+
+        /// <summary>What reflection can reach by name (see the levels at the top).</summary>
         private void RegisterReflectionTargets()
         {
             if (!_usesReflection) return;
+            if (_reflNew)
+                foreach (var rc in ReflectionTableClasses()) KeepConstructors(rc);
+            if (!_reflMembers && !_reflCall) return;
+            foreach (var cls in _classList.ToList())
+            {
+                if (_reflMembers) foreach (var field in cls.Rc.FieldIndex.Keys) AddFieldName(field);
+                for (var c = cls.Rc; c != null; c = c.Base)
+                    foreach (var (name, protos) in c.Methods)
+                        foreach (var m in protos)
+                        {
+                            if (m.IsStatic) continue;
+                            if (_reflCall) KeepInstanceMethod(name, m);
+                            else if (name.StartsWith("get_") || name.StartsWith("set_")) AddFieldName(name.Substring(4));   // (RegisterTargets makes the accessors of the names)
+                        }
+            }
+        }
+
+        /// <summary>What stays although nothing may reach it: everything with `"trim": "all"` (`--keep-all`, debug builds), else the classes and members marked `[Keep]`
+        /// (SPEC 5.12; not inherited).</summary>
+        private void RegisterKeptTargets()
+        {
             foreach (var rc in _program.Program.Classes.Values.ToList())
             {
-                RegisterClass(rc.Name);
-                foreach (var ctor in rc.AllConstructors)
+                if (_trim == TrimMode.All || rc.Keep)
                 {
-                    GetFunc(ctor, FuncKind.Ctor);
-                    // `Reflect.New` with fewer arguments evaluates the default values: their functions have to exist before the code is written
-                    int needed = ctor.ParamCount;
-                    while (needed > 0 && needed - 1 < ctor.ParamDefaults.Count && ctor.ParamDefaults[needed - 1] != null) needed--;
-                    for (int argc = needed; argc < ctor.ParamCount; argc++) DefaultArgs(ctor, argc, "self", "list");
+                    KeepConstructors(rc);
+                    foreach (var field in rc.FieldIndex.Keys) AddFieldName(field);
+                    foreach (var (name, protos) in rc.Methods)
+                        foreach (var m in protos) KeepMethod(name, m);
                 }
-                foreach (var (name, protos) in rc.Methods)
-                    foreach (var m in protos)
+                else if (rc.KeptMembers is { } kept)
+                {
+                    RegisterClass(rc.Name);
+                    foreach (var name in kept)
                     {
-                        if (m.IsStatic) continue;
-                        GetFunc(m, FuncKind.Method);
-                        int required = m.ParamCount;
-                        while (required > 0 && required - 1 < m.ParamDefaults.Count && m.ParamDefaults[required - 1] != null) required--;
-                        for (int argc = required; argc <= m.ParamCount; argc++) _dispatchers.Add((name, argc));
-                        if (name.StartsWith("get_") || name.StartsWith("set_")) _fieldNames.Add(name.Substring(4));
+                        if (rc.FieldIndex.ContainsKey(name)) AddFieldName(name);
+                        foreach (var methodName in new[] { name, "get_" + name, "set_" + name })
+                            if (rc.Methods.TryGetValue(methodName, out var protos))
+                                foreach (var m in protos) KeepMethod(methodName, m);
                     }
-                foreach (var field in rc.FieldIndex.Keys) _fieldNames.Add(field);
+                }
             }
+        }
+
+        private void KeepMethod(string name, FunctionProto m)
+        {
+            if (m.IsStatic) GetFunc(m, FuncKind.Static);
+            else KeepInstanceMethod(name, m);
         }
 
         private static string CStr(string s) => CString(s);
@@ -126,7 +242,7 @@ namespace fire.Native
         private string ReflectionCode()
         {
             var sb = new StringBuilder();
-            var classes = _program.Program.Classes.Values.OrderBy(c => c.Name, StringComparer.Ordinal).ToList();
+            var classes = ReflectionTableClasses();
 
             // ---- tables ----------------------------------------------------------------------------------------------------
             int listIndex = 0;
@@ -388,7 +504,8 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             var newSb = new StringBuilder();
             foreach (var rc in classes)
             {
-                if (!_classes.TryGetValue(rc.Name, out var info)) continue;
+                // (without Reflect.New the constructors are not kept: rf_new is not called)
+                if (!_reflNew || !_classes.TryGetValue(rc.Name, out var info)) continue;
                 var byArgc = new List<string>();
                 foreach (var ctor in rc.AllConstructors)
                 {
@@ -417,7 +534,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             }
             sb.AppendLine(@"FIRE_MAYBE_UNUSED static Value accessDeniedNew(const char* message) { return rfFail(message); }");
             sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_new(Value cname, Value args, OwnList* list, uint32_t caller) {{
-    (void)caller;
+    (void)caller; (void)list;
     int argc = args.kind == K_Array ? (int)arrOf(args)->length : 0;
     const Value* items = args.kind == K_Array ? arrItems(arrOf(args)) : NULL; (void)items;
 {newSb}    char n[200], t[500]; strToUtf8(cname, n, sizeof n);
