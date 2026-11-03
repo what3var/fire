@@ -362,11 +362,18 @@ Prefixes (decimal, implicitly coerced):
 | µ, u   | micro | 1e-6   |
 | m      | milli | 1e-3   |
 | c      | centi | 1e-2   |
+| d      | deci  | 1e-1   |
+| h      | hecto | 1e2    |
 | k      | kilo  | 1e3    |
 | M      | mega  | 1e6    |
 | G      | giga  | 1e9    |
 
-Base units that accept prefixes: `m` (meter), `g` (gram), `s` (second), `b` (bit), `B` (byte, 8 `b`).
+Base units that accept prefixes: `m` (meter), `g` (gram), `s` (second), `b` (bit), `B` (byte, 8 `b`), `l` (litre, the dimension `m^3`: 1l = 1dm^3 =
+0.001m^3; `ml`, `cl`, `dl`, `hl`, `kl`).
+
+`d` and `h` alone are the day and the hour (below); in front of another unit they are deci and hecto (`dm`, `dl`, `dg`, `hm`, `hl`, `hPa` of a declared
+`prefixed unit Pascal: Pa`). They are no prefixes of `b` and `B` (`dB` is not a deci-byte; the decibel is a unit a program declares, 3.3.1).
+**A unit wins over a prefix**: the exact symbols of fire and of the program are looked up before a prefix is split off.
 
 Time units that do not accept prefixes but are dimension-compatible with `s`, with fixed factors:
 
@@ -421,7 +428,9 @@ unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
   (`to(value) * scale + offset` and back); adding, subtracting and comparing convert the right operand into the unit of the left one. Multiplied or
   divided by another unit it counts as its reference unit (the offset and the functions do not take part: `20C * 2s` is `40K*s`), by a number it
   keeps its unit.
-- A symbol or name that is already a unit of fire (`m`, `min`, `km`, `Gs` = giga-second) is an error, so is a unit declared twice and units that are only defined by each other.
+- A symbol or name that is already a unit of fire (`m`, `min`, `l`, `h`) is an error, so is a unit declared twice and units that are only defined by each other.
+  A symbol that is a prefix in front of a unit of fire (`dB`, `hs`, `Gs` = giga-second) may be declared: **the unit wins over the prefix** - the exact
+  symbols (of fire and of the program) are looked up before a prefix is split off, so with `unit Decibel: dB` the text `dB` is the decibel.
 - An own unit behaves exactly like a built-in one: conversion with `:`, declarations (`float d : in = 30cm`), `is in`, arithmetic, comparison (`12in == 1ft`), VM and native code.
 
 ### 3.4 Dimension arithmetic

@@ -16161,7 +16161,6 @@ else
             }
             unit Foot: ft { coerce in => 12 }
             unit Mile: mi { coerce ft => 5280 }
-            prefixed unit Liter: l { coerce m^3 => 0.001 }
             unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
             prefixed unit Watt: W { coerce kg*m^2/s^3 => 1 }
             """),
@@ -16690,6 +16689,54 @@ else
             var facc = new Acc<float>(0.0)
             for (int i = 0; i < 100; i++) { facc.Add(0.5) }
             print(t + " " + acc.sum + " " + facc.Scaled(0.5))
+            """),
+        ("Einheiten: Liter (l, ml, hl, kl) gleich dm^3, Praefixe d und h (dm, dl, dg, hm, hPa, ds), d/h allein Tag/Stunde, dB ohne Deklaration kein Dezi-Byte", """
+            print((1l == 1dm * 1dm * 1dm) + " " + (1000l == 1m * 1m * 1m) + " " + (1ml == 1cm * 1cm * 1cm))
+            float vol : m^3 = 5l
+            float back : l = 1m * 1m * 1m
+            float box : l = 20cm * 10cm * 50cm
+            print(vol + " " + back + " " + box + " " + (3l + 500ml) + " " + (2l > 1999ml))
+            print(1l:ml + " " + 1hl:l + " " + 1dl:cl + " " + 2dm + " " + 1hm:m + " " + 1.0dg:g + " " + 1kl:l + " " + 1cl:ml + " " + 1ds:ms + " " + 1.0hg:kg)
+            print(1d + " " + 1h:min + " " + 2d:h + " " + (1dm is in m) + " " + (5dB is in B) + " " + 5dB + " " + (1hPa is in Pa))
+            any metre = 1m
+            try { print(1l + metre) } catch (UnitMismatchException e) { print(e.message) }
+            """),
+        ("Bibliothek: Zahlen mit Einheit aus Text (ToFloat, ToInt, TryTo*), eigene Einheiten, kombinierte, dB gewinnt gegen Dezi-Byte", """
+            print("5mm".ToFloat() + " " + "5mm".ToInt() + " " + " -2.5 km/h ".ToFloat() + " " + "3 l".ToInt() + " " + "1e3m".ToFloat() + " " + "2kg*m/s^2".ToFloat())
+            print("5apples".TryToFloat() + " " + "5 m s".TryToFloat() + " " + "5ml".ToFloat():l + " " + "5.5m".TryToInt() + " " + "0x1Fm".ToInt() + " " + "5µs".ToFloat() + " " + "5us".ToInt())
+            try { "5xyz".ToFloat() } catch (ArgumentException e) { print(e.message) }
+            try { "2.5 kg".ToInt() } catch (ArgumentException e) { print(e.message) }
+            print("5in".ToFloat() + " " + "2 Inch".ToFloat() + " " + "3mV".ToInt() + " " + "1013 hPa".ToFloat() + " " + "1013hPa".ToFloat():Pa + " " + "20C".ToFloat():K)
+            print("6dB".ToFloat() + " " + ("6dB".ToFloat() is in dB) + " " + 6dB + " " + (6dB is in B) + " " + ("3dB".ToFloat() + 3dB) + " " + "1dl".ToFloat():l + " " + "2hl".ToInt():l)
+            print("20C/s".TryToFloat() + " " + "5V/m".ToFloat() + " " + "2 V*A".ToFloat() + " " + "1kV".ToFloat():V + " " + "4 m^-1".ToFloat() + " " + "1m^".TryToFloat() + " " + "1 m*".TryToFloat())
+            float speed : m/s = "36 km/h".ToFloat()
+            print(speed + " " + ("1.5 kg".ToFloat() + "500 g".ToFloat()) + " " + "12 min".ToInt():s)
+            prefixed unit Volt: V
+            prefixed unit Ampere: A
+            prefixed unit Pascal: Pa
+            unit Inch: in { coerce m => 0.0254 }
+            unit Kelvin: K
+            unit Celsius: C { coerce K => value + 273.15 }
+            unit Decibel: dB {
+                coerce to unitless => 10 ^ (value / 20)
+                coerce from unitless => 20 * Math.Log10(value)
+            }
+            """),
+        ("Bibliothek: Math.Sum, Average, Min, Max von Arrays und Listen (mit Einheiten, leer, falsche Werte), Min/Max mit zwei Werten", """
+            print(Math.Sum([1, 2, 3]) + " " + Math.Sum([1.5, 2]) + " " + Math.Sum([1m, 50cm]) + " " + Math.Sum(new List<int>([4, 5])) + " " + Math.Sum([]))
+            print(Math.Average([1, 2]) + " " + Math.Average([1m, 50cm]) + " " + Math.Min([3, 1, 2]) + " " + Math.Max([1m, 150cm, 20cm]) + " " + Math.Min([2.5]))
+            var list = new List()
+            list.Add("1.5 kg".ToFloat())
+            list.Add(500g)
+            print(Math.Sum(list) + " " + Math.Average(list) + " " + Math.Min(list) + " " + Math.Max(list) + " " + list.Count)
+            print(Math.Min(2, 3) + " " + Math.Max(2m, 1km) + " " + Math.Min(-1, -2.5))
+            try { Math.Min([]) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Average(new List()) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Max([]) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sum(5) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sum("12") } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sum([1, "a"]) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sum([1m, 1s]) } catch (UnitMismatchException e) { print(e.message) }
             """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))

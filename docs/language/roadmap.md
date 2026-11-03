@@ -10,17 +10,15 @@ The larger plan (native C, debugging of native builds, binary libraries, the lib
 
 ## 1. Standard library
 
-| # | Task | Why |
-|---|---|---|
-| 1.1 | Numbers with a unit from text: `"5mm".ToFloat()` | `ToInt`/`ToFloat` read only the number |
-| 1.2 | `Math` for whole arrays and lists (`Sum`, `Average`, `Min`, `Max` of many values) | today a loop or `#import "linq"` |
-| 1.3 | The litre as a built-in unit: `l`, the same as `dm^3` (`1l == 1dm^3`, `1000l == 1m^3`), with prefixes (`ml`, `cl`, with 2.6 also `dl`, `hl`) | volumes are common; today only `m^3` and its parts, or an own `unit` |
+Nothing open at the moment.
 
 ## 2. Language
 
 | # | Task | Why |
 |---|---|---|
-| 2.6 | The prefix `d` (deci) and `h` (hecto): `dm^3`, `dl`, `hPa` | `d` is the day today, `hPa` is a unit of its own |
+| 2.7 | A combined unit with `kg` prints as `6g*m/s^2(×1000)` instead of `6kg*m/s^2` (VM and native) | the prefix of a base unit inside a combined unit is not kept for printing |
+| 2.8 | An array declared with a unit at the type (`float:km/h arr[]`) converts its elements on assignment | today the elements keep the unit they come with |
+| 2.9 | Combined units with mixed prefixes of the same base (`"1m/mm*s"`) get a readable name | the name is built from the parts as written |
 
 ## 3. Type checker
 
@@ -31,6 +29,7 @@ Nothing open at the moment.
 | # | Task | Why |
 |---|---|---|
 | 4.1 | Conformance tests that compare the error texts of VM and native for every run-time error | the texts match for all errors found so far, but they are checked by single tests |
+| 4.2 | An exception nothing catches prints the same text in VM and native ("Unhandled exception of type 'UnitMismatchException': ...") | native prints a shorter text for some ("fire runtime error: Incompatible units.") |
 
 ## 5. Documentation and tools
 
@@ -69,6 +68,9 @@ These problems were found by the examples and fixed right away:
 - An assignment as a condition (`if (a = b)`) is the warning `TC009`.
 - Enum types: `Color c` is a declared type, `c.ToString()` and `print(c)` give the name, `Color c = 5` is a warning of the type checker (lax) or an
   error (strict) - see [Enums](10-enums-and-namespaces.md).
+- Numbers with a unit from text (`"5mm".ToFloat()`, `"2.5 km/h".ToFloat()`, `"3in".ToInt()` with a declared `in`), `Math.Sum`, `Average`, `Min`, `Max`
+  of an array or a `List`, the litre `l` (`ml`, `hl`, ...) and the prefixes `d` (deci) and `h` (hecto) - `dm`, `dl`, `hPa` - with the rule that a unit
+  wins over a prefix (a declared `dB` is the decibel), VM and native.
 - Own units with an offset (`unit Celsius: C { coerce K => value + 273.15 }`) and with conversion functions of any kind (`coerce to mW => 10 ^ (value
   / 10)` and `coerce from mW => 10 * Math.Log10(value)`), VM and native.
 - `break 2`/`continue 2` run every `finally` on their way (VM and native); combined units at a return type (`float:km/h Speed()`); `float[16]` (IEEE

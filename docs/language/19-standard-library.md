@@ -65,9 +65,21 @@ print(Math.Round(2.5))              // 3 - halves away from zero
 print(Math.Floor(2.7m))             // 2m
 print(Math.Sin(Math.PI / 2))        // 1
 print(Math.Atan2(1m, 1m) * 4)       // 3.141592653589793
+print(Math.Sum([1, 2, 3]))          // 6
+print(Math.Sum([1m, 50cm]))         // 150cm - converted like `1m + 50cm`
+print(Math.Average([1, 2]))         // 1.5
+print(Math.Max([1m, 150cm, 20cm]))  // 150cm
+var weights = new List()
+weights.Add(1.5kg)
+weights.Add(500g)
+print(Math.Min(weights))            // 500g
 ```
 
 - `Round`, `Floor` and `Ceiling` keep the unit; an `int` stays an `int`. `Abs`, `Min`, `Max`, `Clamp` work on every number with or without unit.
+- `Sum`, `Average`, `Min` and `Max` with **one** argument take an array or a `List` of numbers (`Min(a, b)` and `Max(a, b)` with two compare two
+  values). Units are handled like `+` and `<`: they must have the same dimension (an `UnitMismatchException` otherwise) and are converted. `Sum` of
+  an empty array is `0`; `Average`, `Min` and `Max` of an empty one are an `ArgumentException`, so is anything that is not an array or a `List` and
+  an element that is not a number. `Average` is a `float`; `Min` and `Max` give the element itself (in its unit).
 - `Sqrt` takes the root of the unit as well; a unit without a root (`m`) is an `ArgumentException`.
 - `Sin`, `Cos`, `Tan` take radians; the angle and exponential functions take a number without unit and give a `float`. `Atan2(y, x)` takes two
   values of the same dimension.

@@ -119,6 +119,8 @@ namespace fire.Native
         private readonly IReadOnlyList<string> _natives;
         private readonly TargetProfile _target;
         private readonly List<Unit> _units = new() { Unit.Unitless };
+        /// <summary>The program calls the methods of `string` (`"5mm".ToFloat()` needs the table of the units a text may name, g_textUnits).</summary>
+        private bool _usesStringCall;
         /// <summary>The units with conversion functions: the hidden class -> its index in the tables of the runtime (g_unitTo/g_unitFrom) and the functions.</summary>
         private readonly Dictionary<string, (int Index, Func To, Func From)> _unitConverters = new();
         private readonly List<string> _strings = new();
@@ -1153,6 +1155,18 @@ namespace fire.Native
             if (_usesElementPointers && _program.ExecutionMode != VmExecutionMode.Performance) sb.AppendLine("#define FIRE_PTRBOUNDS 1 // pointers into arrays and buffers (`ref a[i]`, `p + n`) know the bounds");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
+            // The units a text may name (`"5mm".ToFloat()`, Unit.ParseKnown): those of fire without a prefix, then those of the program by symbol and name
+            var textUnits = new List<(string Symbol, int Unit, bool Prefixable)>();
+            if (_usesStringCall)
+            {
+                foreach (var (symbol, prefixable) in Unit.BuiltInSymbols) textUnits.Add((symbol, UnitId(Unit.Parse(symbol)), prefixable));
+                foreach (var own in _program.Program.CustomUnits)
+                {
+                    int id = UnitId(Unit.OfCustom(own));
+                    textUnits.Add((own.Symbol, id, own.Prefixed));
+                    if (own.Name != own.Symbol) textUnits.Add((own.Name, id, false));
+                }
+            }
             // The unit table: the base symbols of all units of the program (sorted like the VM prints them) and one row per unit.
             var dimNames = _units.SelectMany(u => u.Dimensions.Keys).Distinct().OrderBy(k => k).ToList();
             sb.AppendLine($"#define FIRE_NDIMS {Math.Max(1, dimNames.Count)}");
@@ -1250,6 +1264,13 @@ namespace fire.Native
             }
             else
                 _initCode.AppendLine("    unitsInit(kUnitInit, " + _units.Count + ", NULL, NULL);");
+            if (textUnits.Count > 0)
+            {
+                sb.AppendLine("static const TextUnit kTextUnits[] = {");
+                foreach (var (symbol, unit, prefixable) in textUnits) sb.AppendLine($"    {{{CString(symbol)}, {unit}, {(prefixable ? "true" : "false")}}},");
+                sb.AppendLine("};");
+                _initCode.AppendLine($"    g_textUnits = kTextUnits; g_textUnitCount = {textUnits.Count};");
+            }
             // the files of `new Resource("path")` are part of the binary (docs/RESOURCES.md)
             var resources = _program.Program.Resources;
             if (resources.Count > 0)
@@ -3441,6 +3462,7 @@ namespace fire.Native
                     if (native == StringMethods.NativeName && argc is >= 2 and <= 4)
                     {
                         int first = d - argc;
+                        _usesStringCall = true;
                         string a0 = argc > 2 ? S(first + 2) : "Undef()", a1 = argc > 3 ? S(first + 3) : "Undef()";
                         E($"{S(first)} = stringCall({S(first)}.i, {S(first + 1)}, {argc - 2}, {a0}, {a1}, &{OwnerList()});");
                         Check();
@@ -4758,7 +4780,7 @@ namespace fire.Native
         private int UnitId(Unit? unit)
         {
             if (unit == null || unit.IsUnitless) return 0;
-            for (int i = 1; i < _units.Count; i++) if (_units[i].Equals(unit)) return i;
+            for (int i = 1; i < _units.Count; i++) if (_units[i].Equals(unit) && _units[i].DisplaySymbol == unit.DisplaySymbol) return i;   // (`l` and `dm^3` are equal units with other names)
             _units.Add(unit);
             if ((unit.Converter ?? unit.UnitlessConverter) is { } converter && !_unitConverters.ContainsKey(converter))
             {

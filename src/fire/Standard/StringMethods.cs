@@ -145,7 +145,11 @@ namespace fire.Standard
             """;
 
         /// <summary>The native function `__StringCall(id, text, arguments...)`.</summary>
-        public static Value Call(Value[] args)
+        public static Value Call(Value[] args) => Call(args, null);
+
+        /// <summary>The native function `__StringCall(id, text, arguments...)` of a program with these units of its own (`"5in".ToFloat()`); null: the
+        /// units of the program on this thread.</summary>
+        public static Value Call(Value[] args, IReadOnlyList<CustomUnit>? customUnits)
         {
             if (args.Length < 2 || args[1].Kind != ValueKind.String)
                 throw new InvalidOperationException($"{NativeName}(id, text, ...) expects the string as the second argument.");
@@ -255,11 +259,13 @@ namespace fire.Standard
                 }
 
                 // numbers from text (SPEC 8.12): spaces around are ignored; an int may have a sign, `0x`/`0b` and `_` between digits, a float
-                // also a fraction and an exponent. ToInt/ToFloat throw (ArgumentException in the VM), TryToInt/TryToFloat give undefined.
+                // also a fraction and an exponent. A unit of fire or of the program may follow (`"5mm"`, `"2.5 km/h"`, see SplitUnit).
+                // ToInt/ToFloat throw (ArgumentException in the VM), TryToInt/TryToFloat give undefined.
                 case StringMethod.ToInt:
                 case StringMethod.TryToInt:
                     Arity(method, argc, 0, 0);
                     if (ParseInt(s, out long whole)) return Value.MakeInt(whole);
+                    if (SplitUnit(s, customUnits, isFloat: false) is { } intWithUnit && ParseInt(intWithUnit.Number, out whole)) return Value.MakeInt(whole, intWithUnit.Unit);
                     if (method == StringMethod.TryToInt) return Value.MakeUndefined();
                     throw new InvalidOperationException($"'{s}' is not a whole number.");
 
@@ -267,6 +273,7 @@ namespace fire.Standard
                 case StringMethod.TryToFloat:
                     Arity(method, argc, 0, 0);
                     if (ParseFloat(s, out double number)) return Value.MakeFloat(number);
+                    if (SplitUnit(s, customUnits, isFloat: true) is { } withUnit && ParseFloat(withUnit.Number, out number)) return Value.MakeFloat(number, withUnit.Unit);
                     if (method == StringMethod.TryToFloat) return Value.MakeUndefined();
                     throw new InvalidOperationException($"'{s}' is not a number.");
 
@@ -290,6 +297,26 @@ namespace fire.Standard
         }
 
         private static bool IsSpace(char c) => c is ' ' or '\t' or '\r' or '\n';
+
+        /// <summary>A number followed by a unit (`"5mm"`, `"-2.5 km/h"`, `"3in"` of a program that declares `in`): the first place where a letter starts a
+        /// unit text (Unit.ParseKnown) and the text in front of it is a number (spaces between them are allowed): the text of the number and the unit.
+        /// Null when there is none. Must be identical to fire_rt.h: splitNumberUnit.</summary>
+        private static (string Number, Unit Unit)? SplitUnit(string s, IReadOnlyList<CustomUnit>? customUnits, bool isFloat)
+        {
+            int start = 0, end = s.Length;
+            while (start < end && IsSpace(s[start])) start++;
+            while (end > start && IsSpace(s[end - 1])) end--;
+            for (int k = start + 1; k < end; k++)
+            {
+                if (!Unit.IsUnitLetter(s[k])) continue;
+                string numberText = s.Substring(start, k - start);
+                if (isFloat ? !ParseFloat(numberText, out _) : !ParseInt(numberText, out _)) continue;
+                var unit = Unit.ParseKnown(s.Substring(k, end - k), customUnits);
+                if (unit == null) continue;
+                return (numberText, unit);
+            }
+            return null;
+        }
 
         /// <summary>The text between the spaces at both ends, and whether a sign stood in front (consumed).</summary>
         private static (int Start, int End, bool Negative) Body(string s)

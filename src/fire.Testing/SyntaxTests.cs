@@ -318,7 +318,9 @@ static class SyntaxTests
             """) == "17in\n1in 2in True 3mV\n5");
         Check("unit: Umrechnungen aus einer anderen Datei", Output2("float f : ft = 1m\nprint(f)", "unit Foot: ft { coerce from m => value / 0.3048 }") == "3.280839895013123ft");
         string UnitError(string source) => Output(source) is var o && o.StartsWith("ERROR") ? o : "";
-        Check("unit: eingebaute Einheit (auch mit Praefix) ist ein Fehler", UnitError("unit Meter: m") is var e1 && e1.Contains("already a unit of fire") && UnitError("unit Gauss: Gs { coerce m => 1 }").Contains("the prefix 'G' in front of 's'"), e1);
+        Check("unit: eingebaute Einheit ist ein Fehler, ein Symbol wie Praefix+Einheit nicht (die Einheit gewinnt)", UnitError("unit Meter: m") is var e1 && e1.Contains("already a unit of fire")
+            && UnitError("unit Liter: l").Contains("already a unit of fire") && UnitError("unit Gauss: Gs { coerce m => 1 }") == ""
+            && Output("unit Gauss: Gs { coerce m => 2 }\nprint(2Gs:m + \" \" + 1ms + \" \" + 1hs:s)").Trim() == "4m 1ms 100s", e1);
         Check("unit: doppelt deklariert, im Kreis definiert, Konvertierungen widersprechen sich", UnitError("unit Inch: in\nunit Zoll: in").Contains("declared twice")
             && UnitError("unit A: aa { coerce cc => 2 }\nunit C: cc { coerce aa => 3 }").Contains("circle")
             && UnitError("unit X: xx { coerce m => 2\n coerce cm => 300 }").Contains("do not agree"));
