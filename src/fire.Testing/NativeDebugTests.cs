@@ -733,7 +733,7 @@ static class NativeDebugTests
             return (user && prelude && back && resets && !off.Contains("#line") && !release.Contains("@@fire-line-reset"), $"user {user}, prelude {prelude}, back {back}, resets {resets}, off {!off.Contains("#line")}");
         });
 
-        Check("gcc, clang und tcc uebersetzen das C eines Debug-Builds ohne Warnung, es laeuft ohne Debugger wie die VM", () =>
+        Check("gcc und clang uebersetzen das C eines Debug-Builds ohne Warnung, tcc uebersetzt es; es laeuft ohne Debugger wie die VM", () =>
         {
             var sources = Generate(lineScript, VmExecutionMode.Debug, TargetProfile.Host);
             string cFile = Path.Combine(workDir, "dbgcompilers.c");
@@ -742,7 +742,9 @@ static class NativeDebugTests
             bool ok = sources.Program.Contains("#define FIRE_DEBUG 1") && sources.Program.Contains("#define FIRE_DEBUG_AGENT 1");
             var compilers = new List<(string Tool, string Args)> { ("gcc", "-std=c11 -O0 -g -Wall -Wextra -pedantic -pthread"), ("gcc", "-std=c11 -O2 -Wall -Wextra -pthread") };
             if (HasTool("clang")) compilers.Add(("clang", "-std=c11 -O0 -g -Wall -Wextra -pedantic -pthread"));
-            if (HasTool("tcc")) compilers.Add(("tcc", "-Wall -pthread"));
+            // (TinyCC 0.9.27 ignores noreturn and so reports every function that ends in fatal() as "might return no value" - the built-in tcc toolchain
+            // builds with -w for that reason; here it is checked that tcc builds and runs the debug C, gcc and clang check the warnings)
+            if (HasTool("tcc")) compilers.Add(("tcc", "-w -pthread"));
             for (int i = 0; i < compilers.Count; i++)
             {
                 var (tool, args) = compilers[i];
