@@ -247,7 +247,7 @@ namespace fire.Native
         private IEnumerable<string> OwnDisplayLibraries()
         {
             if (_target.Native.Platform == "windows") return new[] { "user32", "gdi32" };   // (imm32, dwmapi, ole32 are loaded at run time)
-            if (_target.Name == "macos") return new[] { "framework:Cocoa", "framework:QuartzCore" };
+            if (_target.Name == "macos") return new[] { "framework:Cocoa", "framework:QuartzCore", "framework:GameController" };
             return new[] { "dl", "pthread" };
         }
 

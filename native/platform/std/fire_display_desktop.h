@@ -8,7 +8,8 @@
  * FIRE_DISPLAY=x11|wayland|win32|cocoa|web|headless asks for one (SDL_VIDEODRIVER=dummy|offscreen|x11|wayland is understood as well, as the SDL displays did). Nothing
  * of a window system is linked that the operating system does not always have: Linux loads its libraries when it needs them (dlopen); Windows links user32/gdi32 and
  * loads the rest; macOS links its frameworks.
- * The numbers of keys, modifiers, buttons and cursors are fire_display_keys.h's; the look of the desktop comes from fire_systheme.h. */
+ * The numbers of keys, modifiers, buttons and cursors are fire_display_keys.h's; the look of the desktop comes from fire_systheme.h; joysticks and gamepads from
+ * fire_display_joystick.h. */
 #ifndef FIRE_DISPLAY_DESKTOP_H
 #define FIRE_DISPLAY_DESKTOP_H
 
@@ -51,6 +52,8 @@
 #ifdef FIRE_DD_WEB
 #  include "fire_display_web.h"
 #endif
+
+#include "fire_display_joystick.h"
 
 #define FIRE_DISPLAY_AVAILABLE 1
 #define FIRE_DISPLAY_TEXT_INPUT_RECT 1
@@ -242,10 +245,13 @@ static double fire_display_scale(FireDisplayWindow* w) {
 }
 
 static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int fbWidth, int fbHeight) {
-#define FIRE_DD_B(m, p) return fire_##p##_pump(&w->u.m, out, fbWidth, fbHeight);
+    int open = 0;
+#define FIRE_DD_B(m, p) open = fire_##p##_pump(&w->u.m, out, fbWidth, fbHeight); break;
     FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
 #undef FIRE_DD_B
-    return 0;
+    /* the joysticks and gamepads of the program (fire_display_joystick.h): to the window that pumps */
+    if (open) fire_joy_poll(out, w->kind != FIRE_DD_HEADLESS);
+    return open;
 }
 
 /* Shows the pixels (R,G,B,A per 32-bit word, width*height), stretched to the window. */
