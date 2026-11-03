@@ -25,6 +25,7 @@ Leitlinien:
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB jetzt) |
+| 7 | [Kleine und alte Ziele](#12-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -313,3 +314,69 @@ machen beides gleich; getestet in allen drei Stufen.
   sind alle Libraries `"source"` und werden mit dem Programm zusammen weggelassen.
 * Was bleibt, ist beim `ui`-Programm echter Code (`UI.Root`: Ereignisse, Fokus, Popups, Ziehen und Ablegen); kleiner würde es nur durch weniger Code im Package oder ein `ui`, dessen
   Teile (Drag & Drop, Popups) erst beim Benutzen erreicht werden.
+
+## 12. Kleine und alte Ziele
+
+Ziel: fire auf Mikrocontrollern ab 32 KB RAM / 128 KB Flash (Cortex-M, ESP32, RISC-V, PIC32), auf DOS (Real Mode und DPMI), Win 3.x, Win9x und NT 3.51 bis XP.
+Grundlage ist die Analyse auf `native-c` (Größen gemessen mit arm-none-eabi-gcc und avr-gcc): ab 32 Bit sinnvoll, 8-Bit-PIC nie (Hardware-Stack, kein
+Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
+
+**Umgesetzt** (Branch `pointer-kinds`):
+
+* Drei Zeigerarten (`K_PtrVar`, `K_PtrByte`, `K_PtrElem`) statt `K_Pointer` + `width`; das Byte ist frei.
+* Typisierte Arrays (SPEC 8.4.2): `int`, `int[N]`, `float`, `float[N]`, `bool`, `char`, `byte` als Elementtyp - strikt (falscher Typ: `ArgumentException`,
+  andere Einheit: `UnitMismatchException`), `undefined` erlaubt; nativ gepackt (eine C-Zahl pro Element, `undefined` als Merker, Bitmaske erst bei Bedarf).
+* `int x[4]` legt das Array überall gleich an (Local, Global, Feld mit dem Objekt); `int x[]` bleibt `undefined`.
+* `#intwidth 32` (SPEC 8.2.2; `-i`, `intWidth` in Projekt und Ziel, `#if int32`); Standard bleibt 64 Bit, auch auf dem ESP32. Mit `#floatwidth 32` und 32-Bit-Zeigern
+  ist ein Wert 8 statt 16 Byte (`FIRE_COMPACT`).
+
+**Reihenfolge des Rests** (nach dem Abschluss von Abschnitt 9 auf `native-c`):
+
+1. **Kompaktes Format ohne Grenze bei den Objekten.** Heute: 16 Bit Slot, 12 Bit Generation (65535 lebende Objekte/Arrays/Puffer). Neu: ein Objekt, Array oder
+   Puffer trägt Slot (32 Bit, Nutzlast) und Generation (28 Bit, Kopf); der Zeiger steht in der Slot-Tabelle (Zeiger und Generation nebeneinander: eine Ladung).
+   Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `{Adresse, Slot, Generation, Zähler}` (16 Byte pro lebendem Zeiger, nicht pro
+   Array oder Element), gezählt wie Strings, wiederverwendet über eine Freiliste. Mit `#performance` (keine Tabelle) tragen alle direkt ihren Zeiger. Bleibt: 65535 Einheiten.
+   Später, wenn eine Messung es zeigt: einen Kasten mit Zähler 1 bei `p + 1` weiterschieben statt einen neuen zu holen.
+2. **Inline-C** - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
+
+   ```fire
+   inline c int Add(int a, int b) { return a + b; }
+   inline c undefined Beep(int hz) { _asm { mov al, 0B6h
+                                           out 43h, al } }
+   ```
+
+   Parameter und Ergebnis sind C-Typen (`int` -> `FireInt`, `float` -> `Real`, `byte[]` -> die Bytes, `any` -> `Value`); der Generator baut den Wrapper wie bei
+   den Natives der Packages. In der VM ist ein Aufruf ein Fehler (oder eine Alternative mit `#if native`); der Editor hebt den Rumpf als C hervor.
+3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
+   keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
+   paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).
+   Dazu **`#intwidth 16`** (native Breite des 8086/286) und **`word`** (vorzeichenlos in Maschinenbreite, `word[8|16|32]`; die VM bekommt die Wortbreite des Ziels).
+4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
+   Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
+5. **`win16`** - Win 3.x: `wcc`, Large Model, GDI, kooperative Nachrichtenschleife (`Sleep` gibt ab), keine fire-Threads.
+6. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
+   `CONDITION_VARIABLE`), `GetTickCount` statt `GetTickCount64`, ANSI/Unicode-Schicht für 9x, `inet_addr` statt `inet_pton` (NT 3.51: Winsock 1.1), TLS über
+   mbedTLS statt Schannel, kein USB, GDI aus dem laufenden Umbau.
+7. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
+   gepackt pro Klasse später.
+
+Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht pro Familie; Tests mit DOSBox-X / dosemu2 ohne Fenster (`dos16`, `dos32`, Win 3.11),
+9x und NT über QEMU-Images.
+
+**Dazwischen, klein:**
+
+* **Breiten pro Programm statt pro Prozess.** `Value.Ints32` und `Value.SingleFloats` sind statisch: Übersetzt der Editor ein Programm, während ein anderes mit
+  `#intwidth 32` läuft, schneidet er dessen Konstanten ab. Die Breiten gehören zum Programm und werden über ein Objekt weitergereicht (das Zahlenmodell des Programms:
+  der Linker und der Compiler bekommen es ausdrücklich, die VM setzt es für die Threads, auf denen das Programm läuft).
+* **Gepackte Arrays nicht entpacken, wo es nicht nötig ist.** Heute entpackt `arrItems` ein gepacktes Array für immer (16 Byte pro Element). JSON, der Debugger und
+  `print` lesen gepackt (`arrElemGet`); die Natives der Packages bekommen eine API, die gepackte Arrays kennt (`arrGet`/`arrSet`, direkt die Zahlen eines
+  `float[32]`-Arrays für Grafik und Audio); `ref a[i]` in ein gepacktes Array wird ein Zeiger, der den Elementtyp kennt (16-Byte-Wert: das freie Byte; kompakt: im Kasten).
+  `arrItems` bleibt als Notweg.
+* **Mehrdimensional und Literale gleich gepackt anlegen.** Nur `new int[n]` entsteht heute direkt gepackt; `int m[3][4]`, `new int[3][4]` und `int a[] = [1, 2, 3]`
+  legen erst Values an (die ungenutzt im Block bleiben). Der Generator erkennt `NewJagged` / `MakeArrayLiteral` vor `TypeArray` und baut gleich gepackt.
+* **Editor:** die Breite von `int` auch im Dialog des nativen Builds (die Projekteigenschaften haben sie schon).
+* **Mikrocontroller, schnelle Gewinne:** der GPIO-Simulator (8,4 KB RAM) nicht in die Firmware; kein `double`/`strtod` bei `#floatwidth 32` (~10 KB Flash, auch der
+  Faktor der Einheitentabelle als `Real`); AVR: `nearbyint`, `localtime_r` ohne Rückgabe.
+* **Ziele:** ESP32-C3/C6 als Varianten von `esp32`; ein generisches Ziel Cortex-M/RISC-V mit FreeRTOS (Vorgaben für STM32F4/H7, RP2040, SAMD51, PIC32);
+  AVR und PIC24 später mit einem eigenen kleinen Profil (Konstanten im Flash).
+* **Strikte Arrays für Strings und Klassen** (`string a[]`, `Dog a[]`): die Art beim Schreiben prüfen (ohne zu packen).
