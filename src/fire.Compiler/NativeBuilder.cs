@@ -224,6 +224,9 @@ namespace fire.Compiler
                         string flag = kind == "msvc" ? lib + ".lib" : "-l" + lib;
                         if (!libs.Contains(flag)) libs.Add(flag);
                     }
+            // a debug build (mode debug, `#define FIRE_DEBUG 1` at the top of the program): no optimization, debug information, not stripped - for the debugger of spark
+            // and for gdb/lldb (docs/NATIVE_BACKEND.md "Debug-Builds")
+            bool debugBuild = !sharedLibrary && File.Exists(linkSource) && File.ReadLines(linkSource).Take(60).Any(l => l.StartsWith("#define FIRE_DEBUG 1", StringComparison.Ordinal));
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
             var libDirs = new List<string>();
             // SDL: where its headers and import library are (Toolchain\SDL3, SDL3_DIR, the prefix of the compiler, the system; the same for SDL2), see SdlSetup
@@ -251,7 +254,7 @@ namespace fire.Compiler
             if (kind == "msvc")
             {
                 bool smallMsvc = IsSizeProfile(toolchain.Optimization);
-                args.Append($"{(isC ? $"/std:{(std == "c11" ? "c11" : std)} /TC" : $"/std:{std}")} {(smallMsvc ? "/O1 /Gy /Gw" : toolchain.Optimization ?? "/O2")} ");
+                args.Append($"{(isC ? $"/std:{(std == "c11" ? "c11" : std)} /TC" : $"/std:{std}")} {(debugBuild ? "/Od /Zi" : smallMsvc ? "/O1 /Gy /Gw" : toolchain.Optimization ?? "/O2")} ");
                 if (sharedLibrary) args.Append("/LD ");
                 if (compileOnly) args.Append("/c ");
                 foreach (string a in toolchain.Args ?? new()) args.Append(a).Append(' ');
@@ -271,8 +274,8 @@ namespace fire.Compiler
             else
             {
                 bool tcc = kind == "tcc";
-                bool small = IsSizeProfile(toolchain.Optimization) && !tcc;   // (TinyCC keeps every function anyway: no sections to drop)
-                args.Append($"-std={std} {(small ? "-Os -ffunction-sections -fdata-sections" : toolchain.Optimization ?? "-O2")} ");
+                bool small = IsSizeProfile(toolchain.Optimization) && !tcc && !debugBuild;   // (TinyCC keeps every function anyway: no sections to drop)
+                args.Append($"-std={std} {(debugBuild ? "-O0 -g" : small ? "-Os -ffunction-sections -fdata-sections" : toolchain.Optimization ?? "-O2")} ");
                 if (compileOnly) args.Append("-c ");
                 // a library for the VM carries its C++ runtime (MinGW: no libgcc/libstdc++ DLLs next to it), so that it also runs on a machine without the toolchain
                 if (sharedLibrary) args.Append(tcc ? "-shared " : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "-shared -static-libgcc -static-libstdc++ " : "-shared -fPIC ");
@@ -295,7 +298,7 @@ namespace fire.Compiler
                 {
                     bool apple = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
                     if (small) args.Append(apple ? " -Wl,-dead_strip" : " -Wl,--gc-sections");
-                    if (toolchain.Strip != false) args.Append(apple ? " -Wl,-x" : " -s");
+                    if (toolchain.Strip != false && !debugBuild) args.Append(apple ? " -Wl,-x" : " -s");
                 }
             }
             string exeName = isC && kind != "msvc" ? ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler : ToolchainDetector.Find(toolchain) ?? toolchain.EffectiveCompiler;

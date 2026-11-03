@@ -166,6 +166,8 @@ namespace fire.Native
         public string? Toolchain { get; set; }
         /// <summary>The SDL of a window on the desktop: 2 or 3 (null: the build decides, SDL3 when the toolchain has it).</summary>
         public int? Sdl { get; set; }
+        /// <summary>`#line` directives in the generated C (null: on, see NativeTarget.LineDirectives).</summary>
+        public bool? LineDirectives { get; set; }
 
         internal TargetProfile Apply(TargetProfile b, string name)
         {
@@ -180,6 +182,7 @@ namespace fire.Native
                 SupportsThreads = SupportsThreads ?? b.Native.SupportsThreads,
                 Toolchain = Toolchain ?? b.Native.Toolchain,
                 Sdl = Sdl ?? b.Native.Sdl,
+                LineDirectives = LineDirectives ?? b.Native.LineDirectives,
                 Entry = Entry == null ? b.Native.Entry : b.Native.Entry with
                 {
                     Name = Entry.Name ?? b.Native.Entry.Name,

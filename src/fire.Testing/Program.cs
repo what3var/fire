@@ -25086,6 +25086,9 @@ else
             exit = p.ExitCode;
             return output + errTask.Result;
         }
+        // ---- The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): the program driven over the protocol, against the VM (NativeDebugTests.cs)
+        NativeDebugTests.Run(CheckNat, cxx, workDir, sanitize);
+
         // ---- Devices: the same scripts as in the device checks of the VM, natively with the loopback device (FIRE_DEVICES), against the expected outputs
         {
             if (devNativeCases.Count == 0) Console.WriteLine("(Geraete nativ: keine Faelle - die Geraete-Pruefungen der VM liefen nicht)");

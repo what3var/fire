@@ -117,8 +117,14 @@ typedef float Real;
 typedef double Real;
 #endif
 
+#ifdef FIRE_DEBUG
+void fire_dbgExited(int code);   /* the debugger hears that the program ends (fire_debug.h) */
+#endif
 /* Ends the process. With threads the other threads must not run static destructors under their feet: no cleanup, only the streams are flushed. */
 FIRE_NORETURN FIRE_FN void exitNow(int code) {
+#ifdef FIRE_DEBUG
+    fire_dbgExited(code);
+#endif
     fflush(stdout);
     fflush(stderr);
     fire_plat_exit(code);
@@ -212,7 +218,20 @@ typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
 #else
 #define FIRE_ZERO_INIT {0}
 #endif
+/* The debugger (fire_debug.h): the top of the shadow stack of this thread, the depth of the code the VM would run nested, the thread for the debugger. */
+typedef struct DbgFrame DbgFrame;
+typedef struct DbgThread DbgThread;
+#ifdef FIRE_DEBUG
+extern volatile int g_dbgArmed;     /* a debugger is attached */
+#define FIRE_DEBUG_THREAD_VARS(X) \
+    X(DbgFrame*, g_dbgTop, NULL) \
+    X(int32_t, g_dbgNest, 0) \
+    X(DbgThread*, g_dbgSelf, NULL)
+#else
+#define FIRE_DEBUG_THREAD_VARS(X)
+#endif
 #define FIRE_THREAD_VARS(X) \
+    FIRE_DEBUG_THREAD_VARS(X) \
     X(UnwindState, g_unwind, FIRE_ZERO_INIT) \
     X(Pool, g_pool, FIRE_ZERO_INIT) \
     X(Handler*, g_handlers, NULL) \
@@ -284,6 +303,11 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_ioError (fire_tl()->g_ioError)
 #define g_deviceError (fire_tl()->g_deviceError)
 #define g_gfxError (fire_tl()->g_gfxError)
+#ifdef FIRE_DEBUG
+#define g_dbgTop (fire_tl()->g_dbgTop)
+#define g_dbgNest (fire_tl()->g_dbgNest)
+#define g_dbgSelf (fire_tl()->g_dbgSelf)
+#endif
 #else
 #define FIRE_X(type, name, init) extern FIRE_TLS type name;
 FIRE_THREAD_VARS(FIRE_X)
@@ -2067,12 +2091,25 @@ FIRE_FN Value rebindLam(Value lam, Value on, OwnList* list) {
     l->on = on;
     return LamV(l);
 }
-FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
+/* `callee(args...)` of the generated code. */
+FIRE_FN Value callLamV(Value callee, int argc, const Value* args, OwnList* list) {
     Lam* l;
     if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
     l = lamOf(callee);
     if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) return callLamDefaults(callee, argc, args, list);
     return l->fn(callee, args);
+}
+/* A lambda that the runtime or a native calls (a probe, a job, a callback): in a debug build the VM runs it nested - no stops inside. */
+FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
+#ifdef FIRE_DEBUG
+    Value r;
+    g_dbgNest++;
+    r = callLamV(callee, argc, args, list);
+    g_dbgNest--;
+    return r;
+#else
+    return callLamV(callee, argc, args, list);
+#endif
 }
 
 /* CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException). */
@@ -3353,10 +3390,28 @@ FIRE_FN Value jobUnhandled(Value exception);
 
 /* `throw exception`. Returns the resume value if the exception is resumed at this very point; otherwise it returns with `g_unwind.active` set and the caller
  * has to unwind (the generated code checks the flag after every call). `throwValue(x)` is resumable, `throwValue(x, false)` (a rethrow) is not. */
+#ifdef FIRE_DEBUG
+int fire_dbgUnhandled(Value exception);
+void fire_dbgRet(DbgFrame* caller);
+/* Would a catch block of this thread take the exception (VM.WouldBeCaught)? */
+FIRE_FN bool wouldBeCaught(Value exception) {
+    Handler* h;
+    uint32_t i;
+    for (h = g_handlers; h; h = h->prev)
+        if (!h->finallyOnly)
+            for (i = 0; i < h->info->ncatch; i++)
+                if (h->info->types[i] < 0 || excMatches(exception, h->info->types[i])) return true;
+    return false;
+}
+#endif
 FIRE_FN Value throwValueR(Value exception, bool resumable) {
     Handler* h;
     if (FIRE_UNLIKELY(exception.kind != K_Class)) fatal("throw expects an exception object.");
     takeGlobal(asObj(exception));
+#ifdef FIRE_DEBUG
+    /* a debugger: an exception that nothing catches stops at the throw, before anything is unwound; `resume` ignores it (the throw gives undefined) */
+    if (FIRE_UNLIKELY(g_dbgArmed) && !wouldBeCaught(exception) && fire_dbgUnhandled(exception)) return Undef();
+#endif
     h = g_handlers;
     if (!h) {   /* nothing catches it: the program ends here (like the VM, without unwinding the stack) */
 #ifdef FIRE_THREADS
@@ -3391,6 +3446,9 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
                 clearUnwind();
                 h->prev = saved;      /* the resumed code is still inside the try block: its handler is armed again */
                 g_handlers = h;
+#ifdef FIRE_DEBUG
+                if (FIRE_UNLIKELY(g_dbgArmed) && g_dbgTop) fire_dbgRet(g_dbgTop);   /* back at the throw site (like the VM after resume) */
+#endif
                 return v;
             }
             if (!g_unwind.active) fatal("internal error: a catch block ended without leaving.");
@@ -3510,6 +3568,9 @@ FIRE_FN Value fireError(const char* cls, const char* utf8) {
     if (exception.kind == K_Class) return throwValue(exception);
 #endif
     fatalException(cls, utf8);
+#ifdef __TINYC__
+    return Undef();   /* (not reached: TinyCC does not see that fatalException does not return) */
+#endif
 }
 #endif
 
@@ -3818,6 +3879,9 @@ FIRE_FN Value divideByZero(void) {
     return fireError("DivideByZeroException", "Division by zero.");
 #else
     fatalException("DivideByZeroException", "Division by zero.");
+#ifdef __TINYC__
+    return Undef();   /* (not reached) */
+#endif
 #endif
 }
 
@@ -5056,13 +5120,23 @@ typedef struct ThreadStart {
 } ThreadStart;
 FIRE_FN void sectionAbort(void);   /* the end of a thread that is still inside a section */
 
+#ifdef FIRE_DEBUG
+void fire_dbgThreadBegin(void);
+void fire_dbgThreadEnd(void);
+#endif
 FIRE_FN void threadEntry(ThreadStart st) {
     gilAcquire();
     g_isThread = 1;
     g_attnMask = ATTN_ALL;
     g_tick = 4096;
     g_travel = st.travel;
+#ifdef FIRE_DEBUG
+    fire_dbgThreadBegin();
+#endif
     st.fn(st.args);
+#ifdef FIRE_DEBUG
+    fire_dbgThreadEnd();
+#endif
     sectionAbort();
     free(st.args);
     free(g_pool.items);
@@ -5794,6 +5868,10 @@ uint32_t g_hostServiceCount = 0, g_hostServiceCap = 0;
 bool g_autoSync = true;
 #endif
 #endif  /* FIRE_RT_IMPLEMENTATION */
+
+#ifdef FIRE_DEBUG
+#include "fire_debug.h"
+#endif
 
 FIRE_END
 
