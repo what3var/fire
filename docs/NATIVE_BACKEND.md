@@ -236,7 +236,8 @@ Alle neun ließen sich mit dem alten Generator bauen. Was man sieht:
   Klassen-Switch und Prüfung des Aufrufers) statt direkt auf das Feld. Mit dem Feld umbenannt (`tally`) braucht die C-Fassung 8,3 ms - so viel wie der C++-Code.
   **Behoben:** Ein Feld, dessen Name irgendwo privat oder geschützt ist, liest und schreibt der Generator jetzt direkt über den Index, wenn der Typ des Objekts
   bekannt ist und der Code der Funktion das Feld auf jeder möglichen Klasse benutzen darf (die Prüfung steht dann schon beim Übersetzen fest, z. B. `this.count` in
-  einer Methode von `List`); `method` braucht damit wieder ~10 ms.
+  einer Methode von `List`); `method` braucht damit wieder ~10 ms. Dasselbe gilt jetzt für Methoden und Properties: ein Programm, das in einer Schleife eine
+  private Methode, eine private Property und eine geschützte Methode über `this` benutzt, braucht 36 statt 50 ms.
 
 Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Prozessstart (1,3 ms):
 
@@ -308,9 +309,13 @@ einzigen Maschine, keine Garantie.
 
 * **Zugriffsmodifikatoren** (SPEC 5.7): `private`/`protected` bei Feldern, Methoden, statischen Mitgliedern, Properties und Konstruktoren werden wie in der VM geprüft
   (Debug und Release, nicht `#performance`), der Fehler ist die fangbare `AccessDeniedException` mit derselben Meldung. Was der Generator beim Übersetzen entscheiden
-  kann (statische Aufrufe, Konstruktoren, statische Felder: er kennt die Klasse des aufrufenden Codes, `Chunk.OwnerClass`), kostet nichts. Bei Feldern und Methoden, deren
-  Name irgendwo eingeschränkt deklariert ist, bekommen Feldhelfer (`gf_`/`sf_`) und Dispatcher einen Parameter `caller` (die Klasse des aufrufenden Codes) und prüfen je
-  Klasse; alle anderen Namen behalten den schnellen Pfad. Der Initialisierer eines statischen Feldes läuft ungeprüft.
+  kann (statische Aufrufe, statische Felder und Properties, Konstruktoren, `base.M()`: er kennt die Klasse des aufrufenden Codes, `Chunk.OwnerClass`), kostet nichts.
+  Ist die Klasse des Objekts bekannt (`this`, typisierte Variablen, `new`), gilt das auch für Felder, Methoden und Properties: darf der Code das Mitglied auf jeder
+  Klasse benutzen, die das Objekt sein kann (die Klasse und ihre Unterklassen), wird es ohne Prüfung direkt angesprochen - das Feld über den Index, die Methode
+  und der Getter/Setter als Funktion (auch die Abkürzung über den `OverloadHint` nimmt nur erlaubte Klassen, die anderen gehen zum Dispatcher); eine verbotene
+  Stelle meldet schon der Typprüfer (`TC012`). Nur wo die Klasse nicht bekannt ist (`any`, Reflection), bekommen Feldhelfer (`gf_`/`sf_`) und Dispatcher eines
+  irgendwo eingeschränkt deklarierten Namens den Parameter `caller` (die Klasse des aufrufenden Codes) und prüfen je Klasse; alle anderen Namen behalten den
+  schnellen Pfad. Der Initialisierer eines statischen Feldes läuft ungeprüft.
 
 * **Eingebaute Umwandlungen**: `string.ToBytes/ToUnicode`, `char.ToByte/ToUnicode`, `byte.ToChar`, `buffer.ToString/ToUnicode/ToUnicodeChar/ToLittleEndian/ToBigEndian` und `buffer.littleEndian`
   (SPEC 8.10; ein Puffer trägt seine Byte-Reihenfolge, die der Maschine wird zur Laufzeit festgestellt) stehen im Dispatcher der Methode, wenn keine Klasse sie selbst deklariert.
@@ -335,7 +340,8 @@ einzigen Maschine, keine Garantie.
 
 * **Properties** (SPEC 8.8): `get_Name`/`set_Name` sind gewöhnliche Methoden. Der Feldzugriff `gf_`/`sf_` entscheidet je Klasse wie die VM: ein echtes Feld der
   Klasse gewinnt, sonst wird der Getter/Setter aufgerufen (dessen Ergebnis gehört der Liste des Aufrufers, darum bekommen die Helfer von Namen mit Property
-  die `OwnList*`). Ein Setter ohne Getter (und umgekehrt) und die Adresse einer Property sind Laufzeitfehler wie in der VM. Statische Properties
+  die `OwnList*`). Hat jede Klasse, die ein Objekt bekannten Typs sein kann, dieselbe Property (und kein Feld des Namens), ruft der Generator ihren Getter/Setter
+  direkt (ohne Klassen-Switch). Ein Setter ohne Getter (und umgekehrt) und die Adresse einer Property sind Laufzeitfehler wie in der VM. Statische Properties
   rufen `GetStaticField`/`SetStaticField` direkt.
 
 * **Operator-Überladung** (SPEC 5.11): überlädt irgendeine Klasse des Programms `operator+` usw., gehen alle Operationen dieses Operators durch einen erzeugten
