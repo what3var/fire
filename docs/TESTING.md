@@ -150,7 +150,9 @@ quickly:
 | `FIRE_TEST_CCACHE=0` | no compiler cache |
 
 The window cases of the native group (filter `Fenster`) run every window program with SDL2 and, when the machine has it, SDL3 (dummy driver); the clipboard of X11 needs `xvfb-run` (one program,
-two programs, the VM with SDL3 as the other one), the Windows cases MinGW, Wine and the MinGW package of SDL3 (`SDL3_DIR`, else `/opt/sdl-mingw/SDL3-*`). A case whose tools are missing is skipped with a note.
+two programs, the VM with SDL3 as the other one), the Windows cases MinGW, Wine and the MinGW package of SDL3 (`SDL3_DIR`, else `/opt/sdl-mingw/SDL3-*`); the VM's Windows clipboard a `dotnet publish -r win-x64` (the runtime
+pack for win-x64 comes from NuGet once). Drag-out on Wayland needs `weston` (it runs with its X11 backend under Xvfb) and an SDL3 with the Wayland driver - the system's, or a folder with such a
+`libSDL3.so` in `FIRE_TEST_SDL3_WAYLAND`. A case whose tools are missing is skipped with a note.
 
 When `ccache` is installed, the native builds of the tests go through it: a case whose generated program did not change is not compiled again (a run of the native group
 with an unchanged program takes seconds per case instead of a minute). Example: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="Drop|Compression:"` runs the native checks of

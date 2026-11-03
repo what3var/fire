@@ -14,6 +14,7 @@ fire.Terminal                  (net10.0, plattformunabhängig)
 fire.Terminal.Sdl              (net10.0, referenziert nur .Terminal)
   SdlFramebufferRenderer         – IFramebufferRenderer über SDL3-CS
   SdlClipboard                   – IClipboard über SDL3-CS (Text, image/png, image/bmp, text/uri-list)
+  WinClipboard, DropFiles        – Dateien in der Zwischenablage von Windows (CF_HDROP, P/Invoke; SDL3 hat es nicht)
 
 fire.Terminal.Windows          (net10.0, referenziert .Terminal + .Sdl)
   ConsoleWindow                   – zeigt EINEN Framebuffer in einem Fenster an
@@ -455,7 +456,7 @@ außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das vo
 | `2` | es hat es verschoben (ein Dateimanager hat die Dateien verschoben: das Programm kann sie vergessen) |
 
 `window.CanStartDrag()` sagt vorher, ob die Plattform ein solches Ziehen überhaupt übernehmen kann: `true` unter Windows und X11 (der Videotreiber `windows` bzw. `x11` - in der VM gefragt in
-`SdlDragOut.CanStart`, nativ `fire_display_canStartDrag` der Anzeige), `false` unter Wayland, macOS, mit dem Dummy-/Offscreen-Treiber, ohne Desktop (`fire_display_none.h`) und solange das Fenster nicht
+`SdlDragOut.CanStart`, nativ `fire_display_canStartDrag` der Anzeige), `false` in der VM unter Wayland, unter macOS, mit dem Dummy-/Offscreen-Treiber, ohne Desktop (`fire_display_none.h`) und solange das Fenster nicht
 offen ist; ein eigenes Board-Package ohne `FIRE_DISPLAY_CAN_START_DRAG` sagt ebenfalls `false`. Die UI-Bibliothek lässt ein Ziehen dann im Fenster weiterlaufen, statt es beim Verlassen zu beenden.
 
 - **Windows**: OLE (`DoDragDrop`) mit einem eigenen `IDataObject` - der Text als `CF_UNICODETEXT`, die Dateien als `CF_HDROP` - und einer `IDropSource`; nativ in C (die COM-Objekte als
@@ -463,11 +464,16 @@ offen ist; ein eigenes Board-Package ohne `FIRE_DISPLAY_CAN_START_DRAG` sagt ebe
   holt die Nachrichten des Threads selbst ab, bis losgelassen wird. Angeboten werden Kopieren und Verschieben; welches, entscheidet das Ziel (und die Tasten).
 - **X11**: das XDND-Protokoll als Quelle (Version 5: `XdndEnter`/`XdndPosition`/`XdndLeave`/`XdndDrop` an das Fenster mit `XdndAware` unter dem Zeiger, `XdndStatus`/`XdndFinished` zurück; die
   Auswahl `XdndSelection` gehört dem Fenster und liefert `text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING` und `text/plain`). Kopieren, mit Umschalt Verschieben. libX11 wird zur Laufzeit
-  geladen (ohne X11 - nur Wayland, ein Board - gibt es eben kein Ziehen). Die Schleife benutzt die Verbindung von SDL und hält dabei die Sperre, unter der auch die Fenster ihre Ereignisse abholen: sie
+  geladen (ohne X11 - ein Board - gibt es eben kein Ziehen). Die Schleife benutzt die Verbindung von SDL und hält dabei die Sperre, unter der auch die Fenster ihre Ereignisse abholen: sie
   nimmt nur die Antworten des Ziels und die Anfragen nach den Daten aus der Warteschlange, alles andere bleibt für SDL. Den Zeiger hält der Druck, mit dem das Ziehen begann (der implizite Grab der
   Taste bzw. das Festhalten der Maus durch SDL; ein eigener Grab scheitert, solange SDL3 die Maus über XInput2 hält): die Schleife fragt den Server, wo der Zeiger ist und welche Tasten gedrückt
   sind, bis losgelassen wird; Escape bricht ab.
-- **Wayland, macOS**, der Browser, Boards: noch kein Ziehen nach außen (`0`).
+- **Wayland** (nur nativ mit SDL3): `wl_data_device.start_drag` mit einer eigenen `wl_data_source` (`text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING`, `text/plain`; Kopieren und
+  Verschieben, welches, entscheidet das Ziel bzw. der Compositor). Den Zug kann nur beginnen, wer die Seriennummer des Tastendrucks kennt, der den Zeiger hält - SDL gibt sie nicht heraus. Deshalb hört
+  fire auf SDLs Verbindung (`wl_display`) mit einer eigenen Warteschlange selbst mit: ein eigener `wl_seat`, ein eigener `wl_pointer` (der Compositor meldet jeden Tastendruck allen Zeigern des
+  Programms) und der `wl_data_device_manager`; nach jedem Abholen der Ereignisse durch SDL nimmt die Anzeige ihre Warteschlange dran. libwayland-client wird zur Laufzeit geladen. Während des Ziehens
+  gehört der Zeiger dem Compositor (SDL bekommt ein Verlassen und lässt seine Tasten los). Die VM kann unter Wayland noch nicht nach außen ziehen (`0`).
+- **macOS**, der Browser, Boards: noch kein Ziehen nach außen (`0`).
 - Ein Fenster, das der Thread seines Managers zeigt (`Show`), zieht auf diesem Thread - dem, dem das Fenster des Betriebssystems gehört; das Programm wartet auf die Antwort (nativ ohne die GIL,
   die anderen Threads des Programms laufen weiter).
 - Im nativen Backend: `fire_display_startDrag(fenster, text, pfade)` der Anzeige (`fire_display_c.h`; die Pfade zeilenweise), umgesetzt in `platform/std/fire_dragout.h` für SDL3 und SDL2
@@ -491,9 +497,9 @@ Die **Zwischenablage** des Desktops (Text, Bilder, Dateien) gehört zu `#import 
 Sie braucht kein offenes Fenster (SDL startet seinen Video-Teil dafür einmal). Ohne Desktop - ein Board, die Tests mit einem Ersatz-Renderer - hat das Programm eine eigene Zwischenablage,
 die innerhalb des Programms genauso funktioniert. Zugriffe auf die Zwischenablage und das Abholen der Fenster-Ereignisse schließen sich gegenseitig aus (unter X11 wartet SDL auf die Antwort des
 Besitzers der Zwischenablage, indem es selbst Ereignisse abholt). Ein Programm ohne Fenster beantwortet die Fragen anderer Programme nach dem, was es hineingelegt hat, während es `Clipboard`
-aufruft (dort holt SDL die Ereignisse der Zwischenablage ab). SDL 3.2 unter X11 sieht nur, was kopiert wurde, während das Programm lief (es fragt nach den Arten, wenn der Besitzer wechselt) - was vor dem
-Start kopiert wurde, sieht ein SDL3-Programm nicht (SDL2 fragt jedes Mal). Unter Windows hat SDL3 keine Dateilisten: die VM hält Dateien dort in ihrer eigenen Zwischenablage, ein nativer Build spricht
-selbst mit `CF_HDROP`.
+aufruft (dort holt SDL die Ereignisse der Zwischenablage ab). SDL 3.2 unter X11 fragt nach den Arten in der Zwischenablage nur, wenn ihr Besitzer wechselt, während das Programm läuft; damit auch
+da ist, was ein anderes Programm vor dem Start kopiert hat, sagt fire SDL beim ersten Zugriff einmal, der Besitzer habe gewechselt (VM und nativ; danach fragt SDL selbst). Unter Windows hat SDL3 keine Dateilisten: VM und nativer Build sprechen dafür selbst mit der Zwischenablage von Windows
+(`CF_HDROP`, wie der Explorer beim Kopieren von Dateien).
 
 Im nativen Backend: `fire_display_clipboardSet/Get/Has` (Text), `fire_display_clipboardGetImage/SetImage/HasImage` und `GetFiles/SetFiles/HasFiles` der Anzeige (`fire_display_c.h`; SDL3, SDL2 sagt "nicht
 vorhanden", ohne Desktop die eigene des Programms), die Drops als `EV_DROP_FILES`/`EV_DROP_TEXT` mit `data` (Pfade zeilenweise bzw. der Text), das Schweben als `EV_DRAG_HOVER`/`EV_DRAG_LEAVE`

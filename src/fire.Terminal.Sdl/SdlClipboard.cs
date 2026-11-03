@@ -5,7 +5,7 @@ using SDL3;
 namespace fire.Terminal.Sdl
 {
     /// <summary>The clipboard of the desktop through SDL3: text, pictures (image/png, image/bmp - SDL3 puts image/bmp on the Windows clipboard as CF_DIB) and files
-    /// (text/uri-list and x-special/gnome-copied-files; on Windows SDL3 has no CF_HDROP, so files stay within the program there). The video part of SDL is started for it
+    /// (text/uri-list and x-special/gnome-copied-files; on Windows CF_HDROP, which SDL3 does not have: <see cref="WinClipboard"/>). The video part of SDL is started for it
     /// once (on X11 SDL needs a window of its own for the clipboard); the calls hold <see cref="SdlGate.Lock"/>, which the pumping of the windows holds as well - on X11
     /// SDL waits for the answer of the clipboard's owner by pumping events itself. A desktop that cannot be reached (no SDL, no display) gives the program a clipboard of its
     /// own instead. The same kinds as the native display (native/platform/std/fire_display_sdl3.h).</summary>
@@ -22,6 +22,12 @@ namespace fire.Terminal.Sdl
                 _tried = true;
                 try { _ready = SDL.InitSubSystem(SDL.InitFlags.Video); }
                 catch (System.Exception) { _ready = false; }   // (no SDL library on this machine)
+                if (_ready)
+                {
+                    SDL.PumpEvents();
+                    try { X11Refresh.Run(); }
+                    catch (System.Exception) { }   // (no libX11: nothing to ask)
+                }
             }
             // what other programs did with the clipboard arrives as events (X11: the owner changed, then the kinds it offers): taken in before the clipboard is read
             if (_ready) SDL.PumpEvents();
@@ -172,6 +178,11 @@ namespace fire.Terminal.Sdl
             lock (SdlGate.Lock)
             {
                 if (!Ready()) return _fallback.GetFiles();
+                if (WinFiles)
+                {
+                    var dropped = WinClipboard.GetFiles();
+                    if (dropped != null && dropped.Length > 0) return dropped;
+                }
                 var list = GetData("text/uri-list") ?? GetData("x-special/gnome-copied-files");
                 return list == null ? Array.Empty<string>() : PathsFromUriList(Encoding.UTF8.GetString(list));
             }
@@ -185,11 +196,17 @@ namespace fire.Terminal.Sdl
             lock (SdlGate.Lock)
             {
                 if (!Ready()) return _fallback.SetFiles(kept);
+                // (Windows: CF_HDROP of our own; SDL's offer is withdrawn first - it would still answer for the kinds it keeps within the program, e.g. image/png)
+                if (WinFiles && SDL.ClearClipboardData() && WinClipboard.SetFiles(kept)) return true;
                 return SetData(new[] { ("text/uri-list", Encoding.UTF8.GetBytes(uris)), ("x-special/gnome-copied-files", Encoding.UTF8.GetBytes("copy\n" + uris)) });
             }
         }
 
         public bool HasFiles => GetFiles().Length > 0;
+
+        /// <summary>Files go through CF_HDROP of <see cref="WinClipboard"/>: on Windows with SDL's video driver of Windows (with another one - the dummy of the
+        /// tests - the clipboard is SDL's own). The caller holds the lock and SDL is ready.</summary>
+        private static bool WinFiles => OperatingSystem.IsWindows() && SDL.GetCurrentVideoDriver() == "windows";
 
         /// <summary>The paths as a text/uri-list: `file://` URIs, each line ending in CR LF, the bytes a URI may not hold as %XX (C:\a\b becomes file:///C:/a/b).</summary>
         public static string UriListFromPaths(IEnumerable<string> paths)
@@ -237,6 +254,77 @@ namespace fire.Terminal.Sdl
                 paths.Add(OperatingSystem.IsWindows() ? decoded.Replace('/', '\\') : decoded);
             }
             return paths.ToArray();
+        }
+    }
+
+    /// <summary>SDL 3.2 on X11 learns what the clipboard offers only when its owner changes (XFixes tells it, then it asks the owner for TARGETS): what another
+    /// program copied before this one started stays invisible - SDL refuses every kind it was not told of. So once, when the clipboard is first used: if SDL
+    /// knows no kinds but somebody owns CLIPBOARD, SDL is told that the owner changed (an XFixesSelectionNotify sent through SDL's own connection to a hidden
+    /// window of SDL - delivered back to SDL, which then asks for TARGETS itself), and its events are pumped until it has the kinds (at most half a second).
+    /// The same as fire_display_x11ClipboardRefresh of native/platform/std/fire_display_sdl3.h. The caller holds <see cref="SdlGate.Lock"/>.</summary>
+    internal static unsafe class X11Refresh
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XFixesNotify { public int type; public nuint serial; public int send_event; public IntPtr display; public nuint window; public int subtype; public nuint owner, selection, time, selectionTime; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XEvent { public fixed long pad[24]; }
+
+        private static int KindCount()
+        {
+            object? kinds = SDL.GetClipboardMimeTypes(out UIntPtr n);
+            if (kinds is IntPtr p && p != IntPtr.Zero) SDL.Free(p);
+            return (int)n;
+        }
+
+        public static void Run()
+        {
+            if (!(OperatingSystem.IsLinux() || OperatingSystem.IsFreeBSD()) || SDL.GetCurrentVideoDriver() != "x11" || KindCount() > 0) return;
+            if (!NativeLibrary.TryLoad("libX11.so.6", out IntPtr lib) && !NativeLibrary.TryLoad("libX11.so", out lib)) return;
+            var queryExtension = (delegate* unmanaged<IntPtr, byte*, int*, int*, int*, int>)NativeLibrary.GetExport(lib, "XQueryExtension");
+            var internAtom = (delegate* unmanaged<IntPtr, byte*, int, nuint>)NativeLibrary.GetExport(lib, "XInternAtom");
+            var getSelectionOwner = (delegate* unmanaged<IntPtr, nuint, nuint>)NativeLibrary.GetExport(lib, "XGetSelectionOwner");
+            var sendEvent = (delegate* unmanaged<IntPtr, nuint, int, nint, XEvent*, int>)NativeLibrary.GetExport(lib, "XSendEvent");
+            var flush = (delegate* unmanaged<IntPtr, int>)NativeLibrary.GetExport(lib, "XFlush");
+            IntPtr hidden = SDL.CreateWindow("", 1, 1, SDL.WindowFlags.Hidden);
+            if (hidden == IntPtr.Zero) return;
+            bool sent = false;
+            try
+            {
+                uint props = SDL.GetWindowProperties(hidden);
+                IntPtr display = SDL.GetPointerProperty(props, SDL.Props.WindowX11DisplayPointer, IntPtr.Zero);
+                nuint xwindow = (nuint)SDL.GetNumberProperty(props, SDL.Props.WindowX11WindowNumber, 0);
+                int opcode, eventBase, errorBase;
+                byte[] xfixes = Encoding.ASCII.GetBytes("XFIXES\0"), clipboardName = Encoding.ASCII.GetBytes("CLIPBOARD\0");
+                fixed (byte* xf = xfixes)
+                fixed (byte* cn = clipboardName)
+                {
+                    if (display != IntPtr.Zero && xwindow != 0 && queryExtension(display, xf, &opcode, &eventBase, &errorBase) != 0)
+                    {
+                        nuint clipboard = internAtom(display, cn, 0);
+                        nuint owner = getSelectionOwner(display, clipboard);
+                        if (owner != 0)
+                        {
+                            XEvent e = default;
+                            var f = (XFixesNotify*)&e;
+                            f->type = eventBase;   // + XFixesSelectionNotify (0)
+                            f->display = display;
+                            f->window = xwindow;
+                            f->subtype = 0;        // XFixesSetSelectionOwnerNotify
+                            f->owner = owner;
+                            f->selection = clipboard;
+                            sent = sendEvent(display, xwindow, 0, 0, &e) != 0;   // (no mask: to the client that made the window - SDL)
+                            flush(display);
+                        }
+                    }
+                }
+            }
+            finally { SDL.DestroyWindow(hidden); }
+            for (int i = 0; sent && i < 100; i++)
+            {
+                SDL.PumpEvents();
+                if (KindCount() > 0) break;
+                SDL.Delay(5);
+            }
         }
     }
 

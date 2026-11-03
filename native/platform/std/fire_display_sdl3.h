@@ -20,6 +20,7 @@
 #endif
 #include "fire_display_c.h"
 #include "fire_systheme.h"
+#define FIRE_DRAGOUT_WANT_WAYLAND 1
 #include "fire_dragout.h"
 
 #define FIRE_DISPLAY_AVAILABLE 1
@@ -45,6 +46,7 @@ typedef struct FireDisplayWindow {
     float hoverX, hoverY;
     int direct;               /* a presenter draws into the window itself (fire_display_native): no renderer */
     SDL_MetalView metalView;  /* (macOS: the view with the layer the presenter draws into) */
+    int wayland;   /* (SDL's video driver is "wayland") */
 } FireDisplayWindow;
 
 /* One lock for everything that touches SDL's events: the pumping of the windows (from several threads: the managers) and the clipboard (on X11 SDL waits for
@@ -95,7 +97,19 @@ static void fire_display_close(FireDisplayWindow* w) {
     if (w->metalView) { SDL_Metal_DestroyView(w->metalView); w->metalView = NULL; }
     w->direct = 0;
     if (w->window) { SDL_DestroyWindow(w->window); w->window = NULL; }
-    if (w->ownsVideo) { SDL_QuitSubSystem(SDL_INIT_VIDEO); w->ownsVideo = 0; }
+    if (w->ownsVideo) {
+#ifdef FIRE_DRAGOUT_WAYLAND
+        /* (the last window of SDL: what fire listens with on the wl_display is given back before SDL may close the connection) */
+        if (w->wayland) {
+            int left = 0;
+            SDL_Window** windows = SDL_GetWindows(&left);
+            SDL_free(windows);
+            if (left == 0) { fire_display_lockSdl(); fire_dragout_wlForget(); fire_display_unlockSdl(); }
+        }
+#endif
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        w->ownsVideo = 0;
+    }
 }
 
 #if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT) || defined(FIRE_DISPLAY_SELFTEST_DROP) || defined(FIRE_DISPLAY_SELFTEST_HOVER)
@@ -169,6 +183,7 @@ static int fire_display_open(FireDisplayWindow* w, const char* title, int width,
     SDL_SetRenderVSync(w->renderer, vsync ? 1 : 0);
     SDL_StartTextInput(w->window);
     w->windowId = SDL_GetWindowID(w->window);
+    { const char* driver = SDL_GetCurrentVideoDriver(); w->wayland = driver != NULL && strcmp(driver, "wayland") == 0; }
     /* joysticks are an extra: without a driver the window opens all the same (the devices that are plugged in report themselves as SDL_EVENT_JOYSTICK_ADDED)
      * (a reference of its own as well, see above) */
     if (SDL_InitSubSystem(SDL_INIT_JOYSTICK)) w->ownsJoystick = 1;
@@ -363,17 +378,77 @@ static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int f
             default: break;
         }
     }
+#ifdef FIRE_DRAGOUT_WAYLAND
+    /* (Wayland: fire's own queue takes what SDL read for it - the presses of the buttons that a drag out of the window needs) */
+    if (w->window && w->wayland) fire_dragout_wlPump(SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL));
+#endif
     fire_display_unlockSdl();
     return !w->quit;
 }
 
 /* ---- the clipboard of the desktop: text, pictures, files ---- */
+#ifdef FIRE_DRAGOUT_X11
+/* SDL 3.2 on X11 learns what the clipboard offers only when its owner changes (XFixes tells it, then it asks the owner for TARGETS): what another program
+ * copied before this one started stays invisible - SDL_GetClipboardData refuses every kind it was not told of. So once, when the clipboard is first used: if
+ * SDL knows no kinds but somebody owns CLIPBOARD, SDL is told that the owner changed (an XFixesSelectionNotify sent through SDL's own connection to a hidden
+ * window of SDL - delivered back to SDL, which then asks for TARGETS itself), and its events are pumped until it has the kinds (at most half a second). libX11
+ * is the one of fire_dragout.h (dlopen). The caller holds the lock. */
+static void fire_display_x11ClipboardRefresh(void) {
+    const char* driver = SDL_GetCurrentVideoDriver();
+    size_t n = 0;
+    char** kinds;
+    FireX11* x;
+    SDL_Window* hidden;
+    int sent = 0, i;
+    if (driver == NULL || strcmp(driver, "x11") != 0) return;
+    kinds = SDL_GetClipboardMimeTypes(&n);
+    SDL_free(kinds);
+    if (n > 0 || (x = fire_x11_load()) == NULL) return;
+    hidden = SDL_CreateWindow("", 1, 1, SDL_WINDOW_HIDDEN);
+    if (hidden == NULL) return;
+    {
+        SDL_PropertiesID props = SDL_GetWindowProperties(hidden);
+        void* display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, NULL);
+        FireXId xwindow = (FireXId)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+        int opcode, eventBase, errorBase;
+        if (display != NULL && xwindow != 0 && x->QueryExtension(display, "XFIXES", &opcode, &eventBase, &errorBase)) {
+            FireXId clipboard = x->InternAtom(display, "CLIPBOARD", 0);
+            FireXId owner = x->GetSelectionOwner(display, clipboard);
+            if (owner != 0) {
+                FireXEvent e;
+                memset(&e, 0, sizeof e);
+                e.xfixes.type = eventBase;   /* + XFixesSelectionNotify (0) */
+                e.xfixes.display = display;
+                e.xfixes.window = xwindow;
+                e.xfixes.subtype = 0;        /* XFixesSetSelectionOwnerNotify */
+                e.xfixes.owner = owner;
+                e.xfixes.selection = clipboard;
+                sent = x->SendEvent(display, xwindow, 0, 0, &e) != 0;   /* (no mask: to the client that made the window - SDL) */
+                x->Flush(display);
+            }
+        }
+    }
+    SDL_DestroyWindow(hidden);
+    for (i = 0; sent && i < 100; i++) {
+        SDL_PumpEvents();
+        kinds = SDL_GetClipboardMimeTypes(&n);
+        SDL_free(kinds);
+        if (n > 0) break;
+        SDL_Delay(5);
+    }
+}
+#endif
+
 /* The video part of SDL must run for the clipboard (on X11 it needs a window of SDL's own): it is started once and stays. */
 static int fire_display_clipboardReady(void) {
     static int ready = 0;
     if (!ready) {
         if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) return 0;
         ready = 1;
+#ifdef FIRE_DRAGOUT_X11
+        SDL_PumpEvents();
+        fire_display_x11ClipboardRefresh();
+#endif
     }
     /* the events of the clipboard are taken in: what other programs did with it (X11: the owner changed, then the kinds it offers) before it is read, and their
      * questions for what this program put there (a program without a window answers here) */
@@ -704,7 +779,8 @@ static void fire_display_restore(FireDisplayWindow* w) {
 
 /* ---- dragging text and files out of the window into other programs (Window.StartDrag; SDL3 cannot start such a drag: fire_dragout.h does it for the
  * window of the platform) - runs until the user lets go: 0 nothing, 1 copied, 2 moved. Windows: OLE (the HWND of the window); X11: XDND (the Display and the
- * Window of SDL, with the lock of SDL's events held, so that nobody else takes the events of the connection meanwhile); elsewhere (Wayland, macOS) 0. ---- */
+ * Window of SDL, with the lock of SDL's events held, so that nobody else takes the events of the connection meanwhile); Wayland: wl_data_device.start_drag on
+ * SDL's wl_display with the window's wl_surface (the same lock); elsewhere (macOS) 0. ---- */
 #define FIRE_DISPLAY_START_DRAG 1
 static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const char* files) {
     int result = 0;
@@ -727,6 +803,18 @@ static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const 
                 fire_display_unlockSdl();
             }
         }
+#  ifdef FIRE_DRAGOUT_WAYLAND
+        else if (w->wayland) {
+            SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
+            void* display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
+            void* surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
+            if (display != NULL && surface != NULL) {
+                fire_display_lockSdl();
+                result = fire_dragout_wayland(display, surface, text, files);
+                fire_display_unlockSdl();
+            }
+        }
+#  endif
     }
 #else
     (void)text; (void)files;
@@ -734,11 +822,20 @@ static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const 
     return result;
 }
 
-/* Can fire_display_startDrag hand a drag to the desktop here? Windows (the windows video driver) and X11 (the x11 driver, with fire_dragout.h's X11 part);
- * Wayland, macOS, the dummy/offscreen drivers: no. (Only the video driver is asked: callable from any thread.) */
+/* Can fire_display_startDrag hand a drag to the desktop here? Windows (the windows video driver), X11 (the x11 driver, with fire_dragout.h's X11 part) and
+ * Wayland (fire_dragout.h's Wayland part, once its own queue is ready - after the first pump); macOS, the dummy/offscreen drivers: no. */
 #define FIRE_DISPLAY_CAN_START_DRAG 1
 static int fire_display_canStartDrag(FireDisplayWindow* w) {
     if (w == NULL || !w->window) return 0;
+#ifdef FIRE_DRAGOUT_WAYLAND
+    if (w->wayland) {
+        int ready;
+        fire_display_lockSdl();
+        ready = fire_dragout_wlReady(SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL));
+        fire_display_unlockSdl();
+        return ready;
+    }
+#endif
 #if defined(_WIN32) || defined(FIRE_DRAGOUT_X11)
     {
         const char* driver = SDL_GetCurrentVideoDriver();

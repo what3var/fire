@@ -221,22 +221,22 @@ Dynamisches Laden:
 
 Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", docs/NATIVE_BACKEND.md "SDL3 oder SDL2"):
 `Clipboard.GetText`/`SetText`/`HasText`, `GetImage`/`SetImage`/`HasImage` (PNG über `Framebuffer.ToPng`, unter Windows auch `CF_DIB`) und `GetFiles`/`SetFiles`/`HasFiles` (`text/uri-list`, unter
-Windows `CF_HDROP` nativ) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms; die Ereignisse `DropFiles`/`DropText` mit Position
+Windows `CF_HDROP`, nativ und in der VM) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms, unter X11 auch mit dem, was vor dem Start kopiert wurde (SDL 3.2 sähe es nicht); die Ereignisse `DropFiles`/`DropText` mit Position
 und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
 Dreifachklick alles bzw. die Zeile (`root.clickCount`), das mehrzeilige Textfeld `UI.TextArea`, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`,
 `OnDragDone`, `UI.DropEffect`) mit einem Bild am Zeiger (`DragData.ShowImage`: `DragData.Image`, ein durchscheinender Schnappschuss des Quellelements oder ein Schild mit dem Text), Drops aus
 anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`); Ziehen aus dem Fenster heraus in andere Programme (`Window.StartDrag`: Text und Dateien, die Antwort
-Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11 (XDND), in der VM und nativ mit SDL3 und SDL2 - das `ui` übergibt ein Ziehen mit Text oder Dateien,
+Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11 (XDND), in der VM und nativ mit SDL3 und SDL2, unter Wayland (`wl_data_device.start_drag`) nativ mit SDL3 - das `ui` übergibt ein Ziehen mit Text oder Dateien,
 sobald der Zeiger das Fenster verlässt (`UI.DragData.AllowExternal`); wo die Plattform das nicht kann (`Window.CanStartDrag()`), bleibt das Ziehen im Fenster. Rückgängig/Wiederholen in `TextBox`
 und `TextArea`, Ziehen der Markierung (verschieben, mit Ctrl kopieren, in andere Felder und Programme), Doppelklick in `ListBox`/`ListView`/`TreeView` über `root.clickCount` (`OnActivate`).
 
 **Offen:**
-- Ziehen aus dem Fenster heraus unter Wayland (`wl_data_source`/`start_drag`; SDL gibt die Verbindung nicht so heraus, dass das neben SDL ginge) und macOS (`NSDraggingSession`); bis dahin bleibt
-  dort ein Ziehen im `ui` im Fenster (`Window.CanStartDrag()` sagt `false`; kommt Drag-out für eine Plattform dazu, muss `fire_display_canStartDrag`/`SdlDragOut.CanStart` mitwachsen).
+- Ziehen aus dem Fenster heraus unter macOS (`NSDraggingSession`) und in der VM unter Wayland (die VM bräuchte dasselbe wie nativ in `SdlDragOut.cs`); dort bleibt ein Ziehen im `ui`
+  im Fenster (`Window.CanStartDrag()` sagt `false`).
+- Wayland-Ziehen nur mit weston (X11-Backend unter Xvfb) getestet, nicht mit GNOME/KDE.
 - Das Bild am Zeiger gibt es nur im Fenster: draußen zeigt der Desktop sein eigenes Zeichen (ein Bild für OLE/XDND fehlt).
-- Drag-out in der VM unter echtem Windows prüfen (OLE-Pfad nur unter Wine nativ getestet; die VM läuft dort nicht).
-- SDL 3.2 unter X11 sieht nicht, was ein anderes Programm vor seinem Start kopiert hat (es fragt nach den Arten nur, wenn der Besitzer wechselt); Dateien in der Zwischenablage unter Windows
-  in der VM (SDL3 hat kein `CF_HDROP`, die VM bleibt dort bei ihrer eigenen).
+- Drag-out in der VM unter echtem Windows prüfen (OLE-Pfad nur unter Wine nativ getestet; die VM läuft unter Wine als `win-x64`-Build - die
+  Zwischenablage mit `CF_HDROP` wird so geprüft -, ein Ziehen mit der "Hand" dort fehlt noch).
 
 Ursprünglicher Plan:
 
