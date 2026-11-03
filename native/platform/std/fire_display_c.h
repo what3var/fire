@@ -34,7 +34,14 @@
  * A desktop also reports what the user drops onto a window: FIRE_EV_DROP_FILES (`data`: the paths, one per line) and FIRE_EV_DROP_TEXT (`data`: the text), at
  * the position of the drop; while something of another program is dragged over the window, FIRE_EV_DRAG_HOVER (x, y), and FIRE_EV_DRAG_LEAVE when it leaves
  * without being dropped (SDL3; SDL2 sends neither).
- * A board package of your own provides its own `fire_display.h` (see fire_display_sdl.h for what the functions do) and puts the pixels on its screen. */
+ * Optional (a display that has them defines the name in brackets; the windows bridge does without them otherwise):
+ *   void fire_display_setTextInputRect(w, x, y, width, height)   [FIRE_DISPLAY_TEXT_INPUT_RECT] where the text cursor of the program is (framebuffer pixels): the input
+ *                                                             method opens its window there
+ *   int  fire_display_setBackdrop(w, kind)                    [FIRE_DISPLAY_BACKDROP] what the desktop shows behind the window (FIRE_BACKDROP_*); returns what it gives
+ *   double fire_display_scale(w)                              [FIRE_DISPLAY_SCALE] pixels of the screen per logical pixel of the window's screen now
+ * fire's own displays (fire_display_win32.h, _x11.h, _wayland.h, _cocoa.h, _web.h, _headless.h) share fire_display_common.h: the keys (fire_display_keys.h), the queue of a
+ * window, drops, compositions and the events of the tests.
+ * A board package of your own provides its own `fire_display.h` (see fire_display_headless.h for the simplest complete one) and puts the pixels on its screen. */
 #ifndef FIRE_DISPLAY_C_H
 #define FIRE_DISPLAY_C_H
 
@@ -50,11 +57,26 @@ typedef struct fire_native_window { int32_t kind; int32_t width, height; int32_t
 typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
 #endif
 
-/* The numbers are those of `EventType` in the windows prelude. */
-enum { FIRE_EV_UNKNOWN = 0, FIRE_EV_CLOSE = 1, FIRE_EV_CLOSE_REQUEST = 2, FIRE_EV_TEXT_INPUT = 3, FIRE_EV_RESIZE = 4, FIRE_EV_TOUCH_DOWN = 16, FIRE_EV_TOUCH_MOVE = 17, FIRE_EV_TOUCH_UP = 18,
-       FIRE_EV_MOUSE_DOWN = 8, FIRE_EV_MOUSE_MOVE = 9, FIRE_EV_MOUSE_MOVE_REL = 10, FIRE_EV_MOUSE_UP = 11, FIRE_EV_MOUSE_SCROLL = 12, FIRE_EV_KEY_DOWN = 24, FIRE_EV_KEY_UP = 25,
+/* The numbers are those of `EventType` in the windows prelude.
+ * Beyond the first displays (all of fire's own displays have them; a board display may leave them out):
+ *   FIRE_EV_TEXT_EDITING  the text an input method is composing (IME: Japanese, Chinese, dead keys, ...) - `data` the composition so far (UTF-8, malloc; NULL: it ended
+ *                         without text), `cursor` where its cursor stands and `selection` how many characters after it are marked (in characters); the finished text
+ *                         comes as FIRE_EV_TEXT_INPUT, as typed text does. The program says where its text cursor is (fire_display_setTextInputRect), so that the window
+ *                         of the input method opens there.
+ *   FIRE_EV_SCALE         the window moved to a screen with another scale (`value`: pixels of the screen per logical pixel).
+ *   FIRE_EV_MOUSE_ENTER / FIRE_EV_MOUSE_LEAVE   the mouse came into / left the window.
+ *   FIRE_EV_FOCUS_GAINED / FIRE_EV_FOCUS_LOST   the window got / lost the keyboard. */
+enum { FIRE_EV_UNKNOWN = 0, FIRE_EV_CLOSE = 1, FIRE_EV_CLOSE_REQUEST = 2, FIRE_EV_TEXT_INPUT = 3, FIRE_EV_RESIZE = 4, FIRE_EV_TEXT_EDITING = 5, FIRE_EV_SCALE = 6,
+       FIRE_EV_TOUCH_DOWN = 16, FIRE_EV_TOUCH_MOVE = 17, FIRE_EV_TOUCH_UP = 18,
+       FIRE_EV_MOUSE_DOWN = 8, FIRE_EV_MOUSE_MOVE = 9, FIRE_EV_MOUSE_MOVE_REL = 10, FIRE_EV_MOUSE_UP = 11, FIRE_EV_MOUSE_SCROLL = 12, FIRE_EV_MOUSE_ENTER = 13, FIRE_EV_MOUSE_LEAVE = 14,
+       FIRE_EV_FOCUS_GAINED = 20, FIRE_EV_FOCUS_LOST = 21, FIRE_EV_KEY_DOWN = 24, FIRE_EV_KEY_UP = 25,
        FIRE_EV_JOY_AXIS = 32, FIRE_EV_JOY_BUTTON_DOWN = 33, FIRE_EV_JOY_BUTTON_UP = 34, FIRE_EV_JOY_HAT = 35, FIRE_EV_JOY_ADDED = 36, FIRE_EV_JOY_REMOVED = 37,
        FIRE_EV_DROP_FILES = 40, FIRE_EV_DROP_TEXT = 41, FIRE_EV_DRAG_HOVER = 42, FIRE_EV_DRAG_LEAVE = 43 };
+
+/* What the desktop shows behind a window (fire_display_setBackdrop; Window.Backdrop): the window is opaque (NONE), its pixels are mixed with what lies behind it by their
+ * alpha (TRANSPARENT), or the desktop also blurs what lies behind it (BLUR), as acrylic (ACRYLIC: blurred, tinted, with grain) or as Mica (MICA, Windows 11: the wallpaper,
+ * blurred). A display that cannot give what is asked gives the next thing it can (MICA -> ACRYLIC -> BLUR -> TRANSPARENT -> NONE) and says which. */
+enum { FIRE_BACKDROP_NONE = 0, FIRE_BACKDROP_TRANSPARENT = 1, FIRE_BACKDROP_BLUR = 2, FIRE_BACKDROP_ACRYLIC = 3, FIRE_BACKDROP_MICA = 4 };
 
 /* One event; which fields count depends on `type` (positions are in framebuffer pixels: the window may be scaled). */
 typedef struct FireDisplayEvent {
@@ -71,7 +93,8 @@ typedef struct FireDisplayEvent {
     float pressure;                    /* touch: 0 to 1 */
     int joystick, index;               /* joystick: the device, and the axis / button / hat */
     float value;                       /* joystick axis: -1 to 1; hat: a bit mask (1 up, 2 right, 4 down, 8 left) */
-    char* data;                        /* a drop: the paths (one per line) or the text (UTF-8, malloc; it belongs to the list that holds the event) */
+    char* data;                        /* a drop: the paths (one per line) or the text; a composition (UTF-8, malloc; it belongs to the list that holds the event) */
+    int cursor, selection;             /* a composition: where its cursor is, how many characters after it are marked */
 } FireDisplayEvent;
 
 static void fire_display_eventInit(FireDisplayEvent* e) { memset(e, 0, sizeof *e); e->type = FIRE_EV_UNKNOWN; }

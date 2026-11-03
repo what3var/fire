@@ -232,6 +232,27 @@ namespace fire.Native
             ["FntLoad"] = (1, false), ["FntAdd"] = (2, false), ["FntOpen"] = (1, false), ["FntDestroy"] = (1, false), ["FntName"] = (1, true), ["FntIsBitmap"] = (1, false),
             ["FntAscent"] = (2, false), ["FntHeight"] = (2, false), ["FntMeasure"] = (3, false),
         };
+        /// <summary>The SDL a window is built with, or null for fire's own display (the default): the target's `sdl` (2 or 3; 0: the build probes the toolchain, SDL3 when it
+        /// has it), else the environment variable FIRE_SDL (2, 3, or "auto" like 0).</summary>
+        private int? SdlOfTarget()
+        {
+            if (_target.Native.Sdl is int fixedSdl and (2 or 3)) return fixedSdl;
+            string? env = _target.Native.Sdl == 0 ? "auto" : Environment.GetEnvironmentVariable("FIRE_SDL");
+            if (env == "2") return 2;
+            if (env == "3") return 3;
+            if (env == "auto") return _sdlChosen ??= _chooseSdl?.Invoke() ?? 2;
+            return null;
+        }
+
+        /// <summary>What fire's own display links: Linux loads its window systems at run time (dl, pthread for the clipboard's thread); Windows links what every Windows has;
+        /// macOS its frameworks (`framework:` - the build makes `-framework` of it).</summary>
+        private IEnumerable<string> OwnDisplayLibraries()
+        {
+            if (_target.Native.Platform == "windows") return new[] { "user32", "gdi32", "imm32", "ole32", "shell32", "uuid" };
+            if (_target.Name == "macos") return new[] { "framework:Cocoa", "framework:QuartzCore", "framework:Carbon" };
+            return new[] { "dl", "pthread" };
+        }
+
         /// <summary>The natives of `#import "windows"` (`__GRPHWin` + name): arguments and whether the result is an array (it belongs to the innermost scope).</summary>
         private static readonly Dictionary<string, (int Argc, bool Reference)> WindowsBridgeNatives = new()
         {
@@ -242,7 +263,7 @@ namespace fire.Native
             ["SetCursor"] = (2, false), ["ClipboardSetText"] = (1, false), ["ClipboardGetText"] = (0, true), ["ClipboardHasText"] = (0, false),
             ["ClipboardGetImage"] = (0, true), ["ClipboardSetImage"] = (1, false), ["ClipboardHasImage"] = (0, false),
             ["ClipboardGetFiles"] = (0, true), ["ClipboardSetFiles"] = (1, false), ["ClipboardHasFiles"] = (0, false), ["StartDrag"] = (3, false),
-            ["CanStartDrag"] = (1, false),
+            ["CanStartDrag"] = (1, false), ["SetTextInputRect"] = (5, false), ["SetBackdrop"] = (2, false), ["GetBackdrop"] = (1, false), ["GetScale"] = (1, false),
         };
 
         private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName", "FbToPng" };
@@ -1350,20 +1371,25 @@ namespace fire.Native
             foreach (var (import, _) in _packageImports)
                 if (import.Import.Native is { } packageNative)
                     foreach (string lib in packageNative.LinkLibrariesFor(new[] { _target.Native.Platform, _target.Name })) sb.AppendLine($"// fire-link: {lib}");
-            // the display of these platforms is SDL3 or SDL2 (fire_display.h of the platform picks it by FIRE_SDL3): the build links it
+            // the display of these platforms: fire's own (native/platform/std/fire_display_desktop.h - what it links is what the operating system always has), or SDL3/SDL2
+            // when the target or FIRE_SDL asks for it (fire_display.h of the platform picks it by FIRE_DISPLAY_SDL and FIRE_SDL3): the build links it
             if (_usesWindows && _target.Native.Platform == "wasm") sb.AppendLine("// fire-link: SDL2");   // (Emscripten's own SDL2: -sUSE_SDL=2)
             else if (_usesWindows && _target.Native.Platform is "posix" or "windows")
             {
-                int sdl = _target.Native.Sdl ?? (_sdlChosen ??= _chooseSdl?.Invoke() ?? 2);
-                if (sdl == 3) { sb.AppendLine("// fire-link: SDL3"); sb.AppendLine("#define FIRE_SDL3 1"); }
-                else sb.AppendLine("// fire-link: SDL2");
+                if (SdlOfTarget() is int sdl)
+                {
+                    sb.AppendLine("#define FIRE_DISPLAY_SDL 1");
+                    if (sdl == 3) { sb.AppendLine("// fire-link: SDL3"); sb.AppendLine("#define FIRE_SDL3 1"); }
+                    else sb.AppendLine("// fire-link: SDL2");
+                }
+                else foreach (string lib in OwnDisplayLibraries()) sb.AppendLine($"// fire-link: {lib}");
             }
             if (DebugBuild && DebugAgent && _target.Native.Platform == "windows") sb.AppendLine("// fire-link: ws2_32");   // (the debug agent talks TCP)
             if (_separate)
             {
                 // the head of the file of each library module: the same configuration of the runtime, without its state (that lives in the program's file)
                 var head = new StringBuilder(prelude);
-                if (_usesWindows && _target.Native.Platform is "posix" or "windows" && (_target.Native.Sdl ?? _sdlChosen ?? 2) == 3) head.AppendLine("#define FIRE_SDL3 1");
+                if (_usesWindows && _target.Native.Platform is "posix" or "windows" && SdlOfTarget() is int headSdl) { head.AppendLine("#define FIRE_DISPLAY_SDL 1"); if (headSdl == 3) head.AppendLine("#define FIRE_SDL3 1"); }
                 head.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
                 if (_dll) head.Append(DllHead());
                 head.AppendLine("#include \"fire_rt.h\"");

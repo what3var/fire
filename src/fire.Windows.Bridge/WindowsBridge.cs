@@ -119,6 +119,12 @@ namespace fire.Windows.Bridge
                     args[2].Kind == ValueKind.Array ? args[2].AsArray().Items.Where(v => v.Kind == ValueKind.String).Select(v => v.AsString()).Where(p => p.Length > 0 && !p.Contains('\n')).ToArray() : Array.Empty<string>())),
                 // Window.CanStartDrag: can StartDrag hand a drag to the desktop here (Windows, X11)?
                 ["CanStartDrag"] = args => Value.MakeBool(mgr.CanStartDrag((int)args[0].AsInt())),
+                // Window.SetTextInputArea, Window.Backdrop, Window.Scale: the VM's window has no input method, shows nothing behind itself and reports scale 1
+                // (it moves to the C display of the native builds, docs/UI_PLATFORM.md)
+                ["SetTextInputRect"] = args => Value.MakeUndefined(),
+                ["SetBackdrop"] = args => Value.MakeUndefined(),
+                ["GetBackdrop"] = args => Value.MakeInt(0),
+                ["GetScale"] = args => Value.MakeFloat(1.0),
             };
         }
         
@@ -171,6 +177,10 @@ namespace fire.Windows.Bridge
                 ["ClipboardHasFiles"] = args => Value.MakeBool(false) /*STUB*/,
                 ["StartDrag"] = args => Value.MakeInt(0) /*STUB*/,
                 ["CanStartDrag"] = args => Value.MakeBool(false) /*STUB*/,
+                ["SetTextInputRect"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetBackdrop"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetBackdrop"] = args => Value.MakeInt(0) /*STUB*/,
+                ["GetScale"] = args => Value.MakeFloat(1.0) /*STUB*/,
             };
         }
 
