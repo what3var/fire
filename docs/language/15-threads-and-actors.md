@@ -56,6 +56,35 @@ print("main: " + counter.value)             // main: 15
   `sync flat` keeping an object that is on both sides is fine. The table in [Ownership](13-ownership.md#copying-flat-and-copy) lists every form.
 - `sync` returning `undefined` is a good moment for the thread to `leave`.
 
+## Handing over: `handover`
+
+Some objects must not be copied - a connection, a `NativeHandle`, anything marked `[NoCopy]`. `fire handover x` gives `x` itself to the thread,
+without a copy: from then on the thread owns it (its destructor runs in the thread, when the thread ends), and the sender's variable is `undefined`:
+
+```fire
+#import "time"
+[NoCopy]
+class Connection {
+    int id
+    construct(int id) { this.id = id }
+    destruct() { print("closed " + this.id) }
+}
+var conn = new Connection(7)
+fire handover conn {
+    print("thread uses " + conn.id)
+}                                           // closed 7 - at the end of the thread
+print(conn == undefined)                    // True - main no longer has it
+Sleep(100ms)
+```
+
+- Everything reachable from `x` through fields and elements (and what the objects own) goes along, as it is - like `taking`, but moved instead of
+  copied. A part whose owner goes along keeps it; every other part belongs to the thread now, whoever owned it before.
+- Other references the sender still has to these objects point into another thread: do not use them (this is not checked).
+- `handover` can be repeated and mixed with `taking`: `fire taking a handover b handover c { ... }`, also `fire Method(args) handover h`.
+- A lambda or a pointer in a field or an element cannot go to another thread, and a thread cannot hand over what belongs to the main program's
+  global variables: the `fire` throws an `ArgumentException` and nothing moves. A global variable of the main program named in a thread is a compile
+  error. Actors and destroyed objects stay shared references. `fire global` has no `handover` (a job gets copies).
+
 ## Global variables
 
 A thread can **read** the global variables of the main program. A **change** goes through the main program: the thread waits until the main program

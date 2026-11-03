@@ -27,6 +27,7 @@ namespace fire.Lexing
         Continue,
         Where,
         Fire, Taking,
+        Handover, // 'fire handover x' - x goes to the new thread without a copy (see Ast.FireTakingCapture.Handover)
         Operator, // 'operator' - operator overloading (see Parser.ParseOperatorMember)
         Sync, Flat,
         Copy, // 'copy expression' - deep copy (see Ast.UnaryOp.DeepCopy); 'flat expression' is the flat one (UnaryOp.FlatCopy)

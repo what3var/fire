@@ -47,7 +47,7 @@ namespace fire.Editor
             "public", "private", "protected",
             "namespace",
             "with", "extends", "switch", "case", "default", "break", "continue", "where",
-            "fire", "taking", "sync", "flat", "copy", "take", "leave", "terminate", "actor", "process", "operator",
+            "fire", "taking", "handover", "sync", "flat", "copy", "take", "leave", "terminate", "actor", "process", "operator",
             "true", "false", "undefined", "and", "or",
             "unit", "prefixed", "unprefixed", "coerce",
         };

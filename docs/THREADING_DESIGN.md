@@ -28,10 +28,22 @@ fire taking player { ... }
 fire MethodA() taking player
 fire with actorA { ... }
 fire MethodA() with actorA taking player
+fire handover conn { ... }
+fire MethodA() taking player handover conn
 ```
 
 - `taking X` (siehe Abschnitt 3): übergibt dem Kind-Thread eine isolierte
   Arbeitskopie von `X`.
+- `handover X`: übergibt `X` **ohne Kopie** - für das, was nicht verdoppelt werden darf oder kann (eine `[NoCopy]`-Ressource wie ein
+  `NativeHandle`). Wie bei `taking` geht alles mit, was von `X` aus über Felder und Elemente erreichbar ist (und was die Objekte besitzen): ein Teil,
+  dessen Besitzer mitgeht, behält ihn, jeder andere (auch `X`) gehört danach dem Wurzel-Scope des neuen Threads, egal wem er vorher gehörte
+  (wie bei `take`); die Teile verlassen den geteilten Bereich der Globals. Die Variable des Senders ist danach `undefined` (ein Zugriff auf ein
+  Feld ist der übliche Fehler); andere Verweise des Senders auf diese Objekte zeigen auf Objekte eines anderen Threads und dürfen nicht mehr benutzt
+  werden (das wird nicht geprüft). Am Ende des Threads werden sie zerstört, ihre Destruktoren laufen im Thread. Wiederholbar und mit `taking`
+  mischbar wie `taking` (`fire handover a handover b taking c`), auch in der Aufrufform. Abgelehnt wird vor jedem Kopieren und Verschieben (eine
+  `ArgumentException` am `fire`, der Thread startet nicht): ein Lambda oder Pointer in einem Feld/Element ("'handover' rejected: lambda values
+  cannot be handed to a thread."), und in einem Fire-Thread ein Teil der Globals des Hauptprogramms; eine Variable des Hauptprogramms im Thread
+  ist schon beim Übersetzen ein Fehler. Actors und zerstörte Objekte bleiben geteilte Verweise. Nicht bei `fire global`.
 - `with actorA` (siehe Abschnitt 2): bindet eine Actor-Referenz (Handle,
   keine Kopie) in den Fire-Block ein.
 - Beide Bindungen sind unabhängig voneinander kombinierbar.

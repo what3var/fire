@@ -4653,6 +4653,7 @@ namespace fire.Runtime
                     int globalSlotCount = ReadU16();
                     int takingCount = ReadByte();
                     bool hasWith = ReadByte() != 0;
+                    int handoverCount = ReadByte();   // the last ones of the taking values are `handover` (moved, not copied)
                     // Order reversed to compiling (stack!): with
                     // was pushed LAST, so lies on top, is popped FIRST;
                     // afterwards the taking values in REVERSED
@@ -4665,7 +4666,9 @@ namespace fire.Runtime
                     // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element), and a lambda or a pointer
                     // in a field or an element, is the ArgumentException here in the spawning thread, before anything is copied and before the thread starts.
                     // The copies (of everything reachable) are made afterwards, also here, by FireRuntime.FireVmTaking.
-                    foreach (var tv in takingValues) ObjectCopier.RequireNoCopyFree(tv, "taking");
+                    for (int i = 0; i < takingCount - handoverCount; i++) ObjectCopier.RequireNoCopyFree(takingValues[i], "taking");
+                    // `handover` (no copy, a `[NoCopy]` instance is fine): what cannot go to another thread is refused the same way, before anything moves
+                    for (int i = takingCount - handoverCount; i < takingCount; i++) ObjectHandover.RequireMovable(takingValues[i], fromFireThread: IsFireThreadVm);
 
                     // The globals of the main program are NOT copied: the thread reads them directly (under the lock) and changes them only in
                     // a section that the main program grants at `sync globals` (see Runtime.GlobalsBroker). At the first `fire`
@@ -4681,7 +4684,7 @@ namespace fire.Runtime
                     // VmExecutionMode documentation).
                     FireRuntime.FireVmTaking(
                         fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
-                        executionMode: ExecutionMode);
+                        executionMode: ExecutionMode, handoverCount: handoverCount);
                     break;
                 }
 

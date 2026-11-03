@@ -210,7 +210,8 @@ namespace fire.Runtime
         /// `takingValues`: bound directly following the placeholders. An object, an array or a buffer is bound as an isolated deep copy of everything
         /// reachable from it (Runtime.ObjectCopier.TakeValue - the copying itself activates thread sharing on the original), otherwise directly (Value
         /// is an immutable struct). The copies are made HERE, on the spawning thread, before the new thread starts (a snapshot at the `fire`, as in the
-        /// native runtime); their owner is the root scope of the new thread.
+        /// native runtime); their owner is the root scope of the new thread. The last `handoverCount` of them are `fire handover x`: not copied, the
+        /// value itself (with everything reachable from it) moves to the root scope of the new thread (Runtime.ObjectHandover.MoveTo).
         ///
         /// `withValue` (an actor reference), by contrast, is ALWAYS passed on DIRECTLY, WITHOUT a copy, as the last slot - an actor manages its own
         /// thread safety via its mailbox (see Runtime.ActorMailbox), not via the taking/sync ownership model.</summary>
@@ -222,13 +223,16 @@ namespace fire.Runtime
             int sharedGlobalCount,
             IReadOnlyList<Value> takingValues,
             Value? withValue = null,
-            VmExecutionMode executionMode = VmExecutionMode.Debug)
+            VmExecutionMode executionMode = VmExecutionMode.Debug,
+            int handoverCount = 0)
         {
             // The slots 0..sharedGlobalCount-1 are the real globals of the main program (the VM reads/writes them via the broker,
             // see GlobalsBroker/VM.AttachToGlobals) - here only placeholders, so that taking/with lie at the slots assigned by the compiler.
             var scope = new Scope(null, isGlobal: true);
             for (int i = 0; i < sharedGlobalCount; i++) scope.DefineSlot(Value.MakeUndefined());
-            foreach (var tv in takingValues) scope.DefineSlot(ObjectCopier.TakeValue(tv, scope));
+            int copied = takingValues.Count - handoverCount;
+            for (int i = 0; i < takingValues.Count; i++)
+                scope.DefineSlot(i < copied ? ObjectCopier.TakeValue(takingValues[i], scope) : ObjectHandover.MoveTo(takingValues[i], scope));
             if (withValue is Value wv)
                 scope.DefineSlot(wv);
             return Fire(() =>

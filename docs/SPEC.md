@@ -2,7 +2,7 @@
 
 Reference document for the interpreter. Extended as the implementation grows.
 
-Multithreading (`fire`/`taking`/`with`/`sync`/`leave`/`terminate`/
+Multithreading (`fire`/`taking`/`handover`/`with`/`sync`/`leave`/`terminate`/
 `catch threads`/`catch terminate`/actors) is deliberately NOT part of this
 document – see `THREADING_DESIGN.md` for it (fully implemented,
 architecture AND language syntax).
@@ -277,7 +277,7 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
   an instance of it as the operand of `flat`/`copy`, or reached by `copy` through a field or an array element, is an `ArgumentException`
   ("'NativeHandle' cannot be copied ([NoCopy]) - ...") before anything is copied - also for a class derived from it, as an argument
   (`f(copy h)`), assigned to a field and for the arguments of `fire global` (deep copies). `flat` of an object or array that only *refers* to one is fine
-  (the reference is shared, nothing is duplicated). The copies of the threads (no form of them moves an object): `fire taking x` / `fire M(args)`
+  (the reference is shared, nothing is duplicated). The copies of the threads (no form of them moves an object - `fire handover x` does, without a copy, THREADING_DESIGN.md section 1): `fire taking x` / `fire M(args)`
   (a copy of everything reachable, an array included) refuses one reached from any of its values at the `fire` - nothing is copied, the thread does not start
   ("... - 'taking' would copy an instance of it, which exists only once." / "... - 'taking' reaches an instance of it (a field or an element of the copied
   value), which exists only once."); `fire global { } taking x` refuses an object argument that reaches one before the job is queued (`'fire global'`; an

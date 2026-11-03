@@ -5882,6 +5882,105 @@ FIRE_FN bool takingNoCopyFree(const Value* vs, uint32_t n) {
     return true;
 }
 
+/* ---- `fire handover x`: x goes to the thread without a copy (the VM: Runtime.ObjectHandover). Everything reachable from x through fields and elements, and
+ * what the objects (and arrays) own, moves as it is: a part whose owner moves too keeps it, every other part belongs to `travel` (the root scope of the thread)
+ * from then on, whoever owned it before; the parts leave the shared domain of the globals. Actors and destroyed values stay shared references. */
+FIRE_FN Value ownedValue(Owned* h) { return h->okind == O_Object ? ObjV((Obj*)h) : h->okind == O_Array ? ArrV((Arr*)h) : BufV((Buf*)h); }
+FIRE_COLD FIRE_FN Value handoverRefused(const char* what) {
+    char text[200];
+    snprintf(text, sizeof text, "'handover' rejected: %s", what);
+    return fireError("ArgumentException", text);
+}
+/* The parts that move (`seen` marks them, `parts` lists them in discovery order); false - the ArgumentException is thrown - for a lambda or a pointer in a field
+ * or an element, and in a fire thread for a part of the main program's globals (the thread does not own it). Nothing is changed. */
+FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* count, uint32_t* cap) {
+    Value* pending = NULL;
+    uint32_t pn = 0, pcap = 0, i;
+    bool ok = true;
+    if (!ownedOf(v)) return true;
+    pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+    pending[pn++] = v;
+    while (pn) {
+        Value x = pending[--pn];
+        Owned* h;
+        Owned* k;
+        if (x.kind == K_Lambda || x.kind == K_Pointer) {
+            handoverRefused(x.kind == K_Lambda ? "lambda values cannot be handed to a thread." : "raw pointers cannot be handed to a thread.");
+            ok = false;
+            break;
+        }
+        h = ownedOf(x);
+        if (!h || copyMapFind(seen, h)) continue;
+        if (h->okind == O_Object && (h->flags & 8)) continue;   /* an actor stays a shared reference */
+        if (g_isThread && (h->flags & F_SHARED)) {
+            handoverRefused("it reaches an object of the main program's global variables, which this thread does not own.");
+            ok = false;
+            break;
+        }
+        copyMapPut(seen, h, Undef());
+        *parts = (Owned**)fire_growPush(*parts, count, cap, sizeof(Owned*));
+        (*parts)[(*count)++] = h;
+        if (h->okind == O_Object) {
+            Obj* o = (Obj*)h;
+            for (i = 0; i < o->nfields; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = objFields(o)[i];
+            }
+            for (k = o->owned.head; k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        } else if (h->okind == O_Array) {
+            Arr* a = (Arr*)h;
+            for (i = 0; i < a->length; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = arrItems(a)[i];
+            }
+            for (k = a->parts ? a->parts->head : NULL; k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        }
+    }
+    free(pending);
+    return ok;
+}
+/* The check before anything is copied or moved (for all `handover` values of a `fire`). */
+FIRE_FN bool handoverFree(const Value* vs, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        CopyMap seen = {0};
+        Owned** parts = NULL;
+        uint32_t count = 0, cap = 0;
+        bool ok = handoverDiscover(vs[i], &seen, &parts, &count, &cap);
+        copyMapFree(&seen);
+        free(parts);
+        if (!ok) return false;
+    }
+    return true;
+}
+/* What the thread gets for `handover x`: x itself, moved (see above); a string or lambda is shared as with `taking`. */
+FIRE_FN Value handOver(Value v, OwnList* travel) {
+    CopyMap seen = {0};
+    Owned** parts = NULL;
+    uint32_t count = 0, cap = 0, i;
+    if (v.kind == K_String || v.kind == K_Lambda) { retain(v); return v; }
+    if (!ownedOf(v)) return v;
+    handoverDiscover(v, &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
+    for (i = 0; i < count; i++) {
+        Owned* h = parts[i];
+        OwnList* l = h->owner;
+        if (!(l && l->holder && copyMapFind(&seen, l->holder))) {
+            if (l) ownUnlink(h);
+            ownLink(travel, h);
+        }
+    }
+    for (i = 0; i < count; i++) parts[i]->flags &= (uint8_t)~F_SHARED;
+    copyMapFree(&seen);
+    free(parts);
+    return v;
+}
+
 /* ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):
  *   A: copy has an object, original has none -> a new independent copy for the original;  B: copy has none, original has one -> the original loses it
  *   (destroyed if the original's object owned it);  C: both have one -> the reference stays (a full sync goes into it). */

@@ -1313,6 +1313,7 @@ namespace fire.Compiler
             _chunk.EmitU16(_globalSlotCount);
             _chunk.EmitByte((byte)fs.TakingCaptures.Count);
             _chunk.EmitByte(hasWith ? (byte)1 : (byte)0);
+            _chunk.EmitByte((byte)fs.TakingCaptures.Count(c => c.Handover));   // (the parser put them last)
         }
 
         /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`

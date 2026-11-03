@@ -18914,6 +18914,80 @@ else
             print(n + " " + x)
             print(sync globals)
             """),
+        ("Threads: fire handover - [NoCopy]-Objekt samt allem Erreichbaren geht ohne Kopie an den Thread, die Variable wird undefined, der Thread zerstoert es; mit taking gemischt", """
+            #nosync
+            #import "time"
+            var released = 0
+            [NoCopy]
+            class Res { int id
+                construct(int i) { this.id = i }
+                destruct() { print("release " + this.id)
+                    sync global { released = released + 1 } } }
+            class Item { int v
+                construct(int v) { this.v = v } }
+            class Conn { Res res; Item items[]; Item other
+                construct(int i) { this.res = new Res(i) } }
+            class L { any f }
+            class Worker { int n
+                undefined Run(int k) { print("run " + k + " " + this.n) }
+                undefined Start(Res r) { fire Run(r.id) handover r } }
+            var step = 0
+            var keep = new Item(30)
+            var c = new Conn(1)
+            c.items = [new Item(2)]
+            var other = new Item(3)
+            c.other = other
+            var r = new Res(5)
+            var p = new Item(9)
+            var l = new L()
+            l.f = func() => 1
+            try { fire handover l { print("never") } } catch (ArgumentException e) { print("lambda: " + e.message) }
+            print("l kept: " + (l != undefined))
+            try { fire taking r { print("never") } } catch (ArgumentException e) { print("taking: " + e.message) }
+            fire taking p handover c handover r {
+                sync global { step = 1 }
+                print("thread: " + c.res.id + " " + c.items[0].v + " " + c.other.v + " " + r.id + " " + p.v)
+                print("owned: " + (c.res is from c) + " " + (r is from c))
+                c.items[0].v = 20
+                p.v = 10
+            }
+            print("after fire: " + (c == undefined) + " " + (r == undefined) + " " + (p != undefined))
+            while (released < 2) { sync globals }
+            print("p stays: " + p.v)
+            try { print(c.res.id) } catch (Exception e) { print("use after handover: " + e.message) }
+            var arr = [new Res(6), new Res(7)]
+            var n = 4
+            fire handover arr handover n {
+                while (step < 3) { Sleep(1ms) }
+                print("arr " + arr[0].id + arr[1].id + " n " + n)
+                var own = new Res(8)
+                var g = keep
+                try { fire handover g { print("never g") } } catch (ArgumentException e) { print("thread: " + e.message) }
+                fire handover own {
+                    while (step < 4) { Sleep(1ms) }
+                    print("inner " + own.id)
+                }
+                print("own after: " + (own == undefined))
+                sync global { step = 4 }
+                while (released < 3) { Sleep(1ms) }
+            }
+            print("arr after: " + (arr == undefined) + " n after: " + (n == undefined))
+            step = 3
+            while (released < 5) { sync globals }
+            var w = new Worker()
+            w.n = 11
+            w.Start(new Res(12))
+            while (released < 6) { sync globals }
+            print("end")
+            """),
+        ("Abbruch: eine Thread-Exception, die erst am Programmende ankommt, beendet das Programm (VM wie nativ, nicht verschluckt)", """
+            class Item { int v }
+            fire {
+                var it = new Item()
+                print(it.v + 1)
+            }
+            print("main done")
+            """),
         ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """
             class Base {
                 private int secret

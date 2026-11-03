@@ -73,6 +73,7 @@ namespace fire.Compiler
             ["where"] = TokenType.Where,
             ["fire"] = TokenType.Fire,
             ["taking"] = TokenType.Taking,
+            ["handover"] = TokenType.Handover,
             ["operator"] = TokenType.Operator,
             ["sync"] = TokenType.Sync,
             ["flat"] = TokenType.Flat,
