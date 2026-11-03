@@ -196,6 +196,49 @@ Bekannte Abweichungen zur VM:
 * `resume` nach einer `UnitMismatchException` setzt hinter dem `CheckUnit` fort; die VM schiebt dort einen zusätzlichen Wert auf den Stack.
 * Eine Ausnahme, die ein Destruktor wirft, wird beim Abrollen ignoriert.
 
+## Zeilen des Programms im C (`#line`)
+
+Jede Instruktion steht im erzeugten C hinter einer `#line`-Direktive mit ihrer fire-Zeile (`#line 12 "/pfad/main.fire" // 41: Add`; eine Quelle ohne Datei heißt
+`fire:source/N`, der Prelude und die Preludes der Imports `fire:prelude/N`). Nach jeder Funktion nennt sich die C-Datei wieder selbst (`#line <eigene Zeile>
+"fire_program.c"`), damit die Hilfsfunktionen, Tabellen und Wrapper ihre echten Zeilen behalten. So zeigen gdb/lldb, die Meldungen des C-Compilers und
+Absturzberichte fire-Zeilen: `gdb -ex "break main.fire:7"` hält an der Zeile, `bt` zeigt die Aufrufer mit ihren fire-Zeilen. Das gilt in jedem Modus;
+`"lineDirectives": false` im Ziel von `fire.native.json` schaltet es ab (das C liest sich dann als C).
+
+## Debug-Builds
+
+Im Modus `debug` (`#debug`, `-m DEBUG`) wird das Programm für den Debugger von spark gebaut (ROADMAP §8, Protokoll: [NATIVE_DEBUG_PROTOCOL.md](NATIVE_DEBUG_PROTOCOL.md)):
+
+* **Übersetzt** mit `-O0 -g` (msvc `/Od /Zi`) und nicht gestrippt; Release und Performance sind nicht über spark debugbar. `NativeBuilder` erkennt den Debug-Build an
+  `#define FIRE_DEBUG 1` am Anfang des Programms.
+* **Schatten-Stack**: jede fire-Funktion hat einen Wrapper (`fN` ruft `fN_b`), der einen Frame (`DbgFrame`, `fire_debug.h`) auf den Stack des Threads legt und
+  beim Verlassen wieder abnimmt. Der Frame kennt die Funktion, die Adressen ihrer Variablen (`dv_[]`, auch die der Catch-Blöcke: eine Funktion mit `try`
+  hält im Debug-Build alle Variablen im Frame-Struct), ihr `this` und die Stelle (Quelle, Zeile, Scope-Zustand).
+* **Haken** an denselben Stellen, an denen die Einzelschritt-Schleifen der VM eine neue Position sehen - am Anfang jedes Bereichs der Zeilentabelle und an jedem
+  Sprungziel: `FIRE_DBG_L(quelle, zeile, zustand)` schreibt die Stelle in den Frame und ruft, nur wenn ein Debugger verbunden ist (`g_dbgArmed`), `fire_dbgLine`.
+  Ein Wrapper prüft beim Zurückkehren die Stelle des Aufrufers noch einmal (die VM sieht nach `Return` eine neue Position: ein Haltepunkt auf der Zeile des
+  Aufrufs trifft wieder), ebenso das Weitermachen an der Wurfstelle nach `resume`. Ohne Debugger kostet ein Haken einen nicht genommenen Sprung. Gemessen
+  (`Fib(30)` und eine Schleife über 3 Mio.): Release `-O2` 0,035 s, Release mit `-O0` 0,33 s, der Debug-Build ohne Debugger 0,38 s, mit verbundenem
+  Debugger und einem Haltepunkt 0,6 s.
+* **Was die VM verschachtelt ausführt**, ist für Haltepunkte und Schritte unsichtbar (wie in der VM, die es innerhalb einer Instruktion laufen lässt):
+  Getter und Setter von Properties, Destruktoren, Operatoren, `GetIndex`/`SetIndex`, Standardwerte von Parametern, Umrechnungen von Einheiten (diese
+  Funktionen sind "hidden"), `ToString()` bei der Umwandlung in Text, die Ausnahmen der Runtime, der Enumerator eines Arrays und Lambdas, die die Runtime
+  oder ein Native aufruft (`g_dbgNest`).
+* **Catch-Blöcke** laufen auf dem Stack der Wurfstelle; solange sie laufen, ist der Frame ihrer Funktion oben (die VM hat die Frames der Wurfstelle
+  verlassen), danach wieder die Wurfstelle (für `resume`).
+* **Statische Tabellen** je Funktion: die Ebenen ihrer Scope-Zustände mit den Namen der Variablen (wie `VM.DebugScopeChain`: der Name aus dem `DeclareLocal`,
+  Parameter aus `DebugLocalNames`, sonst `(local N)`), dazu die Globals (`g_dbgGlobalCount` zählt die bisher angelegten), die Felder jeder Klasse, die
+  Quellen mit Datei und SHA-256 (`LinkedProgram.SourceHashes`) und ein Setter je Feld für `set` (`fire_dbgSetField`).
+* Ein Debug-Build hat immer Ausnahmen (`FIRE_EXCEPTIONS`): jeder Laufzeitfehler ist eine Ausnahme, an der der Debugger anhalten kann. Eine Ausnahme, die kein
+  `catch` des Threads nehmen würde (`wouldBeCaught`), hält vor dem Abrollen an; `resume` lässt den `throw` `undefined` ergeben.
+* **Der Agent** (`fire_debug.h`, nur posix und windows: `FIRE_DEBUG_AGENT`) ist ein eigener Thread. Mit `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T` verbindet
+  sich das Programm beim Start mit spark und wartet vor der ersten Instruktion; ohne die Variable läuft es ohne Debugger. Er liest Werte nur, solange ihr
+  Thread steht (mit Threads unter der GIL), ruft nie fire-Code zum Anzeigen auf und fasst keinen Zähler an; `set` führt der angehaltene Thread selbst aus.
+  Ein angehaltener Thread wartet ohne GIL, die anderen laufen weiter; neue fire-Threads melden sich und laufen mit den Haltepunkten los.
+* Getestet in `fire.Testing` (`NativeDebugTests.cs`, Fälle "Native-Debugger"): 22 Skripte (Schleifen, Rekursion, Objekte, Properties, Destruktoren, Lambdas,
+  try/catch/finally/resume, Strings, Einheiten, Arrays, statische Felder, Vererbung, Operatoren/ToString, Standardwerte, break/continue, Listen,
+  unbehandelte Ausnahmen), je Haltepunkte/Schritte mit Aufrufstapel, Scopes, `this` und Globals sowie jeder Step Into und Step Over vom Start bis zum
+  Ende gegen die VM; dazu `#line`, gcc/clang/tcc ohne Warnung, gdb, `expand`/`set`, `pause`, `detach`, Threads, unter AddressSanitizer/UBSan; der Agent für Windows mit MinGW unter Wine.
+
 ## Messwerte
 
 **C gegen C++** (während des Ports, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` waren als C 4-16 % schneller

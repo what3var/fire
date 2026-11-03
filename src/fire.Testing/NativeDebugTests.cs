@@ -30,12 +30,14 @@ sealed class NativeDebugClient : IDisposable
     public int? ExitCode => _process.HasExited ? _process.ExitCode : null;
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
-    private NativeDebugClient(string exe, string workDir, string token)
+    private NativeDebugClient(string exe, string workDir, string token, string? launcher, IDictionary<string, string>? environment)
     {
         _listener = new TcpListener(IPAddress.Loopback, 0);
         _listener.Start();
         int port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        var start = new ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+        var start = new ProcessStartInfo(launcher ?? exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+        if (launcher != null) start.ArgumentList.Add(exe);
+        if (environment != null) foreach (var (k, v) in environment) start.Environment[k] = v;
         start.Environment["FIRE_DEBUG"] = $"tcp:127.0.0.1:{port};token={token}";
         _process = Process.Start(start)!;
         _process.OutputDataReceived += (_, e) => { if (e.Data != null) lock (_stdout) _stdout.Append(e.Data).Append('\n'); };
@@ -45,10 +47,10 @@ sealed class NativeDebugClient : IDisposable
     }
 
     /// <summary>Starts the program and waits for its hello (and the stop at the entry).</summary>
-    public static NativeDebugClient Launch(string exe, string workDir)
+    public static NativeDebugClient Launch(string exe, string workDir, string? launcher = null, IDictionary<string, string>? environment = null)
     {
         string token = Guid.NewGuid().ToString("N");
-        var c = new NativeDebugClient(exe, workDir, token);
+        var c = new NativeDebugClient(exe, workDir, token, launcher, environment);
         var accept = c._listener.AcceptTcpClientAsync();
         if (!accept.Wait(Timeout)) throw new TimeoutException("the program did not connect: " + c.Errors);
         c._client = accept.Result;
@@ -842,6 +844,35 @@ static class NativeDebugTests
             ok &= exited && c.ExitCode == 0 && c.Output == "fertig 3 16\n";
             return (ok, $"{hello}\n{entry}\n{threads}\n{c.Output}{c.Errors}");
         });
+
+        // Windows (Winsock, Win32 threads): built with MinGW, run under Wine
+        string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
+        if (wine != null && HasTool("x86_64-w64-mingw32-gcc"))
+            Check("Windows (MinGW, Wine): der Agent verbindet sich, haelt am Haltepunkt, zeigt Scopes und Aufrufstapel", () =>
+            {
+                var target = TargetProfile.TryGet("windows", out var windows) ? windows : throw new InvalidOperationException("no windows target");
+                var sources = Generate(lineScript, VmExecutionMode.Debug, target);
+                string cFile = Path.Combine(workDir, "dbgwin.c"), exe = Path.Combine(workDir, "dbgwin.exe");
+                File.WriteAllText(cFile, sources.Program);
+                string build = RunTool("x86_64-w64-mingw32-gcc", $"-std=c11 -O0 -g -Wall -Wextra \"{cFile}\" -I\"{workDir}\" -o \"{exe}\" -lws2_32", workDir, out int exit);
+                if (exit != 0 || build.Contains("warning")) return (false, build);
+                var environment = new Dictionary<string, string> { ["WINEPREFIX"] = Path.Combine(workDir, "wineprefix"), ["WINEDEBUG"] = "-all", ["LANG"] = "C.UTF-8" };
+                using var c = NativeDebugClient.Launch(exe, workDir, wine, environment);
+                int first = c.Hello.GetProperty("firstUserSource").GetInt32();
+                c.NextEvent("stopped");
+                c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 7 } } });
+                c.Request("continue", new() { ["thread"] = 1 });
+                var stop = c.NextEvent("stopped");
+                var scopes = c.Request("scopes", new() { ["thread"] = 1 });
+                var trace = c.Request("trace", new() { ["thread"] = 1 });
+                c.Request("continue", new() { ["thread"] = 1 });
+                var exited = c.NextEvent("exited");
+                c.WaitExit(NativeDebugClient.Timeout);
+                Thread.Sleep(50);
+                bool ok = stop.GetProperty("line").GetInt32() == 7 && stop.GetProperty("depth").GetInt32() == 1 && scopes.ToString().Contains("\"name\":\"x\",\"kind\":\"int\",\"display\":\"4\"")
+                    && trace.GetProperty("frames").GetArrayLength() == 2 && exited.GetProperty("code").GetInt32() == 0 && c.Output.Replace("\r", "").Contains("fertig 3 16\n");
+                return (ok, $"{c.Hello}\n{stop}\n{scopes}\n{trace}\n{c.Output}{c.Errors}");
+            });
 
         Check("pause haelt eine Endlosschleife an, terminate beendet das Programm", () =>
         {

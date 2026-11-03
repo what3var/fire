@@ -72,7 +72,8 @@ Haltepunkten (wie `DebugThreadContext.ForFireThread`).
 ### Befehle
 
 `thread` ist die Nummer eines Threads (`hello.mainThread`, `thread`-Ereignisse). Befehle, die Werte lesen (`trace`, `scopes`, `this`, `expand`, `set`), brauchen
-einen **angehaltenen** Thread; `globals` und `expand` auf `g:`-Pfaden gehen immer.
+einen **angehaltenen** Thread; `globals` und `expand` auf `g:`-Pfaden gehen in einem Programm mit Threads immer (der Agent liest unter der GIL), in einem
+Programm ohne Threads nur, solange der Hauptthread steht (sonst `ok: false`).
 
 | Befehl | Felder | Antwort |
 |---|---|---|
@@ -83,7 +84,7 @@ einen **angehaltenen** Thread; `globals` und `expand` auf `g:`-Pfaden gehen imme
 | `threads` | - | `threads`: `[{"id", "name", "state": "paused"/"running", "reason", "source", "line", "depth"}]` (`reason`/`source`/`line` nur angehalten) |
 | `trace` | `thread` | `frames`: `[{"function", "source", "line"}]`, innerster zuerst, `depth` + 1 Einträge (wie `VM.CurrentTrace`; ein Aufrufer steht auf der Zeile des Aufrufs) |
 | `scopes` | `thread` | `scopes`: `[{"depth", "functionTop", "variables": [V...]}]` wie `VM.DebugScopeChain()` (innerster Block zuerst, bis zur Ebene der Funktion; auf der obersten Ebene leer) |
-| `globals` | - | `variables`: `[V...]` wie `VM.DebugGlobals()` (die bisher angelegten globalen Variablen) |
+| `globals` | `thread` (optional) | `variables`: `[V...]` wie `VM.DebugGlobals()` (die bisher angelegten globalen Variablen); mit dem `thread` eines fire-Threads zuerst dessen eigene Variablen der obersten Ebene (in der VM: der globale Scope des Threads) |
 | `this` | `thread` | `value`: V oder null (wie `VM.DebugThisValue`: kein `this` gebunden) |
 | `expand` | `ref` | `children`: `[V...]` - Felder eines Objekts (in der Reihenfolge der Klasse, Basis zuerst) oder Elemente eines Arrays (`[0]`, `[1]`, ...) |
 | `set` | `thread`, `ref`, `value` (Literal als Text) | `value`: V (der neue Wert) - siehe "Werte setzen" |
@@ -108,7 +109,7 @@ einen **angehaltenen** Thread; `globals` und `expand` auf `g:`-Pfaden gehen imme
   `object`: der Klassenname (ein zerstörtes Objekt: `<destroyed>`), `array`: `Array[n]`. Der Agent ruft **nie fire-Code** zum Anzeigen auf (kein `ToString()`).
 * `expandable`: ein Objekt mit Feldern oder ein nicht leeres Array.
 * `ref`: ein **Pfad** zum Wert (für `expand` und `set`), den der Debugger nicht deutet: `l:THREAD:SCOPE:INDEX` (Variable INDEX der Ebene SCOPE von `scopes`),
-  `t:THREAD` (`this`), `g:SLOT` (globale Variable), dahinter je Stufe `/N` (Feld N bzw. Element N). Der Pfad wird bei jedem `expand`/`set` neu vom Anfang
+  `t:THREAD` (`this`), `g:SLOT` (globale Variable), `T:THREAD:INDEX` (eigene Variable eines fire-Threads), dahinter je Stufe `/N` (Feld N bzw. Element N). Der Pfad wird bei jedem `expand`/`set` neu vom Anfang
   gelesen - ein Wert, der inzwischen verschwunden ist, ergibt `ok: false`, nie einen Absturz. Ein `l:`/`t:`-Pfad gilt nur, solange der Thread an derselben
   Stelle steht.
 
@@ -116,8 +117,9 @@ einen **angehaltenen** Thread; `globals` und `expand` auf `g:`-Pfaden gehen imme
 
 `value` ist ein Literal: eine ganze Zahl (`42`, `-1`), eine Fließkommazahl (`2.5`, `1e3`), `true`/`false`, `undefined`, ein String in Anführungszeichen
 (`"text"`, mit `\"`, `\\`, `\n`, `\t`). Eine Zahl behält die Einheit des alten Werts. Der angehaltene Thread führt das Setzen selbst aus (Referenzzählung,
-Besitz wie eine Zuweisung im Programm): eine Variable wird direkt gesetzt, ein Feld über den Setter des Felds (Probes melden die Änderung, eine Property ruft
-ihren `set`), ein Array-Element wie `a[i] = x`. Eine Ausnahme dabei ist `ok: false` mit ihrer Meldung (das Programm läuft nicht weiter).
+Besitz wie eine Zuweisung im Programm): eine Variable und ein Array-Element werden direkt gesetzt, ein Feld über den Setter des Felds, wie die Klasse selbst
+es zuweisen würde (die deklarierte Art wird geprüft, Probes hören die Änderung). Eine Ausnahme dabei ist `ok: false` mit ihrer Meldung; das Programm sieht sie
+nicht und steht weiter an derselben Stelle. Die Antwort `value` ist der Wert danach.
 
 ## Semantik (wie die VM)
 
