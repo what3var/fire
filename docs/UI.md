@@ -324,6 +324,30 @@ Programm ins Theme gesetzt hat, bleiben, solange sie kein `SolidBrush` sind.
 Auf einem **Board ohne Desktop** (ESP32, FreeRTOS: `SystemTheme.embedded`) gilt dagegen: dunkel mit violettem Akzent, die schnelle eingebaute Schrift und nur ganzzahlige Skalierung.
 Was nicht ermittelt werden kann, behält den Standard (100 %, hell, Akzent `0x0078D7`, Konsolenschrift); `FIRE_SYSTEM_THEME=off` in der Umgebung schaltet die Abfrage ganz ab (so laufen die Tests).
 
+## Stil und Effekte: Ecken, Schatten, Glas und Acryl
+
+Die Steuerelemente haben abgerundete Ecken (`theme.radius`, 4 px; Menüs und Popups `theme.popupRadius`, 8 px), feine Ränder und - fokussiert - einen 2 px breiten Rand in der
+Akzentfarbe. Schwebende Elemente (Menüs, Listen von ComboBox und AutoSuggestBox) werfen einen feinen, kontrastarmen Schatten (`theme.shadowSize`); Menüs liegen auf **Acryl**: was
+hinter ihnen ist, weichgezeichnet und getönt, mit einer Haarlinie am Rand. `theme.radius = 0` ergibt die eckigen Elemente von früher.
+
+Zwei Schalter, global für jedes neue Root und pro Root:
+
+```
+UI.Effects.Glass = false          // vor dem Anlegen der Roots: kein Glas/Acryl
+UI.Effects.Transparency = false   // nichts Durchscheinendes, keine Schatten
+ui.Glass = false                  // nur dieses Root
+ui.Transparency = false
+```
+
+Ohne Glas haben Menüs ihren einfachen Hintergrund; ohne Transparenz ist alles deckend und schattenlos - die Oberfläche bleibt vollständig, nur flacher und billiger. Beide folgen dem
+System (`SystemTheme.transparency`: Windows „Transparenzeffekte“, macOS „Transparenz reduzieren“, im Browser `prefers-reduced-transparency`); auf einem Board sind sie aus.
+
+Das **Fenster selbst** kann ein Material des Desktops bekommen: `ui.WindowBackdrop = Backdrop.Mica` (Windows 11), `Acrylic`, `Blur` (Windows, macOS, KDE) oder `Transparent`. Der Desktop
+gibt, was er kann (`win.Backdrop`); wo er etwas gibt, wird der Hintergrund der Oberfläche durchscheinend, Panels und Steuerelemente bleiben, wie sie sind.
+
+Die Effekte zeichnet die C-Bibliothek von `graphics` (`Renderer.FillRoundRect`, `DrawRoundRect`, `DrawShadow`, `Blur`, `DrawMaterial` - auch für eigene Programme); siehe
+docs/UI_PLATFORM.md.
+
 ## Show, Run und der Fenster-Manager
 
 Die Fenster laufen über einen `WindowManager` (docs/CONSOLE.md, *Fenster-Manager*): der Root hängt sich an den Zyklus seines Fensters (`window.onCycle`) und verteilt dort die

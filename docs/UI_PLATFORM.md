@@ -189,3 +189,23 @@ Noch offen:
 
 * Die Tests mit gefälschten Renderern (`FakeRenderer`, `ScriptedWindow` u. a.) und die Unit-Tests der C#-Grafik prüfen weiter die C#-Implementierung.
 * Der C#-Zwilling der Grafik für Programme fällt weg, sobald die Bibliothek vorgebaut mitgeliefert wird (dann braucht die VM keinen C-Compiler mehr dafür).
+
+## Stand Teil 3
+
+* **Zeichnen in C** (`packages/graphics/native/fire_gfx_fx.h`): abgerundete Rechtecke mit Antialiasing (Füllung und Umriss), feine Schatten (Maske auf 1/2 bzw. 1/4 der Größe,
+  weichgezeichnet, im Cache, nur der Ring um das Rechteck), Blur (verkleinern, Box-Blur mit gleitender Summe zweimal, bilinear zurück), Materialien Glas/Acryl/Tönung mit Haarlinie
+  und feinem Lichtrand, Schalter für Blur und Transparenz. Halbtransparente Spannen mischen zwei Kanäle je Wort (bitgleich zu `fire_gfx_mix`). Am `Renderer`: `FillRoundRect`,
+  `DrawRoundRect`, `DrawShadow`, `Blur`, `DrawMaterial` (`MaterialKind`, `MaterialOptions`); die C#-Rückfall-Implementierung zeichnet die einfachen Formen.
+* **Stil von `ui`:** Radien 4/8 px, weichere Ränder, Fokus als 2-px-Akzentrand, Auswahl als abgerundete Pille, Scrollbalken als Pillen, Menüs auf Acryl mit feinem Schatten (pro
+  Popup im Cache, neu nur wenn der Hintergrund samt Rand neu gezeichnet wurde), Schatten für alle schwebenden Elemente.
+* **Schalter:** `UI.Effects.Glass/Transparency`, `root.Glass/Transparency`; Standard nach `SystemTheme.transparency` (neu: Windows `EnableTransparency`, macOS
+  `reduceTransparency`, Browser `prefers-reduced-transparency`; Board: aus).
+* **Fenster-Hintergrund:** `root.WindowBackdrop` fordert ihn an; was der Desktop gibt, macht die Grundfläche durchscheinend.
+* **Holds** gehören dem Programm (siehe Teil 2), Raven steht in der About-Box.
+
+Noch offen:
+
+* Dirty-Rechtecke als Liste je Framebuffer (Präsentation nur dort), Blur-Cache auch für eigene Programme.
+* Tooltips gibt es in `ui` noch nicht; `ui.docking` (Werkzeugleisten, Docking) hat den alten eckigen Stil.
+* `override`: der Typprüfer findet eine Basisklasse ohne Namespace innerhalb eines Namespace nicht (`TypeChecker.NameOf`) - die Pakete mit Namespace sind deshalb noch nicht markiert.
+

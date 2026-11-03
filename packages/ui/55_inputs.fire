@@ -168,6 +168,9 @@ namespace UI {
 
     // The suggestion list of an AutoSuggestBox: a click into the text field does not close it.
     class SuggestList : ListBox {
+        // (floating: its shadow follows the corners of the list)
+        int PopupRadius(Root root) { return root.theme.radius }
+
         construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) { }
 
         bool PopupOutside(Root root, int px, int py) {
@@ -321,6 +324,9 @@ namespace UI {
 
     // The drop-down list of a ComboBox: rows follow the pointer, a click chooses, a click outside only closes it.
     class ComboList : ListBox {
+        // (floating: its shadow follows the corners of the list)
+        int PopupRadius(Root root) { return root.theme.radius }
+
         ComboBox combo
 
         construct() : base(0, 0, 160, 24) { }

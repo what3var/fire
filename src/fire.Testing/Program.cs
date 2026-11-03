@@ -11289,6 +11289,23 @@ uiDrawScript = """
         print("glas " + (glass > 20 && glass < 235))
         """, new[] { "fuellen True True True True", "umriss True True True True", "schatten True True True", "blur True", "deckend True", "ohne blur True", "glas True" });
 
+    CheckUi("Stil: Fokus als 2-px-Akzentrand im Element, Fensterhintergrund (headless: Transparent) macht die Grundflaeche durchscheinend, ohne Transparenz deckend", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        ui.SetFocus(b)
+        ui.Draw()
+        var accent = ui.theme.borderFocus.Color
+        print("fokus " + (Px.Get(ui.renderer, 10, 23) == accent) + " " + (Px.Get(ui.renderer, 11, 23) == accent) + " " + (Px.Get(ui.renderer, 12, 23) != accent))
+        ui.WindowBackdrop = Backdrop.Acrylic
+        ui.Tick()
+        ui.Tick()
+        print("hintergrund " + win.Backdrop + " " + ((Px.Get(ui.renderer, 300, 190) >> 24) & 255))
+        ui.Transparency = false
+        ui.Tick()
+        ui.Tick()
+        print("deckend " + win.Backdrop + " " + ((Px.Get(ui.renderer, 300, 190) >> 24) & 255))
+        """, new[] { "fokus True True True", "hintergrund Transparent 208", "deckend None 255" });
+
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
         var c = new UI.CheckBox("Option", 10, 10)
         ui.Add(c)

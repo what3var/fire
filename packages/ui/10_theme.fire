@@ -54,7 +54,7 @@ namespace UI {
             this.scrollThumbHover = new SolidBrush(UI.Color.Rgb(160, 160, 160))
             this.menuBack = new SolidBrush(UI.Color.Rgb(248, 248, 248))
             this.border = new Pen(UI.Color.Rgb(196, 196, 196))
-            this.borderFocus = new Pen(UI.Color.Rgb(0, 120, 215))
+            this.borderFocus = new Pen(UI.Color.Rgb(0, 120, 215), 2)   // (the focus: an edge of 2 px in the accent colour, inside the element)
             this.caret = new Pen(UI.Color.Rgb(0, 0, 0))
         }
 
