@@ -387,9 +387,17 @@ namespace fire.Editor
             var natives = _project.Project.Native != null
                 ? Hint("This project has C++ natives in native/ (docs/PACKAGE_NATIVES.md); they are built with the toolchain, too.")
                 : Hint("This project has no C++ natives of its own.");
+            // (the stripping level as its number - the file may name it: "methods" is 2)
+            static string? Level(string? v) => v != null && ProjectSettings.Strippings.ToList().IndexOf(v.ToLowerInvariant()) is int i and >= 0 ? i.ToString(System.Globalization.CultureInfo.InvariantCulture) : v;
+            string? strippingInh = Level(InheritedOf(x => x.Stripping, null, out string strippingFrom));
+            var stripping = Choice(new[] { ("0 none", "0"), ("1 protected", "1"), ("2 methods", "2"), ("3 all", "3") }, () => Level(s.Stripping), v => s.Stripping = v,
+                strippingInh, strippingFrom, "default: 3");
             return Page("Native & Toolchain", "The target a native build runs on and the C++ toolchain that compiles it. Used when General > Runs as is Native.",
                 Group("Target", Row("Target", target), Hint("The built-in targets and those of fire.native.json.")),
                 Group("Toolchain", Row("Toolchain", toolchain), Row("", edit)),
+                Group("Size", Row("Stripping", stripping),
+                    Hint("What a native build leaves out of what the program does not reach: 0 nothing (like the VM), 1 private and protected members nothing uses, 2 also methods "
+                        + "nothing uses, 3 also classes the program never makes (the default). Names given as literals to reflection and [Keep] always stay; a debug build keeps everything.")),
                 Group("Natives", natives));
         }
 

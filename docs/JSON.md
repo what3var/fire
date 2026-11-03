@@ -115,4 +115,5 @@ A native build only keeps the classes the program can reach (docs/NATIVE_BACKEND
 - Classes that are not serializable are never added.
 
 So a `"$type"` that names a class outside the declared types (a class that is no subclass of the slot's type) is `unknown class 'X'` in a native build, while the
-VM makes it; `"trim": "all"` (`--keep-all`) keeps every class.
+VM makes it (`"$type"` is data of the run: a name in it is not kept like a literal given to reflection). The stripping levels 0-2 (`"stripping"` in
+`fire.native.json`, `--stripping`, `--keep-all` for 0) keep every class.

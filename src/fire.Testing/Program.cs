@@ -24755,19 +24755,20 @@ else
             CheckNat($"Native == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
         }
 
-        // Leaving out what the program does not reach (docs/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): by default ("trim": "reached") a class the
-        // program never reaches is not there for a lookup by its name - the VM has every class, so the outputs differ by design; "trim": "reflection" (once a
-        // class is looked up by name) and "trim": "all" (--keep-all, debug builds) keep them, then the output is the VM's again.
-        const string trimTitle = "Weglassen (trim): Reflection und JSON per Name in den drei Stufen, keep-trAll, Debug, Groesse des ui-Programms";
+        // Leaving out what the program does not reach (docs/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): the stripping levels 0 (none, = the VM),
+        // 1 (protected: every class and public member stays), 2 (methods: every class with constructors, fields and properties, a method only when used) and
+        // 3 (all, the default: only what is reached); names given as literals to reflection always stay, a lookup of what was left out is an error that says so
+        // (the VM has every class and member, so only a native build can hit it).
+        const string trimTitle = "Weglassen (stripping): Reflection, Proben und JSON in den Stufen 0-3, Literale, [Keep], Aliase, Debug, Groesse des ui-Programms";
         if (TestSelected(trimTitle))
         {
-            string trRunTrim(string source, fire.Native.TrimMode? trim, string tag)
+            string trRunTrim(string source, fire.Native.StrippingLevel? stripping, string tag)
             {
                 fire.Native.NativeSources generated;
-                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release), trim: trim); }
+                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release), stripping: stripping); }
                 catch (fire.Native.NativeNotSupportedException ex) { return "nicht uebersetzbar: " + ex.Message; }
-                string exe = Path.Combine(workDir, $"trim_{tag}.bin");
-                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"trim_{tag}", $"-pthread -O1 -Wall -Wextra {sanitize}", exe, out int buildExit);
+                string exe = Path.Combine(workDir, $"strip_{tag}.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"strip_{tag}", $"-pthread -O1 -Wall -Wextra {sanitize}", exe, out int buildExit);
                 if (buildExit != 0 || build.Contains("warning:")) return "C/C++-Compiler: " + build;
                 using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
                 var err = p.StandardError.ReadToEndAsync();
@@ -24775,46 +24776,120 @@ else
                 p.WaitForExit();
                 return p.ExitCode == 0 ? output : $"Exitcode {p.ExitCode}: {output}{err.Result}";
             }
+            var trLevels = new[] { fire.Native.StrippingLevel.None, fire.Native.StrippingLevel.Protected, fire.Native.StrippingLevel.Methods, fire.Native.StrippingLevel.All };
+            // (the names that are not literals of the function that calls reflection: made at run time by a function that does not)
             const string trByName = """
                 #import "reflection"
-                class Seen {
-                    int a
-                    construct() { this.a = 1 }
+                class Animal {
+                    int legs = 4
+                    string Speak() { return "..." }
+                }
+                class Dog : Animal {
+                    string Bark() { return "wuff" }
+                    string Wag() { return "wag" }
+                    private string Hidden() { return "hidden" }
+                    string CallOwn(string n) { return Reflect.Call(this, n, []) }
                 }
                 class Ghost {
                     int b
                     construct() { this.b = 2 }
                 }
-                [Keep]
-                class Kept {
+                class Literal {
                     int c
                     construct() { this.c = 3 }
+                }
+                [Keep]
+                class Kept {
+                    int k
+                    construct() { this.k = 5 }
                 }
                 class Tool {
                     [Keep] static int Version() { return 4 }
                 }
-                var s = new Seen()
-                print(Type.Of(s).Name + " " + Reflect.Get(s, "a"))
-                try { any g = Reflect.New("Ghost", []); print("ghost " + g.b) } catch (ReflectionException e) { print("ghost: " + e.message) }
-                print(Type.Named("Ghost") == undefined)
-                any k = Reflect.New("Kept", [])
-                print("kept " + k.c)
-                print(Type.Named("Tool") != undefined)
+                class N {
+                    static string Of(string a, string b) { return a + b }
+                    static bool Wanted(string n) { return n == "Ghost" || n == "Literal" || n == "Kept" || n == "Tool" || n == "Dog" }
+                }
+                var d = new Dog()
+                print(Reflect.Call(d, "Bark", []) + " " + Reflect.Get(d, "legs"))
+                try { print(Reflect.Call(d, N.Of("Wa", "g"), [])) } catch (ReflectionException e) { print("call: " + e.message) }
+                try { print(d.CallOwn(N.Of("Hid", "den"))) } catch (ReflectionException e) { print("private: " + e.message) }
+                try { any g = Reflect.New(N.Of("Gho", "st"), []); print("ghost " + g.b) } catch (ReflectionException e) { print("new: " + e.message) }
+                try { print(Type.Named(N.Of("Gho", "st")) != undefined) } catch (ReflectionException e) { print("named: " + e.message) }
+                any l = Reflect.New("Literal", [])
+                print("literal " + l.c + " " + (Type.Named("Literal") != undefined))
+                any k = Reflect.New(N.Of("Ke", "pt"), [])
+                print("kept " + k.k)
+                print(Type.Named(N.Of("To", "ol")) != undefined)
                 var has = ""
-                foreach (n in Type.Names()) { if (n == "Seen" || n == "Ghost" || n == "Kept" || n == "Tool") { has = has + n + " " } }
+                foreach (n in Type.Names()) { if (N.Wanted(n)) { has = has + n + " " } }
                 print(has)
+                var methods = ""
+                foreach (m in Type.Of(d).Methods()) { methods = methods + m.Name + " " }
+                print(methods)
+                print(Reflect.Has(d, "legs") + " " + Reflect.Has(d, "Bark"))
                 """;
             string trVmByName = vmOutput(trByName);
-            CheckNat("Weglassen (trim): die VM findet jede Klasse per Name", trVmByName == "Seen 1\nghost 2\nFalse\nkept 3\nTrue\nGhost Kept Seen Tool \n", trVmByName);
-            string trReached = trRunTrim(trByName, null, "reached");
-            CheckNat("Weglassen (trim): reached (Standard) - eine nie erreichte Klasse ist per Name unbekannt, [Keep] auf Klasse und Member bleibt",
-                trReached == "Seen 1\nghost: Unknown class 'Ghost'.\nTrue\nkept 3\nTrue\nKept Seen Tool \n", trReached);
-            string trReflection = trRunTrim(trByName, fire.Native.TrimMode.Reflection, "reflection");
-            CheckNat("Weglassen (trim): reflection - sobald eine Klasse per Name gesucht wird, bleibt jede (wie die VM)", trReflection == trVmByName, trReflection);
-            string trAll = trRunTrim(trByName, fire.Native.TrimMode.All, "all");
-            CheckNat("Weglassen (trim): all - alles bleibt (wie die VM)", trAll == trVmByName, trAll);
+            const string trVmExpected = "wuff 4\nwag\nhidden\nghost 2\nTrue\nliteral 3 True\nkept 5\nTrue\nDog Ghost Kept Literal Tool \nBark Wag Hidden CallOwn Speak \nTrue True\n";
+            CheckNat("Weglassen (stripping): die VM findet jede Klasse und jeden Member per Name", trVmByName == trVmExpected, trVmByName);
+            string trWag(int level) => $"call: Member 'Dog.Wag' was left out of the build (stripping {level}). Add [Keep] to 'Dog.Wag' or use stripping <= 1.\n";
+            string trHidden(int level) => $"private: Member 'Dog.Hidden' was left out of the build (stripping {level}). Add [Keep] to 'Dog.Hidden' or use stripping 0.\n";
+            const string trGhost = "Class 'Ghost' was left out of the build (stripping 3). Add [Keep] to 'Ghost' or use stripping <= 2.\n";
+            var trExpected = new[]
+            {
+                trVmExpected,
+                "wuff 4\nwag\n" + trHidden(1) + "ghost 2\nTrue\nliteral 3 True\nkept 5\nTrue\nDog Ghost Kept Literal Tool \nBark Wag CallOwn Speak \nTrue True\n",
+                "wuff 4\n" + trWag(2) + trHidden(2) + "ghost 2\nTrue\nliteral 3 True\nkept 5\nTrue\nDog Ghost Kept Literal Tool \nBark CallOwn \nTrue True\n",
+                "wuff 4\n" + trWag(3) + trHidden(3) + "new: " + trGhost + "named: " + trGhost + "literal 3 True\nkept 5\nTrue\nDog Kept Literal Tool \nBark CallOwn \nTrue True\n",
+            };
+            string[] trTitles =
+            {
+                "0 none - alles bleibt (wie die VM)",
+                "1 protected - jede Klasse und jeder oeffentliche Member bleibt, ein privater per Name ist ein klarer Fehler",
+                "2 methods - jede Klasse mit Konstruktoren und Feldern bleibt, Reflect.Call einer nicht benutzten Methode per Laufzeitname ist ein klarer Fehler",
+                "3 all (Standard) - eine nie erreichte Klasse per Laufzeitname ist ein klarer Fehler; Literale, [Keep] und Type.Names() wie erwartet",
+            };
+            for (int lv = 0; lv < 4; lv++)
+            {
+                string got = trRunTrim(trByName, lv == 3 ? null : trLevels[lv], $"byname{lv}");
+                CheckNat($"Weglassen (stripping): {trTitles[lv]}", got == trExpected[lv], got);
+            }
 
-            // JSON: "$type" names only the classes of the declared types (with their subclasses); a class outside them is unknown natively, unless everything is kept
+            // probes at the levels 2 and 3 (fields, properties, computed properties, Reflect.Set, probes on every member)
+            const string trProbes = """
+                #import "reflection"
+                class Cfg {
+                    int volume = 1
+                    string name = "n"
+                    int Level { get { return this.volume * 10 } set { this.volume = value / 10 } }
+                    int Twice { get { return this.volume * 2 } }
+                    string Unused() { return "u" }
+                }
+                class Other { int x = 1 }
+                var cfg = new Cfg()
+                probe cfg.volume changed { print("volume " + old + " -> " + value) }
+                probe cfg.Twice changed { print("twice " + value) }
+                cfg.volume = 5
+                cfg.Level = 70
+                Reflect.Set(cfg, "volume", 9)
+                probe cfg.* changed (obj, member, o, n) => print("any " + member + " " + n)
+                cfg.name = "z"
+                silence cfg.*
+                cfg.volume = 2
+                var o = new Other()
+                Reflect.ProbeAll(o, "changed", func (any obj, any member, any a, any b) => print("other " + member + " " + b))
+                o.x = 3
+                print(Reflect.Get(cfg, "Level") + " " + cfg.volume)
+                """;
+            string trVmProbes = vmOutput(trProbes);
+            foreach (var lv in new[] { fire.Native.StrippingLevel.Methods, fire.Native.StrippingLevel.All })
+            {
+                string got = trRunTrim(trProbes, lv, $"probes{(int)lv}");
+                CheckNat($"Weglassen (stripping): Proben in Stufe {(int)lv} wie in der VM", got == trVmProbes && trVmProbes.Contains("twice 18"), $"VM:\n{trVmProbes}nativ:\n{got}");
+            }
+
+            // JSON: "$type" names only the classes of the declared types (with their subclasses) at level 3 - runtime data, a class outside them is unknown; at 0-2
+            // every class is there
             const string trJson = """
                 #import "json"
                 class Shape { string name = "s" }
@@ -24832,40 +24907,66 @@ else
                 } catch (JsonException e) { print("json: " + e.message) }
                 """;
             string trVmJson = vmOutput(trJson);
-            CheckNat("Weglassen (trim): JSON in der VM - $type darf jede Klasse nennen", trVmJson == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\nlonely undefined\n", trVmJson);
-            string trJsonReached = trRunTrim(trJson, null, "json_reached");
-            CheckNat("Weglassen (trim): JSON reached - $type ausserhalb der deklarierten Typen (und ihrer Unterklassen) ist eine unbekannte Klasse",
+            CheckNat("Weglassen (stripping): JSON in der VM - $type darf jede Klasse nennen", trVmJson == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\nlonely undefined\n", trVmJson);
+            string trJsonReached = trRunTrim(trJson, null, "json3");
+            CheckNat("Weglassen (stripping): JSON in Stufe 3 - $type ausserhalb der deklarierten Typen (und ihrer Unterklassen) ist eine unbekannte Klasse",
                 trJsonReached == "{\"$type\":\"Square\",\"name\":\"s\",\"side\":2}\njson: $.shape: unknown class 'Lonely'.\n", trJsonReached);
-            string trJsonAll = trRunTrim(trJson, fire.Native.TrimMode.All, "json_all");
-            CheckNat("Weglassen (trim): JSON all - wie die VM", trJsonAll == trVmJson, trJsonAll);
+            foreach (var lv in new[] { fire.Native.StrippingLevel.None, fire.Native.StrippingLevel.Methods })
+            {
+                string got = trRunTrim(trJson, lv, $"json{(int)lv}");
+                CheckNat($"Weglassen (stripping): JSON in Stufe {(int)lv} - wie die VM", got == trVmJson, got);
+            }
             // what JSON pulls in: writing only the objects the program makes; reading the declared classes, their subclasses and the classes of their fields
             string trGenerated(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release)).Program;
             string trWriteOnly = trGenerated("#import \"json\"\nclass P { int x = 1 }\nclass Unused { int y = 2 }\nclass Other : P { }\nprint(Json.Serialize(new P()))");
             string trReading = trGenerated("#import \"json\"\nclass P { int x = 1\n Q q }\nclass Q { int z }\nclass Unused { int y = 2 }\nclass Other : P { }\nprint(Json.Deserialize<P>(\"{}\").x)");
             string trAnySlot = trGenerated("#import \"json\"\nclass P { int x = 1\n any free }\nclass Unused { int y = 2 }\nprint(Json.Deserialize<P>(\"{}\").x)");
-            CheckNat("Weglassen (trim): JSON - Schreiben zieht keine Klassen nach, Lesen die deklarierten (mit Unterklassen und Feldtypen), ein any-Feld alle",
+            CheckNat("Weglassen (stripping): JSON - Schreiben zieht keine Klassen nach, Lesen die deklarierten (mit Unterklassen und Feldtypen), ein any-Feld alle",
                 !trWriteOnly.Contains("{\"Unused\"") && !trWriteOnly.Contains("{\"Other\"") && trWriteOnly.Contains("{\"P\"")
                 && trReading.Contains("{\"Other\"") && trReading.Contains("{\"Q\"") && !trReading.Contains("{\"Unused\"") && trAnySlot.Contains("{\"Unused\""), "");
 
-            // a debug build keeps everything (the debugger, ROADMAP section 8); the configuration and the command line
+            // a debug build keeps everything (the debugger, ROADMAP section 8); the configuration (numbers, names, the old "trim"), the project and the command line
             var trDebugLinked = new Linker().CompileAndLink(new[] { "#debug\nprint(1)" }, null, null, null);
             var trReleaseLinked = new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release);
-            CheckNat("Weglassen (trim): ein Debug-Build behaelt alles; \"trim\" in fire.native.json und --keep-all",
-                fire.Native.CppGenerator.EffectiveTrim(trDebugLinked, null) == fire.Native.TrimMode.All
-                && fire.Native.CppGenerator.EffectiveTrim(trReleaseLinked, null) == fire.Native.TrimMode.Reached
-                && fire.Native.CppGenerator.EffectiveTrim(trReleaseLinked, fire.Native.TrimMode.Reflection) == fire.Native.TrimMode.Reflection
-                && fire.Native.NativeConfig.Parse("{\"trim\": \"all\"}").Trim == fire.Native.TrimMode.All
-                && fire.Native.NativeConfig.Parse("{\"trim\": \"reflection\"}").Trim == fire.Native.TrimMode.Reflection
-                && fire.Native.NativeConfig.Parse("{}").Trim == null
-                && CommandLineParser.Parse(new[] { "build", "a.fire", "--keep-all" }).KeepAll
-                && CommandLineParser.Parse(new[] { "run", "a.fire", "--keep-all" }).Error != null);
+            fire.Native.StrippingLevel? trParsed(string json) => fire.Native.NativeConfig.Parse(json).Stripping;
+            bool trThrows(Action a) { try { a(); return false; } catch (Exception) { return true; } }
+            var trProject = System.Text.Json.JsonSerializer.Deserialize<fire.Projects.ProjectSettings>("{\"stripping\": 2}", new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+            var trProjectName = System.Text.Json.JsonSerializer.Deserialize<fire.Projects.ProjectSettings>("{\"stripping\": \"protected\"}", new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+            var trCliConfig = new fire.Native.NativeConfig { Stripping = fire.Native.StrippingLevel.Methods, StrippingFromCommandLine = true };
+            var trAliasChecks = new (string Name, bool Ok)[]
+            {
+                ("debug 0", fire.Native.CppGenerator.EffectiveStripping(trDebugLinked, fire.Native.StrippingLevel.All) == fire.Native.StrippingLevel.None),
+                ("default 3", fire.Native.CppGenerator.EffectiveStripping(trReleaseLinked, null) == fire.Native.StrippingLevel.All),
+                ("given", fire.Native.CppGenerator.EffectiveStripping(trReleaseLinked, fire.Native.StrippingLevel.Methods) == fire.Native.StrippingLevel.Methods),
+                ("number", trParsed("{\"stripping\": 2}") == fire.Native.StrippingLevel.Methods && trParsed("{\"stripping\": 0}") == fire.Native.StrippingLevel.None),
+                ("name", trParsed("{\"stripping\": \"protected\"}") == fire.Native.StrippingLevel.Protected && trParsed("{\"stripping\": \"3\"}") == fire.Native.StrippingLevel.All),
+                ("trim all", trParsed("{\"trim\": \"all\"}") == fire.Native.StrippingLevel.None),
+                ("trim reflection", trParsed("{\"trim\": \"reflection\"}") == fire.Native.StrippingLevel.Protected),
+                ("trim reached", trParsed("{\"trim\": \"reached\"}") == fire.Native.StrippingLevel.All),
+                ("stripping before trim", trParsed("{\"stripping\": 2, \"trim\": \"all\"}") == fire.Native.StrippingLevel.Methods && trParsed("{\"trim\": \"all\", \"stripping\": 2}") == fire.Native.StrippingLevel.Methods),
+                ("none", trParsed("{}") == null),
+                ("wrong", trThrows(() => trParsed("{\"stripping\": 7}")) && trThrows(() => trParsed("{\"trim\": \"some\"}"))),
+                ("saved as name", fire.Native.NativeConfig.Parse("{\"trim\": \"reflection\"}").ToJson().Contains("\"stripping\": \"protected\"") && !fire.Native.NativeConfig.Parse("{\"trim\": \"all\"}").ToJson().Contains("trim")),
+                ("--keep-all", CommandLineParser.Parse(new[] { "build", "a.fire", "--keep-all" }).KeepAll && CommandLineParser.Parse(new[] { "run", "a.fire", "--keep-all" }).Error != null),
+                ("--stripping", CommandLineParser.Parse(new[] { "build", "a.fire", "--stripping", "1" }).Stripping == fire.Native.StrippingLevel.Protected
+                    && CommandLineParser.Parse(new[] { "native", "a.fire", "--stripping", "methods" }).Stripping == fire.Native.StrippingLevel.Methods
+                    && CommandLineParser.Parse(new[] { "build", "a.fire", "--stripping", "9" }).Error != null && CommandLineParser.Parse(new[] { "run", "a.fire", "--stripping", "1" }).Error != null),
+                ("project", trProject.Stripping == "2" && trProject.Validate().Count == 0 && trProjectName.Stripping == "protected" && trProjectName.Validate().Count == 0
+                    && new fire.Projects.ProjectSettings { Stripping = "lots" }.Validate().Count == 1 && fire.Native.Strippings.Parse(trProject.Stripping) == fire.Native.StrippingLevel.Methods),
+                ("command line before project", fire.Compiler.NativeBuilder.StrippingOf(trCliConfig, null) == fire.Native.StrippingLevel.Methods),
+            };
+            CheckNat("Weglassen (stripping): ein Debug-Build behaelt alles; \"stripping\" als Zahl und Name, \"trim\" und --keep-all als Aliase, --stripping, das Projekt",
+                trAliasChecks.All(c => c.Ok), string.Join(", ", trAliasChecks.Where(c => !c.Ok).Select(c => c.Name)));
 
-            // the size: the minimal ui program (a window, a root, one label) - 7.85 MB of C before section 11
+            // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11
             const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
             var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
+            var trUiSizes = trLevels.Select(lv => fire.Native.CppGenerator.GenerateSources(trUiLinked, stripping: lv).Program.Length).ToArray();
             int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
-            int trUiAll = fire.Native.CppGenerator.GenerateSources(trUiLinked, trim: fire.Native.TrimMode.All).Program.Length;
-            CheckNat("Weglassen (trim): das minimale ui-Programm bleibt klein (unter 3 MB C; keep-all ist mehr als doppelt so gross)", trUiSize < 3_000_000 && trUiAll > 2 * trUiSize, $"{trUiSize} / keep-all {trUiAll}");
+            // (level 1 is about level 0 here: ui keeps little private code that no public member reaches; the names of the left out members cost a few bytes)
+            CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 3 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
+                trUiSize == trUiSizes[3] && trUiSize < 3_000_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
+                string.Join(" / ", trUiSizes.Select((s, i) => $"{i}: {s}")));
         }
 
         // SChannel, the TLS of the Windows platform: the TLS case built for Windows with MinGW and run under Wine (when both are on this machine) must print what the VM prints

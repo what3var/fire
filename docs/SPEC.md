@@ -1078,8 +1078,9 @@ that are constants (numbers, strings, `bool`, arrays of constants, ranges of `in
 Attributes stand before classes (and actors), methods, fields (`[NonSerialized] int secret`; before a declaration of several fields they belong to all of them) and
 properties - nowhere else. Reflection lists them for every member (`Member.Attributes`) and for the class (`Type.Attributes`). Two attributes concern a class as a whole:
 `[Keep]` (before a class, method, field or property) - a native build keeps the declaration even when the program does not reach it (a class made only by its name,
-`Reflect.New("X")`; before a class: the class with all its members, before a member: that member and its class; not inherited; the VM keeps everything anyway,
-docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
+`Reflect.New(name)`; before a class: the class with all its members, before a member: that member and its class; not inherited; a name given as a literal to
+reflection - `Reflect.New("X")`, `Reflect.Call(o, "M")` - is kept the same way without it; the VM keeps everything anyway; how much a native build leaves out is its
+stripping level 0-3, docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
 derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
 and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the

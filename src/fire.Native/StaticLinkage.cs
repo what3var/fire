@@ -216,7 +216,8 @@ namespace fire.Native
 
         /// <summary>The key of a module's library in the cache: the generator, the toolchain, the target and the mode, the module's sources, the interfaces of the modules
         /// it needs and the switches it is built with (ROADMAP 9.4: a variant per set; null - the module's own switches, only its interface is kept).</summary>
-        internal static string LibraryKey(LinkedProgram program, ModuleSpec spec, IReadOnlyDictionary<ModuleSpec, string> abi, TargetProfile target, string toolchainStamp, ModuleFlags? flags, int? sdl)
+        internal static string LibraryKey(LinkedProgram program, ModuleSpec spec, IReadOnlyDictionary<ModuleSpec, string> abi, TargetProfile target, string toolchainStamp, ModuleFlags? flags, int? sdl,
+            StrippingLevel stripping = StrippingLevel.Protected)
         {
             var sb = new StringBuilder();
             sb.Append("fire-static ").Append(InterfaceFormat).Append(' ').Append(typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId).Append('\n');
@@ -231,6 +232,8 @@ namespace fire.Native
             // (whether its natives in C live in its file depends on the other imports of the program: a variant of its own)
             sb.Append("natives-here ").Append(NativesStandAlone(program, spec.Name, target)).Append('\n');
             sb.Append("flags ").Append(flags?.ToString() ?? "own").Append('\n');
+            // (a library keeps everything with stripping 0, else its API: two variants - see LibraryStripping)
+            if (stripping == StrippingLevel.None) sb.Append("stripping 0\n");
             return Hash(sb.ToString()).Substring(0, 40);
         }
 
@@ -344,7 +347,7 @@ namespace fire.Native
         /// <param name="toolchainStamp">What identifies the compiler (its kind, path, version, arguments): part of every key.</param>
         /// <param name="shared">Linkage "shared" (ROADMAP 9, phase C): the libraries are shared libraries (position-independent code, a variant of their own in the cache); each
         /// says the interface it was built with, the program checks it when it starts.</param>
-        public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, Func<int>? chooseSdl = null, TrimMode? trim = null, string? cacheRoot = null,
+        public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, Func<int>? chooseSdl = null, StrippingLevel? stripping = null, string? cacheRoot = null,
             bool shared = false)
         {
             if (shared) toolchainStamp += "|shared";
@@ -362,7 +365,7 @@ namespace fire.Native
                 var union = flags ?? default;
                 foreach (var spec in specs)
                 {
-                    string key = LibraryKey(program, spec, abi, target, toolchainStamp, flags, sdl);
+                    string key = LibraryKey(program, spec, abi, target, toolchainStamp, flags, sdl, LibraryStripping(program, stripping));
                     keys[spec] = key;
                     string iface = Path.Combine(root, key, spec.Id + NativeLibraryCache.InterfaceExtension);
                     ModuleOutput output;
@@ -375,7 +378,7 @@ namespace fire.Native
                     }
                     else
                     {
-                        output = GenerateLibrary(program, spec, specs, target, trim, flags, separate: true);
+                        output = GenerateLibrary(program, spec, specs, target, stripping, flags, separate: true);
                         fresh[spec] = output;
                         if (flags == null)   // (the module's own switches: only its interface is kept)
                             WriteAtomically(iface, JsonSerializer.Serialize(InterfaceOf(output, key, abi[spec], output.Exports)));
@@ -385,7 +388,7 @@ namespace fire.Native
                 }
                 var main = new CppGenerator(program, target)
                 {
-                    _chooseSdl = chooseSdl, _trim = EffectiveTrim(program, trim), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
+                    _chooseSdl = chooseSdl, _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
                     _sharedAbis = shared ? specs.ToDictionary(s => s, s => $"{InterfaceFormat}:{abi[s]}") : null,
                 };
                 main.SetModules(specs, null);

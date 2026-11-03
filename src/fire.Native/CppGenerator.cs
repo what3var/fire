@@ -203,8 +203,8 @@ namespace fire.Native
         private bool _usesWindows;
         /// <summary>Which SDL the window is built with when the target does not say (see <see cref="GenerateSources"/>).</summary>
         private Func<int>? _chooseSdl;
-        /// <summary>What is left out (see <see cref="EffectiveTrim"/>).</summary>
-        private TrimMode _trim;
+        /// <summary>How much is left out (see <see cref="EffectiveStripping"/>).</summary>
+        private StrippingLevel _strip;
         private int? _sdlChosen;
         /// <summary>A `Takes` mode is used: `Takes.Children` needs the enumerator of the IEnumerable classes (fire_enumerateItems).</summary>
         private bool _usesTakeEnumerate;
@@ -301,30 +301,32 @@ namespace fire.Native
 
         /// <summary>Generates the C++ source of the program for <paramref name="target"/> (default: the machine this runs on).
         /// Link the program with the same target (<c>Linker.CompileAndLink(..., target:)</c>) so that its libraries are checked.</summary>
-        public static string Generate(LinkedProgram program, TargetProfile? target = null, TrimMode? trim = null) => GenerateSources(program, target, trim: trim).Program;
+        public static string Generate(LinkedProgram program, TargetProfile? target = null, StrippingLevel? stripping = null) => GenerateSources(program, target, stripping: stripping).Program;
 
-        /// <summary>A debug build keeps everything (the debugger sees every class and member, docs/ROADMAP.md section 8); otherwise what is asked for, by default only what is reached.</summary>
-        public static TrimMode EffectiveTrim(LinkedProgram program, TrimMode? trim) =>
-            program.ExecutionMode == VmExecutionMode.Debug ? TrimMode.All : trim ?? TrimMode.Reached;
+        /// <summary>A debug build keeps everything (0: the debugger sees every class and member, docs/ROADMAP.md section 8); otherwise what is asked for, by default
+        /// level 3 (only what is reached).</summary>
+        public static StrippingLevel EffectiveStripping(LinkedProgram program, StrippingLevel? stripping) =>
+            program.ExecutionMode == VmExecutionMode.Debug ? StrippingLevel.None : stripping ?? StrippingLevel.All;
 
         /// <summary>The program as C (<see cref="NativeSources.Program"/>) and its natives in C++ (<see cref="NativeSources.Natives"/>, null when it has none; written as
         /// <see cref="NativesFileName"/> next to the program, compiled with a C++ compiler and linked with it).</summary>
         /// <param name="chooseSdl">Asked once when the program shows a window on a desktop and the target does not name the SDL (<see cref="NativeTarget.Sdl"/>): 2 or 3
         /// (the build probes the toolchain); null: SDL2.</param>
-        /// <param name="trim">What is left out (<see cref="TrimMode"/>); null: what the program does not reach - a debug build (`#debug`, `-m DEBUG`) keeps everything.</param>
-        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, Func<int>? chooseSdl = null, TrimMode? trim = null)
+        /// <param name="stripping">How much is left out (<see cref="StrippingLevel"/>); null: level 3, what the program does not reach - a debug build (`#debug`, `-m DEBUG`)
+        /// keeps everything.</param>
+        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, Func<int>? chooseSdl = null, StrippingLevel? stripping = null)
         {
             if (ModulesFromEnvironment && program.SourceModules != null)
             {
                 // (tests, ROADMAP 9 phase A: the same program from modules; a program that cannot be split - it declares a class a library declares too - is built whole)
-                try { return GenerateModular(program, target, chooseSdl, trim); }
+                try { return GenerateModular(program, target, chooseSdl, stripping); }
                 catch (NativeNotSupportedException ex) when (ex.Message.StartsWith("module '", StringComparison.Ordinal))
                 {
                     if (Environment.GetEnvironmentVariable("FIRE_MODULES_LOG") is { Length: > 0 } logFile)
                         lock (typeof(CppGenerator)) File.AppendAllText(logFile, ex.Message + Environment.NewLine);
                 }
             }
-            var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _chooseSdl = chooseSdl, _trim = EffectiveTrim(program, trim) };
+            var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _chooseSdl = chooseSdl, _strip = EffectiveStripping(program, stripping) };
             string c = generator.Run();
             return new NativeSources(c, generator._nativesCode);
         }
@@ -3949,6 +3951,7 @@ namespace fire.Native
                     Need(argc);
                     string cls = Str(ins.A[0]), method = Str(ins.A[1]);
                     var rc = FindClass(cls);
+                    if (ReflectionPrelude.HelperClasses.Contains(cls)) NoteReflectionLiterals(f);   // (`Reflect.New("Dog")`: the names stay, stripping)
                     var staticNames = NamesBefore();
                     if (rc.IsTypeOverloaded(method, argc))
                     {
@@ -4151,6 +4154,8 @@ namespace fire.Native
                     Need(argc + 1);
                     string method = Str(ins.A[0]);
                     int slot = d - argc - 1;
+                    // (`t.Find("Bark")` on a Type, Member, ...: the names stay, stripping)
+                    if (_usesReflection && ReflectionMethodNames.Contains(method) && ObjSlot(slot) && IsReflectionHelperClass(ObjClass(Ty(slot)))) NoteReflectionLiterals(f);
                     if (NamesBefore() is { } methodNames)
                     {
                         // named arguments: per class of the receiver its method with the arguments in the order of its parameters (no dispatcher - its

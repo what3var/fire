@@ -52,9 +52,10 @@ static class LinkageTests
 
     private sealed record Built(bool Ok, string Exe, string Log, double Seconds, long Size);
 
-    private static Built Build(IReadOnlyList<string> sources, string linkage, string exe, ToolchainDef? toolchain = null, TargetProfile? target = null, BuildPlan? plan = null, VmExecutionMode? mode = null)
+    private static Built Build(IReadOnlyList<string> sources, string linkage, string exe, ToolchainDef? toolchain = null, TargetProfile? target = null, BuildPlan? plan = null, VmExecutionMode? mode = null,
+        StrippingLevel? stripping = null)
     {
-        var config = new NativeConfig { Linkage = linkage };
+        var config = new NativeConfig { Linkage = linkage, Stripping = stripping };
         target ??= TargetProfile.Host;
         toolchain ??= config.ResolveToolchain(target, "gcc");
         var watch = Stopwatch.StartNew();
@@ -173,6 +174,28 @@ static class LinkageTests
         }
         """;
 
+    /// <summary>Stripping (docs/NATIVE_BACKEND.md "Größe des Programms") with libraries: the program leaves out like with "source" (a method of its own by a name
+    /// made at run time, a class it never makes); a library keeps its API at every level (List.IndexOf by a name made at run time).</summary>
+    private const string Strip = """
+        #import "reflection"
+        class Dog {
+            string Bark() { return "wuff" }
+            string Wag() { return "wag" }
+        }
+        class Ghost {
+            int b
+            construct() { this.b = 2 }
+        }
+        class N { static string Of(string a, string b) { return a + b } }
+        var d = new Dog()
+        print(Reflect.Call(d, "Bark", []))
+        try { print(Reflect.Call(d, N.Of("Wa", "g"), [])) } catch (ReflectionException e) { print("call: " + e.message) }
+        try { any g = Reflect.New(N.Of("Gho", "st"), []); print("ghost " + g.b) } catch (ReflectionException e) { print("new: " + e.message) }
+        var l = new List()
+        l.Add(1); l.Add(2)
+        print("lib " + Reflect.Call(l, N.Of("Index", "Of"), [2]))
+        """;
+
     private static void RunIn(string root)
     {
         // ---- a program with several packages: the same output as "source" and the VM; the second build takes every library from the cache ----
@@ -215,6 +238,20 @@ static class LinkageTests
         string meetOut = meet.Ok ? Exec(meet.Exe) : "";
         Check("Module: Klassen des Programms und der Libraries treffen sich (OrderBy, Reflect.Get/Set/Call/New, Probe, Operator, List<T> erweitert, Ausnahme, fehlende Methode) wie die VM",
             meet.Ok && meetOut == meetVm && !meet.Log.Contains("not possible"), $"{meet.Log}\nnativ:\n{meetOut}\nVM:\n{meetVm}");
+        // ---- stripping: the program like with "source", a library keeps its API ----
+        string stripVm = Vm(new[] { Strip });
+        Check("Stripping: die VM", stripVm == "wuff\nwag\nghost 2\nlib 1\n", stripVm);
+        foreach (var level in new[] { StrippingLevel.Methods, StrippingLevel.All })
+        {
+            var built = Build(new[] { Strip }, "static", Path.Combine(root, $"strip{(int)level}"), stripping: level);
+            string got = built.Ok ? Exec(built.Exe) : "";
+            int n = (int)level;
+            string expected = $"wuff\ncall: Member 'Dog.Wag' was left out of the build (stripping {n}). Add [Keep] to 'Dog.Wag' or use stripping <= 1.\n"
+                + (level == StrippingLevel.All ? "new: Class 'Ghost' was left out of the build (stripping 3). Add [Keep] to 'Ghost' or use stripping <= 2.\n" : "ghost 2\n") + "lib 1\n";
+            Check($"Stripping {n} mit static: das Programm laesst weg wie mit source (klare Fehler), eine Library behaelt ihre Schnittstelle (List.IndexOf per Laufzeitname)",
+                built.Ok && got == expected && !built.Log.Contains("not possible"), $"{built.Log}\nnativ:\n{got}\nerwartet:\n{expected}");
+        }
+
         var linkedCli = new Linker { Engine = "native" }.CompileAndLink(new[] { Cli });
         string sourceC = CppGenerator.Generate(linkedCli);
         var cliPlan = CppGenerator.GenerateStatic(linkedCli, TargetProfile.Host, "linkage-test", cacheRoot: Path.Combine(root, "plan-cache"));

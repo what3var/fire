@@ -375,8 +375,9 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
 
 * **Reflection und `probe`** (SPEC 8.13/8.14, `#import "reflection"`): was das Programm per Name erreichen kann, hängt davon ab, welche `__refl_*`-Funktionen es aufruft
   (Stufen, `CppGenerator.Reflection.cs`, siehe "Größe des Programms"): Mitglieder eines Objekts per Name (`Reflect.Get/Set/Has`, Selektoren, Proben) brauchen die Felder und
-  Property-Zugriffe der Klassen, deren Objekte es gibt; `Reflect.Call` deren Instanzmethoden; `Reflect.New` die Konstruktoren der Klassen in den Tabellen. Die Tabellen beschreiben
-  die erreichten Klassen (gemacht, benutzt, ihre Basisklassen, `[Keep]`), mit `"trim": "reflection"` jede Klasse, sobald eine per Name gesucht wird, mit `"trim": "all"` immer jede.
+  Property-Zugriffe der Klassen, deren Objekte es gibt; `Reflect.Call` deren Instanzmethoden, die da sind; `Reflect.New` die Konstruktoren der Klassen in den Tabellen. Die Tabellen
+  beschreiben in den Stufen 0-2 jede Klasse, in Stufe 3 die erreichten (gemacht, benutzt, ihre Basisklassen, `[Keep]`, als Literal an die Reflection gegeben); eine weggelassene
+  Methode steht nicht darin, nur ihr Name (für den klaren Fehler, siehe "Größe des Programms").
   Die Beschreibungen sind Tabellen (`RfClass`/`RfMember`: die eigenen Mitglieder jeder Klasse; die geerbten liest `rf_visible` aus den Zeilen der Basisklassen, ein abgeleitetes
   verdeckt gleichnamige - dieselbe Liste wie `ReflectionNatives.Members` der VM); `Reflect.Get/Set/Call/New/Has`
   sind erzeugte Funktionen über die Feldhelfer und Dispatcher des Programms - mit denselben Zugriffs-, Einheiten- und Property-Regeln und denselben Fehlermeldungen
@@ -602,7 +603,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
   "engine": "native",            // "vm" (Standard) oder "native": was `build` erzeugt
   "target": "my-board",          // Standardziel; sonst dieser Rechner
   "toolchain": "gcc",            // Standard-Toolchain für Ziele ohne eigene; sonst die erste gefundene
-  "trim": "reached",             // was bleibt: "reached" (Standard), "reflection" oder "all" (siehe "Größe des Programms")
+  "stripping": 3,                // was wegfällt: 0 "none" .. 3 "all" (Standard), Zahl oder Name (siehe "Größe des Programms")
   "targets": {
     "my-board": {
       "extends": "freertos",     // eingebautes Ziel oder anderes aus dieser Datei; nur Abweichungen stehen hier
@@ -652,19 +653,58 @@ Der Generator übersetzt nur, was vom Programm aus erreichbar ist: Funktionen we
   eines Felds) nur für Namen, deren Adresse das Programm nimmt; die Reflection-Tabellen halten nur die eigenen Mitglieder jeder Klasse (die geerbten kommen zur Laufzeit aus der
   Basisklasse) und jede Namensliste einmal; die Proben-Tabellen ebenso.
 
-`"trim"` in `fire.native.json` sagt, was bleibt:
+**Stufen des Weglassens** (`"stripping"` in `fire.native.json` oder in den Einstellungen des Projekts, `--stripping` auf der Befehlszeile von `build`, `native` und `test`;
+eine Zahl oder ein Name; die Befehlszeile geht vor das Projekt, das Projekt vor `fire.native.json`). Jede Stufe lässt weg, was die vorige behält, und mehr:
 
-| `"trim"` | was bleibt |
+| `"stripping"` | was bleibt |
 |---|---|
-| `"reached"` (Standard) | was das Programm erreicht, dazu `[Keep]`. Eine Suche per Name (`Reflect.New("X")`, `Type.Named("X")`, `Type.Of("X")`, `Reflect.Classes()`) sieht nur diese Klassen: eine nie erreichte ist eine unbekannte Klasse (`Unknown class 'X'.`) - die VM findet sie. |
-| `"reflection"` | wie `"reached"`, aber sobald das Programm eine Klasse per Name sucht (`Type`, `Reflect.New`, `Reflect.Classes`), bleibt jede Klasse in den Tabellen und `Reflect.New` kann jede machen: wie die VM. |
-| `"all"` | alles: jede Klasse mit allen Konstruktoren, Methoden (auch statischen) und Feldern. `--keep-all` auf der Befehlszeile (`build`, `native`, `test`) sagt dasselbe; ein **Debug-Build** (`#debug`, `-m DEBUG`) behält immer alles (der Debugger, ROADMAP Abschnitt 8). |
+| `0` `"none"` | alles: jede Klasse mit allen Konstruktoren, Methoden (auch statischen) und Feldern - wie die VM. `--keep-all` sagt dasselbe; ein **Debug-Build** (`#debug`, `-m DEBUG`) hat immer Stufe 0 (der Debugger, ROADMAP Abschnitt 8). |
+| `1` `"protected"` | jede Klasse und jeder öffentliche Member (Methoden, auch statische, Properties, Konstruktoren); ein privater oder geschützter Member nur, wenn das Programm ihn erreicht (ein geschützter, den eine Unterklasse benutzt, ist erreicht). Das ist die Regel einer vorgebauten Library (ihre Schnittstelle und was sie erreicht). |
+| `2` `"methods"` | jede Klasse mit ihren Konstruktoren (`Reflect.New` macht jede), Feldern und Properties (Getter und Setter: Proben, `Reflect.Get/Set/Has` und JSON arbeiten an allem); eine Methode nur, wenn das Programm sie benutzt - die Reflection-Tabellen beschreiben sie dann auch nicht. |
+| `3` `"all"` (Standard) | was das Programm erreicht: auch eine Klasse, die es nie macht oder benutzt, fehlt (das frühere `"reached"`). |
+
+In jeder Stufe bleiben die Klassen und Member mit `[Keep]` und die **Namen, die das Programm als Literal an die Reflection gibt**: ruft eine Funktion eine Methode von
+`Reflect`, `Type`, `Member`, `Selector` oder `Attribute` (`Reflect.New("Dog", [])`, `Type.Named("Dog")`, `Reflect.Call(o, "Bark", [])`, `Reflect.Get(o, "f")`,
+`t.Find("Bark")`), behält der Generator jeden Text, den sie als Wert lädt und der eine Klasse nennt (wie `[Keep]`: mit allen Membern), oder der ein Name ist (die Member
+dieses Namens der Klassen, deren Objekte es gibt: ihre Methoden mit Verteilern, ihre Felder und Properties). Auch `var n = "Bark"` vor dem Aufruf zählt; ein Text, der
+erst zur Laufzeit entsteht, ein `"$type"` von JSON und ein Name aus einer Datei nicht. Die Erkennung ist bewusst grob (jeder Text der Funktion, nicht nur die Argumente
+des Aufrufs): sie behält höchstens etwas mehr.
+
+Wird zur Laufzeit etwas gesucht, das weggelassen ist, ist das ein klarer Fehler (`ReflectionException`) statt einer unbekannten Klasse:
+
+* eine Klasse per Name (`Reflect.New`, `Type.Named`, `Type.Of(text)`; nur in Stufe 3): `Class 'Ghost' was left out of the build (stripping 3). Add [Keep] to 'Ghost' or use stripping <= 2.`
+  (die Namen der weggelassenen Klassen stehen dafür in `kRfStrippedClasses`);
+* ein Member per Name (`Reflect.Call`, auch ein Feld oder eine Property ohne Helfer): `Member 'Dog.Wag' was left out of the build (stripping 2). Add [Keep] to 'Dog.Wag' or use
+  stripping <= 1.` - für einen privaten oder geschützten `... or use stripping 0.` (die Zeile `RfClass` einer Klasse nennt dafür ihre weggelassenen Methoden in `stripped`,
+  mit der Stufe, die sie behält, vorne: `"1Wag"`).
+
+`Type.Names()` listet die Klassen, die da sind, `Type.Of(o).Methods()` die Methoden, die da sind; `Reflect.Has(o, name)` ist für eine weggelassene Methode `false`.
+Die VM behält alles - der Fehler kommt nur in einem nativen Build vor, dieselbe Meldung gibt es in der VM nicht.
+`"trim"` (der frühere Schalter) bleibt als Alias: `"all"` ist 0, `"reflection"` (jede Klasse, sobald eine per Name gesucht wird) ist 1, `"reached"` ist 3; steht beides da,
+gilt `"stripping"`. Mit `linkage` `"static"`/`"shared"` behält eine Library in jeder Stufe außer 0 ihre Schnittstelle (Stufe 1, siehe "Getrennte Übersetzung"); ein Member
+einer Library per Name ist dann auch in Stufe 2 und 3 da.
 
 **VM und nativ.** Die VM hat jede Klasse des gelinkten Programms; ob das Programm eine Klasse erreicht, weiß sie nicht (dafür bräuchte sie dieselbe Analyse, die der Generator
 nebenbei beim Übersetzen macht - und die hängt an seinem Verteiler nach Namen; ein Weglassen in der VM ist Abschnitt 11.6 der Roadmap, offen). Im Standard unterscheiden sich
-deshalb genau die Suchen nach einer Klasse per Name, die das Programm sonst nie erreicht (`Reflect.New`, `Type.Named`, `Type.Of(text)`, `Reflect.Classes()`, und JSON-`"$type"`
-außerhalb der deklarierten Typen); alles, was an einem vorhandenen Objekt arbeitet, ist gleich. `[Keep]`, `"trim": "reflection"` oder `"all"` machen die Ausgabe wieder gleich.
-Getestet in `fire.Testing` ("Weglassen (trim): ..." in allen drei Stufen gegen die VM, `[Keep]` und JSON als Fälle "Native == VM").
+deshalb genau die Suchen mit einem Namen, der erst zur Laufzeit entsteht, nach etwas, das das Programm sonst nie erreicht (und JSON-`"$type"` außerhalb der deklarierten
+Typen); alles, was an einem vorhandenen Objekt arbeitet, ist gleich. `[Keep]` oder eine kleinere Stufe machen die Ausgabe wieder gleich.
+Getestet in `fire.Testing` ("Weglassen (stripping): ..." in allen vier Stufen gegen die VM - Literale, Laufzeitnamen, privat, `[Keep]`, Proben in 2 und 3, JSON, die
+Aliase; `[Keep]` und JSON als Fälle "Native == VM"; mit `static` in `FIRE_TESTS_ONLY=linkage`).
+
+**Die Stufen am minimalen `ui`-Programm** (Framebuffer, Window, `UI.Root`, ein `UI.Label`, `Run()`; gcc 13 `-std=c11 -O2 -c`, ohne ccache, 4 vCPUs):
+
+| Stufe | C | Zeilen | `gcc -O2 -c` | Objektdatei (davon Code, `size`) |
+|---|---:|---:|---:|---:|
+| 0 `none` (wie `--keep-all`) | 8,75 MB | 240.700 | 149 s | 6,49 MB (3,46 MB) |
+| 1 `protected` | 8,75 MB | 240.700 | 155 s | 6,49 MB (3,46 MB) |
+| 2 `methods` | 7,31 MB | 199.700 | 149 s | 6,41 MB (3,46 MB) |
+| 3 `all` (Standard) | 2,76 MB | 72.800 | 56 s | 2,74 MB (1,44 MB) |
+
+Die Stufen 1 und 2 sind hier so groß wie 0 (Stufe 1 ergibt dieselbe Objektdatei): `ui` hat kaum privaten Code, den kein öffentlicher Member erreicht, und die
+Konstruktoren der rund 140 Klassen des Packages ziehen fast ihren ganzen Code nach (Stufe 2 spart nur die Methoden, die keiner aufruft - gcc hatte die als nicht benutzte
+`static`-Funktionen ohnehin verworfen). Für ein `ui`-Programm lohnen nur 3 und, zum Vergleich mit der VM, 0; 1 und 2 sind für kleine Programme ohne große Packages
+gedacht, die Klassen per Name machen (der Testfall "Weglassen (stripping)": 990 KB / 990 KB / 495 KB / 303 KB C in den Stufen 0-3). Vor den Stufen (Stand 64b4ccc)
+hatte Stufe 3 2,77 MB und `--keep-all` 8,75 MB.
 
 **Messung** (gcc 13 `-std=c11 -O2 -c`, ohne ccache, derselbe Rechner, vorher = Stand vor Abschnitt 11):
 
@@ -676,7 +716,7 @@ Getestet in `fire.Testing` ("Weglassen (trim): ..." in allen drei Stufen gegen d
 | JSON (zwei Klassen, `Serialize` und `Deserialize<T>`) | 161 KB | 71 KB | 5,5 s | 3,8 s |
 | Reflection (`Type.Of`, `Get/Set/Call/Has`) | 680 KB | 348 KB | 15,5 s | 9,2 s |
 
-`graphics` und `scene3d` benutzen keine Reflection: dort war schon vorher nur das Erreichte übersetzt, der Rest ist echter Code und die C-Bridges. Mit `"trim": "all"` ist das
+`graphics` und `scene3d` benutzen keine Reflection: dort war schon vorher nur das Erreichte übersetzt, der Rest ist echter Code und die C-Bridges. Mit Stufe 0 ist das
 `ui`-Programm 8,1 MB groß (alles, auch was vorher ohne Reflection-Zugriff wegfiel).
 
 Was im minimalen `ui`-Programm bleibt, ist im Wesentlichen echter Code: `UI.Root` bringt Ereignisse, Fokus, Popups, Ziehen und Ablegen mit (die Funktionen machen etwa die Hälfte
@@ -687,7 +727,7 @@ Filter höchstens weglassen könnte, sind 4 % des Funktionscodes (die meisten da
 
 ### Bauen: `build` zeigt auf nativ
 
-`fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep] [--keep-all]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
+`fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep] [--stripping 0-3] [--keep-all]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
 eigenständige Datei mit der VM, wie bisher). Mit `native` wird für das Ziel übersetzt (`NativeBuilder`: C++ erzeugen, Runtime und Plattformpaket daneben legen) und mit der Toolchain gebaut;
 bei `files` ist `-o` ein Ordner. `fire.Compiler native ...` erzeugt weiter nur das C++ (samt Runtime und Plattformpaket des Ziels). Der Editor hat denselben Weg:
 **Tools > Toolchain Settings...** (Seiten links: *Build* mit der Standard-Engine, *Target* mit Plattform/Includes/Defines/Einsprung, *Toolchain* mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript bzw. Projekt; auch erreichbar über *Project Properties > Native & Toolchain*), **Run > Build Native...**,
@@ -891,8 +931,9 @@ Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code ste
 
 * Eine **Library** wird von einem Generator erzeugt, der nur ihre Klassen und die der Module sieht, die sie braucht (`LibraryView`). Sie behält, was andere Module
   benutzen können - die öffentlichen und geschützten Member ihrer Klassen (ihre Schnittstelle ist die Wurzel dessen, was bleibt - §11; `protected` zählt dazu, eine
-  Klasse eines anderen Moduls kann davon erben) -, ein privater Member bleibt nur, wenn ihr eigener Code ihn erreicht (mit `"trim": "all"`, in Debug-Builds und mit
-  `[Keep]` alle). Sie nummeriert ihre Klassen selbst (nach Namen sortiert) und schreibt ihre Ids als `fire_mb_<modul> + k`. Member anderer Module ruft sie über
+  Klasse eines anderen Moduls kann davon erben) -, ein privater Member bleibt nur, wenn ihr eigener Code ihn erreicht (mit Stufe 0, in Debug-Builds und mit
+  `[Keep]` alle). Das ist Stufe 1 des Weglassens, in jeder Stufe außer 0: eine Library wird einmal für alle Programme gebaut (ihr Schlüssel im Cache unterscheidet nur 0
+  und den Rest); das Programm selbst lässt weg wie mit `source`. Sie nummeriert ihre Klassen selbst (nach Namen sortiert) und schreibt ihre Ids als `fire_mb_<modul> + k`. Member anderer Module ruft sie über
   **exportierte Namen** (`fx_<modul>_<Klasse>__<Member>_<i>`, aus dem Namen des Members abgeleitet - jedes Modul kommt auf denselben Namen). Statische Felder
   heißen `SFx_<modul>_<Klasse>_<Feld>`; das Modul der Klasse definiert sie.
 * **Jedes Modul bedient seine eigenen Klassen** (Phase B2): seine Verteiler (`<modul>_call_X_n`), Feld-Helfer (`gf_x`/`sf_x`/`fp_x`), `is of` (`isof_X`), Operatoren,

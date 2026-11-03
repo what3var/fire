@@ -9,10 +9,11 @@ namespace fire.Native
 {
     /// <summary>
     /// Reflection (`#import "reflection"`, SPEC 8.13) and `probe`/`silence` (SPEC 8.14) in the native backend. What a program can reach by name depends on the
-    /// `__refl_*` functions it calls (levels, docs/NATIVE_BACKEND.md "Größe des Programms"): the members of an object by name (Get/Set/Has, probes) need the fields
-    /// and property accessors of the classes whose objects exist, Reflect.Call their instance methods, Reflect.New the constructors of the classes in the tables.
-    /// The tables describe the classes the program reaches (made, used, their bases, `[Keep]`); with `"trim": "reflection"` every class as soon as a class is looked up
-    /// by its name, with `"trim": "all"` always every class. The descriptions are tables, the access by name is generated code over the field helpers and dispatchers.
+    /// `__refl_*` functions it calls and on the stripping level (docs/NATIVE_BACKEND.md "Größe des Programms"): the members of an object by name (Get/Set/Has, probes)
+    /// need the fields and property accessors of the classes whose objects exist, Reflect.Call their methods that are there (at level 0 and, the public ones, at 1:
+    /// all), Reflect.New the constructors of the classes in the tables. The tables describe every class at the levels 0-2, at level 3 the classes the program reaches
+    /// (made, used, their bases, `[Keep]`, named as a literal to reflection); a method that is left out is not in them, but its name is: a lookup of it (or of a class
+    /// that is left out) is an error that says so. The access by name is generated code over the field helpers and dispatchers.
     /// </summary>
     public sealed partial class CppGenerator
     {
@@ -22,12 +23,52 @@ namespace fire.Native
         private bool _usesProbes;
         /// <summary>Members of objects by name (Reflect.Get/Set/Has, Selector, probes): the fields and property accessors of every class whose objects exist.</summary>
         private bool _reflMembers;
-        /// <summary>Reflect.Call: every instance method of the classes whose objects exist.</summary>
+        /// <summary>Reflect.Call: the instance methods of the classes whose objects exist that are there (see <see cref="RegisterReflectionTargets"/>).</summary>
         private bool _reflCall;
         /// <summary>Reflect.New: the constructors of every class of the tables.</summary>
         private bool _reflNew;
-        /// <summary>A class is looked up by its name (Type, Reflect.New, Reflect.Classes): with `"trim": "reflection"` the tables then have every class.</summary>
-        private bool _reflByName;
+        /// <summary>The names of classes given as literals to reflection (`Reflect.New("Dog")`, `Type.Named("Dog")`): kept like `[Keep]`.</summary>
+        private readonly HashSet<string> _literalClasses = new(StringComparer.Ordinal);
+        /// <summary>The names of members given as literals to reflection (`Reflect.Call(o, "Bark")`, `Reflect.Get(o, "f")`): kept on the classes whose objects exist.</summary>
+        private readonly HashSet<string> _literalMembers = new(StringComparer.Ordinal);
+        /// <summary>The functions whose literals have been looked at.</summary>
+        private readonly HashSet<Chunk> _literalChunks = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>A function calls reflection (a static method of Reflect/Type/..., a method of a Type/Member/...): the texts it has as literals that name a class or a
+        /// member are kept (docs/NATIVE_BACKEND.md, stripping) - `Reflect.New("Dog")`, `Reflect.Call(o, "Bark")`, also `var n = "Bark"` before the call. Any text of
+        /// the function counts, not only the arguments of the call: what it keeps more is little, and a name that reflection looks up is not missing because of it.</summary>
+        private void NoteReflectionLiterals(Func f)
+        {
+            if (IsReflectionHelperClass(f.Chunk.OwnerClass) || !_literalChunks.Add(f.Chunk)) return;
+            // (the texts the code loads as values - the names of classes and members its instructions use are constants too)
+            foreach (var ins in OpInfo.Decode(f.Chunk.Code))
+            {
+                if (ins.Op != OpCode.LoadConst) continue;
+                var c = f.Chunk.Constants[ins.A[0]];
+                if (c.Kind != ValueKind.String) continue;
+                string text = c.AsString();
+                if (text.Length == 0 || text.Length > 200) continue;
+                if (_program.Program.Classes.ContainsKey(text)) { if (_literalClasses.Add(text)) _version++; }
+                else if (IsMemberName(text) && _literalMembers.Add(text)) _version++;
+            }
+        }
+
+        private static bool IsMemberName(string text) =>
+            (char.IsLetter(text[0]) || text[0] == '_') && text.All(ch => char.IsLetterOrDigit(ch) || ch == '_');
+
+        /// <summary>A class that stays with all its members: `[Keep]`, or named as a literal to reflection.</summary>
+        private bool KeptClass(RuntimeClass rc) => rc.Keep || _literalClasses.Contains(rc.Name);
+
+        /// <summary>The name of a member as reflection sees it: a property accessor `get_X`/`set_X` is `X`.</summary>
+        private static string PlainMemberName(string name) =>
+            name.Length > 4 && (name.StartsWith("get_", StringComparison.Ordinal) || name.StartsWith("set_", StringComparison.Ordinal)) ? name.Substring(4) : name;
+
+        /// <summary>A member named as a literal to reflection.</summary>
+        private bool LiteralMember(string name) => _literalMembers.Contains(name) || _literalMembers.Contains(PlainMemberName(name));
+
+        /// <summary>A member that stays: marked `[Keep]`, or named as a literal to reflection.</summary>
+        private bool KeptMember(RuntimeClass rc, string name) =>
+            rc.KeptMembers is { } kept && (kept.Contains(name) || kept.Contains(PlainMemberName(name))) || LiteralMember(name);
 
         private void UseReflection()
         {
@@ -60,9 +101,7 @@ namespace fire.Native
                 case "__refl_get": case "__refl_set": case "__refl_has": case "__refl_member_kind": case "__refl_probe": case "__refl_silence": case "__refl_silence_handle":
                     Raise(ref _reflMembers); break;
                 case "__refl_call": Raise(ref _reflCall); break;
-                case "__refl_new": Raise(ref _reflNew); Raise(ref _reflByName); break;
-                case "__refl_class_name": case "__refl_class_info": case "__refl_members": case "__refl_classes": case "__refl_is_sub":
-                    Raise(ref _reflByName); break;
+                case "__refl_new": Raise(ref _reflNew); break;
             }
         }
 
@@ -116,14 +155,15 @@ namespace fire.Native
             foreach (var cls in _classList) Add(cls.Rc);
             foreach (var f in _funcs) Add(f.Chunk.OwnerClass);
             foreach (var key in _staticFields.Keys) Add(_program.Program.Classes.GetValueOrDefault(key.Class));
-            foreach (var rc in _program.Program.Classes.Values) if (rc.Keep || rc.KeptMembers != null) Add(rc);
+            foreach (var rc in _program.Program.Classes.Values) if (KeptClass(rc) || rc.KeptMembers != null) Add(rc);
             return set;
         }
 
-        /// <summary>The classes the reflection tables describe (Reflect.Classes, Type.Named, Reflect.New by name), sorted by name.</summary>
+        /// <summary>The classes the reflection tables describe (Reflect.Classes, Type.Named, Reflect.New by name), sorted by name: all of them at the stripping levels
+        /// 0-2, the reached ones at 3.</summary>
         private List<RuntimeClass> ReflectionTableClasses()
         {
-            IEnumerable<RuntimeClass> classes = _trim == TrimMode.All || _trim == TrimMode.Reflection && _reflByName
+            IEnumerable<RuntimeClass> classes = _strip <= StrippingLevel.Methods
                 ? _program.Program.Classes.Values
                 : ReachedClasses().Where(rc => _program.Program.Classes.TryGetValue(rc.Name, out var known) && ReferenceEquals(known, rc));
             return classes.OrderBy(c => c.Name, StringComparer.Ordinal).ToList();
@@ -159,26 +199,42 @@ namespace fire.Native
             if (!_usesReflection) return;
             if (_reflNew)
                 foreach (var rc in ReflectionTableClasses()) KeepConstructors(rc);
+            // (the names given as literals to reflection: the members of that name of the classes whose objects exist)
+            if (_literalMembers.Count > 0)
+                foreach (var cls in _classList.ToList())
+                    for (var c = cls.Rc; c != null; c = c.Base)
+                    {
+                        if (Modular && !IsOwnClass(c)) continue;   // (a library keeps its API itself)
+                        foreach (var field in c.OwnFieldInfo.Keys) if (_literalMembers.Contains(field)) AddFieldName(field);
+                        foreach (var (name, protos) in c.Methods)
+                            if (LiteralMember(name))
+                                foreach (var m in protos) if (!m.IsStatic) KeepInstanceMethod(name, m);
+                    }
             if (!_reflMembers && !_reflCall) return;
-            // (modules: Get/Set/Call by name go through the tables of the runtime - the program's tables list every member of its classes, a library's all of theirs)
+            // (modules: Get/Set by name go through the tables of the runtime - the program's tables list every field and property of its classes, a library's all of its
+            // members; Reflect.Call the methods that are there, like with one file)
             if (Modular && !_tablesAll) { _tablesAll = true; _version++; }
-            if (Modular) return;   // (the setters of every module look for probes themselves)
             foreach (var cls in _classList.ToList())
             {
-                if (_reflMembers) foreach (var field in cls.Rc.FieldIndex.Keys) AddFieldName(field);
+                if (_reflMembers && !Modular) foreach (var field in cls.Rc.FieldIndex.Keys) AddFieldName(field);
                 for (var c = cls.Rc; c != null; c = c.Base)
+                {
+                    if (Modular && !IsOwnClass(c)) continue;   // (the table of a library's class names all its members)
                     foreach (var (name, protos) in c.Methods)
                         foreach (var m in protos)
                         {
                             if (m.IsStatic) continue;
-                            if (_reflCall) KeepInstanceMethod(name, m);
-                            else if (name.StartsWith("get_") || name.StartsWith("set_")) AddFieldName(name.Substring(4));   // (RegisterTargets makes the accessors of the names)
+                            // a method that is there (level 0: every one) - one that is left out is an error that says so (rf_call)
+                            if (_reflCall && (_strip == StrippingLevel.None || _funcByProto.ContainsKey(m))) KeepInstanceMethod(name, m);
+                            else if (!Modular && (name.StartsWith("get_") || name.StartsWith("set_"))) AddFieldName(name.Substring(4));   // (RegisterTargets makes the accessors of the names)
                         }
+                }
             }
         }
 
-        /// <summary>What stays although nothing may reach it: everything with `"trim": "all"` (`--keep-all`, debug builds), else the classes and members marked `[Keep]`
-        /// (SPEC 5.12; not inherited).</summary>
+        /// <summary>What stays although nothing may reach it (the stripping levels): everything at level 0 (`--keep-all`, debug builds); every class with its
+        /// constructors at 1 and 2, at 1 also with every public member; at every level the classes and members marked `[Keep]` (SPEC 5.12; not inherited) or named as
+        /// literals to reflection (those in <see cref="RegisterReflectionTargets"/>).</summary>
         private void RegisterKeptTargets()
         {
             foreach (var rc in _program.Program.Classes.Values.ToList())
@@ -186,18 +242,24 @@ namespace fire.Native
                 // (modules: a library keeps all of its classes itself - the program only makes the kept classes of the libraries known)
                 if (Modular && !IsOwnClass(rc))
                 {
-                    if (_trim == TrimMode.All || rc.Keep) KeepConstructors(rc);
+                    if (_strip <= StrippingLevel.Methods || KeptClass(rc)) KeepConstructors(rc);
                     else if (rc.KeptMembers != null) RegisterClass(rc.Name);
                     continue;
                 }
-                if (_trim == TrimMode.All || rc.Keep)
+                if (_strip == StrippingLevel.None || KeptClass(rc))
                 {
                     KeepConstructors(rc);
                     foreach (var field in rc.FieldIndex.Keys) AddFieldName(field);
                     foreach (var (name, protos) in rc.Methods)
                         foreach (var m in protos) KeepMethod(name, m);
+                    continue;
                 }
-                else if (rc.KeptMembers is { } kept)
+                if (_strip <= StrippingLevel.Methods) KeepConstructors(rc);   // (levels 1 and 2: every class can be made - Reflect.New)
+                if (_strip == StrippingLevel.Protected)
+                    foreach (var (name, protos) in rc.Methods)
+                        foreach (var m in protos)
+                            if ((m.Access ?? AccessModifier.Public) == AccessModifier.Public) KeepMethod(name, m);
+                if (rc.KeptMembers is { } kept)
                 {
                     RegisterClass(rc.Name);
                     foreach (var name in kept)
@@ -225,7 +287,19 @@ namespace fire.Native
         /// <summary>Tables, the functions behind the `__refl_*` natives and the hooks - written after the dispatchers.</summary>
         private int _rfListIndex;
 
-        /// <summary>The rows of the reflection tables (RfClass) of these classes, in their order; their lists and functions go into `sb` first.</summary>
+        /// <summary>A method that stripping left out (not generated): the highest level that keeps it (1 for a public one, else 0); null: it is there (or is not a method).
+        /// Only the members of this module count (a library's table names all of its members).</summary>
+        private int? StrippedMethod(RuntimeClass rc, MemberMeta m)
+        {
+            if (_strip == StrippingLevel.None || LibraryRole || m.Kind != "method" || !rc.Methods.TryGetValue(m.Name, out var protos)) return null;
+            var mine = protos.Where(p => p.ParamCount == m.ParamNames.Count && p.IsStatic == m.IsStatic && (!Modular || OwnsProto(p))).ToList();
+            if (mine.Count == 0 || mine.Any(p => _funcByProto.ContainsKey(p))) return null;
+            return m.Access == "public" ? 1 : 0;
+        }
+
+        /// <summary>The rows of the reflection tables (RfClass) of these classes, in their order; their lists and functions go into `sb` first. A method that stripping
+        /// left out is no row of its class, its name goes into the list `stripped` of the class (with the level that keeps it first: "1Bark") - for the error that
+        /// says so.</summary>
         private List<string> ReflectionRows(StringBuilder sb, IEnumerable<RuntimeClass> classes)
         {
             // ---- tables ----------------------------------------------------------------------------------------------------
@@ -289,8 +363,14 @@ namespace fire.Native
             foreach (var rc in classes)
             {
                 var memberRows = new List<string>();
+                var stripped = new List<string>();
                 foreach (var m in rc.Meta?.Members ?? new List<MemberMeta>())
                 {
+                    if (StrippedMethod(rc, m) is int keepAt)
+                    {
+                        if (!stripped.Any(x => x.Substring(1) == m.Name)) stripped.Add(keepAt.ToString(CultureInfo.InvariantCulture) + m.Name);
+                        continue;
+                    }
                     string pnames = Strings(m.ParamNames), ptypes = Strings(m.ParamTypes);
                     int flags = (m.IsStatic ? 1 : 0) | (m.IsReadonly ? 2 : 0) | (m.CanRead ? 4 : 0) | (m.CanWrite ? 8 : 0);
                     string attrs = Attributes(m.Attributes);
@@ -307,7 +387,7 @@ namespace fire.Native
                     foreach (var b in rc.Meta.BaseNames)
                         if (rc.Base == null || !(rc.Base.Name == b || rc.Base.Name.EndsWith("." + b, StringComparison.Ordinal))) interfaces.Add(b);
                 string classAttrs = Attributes((IReadOnlyList<AttributeMeta>?)rc.Meta?.Attributes ?? Array.Empty<AttributeMeta>());
-                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}, {classAttrs}}}");
+                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}, {classAttrs}, {Strings(stripped)}, {stripped.Count}}}");
             }
             _rfListIndex = listIndex;
             return classRows;
@@ -386,6 +466,24 @@ namespace fire.Native
             sb.AppendLine($"static const RfClass kRfClasses[] = {{{string.Join(",\n    ", classRows)}}};");
             }
             sb.AppendLine($"static const uint32_t kRfClassCount = {classes.Count};");
+            // the classes stripping left out (level 3): a lookup of one by its name is an error that says so
+            var inTables = new HashSet<RuntimeClass>(classes, ReferenceEqualityComparer.Instance);
+            var strippedClasses = _strip == StrippingLevel.None ? new List<string>()
+                : _program.Program.Classes.Values.Where(rc => !inTables.Contains(rc)).Select(rc => rc.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+            sb.AppendLine($"FIRE_MAYBE_UNUSED static const int kRfStripping = {(int)_strip};");
+            sb.AppendLine($"FIRE_MAYBE_UNUSED static const char* const kRfStrippedClasses[] = {{{string.Join(", ", strippedClasses.Select(CStr).DefaultIfEmpty("NULL"))}}};");
+            sb.AppendLine($"FIRE_MAYBE_UNUSED static const uint32_t kRfStrippedCount = {strippedClasses.Count};");
+            sb.AppendLine(@"FIRE_MAYBE_UNUSED static bool rf_isStripped(Value name) {
+    if (name.kind != K_String) return false;
+    for (uint32_t i = 0; i < kRfStrippedCount; i++) if (strIs(name, kRfStrippedClasses[i])) return true;
+    return false;
+}
+/* a class that stripping left out (docs/NATIVE_BACKEND.md): the error says so and what keeps it */
+FIRE_MAYBE_UNUSED static Value rf_strippedClass(Value name) {
+    char n[200], t[700]; strToUtf8(name, n, sizeof n);
+    snprintf(t, sizeof t, ""Class '%s' was left out of the build (stripping %d). Add [Keep] to '%s' or use stripping <= 2."", n, kRfStripping, n);
+    return rfFail(t);
+}");
             sb.AppendLine($"#define RF_CLASS_AT(i) ({rfAt.Replace("[i]", "[(i)]")})");
             sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_find(Value name) {");
             sb.AppendLine($"    for (uint32_t i = 0; i < kRfClassCount; i++) if (strIs(name, ({rfAt})->name)) return {rfAt};");
@@ -434,6 +532,18 @@ FIRE_MAYBE_UNUSED static bool rf_visible(const RfClass* from, const RfClass* lev
             if (strIs(name, l->members[i].name) && strcmp(l->members[i].kind, kind) == 0 && rf_visible(c, l, i)) return &l->members[i];
     return NULL;
 }");
+            // a member that stripping left out: its class (or a base) names it in `stripped`, after the level that keeps it ("1Bark")
+            sb.AppendLine(@"FIRE_MAYBE_UNUSED static const char* rf_stripped(const RfClass* c, Value name, const RfClass** in) {
+    for (const RfClass* l = c; l; l = rf_baseOf(l))
+        for (uint32_t i = 0; i < l->nStripped; i++) if (strIs(name, l->stripped[i] + 1)) { *in = l; return l->stripped[i]; }
+    return NULL;
+}
+FIRE_MAYBE_UNUSED static Value rf_strippedMember(const RfClass* in, const char* entry) {
+    char t[700]; int keep = entry[0] - '0';
+    if (keep == 0) snprintf(t, sizeof t, ""Member '%s.%s' was left out of the build (stripping %d). Add [Keep] to '%s.%s' or use stripping 0."", in->name, entry + 1, kRfStripping, in->name, entry + 1);
+    else snprintf(t, sizeof t, ""Member '%s.%s' was left out of the build (stripping %d). Add [Keep] to '%s.%s' or use stripping <= %d."", in->name, entry + 1, kRfStripping, in->name, entry + 1, keep);
+    return rfFail(t);
+}");
             sb.AppendLine("FIRE_MAYBE_UNUSED static bool rf_isSub(const char* name, const char* base) {");
             sb.AppendLine("    for (const RfClass* c = rf_findC(name); c; c = c->base ? rf_findC(c->base) : NULL) if (strcmp(c->name, base) == 0) return true;");
             sb.AppendLine("    return false;");
@@ -442,12 +552,12 @@ FIRE_MAYBE_UNUSED static bool rf_visible(const RfClass* from, const RfClass* lev
             // ---- the natives -----------------------------------------------------------------------------------------------
             sb.AppendLine(@"FIRE_MAYBE_UNUSED static Value rf_class_name(Value x, OwnList* list) {
     if (x.kind == K_Class) return strFromUtf8(className(asObj(x)->cls), list);
-    if (x.kind == K_String) { const RfClass* c = rf_find(x); if (c) return strFromUtf8(c->name, list); }
+    if (x.kind == K_String) { const RfClass* c = rf_find(x); if (c) return strFromUtf8(c->name, list); if (rf_isStripped(x)) return rf_strippedClass(x); }
     return Undef();
 }
 FIRE_MAYBE_UNUSED static Value rf_class_info(Value name, OwnList* list) {
     const RfClass* c = name.kind == K_String ? rf_find(name) : NULL;
-    if (!c) return Undef();
+    if (!c) return rf_isStripped(name) ? rf_strippedClass(name) : Undef();
     Arr* info = allocArr(5, list);
     Value v0 = strFromUtf8(c->name, list); arrItems(info)[0] = v0; retain(v0);
     if (c->base) { Value v1 = strFromUtf8(c->base, list); arrItems(info)[1] = v1; retain(v1); }
@@ -541,7 +651,8 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
     int kind = rf_kind(c, name);
     const RfMember* getter = rf_member(c, name, ""property"");
     if (kind != 1 && !(getter && (getter->flags & 4))) {{ char n[200], t[500]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, ""'%s' has no readable member '%s'."", c->name, n); return rfFail(t); }}
-{get}    return rfFail(""This member cannot be read by name."");
+{get}    {{ const RfClass* in = NULL; const char* s = rf_stripped(c, name, &in); if (s) return rf_strippedMember(in, s); }}
+    {{ char n[200], t[700]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, ""Member '%s.%s' was left out of the build (stripping %d): it cannot be read by name. Add [Keep] to it or use stripping 0."", c->name, n, kRfStripping); return rfFail(t); }}
 }}");
             sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_set(Value obj, Value name, Value value, OwnList* list, uint32_t caller) {{
     (void)list; (void)caller;
@@ -560,7 +671,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
         snprintf(t, sizeof t, ""The field '%s' of '%s' is 'readonly' and cannot be assigned."", n, field->declared);
         return rfFail(t);
     }} }}
-{set}    return rfFail(""This member cannot be written by name."");
+{set}    {{ char n[200], t[700]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, ""Member '%s.%s' was left out of the build (stripping %d): it cannot be written by name. Add [Keep] to it or use stripping 0."", c->name, n, kRfStripping); return rfFail(t); }}
 }}");
 
             // calls: one entry per (name, number of arguments) that some class has
@@ -596,7 +707,8 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
     if (obj.kind != K_Class) {{ char t[120]; snprintf(t, sizeof t, ""Reflect.Call: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
     int argc = args.kind == K_Array ? (int)arrOf(args)->length : 0;
     const Value* items = args.kind == K_Array ? arrItems(arrOf(args)) : NULL; (void)items;
-{callSb}    char n[200], t[500]; strToUtf8(name, n, sizeof n);
+{callSb}    {{ const RfClass* in = NULL; const char* s = rf_stripped(rf_classOf(asObj(obj)->cls), name, &in); if (s) return rf_strippedMember(in, s); }}
+    char n[200], t[500]; strToUtf8(name, n, sizeof n);
     snprintf(t, sizeof t, ""'%s' has no method '%s' with %d parameter(s)."", className(asObj(obj)->cls), n, argc);
     return rfFail(t);
 }}");
@@ -630,7 +742,8 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
     (void)caller; (void)list;
     int argc = args.kind == K_Array ? (int)arrOf(args)->length : 0;
     const Value* items = args.kind == K_Array ? arrItems(arrOf(args)) : NULL; (void)items;
-{newSb}    char n[200], t[500]; strToUtf8(cname, n, sizeof n);
+{newSb}    if (rf_isStripped(cname)) return rf_strippedClass(cname);
+    char n[200], t[500]; strToUtf8(cname, n, sizeof n);
     if (!rf_find(cname)) snprintf(t, sizeof t, ""Unknown class '%s'."", n);
     else snprintf(t, sizeof t, ""'%s' has no constructor with %d parameter(s)."", n, argc);
     return rfFail(t);
