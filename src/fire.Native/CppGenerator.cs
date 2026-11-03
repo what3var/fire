@@ -1157,7 +1157,7 @@ namespace fire.Native
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             // The units a text may name (`"5mm".ToFloat()`, Unit.ParseKnown): those of fire without a prefix, then those of the program by symbol and name
             var textUnits = new List<(string Symbol, int Unit, bool Prefixable)>();
-            if (_usesStringCall)
+            if (_usesStringCall || _program.Program.CustomUnits.Count > 0)   // (the names of combined units look at the symbols of the program too)
             {
                 foreach (var (symbol, prefixable) in Unit.BuiltInSymbols) textUnits.Add((symbol, UnitId(Unit.Parse(symbol)), prefixable));
                 foreach (var own in _program.Program.CustomUnits)

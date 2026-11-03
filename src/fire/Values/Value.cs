@@ -199,7 +199,7 @@ namespace fire.Values
 
             var currentUnit = Unit ?? Values.Unit.Unitless;
             if (currentUnit.Equals(targetUnit))
-                return this;
+                return LabelledAs(currentUnit, targetUnit);
 
             // `a:unitless` takes the dimension out: the number in the base unit (12mm becomes 0.012, 2km 2000); an int stays an int when that is exact.
             // `a:unit` of another dimension never fails either: the number in the base unit gets the target unit (`5mm:kg` is 0.005kg, `7:s` is 7s).
@@ -226,6 +226,11 @@ namespace fire.Values
             };
         }
 
+        /// <summary>The same number in an equal unit under the name of <paramref name="target"/>: `1dm^3:l` is `1l`, and a value stored in a declaration
+        /// with a unit (`float:kg*m/s^2 f = x`) prints with the unit of the declaration (fire_rt.h coerceUnit/adaptUnit do the same).</summary>
+        private Value LabelledAs(Unit current, Unit target) =>
+            ReferenceEquals(current, target) || current.DisplaySymbol == target.DisplaySymbol && current.Offset == target.Offset ? this : new Value(Kind, _bits, target, Width, _enum);
+
         /// <summary>What a unit declaration does with a value (SPEC "Unit declarations").</summary>
         public enum UnitAdaptation { Ok, Mismatch, Overflow }
 
@@ -247,7 +252,11 @@ namespace fire.Values
             bool dimensionOnly = demand.StartsWith("any ", StringComparison.Ordinal);
             var target = DemandUnits.GetOrAdd(dimensionOnly ? demand.Substring(4) : demand, Values.Unit.Parse);
             var actual = value.Unit ?? Values.Unit.Unitless;
-            if (actual.Equals(target)) return UnitAdaptation.Ok;
+            if (actual.Equals(target))
+            {
+                if (!dimensionOnly) value = value.LabelledAs(actual, target);
+                return UnitAdaptation.Ok;
+            }
             if (value.Kind == ValueKind.Undefined)
             {
                 if (!dimensionOnly) value = MakeUndefined(target);

@@ -791,7 +791,7 @@ namespace fire.Compiler
                     if (Match(TokenType.From)) direction = CoerceDirection.From;
                     else if (Check(TokenType.Identifier) && Peek().Lexeme == "to" && PeekAt(1).Type != TokenType.Arrow) { Advance(); direction = CoerceDirection.To; }
                     if (!IsWord(Peek())) throw Error("Expected the unit to convert from or to after 'coerce'", Peek());
-                    string target = Advance().Lexeme + ParseCombinedUnitTail();
+                    string target = UnitPowers(Advance().Lexeme + ParseCombinedUnitTail(), Previous());
                     Expect(TokenType.Arrow, "Expected '=>' after the unit of 'coerce'");
                     coerces.Add(new UnitCoerce(coerceLine, direction, target, ParseExpression()));
                 }
@@ -1096,7 +1096,17 @@ namespace fire.Compiler
             string name = IsCustomUnitWordAt(0) ? Advance().Lexeme : Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
             if (name == "any" && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0)) && Peek().Line == Previous().Line) name += " " + Advance().Lexeme + ParseCombinedUnitTail();
             else name += ParseCombinedUnitTail();
-            return name;
+            return UnitPowers(name, Previous());
+        }
+
+        /// <summary>A unit of a declaration with its powers written as digits (`m3`, `m/s2`, `kg*m2/s2`) in the form with `^` (`m^3`, `m/s^2`); a power
+        /// written as digits is 1 or more (`m0` is an error, `1/s` is the way to write `s^-1`).</summary>
+        private static string UnitPowers(string unit, Token at)
+        {
+            for (int i = 1; i < unit.Length; i++)
+                if (unit[i] == '0' && Unit.IsUnitLetter(unit[i - 1]))
+                    throw Error($"The power of a unit written as digits must be 1 or more ('{unit}')", at);
+            return Unit.CaretExponents(unit);
         }
 
         /// <summary>The rest of a combined unit in a declaration (`m/s`, `kg*m/s^2`, `m^2`): factors joined by `*` or `/`, each with an optional `^power`,
@@ -1133,12 +1143,12 @@ namespace fire.Compiler
                 if (NameAt(2 + anyLength))
                 {
                     Advance(); Advance();
-                    return "any " + Advance().Lexeme + ParseCombinedUnitTail();
+                    return UnitPowers("any " + Advance().Lexeme + ParseCombinedUnitTail(), Previous());
                 }
             }
             if (!NameAt(1 + CombinedUnitLengthAt(1))) return null;
             Advance();
-            return Advance().Lexeme + ParseCombinedUnitTail();
+            return UnitPowers(Advance().Lexeme + ParseCombinedUnitTail(), Previous());
         }
 
         /// <summary>The number of tokens of a (combined) unit at the token <paramref name="offset"/> ahead, as ParseCombinedUnitTail reads it after the first
