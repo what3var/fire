@@ -3568,6 +3568,9 @@ FIRE_FN Value fireError(const char* cls, const char* utf8) {
     if (exception.kind == K_Class) return throwValue(exception);
 #endif
     fatalException(cls, utf8);
+#ifdef __TINYC__
+    return Undef();   /* (not reached: TinyCC does not see that fatalException does not return) */
+#endif
 }
 #endif
 
@@ -3876,6 +3879,9 @@ FIRE_FN Value divideByZero(void) {
     return fireError("DivideByZeroException", "Division by zero.");
 #else
     fatalException("DivideByZeroException", "Division by zero.");
+#ifdef __TINYC__
+    return Undef();   /* (not reached) */
+#endif
 #endif
 }
 

@@ -14,8 +14,9 @@
 
 /* ---- the tables the generator writes ---- */
 typedef struct DbgVar { const char* name; uint16_t index; } DbgVar;   /* a variable of a scope: its name and its slot in DbgFrame.vars */
-/* A level of a scope chain (VM.ScopeLevel): its variables (the slots declared so far), whether it is the top level of a function, and the level around it
- * (-1: none - the global scope follows). A scope state of a function is the index of its innermost level. */
+/* A level of a scope chain (VM.ScopeLevel): its variables (the slots declared so far), whether it is the top level of a function (1), and the level around it
+ * (-1: none - the global scope follows). A scope state of a function is the index of its innermost level. The outermost level of a fire body (functionTop 2)
+ * holds the thread's own variables of its top level: they are globals of the thread, not a scope of the chain. */
 typedef struct DbgLevel { int32_t parent; uint8_t functionTop; uint16_t count; const DbgVar* vars; } DbgLevel;
 typedef struct DbgFunc { const char* name; const DbgLevel* levels; } DbgFunc;
 typedef struct DbgGlobal { const char* name; Value* slot; } DbgGlobal;          /* by global slot (slot null: no variable) */
@@ -557,7 +558,18 @@ static const DbgLevel* dbgLevel(DbgFrame* f, int depth) {
     if (!f || !f->fn || !f->fn->levels) return NULL;
     lv = f->lv;
     while (lv >= 0 && depth > 0) { lv = f->fn->levels[lv].parent; depth--; }
-    return lv >= 0 ? &f->fn->levels[lv] : NULL;
+    return lv >= 0 && f->fn->levels[lv].functionTop != 2 ? &f->fn->levels[lv] : NULL;
+}
+/* The bottom frame of a thread and the level of its own globals (a fire body), null when it has none. */
+static const DbgLevel* dbgThreadGlobals(DbgThread* t, DbgFrame** bottom) {
+    DbgFrame* f = t->atEntry ? NULL : *t->topp;
+    int32_t lv;
+    if (!f) return NULL;
+    while (f->prev) f = f->prev;
+    *bottom = f;
+    if (!f->fn || !f->fn->levels || f->lv < 0) return NULL;
+    for (lv = f->lv; f->fn->levels[lv].parent >= 0; lv = f->fn->levels[lv].parent) {}
+    return f->fn->levels[lv].functionTop == 2 ? &f->fn->levels[lv] : NULL;
 }
 
 /* Resolves a ref (docs/NATIVE_DEBUG_PROTOCOL.md "Werte"): the slot of the value, or null with a reason. `thread` is the thread a `l:`/`t:` ref names. */
@@ -569,6 +581,19 @@ static Value* dbgResolve(const char* ref, const char** error, DbgThread** thread
         long n = strtol(p + 2, (char**)&p, 10);
         if (n < 0 || n >= g_dbgProg->nglobals || n >= g_dbgGlobalCount || !g_dbgProg->globals[n].slot) { *error = "no such global"; return NULL; }
         slot = g_dbgProg->globals[n].slot;
+    }
+    else if (p[0] == 'T' && p[1] == ':') {
+        long id = strtol(p + 2, (char**)&p, 10), index;
+        DbgThread* t = dbgThreadById((int)id);
+        DbgFrame* bottom = NULL;
+        const DbgLevel* level;
+        if (!t || t->state != DBG_PAUSED) { *error = "the thread is not paused"; return NULL; }
+        *thread = t;
+        if (*p != ':') { *error = "bad ref"; return NULL; }
+        index = strtol(p + 1, (char**)&p, 10);
+        level = dbgThreadGlobals(t, &bottom);
+        if (!level || index < 0 || index >= level->count || !bottom->vars || level->vars[index].index == 0xFFFF) { *error = "no such variable"; return NULL; }
+        slot = bottom->vars[level->vars[index].index];
     }
     else if ((p[0] == 'l' || p[0] == 't') && p[1] == ':') {
         char kind = p[0];
@@ -735,15 +760,28 @@ static void dbgWriteScopes(DbgBuf* b, DbgThread* t) {
     dbgPut(b, "]");
 }
 
-static void dbgWriteGlobals(DbgBuf* b) {
+static void dbgWriteGlobals(DbgBuf* b, DbgThread* thread) {
     int32_t i;
+    int any = 0;
     dbgPut(b, ",\"variables\":[");
+    if (thread) {
+        /* the variables of the top level of a fire thread (its own globals), first */
+        DbgFrame* bottom = NULL;
+        const DbgLevel* level = dbgThreadGlobals(thread, &bottom);
+        uint16_t k;
+        for (k = 0; level && k < level->count; k++) {
+            char ref[48];
+            snprintf(ref, sizeof ref, "T:%d:%u", thread->id, (unsigned)k);
+            if (any++) dbgPut(b, ",");
+            dbgPutValue(b, level->vars[k].name, bottom->vars && level->vars[k].index != 0xFFFF ? *bottom->vars[level->vars[k].index] : Undef(), ref);
+        }
+    }
     for (i = 0; i < g_dbgGlobalCount && i < g_dbgProg->nglobals; i++) {
         char ref[32], name[32];
         const DbgGlobal* g = &g_dbgProg->globals[i];
         snprintf(ref, sizeof ref, "g:%d", (int)i);
         if (!g->name) snprintf(name, sizeof name, "(global %d)", (int)i);
-        if (i) dbgPut(b, ",");
+        if (any++) dbgPut(b, ",");
         dbgPutValue(b, g->name ? g->name : name, g->slot ? *g->slot : Undef(), ref);
     }
     dbgPut(b, "]");
@@ -904,8 +942,10 @@ static void dbgCommand(const char* json) {
 #ifndef FIRE_THREADS
         if (g_dbgMain.state != DBG_PAUSED) { dbgReplyError(id, "the program is running"); goto done; }
 #endif
+        DbgThread* t = threadId ? dbgThreadById(threadId) : NULL;
+        if (threadId && (!t || t->state != DBG_PAUSED)) { dbgReplyError(id, "the thread is not paused"); goto done; }
         dbgReplyHead(&b, id, 1);
-        dbgWriteGlobals(&b);
+        dbgWriteGlobals(&b, t);
         dbgPut(&b, "}");
         dbgSendLine(&b);
     }

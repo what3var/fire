@@ -27,7 +27,7 @@ namespace fire.Native
         private sealed class FuncDebug
         {
             public readonly Dictionary<(int Scope, int Slot), string> Names = new();
-            public readonly List<(int Parent, bool Top, List<(string Name, int Dv)> Vars)> Levels = new();
+            public readonly List<(int Parent, int Top, List<(string Name, int Dv)> Vars)> Levels = new();
             public readonly Dictionary<string, int> LevelIndex = new(StringComparer.Ordinal);
             public readonly List<string> DvNames = new();
             public readonly Dictionary<string, int> DvIndex = new(StringComparer.Ordinal);
@@ -58,8 +58,8 @@ namespace fire.Native
                 var (id, declared) = st.Scopes[^1];
                 string? name = f.Chunk.DeclaredNameAt(code[i].Addr);
                 if (name == null) continue;
-                if (id == GlobalScope) { if (f.Kind == FuncKind.Main) _globalNames[declared] = name; }
-                else d.Names[(id, declared)] = name;
+                if (id == GlobalScope && f.Kind == FuncKind.Main) _globalNames[declared] = name;
+                else d.Names[(id, declared)] = name;   // (a fire body: its own variables of the top level are global slots behind the shared ones)
             }
             return d;
         }
@@ -72,18 +72,19 @@ namespace fire.Native
             for (int j = 0; j < st.Scopes.Count; j++)
             {
                 var (id, declared) = st.Scopes[j];
-                if (id == GlobalScope) continue;
+                if (id == GlobalScope && !(j == 0 && f.Kind == FuncKind.FireBody)) continue;
                 // (VM: the top level of a function is the scope whose parent is the global one - the function scope, or a block of the top level)
-                bool top = id == FunctionScope || (j > 0 && st.Scopes[j - 1].Id == GlobalScope);
+                // (2: the variables of a fire body's top level - the globals of its thread, not a scope of the chain)
+                int top = id == GlobalScope ? 2 : id == FunctionScope || (j > 0 && st.Scopes[j - 1].Id == GlobalScope) ? 1 : 0;
                 key.Append(id).Append(':').Append(declared).Append(';');
                 if (!d.LevelIndex.TryGetValue(key.ToString(), out int index))
                 {
                     var vars = new List<(string, int)>();
-                    for (int k = 0; k < declared; k++)
+                    for (int k = id == GlobalScope ? f.GlobalSlotCount : 0; k < declared; k++)
                     {
-                        string variable = id == FunctionScope ? $"P{k}" : $"B{id}_{k}";
+                        string variable = id == GlobalScope ? $"T{k}" : id == FunctionScope ? $"P{k}" : $"B{id}_{k}";
                         string name = d.Names.TryGetValue((id, k), out var n) ? n
-                            : top && f.Chunk.DebugLocalNames.TryGetValue((0, k), out var p) ? p : $"(local {k})";
+                            : id == GlobalScope ? $"(global {k})" : top == 1 && f.Chunk.DebugLocalNames.TryGetValue((0, k), out var p) ? p : $"(local {k})";
                         bool exists = locals.Contains(variable) || (id == FunctionScope && k < f.ParamLike);
                         vars.Add((name, exists ? d.Dv(variable) : -1));
                     }
@@ -140,7 +141,7 @@ namespace fire.Native
             if (all.Count > 0)
                 sb.AppendLine($"static const DbgVar kDbgV_{n}[] = {{{string.Join(", ", all.Select(v => $"{{{CString(v.Name)}, {(v.Dv < 0 ? "0xFFFF" : v.Dv.ToString(CultureInfo.InvariantCulture))}}}"))}}};");
             if (d.Levels.Count > 0)
-                sb.AppendLine($"static const DbgLevel kDbgLv_{n}[] = {{{string.Join(", ", d.Levels.Select((l, i) => $"{{{l.Parent}, {(l.Top ? 1 : 0)}, {l.Vars.Count}, {(l.Vars.Count > 0 ? $"kDbgV_{n} + {offsets[i]}" : "NULL")}}}"))}}};");
+                sb.AppendLine($"static const DbgLevel kDbgLv_{n}[] = {{{string.Join(", ", d.Levels.Select((l, i) => $"{{{l.Parent}, {l.Top}, {l.Vars.Count}, {(l.Vars.Count > 0 ? $"kDbgV_{n} + {offsets[i]}" : "NULL")}}}"))}}};");
             sb.AppendLine($"static const DbgFunc kDbgF_{n} = {{{CString(DebugFunctionName(f))}, {(d.Levels.Count > 0 ? $"kDbgLv_{n}" : "NULL")}}};");
             return sb.ToString();
         }
