@@ -117,8 +117,14 @@ typedef float Real;
 typedef double Real;
 #endif
 
+#ifdef FIRE_DEBUG
+void fire_dbgExited(int code);   /* the debugger hears that the program ends (fire_debug.h) */
+#endif
 /* Ends the process. With threads the other threads must not run static destructors under their feet: no cleanup, only the streams are flushed. */
 FIRE_NORETURN FIRE_FN void exitNow(int code) {
+#ifdef FIRE_DEBUG
+    fire_dbgExited(code);
+#endif
     fflush(stdout);
     fflush(stderr);
     fire_plat_exit(code);
@@ -212,7 +218,20 @@ typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
 #else
 #define FIRE_ZERO_INIT {0}
 #endif
+/* The debugger (fire_debug.h): the top of the shadow stack of this thread, the depth of the code the VM would run nested, the thread for the debugger. */
+typedef struct DbgFrame DbgFrame;
+typedef struct DbgThread DbgThread;
+#ifdef FIRE_DEBUG
+extern volatile int g_dbgArmed;     /* a debugger is attached */
+#define FIRE_DEBUG_THREAD_VARS(X) \
+    X(DbgFrame*, g_dbgTop, NULL) \
+    X(int32_t, g_dbgNest, 0) \
+    X(DbgThread*, g_dbgSelf, NULL)
+#else
+#define FIRE_DEBUG_THREAD_VARS(X)
+#endif
 #define FIRE_THREAD_VARS(X) \
+    FIRE_DEBUG_THREAD_VARS(X) \
     X(UnwindState, g_unwind, FIRE_ZERO_INIT) \
     X(Pool, g_pool, FIRE_ZERO_INIT) \
     X(Handler*, g_handlers, NULL) \
@@ -284,6 +303,11 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_ioError (fire_tl()->g_ioError)
 #define g_deviceError (fire_tl()->g_deviceError)
 #define g_gfxError (fire_tl()->g_gfxError)
+#ifdef FIRE_DEBUG
+#define g_dbgTop (fire_tl()->g_dbgTop)
+#define g_dbgNest (fire_tl()->g_dbgNest)
+#define g_dbgSelf (fire_tl()->g_dbgSelf)
+#endif
 #else
 #define FIRE_X(type, name, init) extern FIRE_TLS type name;
 FIRE_THREAD_VARS(FIRE_X)
@@ -1761,7 +1785,63 @@ typedef struct Obj {
 } Obj;
 FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
 
-/* Runs the destructors of the object's class chain, derived class first (generated; empty if no class has one). */
+/* A class of the program as the runtime sees it (ROADMAP 9, A0): the generated program fills a table of these (one row per class id, `g_classDescs`) instead of a
+ * function with a switch over the class ids for each question. Its name, the number of fields, the field `message` (an exception that nothing catches) and the
+ * whole-number field `ticks` (a TimeSpan for the time functions) - -1 when the class has none or the program does not need it -, the destructors of the class
+ * and its base classes (derived class first, NULL: none), ToString() (NULL: none) and the exception types (the ids of `catch (T e)`, HandlerInfo.types) an
+ * object of the class is, ending with -1 (NULL: none). */
+#ifdef FIRE_MODULES
+/* Modules (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): every module serves the members of its own classes itself (its dispatchers switch over
+ * them); an object of a class it does not know - of a module that needs it, of the program, of a plugin - is served through the members the class's module
+ * declares by name. A table of one module for one class: its methods sorted by name (strcmp) and number of arguments (one row per number a method takes, with
+ * its number of parameters), its fields sorted by name; `k` is the class as the functions of that module number it. A function of a row serves the class `k`
+ * of its module (and every class derived from it that does not declare the member anew). */
+typedef Value (*FireMethodFn)(uint32_t k, Value self, const Value* a, OwnList* list, uint32_t caller);
+typedef struct FireMethod { const char* name; uint32_t argc; uint32_t params; FireMethodFn fn; } FireMethod;
+typedef Value (*FireFieldGetFn)(uint32_t k, Value v, OwnList* list, uint32_t caller);
+typedef void (*FireFieldSetFn)(uint32_t k, Value v, Value x, OwnList* list, uint32_t caller);
+typedef Value (*FireFieldPtrFn)(uint32_t k, Value v);
+typedef struct FireField { const char* name; int32_t index; FireFieldGetFn get; FireFieldSetFn set; FireFieldPtrFn ptr; } FireField;
+typedef struct FireMembers { uint32_t k; uint32_t nmethods; const FireMethod* methods; uint32_t nfields; const FireField* fields; } FireMembers;
+#endif
+
+typedef struct FireClassDesc {
+    const char* name;
+    uint32_t nfields;
+    int32_t messageIndex;
+    int32_t ticksIndex;
+    void (*destroy)(Obj* o);
+    Value (*toString)(Value self);
+    const int32_t* excTypes;
+#ifdef FIRE_MODULES
+    const char* const* isa;              /* the names of the classes of its chain, the class first (NULL-terminated) */
+    const char* const* ifaces;           /* the interfaces of its chain (NULL-terminated; NULL: none) */
+    const FireMembers* const* members;   /* the tables of its members, the class first, then its bases (NULL-terminated; NULL: none) */
+    const TArg* (*targOf)(Obj* o, const char* cls, int k);   /* the k-th type argument of its generic base `cls` (NULL: no generic class in its chain) */
+#endif
+} FireClassDesc;
+extern const FireClassDesc* g_classDescs;
+extern uint32_t g_classDescCount;
+#ifdef FIRE_MODULES
+/* The members of an object by name, for an object of a class the calling module does not serve (defined with the runtime's state). */
+const FireMethod* fireFindMethod(uint32_t cls, const char* name, int argc, uint32_t* k);
+Value fireCallMethod(Value self, const char* name, int argc, const Value* a, OwnList* list, uint32_t caller);
+Value fireNoMethod(Value self, const char* name, int argc);
+Value fireGetField(Value v, const char* name, OwnList* list, uint32_t caller);
+void fireSetField(Value v, Value x, const char* name, OwnList* list, uint32_t caller);
+Value fireFieldPtr(Value v, const char* name);
+bool fireIsOf(uint32_t cls, const char* name);
+bool fireClassIsSub(uint32_t cls, const char* name);
+int fireClassScore(uint32_t cls, const char* name, int exact, int none);
+const TArg* fireTArgOf(Obj* o, const char* cls, int k);
+/* A probe on an object of any module (Reflect.Set): the member is written and read by its name (no access check for reading the old value of a field). */
+void fireProbeRawSet(Value obj, const char* name, Value value, OwnList* list, uint32_t caller);
+Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
+#endif
+/* The catch type `Exception` (catches every exception object): always type id 0. */
+#define FIRE_EXC_ANY 0
+
+/* Runs the destructors of the object's class chain, derived class first (the descriptor of its class). */
 void runDestructors(Obj* o);
 
 FIRE_FN Value ObjV(Obj* o) { Value r; r.kind = K_Class; r.width = 0; r.reserved = o->h.gen; r.unit = o->h.slot; r.p = o; return r; }
@@ -2067,12 +2147,25 @@ FIRE_FN Value rebindLam(Value lam, Value on, OwnList* list) {
     l->on = on;
     return LamV(l);
 }
-FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
+/* `callee(args...)` of the generated code. */
+FIRE_FN Value callLamV(Value callee, int argc, const Value* args, OwnList* list) {
     Lam* l;
     if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
     l = lamOf(callee);
     if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) return callLamDefaults(callee, argc, args, list);
     return l->fn(callee, args);
+}
+/* A lambda that the runtime or a native calls (a probe, a job, a callback): in a debug build the VM runs it nested - no stops inside. */
+FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
+#ifdef FIRE_DEBUG
+    Value r;
+    g_dbgNest++;
+    r = callLamV(callee, argc, args, list);
+    g_dbgNest--;
+    return r;
+#else
+    return callLamV(callee, argc, args, list);
+#endif
 }
 
 /* CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException). */
@@ -2224,10 +2317,11 @@ FIRE_FN Buf* allocBufExternal(uint8_t* data, uint32_t length, OwnList* list) {
 /* ---------------------------------------------------------------------------------------------------------------------
  * Strings
  * --------------------------------------------------------------------------------------------------------------------- */
-/* Generated: calls the ToString() method of the object's class if it has one (the result is a string value created in `list`). */
+/* Calls the ToString() method of the object's class if it has one (the result is a string value created in `list`; the descriptor of the class). */
 bool userToString(Value object, OwnList* list, Value* result);
 
-const char* className(uint32_t cls);   /* (generated) */
+/* The name of the class with this id ("?" for none; the descriptor of the class). */
+const char* className(uint32_t cls);
 
 /* The characters of a value as `+` and `$"..."` append them (Value.ToString()). */
 typedef struct Piece {
@@ -3050,6 +3144,7 @@ typedef struct RfClass {
     const char* const* ifaces; uint32_t nIfaces;
     const RfMember* members; uint32_t nMembers;
     Value (*attrs)(OwnList* list);    /* the attributes before the class (generated), null: none */
+    const char* const* stripped; uint32_t nStripped;   /* the methods stripping left out, after the highest level that keeps them ("1Bark"; docs/NATIVE_BACKEND.md) */
 } RfClass;
 
 /* Is the string equal to this UTF-8 text? */
@@ -3282,7 +3377,9 @@ typedef struct HandlerInfo {
     uint32_t ncatch;
     const int32_t* types;   /* per catch clause: the type id for excMatches, -1 = catches everything */
     uint8_t hasFinally;
+    const int32_t* typeMap; /* a library module (ROADMAP 9): its type ids -> those of the program (fire_exct_M); NULL: the ids are the program's */
 } HandlerInfo;
+#define FIRE_HANDLER_TYPE(info, i) ((info)->typeMap && (info)->types[i] >= 0 ? (info)->typeMap[(info)->types[i]] : (info)->types[i])
 
 struct Handler {
     Handler* prev;
@@ -3293,7 +3390,7 @@ struct Handler {
     uint8_t finallyOnly;
 };
 
-/* Generated: does the exception match the catch type (`typeId` as stored in HandlerInfo.types)? */
+/* Does the exception match the catch type (`typeId` as stored in HandlerInfo.types; FIRE_EXC_ANY: `Exception`)? The descriptor of its class lists its types. */
 bool excMatches(Value exception, int32_t typeId);
 /* Generated: builds an IndexOutOfBoundsException (message, index, length) owned by the global scope. */
 Value makeIndexError(Value message, int64_t index, int64_t length);
@@ -3325,7 +3422,7 @@ FIRE_FN void takeGlobal(Obj* o) {
     ownLink(g_globalOwn, &o->h);
 }
 
-/* Generated: the index of the field `message` of an object of the class, -1 when the class has none. */
+/* The index of the field `message` of an object of the class, -1 when the class has none (the descriptor of the class). */
 int32_t excMessageIndex(uint32_t cls);
 /* An exception that nothing catches: the text of the VM (UncaughtScriptException) - the class and the text of the field `message`. */
 FIRE_COLD FIRE_FN void reportUnhandled(Value exception) {
@@ -3353,10 +3450,28 @@ FIRE_FN Value jobUnhandled(Value exception);
 
 /* `throw exception`. Returns the resume value if the exception is resumed at this very point; otherwise it returns with `g_unwind.active` set and the caller
  * has to unwind (the generated code checks the flag after every call). `throwValue(x)` is resumable, `throwValue(x, false)` (a rethrow) is not. */
+#ifdef FIRE_DEBUG
+int fire_dbgUnhandled(Value exception);
+void fire_dbgRet(DbgFrame* caller);
+/* Would a catch block of this thread take the exception (VM.WouldBeCaught)? */
+FIRE_FN bool wouldBeCaught(Value exception) {
+    Handler* h;
+    uint32_t i;
+    for (h = g_handlers; h; h = h->prev)
+        if (!h->finallyOnly)
+            for (i = 0; i < h->info->ncatch; i++)
+                if (h->info->types[i] < 0 || excMatches(exception, FIRE_HANDLER_TYPE(h->info, i))) return true;
+    return false;
+}
+#endif
 FIRE_FN Value throwValueR(Value exception, bool resumable) {
     Handler* h;
     if (FIRE_UNLIKELY(exception.kind != K_Class)) fatal("throw expects an exception object.");
     takeGlobal(asObj(exception));
+#ifdef FIRE_DEBUG
+    /* a debugger: an exception that nothing catches stops at the throw, before anything is unwound; `resume` ignores it (the throw gives undefined) */
+    if (FIRE_UNLIKELY(g_dbgArmed) && !wouldBeCaught(exception) && fire_dbgUnhandled(exception)) return Undef();
+#endif
     h = g_handlers;
     if (!h) {   /* nothing catches it: the program ends here (like the VM, without unwinding the stack) */
 #ifdef FIRE_THREADS
@@ -3371,7 +3486,7 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
         int found = -1;
         uint32_t i;
         for (i = 0; i < h->info->ncatch && found < 0; i++)
-            if (h->info->types[i] < 0 || excMatches(exception, h->info->types[i])) found = (int)i;
+            if (h->info->types[i] < 0 || excMatches(exception, FIRE_HANDLER_TYPE(h->info, i))) found = (int)i;
         if (found >= 0) {
             Pending pending;
             Handler fin;
@@ -3391,6 +3506,9 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
                 clearUnwind();
                 h->prev = saved;      /* the resumed code is still inside the try block: its handler is armed again */
                 g_handlers = h;
+#ifdef FIRE_DEBUG
+                if (FIRE_UNLIKELY(g_dbgArmed) && g_dbgTop) fire_dbgRet(g_dbgTop);   /* back at the throw site (like the VM after resume) */
+#endif
                 return v;
             }
             if (!g_unwind.active) fatal("internal error: a catch block ended without leaving.");
@@ -3510,6 +3628,9 @@ FIRE_FN Value fireError(const char* cls, const char* utf8) {
     if (exception.kind == K_Class) return throwValue(exception);
 #endif
     fatalException(cls, utf8);
+#ifdef __TINYC__
+    return Undef();   /* (not reached: TinyCC does not see that fatalException does not return) */
+#endif
 }
 #endif
 
@@ -3684,9 +3805,18 @@ FIRE_FN void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw
     uint32_t i;
     ownListInit(&local, poolMark(), NULL);
     if (node) for (i = 0; i < node->nrunning; i++) if (strcmp(node->running[i], name) == 0) nested = true;
-    if (!node || nested || node->nrunning >= 8) { raw(obj, value, &local, caller); leave(&local); return; }
+#ifdef FIRE_MODULES
+#define FIRE_PROBE_RAW() (raw ? raw(obj, value, &local, caller) : fireProbeRawSet(obj, name, value, &local, caller))
+#else
+#define FIRE_PROBE_RAW() raw(obj, value, &local, caller)
+#endif
+    if (!node || nested || node->nrunning >= 8) { FIRE_PROBE_RAW(); leave(&local); return; }
     node->running[node->nrunning++] = name;
+#ifdef FIRE_MODULES
+    oldValue = get ? get(obj, &local) : fireProbeRawGet(obj, name, &local);
+#else
     oldValue = get(obj, &local);
+#endif
     retain(oldValue);   /* (the assignment below may drop the last reference of the old value: the probes still compare with it and get it) */
     for (i = 0; i < node->n && !g_unwind.active; i++) {
         ProbeEntry e = node->entries[i];
@@ -3697,7 +3827,7 @@ FIRE_FN void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw
         if (verdict.kind == K_Bool && !verdict.i) { cancelled = true; break; }
     }
     if (!g_unwind.active && !cancelled) {
-        raw(obj, value, &local, caller);
+        FIRE_PROBE_RAW();
         if (!g_unwind.active && !eq(oldValue, value))
             for (i = 0; i < node->n && !g_unwind.active; i++) {
                 ProbeEntry e = node->entries[i];
@@ -3730,6 +3860,7 @@ FIRE_FN void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw
     fire_probeDone(node, name);
     release(oldValue);
     leave(&local);
+#undef FIRE_PROBE_RAW
 }
 #endif
 
@@ -3762,8 +3893,8 @@ FIRE_FN Value accessDenied(const char* text) {
  * --------------------------------------------------------------------------------------------------------------------- */
 #define TICKS_PER_MS ((int64_t)10000)
 
-/* Generated: the `ticks` of a TimeSpan (any class with a whole number field `ticks`); false for another object (and for every object when the program has
- * none). */
+/* The `ticks` of a TimeSpan (any class with a whole number field `ticks`, the descriptor of the class); false for another object (and for every object when the
+ * program has none). */
 bool timeObjTicks(Value v, int64_t* ticks);
 
 /* Is the unit a unit of time (the dimension `s` and nothing else)? `factor` is then its size in seconds. */
@@ -3818,6 +3949,9 @@ FIRE_FN Value divideByZero(void) {
     return fireError("DivideByZeroException", "Division by zero.");
 #else
     fatalException("DivideByZeroException", "Division by zero.");
+#ifdef __TINYC__
+    return Undef();   /* (not reached) */
+#endif
 #endif
 }
 
@@ -5056,13 +5190,23 @@ typedef struct ThreadStart {
 } ThreadStart;
 FIRE_FN void sectionAbort(void);   /* the end of a thread that is still inside a section */
 
+#ifdef FIRE_DEBUG
+void fire_dbgThreadBegin(void);
+void fire_dbgThreadEnd(void);
+#endif
 FIRE_FN void threadEntry(ThreadStart st) {
     gilAcquire();
     g_isThread = 1;
     g_attnMask = ATTN_ALL;
     g_tick = 4096;
     g_travel = st.travel;
+#ifdef FIRE_DEBUG
+    fire_dbgThreadBegin();
+#endif
     st.fn(st.args);
+#ifdef FIRE_DEBUG
+    fire_dbgThreadEnd();
+#endif
     sectionAbort();
     free(st.args);
     free(g_pool.items);
@@ -5794,6 +5938,241 @@ uint32_t g_hostServiceCount = 0, g_hostServiceCap = 0;
 bool g_autoSync = true;
 #endif
 #endif  /* FIRE_RT_IMPLEMENTATION */
+
+#ifdef FIRE_DEBUG
+#include "fire_debug.h"
+#endif
+
+/* ---------------------------------------------------------------------------------------------------------------------
+ * The questions the runtime asks about a class, answered from the table of class descriptors (g_classDescs, set by the program's fire_init). In the
+ * translation unit with the runtime's state; a library of a package for the VM (FIRE_LIBRARY) has no classes and answers them itself (fire_pkg_wrapper.h).
+ * --------------------------------------------------------------------------------------------------------------------- */
+#if defined(FIRE_RT_IMPLEMENTATION) && !defined(FIRE_LIBRARY) && !defined(__cplusplus)
+const FireClassDesc* g_classDescs = NULL;
+uint32_t g_classDescCount = 0;
+
+FIRE_FN const FireClassDesc* classDescOf(uint32_t cls) { return cls < g_classDescCount ? &g_classDescs[cls] : NULL; }
+
+const char* className(uint32_t cls) {
+    const FireClassDesc* d = classDescOf(cls);
+    return d ? d->name : "?";
+}
+
+void runDestructors(Obj* o) {
+    const FireClassDesc* d = classDescOf(o->cls);
+    if (d && d->destroy) d->destroy(o);
+}
+
+int32_t excMessageIndex(uint32_t cls) {
+    const FireClassDesc* d = classDescOf(cls);
+    return d ? d->messageIndex : -1;
+}
+
+bool excMatches(Value exception, int32_t typeId) {
+    const FireClassDesc* d;
+    const int32_t* t;
+    if (typeId == FIRE_EXC_ANY) return true;
+    d = classDescOf(asObj(exception)->cls);
+    if (!d || !d->excTypes) return false;
+    for (t = d->excTypes; *t >= 0; t++) if (*t == typeId) return true;
+    return false;
+}
+
+bool timeObjTicks(Value v, int64_t* ticks) {
+    const FireClassDesc* d = classDescOf(asObj(v)->cls);
+    Value t;
+    if (!d || d->ticksIndex < 0) return false;
+    t = objFields(asObj(v))[d->ticksIndex];
+    if (t.kind != K_Int) return false;
+    *ticks = t.i;
+    return true;
+}
+
+bool userToString(Value object, OwnList* list, Value* result) {
+    const FireClassDesc* d = classDescOf(asObj(object)->cls);
+    if (!d || !d->toString) return false;
+#ifdef FIRE_DEBUG
+    FIRE_DBG_NESTED(*result = d->toString(object));
+#else
+    *result = d->toString(object);
+#endif
+    adopt(*result, list);
+    return true;
+}
+
+#ifdef FIRE_MODULES
+/* ---- modules (ROADMAP 9): the members of an object by name - the tables of its class and its bases ---- */
+static int fireMethodCmp(const char* name, uint32_t argc, const FireMethod* m) {
+    int c = strcmp(name, m->name);
+    return c != 0 ? c : argc < m->argc ? -1 : argc > m->argc ? 1 : 0;
+}
+
+const FireMethod* fireFindMethod(uint32_t cls, const char* name, int argc, uint32_t* k) {
+    const FireClassDesc* d = classDescOf(cls);
+    const FireMembers* const* t;
+    if (!d || !d->members) return NULL;
+    for (t = d->members; *t; t++) {
+        uint32_t lo = 0, hi = (*t)->nmethods;
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            int c = fireMethodCmp(name, (uint32_t)argc, &(*t)->methods[mid]);
+            if (c == 0) { *k = (*t)->k; return &(*t)->methods[mid]; }
+            if (c < 0) hi = mid; else lo = mid + 1;
+        }
+    }
+    return NULL;
+}
+
+/* No method `name` with `argc` arguments: a class that has it with other numbers of arguments is an ArgumentException that lists them, otherwise a
+ * MissingMemberException (the texts of the VM). */
+Value fireNoMethod(Value self, const char* name, int argc) {
+    const FireClassDesc* d;
+    const FireMembers* const* t;
+    uint32_t seen[16], n = 0, i, j;
+    char list[160], text[500];
+    if (self.kind != K_Class || !leafAlive(self)) return missingMethod(self, name, argc);
+    d = classDescOf(asObj(self)->cls);
+    if (d && d->members)
+        for (t = d->members; *t; t++)
+            for (i = 0; i < (*t)->nmethods; i++) {
+                if (strcmp((*t)->methods[i].name, name) != 0) continue;
+                for (j = 0; j < n && seen[j] != (*t)->methods[i].params; j++) { }
+                if (j == n && n < 16) seen[n++] = (*t)->methods[i].params;
+            }
+    if (n == 0) return missingMethod(self, name, argc);
+    for (i = 1; i < n; i++) for (j = i; j > 0 && seen[j - 1] > seen[j]; j--) { uint32_t s = seen[j]; seen[j] = seen[j - 1]; seen[j - 1] = s; }
+    list[0] = 0;
+    for (i = 0; i < n; i++) snprintf(list + strlen(list), sizeof list - strlen(list), i == 0 ? "%u" : ", %u", (unsigned)seen[i]);
+    snprintf(text, sizeof text, "Method '%s' on '%s' has no overload with %d argument(s) (available: %s argument(s)).", name, className(asObj(self)->cls), argc, list);
+    return fireError("ArgumentException", text);
+}
+
+Value fireCallMethod(Value self, const char* name, int argc, const Value* a, OwnList* list, uint32_t caller) {
+    uint32_t k;
+    const FireMethod* m = self.kind == K_Class ? fireFindMethod(asObj(self)->cls, name, argc, &k) : NULL;
+    if (m) return m->fn(k, self, a, list, caller);
+    return fireNoMethod(self, name, argc);
+}
+
+static const FireField* fireFindField(uint32_t cls, const char* name, uint32_t* k) {
+    const FireClassDesc* d = classDescOf(cls);
+    const FireMembers* const* t;
+    if (!d || !d->members) return NULL;
+    for (t = d->members; *t; t++) {
+        uint32_t lo = 0, hi = (*t)->nfields;
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            int c = strcmp(name, (*t)->fields[mid].name);
+            if (c == 0) { *k = (*t)->k; return &(*t)->fields[mid]; }
+            if (c < 0) hi = mid; else lo = mid + 1;
+        }
+    }
+    return NULL;
+}
+
+/* A field of an object (a real field of its class wins, otherwise its property `get_name`), by name like the VM. */
+Value fireGetField(Value v, const char* name, OwnList* list, uint32_t caller) {
+    uint32_t k;
+    const FireField* f;
+    const FireMethod* m;
+    char accessor[200];
+    if (v.kind != K_Class) return missingField(v, name);
+    if (!leafAlive(v)) return destroyedError(v);
+    f = fireFindField(asObj(v)->cls, name, &k);
+    if (f) return f->get(k, v, list, caller);
+    snprintf(accessor, sizeof accessor, "get_%s", name);
+    m = fireFindMethod(asObj(v)->cls, accessor, 0, &k);
+    if (m) { Value r = m->fn(k, v, NULL, list, caller); adopt(r, list); return r; }
+    accessor[0] = 's';
+    if (fireFindMethod(asObj(v)->cls, accessor, 1, &k)) {
+        char text[400];
+        snprintf(text, sizeof text, "Property '%s' of '%s' has no getter (only 'set').", name, className(asObj(v)->cls));
+        fatal(text);
+    }
+    return missingField(v, name);
+}
+
+void fireSetField(Value v, Value x, const char* name, OwnList* list, uint32_t caller) {
+    uint32_t k;
+    const FireField* f;
+    const FireMethod* m;
+    char accessor[200];
+    if (v.kind != K_Class) { notObjectAssign(v); return; }
+    if (!leafAlive(v)) { destroyedError(v); return; }
+    f = fireFindField(asObj(v)->cls, name, &k);
+    if (f) { f->set(k, v, x, list, caller); return; }
+    snprintf(accessor, sizeof accessor, "set_%s", name);
+    m = fireFindMethod(asObj(v)->cls, accessor, 1, &k);
+    if (m) { Value r = m->fn(k, v, &x, list, caller); adopt(r, list); return; }
+    accessor[0] = 'g';
+    if (fireFindMethod(asObj(v)->cls, accessor, 0, &k)) {
+        char text[400];
+        snprintf(text, sizeof text, "Property '%s' on '%s' has no setter (only 'get').", name, className(asObj(v)->cls));
+        fatal(text);
+    }
+    missingField(v, name);
+}
+
+Value fireFieldPtr(Value v, const char* name) {
+    uint32_t k;
+    const FireField* f;
+    char text[300];
+    if (v.kind == K_Class && !leafAlive(v)) return destroyedError(v);
+    f = v.kind == K_Class ? fireFindField(asObj(v)->cls, name, &k) : NULL;
+    if (f && f->ptr) return f->ptr(k, v);
+    snprintf(text, sizeof text, "The address of '%s' cannot be taken (it is a property or does not exist).", name);
+    fatal(text);
+}
+
+/* `is of`: the class, a class of its chain or an interface of the chain is called `name`. */
+bool fireIsOf(uint32_t cls, const char* name) {
+    const FireClassDesc* d = classDescOf(cls);
+    const char* const* n;
+    if (!d) return false;
+    if (d->isa) for (n = d->isa; *n; n++) if (strcmp(*n, name) == 0) return true;
+    if (d->ifaces) for (n = d->ifaces; *n; n++) if (strcmp(*n, name) == 0) return true;
+    return false;
+}
+
+/* The class is `name` or derived from it (the access to a protected member). */
+bool fireClassIsSub(uint32_t cls, const char* name) {
+    const FireClassDesc* d = classDescOf(cls);
+    const char* const* n;
+    if (!d || !d->isa) return false;
+    for (n = d->isa; *n; n++) if (strcmp(*n, name) == 0) return true;
+    return false;
+}
+
+/* The score of an object of class `cls` for a parameter of class `name` (overloads): `exact` for the class itself, one less per step to a derived class. */
+int fireClassScore(uint32_t cls, const char* name, int exact, int none) {
+    const FireClassDesc* d = classDescOf(cls);
+    int distance = 0;
+    const char* const* n;
+    if (!d || !d->isa) return none;
+    for (n = d->isa; *n; n++, distance++) if (strcmp(*n, name) == 0) return exact - distance;
+    return none;
+}
+
+const TArg* fireTArgOf(Obj* o, const char* cls, int k) {
+    const FireClassDesc* d = o ? classDescOf(o->cls) : NULL;
+    return d && d->targOf ? d->targOf(o, cls, k) : NULL;
+}
+
+void fireProbeRawSet(Value obj, const char* name, Value value, OwnList* list, uint32_t caller) { fireSetField(obj, value, name, list, caller); }
+
+Value fireProbeRawGet(Value obj, const char* name, OwnList* list) {
+    uint32_t k;
+    const FireField* f = fireFindField(asObj(obj)->cls, name, &k);
+    const FireMethod* m;
+    char accessor[200];
+    if (f && f->index >= 0) return objFields(asObj(obj))[f->index];
+    snprintf(accessor, sizeof accessor, "get_%s", name);
+    m = fireFindMethod(asObj(obj)->cls, accessor, 0, &k);
+    if (m) { Value r = m->fn(k, obj, NULL, list, 0xFFFFFFFFu); adopt(r, list); return r; }
+    return Undef();
+}
+#endif
+#endif
 
 FIRE_END
 

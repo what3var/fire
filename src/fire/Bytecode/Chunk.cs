@@ -61,6 +61,10 @@ namespace fire.Bytecode
         // step debugger in the editor sub-project need BOTH to show the
         // right file/line and to hit breakpoints correctly.
         private readonly List<(int Offset, int SourceIndex, int Line)> _lineTable = new();
+
+        /// <summary>The source of the first line of the chunk (null: it has no line information) - the module its code belongs to (ROADMAP 9).</summary>
+        [MemoryPackIgnore]
+        public int? FirstSourceIndex => _lineTable.Count > 0 ? _lineTable[0].SourceIndex : null;
         private int _lastMarkedSourceIndex = -1;
         private int _lastMarkedLine = -1;
 

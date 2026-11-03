@@ -1418,7 +1418,11 @@ namespace fire.Runtime
         /// which variables belong to the CURRENTLY ACTIVE (innermost) block and
         /// which are "passed through" from an enclosing level).
         /// Depth 0 = the currently innermost scope (`_currentScope` itself).</summary>
-        public sealed record ScopeLevel(int Depth, bool IsFunctionTopLevel, IReadOnlyList<(string Name, Value Value)> Variables);
+        public sealed record ScopeLevel(int Depth, bool IsFunctionTopLevel, IReadOnlyList<(string Name, Value Value)> Variables)
+        {
+            /// <summary>The scope itself (its slots are the variables in order) - for the debugger's `set`.</summary>
+            public Scope? Scope { get; init; }
+        }
 
         /// <summary>The complete scope chain of the current function/method/
         /// lambda, from the currently active (innermost) block up to
@@ -1467,7 +1471,7 @@ namespace fire.Runtime
                         ?? (isFunctionTopLevel && _currentChunk.DebugLocalNames.TryGetValue((0, slot), out var n) ? n : $"(local {slot})");
                     vars.Add((name, scope.GetSlot(slot)));
                 }
-                result.Add(new ScopeLevel(depth, isFunctionTopLevel, vars));
+                result.Add(new ScopeLevel(depth, isFunctionTopLevel, vars) { Scope = scope });
                 scope = scope.Parent;
                 depth++;
             }
@@ -1483,6 +1487,37 @@ namespace fire.Runtime
         {
             for (int slot = 0; slot < _globalScope.SlotCount; slot++)
                 yield return (_globalScope.DebugNameOf(slot) ?? $"(global {slot})", _globalScope.GetSlot(slot));
+        }
+
+        /// <summary>The global scope (its slots are <see cref="DebugGlobals"/> in order) - for the debugger's `set`.</summary>
+        public Scope DebugGlobalScope => _globalScope;
+
+        /// <summary>The debugger's `set` of a member of an object while this VM is paused - runs on the VM's own thread. Like the assignment
+        /// `obj.name = value` in the program: probes on the member fire, a property runs its setter, the unit and type rules of the field apply.
+        /// false with a message if that assignment threw (the exception then goes its way like one of the program: to a handler, or the VM
+        /// stops at it as unhandled).</summary>
+        public bool DebugAssignMember(ObjectInstance obj, string name, Value value, out string? error)
+        {
+            error = null;
+            if (!_steppingStarted) BeginStepping();
+            int sp = _sp;
+            Push(Value.MakeClassRef(obj));
+            Push(value);
+            bool ok;
+            try { ok = SetFieldSlow(name, -1); }
+            catch (Exception ex) when (ex is ScriptErrorException or InvalidOperationException)
+            {
+                _sp = sp;
+                error = ex.Message;
+                return false;
+            }
+            if (!ok)
+            {
+                error = UnhandledException != null ? new UncaughtScriptException(UnhandledException).Message : "The assignment threw an exception.";
+                return false;
+            }
+            _sp = sp;
+            return true;
         }
 
         /// <summary>Executes instructions until the call stack has fallen below

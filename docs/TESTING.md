@@ -138,16 +138,21 @@ not run at the same time - stop the program first.
 ## The test suite of the compiler (`src/fire.Testing`)
 
 The compiler, the VM, the native backend and the libraries are checked by `fire.Testing` (`dotnet build -c Release`, then `dotnet bin/Release/net10.0/linux-x64/fire.Testing.dll`).
-A full run takes about half an hour, most of it the native backend: every case is built with gcc and AddressSanitizer/UBSan and compared with the VM. To check a change
+A full run takes a while, most of it the native backend: every case is built with gcc and AddressSanitizer/UBSan and compared with the VM (in parallel, see below). To check a change
 quickly:
 
 | Switch | Effect |
 |---|---|
-| `FIRE_TESTS_ONLY=<group>` | only one group: `native` (the native backend: cases against the VM, windows, FreeRTOS, toolchains), `ui` (the UI library in the VM), `types`, `syntax`, `diagnostics`, `projects`, `testing`, `windows`, `dialogs`, `docking`, `circuiteditor`, `scene3d`, `snippets`, `notes`, `packer` (the packer and the wasm target: with Emscripten on the PATH a program under node and a window in headless Chromium) |
+| `FIRE_TESTS_ONLY=<group>` | only one group: `native` (the native backend: cases against the VM, windows, FreeRTOS, toolchains), `ui` (the UI library in the VM), `types`, `syntax`, `diagnostics`, `projects`, `testing`, `windows`, `dialogs`, `docking`, `circuiteditor`, `scene3d`, `snippets`, `notes`, `debugger` (the debugger without a window: the stepping run of the VM, the debug targets of `fire.Debugging` - the VM, and the native one against a fake agent - and spark's `DebugSession`), `packer` (the packer and the wasm target: with Emscripten on the PATH a program under node and a window in headless Chromium) |
 | ESP32 | with `IDF_PATH` set (ESP-IDF) the native group builds a program for the ESP32 and runs it in Espressif's QEMU (`FIRE_TESTS_FILTER="ESP32 (ESP-IDF"`; the project is kept in ~/.cache/fire-tests/esp32) |
 | `FIRE_TESTS_FILTER=<text>` | of the checks listed as cases (the native cases, the native window and device cases, the UI checks) only those whose name contains the text; several texts separated by `\|`, case does not matter |
+| Native debugger | the native group drives debug builds over the debug protocol (`NativeDebugTests.cs`, docs/NATIVE_DEBUG_PROTOCOL.md) and compares them with the VM: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="Native-Debugger"` (gdb, clang, tcc, MinGW and Wine are used when they are there); the framed transports: `"Native-Debugger: stdio"`, `"Native-Debugger: FreeRTOS"` (the simulator), and with `IDF_PATH` an ESP32 debug build on QEMU: `"Native-Debugger: ESP32"` (project in ~/.cache/fire-tests/esp32-dbg; the first build of ESP-IDF takes minutes) |
+| `FIRE_TESTS_ONLY=linkage` | linkage "static" of native builds (ROADMAP 9): a program with several packages from the cache, the second build without a compile of a library, a project whose library changes, the interface files, the classes of the program and of the libraries meeting (every module serves its own, the others through the tables of the runtime) and the size of the program's C, the stripping levels 2 and 3 with static libraries (the program strips like with source, a library keeps its API), a breakpoint in a static library, TinyCC, MinGW/Wine when there, `ember cache clean` |
+| `FIRE_MODULES=1` | every native build is generated from modules in one file (the libraries as linkage "static" would build them, ROADMAP 9 phase A): run the native group with it to check that the modules behave like the whole program; `FIRE_MODULES_LOG=<file>` lists the programs that could not be split |
 | `FIRE_TEST_NO_NATIVE=1` | everything but the native backend |
 | `FIRE_TEST_CCACHE=0` | no compiler cache |
+| `FIRE_TEST_JOBS=<n>` | how many native builds and test programs at a time (default: the cores of the machine); `1` builds and runs one case after the other |
+| `FIRE_TEST_OPT=<flags>` | the optimization of the native test builds (default `-O1`; e.g. `-O2` for a run that looks for the warnings only `-O2` finds) |
 
 The window cases of the native group (filter `Fenster`) run every window program with SDL2 and, when the machine has it, SDL3 (dummy driver); the clipboard of X11 needs `xvfb-run` (one program,
 two programs, the VM with SDL3 as the other one), the Windows cases MinGW, Wine and the MinGW package of SDL3 (`SDL3_DIR`, else `/opt/sdl-mingw/SDL3-*`); the VM's Windows clipboard a `dotnet publish -r win-x64` (the runtime
@@ -157,3 +162,19 @@ pack for win-x64 comes from NuGet once). Drag-out on Wayland needs `weston` (it 
 When `ccache` is installed, the native builds of the tests go through it: a case whose generated program did not change is not compiled again (a run of the native group
 with an unchanged program takes seconds per case instead of a minute). Example: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="Drop|Compression:"` runs the native checks of
 two topics in under a minute.
+
+**In parallel.** The native group builds and runs its cases on all cores (`FIRE_TEST_JOBS`). First the VM runs all cases, one after the other and alone (the
+precision of `float` and the handlers of `terminate` are process-wide while a program runs, and some thread cases depend on timing that a machine busy with
+compilers upsets); then the C of the cases is generated in parallel and handed to workers that compile (at most `FIRE_TEST_JOBS` compilers at a time - with
+AddressSanitizer a compiler needs hundreds of MB; the biggest program first, a case with the ui library compiles for minutes) and run the programs.
+The parts after that - the debugger, the devices, the windows with the UI, the cases under Wine, FreeRTOS - run at the same time, too. The output does not change: every
+part prints its checks in the order of its cases, a part's lines are held back until the parts before it are done, and `OK:`/`FEHLER:` come in the same order as with
+`FIRE_TEST_JOBS=1`. What cannot run at the same time takes turns: the cases under Wine share one prefix, every `xvfb-run` gets an X server of its own (`-n`, a number
+far from those of `-a`), a test program gets its variables (`SDL_VIDEODRIVER`, `LSAN_OPTIONS`) per process. The cases are built with `-O1` (`FIRE_TEST_OPT`) - with
+the sanitizers 20-30 % less compile time than `-O2` (a case of 1.3 MB C: 33 s instead of 48 s) and the same memory errors; a few warnings of gcc appear only with
+`-O2` (`FIRE_TEST_OPT=-O2` looks for them), the checks that are about `-O2` itself name it.
+
+**Progress.** Every check line carries its number and the number of checks of the last run with the same `FIRE_TESTS_ONLY` and `FIRE_TESTS_FILTER`:
+`OK: [123/530] Native == VM: ...`, `FEHLER: [124/530] ...` (`?` on the first run; the counts are kept in `~/.cache/fire-tests/totals.json`). The status word stays first,
+so `grep '^OK:'`, `grep -c FEHLER` and the like keep working. Every line is written at once (a log of a run in the background grows line by line), and while a long
+phase prints no check, a line `[ .. ] native Faelle gebaut und gelaufen 37/212 (120 s)` appears every 10 seconds.

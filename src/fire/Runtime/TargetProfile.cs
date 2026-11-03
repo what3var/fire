@@ -163,8 +163,18 @@ namespace fire.Runtime
         /// can compile and link it (a probe that is remembered), else SDL2 (an environment variable FIRE_SDL=2|3 decides first, see docs/NATIVE_BACKEND.md).</summary>
         public int? Sdl { get; init; }
 
+        /// <summary>`#line` directives in the generated C (fire file and line of every instruction): gdb/lldb, the messages of the C compiler and crash reports name
+        /// fire lines. `"lineDirectives": false` in the target of fire.native.json switches them off (the C file is then read as C).</summary>
+        public bool LineDirectives { get; init; } = true;
+
         /// <summary>The name of the toolchain that builds for this target (a key of the configuration's `toolchains`, or `files`: only write the sources);
         /// null: the toolchain of the machine.</summary>
         public string? Toolchain { get; init; }
+
+        /// <summary>A board: the serial port it is on (spark flashes it and talks to its console there); null: found by itself (see Esp32Launch.ResolvePort).</summary>
+        public string? Port { get; init; }
+
+        /// <summary>A board: the baud rate of its console (null: 115200).</summary>
+        public int? Baud { get; init; }
     }
 }

@@ -59,6 +59,26 @@ namespace fire.Runtime
         [MemoryPackIgnore]
         public IReadOnlyList<string?>? SourceFiles { get; init; }
 
+        /// <summary>The SHA-256 (hex, lower case) of the UTF-8 text of each source of the program as the compiler got it, by source index; null for the prelude, the libraries and
+        /// the preludes of imports. Only known while linking (not serialized): a native debug build sends them to the debugger (docs/NATIVE_DEBUG_PROTOCOL.md).</summary>
+        [MemoryPackIgnore]
+        public IReadOnlyList<string?>? SourceHashes { get; init; }
+
+        /// <summary>The module of each source of the program, by source index (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Uebersetzung"): `core` for the prelude of the compiler,
+        /// the import key for the prelude of an import, the import name for the files of a library of the project, null for the program itself. Only known while
+        /// linking (not serialized): the native backend builds each module on its own when the linkage asks for it.</summary>
+        [MemoryPackIgnore]
+        public IReadOnlyList<string?>? SourceModules { get; init; }
+
+        /// <summary>The modules each module needs (directly: its imports and the libraries it references; `core` is always needed). Only known while linking.</summary>
+        [MemoryPackIgnore]
+        public IReadOnlyDictionary<string, IReadOnlyList<string>>? ModuleDeps { get; init; }
+
+        /// <summary>The SHA-256 of the text of every source as the compiler got it (after the preprocessor), by source index - also of the preludes: what a library module is
+        /// made of (the key of its static library in the cache). Only known while linking.</summary>
+        [MemoryPackIgnore]
+        public IReadOnlyList<string>? SourceTextHashes { get; init; }
+
         public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports, int firstUserSource, VmExecutionMode executionMode = VmExecutionMode.Release)
         {
             Program = program;

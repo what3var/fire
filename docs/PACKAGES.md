@@ -130,7 +130,8 @@ as shipped; after a change of the C++ the library is built on first use like tha
 *Install* the project (context menu of the project, or *Project > Install Library*): it is packed and installed at once; an installed package of the same version is replaced after a question.
 The next start of spark or forge would install it, too.
 
-What makes these projects special is small: `"standard": true` lets a project have the import name of a library of the compiler (`time`, `graphics`, ...), and `"native": { "discover": false,
+What makes these projects special is small: `"standard": true` lets a project have the import name of a library of the compiler (`time`, `graphics`, ...), `"serializable": false` (in `ui`)
+keeps its classes out of JSON (docs/JSON.md; written to the import in `package.json`), and `"native": { "discover": false,
 "functions": [...] }` names the natives explicitly (`"c": "fire_io_FileOpen"` for a package in C, `"cpp": "mathkit::Add"` for one in C++). Five imports have natives that are part of the virtual machine (C#): `graphics`,
 `windows`, `ui`, `linq`, `reflection` - their fire code still comes from the package, and for native builds the C of `graphics` and `windows` too. Only the core prelude (`Exception`,
 `List<T>`, `Math`, string methods, ...) is built into the compiler.
@@ -142,6 +143,17 @@ Inside its own project a library is the program: `#import "time"` in the tests o
 A library with drivers of the device framework names them in its project file, `"drivers": ["MyDriver", "Kit.OtherDriver"]` (classes made with `new Class()`).
 `forge` writes them to the import in `package.json` (`"drivers": [...]`). spark loads the drivers of the installed packages and shows their devices in its device
 manager (docs/DEVICES.md).
+
+### The cache of native libraries
+
+A native build with `"linkage": "static"` (docs/NATIVE_BACKEND.md "Getrennte Übersetzung") turns every package (and the prelude, every library of a project) into a static
+library (`"shared"`: a shared library, on Linux and macOS) and keeps it in a cache of the user: `~/.local/share/fire/cache/native` on Linux, `%LOCALAPPDATA%\fire\cache\native` on Windows, `~/Library/Application Support/fire/cache/native`
+on macOS (`FIRE_NATIVE_CACHE` moves it). An entry is found by the content hash of everything its C depends on, so a stale entry is never used, only left behind.
+
+```
+ember cache          where the cache is and how big it is
+ember cache clean    empty it
+```
 
 ## Making packages
 

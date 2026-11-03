@@ -2,17 +2,21 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Controls;
-using fire.Runtime;
-using fire.Values;
+using Avalonia.Threading;
+using fire.Debugging;
 
 namespace fire.Editor
 {
     /// <summary>The scope of the active thread as a tree: `this`, the scope chain of the current function (innermost block
     /// first) and the globals. Objects and arrays expand lazily. Works on ONE DebugSession (see
-    /// AttachSession), otherwise knows nothing about the editor.</summary>
+    /// AttachSession) and only through the engine-independent IDebugThread/DebugValue, otherwise knows nothing about the editor.
+    /// The context menu of a variable, field or element sets its value (IDebugThread.TrySetValue).</summary>
     public partial class ScopePanelControl : UserControl
     {
         private DebugSession? _session;
+
+        /// <summary>A message for the status bar (the result of setting a value).</summary>
+        public event Action<string>? StatusMessage;
 
         public ScopePanelControl()
         {
@@ -25,27 +29,27 @@ namespace fire.Editor
         public void Refresh()
         {
             ScopeTree.Items.Clear();
-            var vm = _session?.Vm;
-            if (vm == null) return;
+            var thread = _session?.ActiveThread?.Thread;
+            if (thread == null) return;
 
             // "this" at the very top, if bound at this point - as a real
             // (expandable) value instead of just a text line, see
             // BuildVariableTreeItem.
-            if (vm.DebugThisValue is Value thisValue)
-                ScopeTree.Items.Add(BuildVariableTreeItem("this", thisValue, expanded: true));
+            if (thread.This is { } thisValue)
+                ScopeTree.Items.Add(BuildVariableTreeItem(thisValue, expanded: true));
 
             // Scope chain of the current function - the FIRST entry (depth 0)
             // is the CURRENTLY ACTIVE (innermost) block, after it enclosing
             // levels up to the function/method/lambda boundary.
-            foreach (var level in vm.DebugScopeChain())
+            foreach (var level in thread.Scopes())
             {
                 string label = level.Depth == 0
                     ? (level.IsFunctionTopLevel ? "Active scope (function level)" : "Active scope")
                     : $"enclosing scope (depth {level.Depth})" + (level.IsFunctionTopLevel ? " - parameters" : "");
 
                 var node = new TreeViewItem { Header = label, IsExpanded = level.Depth == 0 };
-                foreach (var (name, value) in level.Variables)
-                    node.Items.Add(BuildVariableTreeItem(name, value));
+                foreach (var variable in level.Variables)
+                    node.Items.Add(BuildVariableTreeItem(variable));
                 if (level.Variables.Count == 0)
                     node.Items.Add(new TreeViewItem { Header = "(empty)" });
                 ScopeTree.Items.Add(node);
@@ -53,10 +57,10 @@ namespace fire.Editor
 
             // Global at the very bottom, collapsed (usually not the primary focus
             // when debugging a particular function).
-            var globals = vm.DebugGlobals().ToList();
+            var globals = thread.Globals();
             var globalNode = new TreeViewItem { Header = "Global", IsExpanded = false };
-            foreach (var (name, value) in globals)
-                globalNode.Items.Add(BuildVariableTreeItem(name, value));
+            foreach (var variable in globals)
+                globalNode.Items.Add(BuildVariableTreeItem(variable));
             if (globals.Count == 0)
                 globalNode.Items.Add(new TreeViewItem { Header = "(empty)" });
             ScopeTree.Items.Add(globalNode);
@@ -67,81 +71,68 @@ namespace fire.Editor
         // Refresh) - builds child nodes LAZILY only on actual
         // expanding (TreeViewItem.Expanded), instead of immediately walking the entire
         // (potentially huge or cyclic) object graph
-        // completely. Cycle protection via the set of objects/arrays already
-        // visited on the path from the root
-        // (reference identity, not value equality) - a perfectly normal
+        // completely. Cycle protection via the ids (DebugValue.Id) of the objects/arrays already
+        // visited on the path from the root - a perfectly normal
         // MULTIPLE reference to the same object at different places
         // is not a cycle, on the other hand, and stays expandable (only the path
         // ROOT->...->SAME OBJECT AGAIN is cut off).
         // -----------------------------------------------------------
 
-        private TreeViewItem BuildVariableTreeItem(string name, Value value, HashSet<object>? ancestors = null, bool expanded = false)
+        private TreeViewItem BuildVariableTreeItem(DebugValue value, HashSet<long>? ancestors = null, bool expanded = false)
         {
-            var item = new TreeViewItem { Header = $"{name} = {DescribeForTree(value)}", IsExpanded = expanded };
-            AttachChildrenIfExpandable(item, value, ancestors ?? new HashSet<object>());
+            var item = new TreeViewItem { Header = $"{value.Name} = {value.Display}", IsExpanded = expanded };
+            AttachChildrenIfExpandable(item, value, ancestors ?? new HashSet<long>());
+            if (value.CanSet) AttachSetMenu(item, value);
             return item;
         }
 
-        /// <summary>Like Value.ToString(), but for objects/arrays with a
-        /// short description more useful for the debugger (class name +
-        /// creation ID instead of the raw .NET type name, element count instead of
-        /// just "&lt;array&gt;") - pure display convenience, changes nothing about
-        /// Value.ToString() itself (which is needed among other things for script-side
-        /// string concatenation and is to stay unchanged
-        /// for that).</summary>
-        private static string DescribeForTree(Value value) => value.Kind switch
+        private void AttachChildrenIfExpandable(TreeViewItem item, DebugValue value, HashSet<long> ancestors)
         {
-            ValueKind.Class => $"{((ObjectInstance)value.AsObjectRef()).ClassName} (#{((ObjectInstance)value.AsObjectRef()).Id})",
-            ValueKind.Array => $"Array[{value.AsArray().Length}]",
-            _ => value.ToString(),
-        };
-
-        private void AttachChildrenIfExpandable(TreeViewItem item, Value value, HashSet<object> ancestors)
-        {
-            if (value.Kind == ValueKind.Class)
+            if (!value.HasChildren) return; // no fields/elements - no expand arrow needed
+            if (value.Id != 0 && ancestors.Contains(value.Id))
             {
-                var obj = (ObjectInstance)value.AsObjectRef();
-                if (ancestors.Contains(obj))
+                item.Items.Add(new TreeViewItem { Header = value.Kind == DebugValueKind.Array ? "(cycle - array is further up in the tree)" : "(cycle - object is further up in the tree)" });
+                return;
+            }
+
+            item.Items.Add(new TreeViewItem { Header = "…" }); // placeholder until actually expanded
+            bool loaded = false;
+            item.Expanded += (_, _) =>
+            {
+                if (loaded) return;
+                loaded = true;
+                item.Items.Clear();
+                var childAncestors = new HashSet<long>(ancestors);
+                if (value.Id != 0) childAncestors.Add(value.Id);
+                IReadOnlyList<DebugValue> children;
+                try { children = value.Children(); }
+                catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or TimeoutException)
                 {
-                    item.Items.Add(new TreeViewItem { Header = "(cycle - object is further up in the tree)" });
+                    item.Items.Add(new TreeViewItem { Header = $"(not available: {ex.Message})" });
                     return;
                 }
-                if (!obj.Fields.Any()) return; // no fields - no expand arrow needed
+                foreach (var child in children)
+                    item.Items.Add(BuildVariableTreeItem(child, childAncestors));
+            };
+        }
 
-                item.Items.Add(new TreeViewItem { Header = "…" }); // placeholder until actually expanded
-                bool loaded = false;
-                item.Expanded += (_, _) =>
-                {
-                    if (loaded) return;
-                    loaded = true;
-                    item.Items.Clear();
-                    var childAncestors = new HashSet<object>(ancestors) { obj };
-                    foreach (var (fieldName, fieldValue) in obj.Fields)
-                        item.Items.Add(BuildVariableTreeItem(fieldName, fieldValue, childAncestors));
-                };
-            }
-            else if (value.Kind == ValueKind.Array)
+        /// <summary>"Set Value...": asks for the new value and sets it on the thread's own thread (DebugThreadContext.RequestSetValue); the panels
+        /// are rebuilt afterwards like after a step.</summary>
+        private void AttachSetMenu(TreeViewItem item, DebugValue value)
+        {
+            var set = new MenuItem { Header = "Set Value..." };
+            set.Click += async (_, e) =>
             {
-                var arr = value.AsArray();
-                if (arr.Length == 0) return;
-                if (ancestors.Contains(arr))
-                {
-                    item.Items.Add(new TreeViewItem { Header = "(cycle - array is further up in the tree)" });
-                    return;
-                }
-
-                item.Items.Add(new TreeViewItem { Header = "…" });
-                bool loaded = false;
-                item.Expanded += (_, _) =>
-                {
-                    if (loaded) return;
-                    loaded = true;
-                    item.Items.Clear();
-                    var childAncestors = new HashSet<object>(ancestors) { arr };
-                    for (int i = 0; i < arr.Length; i++)
-                        item.Items.Add(BuildVariableTreeItem($"[{i}]", arr.Items[i], childAncestors));
-                };
-            }
+                e.Handled = true;
+                var ctx = _session?.ActiveThread;
+                if (ctx == null || _session == null) return;
+                var text = await Dialogs.Input(TopLevel.GetTopLevel(this) as Window, $"New value of {value.Name} ({value.Kind}):", "Set Value", value.Display);
+                if (text == null) return;
+                if (!ctx.RequestSetValue(value, text, (ok, error) =>
+                        Dispatcher.UIThread.Post(() => StatusMessage?.Invoke(ok ? $"{value.Name} = {text}" : $"{value.Name} was not set: {error}"))))
+                    StatusMessage?.Invoke("Values can only be set while the thread is paused.");
+            };
+            item.ContextMenu = new ContextMenu { Items = { set } };
         }
     }
 }

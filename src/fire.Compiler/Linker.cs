@@ -221,6 +221,16 @@ namespace fire.Compiler
             return files;
         }
 
+        /// <summary>The SHA-256 (hex, lower case) of the text of each source of the program as the compiler got it, by source index (see LinkedProgram.SourceHashes): the sources
+        /// of the program have one, the prelude and the libraries none.</summary>
+        private static IReadOnlyList<string?> SourceHashesOf(int total, IReadOnlyList<string> sources)
+        {
+            var hashes = new string?[total];
+            for (int i = 0; i < sources.Count && total - sources.Count + i >= 0; i++)
+                hashes[total - sources.Count + i] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sources[i]))).ToLowerInvariant();
+            return hashes;
+        }
+
         /// <summary>A package that the project references has to be installed (`ember install`); the version is a minimum.</summary>
         private void CheckPackageReferences()
         {
@@ -265,6 +275,37 @@ namespace fire.Compiler
                 if (errors.Count >= 20) break;
             }
             if (errors.Count > 0) throw new LibraryEntryPointException(string.Join(Environment.NewLine, errors));
+        }
+
+        /// <summary>The modules each module of the program needs (ROADMAP 9): the imports its sources name (with what they bring along) and, for a library of the project,
+        /// the libraries it references. `core` (the prelude) is needed by all and not listed.</summary>
+        private IReadOnlyDictionary<string, IReadOnlyList<string>> ModuleDependencies(IReadOnlyList<ProcessedSource> processed)
+        {
+            var deps = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            var modules = processed.Skip(1).Select(p => p.Module).Where(m => m != null).Select(m => m!).Distinct().ToList();
+            foreach (var module in modules)
+            {
+                var needs = new List<string>();
+                void Need(string key) { if (key != module && !needs.Contains(key)) needs.Add(key); }
+                if (Plan != null && Plan.Libraries.TryGetValue(module, out var library))
+                {
+                    foreach (var other in library.Requires) if (Plan.Libraries.TryGetValue(other, out var lib)) Need(lib.ImportName);
+                    foreach (var file in library.Sources)
+                        foreach (var name in ImportedPreludes.FindImportNames(file.Text))
+                        {
+                            if (Plan.Libraries.TryGetValue(name, out var lib)) { Need(lib.ImportName); continue; }
+                            try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) Need(key); }
+                            catch (Exception) { }
+                        }
+                }
+                else
+                {
+                    try { foreach (var key in ImportedPreludes.WithDependencies(module)) Need(key); }
+                    catch (Exception) { }
+                }
+                deps[module] = needs.Where(modules.Contains).ToList();
+            }
+            return deps;
         }
 
         /// <param name="floatWidthOverride">32 or 64: precision of `float` for this build (command line); overrides `#floatwidth` and the target.</param>
@@ -486,6 +527,11 @@ namespace fire.Compiler
             }
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             var compiled = Compiler.Compile(program, resolveResult, natives);
+            // the classes of a package with `"serializable": false` (docs/JSON.md)
+            var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));
+            if (notSerializable.Count > 0)
+                foreach (var rc in compiled.Classes.Values)
+                    if (rc.Decl != null && notSerializable.Contains(rc.Decl.Source)) rc.NotSerializable = true;
             compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)
             compiled.CustomUnits = fire.Values.Unit.CustomUnits.ToList();   // (read by Parser.ParseMultiple)
 
@@ -501,7 +547,10 @@ namespace fire.Compiler
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
             List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList() };
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
+                SourceHashes = SourceHashesOf(processedSources.Count - driverSources, sources).Concat(new string?[driverSources]).ToList(),
+                SourceModules = processedSources.Select((p, i) => i == 0 ? "core" : p.Module).ToList(), ModuleDeps = ModuleDependencies(processedSources),
+                SourceTextHashes = processedSources.Select(p => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(p.Source))).ToLowerInvariant()).ToList() };
 
             if (!string.IsNullOrEmpty(outname))
             {

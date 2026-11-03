@@ -52,6 +52,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   solche Natives (auch eines mit JSON) ist reines C.
 * **JSON** (`#import "json"`): `native/runtime/fire_json.h` - die Engine in C (Schreiben, Parser, Lesen; dieselben Texte und Fehler wie `JsonMethods` der VM; was sie
   für sich braucht, kommt aus einer Arena des Aufrufs) und die Tabellen der Klassen des Programms, die der Generator dahinter schreibt (`kJsonClasses`, `jsonClassAt`, ...).
+  Schreiben zieht keine Klassen nach; Lesen die der deklarierten Typen (mit Unterklassen und Feldtypen), ein Slot ohne Klasse alle; nicht serialisierbare Klassen nie (docs/JSON.md).
 * **Bauen** (`NativeBuilder.BuildCommands`): ohne Natives in C ein Aufruf des C-Compilers (`gcc -std=c11 ... -lm`); mit Natives wird das Programm zur Objektdatei
   übersetzt und vom C++-Compiler zusammen mit `fire_natives.cpp` gelinkt. Der C-Compiler gehört zum C++-Compiler der Toolchain (`g++` -> `gcc`, `clang++` -> `clang`,
   `em++` -> `emcc`, `x86_64-w64-mingw32-g++` -> `...-gcc`; MSVC: `cl /TC`), oder `toolchain.cCompiler`/`cStd`. Ein ESP-IDF-Komponent listet beide Dateien.
@@ -196,6 +197,54 @@ Bekannte Abweichungen zur VM:
 * `resume` nach einer `UnitMismatchException` setzt hinter dem `CheckUnit` fort; die VM schiebt dort einen zusätzlichen Wert auf den Stack.
 * Eine Ausnahme, die ein Destruktor wirft, wird beim Abrollen ignoriert.
 
+## Zeilen des Programms im C (`#line`)
+
+Jede Instruktion steht im erzeugten C hinter einer `#line`-Direktive mit ihrer fire-Zeile (`#line 12 "/pfad/main.fire" // 41: Add`; eine Quelle ohne Datei heißt
+`fire:source/N`, der Prelude und die Preludes der Imports `fire:prelude/N`). Nach jeder Funktion nennt sich die C-Datei wieder selbst (`#line <eigene Zeile>
+"fire_program.c"`), damit die Hilfsfunktionen, Tabellen und Wrapper ihre echten Zeilen behalten. So zeigen gdb/lldb, die Meldungen des C-Compilers und
+Absturzberichte fire-Zeilen: `gdb -ex "break main.fire:7"` hält an der Zeile, `bt` zeigt die Aufrufer mit ihren fire-Zeilen. Das gilt in jedem Modus;
+`"lineDirectives": false` im Ziel von `fire.native.json` schaltet es ab (das C liest sich dann als C).
+
+## Debug-Builds
+
+Im Modus `debug` (`#debug`, `-m DEBUG`) wird das Programm für den Debugger von spark gebaut (ROADMAP §8, Protokoll: [NATIVE_DEBUG_PROTOCOL.md](NATIVE_DEBUG_PROTOCOL.md)):
+
+* **Übersetzt** mit `-O0 -g` (msvc `/Od /Zi`) und nicht gestrippt; Release und Performance sind nicht über spark debugbar. `NativeBuilder` erkennt den Debug-Build an
+  `#define FIRE_DEBUG 1` am Anfang des Programms.
+* **Schatten-Stack**: jede fire-Funktion hat einen Wrapper (`fN` ruft `fN_b`), der einen Frame (`DbgFrame`, `fire_debug.h`) auf den Stack des Threads legt und
+  beim Verlassen wieder abnimmt. Der Frame kennt die Funktion, die Adressen ihrer Variablen (`dv_[]`, auch die der Catch-Blöcke: eine Funktion mit `try`
+  hält im Debug-Build alle Variablen im Frame-Struct), ihr `this` und die Stelle (Quelle, Zeile, Scope-Zustand).
+* **Haken** an denselben Stellen, an denen die Einzelschritt-Schleifen der VM eine neue Position sehen - am Anfang jedes Bereichs der Zeilentabelle und an jedem
+  Sprungziel: `FIRE_DBG_L(quelle, zeile, zustand)` schreibt die Stelle in den Frame und ruft, nur wenn ein Debugger verbunden ist (`g_dbgArmed`), `fire_dbgLine`.
+  Ein Wrapper prüft beim Zurückkehren die Stelle des Aufrufers noch einmal (die VM sieht nach `Return` eine neue Position: ein Haltepunkt auf der Zeile des
+  Aufrufs trifft wieder), ebenso das Weitermachen an der Wurfstelle nach `resume`. Ohne Debugger kostet ein Haken einen nicht genommenen Sprung. Gemessen
+  (`Fib(30)` und eine Schleife über 3 Mio.): Release `-O2` 0,035 s, Release mit `-O0` 0,33 s, der Debug-Build ohne Debugger 0,38 s, mit verbundenem
+  Debugger und einem Haltepunkt 0,6 s.
+* **Was die VM verschachtelt ausführt**, ist für Haltepunkte und Schritte unsichtbar (wie in der VM, die es innerhalb einer Instruktion laufen lässt):
+  Getter und Setter von Properties, Destruktoren, Operatoren, `GetIndex`/`SetIndex`, Standardwerte von Parametern, Umrechnungen von Einheiten (diese
+  Funktionen sind "hidden"), `ToString()` bei der Umwandlung in Text, die Ausnahmen der Runtime, der Enumerator eines Arrays und Lambdas, die die Runtime
+  oder ein Native aufruft (`g_dbgNest`).
+* **Catch-Blöcke** laufen auf dem Stack der Wurfstelle; solange sie laufen, ist der Frame ihrer Funktion oben (die VM hat die Frames der Wurfstelle
+  verlassen), danach wieder die Wurfstelle (für `resume`).
+* **Statische Tabellen** je Funktion: die Ebenen ihrer Scope-Zustände mit den Namen der Variablen (wie `VM.DebugScopeChain`: der Name aus dem `DeclareLocal`,
+  Parameter aus `DebugLocalNames`, sonst `(local N)`), dazu die Globals (`g_dbgGlobalCount` zählt die bisher angelegten), die Felder jeder Klasse, die
+  Quellen mit Datei und SHA-256 (`LinkedProgram.SourceHashes`) und ein Setter je Feld für `set` (`fire_dbgSetField`).
+* Ein Debug-Build hat immer Ausnahmen (`FIRE_EXCEPTIONS`): jeder Laufzeitfehler ist eine Ausnahme, an der der Debugger anhalten kann. Eine Ausnahme, die kein
+  `catch` des Threads nehmen würde (`wouldBeCaught`), hält vor dem Abrollen an; `resume` lässt den `throw` `undefined` ergeben.
+* **Der Agent** (`fire_debug.h`, `FIRE_DEBUG_AGENT`: posix, windows, freertos, esp32) ist ein eigener Thread (auf FreeRTOS eine Task mit
+  `FIRE_DEBUG_STACK_BYTES`, Standard 8192, Priorität `FIRE_DEBUG_PRIORITY`). Mit `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T` verbindet sich das Programm beim Start
+  mit spark und wartet vor der ersten Instruktion; ohne die Variable läuft es ohne Debugger. Weitere Transporte (Protokoll, "Transport"): `FIRE_DEBUG=stdio`
+  (gerahmt über stdout/stdin), auf dem ESP32 fest die Konsolen-UART (`FIRE_DEBUG_TRANSPORT_UART`), auf FreeRTOS fest stdio (`FIRE_DEBUG_TRANSPORT_STDIO`) -
+  gerahmt wartet das Programm höchstens 3 s auf den Debugger. Er liest Werte nur, solange ihr
+  Thread steht (mit Threads unter der GIL), ruft nie fire-Code zum Anzeigen auf und fasst keinen Zähler an; `set` führt der angehaltene Thread selbst aus.
+  Ein angehaltener Thread wartet ohne GIL, die anderen laufen weiter; neue fire-Threads melden sich und laufen mit den Haltepunkten los.
+* Getestet in `fire.Testing` (`NativeDebugTests.cs`, Fälle "Native-Debugger"): 22 Skripte (Schleifen, Rekursion, Objekte, Properties, Destruktoren, Lambdas,
+  try/catch/finally/resume, Strings, Einheiten, Arrays, statische Felder, Vererbung, Operatoren/ToString, Standardwerte, break/continue, Listen,
+  unbehandelte Ausnahmen), je Haltepunkte/Schritte mit Aufrufstapel, Scopes, `this` und Globals sowie jeder Step Into und Step Over vom Start bis zum
+  Ende gegen die VM; dazu `#line`, gcc/clang/tcc ohne Warnung, gdb, `expand`/`set`, `pause`, `detach`, Threads, unter AddressSanitizer/UBSan; der Agent für Windows mit MinGW unter Wine.
+  Gerahmt: drei Fälle über `FIRE_DEBUG=stdio` und zwei auf dem FreeRTOS-Simulator (`native/sim`, Ziel `freertos`) mit denselben Plänen gegen die VM, die Eingabe
+  des Programms durch den Agenten, Text, der wie ein Rahmen aussieht, ein verfälschter Rahmen, die Wartezeit ohne Debugger; ein ESP32 unter QEMU (siehe "ESP32").
+
 ## Messwerte
 
 **C gegen C++** (während des Ports, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` waren als C 4-16 % schneller
@@ -258,6 +307,33 @@ Damit laufen alle neun Benchmarks nativ (`lambda` siehe unten). Mit clang++ sind
 (Typinferenz) wird `fib` weitere ~4x schneller (`native/spike/spike.cpp`). Die Zahlen sind Momentaufnahmen von einer
 einzigen Maschine, keine Garantie.
 
+### Klassen-Deskriptoren statt `switch` in den Hooks der Runtime (ROADMAP 9, A0)
+
+Was die Runtime über eine Klasse wissen muss - ihr Name (`className`), die Destruktoren ihrer Kette (`runDestructors`), `ToString()` (`userToString`), das Feld
+`message` einer Ausnahme, die nichts fängt (`excMessageIndex`), das ganzzahlige Feld `ticks` eines TimeSpan (`timeObjTicks`) und welche `catch`-Typen ein Objekt ist
+(`excMatches`) -, steht in einer Tabelle `FireClassDesc kClassDescs[]` (eine Zeile je Klassen-Id, `fire_init` setzt `g_classDescs`), nicht mehr in je einer generierten
+Funktion mit einem `switch` über die Klassen-Ids. Die Funktionen sind jetzt Teil der Runtime (`fire_rt.h`, am Ende). Der `catch`-Typ `Exception` hat immer die Id 0
+(`FIRE_EXC_ANY`), jede Klasse listet die Ids der übrigen `catch`-Typen, die sie ist. Das ist die Voraussetzung dafür, dass Module ihre Klassen selbst beschreiben
+(Abschnitt "Getrennte Übersetzung: `linkage`").
+
+Gemessen (gcc 13 `-O2`, eigene Programme: die Benchmarks von `fire.Benchmarks` mit etwa 20-facher Arbeit plus `exceptions` - 300 000 geworfene Ausnahmen
+zweier Klassen einer Hierarchie, zwei `catch` - und `virtual` - Aufrufe über die Basisklasse, `ToString`, ein Destruktor), alt und neu abwechselnd, 30 Läufe, mit
+Prozessstart; gleiche Ausgaben:
+
+| Benchmark | vorher min | nachher min | Verhältnis | Median-Verhältnis |
+|---|---:|---:|---:|---:|
+| `alloc` | 43,8 ms | 45,1 ms | 1,03 | 0,98 |
+| `exceptions` | 44,5 ms | 44,5 ms | 1,00 | 1,03 |
+| `fib` | 12,5 ms | 13,0 ms | 1,04 | 1,01 |
+| `list` | 88,3 ms | 89,2 ms | 1,01 | 1,03 |
+| `method` | 15,8 ms | 14,4 ms | 0,91 | 0,89 |
+| `string` | 31,2 ms | 30,0 ms | 0,96 | 0,96 |
+| `virtual` | 58,0 ms | 58,4 ms | 1,01 | 0,96 |
+
+Alles innerhalb des Rauschens (±4 %, Last auf dem Rechner ~1). Die gestrippten Programme sind 0-8 KB größer (Seitengrenzen; die Tabelle ersetzt die Switches).
+Nach Phase A (Module; mit `linkage` `"source"` ändert sich am erzeugten C nur ein Feld der Tabellen von `try`) noch einmal gegen den Stand vor A0, dieselbe Messung:
+min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `method` 0,92, `string` 0,99, `virtual` 1,02 (Mediane 0,94-1,05) - Rauschen.
+
 ## Stand
 
 Übersetzt wird eine Teilmenge der ISA:
@@ -297,9 +373,13 @@ einzigen Maschine, keine Garantie.
   deklariert, `int[32]` = 32 Bit, sonst Zeigerbreite), `float` (`float[32]` = `float`), `char`, `string` (UTF-8, nach dem Aufruf freigegeben), Zeiger (ein Zeiger auf eine Variable
   bekommt eine Kopie, die danach zurückgeschrieben wird, wie in der VM). Ohne `#extern` (Host-Registrierung in C#) ist die Funktion nicht übersetzbar; `try Name(...)` (Timeouts) auch nicht.
 
-* **Reflection und `probe`** (SPEC 8.13/8.14, `#import "reflection"`): ruft das Programm eine der `__refl_*`-Funktionen auf, erzeugt der Generator **alle** Klassen des Programms
-  (eine Klasse ist über ihren Namen erreichbar) mit ihren Konstruktoren, Methoden und den Feldhelfern aller Namen (`CppGenerator.Reflection.cs`). Die Beschreibungen sind Tabellen
-  (`RfClass`/`RfMember`, wie `ReflectionNatives.Members` sie aufbaut: eigene und geerbte Mitglieder, ein abgeleitetes verdeckt gleichnamige); `Reflect.Get/Set/Call/New/Has`
+* **Reflection und `probe`** (SPEC 8.13/8.14, `#import "reflection"`): was das Programm per Name erreichen kann, hängt davon ab, welche `__refl_*`-Funktionen es aufruft
+  (Stufen, `CppGenerator.Reflection.cs`, siehe "Größe des Programms"): Mitglieder eines Objekts per Name (`Reflect.Get/Set/Has`, Selektoren, Proben) brauchen die Felder und
+  Property-Zugriffe der Klassen, deren Objekte es gibt; `Reflect.Call` deren Instanzmethoden, die da sind; `Reflect.New` die Konstruktoren der Klassen in den Tabellen. Die Tabellen
+  beschreiben in den Stufen 0-2 jede Klasse, in Stufe 3 die erreichten (gemacht, benutzt, ihre Basisklassen, `[Keep]`, als Literal an die Reflection gegeben); eine weggelassene
+  Methode steht nicht darin, nur ihr Name (für den klaren Fehler, siehe "Größe des Programms").
+  Die Beschreibungen sind Tabellen (`RfClass`/`RfMember`: die eigenen Mitglieder jeder Klasse; die geerbten liest `rf_visible` aus den Zeilen der Basisklassen, ein abgeleitetes
+  verdeckt gleichnamige - dieselbe Liste wie `ReflectionNatives.Members` der VM); `Reflect.Get/Set/Call/New/Has`
   sind erzeugte Funktionen über die Feldhelfer und Dispatcher des Programms - mit denselben Zugriffs-, Einheiten- und Property-Regeln und denselben Fehlermeldungen
   (`ReflectionException`). Für private/protected zählt der Code, der die Bibliothek aufgerufen hat: ein Aufruf einer Methode der Bibliotheksklassen von außen setzt `g_reflCaller`.
   Ein Selektor (`c => c.radius`) trägt seine Mitgliedskette in der `Lam` (`sel`). `probe`/`silence`: ein Objekt mit Proben hat Flag 2 und eine `ProbeNode` (Seitentabelle);
@@ -523,6 +603,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
   "engine": "native",            // "vm" (Standard) oder "native": was `build` erzeugt
   "target": "my-board",          // Standardziel; sonst dieser Rechner
   "toolchain": "gcc",            // Standard-Toolchain für Ziele ohne eigene; sonst die erste gefundene
+  "stripping": 3,                // was wegfällt: 0 "none" .. 3 "all" (Standard), Zahl oder Name (siehe "Größe des Programms")
   "targets": {
     "my-board": {
       "extends": "freertos",     // eingebautes Ziel oder anderes aus dieser Datei; nur Abweichungen stehen hier
@@ -552,18 +633,153 @@ Toolchains (`kind`): `gcc`, `clang`, `msvc` (Compiler, Standard, Optimierung, Ar
 **Größe des Programms.** Ein Programm wird beim Linken gestrippt (gcc/clang: `-s`, macOS `-Wl,-x`): Symbole und Debug-Informationen machen ohne Strippen etwa die Hälfte der Datei aus
 (MinGW: 945 KB → 468 KB). `"strip": false` in der Toolchain lässt sie stehen (zum Debuggen); eine Bibliothek für die VM wird nie gestrippt. `"optimization": "size"` wählt das kleine
 Profil: gcc/clang `-Os -ffunction-sections -fdata-sections` und beim Linken `--gc-sections` (macOS `-dead_strip`), msvc `/O1 /Gy /Gw` und `/OPT:REF /OPT:ICF` (Beispiel 3D-Szene unter Linux:
-464 KB → 404 KB gestrippt → 285 KB mit `size`). Der Generator selbst übersetzt schon nur, was vom Programm aus erreichbar ist (Funktionen werden erst beim ersten Aufruf nach Name und
-Argumentzahl angelegt, Klassen erst beim `new`), und der C++-Compiler wirft nicht erreichte `static`-Funktionen weg; im Beispiel führt eine Messung (gcov) nur etwa 9 % der erzeugten
-Zeilen nie aus, darunter Fehlerpfade. Ein weiterer Durchlauf über die Methoden des Preludes würde deshalb kaum etwas sparen und brächte Risiko (Dispatch nach Name, Reflection,
-Callbacks) – er ist nicht eingebaut. Der Editor kennt beides im Dialog „Toolchain Settings“ (Toolchain: Optimization, Strip symbols).
+464 KB → 404 KB gestrippt → 285 KB mit `size`). Was der Generator gar nicht erst übersetzt, steht im folgenden Abschnitt. Der Editor kennt beides im Dialog „Toolchain Settings“
+(Toolchain: Optimization, Strip symbols).
+
+### Größe des Programms: was der Generator weglässt
+
+Der Generator übersetzt nur, was vom Programm aus erreichbar ist: Funktionen werden erst beim ersten Aufruf nach Name und Argumentzahl angelegt, Klassen erst beim `new`
+(`RegisterClass`), ein Aufruf über den Verteiler (`call_Name_n`) zieht die Methode dieses Namens aller *gemachten* Klassen nach; der C-Compiler wirft nicht erreichte
+`static`-Funktionen weg. Die statischen Initialisierer aller Klassen laufen weiter am Anfang (wie in der VM). Was per Name erreichbar ist, hält Code fest:
+
+* **Reflection** (Stufen nach den aufgerufenen `__refl_*`): Mitglieder per Name (`Reflect.Get/Set/Has`, Selektoren, Proben) halten die Felder und Property-Zugriffe der gemachten
+  Klassen fest, `Reflect.Call` ihre Instanzmethoden, `Reflect.New` die Konstruktoren aller Klassen der Tabellen. Die Tabellen (`kRfClasses`, `Reflect.Classes()`, `Type.Named`)
+  beschreiben die **erreichten** Klassen: gemacht, mit benutztem Code oder statischen Feldern, ihre Basisklassen, `[Keep]`. Vorher erzeugte ein einziger Aufruf von `Reflect.Has`
+  (das `ui` tut das für Stile, Trigger und Bindungen) **alle** Klassen des Programms mit allen Konstruktoren und Methoden.
+* **JSON**: Schreiben zieht nichts nach; Lesen die Klassen der deklarierten Typen (`Json.Deserialize<T>`, ihre Feldtypen, Unterklassen, Klassen eines Interfaces), ein Slot ohne
+  Klasse (`any`, ein Typname als Text) alle; `[NotSerializable]` und `"serializable": false` (das Package `ui`) schließen Klassen aus (docs/JSON.md).
+* **`[Keep]`** (SPEC 5.12) vor einer Klasse behält sie mit allen Mitgliedern, vor einem Mitglied dieses und seine Klasse; nicht vererbt.
+* Tabellen: Feldhelfer und Verteiler nur für die Namen, die erreicht werden; gleiche Zweige eines `switch` über die Klassen stehen einmal (`case 3: case 9: ...`); `fp_` (die Adresse
+  eines Felds) nur für Namen, deren Adresse das Programm nimmt; die Reflection-Tabellen halten nur die eigenen Mitglieder jeder Klasse (die geerbten kommen zur Laufzeit aus der
+  Basisklasse) und jede Namensliste einmal; die Proben-Tabellen ebenso.
+
+**Stufen des Weglassens** (`"stripping"` in `fire.native.json` oder in den Einstellungen des Projekts, `--stripping` auf der Befehlszeile von `build`, `native` und `test`;
+eine Zahl oder ein Name; die Befehlszeile geht vor das Projekt, das Projekt vor `fire.native.json`). Jede Stufe lässt weg, was die vorige behält, und mehr:
+
+| `"stripping"` | was bleibt |
+|---|---|
+| `0` `"none"` | alles: jede Klasse mit allen Konstruktoren, Methoden (auch statischen) und Feldern - wie die VM. `--keep-all` sagt dasselbe; ein **Debug-Build** (`#debug`, `-m DEBUG`) hat immer Stufe 0 (der Debugger, ROADMAP Abschnitt 8). |
+| `1` `"protected"` | jede Klasse und jeder öffentliche Member (Methoden, auch statische, Properties, Konstruktoren); ein privater oder geschützter Member nur, wenn das Programm ihn erreicht (ein geschützter, den eine Unterklasse benutzt, ist erreicht). Das ist die Regel einer vorgebauten Library (ihre Schnittstelle und was sie erreicht). |
+| `2` `"methods"` | jede Klasse mit ihren Konstruktoren (`Reflect.New` macht jede), Feldern und Properties (Getter und Setter: Proben, `Reflect.Get/Set/Has` und JSON arbeiten an allem); eine Methode nur, wenn das Programm sie benutzt - die Reflection-Tabellen beschreiben sie dann auch nicht. |
+| `3` `"all"` (Standard) | was das Programm erreicht: auch eine Klasse, die es nie macht oder benutzt, fehlt (das frühere `"reached"`). |
+
+In jeder Stufe bleiben die Klassen und Member mit `[Keep]` und die **Namen, die das Programm als Literal an die Reflection gibt**: ruft eine Funktion eine Methode von
+`Reflect`, `Type`, `Member`, `Selector` oder `Attribute` (`Reflect.New("Dog", [])`, `Type.Named("Dog")`, `Reflect.Call(o, "Bark", [])`, `Reflect.Get(o, "f")`,
+`t.Find("Bark")`), behält der Generator jeden Text, den sie als Wert lädt und der eine Klasse nennt (wie `[Keep]`: mit allen Membern), oder der ein Name ist (die Member
+dieses Namens der Klassen, deren Objekte es gibt: ihre Methoden mit Verteilern, ihre Felder und Properties). Auch `var n = "Bark"` vor dem Aufruf zählt; ein Text, der
+erst zur Laufzeit entsteht, ein `"$type"` von JSON und ein Name aus einer Datei nicht. Die Erkennung ist bewusst grob (jeder Text der Funktion, nicht nur die Argumente
+des Aufrufs): sie behält höchstens etwas mehr.
+
+Wird zur Laufzeit etwas gesucht, das weggelassen ist, ist das ein klarer Fehler (`ReflectionException`) statt einer unbekannten Klasse:
+
+* eine Klasse per Name (`Reflect.New`, `Type.Named`, `Type.Of(text)`; nur in Stufe 3): `Class 'Ghost' was left out of the build (stripping 3). Add [Keep] to 'Ghost' or use stripping <= 2.`
+  (die Namen der weggelassenen Klassen stehen dafür in `kRfStrippedClasses`);
+* ein Member per Name (`Reflect.Call`, auch ein Feld oder eine Property ohne Helfer): `Member 'Dog.Wag' was left out of the build (stripping 2). Add [Keep] to 'Dog.Wag' or use
+  stripping <= 1.` - für einen privaten oder geschützten `... or use stripping 0.` (die Zeile `RfClass` einer Klasse nennt dafür ihre weggelassenen Methoden in `stripped`,
+  mit der Stufe, die sie behält, vorne: `"1Wag"`).
+
+`Type.Names()` listet die Klassen, die da sind, `Type.Of(o).Methods()` die Methoden, die da sind; `Reflect.Has(o, name)` ist für eine weggelassene Methode `false`.
+Die VM behält alles - der Fehler kommt nur in einem nativen Build vor, dieselbe Meldung gibt es in der VM nicht.
+`"trim"` (der frühere Schalter) bleibt als Alias: `"all"` ist 0, `"reflection"` (jede Klasse, sobald eine per Name gesucht wird) ist 1, `"reached"` ist 3; steht beides da,
+gilt `"stripping"`. Mit `linkage` `"static"`/`"shared"` behält eine Library in jeder Stufe außer 0 ihre Schnittstelle (Stufe 1, siehe "Getrennte Übersetzung"); ein Member
+einer Library per Name ist dann auch in Stufe 2 und 3 da.
+
+**VM und nativ.** Die VM hat jede Klasse des gelinkten Programms; ob das Programm eine Klasse erreicht, weiß sie nicht (dafür bräuchte sie dieselbe Analyse, die der Generator
+nebenbei beim Übersetzen macht - und die hängt an seinem Verteiler nach Namen; ein Weglassen in der VM ist Abschnitt 11.6 der Roadmap, offen). Im Standard unterscheiden sich
+deshalb genau die Suchen mit einem Namen, der erst zur Laufzeit entsteht, nach etwas, das das Programm sonst nie erreicht (und JSON-`"$type"` außerhalb der deklarierten
+Typen); alles, was an einem vorhandenen Objekt arbeitet, ist gleich. `[Keep]` oder eine kleinere Stufe machen die Ausgabe wieder gleich.
+Getestet in `fire.Testing` ("Weglassen (stripping): ..." in allen vier Stufen gegen die VM - Literale, Laufzeitnamen, privat, `[Keep]`, Proben in 2 und 3, JSON, die
+Aliase; `[Keep]` und JSON als Fälle "Native == VM"; mit `static` in `FIRE_TESTS_ONLY=linkage`).
+
+**Die Stufen am minimalen `ui`-Programm** (Framebuffer, Window, `UI.Root`, ein `UI.Label`, `Run()`; gcc 13 `-std=c11 -O2 -c`, ohne ccache, 4 vCPUs):
+
+| Stufe | C | Zeilen | `gcc -O2 -c` | Objektdatei (davon Code, `size`) |
+|---|---:|---:|---:|---:|
+| 0 `none` (wie `--keep-all`) | 8,75 MB | 240.700 | 149 s | 6,49 MB (3,46 MB) |
+| 1 `protected` | 8,75 MB | 240.700 | 155 s | 6,49 MB (3,46 MB) |
+| 2 `methods` | 7,31 MB | 199.700 | 149 s | 6,41 MB (3,46 MB) |
+| 3 `all` (Standard) | 2,76 MB | 72.800 | 56 s | 2,74 MB (1,44 MB) |
+
+Die Stufen 1 und 2 sind hier so groß wie 0 (Stufe 1 ergibt dieselbe Objektdatei): `ui` hat kaum privaten Code, den kein öffentlicher Member erreicht, und die
+Konstruktoren der rund 140 Klassen des Packages ziehen fast ihren ganzen Code nach (Stufe 2 spart nur die Methoden, die keiner aufruft - gcc hatte die als nicht benutzte
+`static`-Funktionen ohnehin verworfen). Für ein `ui`-Programm lohnen nur 3 und, zum Vergleich mit der VM, 0; 1 und 2 sind für kleine Programme ohne große Packages
+gedacht, die Klassen per Name machen (der Testfall "Weglassen (stripping)": 990 KB / 990 KB / 495 KB / 303 KB C in den Stufen 0-3). Vor den Stufen (Stand 64b4ccc)
+hatte Stufe 3 2,77 MB und `--keep-all` 8,75 MB.
+
+**Messung** (gcc 13 `-std=c11 -O2 -c`, ohne ccache, derselbe Rechner, vorher = Stand vor Abschnitt 11):
+
+| Programm | C vorher | C nachher | gcc -O2 vorher | gcc -O2 nachher |
+|---|---|---|---|---|
+| minimales `ui` (Framebuffer, Window, `UI.Root`, ein `UI.Label`, `Run()`) | 7,85 MB (220.000 Zeilen, 1430 Funktionen) | 2,29 MB (65.800 Zeilen, 363 Funktionen) | 140 s | 49 s |
+| `graphics` + `windows` (Renderer, Rechteck, Linie, Text) | 417 KB | 412 KB | 5,2 s | 5,3 s |
+| `scene3d` (der Testfall "Scene3D") | 1,27 MB | 1,23 MB | 17,3 s | 17,5 s |
+| JSON (zwei Klassen, `Serialize` und `Deserialize<T>`) | 161 KB | 71 KB | 5,5 s | 3,8 s |
+| Reflection (`Type.Of`, `Get/Set/Call/Has`) | 680 KB | 348 KB | 15,5 s | 9,2 s |
+
+`graphics` und `scene3d` benutzen keine Reflection: dort war schon vorher nur das Erreichte übersetzt, der Rest ist echter Code und die C-Bridges. Mit Stufe 0 ist das
+`ui`-Programm 8,1 MB groß (alles, auch was vorher ohne Reflection-Zugriff wegfiel).
+
+Was im minimalen `ui`-Programm bleibt, ist im Wesentlichen echter Code: `UI.Root` bringt Ereignisse, Fokus, Popups, Ziehen und Ablegen mit (die Funktionen machen etwa die Hälfte
+aus, die Feldhelfer ein Fünftel, die C-Bridges von `graphics` und `windows` ein Achtel). Ein Filter für den Verteiler nach Rapid Type Analysis (eine Methode nur, wenn eine Aufrufstelle
+mit passendem statischen Typ sie erreichen kann) bringt hier wenig: 81 % der Aufrufstellen über den Verteiler kennen die Klasse des Empfängers schon, und die Methoden, die ein solcher
+Filter höchstens weglassen könnte, sind 4 % des Funktionscodes (die meisten davon gehören Unterklassen von `UI.Element` und blieben) - er ist nicht eingebaut. Ebenso nicht die Natives der Bridges in `#if`-Abschnitten: gcc verwirft ihre nicht benutzten
+`static`-Funktionen vor dem Optimieren (Gewinn nur bei TinyCC und an der Größe der Datei).
 
 ### Bauen: `build` zeigt auf nativ
 
-`fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
+`fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep] [--stripping 0-3] [--keep-all]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
 eigenständige Datei mit der VM, wie bisher). Mit `native` wird für das Ziel übersetzt (`NativeBuilder`: C++ erzeugen, Runtime und Plattformpaket daneben legen) und mit der Toolchain gebaut;
 bei `files` ist `-o` ein Ordner. `fire.Compiler native ...` erzeugt weiter nur das C++ (samt Runtime und Plattformpaket des Ziels). Der Editor hat denselben Weg:
 **Tools > Toolchain Settings...** (Seiten links: *Build* mit der Standard-Engine, *Target* mit Plattform/Includes/Defines/Einsprung, *Toolchain* mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript bzw. Projekt; auch erreichbar über *Project Properties > Native & Toolchain*), **Run > Build Native...**,
 und **Build** folgt dem `engine` der Konfiguration.
+
+### Ausführen und Debuggen aus spark (ROADMAP 8.7)
+
+Neben der Modus-Box steht die **Engine-Box** (*VM* / *Native*, auch **Run > Engine: VM / Native**). Die Wahl gilt für das Projekt des aktiven Dokuments
+(`settings.engine`, gespeichert in der `.fireproj`) bzw. für einzelne Skripte (spark-Einstellungen); ohne Wahl gilt das `engine` von `fire.native.json`, sonst die VM.
+Mit *Native* bauen F5, F10, F11 und *Run to End* das Programm für das gewählte Ziel (es muss auf diesem Rechner laufen: Plattform `posix` bzw. `windows`, eine
+Toolchain, die ein Programm macht) in den Ordner `bin/<ziel>-<modus>` des Projekts (ein Skript: neben sich, ungespeichert: im Temp-Ordner) und starten es:
+
+* **Debug**: gebaut mit `-O0 -g` (MSVC `/Od /Zi`), Symbole bleiben (`NativeLaunch.DebugToolchain`). spark lauscht auf `127.0.0.1` an einem freien Port, startet das
+  Programm mit `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T`, nimmt **eine** Verbindung an, deren `hello` das Token trägt, und wartet, bis der Hauptthread am Eintritt steht
+  (`NativeLaunch.LaunchDebug`, `NativeDebugListener`). Danach ist es eine gewöhnliche Debug-Sitzung über `NativeDebugTarget` (`src/fire.Compiler/Debugging`,
+  Protokoll: docs/NATIVE_DEBUG_PROTOCOL.md): Haltepunkte, Schritte, Pause, Threads, Scope-Ansicht mit *Set Value...*, unbehandelte Ausnahmen mit *Ignore Error and
+  Continue*. Das Stack-Panel (der Operandenstapel der VM) ist ausgeblendet. Passen die Hashes der Quellen im `hello` nicht zu den Texten des Editors, steht eine Warnung
+  im Output-Panel. *Stop* schickt `terminate` und beendet den Prozess.
+* **Release/Performance**: nicht debugbar (Entscheidung 8.4) - das Programm läuft einfach; stdout und stderr kommen zeilenweise ins Output-Panel, das Ende mit
+  Exitcode in die Statusleiste. *Stop* beendet den Prozess.
+
+Auf dem Desktop läuft die Ausgabe des Programms über seinen Prozess, nicht über die Debug-Verbindung (ein ESP32: siehe unten). Getestet ohne die Runtime gegen einen Schein-Agenten in C#
+(`FIRE_TESTS_ONLY=debugger`, Block "Natives Debug-Ziel"), dazu Start eines Prozesses mit `FIRE_DEBUG` (ein Programm in bash, das das Protokoll spricht) und - sobald die
+Runtime den Debug-Agenten hat - Ende-zu-Ende mit einem echten Debug-Build gegen die VM (Haltepunkt in einer Methode, Tiefe, Locals, `this`, `set`, Step Over bis
+zur unbehandelten Ausnahme mit Meldung und Ort, `resume`, die Ausgabe des Prozesses); ohne Agenten in der Runtime wird dieser Teil übersprungen.
+
+#### Ziel `esp32`: Run und Debug auf dem Board (ROADMAP 8.6)
+
+Mit dem Ziel `esp32` (Build-Leiste bzw. `settings.target`) machen F5/F10/F11 aus dem Programm ein **ESP-IDF-Projekt** in `bin/esp32-<modus>` (die Komponente, die
+`build -t esp32` schreibt, in `main/`, daneben die `CMakeLists.txt` des Projekts, `Esp32Launch.WriteProject`) und rufen `idf.py [-p PORT] build flash` (mit
+`export.sh`/`export.bat` von ESP-IDF; der Ordner kommt aus `IDF_PATH` bzw. `idfPath` der spark-Einstellungen - fehlt er, sagt spark das; die Ausgabe steht im
+Build-Log, der erste Bau von ESP-IDF dauert Minuten). Danach öffnet spark die **serielle Schnittstelle** selbst (System.IO.Ports, `SerialFramedTransport`) und
+startet das Board neu (RTS, wie `idf.py monitor`):
+
+* **Port**: `"port"` in den Einstellungen des Projekts (`settings.port`) oder im Ziel von `fire.native.json` (`"targets": {"esp32": {"port": "/dev/ttyUSB0"}}`),
+  sonst `ESPPORT`, sonst die einzige USB-Seriell-Schnittstelle des Rechners (Linux `/dev/ttyUSB*`, `/dev/ttyACM*`; macOS `/dev/cu.usbserial*`, ...; Windows die
+  COM-Ports), sonst die, die esptool beim Flashen nimmt und nennt (`Serial port ...`). **Baud**: `"baud"` (Standard 115200).
+* **Run** (Release/Performance): die Konsole des Boards im Output-Panel (Rahmen eines Debug-Builds werden ausgefiltert); unter dem Output-Panel ist eine
+  **Eingabezeile**, deren Zeilen das Board als Standardeingabe bekommt. *Stop* schließt die Schnittstelle.
+* **Debug**: ein Debug-Build (`FIRE_DEBUG_TRANSPORT_UART`, Hauptstack der Task 32 KB statt 16 KB) sagt beim Start `hello` über die Konsolen-UART und wartet 3 s auf
+  den Debugger; spark wartet auf das `hello` (das Boot-Log davor kommt ins Output-Panel), schickt sofort den ersten Befehl und vergleicht die Hashes der Quellen
+  (passen sie nicht: "das Board führt ein anderes Programm aus"). Dann ist es eine gewöhnliche Sitzung über `NativeDebugTarget.OpenFramed` - Haltepunkte,
+  Schritte, Threads, Scopes, *Set Value...*, unbehandelte Ausnahmen; die Konsole zwischen den Rahmen und die Eingabezeile wie bei Run. *Stop* schickt
+  `terminate` (das Board startet neu).
+
+Getestet: `SerialFramedTransport` gegen ein Schein-Board über eine serielle Leitung im Speicher (`FIRE_TESTS_ONLY=debugger`: Boot-Log, verfälschter Rahmen, Rahmen
+mitten in einer Konsolenzeile, Threads mit ihren eigenen Globals, Eingabe, ein zweites `hello`, kein `hello`), und Ende-zu-Ende ein Debug-Build auf
+**QEMU** (`qemu-system-xtensa` von ESP-IDF, `-serial tcp:...,server=on,wait=on`: die Konsolen-UART ist ein Socket; Fälle "Native-Debugger: ESP32 (QEMU, UART)",
+mit `IDF_PATH`, Projekt in `~/.cache/fire-tests/esp32-dbg`): das Boot-Log vor dem `hello`, ein Plan aus Haltepunkt, Step Over/Into/Out, Scopes, `this`,
+Globals, unbehandelter Ausnahme mit `resume` gegen die VM, die Eingabe über die UART; dasselbe Programm ohne Debugger läuft nach 3 s allein, liest seine
+Eingabe von der UART und endet an seiner Ausnahme. **Nicht geprüft**: ein echtes Board (USB-Seriell-Chip, RTS-Reset, Port-Erkennung, `idf.py flash`) und
+die Klicks in spark.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
@@ -698,6 +914,132 @@ fire-Programm  ->  Natives der Bridges (IO, Time, Devices, Graphics, später Har
 
 Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
 
+## Getrennte Übersetzung: `linkage` (ROADMAP 9)
+
+Ein natives Programm entsteht normalerweise als **eine** C-Datei (`linkage` `"source"`, der Standard, Entscheidung 9.1): der Generator sieht das ganze Programm
+(eine geschlossene Welt) und lässt weg, was es nicht erreicht. Mit `"linkage": "static"` (in `fire.native.json`, in den Einstellungen des Projekts oder
+`--linkage static` auf der Befehlszeile) wird jede **Library** des Programms - das Prelude (`core`), jeder Import (`json`, `ui`, ein Package), jede Library des
+Projekts - zu einer **statischen Bibliothek** (`.a`, mit msvc `.lib`), einmal gebaut und in einem Cache des Benutzers abgelegt; das Programm selbst wird bei jedem Bau
+übersetzt und mit ihnen gebunden. Zwei Programme, die dieselben Libraries mit denselben Schaltern benutzen, teilen sich ihre Bibliotheken.
+
+### Module
+
+Die Quellen des gelinkten Programms tragen ihr **Modul** (`LinkedProgram.SourceModules`: `core` für das Prelude, der Import-Schlüssel für das Prelude eines Imports,
+der Import-Name für die Dateien einer Library des Projekts, `null` für das Programm), dazu die Module, die ein Modul braucht (`ModuleDeps`: seine `#import`s, die
+Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code steht: die Methoden einer `class extends List` von `linq` gehören zu `linq`, nicht zu `core`
+(der Compiler merkt sich dafür die Quelle des Members, nicht die der Klasse - auch der Debugger zeigt sie jetzt in der richtigen Datei).
+
+* Eine **Library** wird von einem Generator erzeugt, der nur ihre Klassen und die der Module sieht, die sie braucht (`LibraryView`). Sie behält, was andere Module
+  benutzen können - die öffentlichen und geschützten Member ihrer Klassen (ihre Schnittstelle ist die Wurzel dessen, was bleibt - §11; `protected` zählt dazu, eine
+  Klasse eines anderen Moduls kann davon erben) -, ein privater Member bleibt nur, wenn ihr eigener Code ihn erreicht (mit Stufe 0, in Debug-Builds und mit
+  `[Keep]` alle). Das ist Stufe 1 des Weglassens, in jeder Stufe außer 0: eine Library wird einmal für alle Programme gebaut (ihr Schlüssel im Cache unterscheidet nur 0
+  und den Rest); das Programm selbst lässt weg wie mit `source`. Sie nummeriert ihre Klassen selbst (nach Namen sortiert) und schreibt ihre Ids als `fire_mb_<modul> + k`. Member anderer Module ruft sie über
+  **exportierte Namen** (`fx_<modul>_<Klasse>__<Member>_<i>`, aus dem Namen des Members abgeleitet - jedes Modul kommt auf denselben Namen). Statische Felder
+  heißen `SFx_<modul>_<Klasse>_<Feld>`; das Modul der Klasse definiert sie.
+* **Jedes Modul bedient seine eigenen Klassen** (Phase B2): seine Verteiler (`<modul>_call_X_n`), Feld-Helfer (`gf_x`/`sf_x`/`fp_x`), `is of` (`isof_X`), Operatoren,
+  Klassen-Wertungen von Überladungen (`ovd_X`) und Typargumente von Objekten (`targOf_C_k`) erzeugt es für die Aufrufe seines eigenen Codes, mit einem `switch` nur über
+  seine eigenen Klassen (eine Library zählt sie ab 0: `cls - fire_mb_M`; die Klassen anderer Module, die es mit Membern erweitert - `class extends List` von `linq` -
+  hinter ihnen). Ein Objekt einer Klasse, die das Modul nicht kennt - einer Library, die es braucht, des Programms (auch eine Klasse des Programms, die von einer Klasse
+  der Library erbt), später eines Plugins -, geht über die **Runtime**: jedes Modul schreibt für jede seiner Klassen eine Tabelle der Member, die sie selbst deklariert
+  (`FireMembers` in fire_rt.h: Methoden nach Name und Zahl der Argumente, Felder nach Name - sortiert, binär gesucht), das Programm hängt sie in die
+  Klassen-Deskriptoren (die Klasse zuerst, dann ihre Basen; zu einer Klasse auch die Tabellen der Module, die sie erweitern), dazu die Namen ihrer Kette und Interfaces
+  und eine Funktion für ihre Typargumente. `fireFindMethod`/`fireGetField`/`fireSetField`/`fireIsOf`/`fireClassScore`/`fireTArgOf` gehen sie durch. Eine Zeile einer
+  Tabelle ruft den Verteiler ihres Moduls für diese Klasse (`disp_X_n(k, ...)`): Überladungen, Defaults und Zugriffsprüfungen gelten wie bei eigenen Aufrufen
+  (die Prüfung von `protected` fragt die Kette der Klasse des Aufrufers zur Laufzeit). Fehlt der Member, kommen die Fehler der VM (eine Klasse mit dem Member mit
+  anderen Zahlen von Argumenten: ArgumentException mit ihrer Liste).
+* Das **Programm** kennt als einziges Modul alle Klassen (eine geschlossene Welt): es ruft Member von Libraries direkt, wo der Typ es sagt (Devirtualisierung mit dem
+  Wissen aller Klassen), erzeugt aber Verteiler und Feld-Helfer nur für seine eigenen Klassen. Es definiert die Klassen-Deskriptoren (A0, mit den Spalten oben), die
+  JSON-Tabellen, die Liste der Reflection-Zeilen und die Debug-Tabellen. Die Tabellen seiner Klassen nennen nur die Member, die ein Modul beim Namen ruft (die **Needs**
+  der Libraries: ihre Verteiler und Feldnamen; mit Reflect.Get/Call alle). Die Klassen, von denen eine Library Objekte anlegt, stehen in ihren Needs.
+* **Reflection** je Modul: die Zeilen der Reflection-Tabellen (`RfClass` mit Membern und Attributen) und Reflect.New einer Klasse (`fire_new_<modul>_<Klasse>`) stehen
+  in der Datei ihres Moduls; das Programm listet die Klassen, die es erreicht. Reflect.Get/Set/Call gehen über die Tabellen der Member (`fireGetField`, ...); Probes
+  sehen die Setter jedes Moduls selbst nach, Reflect.Set auf ein Objekt mit Probes schreibt über den Namen (`probedSet` ohne Rohfunktion).
+* **Zahlen, die erst das Programm festlegt**, liest eine Library aus Tabellen des Programms: Einheiten (`fire_units_<m>[k]`), Enums (`fire_enums_<m>[k]`), die Typen
+  von `catch` (`fire_exct_<m>`, `HandlerInfo.typeMap`), die Quellen für den Debugger (`fire_dbgsrc_<m>[k]`, k ist die Stelle unter den Quellen des Moduls),
+  die Basis ihrer Klassen-Ids (`fire_mb_<m>`). `FIRE_NDIMS` ist mit `static` fest 16.
+* **Natives in C** (Packages in C, die Bridges von graphics und windows) stehen in der Datei des Moduls ihres Imports, wenn sie für sich stehen: ihr C ruft keine
+  Funktion der Natives eines anderen Imports des Programms und keiner ruft ihre (hash, compression, io, time; nicht graphics und windows zusammen - die Bridge von
+  windows benutzt die Framebuffer von graphics -, nicht scene3d). Ihr Zustand gibt es so einmal; jedes andere Modul und das Programm rufen sie über die
+  `fire_cn_<funktion>` ihres Moduls. Die anderen stehen in der Datei des Programms (die Libraries rufen sie über `fire_cn_` des Programms); ob sie in der Datei ihres
+  Moduls stehen, ist Teil seines Schlüssels. Die **JSON-Engine** (`FIRE_JSON_IMPLEMENTATION`) steht in der Datei des Moduls, das sie ruft (`json`). Die Natives in
+  C++ bleiben in `fire_natives.cpp` (die Thunks der Libraries kommen dazu).
+* **Schalter des Programms** (Ausnahmen, Threads, Reflection, Probes, Zeiger mit Grenzen, `try x.Take...`, JSON, ...) gelten für alle Module: jedes Modul wird mit
+  der Vereinigung aller Schalter erzeugt (Fixpunkt über die Module); für jede Menge von Schaltern gibt es eine eigene Variante im Cache (Entscheidung 9.4). Was ein
+  Schalter im Programm kostet, kostet er nur noch dort: die Reflection einer Library (`linq` benutzt sie) erzeugt im Programm keine Helfer mehr für die Klassen der
+  Libraries.
+* Kein Inlining über Modulgrenzen; eine Library ruft auch ihre eigenen Klassen über ihre Verteiler (eine Klasse eines anderen Moduls kann überschreiben). Eine LTO gibt
+  es nicht (Entscheidung 9.5: optional, nicht umgesetzt). Die Bibliotheken werden mit einer Section je Funktion übersetzt (`-ffunction-sections -fdata-sections`),
+  das Programm mit `--gc-sections` gebunden: der Linker lässt weg, was nichts erreicht.
+* Ein Member, den das Ziel nicht übersetzen kann (fire-Threads auf wasm), wird in einer Library zu einer Funktion, die beim Aufruf mit dem Grund endet (mit `source`
+  wäre er nicht erreicht worden).
+
+### Cache und Schnittstelle
+
+Der Cache liegt unter dem Ordner für Anwendungsdaten des Benutzers: `~/.local/share/fire/cache/native/<ziel>/<schlüssel>/` (Windows `%LOCALAPPDATA%\fire\cache\native`,
+macOS `~/Library/Application Support/fire/cache/native`; `FIRE_NATIVE_CACHE` verlegt ihn). Der **Schlüssel** ist der SHA-256 über alles, wovon das C einer Library
+abhängt: die Version des Generators (MVID von fire.Native, damit auch die Runtime), die Toolchain (Art, Compiler mit Größe und Zeit, C-Standard, Optimierung,
+Argumente), das Ziel, Modus und Float-Breite, die Texte der Quellen des Moduls, die **ABI-Hashes** der Module, die es braucht, ihre Natives in C und die Schalter.
+In einem Ordner liegen `<modul>.c` (für gdb und `#line`), `fire_<modul>.a` und die **Schnittstelle** `<modul>.fireiface` (JSON: `Format` - die Version des Formats,
+heute 1 -, `Abi` - der Hash der Teile, die andere Module sehen: Klassen, Basis, Interfaces, Felder mit Layout, Art, Einheit, Typ und Zugriff, Member mit Parametern,
+Typen, Zugriff und Defaults -, `Key`, die Schalter, die Klassen, die Exporte und die Needs). Die Schnittstelle wird zuletzt geschrieben: ohne sie gilt die
+Bibliothek als nicht da. Eine Library, deren Code sich ändert, bekommt einen neuen Schlüssel; die Libraries, die sie brauchen, nur wenn sich ihr ABI-Hash ändert.
+Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Exception`), passen die Klassen nicht mehr zur Bibliothek: der Bau nimmt `source` und sagt es.
+`ember cache` zeigt Ort und Größe, `ember cache clean` leert den Cache.
+
+### Ziele
+
+* **Desktop** (gcc, clang, TinyCC mit `tcc -ar`, MinGW mit `x86_64-w64-mingw32-ar`, msvc mit `lib`): das Programm wird mit den Bibliotheken gebunden, eine Library vor
+  denen, die sie braucht.
+* **wasm** (Emscripten): die Bibliotheken mit `emcc -c` und `emar`, gebunden wie oben.
+* **ESP32** (Toolchain `esp-idf`, nur Dateien): die Module stehen als eigene Übersetzungseinheiten (`fire_<modul>.c`, ihr C aus dem Cache) in der Komponente;
+  `idf.py` übersetzt sie in die Bibliothek der Komponente. Ein fertiges `.a` aus dem Cache wird dort nicht benutzt (das übersetzt die Toolchain von ESP-IDF mit ihren
+  eigenen Schaltern).
+* `"shared"` (Phase C): Linux und macOS mit gcc oder clang. Jede Library wird eine **Shared Library** (`libfire_<modul>_<schlüssel>.so`/`.dylib`, positionsunabhängig,
+  eine eigene Variante im Cache), das Programm wird gegen sie gebunden und exportiert, was sie von ihm brauchen (`-rdynamic`: der Zustand der Runtime - auch die
+  thread-lokalen Variablen -, die Tabellen und Thunks des Programms); die Bibliotheken liegen nach dem Bau **neben dem Programm** (`rpath $ORIGIN`). Jede Bibliothek
+  nennt die Schnittstelle, mit der sie gebaut ist (`fire_abi_<modul>`: Formatversion und ABI-Hash); das Programm prüft sie beim Start, vor allem anderen - liegt eine
+  andere daneben, endet es mit „The library of the module 'X' does not fit this program …“ (Exitcode 70) statt abzustürzen. Andere Ziele und Toolchains (Windows,
+  TinyCC, die Boards, wasm) bauen `static` und sagen es im Protokoll. Offen: Windows (DLLs können nichts aus dem Programm importieren: die Runtime müsste eine DLL
+  `libfire_rt` sein, ihre thread-lokalen Variablen hinter Zugriffsfunktionen - ohne Wine hier nicht zu testen); ein Debug-Build übersetzt die Shared Libraries mit
+  `-O2`.
+* Das Laden zur Laufzeit ist Phase D (ROADMAP 9).
+
+### Debuggen
+
+Ein Debug-Build mit `static` debuggt wie sonst: jede Funktion einer Library hat ihre Tabellen (Variablen, Scopes) in ihrem Modul, ihre Zeilen melden die Quelle über
+`fire_dbgsrc_<m>`, das Programm hat die Quellen, Globals und Klassen. Ein Haltepunkt in einer Datei einer Library des Projekts hält dort (Test `FIRE_TESTS_ONLY=linkage`).
+
+### Aus einer Datei: `FIRE_MODULES=1`
+
+Dieselbe Erzeugung in Modulen, aber alles in **einer** Datei (die Libraries hinter der Runtime, dann das Programm; die Namen einer Library haben den Präfix ihres Moduls):
+mit `FIRE_MODULES=1` erzeugt jeder native Bau so (für die Tests: die native Gruppe läuft damit genauso). Ein Programm, das sich nicht teilen lässt, wird ganz erzeugt
+(`FIRE_MODULES_LOG=<datei>` schreibt auf, welches - in der nativen Gruppe zwei: eines deklariert `class Exception` neu, eines `class Shape` neben der von `ui`).
+Gelaufen ist die native Gruppe damit bis zu den Fenstern (402 Prüfungen, ~2 h - jeder Fall enthält das ganze Prelude); verschieden sind nur Prüfungen, die die
+Form des erzeugten C ansehen (der eigene Verteiler eines Interfaces, die Größe des minimalen ui-Programms, der Name `fire_nat_1`), alle Ausgaben sind gleich.
+
+### Messwerte
+
+Gemessen auf dem Rechner dieser Sitzung (4 vCPUs, gcc 13 `-O2`, ohne ccache), Zeit des ganzen Baus mit `forge build`:
+
+| Programm | `source` | `static`, erster Bau (leerer Cache) | `static`, zweiter Bau | Größe `source` / `static` |
+|---|---:|---:|---:|---:|
+| Phase B: CLI mit `json`, `linq`, `hash`, `compression` (9 Module) | 9-10,5 s | 51 s | 27-29 s | 226 KB / 2,5 MB |
+| Phase B: `ui`-Beispiel (5 Module) | 98 s | 223 s | 85 s | 2,3 MB / 5,7 MB |
+| **B2**: CLI | 9,7-10,4 s | 41-45 s | **6,5 s** | 226 KB / 2,7 MB |
+| **B2**: `ui`-Beispiel (Samples/Graphics and UI/UI) | 100 s | 237 s | **16 s** | 2,3 MB / 6,5 MB |
+| **B2**: `print("hi")` (nur `core`) | 2,7 s | 20 s | 3,6 s | 26 KB / 395 KB |
+| **C**: CLI mit `"shared"` | 9,7-10,4 s | 60 s | 6,2 s | 226 KB / 285 KB + 3,8 MB in 9 Shared Libraries |
+
+Die Ausgaben sind gleich. Die Bibliotheken eines ersten Baus werden nebeneinander übersetzt (so viele wie Kerne). Seit B2 übersetzt der zweite Bau nur noch,
+was das Programm selbst ist: das C des CLI-Programms ist von 1,2 MB auf 214 KB geschrumpft (Verteiler und Feld-Helfer nur für seine Klassen, keine Reflection-Helfer
+für die Klassen der Libraries, Natives von hash/compression/io/time und die JSON-Engine in ihren Bibliotheken), das des `ui`-Beispiels enthält im Wesentlichen
+noch die Bridges von graphics und windows (sie gehören zusammen und stehen im Programm). Ein Programm nur mit `core` bleibt etwas langsamer als `source`: es
+bindet eine Bibliothek, `source` übersetzt die paar Funktionen, die es braucht.
+Die Programme sind größer: eine Library behält ihre Schnittstelle, ihre Tabellen nennen alle Member ihrer Klassen, und das Programm legt die Deskriptoren aller
+Klassen an, von denen irgendein Code einer Library Objekte anlegt (ob dieser Code erreicht wird, weiß es nicht) - der Linker (`--gc-sections`) kann nur weglassen,
+was keine Tabelle nennt. Näher an `source` käme `static` mit einer Erreichbarkeit über die Modulgrenzen (die Schnittstelle sagt je Export, was er ruft und anlegt)
+oder einer LTO.
+
 ## WebAssembly (`wasm`) - Programme im Browser
 
 `fire.Compiler native programm.fire -t wasm` bzw. `fire.Compiler build programm.fire -t wasm` baut ein Programm, das im Browser läuft. Das Ergebnis ist **eine** Datei
@@ -729,6 +1071,9 @@ Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emsc
 * **Speicher**: `Value` hat 16 Byte. Objektlayouts pro Klasse halten den Heap klein. Kein GC - die Ownership-Kaskade ist deterministisch.
 * **Code im Flash**: erzeugtes C++ landet als normaler Code im Flash; String-Konstanten sind `static const` (Flash/DROM).
 * `#extern "lib"` (dynamisches Laden) entfällt dort; `extern` wird zum statischen Bindungspunkt.
+* **Debuggen**: ein Debug-Build hat den Agenten auf der Konsolen-UART (gerahmt, 3 s Wartezeit, die Standardeingabe des Programms geht durch den Agenten);
+  spark baut, flasht und debuggt über `idf.py` und die serielle Schnittstelle - siehe "Ziel `esp32`: Run und Debug auf dem Board" und NATIVE_DEBUG_PROTOCOL.md.
+  Ein generisches FreeRTOS-Ziel (`freertos`) debuggt gerahmt über stdio.
 
 ## Natives von Packages in der VM (Shared Library, C-ABI)
 

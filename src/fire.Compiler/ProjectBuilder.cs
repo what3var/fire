@@ -65,6 +65,7 @@ namespace fire.Compiler
                 // the files of `new Resource("...")` go into the package, next to the prelude, at the paths the prelude now writes (relative to the project)
                 if (resources.Count > 0) packageImport.Resources = resources;
                 if (project.Project.Drivers is { Count: > 0 }) packageImport.Drivers = new List<string>(project.Project.Drivers);
+                if (project.Project.Serializable == false) packageImport.Serializable = false;
                 foreach (var l in lib) { packageImport.Requires.Add(l.ImportName); manifest.Dependencies.Add(l.Name); }
                 // what the files import (`#import "time"`) is required by the package: whoever imports it gets those too (the lines are not in the prelude)
                 foreach (var name in imports)

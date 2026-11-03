@@ -16,6 +16,7 @@ namespace fire.Ember
               ember blank File.json          write a package description with all fields empty
               ember forge File.json [-o Dir] build the package (.fpk) from the description; the description with absolute paths is kept in Dir\json\
               ember index Folder [BaseUrl]   write Folder\index.json for the .fpk files in Folder (to publish them on a web page)
+              ember cache [clean]            the user-wide cache of the static libraries of native builds (linkage "static"): where it is and how big; clean empties it
 
             Packages are installed for the machine, below Packages\ in the folder of the compiler. The sources are listed in ember.json next to the compiler
             (default: the folder PackageSource and the index of the packages on the web).
@@ -27,7 +28,7 @@ namespace fire.Ember
             try
             {
                 // the standard packages are packed and installed from Source (by forge next to ember) when they are missing or changed - quick when nothing changed
-                if (args[0].ToLowerInvariant() is not ("create" or "blank" or "forge" or "index"))
+                if (args[0].ToLowerInvariant() is not ("create" or "blank" or "forge" or "index" or "cache"))
                     StandardPackages.EnsureInstalled(Console.WriteLine);
                 return Run(args[0].ToLowerInvariant(), args.Skip(1).ToArray());
             }
@@ -106,6 +107,19 @@ namespace fire.Ember
                     string file = Path.Combine(a[0], "index.json");
                     File.WriteAllText(file, json);
                     Console.WriteLine($"Wrote {Path.GetFullPath(file)}.");
+                    return 0;
+                }
+                case "cache":
+                {
+                    if (a.Length > 1 || a.Length == 1 && a[0].ToLowerInvariant() != "clean") return Usage1("ember cache [clean]");
+                    if (a.Length == 1)
+                    {
+                        var (count, bytes) = NativeLibraryCache.Clean();
+                        Console.WriteLine($"Removed {count} libraries ({bytes / 1024} KB) from {NativeLibraryCache.Root}.");
+                        return 0;
+                    }
+                    var (libraries, size) = NativeLibraryCache.Size();
+                    Console.WriteLine($"{NativeLibraryCache.Root}: {libraries} libraries, {size / 1024} KB");
                     return 0;
                 }
                 default:

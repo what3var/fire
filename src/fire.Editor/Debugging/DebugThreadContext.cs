@@ -2,13 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
-using fire.Bytecode;
-using fire.Runtime;
+using fire.Debugging;
 
 namespace fire.Editor
 {
     /// <summary>
-    /// Encapsulates ONE VM instance for the thread-capable debugger - both the
+    /// Encapsulates ONE thread of the program under the debugger (an IDebugThread - a VM or a thread of a native debug build) for the thread-capable debugger - both the
     /// main thread and every thread created via `fire` run on
     /// their OWN real background thread (see RunLoop), NEVER on
     /// the UI thread itself - otherwise every longer running step
@@ -35,23 +34,28 @@ namespace fire.Editor
     /// </summary>
     public sealed class DebugThreadContext
     {
-        public VM Vm { get; }
+        /// <summary>The thread of the debug target this context drives.</summary>
+        public IDebugThread Thread { get; }
         public string Name { get; }
         public bool IsMain { get; }
         public bool IsFinished { get; private set; }
         public string? RuntimeError { get; private set; }
 
+        /// <summary>true from a requested step until it is done (Paused fires).</summary>
+        public bool IsRunning => _running;
+        private volatile bool _running;
+
         /// <summary>Throw-site locations (innermost first) of the unhandled script exception, if any.</summary>
-        public IReadOnlyList<(int SourceIndex, int Line)>? ErrorTrace => _internalErrorTrace ?? Vm.UnhandledTrace;
+        public IReadOnlyList<(int SourceIndex, int Line)>? ErrorTrace => _internalErrorTrace ?? Thread.UnhandledTrace;
         private IReadOnlyList<(int SourceIndex, int Line)>? _internalErrorTrace;
 
         /// <summary>true while this thread stands at the throw site of an unhandled script exception and could ignore it.</summary>
-        public bool CanIgnoreError => Vm.IsPausedOnUnhandled;
+        public bool CanIgnoreError => Thread.IsPausedOnUnhandled;
 
         /// <summary>Ignores the unhandled exception and makes the thread runnable again right after the `throw` (like `resume()`).</summary>
         public bool IgnoreError()
         {
-            if (!Vm.TryResumeUnhandled()) return false;
+            if (!Thread.TryResumeUnhandled()) return false;
             RuntimeError = null;
             IsFinished = false;
             return true;
@@ -66,21 +70,19 @@ namespace fire.Editor
         public event Action<DebugThreadContext>? Paused;
 
         private readonly SemaphoreSlim _resumeGate = new(0);
-        private volatile Func<VM, bool>? _pendingStep;
+        private volatile Func<IDebugThread, bool>? _pendingStep;
         private volatile bool _pauseRequested;
         private volatile bool _abandoned;
 
-        private DebugThreadContext(VM vm, string name, bool isMain)
+        private DebugThreadContext(IDebugThread debugThread)
         {
-            Vm = vm;
-            vm.CaptureErrorTrace = true;
-            vm.PauseOnUnhandled = true; // stack trace + line marking for unhandled script errors
-            Name = name;
-            IsMain = isMain;
+            Thread = debugThread;
+            Name = debugThread.Name;
+            IsMain = debugThread.IsMain;
 
-            var thread = new Thread(RunLoop)
+            var thread = new System.Threading.Thread(RunLoop)
             {
-                Name = $"fire-Debug-{name}",
+                Name = $"fire-Debug-{Name}",
                 // Foreground thread (.NET default) - a running
                 // debug session should neither silently keep the process
                 // alive nor abruptly die while
@@ -93,18 +95,18 @@ namespace fire.Editor
 
         /// <summary>For the main thread - starts WAITING (no
         /// automatic run, see the class comment).</summary>
-        public static DebugThreadContext ForMain(VM vm) => new(vm, "Main", isMain: true);
+        public static DebugThreadContext ForMain(IDebugThread main) => new(main);
 
         /// <summary>For a thread created via `fire` - starts
         /// IMMEDIATELY in automatic "continue" mode (see the class comment).
-        /// Must be called from Runtime.FireRuntime.ThreadBodyInterceptor
+        /// Called from IDebugTarget.ThreadStarted
         /// (any thread - the constructor itself starts
         /// a NEW, own background thread for the
         /// actual execution, so it does not run on the calling
         /// thread).</summary>
-        public static DebugThreadContext ForFireThread(VM vm, string name, ISet<(int SourceIndex, int Line)> breakpointsSnapshot)
+        public static DebugThreadContext ForFireThread(IDebugThread thread, ISet<(int SourceIndex, int Line)> breakpointsSnapshot)
         {
-            var ctx = new DebugThreadContext(vm, name, isMain: false);
+            var ctx = new DebugThreadContext(thread);
             ctx.RequestStep(MakeContinueStep(breakpointsSnapshot, ctx.ConsumePauseRequest));
             return ctx;
         }
@@ -164,28 +166,25 @@ namespace fire.Editor
                 // gate again without anyone ever opening it again.
                 if (_abandoned) IsFinished = true;
 
+                _running = false;
                 Paused?.Invoke(this);
                 if (IsFinished) return;
             }
         }
 
-        private void RunStepNow(Func<VM, bool> step)
+        private void RunStepNow(Func<IDebugThread, bool> step)
         {
             try
             {
-                bool more = step(Vm);
+                bool more = step(Thread);
                 IsFinished = !more;
 
-                // Since VM.UnhandledException (see there) an
-                // unhandled script exception does NOT throw any more - it has to be
+                // An unhandled script exception does NOT throw - it has to be
                 // checked explicitly here, otherwise the debugger would simply show the
                 // thread as "finished, no error", although
                 // the script was actually aborted with an uncaught exception.
-                // Pure formatting convenience via
-                // UncaughtScriptException (which itself is no longer thrown,
-                // see there) for the same error message as before.
-                if (Vm.UnhandledException != null)
-                    RuntimeError = new UncaughtScriptException(Vm.UnhandledException).Message;
+                if (Thread.UnhandledError is { } unhandled)
+                    RuntimeError = unhandled;
             }
             catch (Exception ex)
             {
@@ -199,10 +198,25 @@ namespace fire.Editor
                 // longer via this catch branch.
                 Debug.WriteLine($"{ex.Message}\r\n{ex.StackTrace}");
                 RuntimeError = ex.Message;
-                try { _internalErrorTrace = Vm.CurrentTrace(); } catch { }
+                try { _internalErrorTrace = Thread.CurrentTrace(); } catch { }
                 IsFinished = true;
             }
             _pendingStep = null; // after this run: NOT automatically continue, but wait for the next explicit instruction
+        }
+
+        /// <summary>Gives a variable/field/element a new value (IDebugThread.TrySetValue) - on this thread's own background thread between two
+        /// steps, FIRE-AND-FORGET like a step: `done` gets the result there, afterwards Paused fires as after a step (the panels show the new value).
+        /// false if the thread is not paused (running, finished, or stopped at an unhandled exception).</summary>
+        public bool RequestSetValue(DebugValue target, string text, Action<bool, string> done)
+        {
+            if (IsFinished || _running) return false;
+            RequestStep(t =>
+            {
+                bool ok = t.TrySetValue(target, text, out var error);
+                done(ok, error);
+                return !t.IsPausedOnUnhandled; // a setter may throw - unhandled, the thread stands at it like after a step
+            });
+            return true;
         }
 
         /// <summary>Requests a single step (Step Line/Into/Out,
@@ -211,10 +225,11 @@ namespace fire.Editor
         /// without waiting for completion (see the class comment
         /// for the reasoning). The result comes via the Paused event.
         /// Has no effect if this thread is already finished.</summary>
-        public void RequestStep(Func<VM, bool> step)
+        public void RequestStep(Func<IDebugThread, bool> step)
         {
             if (IsFinished) return;
             _pendingStep = step;
+            _running = true;
             _resumeGate.Release();
         }
 
@@ -246,19 +261,19 @@ namespace fire.Editor
             _resumeGate.Release();
         }
 
-        /// <summary>Like VM.Continue, but additionally cooperatively interruptible
+        /// <summary>Like IDebugThread.RunUntilBreakpoint, with cooperatively interruptible
         /// via RequestPause/ConsumePauseRequest - basis both for the
         /// automatic "Continue" run with which every fire thread
         /// starts by default, and for an explicit "Continue"
         /// button press on ANY thread (see DebugSession.
         /// Continue).</summary>
-        public static Func<VM, bool> MakeContinueStep(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested) =>
-            vm => vm.RunUntilBreakpoint(breakpoints, isPauseRequested);
+        public static Func<IDebugThread, bool> MakeContinueStep(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested) =>
+            t => t.RunUntilBreakpoint(breakpoints, isPauseRequested);
 
-        /// <summary>Like VM.StepInstruction in a loop until the
-        /// program end, but likewise cooperatively interruptible (see
+        /// <summary>IDebugThread.RunUntilEnd: until the
+        /// program end, cooperatively interruptible (see
         /// MakeContinueStep documentation) - basis for "Run to end".</summary>
-        public static Func<VM, bool> MakeRunToCompletionStep(Func<bool> isPauseRequested) =>
-            vm => vm.RunUntilEnd(isPauseRequested);
+        public static Func<IDebugThread, bool> MakeRunToCompletionStep(Func<bool> isPauseRequested) =>
+            t => t.RunUntilEnd(isPauseRequested);
     }
 }

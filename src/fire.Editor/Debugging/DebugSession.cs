@@ -1,24 +1,19 @@
-using fire.Bytecode;
 using fire.Compiler;
+using fire.Debugging;
 using fire.Parsing;
 using fire.Resolving;
 using fire.Runtime;
-using fire.Terminal;
-using fire.Terminal.Bridge;
-using fire.Terminal.Windows;
-using fire.Values;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
-using static fire.Resolving.ResolvedRef;
 
 namespace fire.Editor
 {
     /// <summary>
     /// Encapsulates one compile+execute run of a script for the
-    /// thread-capable step debugger: compiles once (incl. prelude),
+    /// thread-capable step debugger: compiles once (incl. prelude) into an IDebugTarget (fire.Debugging - the VM: VmDebugTarget),
     /// afterwards holds the main thread PLUS every thread created at runtime via `fire`
     /// as one DebugThreadContext instance each (see
     /// there - EACH of them runs on its OWN background thread, NEVER on
@@ -29,9 +24,7 @@ namespace fire.Editor
     /// immediately) - the result arrives asynchronously via ThreadPaused.
     ///
     /// `print()` is redirected (OutputWritten event) instead of going to the real
-    /// console, prefixed with the name of the thread that is currently EXECUTING
-    /// (see VM.CurrentThreadVm - the [ThreadStatic] field
-    /// that every VM instance sets to itself at the start of Run()/StepInstruction()),
+    /// console, prefixed with the name of the thread that wrote it (see IDebugTarget.Output),
     /// so that in the output window it stays traceable which
     /// line came from which thread.
     /// </summary>
@@ -39,7 +32,6 @@ namespace fire.Editor
     {
         private readonly object _threadsLock = new();
         private readonly List<DebugThreadContext> _threads = new();
-        private int _fireThreadCounter;
         private HashSet<(int SourceIndex, int Line)> _breakpointsSnapshot = new();
 
         public IReadOnlyList<DebugThreadContext> Threads
@@ -49,7 +41,11 @@ namespace fire.Editor
 
         public DebugThreadContext? ActiveThread { get; private set; }
 
-        public VM? Vm => ActiveThread?.Vm;
+        /// <summary>The program under the debugger (null: nothing compiled, or stopped).</summary>
+        public IDebugTarget? Target => _target;
+
+        /// <summary>Whether a program is compiled and can be stepped (the main thread exists).</summary>
+        public bool HasProgram => ActiveThread != null;
         public bool IsStarted { get; private set; }
         public bool IsFinished => ActiveThread?.IsFinished ?? false;
         public string? CompileError { get; private set; }
@@ -95,12 +91,6 @@ namespace fire.Editor
         {
         }
 
-        private DebugThreadContext? FindContextFor(VM? vm)
-        {
-            if (vm == null) return null;
-            lock (_threadsLock) return _threads.FirstOrDefault(t => ReferenceEquals(t.Vm, vm));
-        }
-
         /// <summary>Current breakpoint lines, as the editor last
         /// reported them - every NEWLY arising fire thread starts its
         /// automatic "continue" run (see DebugThreadContext.
@@ -116,7 +106,7 @@ namespace fire.Editor
         /// <summary>Recompiles the source text and sets up a fresh
         /// main-thread VM (on its own background thread, see
         /// DebugThreadContext.ForMain - starts waiting, nothing runs yet).
-        /// On a parse/resolve error Vm stays null, CompileError
+        /// On a parse/resolve error HasProgram stays false, CompileError
         /// contains the message.</summary>
         /// <summary>The errors (when the compile failed) and warnings of the last <see cref="Compile"/>, with their codes; a file is set when the compiler knows it.</summary>
         public IReadOnlyList<Diagnostic> LastDiagnostics { get; private set; } = Array.Empty<Diagnostic>();
@@ -132,51 +122,9 @@ namespace fire.Editor
             using var collecting = warnings.Begin();
             try
             {
-                var session = RuntimeSession.Build(sources, ExecutionMode, args =>
-                {
-                    string text = args.Length > 0 ? args[0].ToString() : "";
-                    string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
-                    OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
-                    return Value.MakeUndefined();
-                }, outname,
-                // IO.Stdio (`#import "io"`) ends up in the same output window as print():
-                // output and errors line by line, input is empty (end immediately).
-                ioStdio: fire.IO.Bridge.IoStdio.Custom(line =>
-                {
-                    string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
-                    OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {line}" : line);
-                }),
-                basePath: basePath, deviceManager: DeviceManager, plan: plan, environment: environment);
-
-                ActiveExecutionMode = ExecutionMode;
-                _session = session;
-
-                FirstUserSourceIndex = session.FirstUserSourceIndex;
-                SourceFiles = session.SourceFiles ?? Array.Empty<string?>();
-
-                var mainCtx = DebugThreadContext.ForMain(session.VirtualMachine);
-                mainCtx.Paused += ctx =>
-                {
-                    CloseHostResourcesIfAllFinished();
-                    ThreadPaused?.Invoke(ctx);
-                };
-
-                lock (_threadsLock)
-                {
-                    _threads.Clear();
-                    _threads.Add(mainCtx);
-                }
-                ActiveThread = mainCtx;
-
-                // From now on THIS session takes over every newly arising
-                // fire thread (see InterceptNewFireThread) - important: unregister it again in
-                // Reset(), otherwise a later,
-                // completely independent run (or even another
-                // script) in the same process would still accidentally run via
-                // THIS (then outdated) session.
-                FireRuntime.ThreadBodyInterceptor = InterceptNewFireThread;
-
+                var target = VmDebugTarget.Build(sources, ExecutionMode, outname, basePath, DeviceManager, plan, environment);
                 LastDiagnostics = warnings.Items.ToList();
+                Attach(target);
                 return true;
             }
             catch (Exception ex) when (ex is ParseException or LexException or ResolverException or TypeCheckException
@@ -190,18 +138,48 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>Runs on the thread that is CURRENTLY executing `fire` (that is,
-        /// e.g. on the background thread of a DebugThreadContext, see
-        /// Runtime.FireRuntime.ThreadBodyInterceptor documentation) - registers
-        /// the new thread in the threads panel. The actual new
-        /// background thread for the fire-thread VM itself arises INSIDE
+        /// <summary>Takes over a debug target that is ready (compiled, its main thread paused before the first line): its output, its main thread and
+        /// every thread it starts later.</summary>
+        public void Attach(IDebugTarget target)
+        {
+            ActiveExecutionMode = ExecutionMode;
+            _target = target;
+
+            FirstUserSourceIndex = target.FirstUserSourceIndex;
+            SourceFiles = target.SourceFiles;
+
+            target.Output += (thread, text) =>
+                OutputWritten?.Invoke(thread != null && !thread.IsMain ? $"[{thread.Name}] {text}" : text);
+            // From now on THIS session takes over every newly arising
+            // thread of the program (see OnThreadStarted).
+            target.ThreadStarted += OnThreadStarted;
+
+            {
+                var mainCtx = DebugThreadContext.ForMain(target.MainThread);
+                mainCtx.Paused += ctx =>
+                {
+                    CloseHostResourcesIfAllFinished();
+                    ThreadPaused?.Invoke(ctx);
+                };
+
+                lock (_threadsLock)
+                {
+                    _threads.Clear();
+                    _threads.Add(mainCtx);
+                }
+                ActiveThread = mainCtx;
+            }
+        }
+
+        /// <summary>Runs on the thread that is CURRENTLY executing `fire` (the VM: e.g. on the background thread of a DebugThreadContext, see
+        /// IDebugTarget.ThreadStarted) - registers the new thread in the threads panel. The actual new
+        /// background thread for the thread arises INSIDE
         /// DebugThreadContext.ForFireThread (see its constructor) -
         /// this method therefore returns IMMEDIATELY, the caller
         /// (Runtime.FireRuntime.Fire) does NOT have to block any more.</summary>
-        private void InterceptNewFireThread(VM vm, Action runNormally)
+        private void OnThreadStarted(IDebugThread thread)
         {
-            string name = $"Fire #{Interlocked.Increment(ref _fireThreadCounter)}";
-            var ctx = DebugThreadContext.ForFireThread(vm, name, _breakpointsSnapshot);
+            var ctx = DebugThreadContext.ForFireThread(thread, _breakpointsSnapshot);
             ctx.Paused += c =>
             {
                 CloseHostResourcesIfAllFinished();
@@ -214,28 +192,26 @@ namespace fire.Editor
 
         public void SelectThread(DebugThreadContext thread) => ActiveThread = thread;
 
-        /// <summary>The session of the current run - holds the safety net for open IO streams (see
-        /// RuntimeSession.CloseHostResources).</summary>
-        private RuntimeSession? _session;
+        /// <summary>The program of the current run - holds the safety net for open IO streams (see
+        /// IDebugTarget.ReleaseResources).</summary>
+        private IDebugTarget? _target;
 
         /// <summary>Closes the IO streams the script left open, as soon as all threads of the run have ended
-        /// (before that a fire thread might still need them). Runs at most once per run.</summary>
+        /// (before that a fire thread might still need them).</summary>
         private void CloseHostResourcesIfAllFinished()
         {
             lock (_threadsLock)
             {
                 if (_threads.Count == 0 || _threads.Any(t => !t.IsFinished)) return;
             }
-            Interlocked.Exchange(ref _session, null)?.CloseHostResources();
+            _target?.ReleaseResources();
         }
 
         public void Reset()
         {
-            if (FireRuntime.ThreadBodyInterceptor != null)
-                FireRuntime.ThreadBodyInterceptor = null;
-
-            // Aborted run: close open streams anyway (the threads are unregistered shortly).
-            Interlocked.Exchange(ref _session, null)?.CloseHostResources();
+            // Aborted run: close open streams anyway (the threads are unregistered shortly); the target no longer takes over new threads -
+            // otherwise a later, completely independent run in the same process would still accidentally run via THIS (then outdated) session.
+            Interlocked.Exchange(ref _target, null)?.Dispose();
 
             lock (_threadsLock)
             {
@@ -254,17 +230,17 @@ namespace fire.Editor
         }
 
         /// <summary>A debugger "step" - one source line further (step
-        /// over, see VM.StepLine) ON THE ACTIVE THREAD. FIRE-AND-FORGET -
+        /// over, see IDebugThread.StepLine) ON THE ACTIVE THREAD. FIRE-AND-FORGET -
         /// the result arrives via ThreadPaused.</summary>
-        public void StepLine() => RunGuarded(_ => vm => vm.StepLine());
+        public void StepLine() => RunGuarded(_ => t => t.StepLine());
 
         /// <summary>Like StepLine, but jumps into a call instead of
-        /// skipping it (see VM.StepInto).</summary>
-        public void StepInto() => RunGuarded(_ => vm => vm.StepInto());
+        /// skipping it (see IDebugThread.StepInto).</summary>
+        public void StepInto() => RunGuarded(_ => t => t.StepInto());
 
         /// <summary>Runs until the current function/method/
-        /// lambda is left (see VM.StepOut).</summary>
-        public void StepOut() => RunGuarded(_ => vm => vm.StepOut());
+        /// lambda is left (see IDebugThread.StepOut).</summary>
+        public void StepOut() => RunGuarded(_ => t => t.StepOut());
 
         /// <summary>Runs to the next breakpoint or program end, on
         /// the ACTIVE thread - interruptible via PauseActiveThread.</summary>
@@ -289,7 +265,7 @@ namespace fire.Editor
         public void ContinueThread(DebugThreadContext ctx, ISet<(int SourceIndex, int Line)> breakpoints) =>
             ctx.RequestStep(DebugThreadContext.MakeContinueStep(breakpoints, ctx.ConsumePauseRequest));
 
-        private void RunGuarded(Func<DebugThreadContext, Func<VM, bool>> makeStep)
+        private void RunGuarded(Func<DebugThreadContext, Func<IDebugThread, bool>> makeStep)
         {
             var ctx = ActiveThread;
             if (ctx == null) return;

@@ -22,6 +22,9 @@
     <Compile Include="..\fire.Editor\Language\LiveDiagnostics.cs" Link="Editor\LiveDiagnostics.cs" />
     <Compile Include="..\fire.Editor\Language\SyntaxHighlighter.cs" Link="Editor\SyntaxHighlighter.cs" />
     <Compile Include="..\fire.Editor\Language\ColorizeAttributes.cs" Link="Editor\ColorizeAttributes.cs" />
+    <!-- the debug session of spark (no user interface): tested headless against the debug targets (DebuggerTests) -->
+    <Compile Include="..\fire.Editor\Debugging\DebugSession.cs" Link="Editor\DebugSession.cs" />
+    <Compile Include="..\fire.Editor\Debugging\DebugThreadContext.cs" Link="Editor\DebugThreadContext.cs" />
   </ItemGroup>
 
   <ItemGroup>
