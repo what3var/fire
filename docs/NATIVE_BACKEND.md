@@ -331,6 +331,8 @@ Prozessstart; gleiche Ausgaben:
 | `virtual` | 58,0 ms | 58,4 ms | 1,01 | 0,96 |
 
 Alles innerhalb des Rauschens (±4 %, Last auf dem Rechner ~1). Die gestrippten Programme sind 0-8 KB größer (Seitengrenzen; die Tabelle ersetzt die Switches).
+Nach Phase A (Module; mit `linkage` `"source"` ändert sich am erzeugten C nur ein Feld der Tabellen von `try`) noch einmal gegen den Stand vor A0, dieselbe Messung:
+min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `method` 0,92, `string` 0,99, `virtual` 1,02 (Mediane 0,94-1,05) - Rauschen.
 
 ## Stand
 
