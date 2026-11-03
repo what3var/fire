@@ -25663,8 +25663,10 @@ else
                                 string outSource = Path.Combine(workDir, "dragsource.out"), outTarget = Path.Combine(workDir, "dragtarget.out");
                                 string script = Path.Combine(workDir, "drag.sh");
                                 File.WriteAllText(script, DragScript($"\"{dragTarget.Value}\"", sourceCommand, driver, outSource, outTarget));
-                                string runLog = RunProc(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", workDir, out int runExit, null,
-                                    new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "x11", ["LSAN_OPTIONS"] = $"suppressions={lsanFile}:print_suppressions=0" });
+                                // (the hand presses and moves on a clock: no compiler of this run at the same time - TestJobs.Alone)
+                                int runExit = 0;
+                                string runLog = TestJobs.Alone(() => RunProc(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", workDir, out runExit, null,
+                                    new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "x11", ["LSAN_OPTIONS"] = $"suppressions={lsanFile}:print_suppressions=0" }));
                                 string actual = DragLines(outSource) + DragLines(outTarget);
                                 string want = string.Concat(dragExpected.Select(l => l + "\n"));
                                 CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}");
@@ -26092,7 +26094,9 @@ else
                                 string script = Path.Combine(winDir, "drag.sh");
                                 // (Wine's windows need a moment more: the source starts 2 s after the target)
                                 File.WriteAllText(script, DragScript($"\"{wine}\" \"{targetExe}\"", $"\"{wine}\" \"{sourceExe}\"", driver, outSource, outTarget, "2"));
-                                string runLog = RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out int runExit);
+                                // (the hand presses and moves on a clock: no compiler of this run at the same time - TestJobs.Alone)
+                                int runExit = 0;
+                                string runLog = TestJobs.Alone(() => RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out runExit));
                                 string actual = DragLines(outSource) + DragLines(outTarget);
                                 string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]" }.Select(l => l + "\n"));
                                 CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}{runLog}");

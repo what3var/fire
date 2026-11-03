@@ -192,6 +192,24 @@ static class TestJobs
                     return $"-n {_nextServer++}";
     }
 
+    /// <summary>Runs <paramref name="run"/> while no compiler of this run runs (it takes all places of <see cref="Compiler"/>): for a test that drives windows
+    /// on a clock (the drag cases: an X program presses, moves and lets go), which a machine busy with compilers upsets.</summary>
+    public static T Alone<T>(Func<T> run)
+    {
+        lock (_alone)
+        {
+            int taken = 0;
+            try
+            {
+                for (; taken < Count; taken++) _compilers.Wait();
+                return run();
+            }
+            finally { if (taken > 0) _compilers.Release(taken); }
+        }
+    }
+
+    static readonly object _alone = new();
+
     /// <summary>Runs <paramref name="run"/> as one of at most <see cref="Count"/> compiler processes at a time (C with AddressSanitizer: hundreds of MB each).</summary>
     public static T Compiler<T>(Func<T> run)
     {
