@@ -14,7 +14,7 @@ namespace fire.Compiler
     /// Builds a program natively: translate it to C++ (<see cref="CppGenerator"/>) for a target, write the runtime and the platform package of the target next to it,
     /// and let the toolchain of the configuration (<see cref="NativeConfig"/>) turn it into a program - or only write the files (and build files) of a project.
     /// </summary>
-    public static class NativeBuilder
+    public static partial class NativeBuilder
     {
         /// <summary>The program (C).</summary>
         public const string SourceName = "fire_program.c";
@@ -108,6 +108,8 @@ namespace fire.Compiler
                 finally { config.Linkage = "shared"; }
                 return r with { Log = $"Linkage \"shared\" is only available on Linux and macOS with gcc or clang and on Windows with MinGW (not for the target '{target.Name}' with '{toolchain.EffectiveKind}'): built with linkage \"static\".\n" + r.Log };
             }
+            if (string.Equals(config.Linkage, "plugin", StringComparison.OrdinalIgnoreCase))
+                return BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
@@ -301,12 +303,21 @@ namespace fire.Compiler
                 if (built) ApplyPeMetadata(exe, program, target, log);
                 // (shared: the libraries next to the program - it finds them there, wherever the cache is)
                 if (built && shared)
+                {
                     foreach (var library in staticPlan.Libraries)
                     {
                         string next = Path.Combine(Path.GetDirectoryName(exe)!, Path.GetFileName(library.LibraryFile(ext)));
                         File.Copy(library.LibraryFile(ext), next, true);
                         log.AppendLine($"{Path.GetFileName(next)} next to the program");
                     }
+                    // (what a plugin built for this program needs to know: `--linkage plugin --host <program>`)
+                    if (staticPlan.Host is { } host)
+                    {
+                        foreach (var m in host.Modules) m.Library += ext;
+                        if (host.Runtime != null) host.Runtime += ext;
+                        File.WriteAllText(HostFileOf(exe), host.ToJson());
+                    }
+                }
                 int sdlVersion = SdlSetup.RequiredVersion(cFile);
                 if (built && toolchain.EffectiveKind != "emscripten" && sdlVersion > 0 && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain, sdlVersion))) log.AppendLine($"SDL{sdlVersion}.dll copied next to the program.");
                 return new NativeBuildResult(built, exe, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C++ compiler of the native build reported errors (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });

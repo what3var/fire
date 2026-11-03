@@ -10,7 +10,7 @@ namespace fire.Standard
     /// <summary>The functions behind the class `Library` (IDs for <see cref="LibraryMethods.NativeName"/>, fixed values - never renumber).</summary>
     public enum LibraryMethod
     {
-        /// <summary>`(1, path)`: loads a native library - its handle (an int), 0 when it cannot be loaded.</summary>
+        /// <summary>`(1, path)`: loads a native library - its handle (an int), 0 when it cannot be loaded, -1 for a fire plugin the program cannot load (not linkage "shared").</summary>
         Load = 1,
         /// <summary>`(2, handle, name)`: the address of a function of the library, 0 when it has none of that name.</summary>
         Symbol = 2,
@@ -18,6 +18,9 @@ namespace fire.Standard
         Arity = 3,
         /// <summary>`(4, address, signature, args)`: calls the function with the arguments converted as the signature says.</summary>
         Call = 4,
+        /// <summary>`(5, handle, path)`: a fire plugin (ROADMAP 9 phase D b) - its classes registered: an array of their names; undefined: the library is no fire plugin;
+        /// a string: why it does not fit the program.</summary>
+        Plugin = 5,
     }
 
     /// <summary>
@@ -62,14 +65,32 @@ namespace fire.Standard
             class Library {
                 private int handle
                 private string path
+                private any classes
                 construct(int handle, string path) { this.handle = handle; this.path = path }
 
                 /// Loads the native library at `path` (or a name the system finds: "libm.so.6", "kernel32.dll"); a LibraryException when it cannot.
+                /// A fire plugin (`forge build --linkage plugin`, its `.fireplugin` file or the library next to it): its classes become part of the program
+                /// (Reflect.New, Type.Named, `is of`, catch) - a LibraryException when it does not fit the program.
                 static Library Load(string path) {
                     var handle = {{NativeName}}({{(int)LibraryMethod.Load}}, path)
                     if (handle == 0) { throw new LibraryException("The library '" + path + "' could not be loaded.") }
-                    return new Library(handle, path)
+                    if (handle == -1) { throw new LibraryException("The library '" + path + "' is a fire plugin: this program cannot load fire plugins - build it with linkage \"shared\".") }
+                    var lib = new Library(handle, path)
+                    var plugin = {{NativeName}}({{(int)LibraryMethod.Plugin}}, handle, path)
+                    if (plugin is of string) { throw new LibraryException(plugin) }
+                    if (plugin is of int) { throw new LibraryException("The library '" + path + "' is a fire plugin: this program cannot load fire plugins - build it with linkage \"shared\".") }
+                    lib.classes = plugin
+                    return lib
                 }
+
+                /// The classes of a fire plugin (their full names); empty for a C library.
+                any Classes() {
+                    if (this.classes == undefined) { return [] }
+                    return this.classes
+                }
+
+                /// Is the library a fire plugin?
+                bool IsPlugin { get { return this.classes != undefined } }
 
                 /// The path (or name) the library was loaded from.
                 string Path { get { return this.path } }

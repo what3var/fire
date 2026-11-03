@@ -144,6 +144,13 @@ A library with drivers of the device framework names them in its project file, `
 `forge` writes them to the import in `package.json` (`"drivers": [...]`). spark loads the drivers of the installed packages and shows their devices in its device
 manager (docs/DEVICES.md).
 
+### Plugins
+
+A package (or a library of a project) can be the interface between a program and its plugins: the program and the plugin both import it, the plugin implements its
+interfaces or derives from its classes, the program creates the plugin's classes by name after `Library.Load` (docs/language/18-native-code.md, docs/NATIVE_BACKEND.md
+"Plugins"). The plugin loads only into a program whose package has the same interface (the hash of its classes and members) - a new version of the package that only
+changes the code of its methods keeps it.
+
 ### The cache of native libraries
 
 A native build with `"linkage": "static"` (docs/NATIVE_BACKEND.md "Getrennte Übersetzung") turns every package (and the prelude, every library of a project) into a static

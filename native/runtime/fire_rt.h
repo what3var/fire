@@ -1878,6 +1878,47 @@ FIRE_RT_FN const TArg* fireTArgOf(Obj* o, const char* cls, int k);
 /* A probe on an object of any module (Reflect.Set): the member is written and read by its name (no access check for reading the old value of a field). */
 FIRE_RT_FN void fireProbeRawSet(Value obj, const char* name, Value value, OwnList* list, uint32_t caller);
 FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
+
+/* ---- fire plugins (ROADMAP 9, phase D b; docs/NATIVE_BACKEND.md "Plugins"): a library module built on its own (`--linkage plugin`), loaded while the program
+ * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
+ * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
+ * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
+#define FIRE_PLUGIN_FORMAT 1
+typedef struct FirePlugin {
+    uint32_t format;                     /* FIRE_PLUGIN_FORMAT */
+    const char* name;                    /* its module */
+    const char* head;                    /* the configuration of the runtime it is built for (the hash of the head of its file) */
+    uint32_t ndeps;
+    const char* const* depNames;         /* the modules it needs and their interfaces it was built against ("format:hash") */
+    const char* const* depAbis;
+    uint32_t nclasses;
+    const char* const* classNames;       /* its classes, in the order of their ids */
+    uint32_t* base;                      /* fire_mb_<p>: the id of its first class (set when it is registered) */
+    void (*fillClasses)(FireClassDesc* rows);   /* the descriptors of its classes (after *base is set) */
+    uint32_t nenums;
+    const FireEnum* enums;               /* its enums - by name the program's number (fire_enums_<p>[k + 1]) */
+    uint8_t* enumMap;
+    uint32_t nexc;
+    const char* const* excNames;         /* its catch types - by name the program's id (fire_exct_<p>) */
+    int32_t* excMap;
+    const void* const* rfRows;           /* its reflection rows (const RfClass*, one per class; NULL: none) */
+    void (*init)(void);                  /* the static initialisers of its classes */
+    const char* (*link)(const void* (*find)(const char*));   /* Windows: fills its pointers to the program (NULL elsewhere); the name the program lacks */
+} FirePlugin;
+/* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
+typedef struct FirePluginHost {
+    const char* head;                                /* the hash of the head of its files */
+    const char* (*moduleAbi)(const char* module);    /* the interface ("format:hash") of a library module of the program, NULL: none of that name */
+    const char* const* excNames;                     /* its catch types by name (index = id) */
+    uint32_t nexc;
+    const void* (*find)(const char* name);           /* Windows: what a DLL may use of the program */
+} FirePluginHost;
+extern FIRE_RT_DATA const FirePluginHost* g_pluginHost;
+/* The reflection rows of the plugins' classes (const RfClass*; the program's rf_find looks here after its own). */
+extern FIRE_RT_DATA const void** g_pluginRf;
+extern FIRE_RT_DATA uint32_t g_pluginRfCount;
+/* Registers a plugin (once; again: the same answer): an array of the names of its classes, or a string that says why it does not fit. */
+FIRE_RT_FN Value fireRegisterPlugin(const FirePlugin* p, OwnList* list);
 #endif
 /* The catch type `Exception` (catches every exception object): always type id 0. */
 #define FIRE_EXC_ANY 0
@@ -3186,6 +3227,7 @@ typedef struct RfClass {
     const RfMember* members; uint32_t nMembers;
     Value (*attrs)(OwnList* list);    /* the attributes before the class (generated), null: none */
     const char* const* stripped; uint32_t nStripped;   /* the methods stripping left out, after the highest level that keeps them ("1Bark"; docs/NATIVE_BACKEND.md) */
+    Value (*make)(int argc, const Value* items, OwnList* list, uint32_t caller);   /* a class of a plugin: Reflect.New (NULL: the program knows the class) */
 } RfClass;
 
 /* Is the string equal to this UTF-8 text? */
@@ -5123,6 +5165,34 @@ FIRE_FN Value libCall(Value id, Value a, Value b, Value c, OwnList* list) {
             if (a.kind != K_String) return Int(0);
             strToUtf8(a, text, sizeof text);
             h = fire_plat_dlopen(text);
+            if (!h) {
+                /* a fire plugin by its bytecode (`kit.fireplugin`, the VM's): its library next to it */
+                size_t n = strlen(text);
+#if defined(_WIN32)
+                const char* ext = ".dll";
+#elif defined(__APPLE__)
+                const char* ext = ".dylib";
+#else
+                const char* ext = ".so";
+#endif
+                size_t e = strlen(ext);
+                bool plugin = n > 11 && strcmp(text + n - 11, ".fireplugin") == 0;
+                if (plugin) { memcpy(text + n - 11, ext, e + 1); h = fire_plat_dlopen(text); n = n - 11 + e; }
+                /* a fire plugin (its bytecode next to it) that does not load into a program that cannot load plugins: -1, Load says so */
+#ifdef FIRE_MODULES
+                if (!h && !g_pluginHost)
+#else
+                if (!h)
+#endif
+                {
+                    if (!plugin && n > e && strcmp(text + n - e, ext) == 0 && n - e + 11 < sizeof text) {
+                        FILE* f;
+                        memcpy(text + n - e, ".fireplugin", 12);
+                        if ((f = fopen(text, "rb")) != NULL) { fclose(f); plugin = true; }
+                    }
+                    if (plugin) return Int(-1);
+                }
+            }
             return Int((int64_t)(intptr_t)h);
         }
         case 2:
@@ -5147,6 +5217,16 @@ FIRE_FN Value libCall(Value id, Value a, Value b, Value c, OwnList* list) {
                 return fireError("ArgumentException", t);
             }
             return thunk((void*)(intptr_t)a.i, arrItems(args), list);
+        }
+        case 5: {
+            /* a fire plugin (it exports fire_module_info): its classes registered - an array of their names; undefined: no fire plugin; a string: why it does not fit */
+            const void* info = a.kind == K_Int ? fire_plat_dlsym((void*)(intptr_t)a.i, "fire_module_info") : NULL;
+            if (!info) return Undef();
+#ifdef FIRE_MODULES
+            return fireRegisterPlugin((const FirePlugin*)info, list);
+#else
+            return Int(-1);   /* (this program cannot load fire plugins: not built with modules) */
+#endif
         }
         default: fatal("__LibCall: unknown function");
     }
@@ -6088,6 +6168,15 @@ bool g_autoSync = true;
 #if defined(FIRE_RT_IMPLEMENTATION) && !defined(FIRE_LIBRARY) && !defined(__cplusplus)
 const FireClassDesc* g_classDescs = NULL;
 uint32_t g_classDescCount = 0;
+#ifdef FIRE_MODULES
+const FirePluginHost* g_pluginHost = NULL;
+const void** g_pluginRf = NULL;
+uint32_t g_pluginRfCount = 0;
+/* the catch types by name: the program's (g_excStatic of them), then those plugins brought (g_excExtra: there are some) */
+static const char** g_excNames = NULL;
+static uint32_t g_excCount = 0, g_excStatic = 0;
+static bool g_excExtra = false;
+#endif
 
 FIRE_FN const FireClassDesc* classDescOf(uint32_t cls) { return cls < g_classDescCount ? &g_classDescs[cls] : NULL; }
 
@@ -6111,6 +6200,10 @@ bool excMatches(Value exception, int32_t typeId) {
     const int32_t* t;
     if (typeId == FIRE_EXC_ANY) return true;
     d = classDescOf(asObj(exception)->cls);
+#ifdef FIRE_MODULES
+    /* a catch type a plugin brought (the program has no id for it): by the name of the class */
+    if (d && g_excExtra && typeId >= (int32_t)g_excStatic) return typeId < (int32_t)g_excCount && fireClassIsSub(asObj(exception)->cls, g_excNames[typeId]);
+#endif
     if (!d || !d->excTypes) return false;
     for (t = d->excTypes; *t >= 0; t++) if (*t == typeId) return true;
     return false;
@@ -6308,6 +6401,125 @@ Value fireProbeRawGet(Value obj, const char* name, OwnList* list) {
     m = fireFindMethod(asObj(obj)->cls, accessor, 0, &k);
     if (m) { Value r = m->fn(k, obj, NULL, list, 0xFFFFFFFFu); adopt(r, list); return r; }
     return Undef();
+}
+
+/* ---- fire plugins (see FirePlugin): the checks, then the registration of its classes, catch types, enums and reflection rows ---- */
+static const FirePlugin* g_plugins[64];
+static Value firePlText(const char* text, OwnList* list) { return newStrFromUtf8((const uint8_t*)text, strlen(text), list); }
+static uint32_t g_pluginCount = 0;
+
+static Value firePluginClassNames(const FirePlugin* p, OwnList* list) {
+    uint32_t i, n = 0;
+    Arr* names;
+    for (i = 0; i < p->nclasses; i++) if (strncmp(p->classNames[i], "__", 2) != 0) n++;   /* (not the classes behind its enums) */
+    names = allocArr(n, list);
+    for (i = 0, n = 0; i < p->nclasses; i++)
+        if (strncmp(p->classNames[i], "__", 2) != 0) { Value s = firePlText(p->classNames[i], list); arrItems(names)[n++] = s; retain(s); }
+    return ArrV(names);
+}
+
+static Value firePluginRefused(const FirePlugin* p, const char* text, OwnList* list) {
+    char t[900];
+    snprintf(t, sizeof t, "The plugin '%s' cannot be loaded: %s", p->name, text);
+    return firePlText(t, list);
+}
+
+/* The id of a catch type by its name: the program's, else a new one (excMatches compares it by the name of the class). */
+static int32_t firePluginExcId(const char* name) {
+    uint32_t i;
+    const char** grown;
+    for (i = 0; i < g_excCount; i++) if (strcmp(g_excNames[i], name) == 0) return (int32_t)i;
+    grown = (const char**)malloc((g_excCount + 1) * sizeof *grown);
+    if (!grown) fatal("out of memory");
+    if (g_excCount) memcpy(grown, g_excNames, g_excCount * sizeof *grown);
+    grown[g_excCount] = name;
+    g_excNames = grown;   /* (the old table stays: another thread may read it) */
+    g_excExtra = true;
+    return (int32_t)g_excCount++;
+}
+
+/* The number of an enum by its name: the program's, else a new one. */
+static uint8_t firePluginEnum(const FireEnum* e) {
+    uint32_t i;
+    FireEnum* grown;
+    for (i = 0; i < g_enumCount; i++) if (strcmp(g_enums[i].name, e->name) == 0) return (uint8_t)(i + 1);
+    if (g_enumCount >= 255) fatal("too many enums");
+    grown = (FireEnum*)malloc((g_enumCount + 1) * sizeof *grown);
+    if (!grown) fatal("out of memory");
+    if (g_enumCount) memcpy(grown, g_enums, g_enumCount * sizeof *grown);
+    grown[g_enumCount] = *e;
+    g_enums = grown;
+    return (uint8_t)++g_enumCount;
+}
+
+Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
+    uint32_t i, j, base;
+    FireClassDesc* rows;
+    char t[600];
+    for (i = 0; i < g_pluginCount; i++) if (g_plugins[i] == p) return firePluginClassNames(p, list);   /* (loaded before) */
+    if (p->format != FIRE_PLUGIN_FORMAT) return firePlText("The library is a fire plugin of another version of fire: build it again.", list);
+    if (!g_pluginHost) return firePluginRefused(p, "this program cannot load fire plugins - build it with linkage \"shared\".", list);
+    for (i = 0; i < p->ndeps; i++) {
+        const char* has = g_pluginHost->moduleAbi(p->depNames[i]);
+        if (!has) { snprintf(t, sizeof t, "it needs the module '%s', which this program does not have.", p->depNames[i]); return firePluginRefused(p, t, list); }
+        if (strcmp(has, p->depAbis[i]) != 0) {
+            snprintf(t, sizeof t, "it was built against another interface of the module '%s' (%.14s, the program has %.14s) - build it again against the libraries of this program.", p->depNames[i], p->depAbis[i], has);
+            return firePluginRefused(p, t, list);
+        }
+    }
+    if (strcmp(p->head, g_pluginHost->head) != 0) {
+        snprintf(t, sizeof t, "it was built for another configuration of the runtime (%.12s, the program has %.12s: other switches, target or version of fire) - build it for this program (--host).", p->head, g_pluginHost->head);
+        return firePluginRefused(p, t, list);
+    }
+    for (i = 0; i < g_pluginCount; i++)
+        if (strcmp(g_plugins[i]->name, p->name) == 0) return firePluginRefused(p, "another plugin of that name is loaded already.", list);
+    for (i = 0; i < p->nclasses; i++)
+        for (j = 0; j < g_classDescCount; j++)
+            if (strcmp(g_classDescs[j].name, p->classNames[i]) == 0) { snprintf(t, sizeof t, "the program has a class '%s' already.", p->classNames[i]); return firePluginRefused(p, t, list); }
+    if (g_pluginCount >= sizeof g_plugins / sizeof g_plugins[0]) return firePluginRefused(p, "too many plugins.", list);
+    if (p->link) {
+        const char* missing = g_pluginHost->find ? p->link(g_pluginHost->find) : "fire_hostFind";
+        if (missing) { snprintf(t, sizeof t, "it needs '%s', which the program does not have.", missing); return firePluginRefused(p, t, list); }
+    }
+    if (!g_excNames) {
+        g_excNames = (const char**)g_pluginHost->excNames;
+        g_excCount = g_excStatic = g_pluginHost->nexc;
+    }
+    /* the catch types and enums of its code: the program's numbers (new ones for those it does not have) */
+    for (i = 0; i < p->nexc; i++) p->excMap[i] = firePluginExcId(p->excNames[i]);
+    p->enumMap[0] = 0;
+    for (i = 0; i < p->nenums; i++) p->enumMap[i + 1] = firePluginEnum(&p->enums[i]);
+    /* its classes: the next ids */
+    base = g_classDescCount;
+    rows = (FireClassDesc*)calloc(base + p->nclasses + 1, sizeof *rows);
+    if (!rows) fatal("out of memory");
+    if (base) memcpy(rows, g_classDescs, base * sizeof *rows);
+    *p->base = base;
+    p->fillClasses(rows + base);
+    for (i = 0; i < p->nclasses; i++) {
+        /* the catch types of the program an object of the class is (by the names of its chain) */
+        int32_t* types = (int32_t*)malloc((g_excStatic + 1) * sizeof *types);
+        uint32_t n = 0;
+        const char* const* c;
+        if (!types) fatal("out of memory");
+        for (j = 1; j < g_excStatic; j++)
+            for (c = rows[base + i].isa; c && *c; c++) if (strcmp(*c, g_excNames[j]) == 0) { types[n++] = (int32_t)j; break; }
+        types[n] = -1;
+        rows[base + i].excTypes = types;
+    }
+    g_classDescs = rows;   /* (the old table stays: another thread may read it) */
+    g_classDescCount = base + p->nclasses;
+    if (p->rfRows) {
+        const void** rf = (const void**)malloc((g_pluginRfCount + p->nclasses) * sizeof *rf);
+        if (!rf) fatal("out of memory");
+        if (g_pluginRfCount) memcpy(rf, g_pluginRf, g_pluginRfCount * sizeof *rf);
+        for (i = 0; i < p->nclasses; i++) rf[g_pluginRfCount + i] = p->rfRows[i];
+        g_pluginRf = rf;
+        g_pluginRfCount += p->nclasses;
+    }
+    g_plugins[g_pluginCount++] = p;
+    if (p->init) p->init();
+    return firePluginClassNames(p, list);
 }
 #endif
 #endif
