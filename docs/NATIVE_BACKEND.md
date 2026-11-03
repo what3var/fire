@@ -583,7 +583,8 @@ Toolchain, die ein Programm macht) in den Ordner `bin/<ziel>-<modus>` des Projek
 
 Die Ausgabe des Programms läuft immer über seinen Prozess, nicht über die Debug-Verbindung. Getestet ohne die Runtime gegen einen Schein-Agenten in C#
 (`FIRE_TESTS_ONLY=debugger`, Block "Natives Debug-Ziel"), dazu Start eines Prozesses mit `FIRE_DEBUG` (ein Programm in bash, das das Protokoll spricht) und - sobald die
-Runtime den Debug-Agenten hat - Ende-zu-Ende mit einem echten Debug-Build gegen die VM.
+Runtime den Debug-Agenten hat - Ende-zu-Ende mit einem echten Debug-Build gegen die VM (Haltepunkt in einer Methode, Tiefe, Locals, `this`, `set`, Step Over bis
+zur unbehandelten Ausnahme mit Meldung und Ort, `resume`, die Ausgabe des Prozesses); ohne Agenten in der Runtime wird dieser Teil übersprungen.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.

@@ -287,7 +287,8 @@ static partial class DebuggerTests
             int src = target.FirstUserSourceIndex;
             target.Output += (t, text) => output.Enqueue((t, text));
             var startLocations = new ConcurrentQueue<(int, int)>();
-            target.ThreadStarted += t => { started.Enqueue(t); startLocations.Enqueue(t.CurrentLocation); runs.Enqueue(Task.Run(() => t.RunUntilEnd(() => false))); };
+            // (the run is queued before the thread is announced to the test: it waits for "started", then for the runs)
+            target.ThreadStarted += t => { startLocations.Enqueue(t.CurrentLocation); runs.Enqueue(Task.Run(() => t.RunUntilEnd(() => false))); started.Enqueue(t); };
             // the main program waits at its last line (otherwise its end could stop the thread before it printed)
             bool mainPaused = target.MainThread.RunUntilBreakpoint(new HashSet<(int, int)> { (src, 4) }, () => false);
             for (int i = 0; i < 400 && started.IsEmpty; i++) Thread.Sleep(50); // `fire` starts its thread asynchronously

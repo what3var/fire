@@ -62,7 +62,8 @@ namespace fire.Debugging
         bool StepLine();
         /// <summary>One source line further or into a call ("Step Into").</summary>
         bool StepInto();
-        /// <summary>Until the current function is left ("Step Out"); false at the top level without running anything.</summary>
+        /// <summary>Until the current function is left ("Step Out"). At the top level nothing runs: the VM returns false, a native program refuses it and the
+        /// thread stays (true) - spark does not offer it there.</summary>
         bool StepOut();
         /// <summary>Until a breakpoint (counted when its line is ENTERED, not for the line the run starts on), a pause request or the end.</summary>
         bool RunUntilBreakpoint(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested);

@@ -525,6 +525,8 @@ static partial class DebuggerTests
             var b = new Box()
             var n = b.Twice(3)
             print("n " + n)
+            throw new Exception("boom")
+            print("after")
             """;
         var config = new fire.Native.NativeConfig();
         var target = fire.Runtime.TargetProfile.Host;
@@ -546,13 +548,21 @@ static partial class DebuggerTests
             Check(built.Ok, "Ende-zu-Ende: Debug-Build (-O0 -g) gelingt", built.Log.Length > 2000 ? built.Log[..2000] : built.Log);
             if (!built.Ok) return;
 
-            // the VM as the reference
+            // the VM as the reference: the stop at line 5, then t = 10 and Step Over to the unhandled exception, then on after it
             VM.ResetTerminateForTests();
+            var vmOutput = new ConcurrentQueue<string>();
             using var vm = VmDebugTarget.Build(new[] { script }, VmExecutionMode.Debug);
+            vm.Output += (_, line) => vmOutput.Enqueue(line);
             int vmSrc = vm.FirstUserSourceIndex;
             vm.MainThread.RunUntilBreakpoint(new HashSet<(int, int)> { (vmSrc, 5) }, () => false);
             string vmLocals = Show(vm.MainThread.Scopes().SelectMany(s => s.Variables));
             int vmDepth = vm.MainThread.CallDepth;
+            vm.MainThread.TrySetValue(vm.MainThread.Scopes().SelectMany(s => s.Variables).First(v => v.Name == "t"), "10", out _);
+            var vmSteps = new List<string>();
+            while (vm.MainThread.StepLine()) vmSteps.Add($"{vm.MainThread.CurrentLocation.Line}/{vm.MainThread.CallDepth}");
+            string vmStop = $"{vm.MainThread.IsPausedOnUnhandled} {vm.MainThread.CurrentLocation.Line} {vm.MainThread.UnhandledError}";
+            vm.MainThread.TryResumeUnhandled();
+            vm.MainThread.RunUntilEnd(() => false);
             VM.ResetTerminateForTests();
 
             var lines = new ConcurrentQueue<string>();
@@ -567,9 +577,16 @@ static partial class DebuggerTests
                 && Show(self.Children()).Contains("v=2") && native.SourcesNotMatching(new[] { script }).Count == 0,
                 "Ende-zu-Ende: Haltepunkt in einer Methode, Tiefe und Locals wie die VM, this mit Feldern", $"{hit} {main.CurrentLocation} depth {main.CallDepth}/{vmDepth} | {Show(locals)} | VM {vmLocals}");
             bool set = locals.FirstOrDefault(v => v.Name == "t") is { } t && main.TrySetValue(t, "10", out _);
+            var steps = new List<string>();
+            while (main.StepLine()) steps.Add($"{main.CurrentLocation.Line}/{main.CallDepth}");
+            string stop = $"{main.IsPausedOnUnhandled} {main.CurrentLocation.Line} {main.UnhandledError}";
+            Check(set && steps.SequenceEqual(vmSteps) && stop == vmStop && main.UnhandledTrace is { Count: > 0 } ut && ut[0] == (src, 11),
+                "Ende-zu-Ende: set, Step Over bis zur unbehandelten Ausnahme wie die VM (Zeilen, Tiefen, Meldung, Ort)", $"{string.Join(" ", steps)} | VM {string.Join(" ", vmSteps)} | {stop} | VM {vmStop}");
+            bool resumed = main.TryResumeUnhandled();
             bool more = main.RunUntilEnd(() => false);
-            for (int i = 0; i < 100 && !lines.Contains("n 10"); i++) Thread.Sleep(20);
-            Check(set && !more && native.HasExited && lines.Contains("n 10"), "Ende-zu-Ende: set, das Programm endet mit dem neuen Wert, seine Ausgabe kommt an", string.Join(" | ", lines));
+            for (int i = 0; i < 100 && !lines.Contains("after"); i++) Thread.Sleep(20);
+            Check(resumed && !more && native.HasExited && lines.Contains("n 10") && lines.Contains("after") && vmOutput.SequenceEqual(new[] { "n 10", "after" }),
+                "Ende-zu-Ende: resume nach der Ausnahme, das Programm endet, seine Ausgabe (mit dem gesetzten Wert) kommt an", string.Join(" | ", lines) + " | VM " + string.Join(" | ", vmOutput));
         }
         catch (NativeDebugException ex) { Check(false, "Ende-zu-Ende nativ", ex.Message); }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
