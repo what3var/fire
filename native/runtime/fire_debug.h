@@ -50,9 +50,9 @@ FIRE_RT_FN int64_t fire_dbgStdinRead(uint8_t* out, int64_t count);
 FIRE_RT_FN void fire_dbgStdinUnget(int c);
 
 /* (generated) the class `cls` for the debugger: its name and the names of its fields, base fields first */
-const DbgClass* fire_dbgClass(uint32_t cls);
+FIRE_HOST_EXTERN const DbgClass* fire_dbgClass(uint32_t cls);
 /* (generated) `set` of field `index` of an object: through the setter of the field, as the class itself would assign it */
-void fire_dbgSetField(Value o, uint32_t index, Value x);
+FIRE_HOST_EXTERN void fire_dbgSetField(Value o, uint32_t index, Value x);
 
 FIRE_RT_FN void fire_dbgLine(DbgFrame* f);
 FIRE_RT_FN void fire_dbgRet(DbgFrame* caller);

@@ -100,9 +100,9 @@
 #define FIRE_RT_DATA
 #define FIRE_RT_FN
 #endif
-#ifdef FIRE_DLL_LINKED
+#if defined(FIRE_DLL_LINKED) && !defined(FIRE_DLL_LINKED_ELSEWHERE)
 #define FIRE_HOST_EXTERN   /* (a pointer of this DLL, see above) */
-#else
+#else   /* (FIRE_DLL_LINKED_ELSEWHERE: the natives in C++ of a fire plugin - the pointers are those of its C file) */
 #define FIRE_HOST_EXTERN extern
 #endif
 #if defined(__GNUC__) || defined(__clang__)
@@ -510,8 +510,10 @@ FIRE_FN int formatReal(Real v, char* out) { return formatFloating((double)v, siz
 #ifndef FIRE_NDIMS
 #define FIRE_NDIMS 1
 #endif
-/* The base symbols, in the order of the dimension vectors (sorted like the VM prints them). Defined by the generated code. */
-FIRE_HOST_EXTERN const char* const g_dimNames[];
+/* The base symbols, in the order of the dimension vectors (sorted like the VM prints them). Defined by the generated code; with linkage "shared" a fire plugin
+ * puts the dimensions of its units the program does not have into its free (empty) places - then g_dimsAdded is set and the names are printed in their order
+ * (unitDimOrder), not in that of the places. */
+FIRE_HOST_EXTERN const char* g_dimNames[];
 
 typedef struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; double offset; int32_t conv; int32_t ulconv; } UnitInit;
 typedef struct UnitDef {
@@ -529,6 +531,7 @@ extern FIRE_RT_DATA const UnitConvFn* g_unitTo;
 extern FIRE_RT_DATA const UnitConvFn* g_unitFrom;
 extern FIRE_RT_DATA UnitDef* g_ud;
 extern FIRE_RT_DATA uint32_t g_udCount, g_udCap;
+extern FIRE_RT_DATA bool g_dimsAdded;
 
 FIRE_FN bool unitDimsZero(const int32_t* dims) {
     int i;
@@ -537,6 +540,29 @@ FIRE_FN bool unitDimsZero(const int32_t* dims) {
 }
 /* Unit.IsUnitless: no dimensions (whatever the scale). */
 FIRE_FN bool unitIsUnitless(uint32_t u) { return unitDimsZero(g_ud[u].dims); }
+/* The places of the dimensions in the order of their names, as the VM sorts them (letters without case first, then lower before upper case): the order of the
+ * places, unless a plugin added dimensions (g_dimsAdded). */
+FIRE_FN int unitDimCompare(const char* a, const char* b) {
+    const char* x = a;
+    const char* y = b;
+    for (; *x && *y; x++, y++) {
+        int cx = (*x >= 'A' && *x <= 'Z') ? *x + 32 : (unsigned char)*x, cy = (*y >= 'A' && *y <= 'Z') ? *y + 32 : (unsigned char)*y;
+        if (cx != cy) return cx - cy;
+    }
+    if (*x || *y) return *x ? 1 : -1;
+    for (x = a, y = b; *x; x++, y++) if (*x != *y) return (*x >= 'a' && *x <= 'z') ? -1 : 1;
+    return 0;
+}
+FIRE_FN void unitDimOrder(int* order) {
+    int i, j;
+    for (i = 0; i < FIRE_NDIMS; i++) order[i] = i;
+    if (FIRE_LIKELY(!g_dimsAdded)) return;
+    for (i = 1; i < FIRE_NDIMS; i++) {
+        int x = order[i];
+        for (j = i; j > 0 && unitDimCompare(g_dimNames[order[j - 1]], g_dimNames[x]) > 0; j--) order[j] = order[j - 1];
+        order[j] = x;
+    }
+}
 /* The text printed after a number: nothing for a unit without dimensions. */
 FIRE_FN const char* unitSuffix(uint32_t u) { return unitIsUnitless(u) ? "" : g_ud[u].name; }
 
@@ -553,9 +579,11 @@ FIRE_FN char* unitBuildName(const int32_t* dims, double scale, const char* displ
     if (unitDimsZero(dims)) fire_put(&t, "unitless");
     else if (display) fire_put(&t, display);
     else {
-        int numerators = 0, denominators = 0, i;
+        int numerators = 0, denominators = 0, i, o, order[FIRE_NDIMS];
         char tmp[16];
-        for (i = 0; i < FIRE_NDIMS; i++) {
+        unitDimOrder(order);
+        for (o = 0; o < FIRE_NDIMS; o++) {
+            i = order[o];
             if (dims[i] > 0) { if (numerators++) fire_put(&t, "*"); fire_put(&t, g_dimNames[i]); if (dims[i] != 1) { snprintf(tmp, sizeof tmp, "^%d", (int)dims[i]); fire_put(&t, tmp); } }
         }
         if (!numerators) fire_put(&t, "1");
@@ -564,8 +592,8 @@ FIRE_FN char* unitBuildName(const int32_t* dims, double scale, const char* displ
             int k = 0;
             fire_put(&t, "/");
             if (denominators > 1) fire_put(&t, "(");
-            for (i = 0; i < FIRE_NDIMS; i++)
-                if (dims[i] < 0) { if (k++) fire_put(&t, "*"); fire_put(&t, g_dimNames[i]); if (dims[i] != -1) { snprintf(tmp, sizeof tmp, "^%d", (int)-dims[i]); fire_put(&t, tmp); } }
+            for (o = 0; o < FIRE_NDIMS; o++)
+                if (dims[i = order[o]] < 0) { if (k++) fire_put(&t, "*"); fire_put(&t, g_dimNames[i]); if (dims[i] != -1) { snprintf(tmp, sizeof tmp, "^%d", (int)-dims[i]); fire_put(&t, tmp); } }
             if (denominators > 1) fire_put(&t, ")");
         }
         if (fabs(scale - 1.0) > 1e-12) {
@@ -604,16 +632,11 @@ FIRE_FN void unitsInit(const UnitInit* init, uint32_t count, const UnitConvFn* t
     g_udCount = count;
 }
 
-/* The index of the unit with these dimensions, scale and display text (made when it is new). */
-FIRE_FN uint32_t unitIntern(const int32_t* dims, double scale, const char* display) {
-    uint32_t i;
+/* A new unit at the end of the table. */
+FIRE_FN uint32_t unitAppend(const int32_t* dims, double scale, const char* display, double offset, int32_t conv, int32_t ulconv) {
     UnitDef* d;
-    for (i = 0; i < g_udCount; i++) {
-        const UnitDef* e = &g_ud[i];
-        if (e->scale == scale && e->offset == 0 && e->conv < 0 && e->ulconv < 0 && memcmp(e->dims, dims, sizeof e->dims) == 0 && ((e->display == NULL) == (display == NULL)) && (!display || strcmp(e->display, display) == 0)) return i;
-    }
     if (g_udCount == g_udCap) {
-        g_udCap *= 2;
+        g_udCap = g_udCap ? g_udCap * 2 : 32;
         g_ud = (UnitDef*)realloc(g_ud, sizeof(UnitDef) * g_udCap);
         if (!g_ud) outOfMemory();
     }
@@ -622,10 +645,20 @@ FIRE_FN uint32_t unitIntern(const int32_t* dims, double scale, const char* displ
     d->scale = scale;
     d->display = display;
     d->name = unitBuildName(dims, scale, display);
-    d->offset = 0;
-    d->conv = -1;
-    d->ulconv = -1;
+    d->offset = offset;
+    d->conv = conv;
+    d->ulconv = ulconv;
     return g_udCount++;
+}
+
+/* The index of the unit with these dimensions, scale and display text (made when it is new). */
+FIRE_FN uint32_t unitIntern(const int32_t* dims, double scale, const char* display) {
+    uint32_t i;
+    for (i = 0; i < g_udCount; i++) {
+        const UnitDef* e = &g_ud[i];
+        if (e->scale == scale && e->offset == 0 && e->conv < 0 && e->ulconv < 0 && memcmp(e->dims, dims, sizeof e->dims) == 0 && ((e->display == NULL) == (display == NULL)) && (!display || strcmp(e->display, display) == 0)) return i;
+    }
+    return unitAppend(dims, scale, display, 0, -1, -1);
 }
 
 FIRE_FN bool unitCompatible(uint32_t a, uint32_t b) { return a == b || memcmp(g_ud[a].dims, g_ud[b].dims, sizeof g_ud[a].dims) == 0; }
@@ -748,11 +781,13 @@ FIRE_FN bool unitTermsOfText(const char* text, UnitTerms* out) {
  * or conversion functions counts as its reference unit (Unit.LinearPart). */
 FIRE_FN bool unitTermsOf(uint32_t u, UnitTerms* out) {
     const UnitDef* d = &g_ud[u];
-    int i;
+    int i, o, order[FIRE_NDIMS];
     if (d->display && unitLinear(u)) return unitTermsOfText(d->display, out);
     if (fabs(d->scale - 1.0) > 1e-12) return false;
     out->n = 0;
-    for (i = 0; i < FIRE_NDIMS; i++) {
+    unitDimOrder(order);
+    for (o = 0; o < FIRE_NDIMS; o++) {
+        i = order[o];
         if (!d->dims[i]) continue;
         if (strlen(g_dimNames[i]) >= sizeof out->t[0].sym || out->n == FIRE_UNIT_TERMS) return false;
         strcpy(out->t[out->n].sym, g_dimNames[i]);
@@ -1884,7 +1919,9 @@ FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
  * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
  * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
  * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
-#define FIRE_PLUGIN_FORMAT 1
+#define FIRE_PLUGIN_FORMAT 3
+/* A plugin that calls a native in C of the program (`fire_cn_<function>`) the program does not export: what Load says (the function: %.*s). */
+#define FIRE_PLUGIN_CNATIVE "it calls the native function '%.*s' in C, which this program does not export to plugins (natives in C are the program's: build the program again with the package of the native; of graphics and windows it exports only those its libraries call)."
 typedef struct FirePlugin {
     uint32_t format;                     /* FIRE_PLUGIN_FORMAT */
     const char* name;                    /* its module */
@@ -1905,6 +1942,23 @@ typedef struct FirePlugin {
     const void* const* rfRows;           /* its reflection rows (const RfClass*, one per class; NULL: none) */
     void (*init)(void);                  /* the static initialisers of its classes */
     const char* (*link)(const void* (*find)(const char*));   /* Windows: fills its pointers to the program (NULL elsewhere); the name the program lacks */
+    uint32_t nunits;
+    const UnitInit* units;               /* its units (row 0: none), their dimensions over dimNames - by dimensions, scale and symbol the program's (unitMap) */
+    uint16_t* unitMap;                   /* fire_units_<p> */
+    uint32_t ndims;
+    const char* const* dimNames;         /* the dimensions of its units, by name the program's (a new one in a free place of g_dimNames) */
+    uint32_t nconv;
+    const UnitConvFn* convTo;            /* the conversion functions of its units (UnitInit.conv/ulconv) */
+    const UnitConvFn* convFrom;
+    const uint8_t* convOwn;              /* 1: of a unit the plugin declares (always a new unit), 0: of a library (the program's unit when it has it) */
+    uint32_t ntext;
+    const TextUnit* textUnits;           /* the units a text may name (`"5in".ToFloat()`), with its numbers: those the program does not know are added */
+    /* JSON (the program has `#import "json"`; NULL: it has not): the JsonClassInfo of its class k (fire_json.h; the units of the fields are the program's once
+     * it is registered), the k of its class of a name (-1: none), the texts of its type arguments and back (NULL: not its own) */
+    const void* (*jsonAt)(uint32_t k);
+    int32_t (*jsonNamed)(const char* name);
+    const char* (*jsonTargText)(const TArg* t);   /* (not jsonTArgText: a DLL defines that name as a macro) */
+    const TArg* (*jsonTargFor)(const char* text);
 } FirePlugin;
 /* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
 typedef struct FirePluginHost {
@@ -1920,6 +1974,12 @@ extern FIRE_RT_DATA const void** g_pluginRf;
 extern FIRE_RT_DATA uint32_t g_pluginRfCount;
 /* Registers a plugin (once; again: the same answer): an array of the names of its classes, or a string that says why it does not fit. */
 FIRE_RT_FN Value fireRegisterPlugin(const FirePlugin* p, OwnList* list);
+/* JSON of the classes of the plugins (the program's jsonClassAt, ... ask here for what is not in its tables): the JsonClassInfo of a class id (NULL: no class of a
+ * plugin, or none with JSON), the id of a class name (-1: none), the text of a type argument of a plugin and back (NULL: none). */
+FIRE_RT_FN const void* firePluginJsonAt(uint32_t cls);
+FIRE_RT_FN int32_t firePluginJsonNamed(const char* name);
+FIRE_RT_FN const char* firePluginTArgText(const TArg* t);
+FIRE_RT_FN const TArg* firePluginTArgFor(const char* text);
 #endif
 /* The catch type `Exception` (catches every exception object): always type id 0. */
 #define FIRE_EXC_ANY 0
@@ -3255,7 +3315,7 @@ FIRE_FN Value strArrayOf(const char* const* items, uint32_t n, OwnList* list) {
     return ArrV(a);
 }
 /* Generated: builds a ReflectionException (message) owned by the global scope. */
-Value makeReflectError(Value message);
+FIRE_HOST_EXTERN Value makeReflectError(Value message);
 #endif
 
 FIRE_FN const char* kindName(Value v) {
@@ -3477,9 +3537,9 @@ struct Handler {
 /* Does the exception match the catch type (`typeId` as stored in HandlerInfo.types; FIRE_EXC_ANY: `Exception`)? The descriptor of its class lists its types. */
 FIRE_RT_FN bool excMatches(Value exception, int32_t typeId);
 /* Generated: builds an IndexOutOfBoundsException (message, index, length) owned by the global scope. */
-Value makeIndexError(Value message, int64_t index, int64_t length);
+FIRE_HOST_EXTERN Value makeIndexError(Value message, int64_t index, int64_t length);
 /* Generated: builds a UnitMismatchException (message, expected unit, actual unit) owned by the global scope. */
-Value makeUnitError(Value message, Value expected, Value actual);
+FIRE_HOST_EXTERN Value makeUnitError(Value message, Value expected, Value actual);
 
 FIRE_FN void pushHandler(Handler* h) { h->prev = g_handlers; h->origin = h; h->finallyOnly = 0; g_handlers = h; }
 FIRE_FN void popHandler(void) { g_handlers = g_handlers->prev; }
@@ -3698,7 +3758,7 @@ FIRE_FN void unitMismatch(Value v, Value expectedText) {
 #ifdef FIRE_EXCEPTIONS
 /* Generated: the exception object of the class `cls` (a class that natives of packages throw: `exceptions` of the package) with the message, or an undefined
  * value. */
-Value makeClassError(const char* cls, Value message);
+FIRE_HOST_EXTERN Value makeClassError(const char* cls, Value message);
 #endif
 /* An exception of the program that a native of a package throws (`fireError("TimeException", "text")`): thrown, or - when the program has no exceptions - the
  * end of the program. */
@@ -3961,7 +4021,7 @@ FIRE_FN Value fire_asciiMessage(const char* text) {
 }
 
 /* Generated: builds an AccessDeniedException (message) owned by the global scope. */
-Value makeAccessError(Value message);
+FIRE_HOST_EXTERN Value makeAccessError(Value message);
 
 /* A private or protected member used from where it may not be (SPEC 5.7): an AccessDeniedException, or the end of the program when there are no exceptions. */
 FIRE_FN Value accessDenied(const char* text) {
@@ -4022,10 +4082,10 @@ FIRE_FN void setDefaultTimeout(Value t) {
 }
 
 /* Generated: builds a DestroyedException (message) owned by the global scope. */
-Value makeDestroyedError(Value message);
+FIRE_HOST_EXTERN Value makeDestroyedError(Value message);
 
 /* Generated: builds a DivideByZeroException (message) owned by the global scope. */
-Value makeDivideError(Value message);
+FIRE_HOST_EXTERN Value makeDivideError(Value message);
 
 FIRE_FN Value divideByZero(void) {
 #ifdef FIRE_EXCEPTIONS
@@ -5155,7 +5215,7 @@ FIRE_FN void externPtrFree(ExternPtr* e) {
  * every text of the program that is a signature (fire_libThunk, NULL for any other). The errors are thrown by the fire code of the class (the same as in the VM). ---- */
 /* `release`: the library's `void(void*)` that frees a returned string after it is copied (Get's `release:`; NULL: never freed). */
 typedef Value (*FireLibThunk)(void* fn, const Value* args, void* release, OwnList* list);
-FireLibThunk fire_libThunk(const char* signature);   /* (generated: by the signature without white space) */
+FIRE_HOST_EXTERN FireLibThunk fire_libThunk(const char* signature);   /* (generated: by the signature without white space) */
 
 /* The signature without white space; 0 when it does not fit. */
 FIRE_FN int fire_libSigNorm(Value text, char* out, uint32_t cap) {
@@ -5256,6 +5316,21 @@ FIRE_FN Value libCall(Value id, Value a, Value b, Value c, Value d, OwnList* lis
                     }
                     if (plugin) return Int(-1);
                 }
+#ifdef FIRE_MODULES
+                /* a fire plugin that calls a native in C of the program the program does not export (`fire_cn_<function>`): a text, Load throws it */
+                if (!h) {
+                    const char* why = fire_plat_dlerror();
+                    const char* cn = why ? strstr(why, "fire_cn_") : NULL;
+                    if (cn) {
+                        char t[700];
+                        size_t k = 0;
+                        cn += 8;
+                        while (k < 200 && ((cn[k] >= 'a' && cn[k] <= 'z') || (cn[k] >= 'A' && cn[k] <= 'Z') || (cn[k] >= '0' && cn[k] <= '9') || cn[k] == '_')) k++;
+                        snprintf(t, sizeof t, "The plugin library '%s' cannot be loaded: " FIRE_PLUGIN_CNATIVE, text, (int)k, cn);
+                        return newStrFromUtf8((const uint8_t*)t, strlen(t), list);
+                    }
+                }
+#endif
             }
             return Int((int64_t)(intptr_t)h);
         }
@@ -6230,6 +6305,7 @@ const UnitConvFn* g_unitTo = NULL;
 const UnitConvFn* g_unitFrom = NULL;
 UnitDef* g_ud = NULL;
 uint32_t g_udCount = 0, g_udCap = 0;
+bool g_dimsAdded = false;
 const TextUnit* g_textUnits = NULL;
 uint32_t g_textUnitCount = 0;
 #ifndef FIRE_UNCHECKED
@@ -6539,6 +6615,40 @@ static Value firePluginClassNames(const FirePlugin* p, OwnList* list) {
     return ArrV(names);
 }
 
+const void* firePluginJsonAt(uint32_t cls) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const FirePlugin* p = g_plugins[i];
+        if (p->jsonAt && cls >= *p->base && cls - *p->base < p->nclasses) return p->jsonAt(cls - *p->base);
+    }
+    return NULL;
+}
+int32_t firePluginJsonNamed(const char* name) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const FirePlugin* p = g_plugins[i];
+        int32_t k = p->jsonNamed ? p->jsonNamed(name) : -1;
+        if (k >= 0) return (int32_t)(*p->base + (uint32_t)k);
+    }
+    return -1;
+}
+const char* firePluginTArgText(const TArg* t) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const char* text = g_plugins[i]->jsonTargText ? g_plugins[i]->jsonTargText(t) : NULL;
+        if (text) return text;
+    }
+    return NULL;
+}
+const TArg* firePluginTArgFor(const char* text) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const TArg* t = g_plugins[i]->jsonTargFor ? g_plugins[i]->jsonTargFor(text) : NULL;
+        if (t) return t;
+    }
+    return NULL;
+}
+
 static Value firePluginRefused(const FirePlugin* p, const char* text, OwnList* list) {
     char t[900];
     snprintf(t, sizeof t, "The plugin '%s' cannot be loaded: %s", p->name, text);
@@ -6573,8 +6683,94 @@ static uint8_t firePluginEnum(const FireEnum* e) {
     return (uint8_t)++g_enumCount;
 }
 
+/* Its units: their dimensions by name in the program's places (new ones in free places: false when there are not enough), then each unit the program's with the
+ * same dimensions, scale, symbol and offset - a unit with conversion functions only when it is not the plugin's own -, else a new one (with its functions). */
+static bool firePluginDims(const FirePlugin* p, int32_t* place, bool apply) {
+    uint32_t i;
+    int k, next = 0;
+    for (i = 0; i < p->ndims; i++) {
+        place[i] = -1;
+        for (k = 0; k < FIRE_NDIMS; k++) if (g_dimNames[k][0] && strcmp(g_dimNames[k], p->dimNames[i]) == 0) { place[i] = k; break; }
+        if (place[i] >= 0) continue;
+        while (next < FIRE_NDIMS && g_dimNames[next][0]) next++;
+        if (next == FIRE_NDIMS) return false;
+        place[i] = next;
+        if (apply) { g_dimNames[next] = p->dimNames[i]; g_dimsAdded = true; }
+        next++;
+    }
+    return true;
+}
+static void firePluginUnits(const FirePlugin* p) {
+    int32_t place[FIRE_NDIMS], conv[64];
+    uint32_t i, j, k, hostConv = 0;
+    if (p->nunits <= 1 && p->ntext == 0) return;
+    firePluginDims(p, place, true);
+    for (i = 0; i < g_udCount; i++) {
+        if (g_ud[i].conv >= 0 && (uint32_t)g_ud[i].conv + 1 > hostConv) hostConv = (uint32_t)g_ud[i].conv + 1;
+        if (g_ud[i].ulconv >= 0 && (uint32_t)g_ud[i].ulconv + 1 > hostConv) hostConv = (uint32_t)g_ud[i].ulconv + 1;
+    }
+    for (k = 0; k < p->nconv && k < 64; k++) conv[k] = -1;
+    p->unitMap[0] = 0;
+    for (k = 1; k < p->nunits; k++) {
+        const UnitInit* u = &p->units[k];
+        int32_t dims[FIRE_NDIMS];
+        bool own = (u->conv >= 0 && p->convOwn[u->conv]) || (u->ulconv >= 0 && p->convOwn[u->ulconv]);
+        uint32_t found = 0;
+        memset(dims, 0, sizeof dims);
+        for (j = 0; j < p->ndims; j++) dims[place[j]] = u->dims[j];
+        if (!own)
+            for (i = 1; i < g_udCount && !found; i++) {
+                const UnitDef* e = &g_ud[i];
+                if (e->scale == u->scale && e->offset == u->offset && (e->conv >= 0) == (u->conv >= 0) && (e->ulconv >= 0) == (u->ulconv >= 0) && memcmp(e->dims, dims, sizeof dims) == 0
+                    && ((e->display == NULL) == (u->display == NULL)) && (!u->display || strcmp(e->display, u->display) == 0)) found = i;
+            }
+        if (!found) {
+            /* (a new unit: its conversion functions get the next numbers of the program) */
+            int32_t c[2];
+            int32_t from[2];
+            int n;
+            from[0] = u->conv; from[1] = u->ulconv;
+            for (n = 0; n < 2; n++) {
+                c[n] = -1;
+                if (from[n] < 0 || (uint32_t)from[n] >= p->nconv || from[n] >= 64) continue;
+                if (conv[from[n]] < 0) {
+                    UnitConvFn* to = (UnitConvFn*)malloc((hostConv + 1) * sizeof *to);
+                    UnitConvFn* back = (UnitConvFn*)malloc((hostConv + 1) * sizeof *back);
+                    if (!to || !back) outOfMemory();
+                    if (hostConv) { memcpy(to, g_unitTo, hostConv * sizeof *to); memcpy(back, g_unitFrom, hostConv * sizeof *back); }
+                    to[hostConv] = p->convTo[from[n]];
+                    back[hostConv] = p->convFrom[from[n]];
+                    g_unitTo = to;   /* (the old tables stay: another thread may read them) */
+                    g_unitFrom = back;
+                    conv[from[n]] = (int32_t)hostConv++;
+                }
+                c[n] = conv[from[n]];
+            }
+            found = unitAppend(dims, u->scale, u->display, u->offset, c[0], c[1]);
+        }
+        p->unitMap[k] = (uint16_t)found;
+    }
+    /* the units a text may name: those of the plugin the program does not know by that symbol */
+    if (p->ntext) {
+        TextUnit* text = (TextUnit*)malloc((g_textUnitCount + p->ntext) * sizeof *text);
+        uint32_t n = g_textUnitCount;
+        if (!text) outOfMemory();
+        if (n) memcpy(text, g_textUnits, n * sizeof *text);
+        for (k = 0; k < p->ntext; k++) {
+            for (i = 0; i < g_textUnitCount && strcmp(g_textUnits[i].symbol, p->textUnits[k].symbol) != 0; i++) { }
+            if (i < g_textUnitCount) continue;
+            text[n] = p->textUnits[k];
+            text[n].unit = p->unitMap[p->textUnits[k].unit];
+            n++;
+        }
+        g_textUnits = text;
+        g_textUnitCount = n;
+    }
+}
+
 Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
     uint32_t i, j, base;
+    int32_t places[FIRE_NDIMS];
     FireClassDesc* rows;
     char t[600];
     for (i = 0; i < g_pluginCount; i++) if (g_plugins[i] == p) return firePluginClassNames(p, list);   /* (loaded before) */
@@ -6598,10 +6794,18 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
         for (j = 0; j < g_classDescCount; j++)
             if (strcmp(g_classDescs[j].name, p->classNames[i]) == 0) { snprintf(t, sizeof t, "the program has a class '%s' already.", p->classNames[i]); return firePluginRefused(p, t, list); }
     if (g_pluginCount >= sizeof g_plugins / sizeof g_plugins[0]) return firePluginRefused(p, "too many plugins.", list);
+    if (p->ndims > FIRE_NDIMS || !firePluginDims(p, places, false)) {
+        snprintf(t, sizeof t, "its units need more dimensions than the program has room for (%d in all with linkage \"shared\").", FIRE_NDIMS);
+        return firePluginRefused(p, t, list);
+    }
+    if (p->nconv > 64) return firePluginRefused(p, "it has more than 64 units with conversion functions.", list);
     if (p->link) {
         const char* missing = g_pluginHost->find ? p->link(g_pluginHost->find) : "fire_hostFind";
+        if (missing && strncmp(missing, "fire_cn_", 8) == 0) { snprintf(t, sizeof t, FIRE_PLUGIN_CNATIVE, (int)strlen(missing + 8), missing + 8); return firePluginRefused(p, t, list); }
         if (missing) { snprintf(t, sizeof t, "it needs '%s', which the program does not have.", missing); return firePluginRefused(p, t, list); }
     }
+    /* its units: the program's numbers (new ones for those it does not have) */
+    firePluginUnits(p);
     if (!g_excNames) {
         g_excNames = (const char**)g_pluginHost->excNames;
         g_excCount = g_excStatic = g_pluginHost->nexc;

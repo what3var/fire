@@ -10,7 +10,8 @@ namespace fire.Standard
     /// <summary>The functions behind the class `Library` (IDs for <see cref="LibraryMethods.NativeName"/>, fixed values - never renumber).</summary>
     public enum LibraryMethod
     {
-        /// <summary>`(1, path)`: loads a native library - its handle (an int), 0 when it cannot be loaded, -1 for a fire plugin the program cannot load (not linkage "shared").</summary>
+        /// <summary>`(1, path)`: loads a native library - its handle (an int), 0 when it cannot be loaded, -1 for a fire plugin the program cannot load (not linkage "shared"),
+        /// a text that says why a fire plugin does not load (natively: it calls a native in C the program does not export).</summary>
         Load = 1,
         /// <summary>`(2, handle, name)`: the address of a function of the library, 0 when it has none of that name.</summary>
         Symbol = 2,
@@ -112,6 +113,7 @@ namespace fire.Standard
                 /// (Reflect.New, Type.Named, `is of`, catch) - a LibraryException when it does not fit the program.
                 static Library Load(string path) {
                     var handle = {{NativeName}}({{(int)LibraryMethod.Load}}, path)
+                    if (handle is of string) { throw new LibraryException(handle) }
                     if (handle == 0) { throw new LibraryException("The library '" + path + "' could not be loaded.") }
                     if (handle == -1) { throw new LibraryException("The library '" + path + "' is a fire plugin: this program cannot load fire plugins - build it with linkage \"shared\".") }
                     var lib = new Library(handle, path)

@@ -1313,7 +1313,7 @@ namespace fire.Native
                     TArgTables();
                 }
                 // (the units a text may name, see textUnits below: registered here, so that the conversion functions of a unit (`coerce`) are generated too)
-                if (!LibraryRole && (_usesStringCall || _program.Program.CustomUnits.Count > 0))
+                if ((!LibraryRole || _plugin) && (_usesStringCall || _program.Program.CustomUnits.Count > 0))
                 {
                     foreach (var (symbol, _) in Unit.BuiltInSymbols) UnitId(Unit.Parse(symbol));
                     foreach (var own in _program.Program.CustomUnits) UnitId(Unit.OfCustom(own));
@@ -1439,7 +1439,7 @@ namespace fire.Native
             sb.AppendLine();
             // (linkage "static": FIRE_NDIMS is fixed - the names of the dimensions the program does not use are empty)
             var dimTexts = dimNames.Select(CString).Concat(Enumerable.Repeat("\"\"", _separate ? SeparateDims - dimNames.Count : dimNames.Count == 0 ? 1 : 0)).ToList();
-            sb.AppendLine($"const char* const g_dimNames[] = {{{string.Join(", ", dimTexts)}}};");
+            sb.AppendLine($"const char* g_dimNames[] = {{{string.Join(", ", dimTexts)}}};   /* (not const: a plugin puts the dimensions of its units into the free places) */");
             sb.AppendLine("static const UnitInit kUnitInit[] = {");
             foreach (var u in _units)
             {

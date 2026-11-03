@@ -6,6 +6,7 @@ using fire.Runtime;
 using fire.Values;
 using fire.Ast;
 using fire.Package.Manager;
+using fire.Standard;
 
 namespace fire.Native
 {
@@ -40,8 +41,9 @@ namespace fire.Native
         public string Library { get; set; } = "";
     }
 
-    /// <summary>A plugin as generated: its C (one file), its module name, the interfaces of the modules it needs (the host must have the same), the log.</summary>
-    public sealed record PluginBuildPlan(string C, string Name, IReadOnlyList<(string Module, string Abi)> Deps, string Log);
+    /// <summary>A plugin as generated: its C (one file), its natives in C++ (null: none - a file of their own, compiled with the C++ compiler into the same library), its
+    /// module name, the interfaces of the modules it needs (the host must have the same), the log.</summary>
+    public sealed record PluginBuildPlan(string C, string? Natives, string Name, IReadOnlyList<(string Module, string Abi)> Deps, string Log);
 
     /// <summary>
     /// fire plugins (ROADMAP 9, phase D b; docs/NATIVE_BACKEND.md "Plugins"): the classes of a program built as a library module of their own (`--linkage plugin`), a
@@ -114,11 +116,10 @@ namespace fire.Native
         {
             var sb = new StringBuilder();
             string id = _self!.Id;
-            if (_units.Count > 1) throw new NativeNotSupportedException($"the plugin uses units ({string.Join(", ", _units.Skip(1).Take(3).Select(u => u.ToString()))}): not possible in a plugin yet");
             sb.AppendLine($"/* ---- plugin {_self.Name} (ROADMAP 9 phase D b): the tables a program defines for a library module - its own, filled when it is registered ---- */");
             sb.AppendLine($"static uint32_t fire_mb_{id} = 0;");
             foreach (var m in _usedModules.OrderBy(m => m.Index)) sb.Append(HostDecl($"fire_mb_{m.Id}", $"extern const uint32_t fire_mb_{m.Id};"));
-            sb.AppendLine($"FIRE_MAYBE_UNUSED static const uint16_t fire_units_{id}[] = {{0}};");
+            sb.AppendLine($"static uint16_t fire_units_{id}[{Math.Max(1, _units.Count)}];");
             sb.AppendLine($"static uint8_t fire_enums_{id}[{_enumList.Count + 1}];");
             sb.AppendLine($"static int32_t fire_exct_{id}[{Math.Max(1, _excTypes.Count)}];");
             sb.AppendLine($"FIRE_MAYBE_UNUSED static const int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}] = {{0}};");
@@ -136,6 +137,14 @@ namespace fire.Native
                 for (var c = rc; c != null; c = c.Base) if (c.Destructor != null) GetFunc(c.Destructor, FuncKind.Dtor);
                 if (rc.FindMethodWithAccess("ToString", 0).Proto is { ParamCount: 0, IsStatic: false } toString) GetFunc(toString, FuncKind.Method);
             }
+            // (the program has JSON: the units and type arguments of the fields of its classes are in its tables)
+            if (_usesJson)
+                foreach (var name in _self.Classes)
+                    foreach (var field in JsonMethods.JsonFieldsOf(FindClass(name)))
+                    {
+                        UnitId(field.Unit);
+                        foreach (var arg in JsonTypeArgTexts(field.Type)) TArgRef(arg);
+                    }
             // the static initialisers of its classes (the compiler puts them at the start of a program's top level): what they make belongs to the global scope
             _pluginStaticInits.Clear();
             foreach (var rc in _program.Program.Classes.Values.Where(c => _self.Classes.Contains(c.Name)))
@@ -176,13 +185,17 @@ namespace fire.Native
                     sb.AppendLine($"static const FireEnumMember kPlEnumM{i}[] = {{{string.Join(", ", _enumList[i].Members.Select(m => $"{{{CString(m.Name)}, {(m.Value == long.MinValue ? "INT64_MIN" : m.Value.ToString(CultureInfo.InvariantCulture) + "LL")}}}").DefaultIfEmpty("{\"\", 0}"))}}};");
                 sb.AppendLine($"static const FireEnum kPlEnums[] = {{{string.Join(", ", _enumList.Select((e, i) => $"{{{CString(e.Name)}, {(e.IsFlags ? 1 : 0)}, kPlEnumM{i}, {e.Members.Count}}}"))}}};");
             }
+            string units = PluginUnits(sb);
             string rf = "NULL";
             if (_usesReflection)
             {
                 rf = "kPlRf";
                 sb.AppendLine($"static const void* const kPlRf[] = {{{string.Join(", ", _self.Classes.Select(n => "&" + RfRowName(ModId, FindClass(n))))}}};");
             }
+            var jsonFixups = new List<string>();
+            string json = PluginJson(sb, jsonFixups);
             sb.AppendLine("static void fire_pl_init(void) {");
+            foreach (var fixup in jsonFixups) sb.AppendLine("    " + fixup);   // (the units of the fields JSON reads: the program's, known now)
             foreach (var (cls, field, init) in _pluginStaticInits)
                 sb.AppendLine($"    {{ Value r = {init.Name}(Undef()); {(_usesExceptions ? "if (g_unwind.active) return; " : "")}adopt(r, g_globalOwn); {StaticFieldVar(cls, field)} = r; retain(r); }}   // {cls}.{field}");
             sb.AppendLine("}");
@@ -194,8 +207,58 @@ namespace fire.Native
             }
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}extern const FirePlugin fire_module_info;");
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}const FirePlugin fire_module_info = {{FIRE_PLUGIN_FORMAT, {CString(_self.Name)}, \"{PluginHeadMark}\", {_pluginDeps.Count}u, {depNames}, {depAbis}, "
-                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}}};");
+                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}}};");
             return sb.ToString();
+        }
+
+        /// <summary>A plugin: the tables of its units (the program's numbers for them are found by dimensions, scale and symbol when it is registered, fire_rt.h
+        /// firePluginUnits) - the dimensions by name, a row per unit over them, the conversion functions and the units a text may name. The fields of FirePlugin from
+        /// `nunits` on.</summary>
+        private string PluginUnits(StringBuilder sb)
+        {
+            string id = _self!.Id;
+            var dimNames = _units.SelectMany(u => u.Dimensions.Keys).Distinct().OrderBy(k => k, StringComparer.Ordinal).ToList();
+            if (dimNames.Count > SeparateDims) throw new NativeNotSupportedException($"the plugin uses {dimNames.Count} dimensions of units; at most {SeparateDims}");
+            string dims = "NULL", conv = "0u, NULL, NULL, NULL", text = "0u, NULL";
+            if (dimNames.Count > 0)
+            {
+                dims = "kPlDims";
+                sb.AppendLine($"static const char* const kPlDims[] = {{{string.Join(", ", dimNames.Select(CString))}}};");
+            }
+            sb.AppendLine("static const UnitInit kPlUnits[] = {");
+            foreach (var u in _units)
+            {
+                string exps = dimNames.Count == 0 ? "0" : string.Join(", ", dimNames.Select(n => u.Dimensions.TryGetValue(n, out int e) ? e.ToString(CultureInfo.InvariantCulture) : "0"));
+                string display = u.DisplaySymbol is { } symbol ? CString(symbol) : "NULL";
+                int c = u.Converter is { } converter ? _unitConverters[converter].Index : -1;
+                int ul = u.UnitlessConverter is { } plainConverter ? _unitConverters[plainConverter].Index : -1;
+                sb.AppendLine($"    {{{{{exps}}}, {DoubleLiteral(u.Scale, false)}, {display}, {DoubleLiteral(u.Offset, false)}, {c}, {ul}}},");
+            }
+            sb.AppendLine("};");
+            if (_unitConverters.Count > 0)
+            {
+                var converters = _unitConverters.OrderBy(c => c.Value.Index).ToList();
+                sb.AppendLine($"static const UnitConvFn kPlUnitTo[] = {{{string.Join(", ", converters.Select(c => c.Value.To.Name))}}};");
+                sb.AppendLine($"static const UnitConvFn kPlUnitFrom[] = {{{string.Join(", ", converters.Select(c => c.Value.From.Name))}}};");
+                // (the hidden class of a unit the plugin declares is its own: the unit is new in the program - one of a library is the program's when it has it)
+                sb.AppendLine($"static const uint8_t kPlUnitOwn[] = {{{string.Join(", ", converters.Select(c => _self.Classes.Contains(c.Key) ? "1" : "0"))}}};");
+                conv = $"{converters.Count}u, kPlUnitTo, kPlUnitFrom, kPlUnitOwn";
+            }
+            if (_usesStringCall || _program.Program.CustomUnits.Count > 0)
+            {
+                // the units a text may name (as the program's kTextUnits): those of fire, then those of the plugin and its libraries by symbol and name
+                var rows = new List<string>();
+                foreach (var (symbol, prefixable) in Unit.BuiltInSymbols) rows.Add($"{{{CString(symbol)}, {UnitId(Unit.Parse(symbol))}, {(prefixable ? "true" : "false")}}}");
+                foreach (var own in _program.Program.CustomUnits)
+                {
+                    int u = UnitId(Unit.OfCustom(own));
+                    rows.Add($"{{{CString(own.Symbol)}, {u}, {(own.Prefixed ? "true" : "false")}}}");
+                    if (own.Name != own.Symbol) rows.Add($"{{{CString(own.Name)}, {u}, false}}");
+                }
+                sb.AppendLine($"static const TextUnit kPlTextUnits[] = {{\n    {string.Join(",\n    ", rows)}\n}};");
+                text = $"{rows.Count}u, kPlTextUnits";
+            }
+            return $"{_units.Count}u, kPlUnits, fire_units_{id}, {dimNames.Count}u, {dims}, {conv}, {text}";
         }
 
         /// <summary>A plugin (`--linkage plugin`, ROADMAP 9 phase D b): the classes of the program's own sources as a library module of their own, against the library
@@ -251,7 +314,6 @@ namespace fire.Native
                 if (round > 4) throw new NativeNotSupportedException("the plugin and its modules do not agree on the switches");
                 flags = union;
             }
-            if (output.NativeThunks.Length > 0) throw new NativeNotSupportedException("the plugin calls natives in C++: not possible in a plugin yet");
             // the head of its file: the configuration of the runtime of the program (the same switches), the key the runtime compares
             var headGen = new CppGenerator(program, target) { _role = ModuleRole.Program, _forced = flags, _separate = true, _dll = dll, _chooseSdl = chooseSdl, _strip = LibraryStripping(program, stripping) };
             headGen.CollectPackages();
@@ -262,8 +324,36 @@ namespace fire.Native
             if (output.JsonEngine) head = head.Replace("#include \"fire_json.h\"", "#define FIRE_JSON_IMPLEMENTATION 1   // (the JSON engine: in the file of the module that calls it)\n#include \"fire_json.h\"");
             if (host != null && key != host.Head) log.AppendLine($"note: the configuration of the runtime differs from the program's ({key.Substring(0, 12)}, the program {host.Head.Substring(0, Math.Min(12, host.Head.Length))})");
             string c = ResolveLineResets(head + output.NativesC + output.Body.Replace(PluginHeadMark, key) + output.LinkC);
-            log.AppendLine($"plugin {name}: {self.Classes.Count} classes, switches {flags.Value}, runtime {key.Substring(0, 12)}");
-            return new PluginBuildPlan(c, name, specs.Select(s => (s.Name, $"{InterfaceFormat}:{abi[s]}")).ToList(), log.ToString());
+            string? natives = output.NativeThunks.Length > 0 ? headGen.PluginNativesCpp(output) : null;
+            log.AppendLine($"plugin {name}: {self.Classes.Count} classes, switches {flags.Value}, runtime {key.Substring(0, 12)}{(natives != null ? $", natives in C++ ({output.CppNatives.Count})" : "")}");
+            return new PluginBuildPlan(c, natives, name, specs.Select(s => (s.Name, $"{InterfaceFormat}:{abi[s]}")).ToList(), log.ToString());
+        }
+
+        /// <summary>A plugin's natives in C++ (this generator: the plugin's program, its packages collected): the configuration of the runtime of its C file, fire_rt_cpp.hpp,
+        /// the C++ of the packages whose natives its code calls and its thunks (`fire_nat_<p>_k`). They are the plugin's own copy - their state is not the program's,
+        /// also when the program imports the same package (Linux: compiled with hidden visibility, as a DLL on Windows is anyway). On Windows the pointers to the
+        /// program are those of its C file (FIRE_DLL_LINKED_ELSEWHERE).</summary>
+        private string PluginNativesCpp(ModuleOutput output)
+        {
+            var called = new HashSet<string>(output.CppNatives, StringComparer.Ordinal);
+            var nat = new StringBuilder();
+            nat.Append(HeadDefines().Replace("// Generated by fire.Native from the bytecode - do not edit.", "// Generated by fire.Native: the natives in C++ of a fire plugin - do not edit."));
+            nat.Append(HeadTail(0));
+            if (_dll) { nat.Append(DllHead()); nat.AppendLine("#define FIRE_DLL_LINKED_ELSEWHERE 1   // (the pointers to the program are those of the plugin's C file)"); }
+            nat.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
+            nat.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
+            nat.AppendLine("#include \"fire_rt_cpp.hpp\"   // the runtime (fire_rt.h, the program has its state) and what C++ code expects of it");
+            foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) nat.AppendLine(line);
+            foreach (var (import, _) in _packageImports.Where(p => p.Import.Import.Native is { IsC: false } n && n.Functions.Any(f => called.Contains(f.Symbol))))
+                foreach (var (file, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
+                {
+                    nat.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\": {file}");
+                    nat.AppendLine(text);
+                    nat.AppendLine($"// ---- end of {file}");
+                }
+            nat.AppendLine();
+            nat.Append(output.NativeThunks);
+            return nat.ToString();
         }
 
         private static string DescribeFlags(ModuleFlags wanted, ModuleFlags has)

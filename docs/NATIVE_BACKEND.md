@@ -1083,8 +1083,9 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
 
 * **Das Plugin** ist ein Modul mit der Rolle einer Library (`_plugin`): es nummeriert seine Klassen ab einer Basis, ruft die anderen Module über ihre exportierten
   Namen, bedient seine eigenen Klassen selbst. Was das Programm sonst für eine Library festlegt, legt es selbst an und füllt es beim Registrieren: `fire_mb_<p>`
-  (die Id seiner ersten Klasse), `fire_exct_<p>` (seine Typen von `catch`, nach Namen), `fire_enums_<p>` (seine Enums, nach Namen); Einheiten gibt es in einem
-  Plugin noch nicht (der Bau sagt es). Dazu schreibt es die Deskriptoren seiner Klassen (wie das Programm: Destruktoren der Kette, ToString, `message`/`ticks`, die
+  (die Id seiner ersten Klasse), `fire_exct_<p>` (seine Typen von `catch`, nach Namen), `fire_enums_<p>` (seine Enums, nach Namen), `fire_units_<p>` (seine
+  Einheiten: eine Zeile `UnitInit` je Einheit über die Namen ihrer Dimensionen - `kPlDims` -, die Umrechnungsfunktionen der Einheiten mit `coerce to`/`from`, ob eine
+  davon zu einer Einheit des Plugins selbst gehört, und die Einheiten, die ein Text nennen darf - die von fire, des Plugins und seiner Libraries). Dazu schreibt es die Deskriptoren seiner Klassen (wie das Programm: Destruktoren der Kette, ToString, `message`/`ticks`, die
   Namen der Kette und der Interfaces, die Tabellen der Member - seine eigenen und die exportierten `fire_mem_<m>_<Klasse>` der Module seiner Basisklassen -, die
   Funktion der Typargumente), seine Reflection-Zeilen (mit Reflect.New: `RfClass.make`), eine Funktion mit den statischen Initialisierern seiner Klassen (was sie
   anlegen, gehört dem globalen Scope) und `fire_module_info` (`FirePlugin` in fire_rt.h).
@@ -1093,7 +1094,14 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   Konfiguration der Runtime (Generator, Schalter der Module, Kopf der Dateien) der des Programms. Dann bekommen seine Klassen die nächsten Ids (`g_classDescs` wächst:
   kopiert und angehängt, die alte Tabelle bleibt für andere Threads), seine Typen von `catch` die Ids des Programms (ein Typ, den das Programm nicht kennt, eine neue,
   `excMatches` vergleicht ihn über den Namen der Klasse), seine Enums die Nummern des Programms (sonst neue), seine Reflection-Zeilen kommen in `g_pluginRf`, dann
-  laufen die statischen Initialisierer. Ein zweites `Load` desselben Plugins gibt dieselben Klassen; ein anderes Plugin mit demselben Namen oder eine Klasse, die das
+  laufen die statischen Initialisierer. **Einheiten** (`firePluginUnits`): ihre Dimensionen bekommen nach Namen die Plätze des Programms in `g_dimNames`, eine
+  Dimension, die das Programm nicht hat (`pears`, das `V` eines `prefixed unit Volt: V` des Plugins), einen freien Platz (`FIRE_NDIMS` ist mit `"shared"` 16 - reicht der
+  Platz nicht, sagt `Load` es; `g_dimNames` ist dafür nicht mehr `const`); eine Einheit wird die des Programms mit denselben Dimensionen, Faktor, Offset und Symbol,
+  sonst eine neue. Eine Einheit mit Umrechnungsfunktionen einer Library (dBm von `Api`) ist die des Programms, wenn es sie hat; eine des Plugins selbst ist immer neu
+  (ihre versteckte Klasse gehört dem Plugin - hätte das Programm eine Klasse dieses Namens, lädt das Plugin ohnehin nicht), ihre Funktionen bekommen die nächsten
+  Nummern in `g_unitTo`/`g_unitFrom` (kopiert und angehängt). Die Einheiten, die ein Text nennen darf (`"7in".ToFloat()`), kommen zu `g_textUnits`, wenn das
+  Programm das Symbol nicht hat. Hat ein Plugin Dimensionen hinzugefügt (`g_dimsAdded`), schreibt die Runtime die Namen von Einheiten in der Ordnung der Namen wie
+  die VM (`unitDimOrder`: Buchstaben ohne Groß/klein, dann klein vor groß), nicht in der ihrer Plätze. Ein zweites `Load` desselben Plugins gibt dieselben Klassen; ein anderes Plugin mit demselben Namen oder eine Klasse, die das
   Programm schon hat, ist ein Fehler. Die Fehler sind Texte, die `Library.Load` als `LibraryException` wirft („The plugin 'Kit' cannot be loaded: ...“).
 * **Das Programm** (nur mit `"shared"`) ist eine offene Welt (`_openWorld`): keine Devirtualisierung ohne Prüfung (`DirectMethod`, `DirectAccessor`), keine
   Verteiler eines Interfaces (die allgemeinen gehen für eine fremde Klasse über die Runtime), `is of`, Feld-Helfer, Klassen-Wertungen fragen für Klassen nach den eigenen
@@ -1103,6 +1111,27 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   `rf_find`/`rf_classes`/`rf_new` sehen die Klassen der Plugins. Neben das Programm schreibt der Bau `<programm>.firehost` (JSON: Ziel, Schalter, SDL, Schlüssel der
   Runtime, die Module mit Schnittstelle und Datei ihrer Bibliothek); `--host <programm>` baut ein Plugin mit diesen Schaltern (braucht das Plugin einen weiteren,
   sagt es der Bau). Ein Programm ohne `"shared"` exportiert nichts, was ein Plugin braucht: `Load` sagt, dass es keine Plugins laden kann.
+* **Natives in C++** (der Ordner `native/` des Projekts des Plugins, ein Package in C++, das es importiert): eine Datei für sich (`fire_plugin_natives.cpp`: der
+  Kopf seiner C-Datei, `fire_rt_cpp.hpp`, das C++ der Packages, deren Natives sein Code ruft, seine Thunks `fire_nat_<p>_k` - nicht die des Programms), mit dem
+  C++-Compiler übersetzt und in dieselbe Bibliothek gebunden (Linux mit `-lstdc++`, MinGW mit `-static-libstdc++`). Sie sind die **eigene Kopie** des Plugins: ihr
+  Zustand ist nicht der des Programms, auch wenn das Programm dasselbe Package importiert (Linux: mit `-fvisibility=hidden` übersetzt, wie es eine DLL ohnehin ist).
+  Unter Windows sind die Zeiger auf das Programm (`makeClassError`, ...) die der C-Datei des Plugins: der Kopf der C++-Datei sagt `FIRE_DLL_LINKED_ELSEWHERE`, dann
+  deklariert `FIRE_HOST_EXTERN` sie `extern` (die Hooks der Header sind dafür `FIRE_HOST_EXTERN` deklariert). Eine Ausnahme eines Natives (`fireError`) macht
+  `makeClassError` des Programms - eine Klasse, die nur das Plugin kennt, wird so nicht geworfen (das Programm endet mit ihr). Für die VM baut der Bau ihre
+  Bibliothek mit der C-ABI (`PackageLibrary`, wie für ein Package) und legt sie neben die `.fireplugin`-Datei; die nennt die Natives und ihre Bibliotheken
+  (`PluginBytecode.PackageNatives`/`PackageLibraries`), die VM registriert beim Laden die, die das Programm nicht hat (`PackageNativeBinding`).
+* **Natives in C** (ein Package oder eine Library mit `"language": "c"`): sie gehören dem Programm (wie bei `"static"`: ein Plugin ruft die `fire_cn_<funktion>` des
+  Programms, oder die des Moduls, in dessen Datei sie liegen). Ein Programm, das Plugins laden kann, legt `fire_cn_` für **jedes** Native in C der Packages in seiner
+  Datei an (`OpenWorldNativesC`; unter Windows auch in `fire_hostFind`), nicht nur für die, die seine Libraries rufen - ein Plugin darf eines rufen, das weder das
+  Programm noch die Library ruft. Von graphics und windows nur die, die seine Libraries rufen. Fehlt dem Programm eines (es wurde vor der neuen Version des Packages
+  gebaut), sagt `Load` es lesbar statt „could not be loaded“: unter Linux erkennt `libCall` `fire_cn_` im Text von `dlerror()` (`fire_plat_dlerror`) und gibt einen
+  Text zurück, den `Library.Load` als `LibraryException` wirft; unter Windows meldet es die `fire_link_<p>` des Plugins beim Registrieren - dieselbe Meldung
+  (`FIRE_PLUGIN_CNATIVE`: „... cannot be loaded: it calls the native function 'x' in C, which this program does not export to plugins ...“).
+* **JSON** (das Programm hat `#import "json"`, dann hat es auch das Plugin - dieselben Schalter): das Plugin schreibt die Zeilen `JsonClassInfo` seiner Klassen und
+  seine Typargumente (`FirePlugin.jsonAt`, `jsonNamed`, `jsonTargText`, `jsonTargFor`); die Einheiten der Felder sind die des Programms, sobald es registriert ist
+  (die Tabellen der Felder sind nicht `const`, `fire_pl_init` setzt sie aus `fire_units_<p>`). `jsonClassAt`, `jsonClassNamed`, `jsonTArgText`, `jsonTArgFor` eines
+  Programms, das Plugins laden kann, fragen für das, was nicht in seinen Tabellen steht, die Runtime (`firePluginJsonAt`, ...: die Plugins nach Id oder Namen) - so
+  schreibt und liest JSON Objekte der Plugins (`"$type": "Kit.Settings"`, auch als Unterklasse einer Klasse einer Library), in der VM wie nativ.
 * **Linux/macOS**: das Plugin ist eine Shared Library ohne Abhängigkeiten beim Linken; was es vom Programm und den Libraries braucht, findet der Lader im Programm
   (`-rdynamic`) und in den Bibliotheken, die es schon geladen hat.
 * **Windows** (MinGW): die DLL des Plugins importiert aus der DLL der Runtime und den DLLs der Module des Programms (ihre Namen aus `.firehost`, `--host` ist dort nötig);
@@ -1111,12 +1140,22 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
 * **VM** (`VM.Plugins.cs`): `Library.Load` einer `.fireplugin`-Datei (oder einer Bibliothek, neben der eine liegt) liest den Bytecode; beim Registrieren werden die
   Schnittstellen der Module verglichen (`ModuleInterface`, die Module des laufenden Programms - ein gepacktes Programm kennt sie nicht und prüft nicht), die Klassen
   in die des Programms gehängt (ihre Basisklassen sind die des Programms), die Nummern der Natives im Code nach Namen umgeschrieben, die statischen Initialisierer
-  ausgeführt. Code, der Variablen der obersten Ebene seiner Datei oder `extern`/versuchbare Natives benutzt, lädt nicht (mit einer Meldung).
-* Noch nicht: Einheiten, Natives in C++ und `class extends` einer Klasse des Programms oder einer Library in einem Plugin; JSON von Objekten eines Plugins und benannte
-  Argumente auf ihnen im nativen Programm; Debuggen eines Plugins; msvc.
+  ausgeführt. Code, der Variablen der obersten Ebene seiner Datei oder `extern`/versuchbare Natives benutzt, lädt nicht (mit einer Meldung). Eine Einheit der VM
+  trägt ihre Dimensionen und die versteckte Klasse ihrer Umrechnung beim Namen - nur die Einheiten, die ein Text nennen darf, kommen zu denen des Programms
+  (`Unit.AddCustomUnits`; ein gepacktes Programm kennt seine Liste nicht und nimmt sie nicht auf).
+* Noch nicht: `class extends` einer Klasse des Programms oder einer Library in einem Plugin; benannte Argumente in Aufrufen des nativen Programms auf Objekten
+  eines Plugins (die Verteiler des Programms kennen nur seine Klassen - die Runtime bräuchte die Namen und Vorgaben der Parameter in den Tabellen der Member);
+  Reflect.Get/Set und die Member (`Type.Of(x).Members`) der eigenen Felder eines Plugins im nativen Programm, wenn das Plugin `reflection` nicht selbst importiert
+  (seine Klassen haben dann keine Metadaten - `ClassMeta` legt der Compiler nur mit den Natives von `reflection` an; Reflect.New/Call gehen); Debuggen eines Plugins; msvc.
 * Getestet (`FIRE_TESTS_ONLY=linkage`, nur die Plugins mit `FIRE_TESTS_FILTER=plugin`): ein Projekt mit der Library `Api`, dem Programm (shared) und dem Plugin `Kit`
   - Interface, Basisklasse mit überschriebenen Methoden, Reflect.New/Get/Call, Type.Of, Ausnahmen beider Richtungen, Enum, statische Felder - nativ, in der VM und
-  unter Windows (MinGW, Wine); eine andere Schnittstelle von `Api`, ein Programm ohne `"shared"`, andere Schalter.
+  unter Windows (MinGW, Wine); eine andere Schnittstelle von `Api`, ein Programm ohne `"shared"`, andere Schalter. Das Plugin `Meter` mit Einheiten: eigene (neue
+  Dimension, Faktor, Offset, eigene Umrechnungsfunktionen), dBm von `Api` (Umrechnungsfunktionen einer Library, auch im Programm), die von fire, Einheiten des
+  Programms hinein und zurück (`ft`, `apples`), Texte mit seinen Einheiten, ein Name aus einer hinzugefügten und einer Dimension des Programms; dazu Natives in C++ im Ordner `native/` des Projekts
+  (`std::string`, eigener Zustand, eine Ausnahme aus C++). JSON (ein Programm mit `#import "json"`, Kit und Meter dafür gebaut): Serialize/Deserialize eines
+  Objekts von Kit (eine Liste, ein Feld mit einem Objekt des Plugins), `Json.Deserialize<Api.Device>` mit `"$type"` einer Klasse von Kit, Felder mit Einheiten von
+  Meter - nativ, VM, Windows. Natives in C (`CApi` mit `"language": "c"`): das Plugin ruft eines, das weder das Programm noch `CApi` ruft; eines, das das Programm
+  nicht hat - die lesbare Meldung (Linux, Windows; die VM ruft es).
 
 ### Debuggen
 

@@ -19,13 +19,13 @@ typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objC
 
 /* Generated (the program): the class with this id (null: none), the id of a class name (-1: none), the text of a type argument (null: not known), the type
  * argument of a text (null: none), the special slots. */
-const JsonClassInfo* jsonClassAt(uint32_t cls);
-int32_t jsonClassNamed(const char* name);
+FIRE_HOST_EXTERN const JsonClassInfo* jsonClassAt(uint32_t cls);
+FIRE_HOST_EXTERN int32_t jsonClassNamed(const char* name);
 /* A class of the program that is not serializable and not in the tables (the native build left it out): its name, null for any other name. */
-const char* jsonExcludedNamed(const char* name);
-const char* jsonTArgText(const TArg* t);
-const TArg* jsonTArgFor(const char* text);
-const JsonSpecial* jsonSpecial(void);
+FIRE_HOST_EXTERN const char* jsonExcludedNamed(const char* name);
+FIRE_HOST_EXTERN const char* jsonTArgText(const TArg* t);
+FIRE_HOST_EXTERN const TArg* jsonTArgFor(const char* text);
+FIRE_HOST_EXTERN const JsonSpecial* jsonSpecial(void);
 
 /* The engine (below, in the program): `__JsonCall(id, ...)` - 1 Serialize(value, flags), 2 Deserialize(text[, typeName]) -> [value, objects with
  * OnDeserialized], 3 Parse(text). `callType` is the type argument of the generic method that calls it (`Json.Deserialize<Person>`), null when there is none. */

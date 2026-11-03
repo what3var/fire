@@ -14,6 +14,34 @@ namespace fire.Compiler
         /// <summary>The extension of a plugin's library on the target.</summary>
         public static string PluginExtension(TargetProfile target) => target.Native.Platform == "windows" ? ".dll" : OperatingSystem.IsMacOS() ? ".dylib" : ".so";
 
+        /// <summary>The natives in C++ of a plugin for the VM (its project's, its packages'): their libraries for this machine (C ABI, PackageLibrary - built now when needed)
+        /// copied next to its bytecode, and which native is in which (the VM registers those the program does not have). One that cannot be built is left out (the
+        /// VM says the native is missing when it links the plugin).</summary>
+        private static List<(string Native, string Library)> PluginVmNatives(fire.Runtime.LinkedProgram program, string directory, StringBuilder log)
+        {
+            var result = new List<(string, string)>();
+            if (program.PackageNatives is not { Count: > 0 } names || program.PackageNativeLibraries is not { } files) return result;
+            var copied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in program.NativeImports.Where(PackageImports.IsPackageKey).OrderBy(k => k, StringComparer.Ordinal))
+                if (fire.Package.Manager.PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { IsC: false } native && native.Functions.Any(f => !f.Host))
+                {
+                    try
+                    {
+                        string built = PackageLibrary.Ensure(import, m => log.AppendLine(m));
+                        string file = PackageLibrary.FileNameFor(import);
+                        File.Copy(built, Path.Combine(directory, file), true);
+                        copied.Add(file);
+                    }
+                    catch (Exception ex) when (ex is fire.Package.Manager.PackageException or IOException or UnauthorizedAccessException)
+                    {
+                        log.AppendLine($"note: the natives in C++ of '{import.Name}' are not built for the VM ({ex.Message})");
+                    }
+                }
+            for (int i = 0; i < names.Count && i < files.Count; i++)
+                if (copied.Contains(files[i])) result.Add((names[i], files[i]));
+            return result;
+        }
+
         /// <summary>`--linkage plugin` (ROADMAP 9 phase D b, docs/NATIVE_BACKEND.md "Plugins"): the classes of the program's own sources as a fire plugin - a shared library
         /// (`<output>.so`/`.dll`) that a program with linkage "shared" loads with `Library.Load`, and its bytecode for the VM (`<output>.fireplugin`). With `--host <program>`
         /// it is built for that program (its switches, the files of its libraries - on Windows needed: the DLL imports from them).</summary>
@@ -56,6 +84,20 @@ namespace fire.Compiler
                 Directory.CreateDirectory(Path.GetDirectoryName(library)!);
                 bool ok;
                 string text;
+                // its natives in C++: a file of their own, compiled with the C++ compiler into the same library (Linux: hidden - they are the plugin's own copy)
+                string? natObj = null;
+                if (pluginPlan.Natives != null)
+                {
+                    string natFile = Path.Combine(workDir, "fire_plugin_natives.cpp");
+                    File.WriteAllText(natFile, pluginPlan.Natives);
+                    natObj = Path.Combine(workDir, "fire_plugin_natives.o");
+                    var natCompile = CompilerCommand(toolchain, target, natFile, workDir, natObj, sharedLibrary: !dll, language: "c++", compileOnly: true);
+                    string natArgs = natCompile.Arguments + (dll ? "" : " -fvisibility=hidden");
+                    log.AppendLine($"{natCompile.Executable} {natArgs}");
+                    (ok, text) = Run(natCompile.Executable, natArgs, workDir);
+                    log.Append(text);
+                    if (!ok) return Fail("The C++ compiler reported errors in the natives of the plugin (see the build log).");
+                }
                 if (dll)
                 {
                     // a DLL imports by file name: from the runtime's DLL and the DLLs of the modules of the program (next to it)
@@ -71,9 +113,11 @@ namespace fire.Compiler
                         if (host.Modules.FirstOrDefault(m => m.Name == module) is { Library.Length: > 0 } m) imports.Add(Path.Combine(hostDir!, m.Library));
                     var missing = imports.FirstOrDefault(f => !File.Exists(f));
                     if (missing != null) return Fail($"The library '{Path.GetFileName(missing)}' of the program is not next to it ({hostDir}).");
-                    string cc = ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler;
+                    // (with natives in C++: linked by the C++ compiler, its runtime in the DLL)
+                    string cc = natObj != null ? ToolchainDetector.Find(toolchain) ?? toolchain.EffectiveCompiler : ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler;
                     var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
-                    string arguments = $"-shared -static-libgcc -o \"{library}\" \"{Path.Combine(workDir, "fire_plugin.o")}\"{string.Concat(imports.Select(i => $" \"{i}\""))} -Wl,--export-all-symbols -s {string.Join(" ", libs)}";
+                    string objects = $"\"{Path.Combine(workDir, "fire_plugin.o")}\"" + (natObj != null ? $" \"{natObj}\"" : "");
+                    string arguments = $"-shared -static-libgcc{(natObj != null ? " -static-libstdc++" : "")} -o \"{library}\" {objects}{string.Concat(imports.Select(i => $" \"{i}\""))} -Wl,--export-all-symbols -s {string.Join(" ", libs)}";
                     log.AppendLine($"{cc} {arguments}");
                     BuildMonitor.Step(BuildPhase.Link, "Linking the plugin's DLL", 1, 2);
                     (ok, text) = Run(cc, arguments, workDir);
@@ -82,8 +126,8 @@ namespace fire.Compiler
                 else
                 {
                     // (what it uses of the program and the libraries is found when it is loaded: the program exports it)
-                    var link = CompilerCommand(toolchain, target, cFile, workDir, library, sharedLibrary: true, language: "c");
-                    string extra = OperatingSystem.IsMacOS() ? " -undefined dynamic_lookup" : "";
+                    var link = CompilerCommand(toolchain, target, cFile, workDir, library, sharedLibrary: true, language: "c", extraInputs: natObj != null ? new[] { natObj } : null);
+                    string extra = (OperatingSystem.IsMacOS() ? " -undefined dynamic_lookup" : "") + (natObj != null ? " -lstdc++" : "");
                     log.AppendLine($"{link.Executable} {link.Arguments}{extra} -lm");
                     BuildMonitor.Step(BuildPhase.Link, "Compiling and linking the plugin (C)");
                     (ok, text) = Run(link.Executable, link.Arguments + extra + " -lm", workDir);
@@ -96,7 +140,7 @@ namespace fire.Compiler
                     BuildMonitor.Step(BuildPhase.CompileFire, "Compiling the plugin's bytecode for the VM");
                     var vmLinked = new Linker { BasePath = basePath, Engine = "vm", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth);
                     var vmDeps = (ModuleInterface.Modules(vmLinked) ?? new()).OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => (m.Key, ModuleInterface.Text(vmLinked, m.Value.Classes, m.Value.Sources)));
-                    PluginBytecode.Write(bytecode, name, vmLinked, vmDeps);
+                    PluginBytecode.Write(bytecode, name, vmLinked, vmDeps, PluginVmNatives(vmLinked, Path.GetDirectoryName(bytecode)!, log));
                     log.AppendLine($"plugin {name}: {library}, {Path.GetFileName(bytecode)} (the VM)");
                 }
                 return new NativeBuildResult(built, library, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C compiler reported errors in the plugin (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });

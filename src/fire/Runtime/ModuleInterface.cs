@@ -80,13 +80,21 @@ namespace fire.Runtime
         public List<string> Classes { get; set; } = new();
         /// <summary>The native functions of its code by their numbers (CallNative): the VM renumbers them by name.</summary>
         public List<string> Natives { get; set; } = new();
+        /// <summary>Its natives in C++ (a package or the project of the plugin) and the file names of the libraries for the VM next to it that hold them (C ABI,
+        /// PackageNativeBinding): the VM registers those the program does not have.</summary>
+        public List<string> PackageNatives { get; set; } = new();
+        public List<string> PackageLibraries { get; set; } = new();
         [System.Text.Json.Serialization.JsonIgnore]
         public LinkedProgram? Program { get; set; }
+        /// <summary>The folder of its file (the libraries of its natives lie there).</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string Directory { get; set; } = "";
 
-        public static void Write(string path, string name, LinkedProgram program, IEnumerable<(string Module, string Abi)> deps)
+        public static void Write(string path, string name, LinkedProgram program, IEnumerable<(string Module, string Abi)> deps, IEnumerable<(string Native, string Library)>? packageNatives = null)
         {
             var modules = program.SourceModules;
             var header = new PluginBytecode { Name = name, Deps = deps.Select(d => new[] { d.Module, d.Abi }).ToList(), Natives = program.NativeNames?.ToList() ?? new List<string>() };
+            foreach (var (native, library) in packageNatives ?? Enumerable.Empty<(string, string)>()) { header.PackageNatives.Add(native); header.PackageLibraries.Add(library); }
             foreach (var rc in program.Program.Classes.Values)
                 if (rc.Decl != null && modules != null && rc.Decl.Source < modules.Count && modules[rc.Decl.Source] == null) header.Classes.Add(rc.Name);
             header.Classes.Sort(StringComparer.Ordinal);
@@ -111,6 +119,7 @@ namespace fire.Runtime
             if (program == null) return null;
             program.Program.RelinkAfterDeserialize();
             header.Program = program;
+            header.Directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? "";
             return header;
         }
     }
