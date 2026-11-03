@@ -324,6 +324,9 @@ static class LinkageTests
         // ---- a debug build: a breakpoint inside a static library ----
         DebugInLibrary(root, Plan(), libSource);
 
+        // ---- Library.Load / Get (phase D): a C library loaded while the program runs ----
+        LibraryLoad(root);
+
         // ---- a program that cannot be split (it declares a class of the prelude anew): linkage source, with a note ----
         const string own = "class Exception { string message; construct(string message = \"\") { this.message = message } }\ntry { throw new Exception(\"x\") } catch (e) { print(\"caught \" + e.message) }\n";
         var fallback = Build(new[] { own }, "static", Path.Combine(root, "own"));
@@ -361,6 +364,101 @@ static class LinkageTests
     }
 
     private static bool HasProgram(string name) => ToolchainSetup.FindProgram(name) != null;
+
+    private const string CLibrary = """
+        #include <stdint.h>
+        #include <string.h>
+        #include <stdbool.h>
+        #ifdef _WIN32
+        #define EXPORT __declspec(dllexport)
+        #else
+        #define EXPORT
+        #endif
+        EXPORT int64_t add(int64_t a, int64_t b) { return a + b; }
+        EXPORT int neg32(int a) { return -a; }
+        EXPORT double scale(double x, float f) { return x * f; }
+        EXPORT int64_t len(const char* s) { return (int64_t)strlen(s); }
+        EXPORT const char* greet(void) { return "hello from C"; }
+        EXPORT bool isodd(int64_t x) { return x % 2 != 0; }
+        EXPORT void twice(int64_t* p) { *p = *p * 2; }
+        EXPORT uint16_t upper(uint16_t c) { return c >= 97 && c <= 122 ? c - 32 : c; }
+        """;
+
+    private const string UseLibrary = """
+        var path = Environment.Get("FIRE_TEST_CLIB")
+        var lib = Library.Load(path)
+        var add = lib.Get("add", "int(int, int)")
+        print(add(40, 2))
+        var neg = lib.Get("neg32", "int[32](int[32])")
+        print(neg(7))
+        var scale = lib.Get("scale", "float(float, float[32])")
+        print(scale(2.5, 4.0))
+        print(lib.Get("len", "int(string)")("hello"))
+        print(lib.Get("greet", "string()")())
+        print(lib.Get("isodd", "bool(int)")(7))
+        print(lib.Get("upper", "char(char)")('q'))
+        int x = 21
+        var twice = lib.Get("twice", "void(int*)")
+        unsafe { twice(&x) }
+        print(x)
+        print(lib.Path == path)
+        try { Library.Load("/nonexistent/libnope.so") } catch (LibraryException e) { print("load: " + e.message) }
+        try { lib.Get("nope", "int()") } catch (LibraryException e) { print("symbol: " + e.message.Replace(path, "LIB")) }
+        try { lib.Get("add", "int(int,") } catch (LibraryException e) { print("sig: " + e.message) }
+        var s = "int(" + "int)"
+        try { var f = lib.Get("add", s); print("made") } catch (LibraryException e) { print("dyn: " + e.message) }
+        """;
+
+    /// <summary>`Library.Load(path)` / `lib.Get(name, signature)` (ROADMAP 9, phase D): a C library built here, loaded while the program runs - in the VM, natively
+    /// (source, static) and for Windows (MinGW, under Wine); the errors (no library, no function, no signature) are the same everywhere; a signature made at run time
+    /// works in the VM, the native build says it has no thunk for it.</summary>
+    private static void LibraryLoad(string root)
+    {
+        string dir = Path.Combine(root, "clib");
+        string cFile = Write(dir, "t.c", CLibrary);
+        string so = Path.Combine(dir, "libt.so");
+        var (ok, text) = NativeBuilderRun("gcc", $"-shared -fPIC -o \"{so}\" \"{cFile}\"", dir);
+        if (!ok) { Check("Library: die C-Bibliothek des Tests baut", false, text); return; }
+        string? before = Environment.GetEnvironmentVariable("FIRE_TEST_CLIB");
+        Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", so);
+        try
+        {
+            const string common = "42\n-7\n10\n5\nhello from C\nTrue\nQ\n42\nTrue\nload: The library '/nonexistent/libnope.so' could not be loaded.\nsymbol: The library 'LIB' has no function 'nope'.\n"
+                + "sig: The signature 'int(int,' is not valid: write the result type and the parameter types in C order, like \"int[32](string, float)\" (bool, int, int[8|16|32|64], float, float[32], char, string, pointers with *, void).\n";
+            const string native = common + "dyn: The signature 'int(int)' is not known to this native build: pass it to Get as a text constant.\n";
+            string vm = Vm(new[] { UseLibrary });
+            Check("Library: Load/Get in der VM (int, int[32], float[32], string hin und zurueck, bool, char, Zeiger; die Fehler)", vm == common + "made\n", vm);
+            var src = Build(new[] { UseLibrary }, "source", Path.Combine(root, "clib-source"));
+            string srcOut = src.Ok ? Exec(src.Exe) : "";
+            Check("Library: nativ wie die VM (ein Thunk je Signatur, die ein Text des Programms ist; eine zur Laufzeit gebaute Signatur sagt, dass sie fehlt)", srcOut == native, $"{srcOut}\n{src.Log}");
+            var st = Build(new[] { UseLibrary }, "static", Path.Combine(root, "clib-static"));
+            string stOut = st.Ok ? Exec(st.Exe) : "";
+            Check("Library: mit linkage static (Library in core, die Thunks im Programm)", stOut == native, $"{stOut}\n{st.Log}");
+            var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
+            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
+            if (ToolchainDetector.Find(mingw) != null && wine != null)
+            {
+                string winDir = Path.Combine(root, "clib-win");
+                Directory.CreateDirectory(winDir);
+                var (dllOk, dllText) = NativeBuilderRun("x86_64-w64-mingw32-gcc", $"-shared -o \"{Path.Combine(winDir, "t.dll")}\" \"{cFile}\"", dir);
+                var win = Build(new[] { UseLibrary }, "static", Path.Combine(winDir, "use.exe"), mingw, TargetProfile.Windows);
+                _winePrefix ??= Path.Combine(root, "wineprefix");
+                Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", "t.dll");
+                string winOut = dllOk && win.Ok ? Exec(win.Exe, wine) : "";
+                Check("Library: Windows (MinGW, LoadLibrary) unter Wine wie nativ", winOut == native, $"{winOut}\n{dllText}\n{win.Log}");
+            }
+        }
+        finally { Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", before); }
+    }
+
+    private static (bool Ok, string Text) NativeBuilderRun(string exe, string arguments, string dir)
+    {
+        var psi = new ProcessStartInfo(exe, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = dir };
+        using var p = Process.Start(psi)!;
+        string text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        return (p.ExitCode == 0, text);
+    }
 
     /// <summary>Linkage "shared" on Windows (MinGW, under Wine): the runtime and every library a DLL next to the program, the program like the VM; two programs share the
     /// DLLs; a DLL with another interface next to the program is the readable error at the start (exit code 70), like on Linux.</summary>

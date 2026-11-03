@@ -500,7 +500,7 @@ namespace fire.Native
             ("makeClassError", "defined(FIRE_EXCEPTIONS)"), ("makeReflectError", "defined(FIRE_REFLECTION)"),
             ("jsonClassAt", "defined(FIRE_JSON_H)"), ("jsonClassNamed", "defined(FIRE_JSON_H)"), ("jsonExcludedNamed", "defined(FIRE_JSON_H)"), ("jsonSpecial", "defined(FIRE_JSON_H)"),
             ("jsonTArgFor", "defined(FIRE_JSON_H)"), ("jsonTArgText", "defined(FIRE_JSON_H)"),
-            ("fire_dbgClass", "defined(FIRE_DEBUG)"), ("fire_dbgSetField", "defined(FIRE_DEBUG)"),
+            ("fire_dbgClass", "defined(FIRE_DEBUG)"), ("fire_dbgSetField", "defined(FIRE_DEBUG)"), ("fire_libThunk", null),
         };
 
         /// <summary>The head of a file in a DLL (the runtime, a module): the hooks of the program are pointers of the DLL (before fire_rt.h declares them).</summary>

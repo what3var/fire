@@ -11,6 +11,7 @@ Every program has, without an import:
 | `StringBuilder` | collects text: `Append`, `AppendLine`, `Length`, `Clear`, `ToString` - see [Strings](06-strings.md#joining) |
 | `List<T>`, `Dictionary<K, V>`, `HashSet<T>`, `Owns` | lists, dictionaries and sets - see [Arrays and lists](07-arrays-and-lists.md#lists-listt) |
 | `Environment` | the arguments of the program, environment variables, `Exit` - see below |
+| `Library`, `LibraryException` | a native library loaded while the program runs: `Library.Load(path).Get(name, signature)` - see [Native code](18-native-code.md#loading-a-library-while-the-program-runs-libraryload) |
 | `IEnumerable<T>`, `IEnumerator<T>` | the interfaces of `foreach` - see [Interfaces and generics](09-interfaces-and-generics.md#ienumerable) |
 | `Exception` and the runtime exceptions | see [Exceptions](14-exceptions.md#errors-of-the-runtime) |
 | `Takes` | what travels along with `TakeTo` & co. - see [Ownership](13-ownership.md) |

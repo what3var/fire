@@ -227,7 +227,7 @@ Reflect.New je Modul, Natives in C, die für sich stehen, und die JSON-Engine in
 `"linkage": "shared"` (C, Linux und macOS mit gcc/clang): die Libraries als Shared Libraries neben dem Programm, das den Zustand der Runtime exportiert; jede
 nennt ihre Schnittstelle, das Programm prüft sie beim Start (eine lesbare Meldung statt eines Absturzes). Windows (MinGW, unter Wine getestet): die Runtime eine DLL
 für sich, die thread-lokalen Variablen hinter `fire_tl()`, was eine DLL vom Programm braucht über Zeiger, die ihre `fire_link_*`-Funktion beim Start füllt.
-Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), `Library.Load` und Plugins (Phase D); **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
+Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), Plugins (Phase D b); **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
 Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur
@@ -248,7 +248,7 @@ Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heut
 
 Dynamisches Laden:
 
-* `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
+* **umgesetzt** (Phase D a; docs/language/18-native-code.md): `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
   das nur feste Namen kennt).
 * fire-Module als Plugins: eine mit `"shared"` gebaute Library lädt zur Laufzeit, registriert ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie
   (spark lädt so die Treiber installierter Packages).

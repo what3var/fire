@@ -215,4 +215,20 @@ static inline void fire_plat_envEach(void (*fn)(const char* name, size_t nameLen
     FreeEnvironmentStringsW(block);
 }
 
+/* `Library.Load` / `Get` (docs/language/18-native-code.md): a DLL loaded at run time (a path, or a name the system finds) and a function of it; NULL when it cannot. */
+static inline void* fire_plat_dlopen(const char* path) {
+    wchar_t* wide = fire_plat_toWide(path);
+    HMODULE h;
+    if (wide == NULL) return NULL;
+    h = LoadLibraryW(wide);
+    free(wide);
+    return (void*)h;
+}
+static inline void* fire_plat_dlsym(void* library, const char* name) {
+    FARPROC p = library ? GetProcAddress((HMODULE)library, name) : NULL;
+    void* r;
+    memcpy(&r, &p, sizeof r);
+    return r;
+}
+
 #endif

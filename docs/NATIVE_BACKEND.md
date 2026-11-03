@@ -1025,7 +1025,13 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
     die DLLs, eine DLL mit anderer Schnittstelle). **msvc** baut `static`: der C-Code hält sich an das, was msvc braucht (`dllimport` für Daten, Exporte der
     Runtime), aber die Tabellen des Programms zeigen in statischen Initialisierern auf Daten der Modul-DLLs (MinGW löst das mit seinen Pseudo-Relocations, msvc nicht),
     und die Exporte der Modul-DLLs bräuchten eine `.def`-Datei - nicht umgesetzt, ohne msvc hier nicht zu testen.
-* Das Laden zur Laufzeit ist Phase D (ROADMAP 9).
+* **Laden zur Laufzeit** (Phase D a): `Library.Load(path)` / `lib.Get(name, signatur)` (docs/language/18-native-code.md) - die Klasse `Library` steht im Prelude
+  (`fire.Standard.LibraryMethods`, eine native Funktion `__LibCall`). Die VM lädt mit `NativeLibrary` und ruft über einen Delegate, den sie für die Signatur baut (wie
+  `#extern`; `VM.Library.cs`). Nativ lädt die Plattformschicht (`fire_plat_dlopen`/`fire_plat_dlsym`: `dlopen` unter POSIX, `LoadLibraryW` unter Windows, auf den
+  Boards und im Browser keine); ein Aufruf geht über einen **Thunk je Signatur**: das Programm erzeugt einen für jeden Text des Programms (aller Module), der eine
+  Signatur ist (`fire_lt_k`: die Argumente wie bei einem `extern`-Aufruf umgewandelt, die Adresse mit diesem C-Typ gerufen), und `fire_libThunk(signatur)` findet
+  ihn (mit Modulen im Programm, bei `"shared"` unter Windows ein Hook). Eine Signatur, die erst zur Laufzeit entsteht, hat keinen: `Get` sagt es. Die Fehler wirft
+  der fire-Code der Klasse (`LibraryException`, in VM und nativ gleich).
 
 ### Debuggen
 

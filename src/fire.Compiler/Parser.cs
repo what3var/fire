@@ -504,14 +504,18 @@ namespace fire.Compiler
         };
 
         /// <summary>The prelude declares the base class `Exception` (SPEC 7.1). Programs written before that declare their own - it replaces the one of the
-        /// prelude instead of being a second definition. Two declarations in the program itself remain an error (the resolver reports it).</summary>
+        /// prelude instead of being a second definition. Two declarations in the program itself remain an error (the resolver reports it). The same for the classes
+        /// of the prelude with names a program may well use itself (`Library`, `LibraryException`: a program with its own `class Library` has no `Library.Load`).</summary>
         private static List<Stmt> LetOwnExceptionReplacePrelude(List<Stmt> program, IReadOnlyList<ProcessedSource> sources)
         {
             // (the prelude is the first source; it is recognised by its own classes)
             if (sources.Count < 2 || !program.Any(s => s is ClassDecl { Name: "IndexOutOfBoundsException", Source: 0 })) return program;
-            if (!program.Any(s => s is ClassDecl { Name: "Exception", Source: > 0 })) return program;
-            return program.Where(s => s is not ClassDecl { Name: "Exception", Source: 0 }).ToList();
+            var own = ReplaceablePreludeClasses.Where(n => program.Any(s => s is ClassDecl { Source: > 0 } cd && cd.Name == n)).ToHashSet(StringComparer.Ordinal);
+            if (own.Count == 0) return program;
+            return program.Where(s => s is not ClassDecl { Source: 0 } cd || !own.Contains(cd.Name)).ToList();
         }
+
+        private static readonly string[] ReplaceablePreludeClasses = { "Exception", "Library", "LibraryException" };
 
         /// <summary>Gives every GENERIC class next to which a
         /// NON-generic class with the same (fully qualified) name

@@ -21,6 +21,32 @@ print(strlen("hello"))  // 5
 - The library is loaded at the first call; a function that cannot be found is an error at the call, not when compiling.
 - A host program that embeds fire can also provide `extern` functions itself (see the help page "Embedding").
 
+### Loading a library while the program runs: `Library.Load`
+
+`extern` names its functions when the program is written. `Library.Load(path)` loads a native library (C ABI) while the program runs - a path, or a
+name the system finds - and `Get(name, signature)` gives one of its functions as a lambda:
+
+```fire
+#if linux
+var libm = Library.Load("libm.so.6")
+var cos = libm.Get("cos", "float(float)")
+print(cos(0.0))                                     // 1
+var add = Library.Load("./libmine.so").Get("add", "int[32](int[32], int[32])")
+print(add(40, 2))                                   // 42
+#endif
+```
+
+- The **signature** is the result type, then the parameter types in parentheses, in C order: `"int[32](string, float)"`, `"void(int*)"`, `"string()"`.
+  The types are those of `extern`: `bool` (a C `bool`), `int` (64 bits) and `int[8]`/`int[16]`/`int[32]`/`int[64]`, `float` (a C `double`) and `float[32]`
+  (a C `float`), `char` (a UTF-16 unit), `string` (UTF-8 both ways: passed as `const char*`, a returned `const char*` is copied, never freed), pointers with `*`
+  (a pointer of `unsafe` or an address as `int`; `void*` too) and `void` as the result. At most 8 parameters.
+- `lib.Path` is what it was loaded from. A library is not unloaded.
+- Errors are a `LibraryException`: the library cannot be loaded, it has no function of that name, the signature is not one.
+- In a **native build** the call goes through a small function the compiler generates for the signature: the signature must be a text constant somewhere in
+  the program (`Get("add", "int(int, int)")`). A signature that is put together while the program runs works in the VM; a native build says
+  "The signature '...' is not known to this native build: pass it to Get as a text constant."
+- The boards and the browser have no dynamic loader: `Load` throws there.
+
 ### Functions that can fail: `try Name(...)`
 
 Some functions of the host or of packages are registered as *tryable*: they can only be called with `try` and return `undefined` instead of

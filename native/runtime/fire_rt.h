@@ -5057,6 +5057,101 @@ FIRE_FN void externPtrFree(ExternPtr* e) {
     }
 }
 
+/* ---- `Library` (docs/language/18-native-code.md, fire.Standard.LibraryMethods): a native library loaded at run time and its functions by C signature.
+ * The system's part is the platform layer's (fire_plat_dlopen, fire_plat_dlsym); a call goes through the thunk the program generated for the signature - one for
+ * every text of the program that is a signature (fire_libThunk, NULL for any other). The errors are thrown by the fire code of the class (the same as in the VM). ---- */
+typedef Value (*FireLibThunk)(void* fn, const Value* args, OwnList* list);
+FireLibThunk fire_libThunk(const char* signature);   /* (generated: by the signature without white space) */
+
+/* The signature without white space; 0 when it does not fit. */
+FIRE_FN int fire_libSigNorm(Value text, char* out, uint32_t cap) {
+    char raw[256];
+    uint32_t i, n = 0;
+    if (text.kind != K_String || strOf(text)->length >= sizeof raw) return 0;
+    strToUtf8(text, raw, sizeof raw);
+    for (i = 0; raw[i]; i++) if (raw[i] != ' ' && raw[i] != '\t' && raw[i] != '\r' && raw[i] != '\n') { if (n + 1 >= cap) return 0; out[n++] = raw[i]; }
+    out[n] = 0;
+    return 1;
+}
+
+/* One type of a signature at *p (the grammar of LibraryMethods.Parse): 1 a type, 2 `void` alone, 0 not a type. */
+FIRE_FN int fire_libSigType(const char** p) {
+    const char* s = *p;
+    const char* name = s;
+    size_t len;
+    long width = -1;
+    int depth = 0;
+    while (*s >= 'a' && *s <= 'z') s++;
+    len = (size_t)(s - name);
+    if (*s == '[') {
+        char* end;
+        width = strtol(s + 1, &end, 10);
+        if (end == s + 1 || *end != ']') return 0;
+        s = end + 1;
+    }
+    while (*s == '*') { depth++; s++; }
+    *p = s;
+    if (len == 4 && memcmp(name, "void", 4) == 0) return width >= 0 ? 0 : depth > 0 ? 1 : 2;
+    if ((len == 4 && (memcmp(name, "bool", 4) == 0 || memcmp(name, "char", 4) == 0)) || (len == 6 && memcmp(name, "string", 6) == 0)) return width < 0;
+    if (len == 3 && memcmp(name, "int", 3) == 0) return width < 0 || width == 8 || width == 16 || width == 32 || width == 64;
+    if (len == 5 && memcmp(name, "float", 5) == 0) return width < 0 || width == 32 || width == 64;
+    return 0;
+}
+
+/* The number of parameters of a signature (without white space); -1 when it is not one. */
+FIRE_FN int fire_libSigArity(const char* s) {
+    int n = 0, t = fire_libSigType(&s);
+    if (t == 0 || *s++ != '(') return -1;
+    if (*s == ')') return s[1] ? -1 : 0;
+    for (;;) {
+        t = fire_libSigType(&s);
+        if (t == 2 && n == 0 && *s == ')') return s[1] ? -1 : 0;   /* `int(void)` */
+        if (t != 1) return -1;
+        n++;
+        if (*s == ',') { s++; continue; }
+        if (*s == ')') return s[1] ? -1 : n;
+        return -1;
+    }
+}
+
+/* `__LibCall(id, a, b, c)` (LibraryMethods: 1 load, 2 a function's address, 3 the number of parameters of a signature, 4 a call). */
+FIRE_FN Value libCall(Value id, Value a, Value b, Value c, OwnList* list) {
+    char text[512];
+    switch (id.i) {
+        case 1: {
+            void* h;
+            if (a.kind != K_String) return Int(0);
+            strToUtf8(a, text, sizeof text);
+            h = fire_plat_dlopen(text);
+            return Int((int64_t)(intptr_t)h);
+        }
+        case 2:
+            if (a.kind != K_Int || b.kind != K_String) return Int(0);
+            strToUtf8(b, text, sizeof text);
+            return Int((int64_t)(intptr_t)fire_plat_dlsym((void*)(intptr_t)a.i, text));
+        case 3: {
+            int n;
+            if (!fire_libSigNorm(a, text, sizeof text) || (n = fire_libSigArity(text)) < 0) return Int(-1);
+            return Int(fire_libThunk(text) ? n : -2);
+        }
+        case 4: {
+            FireLibThunk thunk;
+            Arr* args;
+            int n;
+            if (!fire_libSigNorm(b, text, sizeof text) || !(thunk = fire_libThunk(text))) return fireError("LibraryException", "The signature of a native function is not known to this native build.");
+            n = fire_libSigArity(text);
+            args = c.kind == K_Array ? arrOf(c) : NULL;
+            if (!args || (int)args->length != n) {
+                char t[160];
+                snprintf(t, sizeof t, "The function expects %d argument(s), got %d.", n, args ? (int)args->length : 0);
+                return fireError("ArgumentException", t);
+            }
+            return thunk((void*)(intptr_t)a.i, arrItems(args), list);
+        }
+        default: fatal("__LibCall: unknown function");
+    }
+}
+
 /* `print(value)`: writes the text of the value (Value.ToString(), or its ToString() method) and a line break. */
 FIRE_FN Value print(Value v, OwnList* list) {
     Piece p;
