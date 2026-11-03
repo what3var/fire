@@ -26010,6 +26010,75 @@ else
                     }
                 });
 
+                // ---- Window.PresentArea on X11: only the reported area goes to the X server (a picture of the screen by ImageMagick's import shows it); idle frames
+                //      with an empty area overwrite nothing
+                windowRuns.Add(() =>
+                {
+                    string title = "Fenster: PresentArea auf X11 (Xvfb) - nur der gemeldete Bereich geht an den X-Server, leere Bereiche im Leerlauf ueberschreiben nichts";
+                    string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                    string? xvfbRunTool = FindProgram("xvfb-run"), importTool = FindProgram("import");
+                    if (!TestSelected(title)) { }
+                    else if (!File.Exists(forge) || xvfbRunTool == null || importTool == null || OperatingSystem.IsWindows()) Console.WriteLine("(PresentArea unter Xvfb: uebersprungen - forge, xvfb-run oder import fehlt)");
+                    else
+                    {
+                        string dir = Path.Combine(workDir, "presentarea");
+                        Directory.CreateDirectory(dir);
+                        File.WriteAllText(Path.Combine(dir, "area.fire"), """
+                            #import "windows"
+                            var fb = new Framebuffer(200, 100)
+                            var r = new Renderer(fb)
+                            var win = new Window(fb, "area")
+                            win.VSync = false
+                            r.FillRect(0, 0, 200, 100, new SolidBrush(0xFF0000FF))
+                            win.Tick()
+                            win.Tick()
+                            r.FillRect(20, 20, 30, 30, new SolidBrush(0xFFFF0000))
+                            r.FillRect(120, 20, 30, 30, new SolidBrush(0xFF00FF00))
+                            win.PresentArea(20, 20, 30, 30)
+                            win.Tick()
+                            print("ready")
+                            win.VSync = true
+                            for (var i = 0; i < 120; i = i + 1) {
+                                win.PresentArea(0, 0, 0, 0)
+                                win.Tick()
+                            }
+                            """);
+                        File.WriteAllText(Path.Combine(dir, "run.sh"),
+                            $"FIRE_DISPLAY=x11 \"{forge}\" run \"{dir}/area.fire\" > \"{dir}/out.txt\" 2>&1 &\n" +
+                            $"for i in $(seq 1 300); do grep -q ready \"{dir}/out.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 0.5\n" +
+                            $"import -window root \"{dir}/screen.ppm\"\nwait\n");
+                        var psi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 400x300x24\" sh \"{dir}/run.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
+                        using var proc = System.Diagnostics.Process.Start(psi)!;
+                        proc.StandardOutput.ReadToEnd(); proc.StandardError.ReadToEnd();
+                        proc.WaitForExit(120000);
+                        // the picture (PPM P6): the window's top left corner is the first red pixel; inside the area blue, outside it still red (the green was not reported)
+                        string got = "kein Bild";
+                        string screenFile = Path.Combine(dir, "screen.ppm");
+                        if (File.Exists(screenFile))
+                        {
+                            byte[] ppm = File.ReadAllBytes(screenFile);
+                            int pos = 0, field = 0, width = 0, height = 0;
+                            var header = new int[3];
+                            pos = 2;
+                            while (field < 3)
+                            {
+                                while (pos < ppm.Length && char.IsWhiteSpace((char)ppm[pos])) pos++;
+                                if (pos < ppm.Length && ppm[pos] == '#') { while (pos < ppm.Length && ppm[pos] != '\n') pos++; continue; }
+                                int v = 0;
+                                while (pos < ppm.Length && char.IsDigit((char)ppm[pos])) v = v * 10 + (ppm[pos++] - '0');
+                                header[field++] = v;
+                            }
+                            pos++;
+                            width = header[0]; height = header[1];
+                            (int, int, int) Px(int x, int y) { int i = pos + (y * width + x) * 3; return (ppm[i], ppm[i + 1], ppm[i + 2]); }
+                            int wx = -1, wy = -1;
+                            for (int y = 0; y < height && wx < 0; y++) for (int x = 0; x < width; x++) if (Px(x, y) == (255, 0, 0)) { wx = x; wy = y; break; }
+                            got = wx < 0 ? "kein Fenster" : $"innen {Px(wx + 35, wy + 35)} aussen {Px(wx + 135, wy + 35)}";
+                        }
+                        CheckNat(title, got == "innen (0, 0, 255) aussen (255, 0, 0)", got + "\n" + (File.Exists(Path.Combine(dir, "out.txt")) ? File.ReadAllText(Path.Combine(dir, "out.txt")) : ""));
+                    }
+                });
+
                 // ---- drag-out (Window.StartDrag): a fire window drags a text and then two files into another program. X11 under Xvfb (XDND): the target is a native fire
                 // program with SDL3 that prints what is dropped on it; the source a fire window built with SDL2 and with SDL3 (and once on the thread of its manager:
                 // Window.Show), and the VM's window (forge run). The hand is a small X program that presses, moves and lets go with XTest (libXtst, loaded at run time).

@@ -273,6 +273,7 @@ namespace fire.Native
             ["ClipboardGetImage"] = (0, true), ["ClipboardSetImage"] = (1, false), ["ClipboardHasImage"] = (0, false),
             ["ClipboardGetFiles"] = (0, true), ["ClipboardSetFiles"] = (1, false), ["ClipboardHasFiles"] = (0, false), ["StartDrag"] = (3, false),
             ["CanStartDrag"] = (1, false), ["SetTextInputRect"] = (5, false), ["SetBackdrop"] = (2, false), ["GetBackdrop"] = (1, false), ["GetScale"] = (1, false),
+            ["PresentArea"] = (5, false),
         };
 
         /// <summary>The natives of `#import "windows"` whose C function takes the list of the scope as its last argument (they hand out what they make).</summary>

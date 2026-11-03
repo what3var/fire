@@ -110,6 +110,10 @@ class Window {
         set { __GRPHWinSetBackdrop(this.id, value!int) }
     }
 
+    // Only the area (x, y, width, height; pixels of the framebuffer) changed for the next frame: the display may hand over only that to the window system (X11,
+    // Windows) - a program that knows what it drew saves the rest. Several before a frame add up; without it the whole frame goes. UI.Root says it by itself.
+    undefined PresentArea(int x, int y, int width, int height) { __GRPHWinPresentArea(this.id, x, y, width, height) }
+
     // Pixels of the screen per logical pixel where the window is (2 on a "Retina" or 200 % screen); EventType.ScaleChanged reports a change.
     float Scale { get { return __GRPHWinGetScale(this.id) } }
 

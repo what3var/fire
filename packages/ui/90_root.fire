@@ -139,6 +139,9 @@ namespace UI {
         // the materials of the floating elements, kept while nothing behind them is repainted (see PopupSurface)
         List surfaces
         Backdrop windowBackdrop = Backdrop.None
+        // After repainting only a part, the window hands over only that part (Window.PresentArea). A program that also draws into the framebuffer of the root
+        // itself (outside the elements) switches it off - then every frame goes whole.
+        bool PartialPresent = true
         Backdrop givenBackdrop = Backdrop.None
 
         // Glass and acrylic behind menus and popups. Starts with UI.Effects.Glass and the system (off where it switched transparency off, and on a board);
@@ -443,7 +446,16 @@ namespace UI {
                 popup.Draw(this, popup.rx, popup.ry)
             }
             this.DrawDragImage()
-            if (!this.fullRedraw) { this.PopClip() }
+            if (!this.fullRedraw) {
+                this.PopClip()
+                if (this.PartialPresent && this.window != undefined) {
+                    var r = this.renderer
+                    this.window.PresentArea(r.Px(this.dirtyX0), r.Px(this.dirtyY0), r.Px(this.dirtyX1) - r.Px(this.dirtyX0), r.Px(this.dirtyY1) - r.Px(this.dirtyY0))
+                }
+            } else if (this.PartialPresent && this.window != undefined) {
+                // (all of it: a part painted after it before the next frame does not shrink what goes)
+                this.window.PresentArea(0, 0, this.framebuffer.Width(), this.framebuffer.Height())
+            }
         }
 
         // The background of the interface: the colour of the theme - translucent where the desktop draws a material behind the window (WindowBackdrop), so that
@@ -672,7 +684,7 @@ namespace UI {
             this.DispatchEvents()
             if (this.window.IsClosed) { this.closed = true }
             this.JoyRepeat()
-            this.Update()
+            this.UpdateAndSay()
             var callback = this.onTick
             if (callback != undefined) { callback() }
         }
@@ -681,11 +693,16 @@ namespace UI {
         // points. `modal`: returns when the window is closed, the other windows of the manager take no input meanwhile.
         undefined Show(bool modal = false) { this.window.Show(modal) }
 
+        // Update - and when nothing was painted, the window hands over nothing of the next frame (an idle interface costs no copies to the window system).
+        undefined UpdateAndSay() {
+            if (!this.Update() && this.PartialPresent && this.window != undefined) { this.window.PresentArea(0, 0, 0, 0) }
+        }
+
         // The cycle of this root only (without the attached ones).
         bool TickOne() {
             this.cycles = this.cycles + 1
             this.JoyRepeat()
-            this.Update()
+            this.UpdateAndSay()
             var open = this.window.Tick()
             this.DispatchEvents()
             if (!open) { this.closed = true }

@@ -201,11 +201,15 @@ Noch offen:
 * **Schalter:** `UI.Effects.Glass/Transparency`, `root.Glass/Transparency`; Standard nach `SystemTheme.transparency` (neu: Windows `EnableTransparency`, macOS
   `reduceTransparency`, Browser `prefers-reduced-transparency`; Board: aus).
 * **Fenster-Hintergrund:** `root.WindowBackdrop` fordert ihn an; was der Desktop gibt, macht die Grundfläche durchscheinend.
+* **Nur Geändertes präsentieren:** `Window.PresentArea(x, y, w, h)` (optional in der HAL: `fire_display_presentArea`, `FIRE_DISPLAY_PRESENT_AREA`); X11 rechnet nur den
+  Bereich um und gibt nur ihn an den X-Server (`XShmPutImage`), Win32 rechnet nur ihn um. Mehrere Bereiche vor einem Bild werden vereinigt, im Thread des Managers auch über
+  mehrere veröffentlichte Bilder; ein Bild anderer Größe oder ohne Bereich geht ganz. `UI.Root` meldet sein Dirty-Rechteck selbst (nach vollem Neuzeichnen alles, im Leerlauf
+  nichts); `root.PartialPresent = false` für Programme, die zusätzlich selbst in den Framebuffer zeichnen.
 * **Holds** gehören dem Programm (siehe Teil 2), Raven steht in der About-Box.
 
 Noch offen:
 
-* Dirty-Rechtecke als Liste je Framebuffer (Präsentation nur dort), Blur-Cache auch für eigene Programme.
+* Wayland, Cocoa und das Web präsentieren noch das ganze Bild (`fire_display_presentArea` fällt dort auf `present` zurück); Blur-Cache auch für eigene Programme.
 * Tooltips gibt es in `ui` noch nicht.
 * `override`: der Typprüfer findet eine Basisklasse ohne Namespace innerhalb eines Namespace nicht (`TypeChecker.NameOf`) - die Pakete mit Namespace sind deshalb noch nicht markiert.
 

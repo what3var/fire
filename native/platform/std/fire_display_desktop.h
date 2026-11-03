@@ -59,6 +59,7 @@
 #define FIRE_DISPLAY_TEXT_INPUT_RECT 1
 #define FIRE_DISPLAY_BACKDROP 1
 #define FIRE_DISPLAY_SCALE 1
+#define FIRE_DISPLAY_PRESENT_AREA 1
 #define FIRE_DISPLAY_START_DRAG 1
 #define FIRE_DISPLAY_CAN_START_DRAG 1
 
@@ -260,6 +261,15 @@ static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int
 #define FIRE_DD_B(m, p) fire_##p##_present(&w->u.m, rgba, width, height); break;
     FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
 #undef FIRE_DD_B
+}
+
+/* Only the area (x, y, aw, ah; framebuffer pixels) changed since the last frame: X11 and Win32 hand over only that, the others show the whole frame. */
+static void fire_display_presentArea(FireDisplayWindow* w, const uint32_t* rgba, int width, int height, int x, int y, int aw, int ah) {
+    switch (w->kind) {
+        FIRE_DD_IF_X11(case FIRE_DD_KIND_X11: fire_dx11_presentArea(&w->u.x11, rgba, width, height, x, y, aw, ah); return;)
+        FIRE_DD_IF_W32(case FIRE_DD_KIND_WIN32: fire_dw32_presentArea(&w->u.w32, rgba, width, height, x, y, aw, ah); return;)
+        default: fire_display_present(w, rgba, width, height); return;
+    }
 }
 
 static int fire_display_native(FireDisplayWindow* w, fire_native_window* out) {
