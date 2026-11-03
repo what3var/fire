@@ -593,6 +593,38 @@ class Renderer {
         pen.Width = w
     }
 
+    // ---- rounded rectangles and effects (docs/UI_PLATFORM.md): antialiased at their edges; the radius is clamped to half the shorter side (0: a plain rectangle) ----
+    undefined FillRoundRect(int x, int y, int w, int h, int radius, Brush brush) {
+        if (this.scale == 1.0) { __GRPHRndFillRoundRect(this.id, x, y, w, h, radius, brush.id); return }
+        __GRPHRndFillRoundRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), brush.id)
+    }
+    // The outline, as wide as the pen (its shape does not count)
+    undefined DrawRoundRect(int x, int y, int w, int h, int radius, Pen pen) {
+        if (this.scale == 1.0) { __GRPHRndDrawRoundRect(this.id, x, y, w, h, radius, pen.id); return }
+        var pw = this.PenOn(pen)
+        __GRPHRndDrawRoundRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), pen.id)
+        pen.Width = pw
+    }
+    // A fine shadow around the rounded rectangle (drawn before it: under the rectangle nothing is drawn). `color`'s alpha is its strongest opacity (subtle: 0x14000000 to
+    // 0x26000000), `softness` how far it fades out, `offsetY` how far it lies lower. Its blurred mask is made at a quarter of the size and kept for the next time.
+    undefined DrawShadow(int x, int y, int w, int h, int radius, int softness, int color, int offsetY = 0) {
+        if (this.scale == 1.0) { __GRPHRndDrawShadow(this.id, x, y, w, h, radius, softness, color, offsetY); return }
+        __GRPHRndDrawShadow(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), this.Len(softness), color, this.Len(offsetY))
+    }
+    // Blurs what is drawn in the rounded rectangle by `radius` pixels (the cost does not grow with the radius)
+    undefined Blur(int x, int y, int w, int h, int radius, int cornerRadius = 0) {
+        if (this.scale == 1.0) { __GRPHRndBlur(this.id, x, y, w, h, radius, cornerRadius); return }
+        __GRPHRndBlur(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), this.Len(cornerRadius))
+    }
+    // A material in the rounded rectangle, over what is drawn there: Glass (blurred a little, a light tint), Acrylic (blurred more, a denser tint, a fine grain) or a plain
+    // Tint - each with a hairline at its edge. `tint`: the colour over the background, its alpha how much (glass 10-20 %, acrylic 40-60 %); `baseColor`: what lies under it
+    // when there is no transparency. `options` (MaterialOptions): Blur off - no blur (glass and acrylic become a translucent tint); Transparency off - opaque (the tint
+    // over baseColor); Dark - the hairline of a dark theme.
+    undefined DrawMaterial(MaterialKind kind, int x, int y, int w, int h, int radius, int tint, int baseColor, int options = 3) {
+        if (this.scale == 1.0) { __GRPHRndDrawMaterial(this.id, kind!int, x, y, w, h, radius, tint, baseColor, options); return }
+        __GRPHRndDrawMaterial(this.id, kind!int, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), tint, baseColor, options)
+    }
+
     // ---- Kopieren ----
     // Copies another framebuffer (e.g. a loaded image) here, also between the colour modes (see BlitMode; Blend only blends with AlphaBlending). Blit: the whole image
     // with its top left corner at (x, y); BlitRegion: the section (sx, sy, sw, sh) to (dx, dy); BlitScaled: additionally brought to the size dw x dh (nearest neighbour;
@@ -606,4 +638,19 @@ class Renderer {
     undefined BlitScaled(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode = 0, int key = -1) {
         __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, this.Px(dx), this.Px(dy), this.Px(dx + dw) - this.Px(dx), this.Px(dy + dh) - this.Px(dy), mode, key)
     }
+}
+
+// The materials of Renderer.DrawMaterial.
+enum MaterialKind
+{
+    Tint = 0,
+    Glass = 1,
+    Acrylic = 2
+}
+
+// The options of Renderer.DrawMaterial (added together; the default is Blur + Transparency).
+class MaterialOptions {
+    static int Blur = 1
+    static int Transparency = 2
+    static int Dark = 4
 }

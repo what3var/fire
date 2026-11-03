@@ -67,6 +67,10 @@ static void fire_gfx_host_reset(void) {
         g_fireWinCount = 1;
         g_fireWinMgrCount = 1;
     }
+#ifdef FIRE_DISPLAY_DESKTOP_H
+    /* the program's own clipboard (a display without a desktop) goes with it; the desktop's stays */
+    fire_display_memClear(fire_display_memClipboard());
+#endif
     if (!t->ready) return;
     for (i = 1; i < t->rndCount; i++) if (t->renderers[i]) { fire_gfx_rendererDelete(t->renderers[i]); t->renderers[i] = NULL; }
     for (i = 1; i < t->fbCount; i++) if (t->framebuffers[i]) { fire_gfx_fbRelease(t->framebuffers[i]); t->framebuffers[i] = NULL; }

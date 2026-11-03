@@ -250,6 +250,7 @@ namespace fire.Terminal.Bridge
             "FillRect", "Fill", "FillCircle", "FillEllipse", "FillTriangle", "FillPolygon", "FloodFill", "FloodFillBorder",
             "DrawPoint", "DrawLine", "DrawPath", "DrawRect", "DrawCircle", "DrawEllipse", "DrawTriangle", "DrawPolygon",
             "Blit", "SetClip", "ResetClip", "DrawTextFont",
+            "FillRoundRect", "DrawRoundRect", "DrawShadow", "Blur", "DrawMaterial",
         };
 
         private static readonly string[] FontFunctionNames = { "Load", "Add", "Open", "Destroy", "Name", "IsBitmap", "Ascent", "Height", "Measure" };
@@ -326,6 +327,12 @@ namespace fire.Terminal.Bridge
                 // text in a font: font ID 0 = the font of the renderer, size in pixels
                 ["DrawTextFont"] = args => Nothing(() => mgr.DrawTextFont(I(args[0]), I(args[1]), I(args[2]), args[3].AsString(), I(args[4]), I(args[5]), I(args[6]), I(args[7]))),
                 ["Blit"] = args => Nothing(() => mgr.Blit(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]), I(args[8]), I(args[9]), I(args[10]), I(args[11]))),
+                // rounded rectangles and effects (the C library draws them; here the plain shapes, see RendererManager)
+                ["FillRoundRect"] = args => Nothing(() => mgr.FillRoundRect(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]))),
+                ["DrawRoundRect"] = args => Nothing(() => mgr.DrawRoundRect(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]))),
+                ["DrawShadow"] = args => Value.MakeUndefined(),
+                ["Blur"] = args => Value.MakeUndefined(),
+                ["DrawMaterial"] = args => Nothing(() => mgr.DrawMaterial(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]), I(args[8]), I(args[9]))),
             });
         }
 

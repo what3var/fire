@@ -229,6 +229,28 @@ static uint32_t fire_gfx_mix(uint32_t dst, uint32_t src) {
     return r | (g << 8) | (b << 16) | ((outA < 255u ? outA : 255u) << 24);
 }
 
+/* x / 255 for 0 <= x <= 65152 (what a channel times alpha plus the rounding can be): in each 16-bit lane of `x`. */
+#define FIRE_GFX_DIV255_2(x) ((((x) + 0x00010001u + (((x) >> 8) & 0x00FF00FFu)) >> 8) & 0x00FF00FFu)
+
+/* Mixes `src` over each of the `n` pixels - the same result as fire_gfx_mix for every pixel, red and blue in one multiplication. */
+static void fire_gfx_blendRow(uint32_t* p, size_t n, uint32_t src) {
+    uint32_t a = src >> 24, inv, rb, g;
+    size_t k;
+    if (a == 0) { for (k = 0; k < n; k++) if ((p[k] >> 24) == 0) p[k] = src; return; }   /* (as fire_gfx_mix: over nothing it is the color) */
+    if (a == 255) { for (k = 0; k < n; k++) p[k] = src; return; }
+    inv = 255 - a;
+    rb = (src & 0x00FF00FFu) * a + 0x007F007Fu;
+    g = ((src >> 8) & 0xFFu) * a + 127u;
+    for (k = 0; k < n; k++) {
+        uint32_t d = p[k], da = d >> 24, x, y, outA;
+        if (da == 0) { p[k] = src; continue; }
+        x = (d & 0x00FF00FFu) * inv + rb;
+        y = ((d >> 8) & 0xFFu) * inv + g;
+        outA = a + (da * inv + 127u) / 255u;
+        p[k] = FIRE_GFX_DIV255_2(x) | (((y + 1u + (y >> 8)) >> 8) << 8) | ((outA < 255u ? outA : 255u) << 24);
+    }
+}
+
 /* What the drawing functions write through: the pixels of a framebuffer with clipping at the edge and - when `blend` - alpha blending. A color with alpha: in an RGBA target
  * with blending alpha 255 is a copy, 0 draws nothing, in between it is mixed; without blending it is copied with its alpha. A palette target only copies: with blending a color
  * from alpha 128 on, below that nothing; without blending always. */
@@ -293,7 +315,7 @@ static void fire_gfx_span(FireGfxSurface* s, int y, int x0, int x1, const FireGf
     at = (size_t)y * s->width + x0; n = (size_t)(x1 - x0 + 1);
     if (s->indices) memset(s->indices + at, p->index, n);
     else if (!s->blend || (p->rgba >> 24) == 255) for (k = 0; k < n; k++) s->pixels[at + k] = p->rgba;
-    else for (k = 0; k < n; k++) s->pixels[at + k] = fire_gfx_mix(s->pixels[at + k], p->rgba);
+    else fire_gfx_blendRow(s->pixels + at, n, p->rgba);
 }
 
 static void fire_gfx_rect(FireGfxSurface* s, int x, int y, int w, int h, const FireGfxPixel* p) {

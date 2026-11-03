@@ -109,11 +109,13 @@ namespace fire.Compiler
         public sealed class Instance : IDisposable
         {
             [StructLayout(LayoutKind.Sequential)]
-            private struct HostBlock { public int Size; public IntPtr Ctx, NextEvent, Present, Cursor; }
+            private struct HostBlock { public int Size; public IntPtr Ctx, NextEvent, Present, Cursor, StartDrag, CanStartDrag; }
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int NextEventFn(IntPtr ctx, int window, IntPtr output);
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void PresentFn(IntPtr ctx, int window, IntPtr rgba, int width, int height, int vsync);
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void CursorFn(IntPtr ctx, int window, int cursor);
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int DisplayFn(IntPtr host);
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int StartDragFn(IntPtr ctx, int window, IntPtr text, IntPtr files);
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CanStartDragFn(IntPtr ctx, int window);
 
             private static readonly List<Instance> Pool = new();
             private static bool _swept;
@@ -127,13 +129,24 @@ namespace fire.Compiler
             private readonly NextEventFn _next;
             private readonly PresentFn _present;
             private readonly CursorFn _cursor;
+            private readonly StartDragFn _startDrag;
+            private readonly CanStartDragFn _canStartDrag;
             private readonly IntPtr _block, _hostless;
             private int[] _scratch = Array.Empty<int>();
+            private IntPtr _data;
+
+            private static IntPtr Utf8(string text)
+            {
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text + "\0");
+                var block = Marshal.AllocHGlobal(bytes.Length);
+                Marshal.Copy(bytes, 0, block, bytes.Length);
+                return block;
+            }
 
             private Instance(string file, string path, DateTime stamp)
             {
                 File = file; Path = path; _stamp = stamp;
-                _next = NextEvent; _present = Present; _cursor = Cursor;
+                _next = NextEvent; _present = Present; _cursor = Cursor; _startDrag = StartDrag; _canStartDrag = CanStartDrag;
                 _block = Marshal.AllocHGlobal(Marshal.SizeOf<HostBlock>());
                 Marshal.StructureToPtr(new HostBlock
                 {
@@ -141,6 +154,8 @@ namespace fire.Compiler
                     NextEvent = Marshal.GetFunctionPointerForDelegate(_next),
                     Present = Marshal.GetFunctionPointerForDelegate(_present),
                     Cursor = Marshal.GetFunctionPointerForDelegate(_cursor),
+                    StartDrag = Marshal.GetFunctionPointerForDelegate(_startDrag),
+                    CanStartDrag = Marshal.GetFunctionPointerForDelegate(_canStartDrag),
                 }, _block, false);
                 _hostless = Marshal.AllocHGlobal(Marshal.SizeOf<HostBlock>());
                 Marshal.StructureToPtr(new HostBlock { Size = Marshal.SizeOf<HostBlock>() }, _hostless, false);
@@ -233,6 +248,12 @@ namespace fire.Compiler
                         }
                     }
                     Marshal.Copy(text, 0, output + 44, 32);
+                    Marshal.Copy(new[] { e.Joystick, e.Index }, 0, output + 76, 2);
+                    Marshal.Copy(new[] { e.Value, e.Pressure }, 0, output + 84, 2);
+                    Marshal.WriteInt64(output + 96, e.Finger);
+                    if (_data != IntPtr.Zero) { Marshal.FreeHGlobal(_data); _data = IntPtr.Zero; }   // (the library copied the last one)
+                    if (e.Data != null) _data = Utf8(e.Data);
+                    Marshal.WriteIntPtr(output + 104, _data);
                     return 1;
                 }
                 catch (Exception) { return 0; }
@@ -255,6 +276,22 @@ namespace fire.Compiler
             {
                 try { _display?.Cursor(window, cursor); } catch (Exception) { }
             }
+
+            private int StartDrag(IntPtr ctx, int window, IntPtr text, IntPtr files)
+            {
+                try
+                {
+                    if (_display is not { } d) return 0;
+                    string paths = Marshal.PtrToStringUTF8(files) ?? "";
+                    return d.StartDrag(window, Marshal.PtrToStringUTF8(text) ?? "", paths.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+                }
+                catch (Exception) { return 0; }
+            }
+
+            private int CanStartDrag(IntPtr ctx, int window)
+            {
+                try { return _display?.CanStartDrag(window) == true ? 1 : 0; } catch (Exception) { return 0; }
+            }
         }
     }
 
@@ -264,12 +301,21 @@ namespace fire.Compiler
 
     /// <summary>One event a host hands to a program's window (<see cref="IHostDisplay.NextEvent"/>): <see cref="Type"/> as EventType (mouse, keys, text, resize, close);
     /// positions in pixels of the window. MouseDown/Up: Button, X, Y; MouseMove: X, Y (the buttons the window keeps itself); MouseScroll: Dx, Dy (notches, Dy &gt; 0: up), X, Y;
-    /// KeyDown/Up: KeyCode, Modifiers (SDL's numbers, see UI.Keys); TextInput: Text; Resize: Width, Height; Close.</summary>
+    /// KeyDown/Up: KeyCode, Modifiers (SDL's numbers, see UI.Keys); TextInput: Text; Resize: Width, Height; Touch*: Finger, X, Y, Pressure; Joystick*: Joystick, Index, Value;
+    /// DropFiles/DropText: Data, X, Y; DragHover: X, Y; DragLeave; Close.</summary>
     public struct HostDisplayEvent
     {
         public int Type, Button, Buttons, KeyCode, Modifiers, Width, Height;
         public float X, Y, Dx, Dy;
         public string? Text;
+        /// <summary>TouchDown/Move/Up: the finger and how hard it presses (0 to 1).</summary>
+        public long Finger;
+        public float Pressure;
+        /// <summary>Joystick events: the device, the axis/button/hat and its value.</summary>
+        public int Joystick, Index;
+        public float Value;
+        /// <summary>DropFiles (the paths, one per line) / DropText: what was dropped.</summary>
+        public string? Data;
     }
 
     /// <summary>A host that drives the windows of a program running on the C library (<see cref="GraphicsLibrary.Instance"/>): the editor's live view. Called on the thread of
@@ -282,5 +328,9 @@ namespace fire.Compiler
         void Present(int window, ReadOnlySpan<uint> rgba, int width, int height, bool vsync);
         /// <summary>The mouse pointer the program wants over the window (SDL numbering, see UI.Cursor).</summary>
         void Cursor(int window, int cursor);
+        /// <summary>Window.StartDrag: the program drags text and/or files out of the window - 0 nothing happened, 1 copied, 2 moved.</summary>
+        int StartDrag(int window, string text, string[] files) => 0;
+        /// <summary>Window.CanStartDrag: does the host take drags out of the window?</summary>
+        bool CanStartDrag(int window) => false;
     }
 }

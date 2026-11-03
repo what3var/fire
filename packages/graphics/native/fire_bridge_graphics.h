@@ -17,6 +17,7 @@
 #include "fire_gfx_text.h"
 #include "fire_gfx_images.h"
 #include "fire_gfx_slicer.h"
+#include "fire_gfx_fx.h"
 
 /* The framebuffers, renderers, brushes and pens by id (ids start at 1 and are not used again, like the VM's IdManager). */
 typedef struct FireGfxTables {
@@ -608,6 +609,41 @@ static Value fire_gfx_RndFillRect(Value id, Value x, Value y, Value w, Value h, 
     fire_gfx_brushFillRect(fire_gfxb_brushOf(brush), &s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h));
     return Undef();
 }
+/* rounded rectangles and effects (fire_gfx_fx.h) */
+static Value fire_gfx_RndFillRoundRect(Value id, Value x, Value y, Value w, Value h, Value radius, Value brush) {
+    FireGfxRenderer* r = fire_gfxb_rendererOf(id);
+    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    FireGfxPixel p = fire_gfx_resolve(&s, fire_gfxb_brushOf(brush)->color);
+    fire_gfx_fxFillRoundRect(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), &p);
+    return Undef();
+}
+static Value fire_gfx_RndDrawRoundRect(Value id, Value x, Value y, Value w, Value h, Value radius, Value pen) {
+    FireGfxRenderer* r = fire_gfxb_rendererOf(id);
+    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    FireGfxPen* pn = fire_gfxb_penOf(pen);
+    FireGfxPixel p = fire_gfx_resolve(&s, pn->color);
+    fire_gfx_fxStrokeRoundRect(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), pn->width, &p);
+    return Undef();
+}
+static Value fire_gfx_RndDrawShadow(Value id, Value x, Value y, Value w, Value h, Value radius, Value soft, Value color, Value dy) {
+    FireGfxRenderer* r = fire_gfxb_rendererOf(id);
+    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    fire_gfx_fxShadow(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), fire_gfxb_I(soft), (uint32_t)(int32_t)color.i, fire_gfxb_I(dy));
+    return Undef();
+}
+static Value fire_gfx_RndBlur(Value id, Value x, Value y, Value w, Value h, Value radius, Value corner) {
+    FireGfxRenderer* r = fire_gfxb_rendererOf(id);
+    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    fire_gfx_fxBlur(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(corner), fire_gfxb_I(radius));
+    return Undef();
+}
+static Value fire_gfx_RndDrawMaterial(Value id, Value kind, Value x, Value y, Value w, Value h, Value radius, Value tint, Value base, Value flags) {
+    FireGfxRenderer* r = fire_gfxb_rendererOf(id);
+    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    fire_gfx_fxMaterial(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), fire_gfxb_I(kind), (uint32_t)(int32_t)tint.i, (uint32_t)(int32_t)base.i,
+                        fire_gfxb_I(flags));
+    return Undef();
+}
 static Value fire_gfx_RndFill(Value id, Value brush) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
     FireGfxSurface s = fire_gfx_rendererSurface(r);
@@ -712,7 +748,8 @@ static Value fire_gfx_RndBlit(Value id, Value src, Value sx, Value sy, Value sw,
 }
 
 /* The colour as a script gives it: a palette index 0-255 or the direct value. */
-static Value fire_gfxb_colorNumber(FireGfxPaint p) { return Int(fire_gfx_paintIsIndex(p) ? (int64_t)p.index : (int64_t)(int32_t)p.rgba); }
+/* (a color as the script set it: unsigned, 0xAABBGGRR - as UI.Color.Rgb makes it) */
+static Value fire_gfxb_colorNumber(FireGfxPaint p) { return Int(fire_gfx_paintIsIndex(p) ? (int64_t)p.index : (int64_t)p.rgba); }
 
 /* fonts (ID 0 = the font of the renderer, 1 and 2 = the built-in bitmap fonts, -1 = none) */
 static FireGfxTextFont* fire_gfxb_fontOf(Value id) {

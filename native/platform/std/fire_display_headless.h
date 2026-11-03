@@ -4,20 +4,27 @@
  * whoever drives the window (fire_dhl_headlessPush). The clipboard is the program's own; nothing can be dragged out.
  *
  * A HOST can drive it (fire_display_host): the editor's live view of a program and its design view (the library of the VM, native/abi/fire_gfx_host.h). Then every window
- * of the program is one of this display, whatever FIRE_DISPLAY says; its events come from the host (next_event, asked when the program pumps), its pictures and its mouse
- * pointer go to the host (present, cursor; each may be NULL). */
+ * of the program is one of this display, whatever FIRE_DISPLAY says; its events come from the host (next_event, asked when the program pumps), its pictures, its mouse
+ * pointer and its drags go to the host (present, cursor, start_drag; each may be NULL). */
 #ifndef FIRE_DISPLAY_HEADLESS_H
 #define FIRE_DISPLAY_HEADLESS_H
 
 #include "fire_display_common.h"
 
 
-/* An event from the host: `type` as FIRE_EV_* (mouse and keys, text, resize, close), positions in pixels of the window. MOUSE_DOWN/UP: button, x, y; MOUSE_MOVE: x, y;
- * MOUSE_SCROLL: dx, dy (notches, y > 0: up), x, y; KEY_DOWN/UP: keyCode, modifiers (fire_display_keys.h); TEXT_INPUT: text (UTF-8); RESIZE: width, height; CLOSE. */
+/* An event from the host: `type` as FIRE_EV_*, positions in pixels of the window. MOUSE_DOWN/UP: button, x, y; MOUSE_MOVE: x, y; MOUSE_SCROLL: dx, dy (notches, y > 0: up),
+ * x, y; KEY_DOWN/UP: keyCode, modifiers (fire_display_keys.h); TEXT_INPUT: text (UTF-8); RESIZE: width, height; TOUCH_*: finger, x, y, pressure; JOY_*: joystick, index,
+ * value; DROP_FILES (data: the paths, one per line) / DROP_TEXT (data), x, y; DRAG_HOVER: x, y; DRAG_LEAVE, CLOSE, focus and the mouse coming and going. `data` (UTF-8,
+ * zero terminated, may be NULL) is the host's: it is copied at once. */
 typedef struct FireDisplayHostEvent {
     int32_t type, button, buttons, keyCode, modifiers, width, height;
     float x, y, dx, dy;
     char text[32];
+    int32_t joystick, index;
+    float value, pressure;
+    int32_t reserved;
+    int64_t finger;
+    const char* data;
 } FireDisplayHostEvent;
 typedef struct FireDisplayHost {
     int32_t size;                                                                                         /* sizeof(FireDisplayHost) */
@@ -25,6 +32,8 @@ typedef struct FireDisplayHost {
     int32_t (*next_event)(void* ctx, int32_t window, FireDisplayHostEvent* out);                        /* 1: `out` is the next event of window `window`; 0: none */
     void (*present)(void* ctx, int32_t window, const uint32_t* rgba, int32_t width, int32_t height, int32_t vsync);   /* a picture (on the window's thread) */
     void (*cursor)(void* ctx, int32_t window, int32_t cursor);                                          /* the mouse pointer (FIRE_CURSOR_*) */
+    int32_t (*start_drag)(void* ctx, int32_t window, const char* text, const char* files);              /* Window.StartDrag (UTF-8; files one per line): 0 nothing, 1 copied, 2 moved */
+    int32_t (*can_start_drag)(void* ctx, int32_t window);                                               /* Window.CanStartDrag: 1 the host takes drags */
 } FireDisplayHost;
 static FireDisplayHost g_fireDisplayHost;
 static volatile int g_fireDisplayHosted;
@@ -118,7 +127,18 @@ static void fire_dhl_hostEvents(FireDhlWindow* w) {
             case FIRE_EV_KEY_DOWN: case FIRE_EV_KEY_UP: fire_display_queueKey(&w->queue, h.type == FIRE_EV_KEY_DOWN, h.keyCode, 0, h.modifiers, 0); break;
             case FIRE_EV_TEXT_INPUT: h.text[sizeof h.text - 1] = 0; fire_display_queueText(&w->queue, h.text, strlen(h.text)); break;
             case FIRE_EV_RESIZE: if (h.width > 0 && h.height > 0) { w->winW = h.width; w->winH = h.height; fire_display_queueResize(&w->queue, h.width, h.height); } break;
-            case FIRE_EV_CLOSE: case FIRE_EV_CLOSE_REQUEST: case FIRE_EV_MOUSE_ENTER: case FIRE_EV_MOUSE_LEAVE: case FIRE_EV_FOCUS_GAINED: case FIRE_EV_FOCUS_LOST:
+            case FIRE_EV_TOUCH_DOWN: case FIRE_EV_TOUCH_MOVE: case FIRE_EV_TOUCH_UP: fire_display_queueTouch(&w->queue, h.type, (long long)h.finger, h.x, h.y, h.pressure); break;
+            case FIRE_EV_JOY_AXIS: case FIRE_EV_JOY_BUTTON_DOWN: case FIRE_EV_JOY_BUTTON_UP: case FIRE_EV_JOY_HAT: case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED:
+                fire_display_queueJoy(&w->queue, h.type, h.joystick, h.index, h.value); break;
+            case FIRE_EV_DROP_FILES: case FIRE_EV_DROP_TEXT: case FIRE_EV_DRAG_HOVER: {
+                FireDisplayEvent e;
+                fire_display_eventInit(&e);
+                e.type = h.type; e.x = h.x; e.y = h.y;
+                if (h.data != NULL && h.type != FIRE_EV_DRAG_HOVER) e.data = (char*)fire_display_copyBytes(h.data, strlen(h.data));
+                fire_display_queuePush(&w->queue, &e);
+                break;
+            }
+            case FIRE_EV_CLOSE: case FIRE_EV_CLOSE_REQUEST: case FIRE_EV_MOUSE_ENTER: case FIRE_EV_MOUSE_LEAVE: case FIRE_EV_FOCUS_GAINED: case FIRE_EV_FOCUS_LOST: case FIRE_EV_DRAG_LEAVE:
                 fire_display_queueSimple(&w->queue, h.type); break;
             default: break;
         }
@@ -168,7 +188,10 @@ static char* fire_dhl_clipboardGetFiles(void) { return fire_display_memGetFiles(
 static int fire_dhl_clipboardSetFiles(const char* paths) { return fire_display_memSetFiles(paths); }
 static int fire_dhl_clipboardHasFiles(void) { return fire_display_memHasFiles(); }
 
-static int fire_dhl_startDrag(FireDhlWindow* w, const char* text, const char* files) { (void)w; (void)text; (void)files; return 0; }
-static int fire_dhl_canStartDrag(FireDhlWindow* w) { (void)w; return 0; }
+static int fire_dhl_startDrag(FireDhlWindow* w, const char* text, const char* files) {
+    if (g_fireDisplayHosted && g_fireDisplayHost.start_drag != NULL) return g_fireDisplayHost.start_drag(g_fireDisplayHost.ctx, w->id, text ? text : "", files ? files : "");
+    return 0;
+}
+static int fire_dhl_canStartDrag(FireDhlWindow* w) { return g_fireDisplayHosted && g_fireDisplayHost.can_start_drag != NULL && g_fireDisplayHost.can_start_drag(g_fireDisplayHost.ctx, w->id) != 0; }
 
 #endif

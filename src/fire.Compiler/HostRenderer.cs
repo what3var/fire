@@ -57,6 +57,9 @@ namespace fire.Compiler
             _display?.Cursor(1, cursor);
         }
 
+        public int StartDrag(string text, string[] files) => _display?.StartDrag(1, text, files) ?? 0;
+        public bool CanStartDrag() => _display?.CanStartDrag(1) == true;
+
         public void Dispose() { }
     }
 }

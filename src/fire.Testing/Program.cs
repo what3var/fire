@@ -9452,15 +9452,14 @@ uiDrawScript = """
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
 
-        var renderer = new FakeRenderer();
-        var fbManager = new fire.Terminal.FramebufferManager();
-        var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
-        var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
-        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
-        fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
+        // graphics and windows are the C library's (a copy of it, whose window the test drives: TestHostDisplay) - what a program runs on
+        var renderer = new TestHostDisplay();
+        var instance = fire.Compiler.GraphicsLibrary.Instance.Acquire() ?? throw new InvalidOperationException("the C library of graphics and windows cannot be built: " + fire.Compiler.GraphicsLibrary.Failure);
+        instance.Attach(renderer);
+        fire.Compiler.GraphicsLibrary.Register(natives, withWindows: true, instance: instance);
         ReflectionNatives.Register(natives);
 
-        natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
+        natives.Register("__TestClose", args => { renderer.Close(); return Value.MakeUndefined(); });
         var testClock = System.Diagnostics.Stopwatch.StartNew();
         natives.Register("__TestMillis", args => Value.MakeInt(testClock.ElapsedMilliseconds));
         natives.Register("__TestEvent", args =>
@@ -9477,7 +9476,11 @@ uiDrawScript = """
         var compiled = Compiler.Compile(program, resolveResult, natives);
         uiClasses = compiled.Classes;
         var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
-        vm.Run();
+        try
+        {
+            using (PackageHost.Begin(null, null, libraries: new[] { instance.File })) vm.Run();   // (its end resets the copy: windows, framebuffers)
+        }
+        finally { instance.Dispose(); }
         if (vm.UnhandledException != null)
             lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
         return lines;
@@ -26922,6 +26925,62 @@ sealed class PixelOnlyFont : fire.Terminal.IGlyphFont
 }
 
 /// <summary>Renderer dummy for the UI tests: delivers the stored events at the next PumpEvents, draws nothing.</summary>
+/// <summary>The window of a UI test on the C library (fire.Compiler.IHostDisplay): `__TestEvent` hands it events, `__TestClose` closes it, StartDrag answers what the test says.</summary>
+sealed class TestHostDisplay : fire.Compiler.IHostDisplay
+{
+    private readonly List<fire.Compiler.HostDisplayEvent> _pending = new();
+    public int DragAnswer { get; set; }
+    public bool CanDrag { get; set; } = true;
+    public Action<string, string[]>? Dragged { get; set; }
+
+    public void Close() { lock (_pending) _pending.Add(new fire.Compiler.HostDisplayEvent { Type = (int)fire.Terminal.Event.EventType.Close }); }
+
+    /// <summary>An event as FakeRenderer.Push takes it: args[0] type, then mouse (button, x, y) or motion (x, y), key (keycode, modifier), text (text).</summary>
+    public void Push(int type, IReadOnlyList<Value> args)
+    {
+        var e = new fire.Compiler.HostDisplayEvent { Type = type };
+        switch ((fire.Terminal.Event.EventType)type)
+        {
+            case fire.Terminal.Event.EventType.MouseDown:
+            case fire.Terminal.Event.EventType.MouseUp: e.Button = (int)args[1].AsInt(); e.X = (float)args[2].AsFloat(); e.Y = (float)args[3].AsFloat(); break;
+            case fire.Terminal.Event.EventType.MouseMove: e.X = (float)args[1].AsFloat(); e.Y = (float)args[2].AsFloat(); break;
+            case fire.Terminal.Event.EventType.MouseScroll: e.Dx = (float)args[1].AsFloat(); e.Dy = (float)args[2].AsFloat(); e.X = args.Count > 3 ? (float)args[3].AsFloat() : 0; e.Y = args.Count > 4 ? (float)args[4].AsFloat() : 0; break;
+            case fire.Terminal.Event.EventType.KeyDown:
+            case fire.Terminal.Event.EventType.KeyUp: e.KeyCode = (int)args[1].AsInt(); e.Modifiers = (int)args[2].AsInt(); break;
+            case fire.Terminal.Event.EventType.TextInput: e.Text = args[1].AsString(); break;
+            case fire.Terminal.Event.EventType.Resize: e.Width = (int)args[1].AsInt(); e.Height = (int)args[2].AsInt(); break;
+            case fire.Terminal.Event.EventType.TouchDown:
+            case fire.Terminal.Event.EventType.TouchMove:
+            case fire.Terminal.Event.EventType.TouchUp: e.Finger = args[1].AsInt(); e.X = (float)args[2].AsFloat(); e.Y = (float)args[3].AsFloat(); e.Pressure = 1f; break;
+            case fire.Terminal.Event.EventType.JoystickAxis: e.Joystick = (int)args[1].AsInt(); e.Index = (int)args[2].AsInt(); e.Value = (float)args[3].AsFloat(); break;
+            case fire.Terminal.Event.EventType.JoystickHat: e.Joystick = (int)args[1].AsInt(); e.Index = (int)args[2].AsInt(); e.Value = args[3].AsInt(); break;
+            case fire.Terminal.Event.EventType.JoystickButtonDown:
+            case fire.Terminal.Event.EventType.JoystickButtonUp: e.Joystick = (int)args[1].AsInt(); e.Index = (int)args[2].AsInt(); break;
+            case fire.Terminal.Event.EventType.JoystickAdded:
+            case fire.Terminal.Event.EventType.JoystickRemoved: e.Joystick = (int)args[1].AsInt(); break;
+            case fire.Terminal.Event.EventType.DropFiles:
+            case fire.Terminal.Event.EventType.DropText: e.Data = args[1].AsString(); e.X = (float)args[2].AsFloat(); e.Y = (float)args[3].AsFloat(); break;
+            case fire.Terminal.Event.EventType.DragHover: e.X = (float)args[1].AsFloat(); e.Y = (float)args[2].AsFloat(); break;
+        }
+        lock (_pending) _pending.Add(e);
+    }
+
+    public bool NextEvent(int window, out fire.Compiler.HostDisplayEvent e)
+    {
+        lock (_pending)
+        {
+            if (_pending.Count == 0) { e = default; return false; }
+            e = _pending[0];
+            _pending.RemoveAt(0);
+            return true;
+        }
+    }
+    public void Present(int window, ReadOnlySpan<uint> rgba, int width, int height, bool vsync) { }
+    public void Cursor(int window, int cursor) { }
+    public int StartDrag(int window, string text, string[] files) { Dragged?.Invoke(text, files); return DragAnswer; }
+    public bool CanStartDrag(int window) => CanDrag;
+}
+
 sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
 {
     private readonly List<fire.Terminal.Event.IEvent> _pending = new();
