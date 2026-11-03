@@ -199,7 +199,7 @@ namespace fire.Values
 
             var currentUnit = Unit ?? Values.Unit.Unitless;
             if (currentUnit.Equals(targetUnit))
-                return this;
+                return LabelledAs(currentUnit, targetUnit);
 
             // `a:unitless` takes the dimension out: the number in the base unit (12mm becomes 0.012, 2km 2000); an int stays an int when that is exact.
             // `a:unit` of another dimension never fails either: the number in the base unit gets the target unit (`5mm:kg` is 0.005kg, `7:s` is 7s).
@@ -226,6 +226,11 @@ namespace fire.Values
             };
         }
 
+        /// <summary>The same number in an equal unit under the name of <paramref name="target"/>: `1dm^3:l` is `1l`, and a value stored in a declaration
+        /// with a unit (`float:kg*m/s^2 f = x`) prints with the unit of the declaration (fire_rt.h coerceUnit/adaptUnit do the same).</summary>
+        private Value LabelledAs(Unit current, Unit target) =>
+            ReferenceEquals(current, target) || current.DisplaySymbol == target.DisplaySymbol && current.Offset == target.Offset ? this : new Value(Kind, _bits, target, Width, _enum);
+
         /// <summary>What a unit declaration does with a value (SPEC "Unit declarations").</summary>
         public enum UnitAdaptation { Ok, Mismatch, Overflow }
 
@@ -233,9 +238,30 @@ namespace fire.Values
 
         /// <summary>A unit declaration takes `value` (see TypeRef.UnitDemand; a leading `#`: the declaration is a float): `demand` is a unit (`mm`, `unitless`) - a value of the same dimension is converted into it, `undefined`
         /// takes it - or `any m` - every unit of the dimension of `m`, nothing is converted. Another dimension is a `Mismatch`, a whole number that does not
-        /// fit any more after the conversion an `Overflow`. Values that carry no unit (strings, objects) are left alone.</summary>
-        public static UnitAdaptation AdaptToUnit(ref Value value, string demand)
+        /// fit any more after the conversion an `Overflow`. Values that carry no unit (strings, objects) are left alone. An array (`float:km/h speeds[] =
+        /// [...]`) takes the demand for each of its elements, also of inner arrays: they are converted where they are.</summary>
+        public static UnitAdaptation AdaptToUnit(ref Value value, string demand) => AdaptToUnit(ref value, demand, out _);
+
+        /// <summary>AdaptToUnit; <paramref name="offending"/> is the value that did not fit (the element of an array, else `value` as it came).</summary>
+        public static UnitAdaptation AdaptToUnit(ref Value value, string demand, out Value offending) => AdaptToUnit(ref value, demand, out offending, 0);
+
+        private static UnitAdaptation AdaptToUnit(ref Value value, string demand, out Value offending, int depth)
         {
+            offending = value;
+            if (value.Kind == ValueKind.Array)
+            {
+                var array = value.AsArray();
+                if (array.IsDestroyed || depth > 32) return UnitAdaptation.Ok;   // (a destroyed array is reported where it is used; an array inside itself ends here)
+                var items = array.Items;
+                for (int i = 0; i < items.Length; i++)
+                {
+                    var element = items[i];
+                    var result = AdaptToUnit(ref element, demand, out offending, depth + 1);
+                    if (result != UnitAdaptation.Ok) return result;
+                    items[i] = element;
+                }
+                return UnitAdaptation.Ok;
+            }
             if (value.Kind is not (ValueKind.Int or ValueKind.Float or ValueKind.Undefined)) return UnitAdaptation.Ok;
             if (demand.StartsWith('#'))
             {
@@ -247,7 +273,11 @@ namespace fire.Values
             bool dimensionOnly = demand.StartsWith("any ", StringComparison.Ordinal);
             var target = DemandUnits.GetOrAdd(dimensionOnly ? demand.Substring(4) : demand, Values.Unit.Parse);
             var actual = value.Unit ?? Values.Unit.Unitless;
-            if (actual.Equals(target)) return UnitAdaptation.Ok;
+            if (actual.Equals(target))
+            {
+                if (!dimensionOnly) value = value.LabelledAs(actual, target);
+                return UnitAdaptation.Ok;
+            }
             if (value.Kind == ValueKind.Undefined)
             {
                 if (!dimensionOnly) value = MakeUndefined(target);

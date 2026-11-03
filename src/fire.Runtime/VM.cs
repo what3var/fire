@@ -4588,10 +4588,9 @@ namespace fire.Runtime
                     // (Converting is part of what the value means, so it happens in every execution mode.)
                     string requiredUnitName = _constants[ReadU16()].AsString();
                     ref var adapted = ref _stack[_sp - 1];
-                    var actualUnit = adapted.Unit ?? Values.Unit.Unitless;
-                    switch (Value.AdaptToUnit(ref adapted, requiredUnitName))
+                    switch (Value.AdaptToUnit(ref adapted, requiredUnitName, out var offending))
                     {
-                        case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), actualUnit); break;
+                        case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), offending.Unit ?? Values.Unit.Unitless); break;
                         case Value.UnitAdaptation.Overflow: ThrowOverflow($"{adapted} does not fit into a whole number in '{Values.Unit.DemandDisplay(requiredUnitName)}'."); break;
                     }
                     break;
@@ -5850,10 +5849,9 @@ namespace fire.Runtime
         /// <summary>A field with a unit takes `value` (converted into its unit, see Value.AdaptToUnit); false when that threw a script exception.</summary>
         private bool AdaptFieldUnit(ref Value value, string requiredUnitName)
         {
-            var actualUnit = value.Unit ?? Values.Unit.Unitless;
-            switch (Value.AdaptToUnit(ref value, requiredUnitName))
+            switch (Value.AdaptToUnit(ref value, requiredUnitName, out var offending))
             {
-                case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), actualUnit); return false;
+                case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), offending.Unit ?? Values.Unit.Unitless); return false;
                 case Value.UnitAdaptation.Overflow: ThrowOverflow($"{value} does not fit into a whole number in '{Values.Unit.DemandDisplay(requiredUnitName)}'."); return false;
                 default: return true;
             }

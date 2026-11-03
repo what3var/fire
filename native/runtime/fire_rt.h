@@ -327,6 +327,8 @@ FIRE_NORETURN FIRE_FN Value fireError(const char* cls, const char* utf8) {
     snprintf(e.text, sizeof e.text, "%s", utf8);
     throw e;
 }
+/* (in a package library an exception of the language goes to the VM, which throws it there) */
+FIRE_NORETURN FIRE_FN void fatalException(const char* cls, const char* message) { fireError(cls, message); }
 #elif defined(FIRE_LIBRARY)
 /* The natives of a package in C built as a shared library for the virtual machine (native/abi/fire_pkg_wrapper.h): a run-time error does not end the process - it
  * jumps back (longjmp) to the wrapper of the entry point, which reports it to the VM. (So a native that calls fireError or fatal must not hold anything it has to
@@ -352,10 +354,20 @@ FIRE_NORETURN FIRE_FN void unsupported(const char* what) {
     fireLibraryJump(1, "", text);
 }
 FIRE_NORETURN FIRE_FN Value fireError(const char* cls, const char* utf8) { fireLibraryJump(2, cls, utf8); }
+/* (in a package library an exception of the language goes to the VM, which throws it there) */
+FIRE_NORETURN FIRE_FN void fatalException(const char* cls, const char* message) { fireLibraryJump(2, cls, message); }
 #else
 FIRE_NORETURN FIRE_COLD FIRE_FN void fatal(const char* message) {
     fflush(stdout);
     fprintf(stderr, "fire runtime error: %s\n", message);
+    exitNow(1);
+}
+
+/* An exception of the language that nothing catches (a program without exceptions ends at the first one): the text and the exit code of the VM's command line
+ * runner (UncaughtScriptException: "Unhandled exception of type 'Class': message", exit code 1). */
+FIRE_NORETURN FIRE_COLD FIRE_FN void fatalException(const char* cls, const char* message) {
+    fflush(stdout);
+    fprintf(stderr, "Unhandled exception of type '%s': %s\n", cls, message);
     exitNow(1);
 }
 
@@ -556,6 +568,12 @@ FIRE_FN bool unitCompatible(uint32_t a, uint32_t b) { return a == b || memcmp(g_
 FIRE_FN bool unitEq(uint32_t a, uint32_t b) {
     return a == b || (unitCompatible(a, b) && fabs(g_ud[a].scale - g_ud[b].scale) < 1e-12 && g_ud[a].offset == g_ud[b].offset && g_ud[a].conv == g_ud[b].conv && g_ud[a].ulconv == g_ud[b].ulconv);
 }
+/* Value.LabelledAs: two equal units that print the same (an equal unit under another name takes that name: `1dm^3:l` is `1l`). */
+FIRE_FN bool unitSameLabel(uint32_t a, uint32_t b) {
+    const char* x = g_ud[a].display;
+    const char* y = g_ud[b].display;
+    return a == b || (g_ud[a].offset == g_ud[b].offset && (x == y || (x && y && strcmp(x, y) == 0)));
+}
 /* Unit.IsLinear: only a factor of its base unit (no offset, no conversion functions). */
 FIRE_FN bool unitLinear(uint32_t u) { return g_ud[u].offset == 0 && g_ud[u].conv < 0; }
 
@@ -572,9 +590,9 @@ FIRE_COLD FIRE_FN void unitConflict(uint32_t from, uint32_t to) {
     snprintf(text, sizeof text, "Incompatible units: '%s' cannot be converted to '%s'.", g_ud[from].name, g_ud[to].name);
     fireError("UnitMismatchException", text);
 #else
-    fflush(stdout);
-    fprintf(stderr, "Unhandled exception. fire.Values.UnitMismatchException: Incompatible units: '%s' cannot be converted to '%s'.\n", g_ud[from].name, g_ud[to].name);
-    exitNow(1);
+    char text[240];
+    snprintf(text, sizeof text, "Incompatible units: '%s' cannot be converted to '%s'.", g_ud[from].name, g_ud[to].name);
+    fatalException("UnitMismatchException", text);
 #endif
 }
 /* Unit.ConversionFactorTo
@@ -608,13 +626,209 @@ FIRE_FN double unitFactorCached(double* cache, uint32_t from, uint32_t to) {
     return *cache;
 }
 
-/* Unit.Multiply / Unit.Divide: a unit without dimensions leaves the other one as it is; `mm * mm` is `mm^2`. */
+/* The units of fire and of the program a text may name (`"5mm".ToFloat()`, see below; the names of combined units look at them too). */
+typedef struct TextUnit { const char* symbol; uint32_t unit; bool prefixable; } TextUnit;
+extern const TextUnit* g_textUnits;
+extern uint32_t g_textUnitCount;
+
+/* ---- The names of combined units (Unit.CombinedName, the same steps): a list of symbols with powers. A product or a quotient keeps the symbols of its
+ * operands (`kg*m/s^2`, `km/h`, `m*mm`), the same symbol counts once (`mm^2`); parts of one unit of fire with different prefixes that cancel (`m/mm*s`)
+ * give their factor to the prefix of another part when one fits (`ms^-1`). ---- */
+#define FIRE_UNIT_TERMS 16
+typedef struct UnitTerm { char sym[32]; int exp; } UnitTerm;
+typedef struct UnitTerms { UnitTerm t[FIRE_UNIT_TERMS]; int n; } UnitTerms;
+
+/* A byte of a unit symbol in UTF-8 (the letters; the micro sign and the Greek mu are the only bytes from 0x80 on). */
+FIRE_FN bool unitSymbolByte(unsigned char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80; }
+
+/* Unit.TermsOfText: `kg*m/s^2`, `1/ms`, `m^-1` (everything after a `/` divides); false when the text is not of that form. */
+FIRE_FN bool unitTermsOfText(const char* text, UnitTerms* out) {
+    bool divide = false;
+    size_t i = 0;
+    out->n = 0;
+    for (;;) {
+        size_t start = i, end;
+        int power = 1;
+        while (text[i] && unitSymbolByte((unsigned char)text[i])) i++;
+        end = i;
+        if (end == start) {
+            if (divide || out->n > 0 || text[i] != '1' || text[i + 1] != '/') return false;
+            i++;
+        } else {
+            if (end - start >= sizeof out->t[0].sym || out->n == FIRE_UNIT_TERMS) return false;
+            if (text[i] == '^') {
+                bool negative = false;
+                size_t digits;
+                i++;
+                if (text[i] == '-') { negative = true; i++; }
+                digits = i;
+                power = 0;
+                while (text[i] >= '0' && text[i] <= '9') { power = power * 10 + (text[i] - '0'); i++; if (power > 100000) return false; }
+                if (i == digits) return false;
+                if (negative) power = -power;
+            }
+            memcpy(out->t[out->n].sym, text + start, end - start);
+            out->t[out->n].sym[end - start] = 0;
+            out->t[out->n].exp = divide ? -power : power;
+            out->n++;
+        }
+        if (!text[i]) return true;
+        if (text[i] == '/') divide = true;
+        else if (text[i] != '*') return false;
+        i++;
+    }
+}
+
+/* Unit.Terms: the display text of the unit, or - without one - its base symbols when the scale is 1; false when it has no such name. A unit with an offset
+ * or conversion functions counts as its reference unit (Unit.LinearPart). */
+FIRE_FN bool unitTermsOf(uint32_t u, UnitTerms* out) {
+    const UnitDef* d = &g_ud[u];
+    int i;
+    if (d->display && unitLinear(u)) return unitTermsOfText(d->display, out);
+    if (fabs(d->scale - 1.0) > 1e-12) return false;
+    out->n = 0;
+    for (i = 0; i < FIRE_NDIMS; i++) {
+        if (!d->dims[i]) continue;
+        if (strlen(g_dimNames[i]) >= sizeof out->t[0].sym || out->n == FIRE_UNIT_TERMS) return false;
+        strcpy(out->t[out->n].sym, g_dimNames[i]);
+        out->t[out->n].exp = d->dims[i];
+        out->n++;
+    }
+    return true;
+}
+
+/* Unit.MergeTerms: the powers of `more` (times `sign`) added; false when the list is full. */
+FIRE_FN bool unitMergeTerms(UnitTerms* terms, const UnitTerms* more, int sign) {
+    int m, k;
+    for (m = 0; m < more->n; m++) {
+        int e = sign * more->t[m].exp;
+        for (k = 0; k < terms->n && strcmp(terms->t[k].sym, more->t[m].sym) != 0; k++) { }
+        if (k == terms->n) {
+            if (terms->n == FIRE_UNIT_TERMS) return false;
+            terms->t[terms->n] = more->t[m];
+            terms->t[terms->n].exp = e;
+            terms->n++;
+        } else if (terms->t[k].exp + e == 0) {
+            memmove(&terms->t[k], &terms->t[k + 1], (size_t)(terms->n - k - 1) * sizeof(UnitTerm));
+            terms->n--;
+        } else terms->t[k].exp += e;
+    }
+    return true;
+}
+
+FIRE_FN bool unitPrefixableBase(const char* s) {
+    return strcmp(s, "m") == 0 || strcmp(s, "g") == 0 || strcmp(s, "s") == 0 || strcmp(s, "b") == 0 || strcmp(s, "B") == 0 || strcmp(s, "l") == 0;
+}
+FIRE_FN bool unitPrefixFactor(fire_char16 c, double* f);
+FIRE_FN bool unitPrefixAllowed(fire_char16 prefix, const char* symbol);
+/* Unit.SplitBuiltIn: a prefixable unit of fire alone or with a prefix (`mm`, `kg`): the unit (`base` points into `sym`) and the factor of the prefix. */
+FIRE_FN bool unitSplitBuiltIn(const char* sym, const char** base, double* prefix) {
+    const unsigned char* s = (const unsigned char*)sym;
+    fire_char16 c;
+    const char* rest;
+    uint32_t i;
+    *base = sym;
+    *prefix = 1;
+    if (unitPrefixableBase(sym)) return true;
+    if (strcmp(sym, "min") == 0 || strcmp(sym, "h") == 0 || strcmp(sym, "d") == 0) return false;
+    for (i = 0; i < g_textUnitCount; i++) if (strcmp(g_textUnits[i].symbol, sym) == 0) return false;   /* (a unit of the program) */
+    if (s[0] < 0x80) { c = s[0]; rest = sym + 1; }
+    else if (s[0] == 0xC2 && s[1] == 0xB5) { c = 0xB5; rest = sym + 2; }
+    else if (s[0] == 0xCE && s[1] == 0xBC) { c = 0x3BC; rest = sym + 2; }
+    else return false;
+    if (!*rest || !unitPrefixableBase(rest) || !unitPrefixFactor(c, prefix) || !unitPrefixAllowed(c, rest)) return false;
+    *base = rest;
+    return true;
+}
+
+/* Unit.SimplifyTerms */
+FIRE_FN void unitSimplifyTerms(UnitTerms* terms) {
+    static const char* const prefixText[] = { "f", "p", "n", "\xC2\xB5", "m", "c", "d", "h", "k", "M", "G" };
+    static const fire_char16 prefixChar[] = { 'f', 'p', 'n', 0xB5, 'm', 'c', 'd', 'h', 'k', 'M', 'G' };
+    static const double prefixFactor[] = { 1e-15, 1e-12, 1e-9, 1e-6, 1e-3, 1e-2, 1e-1, 1e2, 1e3, 1e6, 1e9 };
+    const char* bases[FIRE_UNIT_TERMS];
+    double prefixes[FIRE_UNIT_TERMS], factor = 1;
+    bool drop[FIRE_UNIT_TERMS], any = false;
+    int k, j, p;
+    for (k = 0; k < terms->n; k++) {
+        drop[k] = false;
+        if (!unitSplitBuiltIn(terms->t[k].sym, &bases[k], &prefixes[k])) bases[k] = NULL;
+    }
+    for (k = 0; k < terms->n; k++) {
+        int sum = 0, count = 0;
+        if (!bases[k] || drop[k]) continue;
+        for (j = k; j < terms->n; j++) if (bases[j] && strcmp(bases[j], bases[k]) == 0) { sum += terms->t[j].exp; count++; }
+        if (sum != 0 || count < 2) continue;
+        for (j = k; j < terms->n; j++)
+            if (bases[j] && strcmp(bases[j], bases[k]) == 0) { drop[j] = true; factor *= pow(prefixes[j], terms->t[j].exp); }
+        any = true;
+    }
+    if (!any) return;
+    for (k = 0; k < terms->n; k++) {
+        double wanted;
+        char sym[32];
+        bool found = false;
+        UnitTerms kept, result;
+        if (drop[k] || !bases[k]) continue;
+        wanted = prefixes[k] * pow(factor, 1.0 / terms->t[k].exp);
+        if (fabs(wanted - 1) <= 1e-9) { snprintf(sym, sizeof sym, "%s", bases[k]); found = true; }
+        for (p = 0; p < 11 && !found; p++)
+            if (fabs(wanted / prefixFactor[p] - 1) <= 1e-9 && unitPrefixAllowed(prefixChar[p], bases[k])) { snprintf(sym, sizeof sym, "%s%s", prefixText[p], bases[k]); found = true; }
+        if (!found) continue;
+        kept.n = 0;
+        for (j = 0; j < terms->n; j++) {
+            if (drop[j]) continue;
+            kept.t[kept.n] = terms->t[j];
+            if (j == k) snprintf(kept.t[kept.n].sym, sizeof kept.t[kept.n].sym, "%s", sym);
+            kept.n++;
+        }
+        result.n = 0;
+        unitMergeTerms(&result, &kept, 1);
+        *terms = result;
+        return;
+    }
+}
+
+/* Unit.RenderTerms: `kg*m/s^2`, `ms^-1` when nothing is multiplied; a new text (malloc), null for no terms. */
+FIRE_FN char* unitRenderTerms(const UnitTerms* terms) {
+    fire_TextBuf t;
+    char tmp[16];
+    char* out;
+    int k, positives = 0;
+    bool first = true;
+    if (terms->n == 0) return NULL;
+    t.n = 0;
+    for (k = 0; k < terms->n; k++) if (terms->t[k].exp > 0) positives++;
+    if (!positives) {
+        for (k = 0; k < terms->n; k++) { if (k) fire_put(&t, "*"); fire_put(&t, terms->t[k].sym); snprintf(tmp, sizeof tmp, "^%d", terms->t[k].exp); fire_put(&t, tmp); }
+    } else {
+        for (k = 0; k < terms->n; k++)
+            if (terms->t[k].exp > 0) { if (!first) fire_put(&t, "*"); first = false; fire_put(&t, terms->t[k].sym); if (terms->t[k].exp != 1) { snprintf(tmp, sizeof tmp, "^%d", terms->t[k].exp); fire_put(&t, tmp); } }
+        first = true;
+        for (k = 0; k < terms->n; k++)
+            if (terms->t[k].exp < 0) { fire_put(&t, first ? "/" : "*"); first = false; fire_put(&t, terms->t[k].sym); if (terms->t[k].exp != -1) { snprintf(tmp, sizeof tmp, "^%d", -terms->t[k].exp); fire_put(&t, tmp); } }
+    }
+    out = (char*)malloc(t.n + 1);
+    if (!out) outOfMemory();
+    memcpy(out, t.buf, t.n);
+    out[t.n] = 0;
+    return out;
+}
+
+/* Unit.CombinedName: the name of the product (`sign` 1) or the quotient (-1) of two units (a new text), null when one of them has none. */
+FIRE_FN char* unitCombinedName(uint32_t a, uint32_t b, int sign) {
+    UnitTerms ta, tb;
+    if (!unitTermsOf(a, &ta) || !unitTermsOf(b, &tb) || !unitMergeTerms(&ta, &tb, sign)) return NULL;
+    unitSimplifyTerms(&ta);
+    return unitRenderTerms(&ta);
+}
+
+/* Unit.Multiply / Unit.Divide: a unit without dimensions leaves the other one as it is; the name keeps the symbols of both (`kg*m/s^2`, `mm^2`). */
 FIRE_FN uint32_t unitMul(uint32_t a, uint32_t b) {
     const UnitDef* x;
     const UnitDef* y;
     int32_t dims[FIRE_NDIMS];
-    const char* display = NULL;
-    double scale;
+    char* display;
     uint32_t id;
     int i;
     if (unitIsUnitless(b)) return a;
@@ -622,30 +836,26 @@ FIRE_FN uint32_t unitMul(uint32_t a, uint32_t b) {
     x = &g_ud[a];
     y = &g_ud[b];
     for (i = 0; i < FIRE_NDIMS; i++) dims[i] = x->dims[i] + y->dims[i];
-    /* (a unit with an offset or conversion functions counts as its reference unit: Unit.LinearPart, no `C^2`) */
-    if (x->display && y->display && unitLinear(a) && unitLinear(b) && strcmp(x->display, y->display) == 0) {
-        size_t l = strlen(x->display);
-        char* square = (char*)malloc(l + 3);
-        if (!square) outOfMemory();
-        memcpy(square, x->display, l);
-        memcpy(square + l, "^2", 3);
-        display = square;
-    }
-    scale = x->scale * y->scale;
-    id = unitIntern(dims, scale, display);
-    if (display && g_ud[id].display != display) free((char*)display);   /* an equal unit existed */
+    display = unitDimsZero(dims) ? NULL : unitCombinedName(a, b, 1);
+    id = unitIntern(dims, x->scale * y->scale, display);
+    if (display && g_ud[id].display != display) free(display);   /* an equal unit existed */
     return id;
 }
 FIRE_FN uint32_t unitDiv(uint32_t a, uint32_t b) {
     const UnitDef* x;
     const UnitDef* y;
     int32_t dims[FIRE_NDIMS];
+    char* display;
+    uint32_t id;
     int i;
     if (unitIsUnitless(b)) return a;
     x = &g_ud[a];
     y = &g_ud[b];
     for (i = 0; i < FIRE_NDIMS; i++) dims[i] = x->dims[i] - y->dims[i];
-    return unitIntern(dims, x->scale / y->scale, NULL);
+    display = unitDimsZero(dims) ? NULL : unitCombinedName(a, b, -1);
+    id = unitIntern(dims, x->scale / y->scale, display);
+    if (display && g_ud[id].display != display) free(display);
+    return id;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -653,9 +863,6 @@ FIRE_FN uint32_t unitDiv(uint32_t a, uint32_t b) {
  * rows of a generated table (`g_textUnits`, set by the program before it runs); a prefix in front of a prefixable row and the combinations (`km/h`,
  * `kg*m/s^2`) are made here, like the VM makes them. An unknown word is no unit here.
  * --------------------------------------------------------------------------------------------------------------------- */
-typedef struct TextUnit { const char* symbol; uint32_t unit; bool prefixable; } TextUnit;
-extern const TextUnit* g_textUnits;
-extern uint32_t g_textUnitCount;
 
 /* Unit.IsUnitLetter: ASCII letters, the micro sign and the Greek mu. */
 FIRE_FN bool unitIsLetter(fire_char16 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == 0xB5 || c == 0x3BC; }
@@ -733,6 +940,19 @@ FIRE_FN bool unitOfText(const fire_char16* s, uint32_t n, uint32_t* out) {
     uint32_t i, f;
     char display[128];
     int d;
+    fire_char16 caret[128];
+    /* (Unit.CaretExponents: the power written as digits right after a symbol, `m3`, `m/s2`, is `m^3`, `m/s^2`) */
+    for (i = 1; i < n; i++) if (s[i] >= '0' && s[i] <= '9' && unitIsLetter(s[i - 1])) break;
+    if (i < n) {
+        uint32_t k = 0;
+        for (i = 0; i < n; i++) {
+            if (k + 2 >= 128) return false;
+            if (i > 0 && s[i] >= '0' && s[i] <= '9' && unitIsLetter(s[i - 1])) caret[k++] = '^';
+            caret[k++] = s[i];
+        }
+        s = caret;
+        n = k;
+    }
     for (i = 0; i < n; i++) {
         if (s[i] == '*' || s[i] == '/' || s[i] == '^') combined = true;
         else if (!unitIsLetter(s[i]) && !(s[i] >= '0' && s[i] <= '9') && s[i] != '-') return false;
@@ -778,7 +998,18 @@ FIRE_FN bool unitOfText(const fire_char16* s, uint32_t n, uint32_t* out) {
         else if (s[i] != '*') return false;
         i++;
     }
-    *out = unitInternText(dims, scale, display);
+    {
+        /* the name of the unit (Unit.ParseCombined): the parts merged and simplified (`m*m/s/s` is `m^2/s^2`, `m/mm*s` is `ms^-1`) */
+        UnitTerms written, merged;
+        char* name = NULL;
+        merged.n = 0;
+        if (unitTermsOfText(display, &written) && unitMergeTerms(&merged, &written, 1)) {
+            unitSimplifyTerms(&merged);
+            name = unitRenderTerms(&merged);
+        }
+        *out = unitInternText(dims, scale, name ? name : display);
+        free(name);
+    }
     return true;
 }
 
@@ -1282,7 +1513,7 @@ FIRE_FN Value stepOf(Value target, Value one) { uint32_t u = unitOf(target); if 
 FIRE_FN Value coerceUnit(Value v, uint32_t target) {
     double factor;
     if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be converted.");
-    if (unitEq(v.unit, target)) return v;
+    if (unitEq(v.unit, target)) { if (unitSameLabel(v.unit, target)) return v; v.unit = target; return v; }   /* (`1dm^3:l` is `1l`) */
     /* `a:unitless`, and `a:unit` of another dimension: the number in the base unit (the dimension is taken out), labelled with the target unit */
     if (v.kind != K_Undefined && ((unitIsUnitless(target) && !unitIsUnitless(v.unit)) || !unitCompatible(v.unit, target))) {
         double inBase;
@@ -1900,11 +2131,31 @@ FIRE_FN Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.
  * `dimensionOnly` (`: any m`) every unit of that dimension is taken as it is; with `toFloat` (a float declaration) a whole number is converted as a float.
  * Another dimension is an UnitMismatchException, a whole number that does not fit any more after the conversion an OverflowException. Values without a unit
  * (strings, objects) are left alone. */
+/* An array into a declaration with a unit (`float:km/h speeds[] = [...]`): each element (also of inner arrays) is converted where it is (Value.AdaptToUnit). */
+FIRE_COLD FIRE_FN void adaptArrayUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText, int depth) {
+    Value* items;
+    uint32_t i, n;
+    if (!leafAlive(v) || depth > 32) return;
+    items = arrItems((Arr*)v.p);
+    n = ((Arr*)v.p)->length;
+    for (i = 0; i < n; i++) {
+        Value e = items[i];
+        if (e.kind == K_Array) adaptArrayUnit(e, unit, dimensionOnly, toFloat, expectedText, depth + 1);
+        else if (e.kind == K_Int || e.kind == K_Float || e.kind == K_Undefined) {
+            e = adaptUnit(e, unit, dimensionOnly, toFloat, expectedText);
+            if (g_unwind.active) return;
+            items[i] = e;
+        }
+        if (g_unwind.active) return;
+    }
+}
+
 FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText) {
     double converted;
+    if (FIRE_UNLIKELY(v.kind == K_Array)) { adaptArrayUnit(v, unit, dimensionOnly, toFloat, expectedText, 0); return v; }
     if (!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined)) return v;
     if (toFloat && v.kind == K_Int) v = Float((Real)v.i, v.unit);   /* a float declaration: a whole number becomes one (`float f = 3` holds 3.0) */
-    if (unitEq(v.unit, unit)) return v;
+    if (unitEq(v.unit, unit)) { if (!dimensionOnly && !unitSameLabel(v.unit, unit)) v.unit = unit; return v; }   /* (printed with the unit of the declaration) */
     if (v.kind == K_Undefined) { if (!dimensionOnly) v.unit = unit; return v; }
     /* a unit that becomes a plain number (dB) stored without a unit, and a plain number stored in such a unit */
     if (!dimensionOnly && ((unitIsUnitless(unit) && g_ud[v.unit].ulconv >= 0) || (unitIsUnitless(v.unit) && g_ud[unit].ulconv >= 0))) {
@@ -3074,11 +3325,25 @@ FIRE_FN void takeGlobal(Obj* o) {
     ownLink(g_globalOwn, &o->h);
 }
 
+/* Generated: the index of the field `message` of an object of the class, -1 when the class has none. */
+int32_t excMessageIndex(uint32_t cls);
+/* An exception that nothing catches: the text of the VM (UncaughtScriptException) - the class and the text of the field `message`. */
 FIRE_COLD FIRE_FN void reportUnhandled(Value exception) {
-    Obj* o;
+    Obj* o = asObj(exception);
+    int32_t index = excMessageIndex(o->cls);
+    char text[1024];
+    if (index < 0) snprintf(text, sizeof text, "(no 'message' field)");
+    else {
+        Value m = objFields(o)[index];
+        if (m.kind != K_String) {
+            OwnList scratch;
+            ownListInit(&scratch, 0, NULL);
+            m = toStringValue(m, &scratch);
+        }
+        strToUtf8(m, text, sizeof text);
+    }
     fflush(stdout);
-    o = asObj(exception);
-    fprintf(stderr, "Unhandled exception of class '%s'.\n", className(o->cls));
+    fprintf(stderr, "Unhandled exception of type '%s': %s\n", className(o->cls), text);
 }
 
 #ifdef FIRE_THREADS
@@ -3176,7 +3441,7 @@ FIRE_FN Value indexError(const char* what, int64_t index, int64_t length) {
     return fireError("IndexOutOfBoundsException", text);   /* the VM throws it as the exception of the program */
 #else
     (void)n;
-    fatal(text);
+    fatalException("IndexOutOfBoundsException", text);
 #endif
 }
 
@@ -3218,8 +3483,11 @@ FIRE_FN void unitMismatch(Value v, Value expectedText) {
     actual = newStrFrom(actualText, an, &unused);
     throwValue(makeUnitError(StrV(msg), expectedText, actual));
 #else
-    (void)v; (void)expectedText;
-    fatal("Incompatible units.");
+    char expected[120], text[300];
+    uint32_t actualUnit = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
+    strToUtf8(expectedText, expected, sizeof expected);
+    snprintf(text, sizeof text, "Expected unit '%s', got: %s.", expected, actualUnit ? g_ud[actualUnit].name : "(no unit)");
+    fatalException("UnitMismatchException", text);
 #endif
 }
 
@@ -3240,10 +3508,8 @@ FIRE_FN Value fireError(const char* cls, const char* utf8) {
     msg = newStrFrom(text, utf8ToUtf16(utf8, text, 400), &unused);
     exception = makeClassError(cls, msg);
     if (exception.kind == K_Class) return throwValue(exception);
-#else
-    (void)cls;
 #endif
-    fatal(utf8);
+    fatalException(cls, utf8);
 }
 #endif
 
@@ -3253,6 +3519,7 @@ FIRE_FN const char* valueKindText(Value v) { return kindName(v); }
 /* A method that the value does not have (a class that has it with other numbers of arguments is reported by the dispatcher itself): a MissingMemberException. */
 FIRE_COLD FIRE_FN Value missingMethod(Value self, const char* name, int argc) {
     char text[400];
+    if (self.kind == K_Class && !leafAlive(self)) return destroyedError(self);   /* (the VM looks at a destroyed object first) */
     if (self.kind == K_Class) snprintf(text, sizeof text, "Method '%s' not found on '%s'.", name, className(asObj(self)->cls));
     else snprintf(text, sizeof text, "'%s' (%d argument(s)) is not a known built-in method on a value of type %s.", name, argc, valueKindText(self));
     return fireError("MissingMemberException", text);
@@ -3290,7 +3557,7 @@ FIRE_FN Value rfFail(const char* utf8) {
     msg = strFromUtf8(utf8, &unused);
     return throwValue(makeReflectError(msg));
 #else
-    fatal(utf8);
+    fatalException("ReflectionException", utf8);
 #endif
 }
 #endif
@@ -3485,7 +3752,7 @@ FIRE_FN Value accessDenied(const char* text) {
 #ifdef FIRE_EXCEPTIONS
     return throwValue(makeAccessError(fire_asciiMessage(text)));
 #else
-    fatal(text);
+    fatalException("AccessDeniedException", text);
 #endif
 }
 
@@ -3550,7 +3817,7 @@ FIRE_FN Value divideByZero(void) {
 #elif defined(FIRE_LIBRARY)
     return fireError("DivideByZeroException", "Division by zero.");
 #else
-    fatal("Division by zero.");
+    fatalException("DivideByZeroException", "Division by zero.");
 #endif
 }
 
@@ -3559,7 +3826,7 @@ FIRE_FN Value destroyedError(Value leaf) {
 #ifdef FIRE_EXCEPTIONS
     return throwValue(makeDestroyedError(fire_asciiMessage(text)));
 #else
-    fatal(text);
+    fatalException("DestroyedException", text);
 #endif
 }
 

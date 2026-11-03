@@ -1180,7 +1180,7 @@ namespace fire.Native
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             // The units a text may name (`"5mm".ToFloat()`, Unit.ParseKnown): those of fire without a prefix, then those of the program by symbol and name
             var textUnits = new List<(string Symbol, int Unit, bool Prefixable)>();
-            if (_usesStringCall)
+            if (_usesStringCall || _program.Program.CustomUnits.Count > 0)   // (the names of combined units look at the symbols of the program too)
             {
                 foreach (var (symbol, prefixable) in Unit.BuiltInSymbols) textUnits.Add((symbol, UnitId(Unit.Parse(symbol)), prefixable));
                 foreach (var own in _program.Program.CustomUnits)
@@ -2122,6 +2122,18 @@ namespace fire.Native
             foreach (var cls in _classList) sb.AppendLine($"        case {cls.Id}: return {CString(cls.Rc.Name)};");
             sb.AppendLine("        default: return \"?\";");
             sb.AppendLine("    }");
+            sb.AppendLine("}");
+            // the field `message` of an exception that nothing catches (reportUnhandled prints it like the VM)
+            sb.AppendLine("int32_t excMessageIndex(uint32_t cls) {");
+            var messageCases = _usesExceptions ? _classList.Where(c => c.Rc.FieldIndex.ContainsKey("message")).GroupBy(c => c.Rc.FieldIndex["message"]).ToList() : new();
+            if (messageCases.Count > 0)
+            {
+                sb.AppendLine("    switch (cls) {");
+                foreach (var g in messageCases) sb.AppendLine("        " + string.Concat(g.Select(c => $"case {c.Id}: ")) + $"return {g.Key};");
+                sb.AppendLine("        default: return -1;");
+                sb.AppendLine("    }");
+            }
+            else sb.AppendLine("    (void)cls; return -1;");
             sb.AppendLine("}");
 
             if (_usesExceptions)

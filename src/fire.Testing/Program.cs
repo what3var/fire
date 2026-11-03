@@ -15863,6 +15863,7 @@ else
         return null;
     }
 
+    var vmUnhandled = new Dictionary<string, string>();
     string vmOutput(string source)
     {
         // `terminate` and `catch threads/terminate` are process-wide state of the VM: an earlier case must not leave its handlers behind
@@ -15871,6 +15872,8 @@ else
         var lines = new List<string>();
         var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
         session.Run();
+        // what the command line runner writes to stderr for an exception that nothing catches (an "Abbruch:" case compares it with the native program)
+        if (session.VirtualMachine?.UnhandledException is { } unhandled) lock (vmUnhandled) vmUnhandled[source] = new UncaughtScriptException(unhandled).Message;
         return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
     }
 
@@ -16721,6 +16724,51 @@ else
                 coerce to unitless => 10 ^ (value / 20)
                 coerce from unitless => 20 * Math.Log10(value)
             }
+            """),
+        ("Einheiten: Namen kombinierter Einheiten (kg*m/s^2, km/h, m*mm, ms^-1), Umbenennen in eine gleiche Einheit (1dm3:l)", """
+            var f = 5kg * (2m / 1s / 1s)
+            print(f + " " + 2km / 1h + " " + 1m * 1mm + " " + 500mm * 2m + " " + 2kg * 3g + " " + 3m * 2m * 4m + " " + 10m / 2s * 3s)
+            float:kg*m/s^2 g = f
+            float:N n = f
+            print(g + " " + 1m / (1mm * 1s) + " " + "1m/mm*s".ToFloat() + " " + "2 m*m/s/s".ToFloat() + " " + "3 km/m*h".ToFloat() + " " + 1.0dm3:l + " " + 2 / 4s + " " + n)
+            unit Newton: N { coerce kg*m/s^2 => 1 }
+            """),
+        ("Einheiten: Potenz als Ziffern (1m3, float:m/s2, \"5 m3\".ToFloat()), wissenschaftliche Schreibweise 1e3", """
+            print(1m3 + " " + 5dm3 + " " + 2cm2)
+            float v : m3 = 5l
+            float:m/s2 a = 9.81m / 1s / 1s
+            float:kg*m2/s2 e = 2kg * 3m2 / 1s / 1s
+            float w : m^3 = 1m3
+            print(v + " " + a + " " + e + " " + w + " " + (1m3 == 1000l) + " " + 1m3:l + " " + 5:m3)
+            print("5 m3".ToFloat() + " " + "2 m/s2".ToFloat() + " " + "1e3".ToFloat() + " " + "1e3m".ToFloat() + " " + "3dm3".ToFloat():l)
+            print(1e3 + " " + 2.5e-3 + " " + 1e3m + " " + 0x1F + " " + 2E+2)
+            """),
+        ("Einheiten: Arrays mit Einheit am Typ rechnen ihre Elemente um (Initialisierer, Element, Parameter, Feld, Rueckgabe, mehrdimensional)", """
+            float:km/h arr[] = [36m / 1s, 10km / 1h]
+            print(arr[0] + " " + arr[1])
+            arr[1] = 5m / 1s
+            arr[0] += 1m / 1s
+            float b[3] : mm
+            b[0] = 2cm
+            int c[] : cm = [1m, 20mm]
+            print(arr[0] + " " + arr[1] + " " + b[0] + " " + b[1] + " " + c[0] + " " + c[1])
+            class K {
+                float:m lens[]
+                construct() { lens = [1km, 2cm] }
+                static float:m Sum(float v[] : m) { float s = 0m; foreach (x in v) { s += x } return s }
+                static float:cm[] Two() { return [1m, 2m] }
+            }
+            var k = new K()
+            k.lens[1] = 3mm
+            print(K.Sum([1km, 20cm]) + " " + k.lens[0] + " " + k.lens[1] + " " + K.Two()[1])
+            float:m grid[][] = new float[2][2]
+            grid[1][0] = 3km
+            float:mm nested[][] = [[1m], [2cm, 3m]]
+            print(grid[1][0] + " " + nested[1][1] + " " + grid[0][0])
+            any w = 3kg
+            try { arr[0] = w } catch (UnitMismatchException e) { print(e.message) }
+            any bad = [1m, 2s]
+            try { float:m xs[] = bad } catch (UnitMismatchException e) { print(e.message) }
             """),
         ("Bibliothek: Math.Sum, Average, Min, Max von Arrays und Listen (mit Einheiten, leer, falsche Werte), Min/Max mit zwei Werten", """
             print(Math.Sum([1, 2, 3]) + " " + Math.Sum([1.5, 2]) + " " + Math.Sum([1m, 50cm]) + " " + Math.Sum(new List<int>([4, 5])) + " " + Math.Sum([]))
@@ -17748,6 +17796,71 @@ else
             print("start")
             T.F(2)
             print("never")
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException (Programm ohne Ausnahmen) - Text und Exitcode wie die VM", """
+            any s = 1s
+            print("a")
+            print(1m + s)
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException einer Deklaration mit Einheit", """
+            try { print(1) } catch (Exception e) { }
+            any w = 3kg
+            float:km/h v = w
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException einer Deklaration (Programm ohne Ausnahmen)", """
+            any w = 3kg
+            float:km/h v = w
+            """),
+        ("Abbruch: unbehandelte IndexOutOfBoundsException (Programm ohne Ausnahmen)", """
+            int a[] = new int[3]
+            print(a[5])
+            """),
+        ("Abbruch: unbehandelte IndexOutOfBoundsException", """
+            try { print(1) } catch (Exception e) { }
+            int a[] = new int[3]
+            print(a[-1])
+            """),
+        ("Abbruch: unbehandelte ArgumentException (Programm ohne Ausnahmen)", """
+            any q = "q"
+            print(q * 2)
+            """),
+        ("Abbruch: unbehandelte DestroyedException (Programm ohne Ausnahmen)", """
+            class Foo { int x
+                construct() { } }
+            var f = new Foo()
+            delete f
+            print(f.x)
+            """),
+        ("Abbruch: unbehandelte DestroyedException beim Methodenaufruf", """
+            class Foo { construct() { } }
+            var f = new Foo()
+            delete f
+            print(f.ToString())
+            """),
+        ("Abbruch: unbehandelte AccessDeniedException (Programm ohne Ausnahmen)", """
+            class P { private int x
+                construct() { x = 1 } }
+            any p = new P()
+            print(p.x)
+            """),
+        ("Abbruch: unbehandelter Zugriff auf undefined (Programm ohne Ausnahmen)", """
+            var u = undefined
+            print(u.foo)
+            """),
+        ("Abbruch: unbehandelte DivideByZeroException (Programm ohne Ausnahmen)", """
+            int z = 0
+            print(5 / z)
+            """),
+        ("Abbruch: unbehandelte eigene Ausnahme mit Text", """
+            class MyEx : Exception { construct(string m) : base(m) { } }
+            print("vorher")
+            throw new MyEx("mine")
+            """),
+        ("Abbruch: unbehandelte Ausnahme in einem fire-Thread", """
+            #import "time"
+            fire { throw new Exception("in thread") }
+            Sleep(500ms)
+            print("after")
             """),
         ("Ausnahmen: Lambdas, ToString, Konstruktor, catch ohne try", """
             class Boom : Exception {
@@ -24668,12 +24781,15 @@ else
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C/C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {
-                // an exception that nothing catches: the program ends with exit code 1 after the output so far (the VM stops the same way)
+                // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
+                // stderr ("Unhandled exception of type 'Class': message")
                 using var run = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exeFile) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
                 var stderrTask = run.StandardError.ReadToEndAsync();
                 string stdout = run.StandardOutput.ReadToEnd();
                 run.WaitForExit();
-                return (c.Name, expected, run.ExitCode == 1 && stderrTask.Result.Contains("Unhandled exception") ? stdout : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
+                string vmStderr;
+                lock (vmUnhandled) vmStderr = vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
+                return (c.Name, expected + "stderr: " + vmStderr, run.ExitCode == 1 ? stdout + "stderr: " + stderrTask.Result.TrimEnd('\n', '\r') : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
             }
             string actual = RunTool(exeFile, "", out int runExit);
             // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
