@@ -375,7 +375,17 @@ static class LinkageTests
 
     // ---- fire plugins (ROADMAP 9 phase D b): a library module built on its own and loaded while the program runs ----
     private const string PluginApi = """
+        prefixed unit Watt: W
+        unit DecibelMilliwatt: dBm
+        {
+            coerce to mW => 10 ^ (value / 10)
+            coerce from mW => 10 * Math.Log10(value)
+        }
         namespace Api {
+            interface IGauge {
+                string Report()
+                any Convert(any x)
+            }
             interface IDriver {
                 string Name()
                 int Run(int x)
@@ -423,6 +433,7 @@ static class LinkageTests
     private const string PluginHost = """
         #import "Api"
         #import "reflection"
+        unit Foot: ft { coerce m => 0.3048 }
         class Mine : Api.Device {
             construct() : base("mine") { }
         }
@@ -447,7 +458,49 @@ static class LinkageTests
         print(Reflect.Get(dev, "id") + " " + Reflect.Call(d, "Run", [5]) + " " + Type.Of(dev).Name)
         print("again " + Library.Load(Environment.Get("FIRE_TEST_PLUGIN")).Classes().Length)
         try { Reflect.New("Kit.Nope", []) } catch (ReflectionException e) { print("nope: " + e.message) }
+        any up = Environment.Get("FIRE_TEST_UNITS")
+        if (up != undefined) {
+            Library.Load(up)
+            Api.IGauge g = Reflect.New("Meter.Gauge", [])
+            print(g.Report())
+            print(g.Convert(1.0m) + " " + g.Convert(254mm) + " " + g.Convert(3.0ft) + " " + g.Convert(2.0km):m)
+            any m = Reflect.Call(g, "Measure", [])
+            print(m + " " + m:mW + " " + (m * 2) + " " + (m * 1s) + " " + Reflect.Call(g, "Level", []):W + " " + (Reflect.Call(g, "Level", []) == 30.0dBm))
+            any c = Reflect.Call(g, "Pears", [])
+            print(c + " " + (c * 4apples) + " " + (c * 1m / 1s) + " " + (4apples * 1s) + " " + "3mm".ToFloat() + " " + "2ft".ToFloat() + " " + (1.0ft + 1.0m) + " " + (m * c))
+        }
         """;
+
+    /// <summary>A plugin with units (ROADMAP 9): its own (a new dimension, a factor, an offset, conversion functions of its own), those of a library (dBm of Api, with
+    /// conversion functions) and of fire, units of the program passed in and back, a text that names its units.</summary>
+    private const string PluginMeter = """
+        #import "Api"
+        prefixed unit Volt: V
+        unit Inch: in { coerce m => 0.0254 }
+        unit Kelvin: K
+        unit Celsius: C { coerce K => value + 273.15 }
+        unit Binary: bn
+        {
+            coerce to mW => 2 ^ value
+            coerce from mW => Math.Log(value) / Math.Log(2)
+        }
+        namespace Meter {
+            class Gauge : Api.IGauge {
+                construct() { }
+                string Report() {
+                    float t = 20.0C
+                    return (5V + 300mV) + " " + (1.0m:in) + " " + (10in + 2.54cm) + " " + t:K + " " + (30.0dBm:W) + " " + (3.0bn:mW) + " " + (3pears * 2m) + " " + (2km + 5m) + " " + "7in".ToFloat() + " " + "2kV".ToFloat() + " " + "5bn".ToFloat():mW
+                }
+                any Convert(any x) { return x:in }
+                any Measure() { return 4.0bn }
+                any Level() { return 30.0dBm }
+                any Pears() { return 3.0pears / 1kV }
+            }
+        }
+        """;
+
+    private const string PluginUnitsExpected = "5300mV 39.37007874015748in 11in 293.15K 1W 8mW 6pears*m 2005m 7in 2kV 32mW\n39.37007874015748in 10in 36in 2000.0000000000002m\n"
+        + "4bn 16mW 8bn 4s*W(×0.001) 1W True\n3pears/kV 12pears*apples/kV 3pears*m/kV*s 4apples*s 3mm 2ft 4.2808398950131235ft 12pears*W/V(×1E-06)\n";
 
     private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
         + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 3\nnope: Unknown class 'Kit.Nope'.\n";
@@ -462,13 +515,15 @@ static class LinkageTests
         Write(s, "Api/Api.fireproj", """{ "name": "Api", "type": "library" }""");
         Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
         Write(s, "Kit/kit.script", PluginKit);
+        Write(s, "Meter/Meter.fireproj", """{ "name": "Meter", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
+        Write(s, "Meter/meter.script", PluginMeter);
         Write(s, "Host/Host.fireproj", """{ "name": "Host", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "shared" } }""");
         Write(s, "Host/main.script", PluginHost);
-        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Meter/Meter.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
         BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
-        Built BuildPlugin(string output, string? host, ToolchainDef? toolchain = null, TargetProfile? target = null)
+        Built BuildPlugin(string output, string? host, ToolchainDef? toolchain = null, TargetProfile? target = null, string project = "Kit")
         {
-            var plan = Plan("Kit");
+            var plan = Plan(project);
             var config = new NativeConfig { Linkage = "plugin", Host = host };
             target ??= TargetProfile.Host;
             toolchain ??= config.ResolveToolchain(target, "gcc");
@@ -476,6 +531,7 @@ static class LinkageTests
             return new Built(result.Ok, result.Output, result.Log, 0, 0);
         }
         string? before = Environment.GetEnvironmentVariable("FIRE_TEST_PLUGIN");
+        Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
         try
         {
             if (OperatingSystem.IsLinux())
@@ -496,6 +552,19 @@ static class LinkageTests
                 // (Library.Load of the .fireplugin file natively: the library next to it)
                 string viaBytecode = host.Ok && kit.Ok ? Exec(host.Exe) : "";
                 Check("Plugin: nativ laedt Library.Load(\"kit.fireplugin\") die Bibliothek daneben", viaBytecode == PluginExpected, viaBytecode);
+
+                // a plugin with units: its own, a library's, fire's, the program's - mapped to the program's by dimensions, scale and symbol (natively), by name (VM)
+                var meter = BuildPlugin(Path.Combine(root, "plug-meter", "meter"), host.Exe, project: "Meter");
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.so"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", Path.Combine(root, "plug-meter", "meter.so"));
+                string unitsNative = host.Ok && meter.Ok ? Exec(host.Exe) : "";
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", Path.Combine(root, "plug-meter", "meter.fireplugin"));
+                string unitsVm = Vm(hostPlan.SourceTexts, hostPlan);
+                Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
+                Check("Plugin: Einheiten im Plugin (eigene, neue Dimension, Offset, eigene und Library-Umrechnungsfunktionen, Text) und des Programms - nativ",
+                    unitsNative == PluginExpected + PluginUnitsExpected, $"{unitsNative}\n{meter.Log}");
+                Check("Plugin: Einheiten im Plugin - die VM wie nativ", unitsVm == PluginExpected + PluginUnitsExpected, unitsVm);
 
                 // a plugin built against another interface of Api (a field more): readable error, in the VM too
                 string apiBefore = File.ReadAllText(apiSource);
@@ -543,16 +612,21 @@ static class LinkageTests
                     Directory.CreateDirectory(winDir);
                     var winHost = Build(hostPlan.SourceTexts, "shared", Path.Combine(winDir, "host.exe"), mingw, TargetProfile.Windows, hostPlan);
                     var winKit = winHost.Ok ? BuildPlugin(Path.Combine(winDir, "kit"), winHost.Exe, mingw, TargetProfile.Windows) : new Built(false, "", "", 0, 0);
+                    var winMeter = winHost.Ok ? BuildPlugin(Path.Combine(winDir, "meter"), winHost.Exe, mingw, TargetProfile.Windows, "Meter") : new Built(false, "", "", 0, 0);
                     Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", "kit.dll");
                     string winOut = winHost.Ok && winKit.Ok ? Exec(winHost.Exe, wine) : "";
                     Check("Plugin: Windows (MinGW, DLL des Plugins gegen die DLLs des Programms, fire_link) unter Wine wie die VM", winOut == PluginExpected, $"{winOut}\n{winHost.Log}\n{winKit.Log}");
+                    Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", "meter.dll");
+                    string winUnits = winHost.Ok && winMeter.Ok ? Exec(winHost.Exe, wine) : "";
+                    Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null);
+                    Check("Plugin: Einheiten im Plugin unter Windows (MinGW, Wine) wie die VM", winUnits == PluginExpected + PluginUnitsExpected, $"{winUnits}\n{winMeter.Log}");
                     var noHost = BuildPlugin(Path.Combine(winDir, "nohost"), null, mingw, TargetProfile.Windows);
                     Check("Plugin: fuer Windows ohne --host - der Bau sagt, dass das Plugin fuer ein Programm gebaut wird", !noHost.Ok && noHost.Log.Contains("--host"), noHost.Log);
                 }
                 else Console.WriteLine("(Plugin unter Windows: uebersprungen - MinGW/Wine fehlt)");
             }
         }
-        finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); }
+        finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null); }
     }
 
     private const string CLibrary = """

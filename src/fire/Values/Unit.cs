@@ -318,6 +318,21 @@ namespace fire.Values
             _customUnitTable = table;
         }
 
+        /// <summary>A fire plugin that the VM links into a running program (ROADMAP 9): the units it declares join those of the program - <paramref name="program"/>
+        /// (the list the natives of the program read, `"5in".ToFloat()`) and those of this thread (the names of combined units). A symbol the program has stays its own.</summary>
+        public static void AddCustomUnits(List<CustomUnit> program, IEnumerable<CustomUnit> more)
+        {
+            lock (CustomTables)
+            {
+                bool added = false;
+                foreach (var u in more)
+                    if (!program.Any(k => k.Symbol == u.Symbol)) { program.Add(u); added = true; }
+                if (!added) return;
+                CustomTables.Remove(program);
+            }
+            UseCustomUnits(program.ToList());
+        }
+
         private const char DemandMark = '§';
 
         /// <summary>The text of a unit that a declaration demands, as the compiled program keeps it (TypeRef.UnitDemand): unchanged for the units of fire;

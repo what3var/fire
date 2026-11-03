@@ -114,11 +114,10 @@ namespace fire.Native
         {
             var sb = new StringBuilder();
             string id = _self!.Id;
-            if (_units.Count > 1) throw new NativeNotSupportedException($"the plugin uses units ({string.Join(", ", _units.Skip(1).Take(3).Select(u => u.ToString()))}): not possible in a plugin yet");
             sb.AppendLine($"/* ---- plugin {_self.Name} (ROADMAP 9 phase D b): the tables a program defines for a library module - its own, filled when it is registered ---- */");
             sb.AppendLine($"static uint32_t fire_mb_{id} = 0;");
             foreach (var m in _usedModules.OrderBy(m => m.Index)) sb.Append(HostDecl($"fire_mb_{m.Id}", $"extern const uint32_t fire_mb_{m.Id};"));
-            sb.AppendLine($"FIRE_MAYBE_UNUSED static const uint16_t fire_units_{id}[] = {{0}};");
+            sb.AppendLine($"static uint16_t fire_units_{id}[{Math.Max(1, _units.Count)}];");
             sb.AppendLine($"static uint8_t fire_enums_{id}[{_enumList.Count + 1}];");
             sb.AppendLine($"static int32_t fire_exct_{id}[{Math.Max(1, _excTypes.Count)}];");
             sb.AppendLine($"FIRE_MAYBE_UNUSED static const int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}] = {{0}};");
@@ -176,6 +175,7 @@ namespace fire.Native
                     sb.AppendLine($"static const FireEnumMember kPlEnumM{i}[] = {{{string.Join(", ", _enumList[i].Members.Select(m => $"{{{CString(m.Name)}, {(m.Value == long.MinValue ? "INT64_MIN" : m.Value.ToString(CultureInfo.InvariantCulture) + "LL")}}}").DefaultIfEmpty("{\"\", 0}"))}}};");
                 sb.AppendLine($"static const FireEnum kPlEnums[] = {{{string.Join(", ", _enumList.Select((e, i) => $"{{{CString(e.Name)}, {(e.IsFlags ? 1 : 0)}, kPlEnumM{i}, {e.Members.Count}}}"))}}};");
             }
+            string units = PluginUnits(sb);
             string rf = "NULL";
             if (_usesReflection)
             {
@@ -194,8 +194,58 @@ namespace fire.Native
             }
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}extern const FirePlugin fire_module_info;");
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}const FirePlugin fire_module_info = {{FIRE_PLUGIN_FORMAT, {CString(_self.Name)}, \"{PluginHeadMark}\", {_pluginDeps.Count}u, {depNames}, {depAbis}, "
-                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}}};");
+                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}}};");
             return sb.ToString();
+        }
+
+        /// <summary>A plugin: the tables of its units (the program's numbers for them are found by dimensions, scale and symbol when it is registered, fire_rt.h
+        /// firePluginUnits) - the dimensions by name, a row per unit over them, the conversion functions and the units a text may name. The fields of FirePlugin from
+        /// `nunits` on.</summary>
+        private string PluginUnits(StringBuilder sb)
+        {
+            string id = _self!.Id;
+            var dimNames = _units.SelectMany(u => u.Dimensions.Keys).Distinct().OrderBy(k => k, StringComparer.Ordinal).ToList();
+            if (dimNames.Count > SeparateDims) throw new NativeNotSupportedException($"the plugin uses {dimNames.Count} dimensions of units; at most {SeparateDims}");
+            string dims = "NULL", conv = "0u, NULL, NULL, NULL", text = "0u, NULL";
+            if (dimNames.Count > 0)
+            {
+                dims = "kPlDims";
+                sb.AppendLine($"static const char* const kPlDims[] = {{{string.Join(", ", dimNames.Select(CString))}}};");
+            }
+            sb.AppendLine("static const UnitInit kPlUnits[] = {");
+            foreach (var u in _units)
+            {
+                string exps = dimNames.Count == 0 ? "0" : string.Join(", ", dimNames.Select(n => u.Dimensions.TryGetValue(n, out int e) ? e.ToString(CultureInfo.InvariantCulture) : "0"));
+                string display = u.DisplaySymbol is { } symbol ? CString(symbol) : "NULL";
+                int c = u.Converter is { } converter ? _unitConverters[converter].Index : -1;
+                int ul = u.UnitlessConverter is { } plainConverter ? _unitConverters[plainConverter].Index : -1;
+                sb.AppendLine($"    {{{{{exps}}}, {DoubleLiteral(u.Scale, false)}, {display}, {DoubleLiteral(u.Offset, false)}, {c}, {ul}}},");
+            }
+            sb.AppendLine("};");
+            if (_unitConverters.Count > 0)
+            {
+                var converters = _unitConverters.OrderBy(c => c.Value.Index).ToList();
+                sb.AppendLine($"static const UnitConvFn kPlUnitTo[] = {{{string.Join(", ", converters.Select(c => c.Value.To.Name))}}};");
+                sb.AppendLine($"static const UnitConvFn kPlUnitFrom[] = {{{string.Join(", ", converters.Select(c => c.Value.From.Name))}}};");
+                // (the hidden class of a unit the plugin declares is its own: the unit is new in the program - one of a library is the program's when it has it)
+                sb.AppendLine($"static const uint8_t kPlUnitOwn[] = {{{string.Join(", ", converters.Select(c => _self.Classes.Contains(c.Key) ? "1" : "0"))}}};");
+                conv = $"{converters.Count}u, kPlUnitTo, kPlUnitFrom, kPlUnitOwn";
+            }
+            if (_usesStringCall || _program.Program.CustomUnits.Count > 0)
+            {
+                // the units a text may name (as the program's kTextUnits): those of fire, then those of the plugin and its libraries by symbol and name
+                var rows = new List<string>();
+                foreach (var (symbol, prefixable) in Unit.BuiltInSymbols) rows.Add($"{{{CString(symbol)}, {UnitId(Unit.Parse(symbol))}, {(prefixable ? "true" : "false")}}}");
+                foreach (var own in _program.Program.CustomUnits)
+                {
+                    int u = UnitId(Unit.OfCustom(own));
+                    rows.Add($"{{{CString(own.Symbol)}, {u}, {(own.Prefixed ? "true" : "false")}}}");
+                    if (own.Name != own.Symbol) rows.Add($"{{{CString(own.Name)}, {u}, false}}");
+                }
+                sb.AppendLine($"static const TextUnit kPlTextUnits[] = {{\n    {string.Join(",\n    ", rows)}\n}};");
+                text = $"{rows.Count}u, kPlTextUnits";
+            }
+            return $"{_units.Count}u, kPlUnits, fire_units_{id}, {dimNames.Count}u, {dims}, {conv}, {text}";
         }
 
         /// <summary>A plugin (`--linkage plugin`, ROADMAP 9 phase D b): the classes of the program's own sources as a library module of their own, against the library

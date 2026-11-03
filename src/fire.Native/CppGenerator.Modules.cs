@@ -342,6 +342,8 @@ namespace fire.Native
             bool dll = false, List<(string Module, string Abi)>? plugin = null)
         {
             var view = LibraryView(program, spec);
+            // (a plugin: the units it and its libraries declare are those a text in it may name - a library leaves that to the program)
+            if (plugin != null) view.Program.CustomUnits = program.Program.CustomUnits;
             var generator = new CppGenerator(view, target) { _strip = LibraryStripping(program, stripping), _role = ModuleRole.Library, _forced = flags, _self = spec, _separate = separate, _dll = dll };
             // (a plugin: the tables a program defines for a library are its own; every member of its classes and of their bases is in their tables)
             if (plugin != null) { generator._plugin = true; generator._pluginDeps = plugin; generator._tablesAll = true; }

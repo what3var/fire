@@ -125,6 +125,9 @@ namespace fire.Runtime
             if (problem != null) return problem;
             foreach (var rc in own) classes[rc.Name] = rc;
             linked[plugin.Name] = plugin;
+            // its units: a unit of the VM carries its dimensions by name (and its conversion functions by the name of its hidden class, linked above) - only what a text
+            // may name (`"5in".ToFloat()`) needs the program to know them
+            if (host != null && program.Program.CustomUnits.Count > 0) Unit.AddCustomUnits(host.Program.CustomUnits, program.Program.CustomUnits);
             // the static initialisers of its classes, in the order of their declarations (as the top level of a program runs them first); what they make belongs to the
             // global scope (like the values of the top level)
             foreach (var rc in own)
