@@ -177,14 +177,16 @@ Ursprünglicher Plan:
 Ein Debug-Agent im nativen Debug-Build, damit spark native Programme genauso debuggt wie die VM - auf jedem Ziel, ohne gdb/lldb.
 
 Stand: **Generator, Runtime und Agent (Desktop) umgesetzt** (Punkte 1, 3, 4, 5 für TCP, 6, 7; docs/NATIVE_BACKEND.md "Zeilen des Programms im C" und "Debug-Builds",
-Protokoll: [NATIVE_DEBUG_PROTOCOL.md](NATIVE_DEBUG_PROTOCOL.md)); getestet gegen die VM (`NativeDebugTests.cs`). Offen: `IDebugTarget`/`NativeDebugTarget` in spark
-(2, 8), ESP32 (UART/USB-CDC, WLAN), wasm. Nicht getestet: `set` eines Felds mit Probes (die gibt es nur mit Reflection; geprüft ist der Setter mit der Prüfung
+Protokoll: [NATIVE_DEBUG_PROTOCOL.md](NATIVE_DEBUG_PROTOCOL.md)); getestet gegen die VM (`NativeDebugTests.cs`). spark-Seite (2, 8) ebenfalls umgesetzt (`IDebugTarget`, `NativeDebugTarget`, Engine-Box, natives Run/Debug; Tests `FIRE_TESTS_ONLY=debugger`). Offen:
+ESP32 (UART/USB-CDC, WLAN), wasm. Nicht getestet: `set` eines Felds mit Probes (die gibt es nur mit Reflection; geprüft ist der Setter mit der Prüfung
 der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Windows).
 
 1. ~~**`#line`** im erzeugten C (alle Modi)~~: gdb/lldb und Absturzberichte zeigen fire-Zeilen (`"lineDirectives": false` schaltet es ab).
-2. **`IDebugTarget`** in spark: die ~20 Mitglieder der VM, die `DebugSession`, `DebugThreadContext` und die Panels benutzen (`StepLine`, `StepInto`,
-   `StepOut`, `RunUntilBreakpoint`, `CurrentLocation`, `CurrentTrace`, `DebugScopeChain`, `DebugGlobals`, `DebugThisValue`, `PauseOnUnhandled`, ...)
-   hinter ein Interface; `VmDebugTarget` zuerst, ohne Änderung des Verhaltens.
+2. ~~**`IDebugTarget`** in spark~~ (umgesetzt): die ~20 Mitglieder der VM, die `DebugSession`, `DebugThreadContext` und die Panels benutzten, stehen hinter
+   `IDebugTarget`/`IDebugThread` mit dem Wertemodell `DebugValue` (Name, Text, Art, Id, Kinder auf Anfrage) in `fire.Debugging`
+   (`src/fire.Compiler/Debugging`); `VmDebugTarget` reicht die VM ohne Änderung des Verhaltens durch, dazu `set` (Local, Global, Element, Feld
+   über Setter und Probes). Die Panels kennen keine `Value`/`ObjectInstance` mehr; Scope-Ansicht: Kontextmenü *Set Value...*.
+   Tests: `FIRE_TESTS_ONLY=debugger`.
 3. ~~**Generator**~~ (nur Modus `debug`): beim Wechsel der Zeile `if (FIRE_UNLIKELY(g_dbgArmed)) fire_dbg_line(&frame, src, line, scope);`,
    ein Debug-Frame pro Funktion auf einem Schatten-Stack (Funktion, Zeile, `this`, Adressen der Locals), statische Tabellen Scope -> Namen/Eltern-Scope,
    eine Tabelle der Globals, Reflection-Tabellen immer.
@@ -195,7 +197,11 @@ der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Wind
    Programmausgabe gemischt, Rahmen mit Kennung) oder TCP über WLAN; wasm später über `postMessage`. Protokoll: eine JSON-Nachricht pro Zeile.
 6. ~~**Threads**~~: Anhalten aller Threads über die GIL; ein angehaltener Thread wartet ohne GIL (wie `Sleep`), damit `ContinueThread` einzelne Threads laufen lässt.
 7. ~~**Unbehandelte Ausnahmen**~~: anhalten vor dem Abrollen, wenn kein Handler da ist; `resume` wie `TryResumeUnhandled` der VM.
-8. `NativeDebugTarget` in spark; *Run > Debug* mit der Engine `native` (und dem Ziel aus dem Projekt).
+8. ~~`NativeDebugTarget` in spark; *Run > Debug* mit der Engine `native` (und dem Ziel aus dem Projekt)~~ (umgesetzt, spark-Seite): `NativeDebugTarget`/`NativeDebugThread`
+   sprechen das Protokoll (docs/NATIVE_DEBUG_PROTOCOL.md); spark lauscht, übergibt `FIRE_DEBUG`, nimmt eine Verbindung mit dem Token an. Engine-Box *VM/Native* neben der
+   Modus-Box (gespeichert in `settings.engine`), natives *Run* (Release/Performance: Ausgabe ins Output-Panel) und *Debug* (Build mit `-O0 -g` nach `bin/<ziel>-dbg`),
+   Stack-Panel bei nativ ausgeblendet (docs/NATIVE_BACKEND.md "Ausführen und Debuggen aus spark"). Getestet gegen einen Schein-Agenten; Ende-zu-Ende-Test gegen einen
+   echten Debug-Build, sobald die Runtime den Agenten hat. Offen: ESP32 (8.6, flashen über `idf.py`), die Oberfläche ist nicht von Hand durchgeklickt.
 
 Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 

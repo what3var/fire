@@ -98,6 +98,9 @@ namespace fire.Projects
         /// <summary>The target of a native build that was chosen in the build tool strip (null: the target of the project or of the native build settings).</summary>
         public string? NativeTarget { get; set; }
 
+        /// <summary>The engine of a run of a single script (`vm` or `native`; null: the one of the native build configuration, else the VM). A project keeps its own in settings.engine.</summary>
+        public string? Engine { get; set; }
+
         public static string DefaultPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "spark-settings.json");
 
         private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };

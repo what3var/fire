@@ -13,12 +13,16 @@ namespace fire.Editor
 
         public event Action<DebugThreadContext>? ThreadSelected;
 
+        /// <summary>A message for the status bar (e.g. the result of setting a value in the scope view).</summary>
+        public event Action<string>? StatusMessage;
+
         public DebuggerPanels(ThreadsPanelControl threads, ScopePanelControl scope, StackPanelControl stack)
         {
             _threads = threads;
             _scope = scope;
             _stack = stack;
             _threads.ThreadSelected += ctx => ThreadSelected?.Invoke(ctx);
+            _scope.StatusMessage += text => StatusMessage?.Invoke(text);
         }
 
         public void AttachSession(DebugSession session)

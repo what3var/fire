@@ -265,6 +265,9 @@
 					<MenuItem Header="Debug" ToggleType="CheckBox" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
 					<MenuItem Header="Release" ToggleType="CheckBox" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
 					<MenuItem Header="Performance" ToggleType="CheckBox" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
+					<Separator/>
+					<MenuItem Header="Engine: _VM" ToggleType="CheckBox" x:Name="mnuEngineVm" Click="mnuEngineVm_Click"/>
+					<MenuItem Header="Engine: _Native (build and run the program)" ToggleType="CheckBox" x:Name="mnuEngineNative" Click="mnuEngineNative_Click"/>
 					<MenuItem Header="Program _Arguments..." Click="ProgramArguments_Click"/>
 					<Separator/>
 					<MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
@@ -379,6 +382,11 @@
 							<ComboBoxItem Content="Debug" Tag="Debug"/>
 							<ComboBoxItem Content="Release" Tag="Release"/>
 							<ComboBoxItem Content="Performance" Tag="Performance"/>
+						</ComboBox>
+						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbEngine" Width="90" SelectionChanged="cmbEngine_SelectionChanged" MinHeight="26" Padding="8,2" Margin="4,0,0,0"
+								  ToolTip.Tip="Engine: the virtual machine in spark, or a native build of the program (Debug: built with -O0 -g and debugged over the debug protocol). Saved in the project's settings">
+							<ComboBoxItem Content="VM" Tag="vm"/>
+							<ComboBoxItem Content="Native" Tag="native"/>
 						</ComboBox>
 						<local:ToolStripButton Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended" IconSource="/Assets/icons/Material-Play.png"/>
 						<local:ToolStripButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)" IconSource="/Assets/icons/Material-Restart.png"/>

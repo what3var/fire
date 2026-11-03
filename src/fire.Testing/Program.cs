@@ -45,6 +45,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { Dialog
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "debugger") { DebuggerTests.Run(); return; }
 // (filled by sections that FIRE_TESTS_ONLY may skip: the native device cases by the device checks of the VM, the UI drawing by the UI checks)
 var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
 string uiDrawScript = "";
@@ -13672,146 +13673,7 @@ devNativeCases.Clear();
 // ---------------------------------------------------------------------------
 // Debugger run of the editor: VM.RunUntilBreakpoint/RunUntilEnd (F5), line table (binary search), native forwarding
 // ---------------------------------------------------------------------------
-{
-    Console.WriteLine();
-    Console.WriteLine("=== Debugger-Lauf ===");
-    int dbgFailures = 0;
-    void DbgCheck(bool ok, string title, string? detail = null)
-    {
-        if (!ok) dbgFailures++;
-        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}{(detail != null ? "\n  " + detail : "")}");
-    }
-
-    (fire.Compiler.RuntimeSession Session, List<string> Lines) BuildDbg(string script, VmExecutionMode mode)
-    {
-        var lines = new List<string>();
-        var session = fire.Compiler.RuntimeSession.Build(new[] { script }, mode, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
-        return (session, lines);
-    }
-
-    foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
-    {
-        // Loops (for/while/foreach): a breakpoint in the last line of the body hits exactly once per pass - not once more
-        // when leaving the loop. In addition the earlier loop as a reference (StepInstruction + CurrentLocation per instruction):
-        // RunUntilBreakpoint must stop at the same places.
-        foreach (var (kind, loopScript) in new[]
-        {
-            ("for", "var total = 0\nfor (var i = 0; i < 3; i = i + 1) {\n    total = total + i\n}\nprint(\"fertig \" + total)\n"),
-            ("while", "var total = 0\nvar i = 0\nwhile (i < 3) {\n    total = total + i\n    i = i + 1\n}\nprint(\"fertig \" + total)\n"),
-            ("foreach", "var total = 0\nvar items = [0, 1, 2]\nforeach (x in items) {\n    total = total + x\n}\nprint(\"fertig \" + total)\n"),
-        })
-        {
-            int bpLine = kind == "for" ? 3 : kind == "while" ? 5 : 4;
-            VM.ResetTerminateForTests();
-            var (refSession, refLines) = BuildDbg(loopScript, mode);
-            var refVm = refSession.VirtualMachine!;
-            var refBps = new HashSet<(int SourceIndex, int Line)> { (refSession.FirstUserSourceIndex, bpLine) };
-            int refHits = 0;
-            {
-                var lastLocation = refVm.CurrentLocation;
-                while (refVm.StepInstruction())
-                {
-                    var location = refVm.CurrentLocation;
-                    if (location != lastLocation) { lastLocation = location; if (refBps.Contains(location)) refHits++; }
-                }
-            }
-            VM.ResetTerminateForTests();
-
-            VM.ResetTerminateForTests();
-            var (session, lines) = BuildDbg(loopScript, mode);
-            var vm = session.VirtualMachine!;
-            var bps = new HashSet<(int SourceIndex, int Line)> { (session.FirstUserSourceIndex, bpLine) };
-            int hits = 0;
-            var lineAtHit = new List<int>();
-            while (vm.RunUntilBreakpoint(bps, () => false))
-            {
-                hits++;
-                lineAtHit.Add(vm.CurrentLine);
-                if (hits > 10) break;
-            }
-            DbgCheck(hits == 3 && hits == refHits && lineAtHit.All(l => l == bpLine) && lines.SequenceEqual(new[] { "fertig 3" }) && refLines.SequenceEqual(lines),
-                $"RunUntilBreakpoint ({kind}): Haltepunkt im Body trifft genau einmal je Durchlauf (wie die Einzelschritt-Schleife), danach laeuft das Programm zu Ende [{mode}]",
-                $"Treffer {hits} (Referenz {refHits}), Zeilen {string.Join(",", lineAtHit)}, Ausgabe {string.Join("|", lines)}");
-            VM.ResetTerminateForTests();
-        }
-    }
-
-    {
-        // A breakpoint in the FIRST line stops at the start (like other debuggers: the prelude runs first, then the program enters line 1), nothing has run there yet;
-        // going on from there does not stop on the same line again, the program runs to the end
-        VM.ResetTerminateForTests();
-        var (session, lines) = BuildDbg("print(\"a\")\nprint(\"b\")\n", VmExecutionMode.Debug);
-        var vm = session.VirtualMachine!;
-        var firstLine = new HashSet<(int, int)> { (session.FirstUserSourceIndex, 1) };
-        bool stopped = vm.RunUntilBreakpoint(firstLine, () => false);
-        bool atStart = stopped && vm.CurrentLine == 1 && lines.Count == 0;
-        bool again = vm.RunUntilBreakpoint(firstLine, () => false);
-        DbgCheck(atStart && !again && lines.SequenceEqual(new[] { "a", "b" }), "RunUntilBreakpoint: ein Haltepunkt auf der ersten Zeile haelt beim Start an (vor ihr), weiter laeuft das Programm zu Ende",
-            $"angehalten {stopped}, Zeile {vm.CurrentLine}, nochmal {again}, Ausgabe {string.Join("|", lines)}");
-        VM.ResetTerminateForTests();
-    }
-
-    {
-        // A pause request interrupts an infinite loop (RunUntilEnd and RunUntilBreakpoint)
-        foreach (var useBreakpointRun in new[] { false, true })
-        {
-            VM.ResetTerminateForTests();
-            var (session, _) = BuildDbg("var n = 0\nwhile (true) { n = n + 1 }\n", VmExecutionMode.Release);
-            var vm = session.VirtualMachine!;
-            volatile_bool pause = new();
-            var timer = Task.Run(() => { Thread.Sleep(100); pause.Value = true; });
-            var run = Task.Run(() => useBreakpointRun ? vm.RunUntilBreakpoint(new HashSet<(int, int)>(), () => pause.Value) : vm.RunUntilEnd(() => pause.Value));
-            bool finishedInTime = run.Wait(TimeSpan.FromSeconds(20));
-            DbgCheck(finishedInTime && run.Result, $"Pause-Anforderung haelt eine Endlosschleife an ({(useBreakpointRun ? "RunUntilBreakpoint" : "RunUntilEnd")})");
-            VM.ResetTerminateForTests();
-        }
-    }
-
-    {
-        // Line table: binary search yields the same places as the line of each instruction suggests
-        VM.ResetTerminateForTests();
-        var (session, _) = BuildDbg("var a = 1\nvar b = 2\n\nvar c = a + b\nprint(c)\n", VmExecutionMode.Debug);
-        var chunk = session.CompiledProgram.TopLevel;
-        var seen = new List<int>();
-        int ip = 0, lastLine = -1;
-        for (; ip < chunk.Code.Count; ip++)
-        {
-            var (src, line) = chunk.GetLocation(ip);
-            if (src == session.FirstUserSourceIndex && line != lastLine) { seen.Add(line); lastLine = line; }
-        }
-        DbgCheck(seen.SequenceEqual(new[] { 1, 2, 4, 5 }), "Chunk.GetLocation (binaere Suche): die Zeilen des Programms in Reihenfolge", string.Join(",", seen));
-        var (s0, l0) = chunk.GetLocationRange(0, out int rs, out int re);
-        DbgCheck(rs == 0 && re > 0 && re < chunk.Code.Count, "Chunk.GetLocationRange: Bereich der ersten Stelle beginnt bei 0 und endet vor dem Chunk-Ende");
-    }
-
-    {
-        // Forwarding to native functions (methods of the bridge preludes): same result as the direct call, also with a return value
-        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
-        {
-            VM.ResetTerminateForTests();
-            var (session, lines) = BuildDbg("""
-                #import "graphics"
-                var fb = new Framebuffer(16, 16)
-                var con = new Renderer(fb)
-                con.AlphaBlending = false
-                var viaMethod = 0
-                var direct = 0
-                for (var i = 0; i < 5; i = i + 1) {
-                    con.FillRect(i, 0, 1, 1, new SolidBrush(256 + i))
-                    viaMethod = viaMethod + con.GetPixel(i, 0) + con.CellWidth()
-                    direct = direct + __GRPHRndGetPixel(con.id, i, 0) + __GRPHRndCellWidth(con.id)
-                }
-                print(viaMethod == direct)
-                print(viaMethod)
-                """, mode);
-            session.Run();
-            DbgCheck(lines.SequenceEqual(new[] { "True", "1330" }), $"Methoden der Grafik-Bruecke (Weiterleitung an native Funktionen) liefern dasselbe wie der direkte Aufruf [{mode}]", string.Join("|", lines));
-            VM.ResetTerminateForTests();
-        }
-    }
-
-    Console.WriteLine(dbgFailures == 0 ? "Alle Debugger-Lauf-Pruefungen bestanden." : $"FEHLER: {dbgFailures} Debugger-Lauf-Pruefung(en) fehlgeschlagen.");
-}
+DebuggerTests.Run();
 
 // ---------------------------------------------------------------------------
 // Lambda captures, short syntax `x => ...` and the query library (#import "linq")

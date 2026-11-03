@@ -661,6 +661,27 @@ bei `files` ist `-o` ein Ordner. `fire.Compiler native ...` erzeugt weiter nur d
 **Tools > Toolchain Settings...** (Seiten links: *Build* mit der Standard-Engine, *Target* mit Plattform/Includes/Defines/Einsprung, *Toolchain* mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript bzw. Projekt; auch erreichbar über *Project Properties > Native & Toolchain*), **Run > Build Native...**,
 und **Build** folgt dem `engine` der Konfiguration.
 
+### Ausführen und Debuggen aus spark (ROADMAP 8.7)
+
+Neben der Modus-Box steht die **Engine-Box** (*VM* / *Native*, auch **Run > Engine: VM / Native**). Die Wahl gilt für das Projekt des aktiven Dokuments
+(`settings.engine`, gespeichert in der `.fireproj`) bzw. für einzelne Skripte (spark-Einstellungen); ohne Wahl gilt das `engine` von `fire.native.json`, sonst die VM.
+Mit *Native* bauen F5, F10, F11 und *Run to End* das Programm für das gewählte Ziel (es muss auf diesem Rechner laufen: Plattform `posix` bzw. `windows`, eine
+Toolchain, die ein Programm macht) in den Ordner `bin/<ziel>-<modus>` des Projekts (ein Skript: neben sich, ungespeichert: im Temp-Ordner) und starten es:
+
+* **Debug**: gebaut mit `-O0 -g` (MSVC `/Od /Zi`), Symbole bleiben (`NativeLaunch.DebugToolchain`). spark lauscht auf `127.0.0.1` an einem freien Port, startet das
+  Programm mit `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T`, nimmt **eine** Verbindung an, deren `hello` das Token trägt, und wartet, bis der Hauptthread am Eintritt steht
+  (`NativeLaunch.LaunchDebug`, `NativeDebugListener`). Danach ist es eine gewöhnliche Debug-Sitzung über `NativeDebugTarget` (`src/fire.Compiler/Debugging`,
+  Protokoll: docs/NATIVE_DEBUG_PROTOCOL.md): Haltepunkte, Schritte, Pause, Threads, Scope-Ansicht mit *Set Value...*, unbehandelte Ausnahmen mit *Ignore Error and
+  Continue*. Das Stack-Panel (der Operandenstapel der VM) ist ausgeblendet. Passen die Hashes der Quellen im `hello` nicht zu den Texten des Editors, steht eine Warnung
+  im Output-Panel. *Stop* schickt `terminate` und beendet den Prozess.
+* **Release/Performance**: nicht debugbar (Entscheidung 8.4) - das Programm läuft einfach; stdout und stderr kommen zeilenweise ins Output-Panel, das Ende mit
+  Exitcode in die Statusleiste. *Stop* beendet den Prozess.
+
+Die Ausgabe des Programms läuft immer über seinen Prozess, nicht über die Debug-Verbindung. Getestet ohne die Runtime gegen einen Schein-Agenten in C#
+(`FIRE_TESTS_ONLY=debugger`, Block "Natives Debug-Ziel"), dazu Start eines Prozesses mit `FIRE_DEBUG` (ein Programm in bash, das das Protokoll spricht) und - sobald die
+Runtime den Debug-Agenten hat - Ende-zu-Ende mit einem echten Debug-Build gegen die VM (Haltepunkt in einer Methode, Tiefe, Locals, `this`, `set`, Step Over bis
+zur unbehandelten Ausnahme mit Meldung und Ort, `resume`, die Ausgabe des Prozesses); ohne Agenten in der Runtime wird dieser Teil übersprungen.
+
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
 
