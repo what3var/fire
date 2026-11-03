@@ -75,8 +75,10 @@ static class LinkageTests
         Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", Path.Combine(root, "cache"));
         try
         {
-            // (FIRE_TESTS_FILTER=plugin: only the fire plugins)
-            if (Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") is { } filter && filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
+            // (FIRE_TESTS_FILTER=plugin: only the fire plugins; =library: only Library.Load/Get)
+            string filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") ?? "";
+            if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
+            else if (filter.Contains("library", StringComparison.OrdinalIgnoreCase)) LibraryLoad(root);
             else RunIn(root);
         }
         catch (Exception ex) { Check("ohne Ausnahme", false, ex.ToString()); }
@@ -557,6 +559,7 @@ static class LinkageTests
 
     private const string CLibrary = """
         #include <stdint.h>
+        #include <stdlib.h>
         #include <string.h>
         #include <stdbool.h>
         #ifdef _WIN32
@@ -572,7 +575,62 @@ static class LinkageTests
         EXPORT bool isodd(int64_t x) { return x % 2 != 0; }
         EXPORT void twice(int64_t* p) { *p = *p * 2; }
         EXPORT uint16_t upper(uint16_t c) { return c >= 97 && c <= 122 ? c - 32 : c; }
+        /* release: (Get's release function) - every allocation counted */
+        static int live;
+        EXPORT int live_count(void) { return live; }
+        EXPORT void* obj_new(int64_t v) { int64_t* p = (int64_t*)malloc(sizeof *p); *p = v; live++; return p; }
+        EXPORT void* obj_none(void) { return NULL; }
+        EXPORT int64_t obj_get(void* p) { return *(int64_t*)p; }
+        EXPORT int64_t obj_sum(void* a, int64_t k, void* b) { return *(int64_t*)a + k + *(int64_t*)b; }
+        EXPORT void obj_free(void* p) { live--; free(p); }
+        EXPORT char* text_dup(const char* s) { char* r = (char*)malloc(strlen(s) + 1); strcpy(r, s); live++; return r; }
+        EXPORT char* text_none(void) { return NULL; }
         """;
+
+    private const string UseRelease = """
+        var lib = Library.Load(Environment.Get("FIRE_TEST_CLIB"))
+        var make = lib.Get("obj_new", "void*(int)", release: "obj_free")
+        var get = lib.Get("obj_get", "int(void*)")
+        var sum = lib.Get("obj_sum", "int(void*, int, void*)")
+        var live = lib.Get("live_count", "int[32]()")
+        class Holder { NativeHandle h }
+        {
+            var a = make(5)
+            var b = make(30)
+            print(get(a) + " " + sum(a, 7, b) + " " + live() + " " + (a is of NativeHandle) + " " + (a.Address != 0))
+        }
+        print("block " + live())
+        var h = make(7)
+        print(get(h) + " " + live())
+        delete h
+        print("delete " + live())
+        try { print(get(h)) } catch (DestroyedException e) { print("use: " + e.message) }
+        try { print(h.Address) } catch (DestroyedException e) { print("address: " + e.message) }
+        try { delete h; print("delete again: " + live()) } catch (DestroyedException e) { print("delete again: " + e.message) }
+        {
+            var box = new Holder()
+            box.h = make(9)
+            print("holder " + get(box.h) + " " + live())
+        }
+        print("holder gone " + live())
+        var dup = lib.Get("text_dup", "string(string)", release: "obj_free")
+        print(dup("copied") + " " + live())
+        print(lib.Get("text_none", "string()", release: "obj_free")() == undefined)
+        print(lib.Get("obj_none", "void*()", release: "obj_free")() == undefined)
+        var raw = lib.Get("obj_new", "void*(int)")(1)
+        print((raw is of int) + " " + live())
+        lib.Get("obj_free", "void(void*)")(raw)
+        try { lib.Get("obj_new", "void*(int)", release: "nope") } catch (LibraryException e) { print("rel: " + e.message.Replace(lib.Path, "LIB")) }
+        try { lib.Get("add", "int(int, int)", release: "obj_free") } catch (LibraryException e) { print("kind: " + e.message) }
+        var g = make(11)
+        print("end " + live())
+        """;
+
+    /// <summary>The output of <see cref="UseRelease"/> - the same in the VM, natively (source, static, under ASan) and under Wine.</summary>
+    private const string ReleaseExpected = "5 42 2 True True\nblock 0\n7 1\ndelete 0\nuse: Access to a destroyed object.\naddress: Access to a destroyed object.\n"
+        + "delete again: 0\nholder 9 1\nholder gone 0\ncopied 0\nTrue\nTrue\nTrue 1\n"
+        + "rel: The library 'LIB' has no function 'nope' (release:).\n"
+        + "kind: release: frees what a function returns - the signature 'int(int, int)' returns no pointer and no string.\nend 1\n";
 
     private const string UseLibrary = """
         var path = Environment.Get("FIRE_TEST_CLIB")
@@ -624,6 +682,24 @@ static class LinkageTests
             var st = Build(new[] { UseLibrary }, "static", Path.Combine(root, "clib-static"));
             string stOut = st.Ok ? Exec(st.Exe) : "";
             Check("Library: mit linkage static (Library in core, die Thunks im Programm)", stOut == native, $"{stOut}\n{st.Log}");
+
+            // ---- release: (what the library returns, freed by its own function): a NativeHandle follows ownership, a string is copied and freed at once ----
+            string relVm = Vm(new[] { UseRelease });
+            Check("Library release: in der VM (NativeHandle: delete, Ende des Blocks und des Besitzers geben frei, einmal; danach DestroyedException; String kopiert und freigegeben)",
+                relVm == ReleaseExpected, relVm);
+            var relSrc = Build(new[] { UseRelease }, "source", Path.Combine(root, "rel-source"));
+            string relSrcOut = relSrc.Ok ? Exec(relSrc.Exe) : "";
+            Check("Library release: nativ (source) wie die VM", relSrcOut == ReleaseExpected, $"{relSrcOut}\n{relSrc.Log}");
+            var relSt = Build(new[] { UseRelease }, "static", Path.Combine(root, "rel-static"));
+            string relStOut = relSt.Ok ? Exec(relSt.Exe) : "";
+            Check("Library release: nativ (static) wie die VM", relStOut == ReleaseExpected, $"{relStOut}\n{relSt.Log}");
+            // under AddressSanitizer (LeakSanitizer at the end): no leak, no double free - the library's malloc/free are intercepted too
+            const string asanFlags = "-fsanitize=address,undefined";
+            var asanTool = new ToolchainDef { Kind = "gcc", Compiler = "g++", CCompiler = "gcc", Std = "c++17", CStd = "c11", Optimization = "-O1 -g", Strip = false, Args = new() { asanFlags }, Libs = new() { asanFlags } };
+            var relAsan = Build(new[] { UseRelease }, "source", Path.Combine(root, "rel-asan"), asanTool);
+            string relAsanOut = relAsan.Ok ? Exec(relAsan.Exe) : "";
+            Check("Library release: nativ unter AddressSanitizer (kein Leck, keine doppelte Freigabe)", relAsanOut == ReleaseExpected, $"{relAsanOut}\n{relAsan.Log}");
+
             var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
             string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
             if (ToolchainDetector.Find(mingw) != null && wine != null)
@@ -632,10 +708,13 @@ static class LinkageTests
                 Directory.CreateDirectory(winDir);
                 var (dllOk, dllText) = NativeBuilderRun("x86_64-w64-mingw32-gcc", $"-shared -o \"{Path.Combine(winDir, "t.dll")}\" \"{cFile}\"", dir);
                 var win = Build(new[] { UseLibrary }, "static", Path.Combine(winDir, "use.exe"), mingw, TargetProfile.Windows);
-                _winePrefix ??= Path.Combine(root, "wineprefix");
+                _winePrefix ??= Environment.GetEnvironmentVariable("WINEPREFIX") ?? Path.Combine(root, "wineprefix");
                 Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", "t.dll");
                 string winOut = dllOk && win.Ok ? Exec(win.Exe, wine) : "";
                 Check("Library: Windows (MinGW, LoadLibrary) unter Wine wie nativ", winOut == native, $"{winOut}\n{dllText}\n{win.Log}");
+                var relWin = Build(new[] { UseRelease }, "static", Path.Combine(winDir, "rel.exe"), mingw, TargetProfile.Windows);
+                string relWinOut = dllOk && relWin.Ok ? Exec(relWin.Exe, wine) : "";
+                Check("Library release: Windows (MinGW, die Freigabe der DLL) unter Wine wie die VM", relWinOut == ReleaseExpected, $"{relWinOut}\n{relWin.Log}");
             }
         }
         finally { Environment.SetEnvironmentVariable("FIRE_TEST_CLIB", before); }

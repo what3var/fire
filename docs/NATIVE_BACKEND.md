@@ -1032,6 +1032,13 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
   Signatur ist (`fire_lt_k`: die Argumente wie bei einem `extern`-Aufruf umgewandelt, die Adresse mit diesem C-Typ gerufen), und `fire_libThunk(signatur)` findet
   ihn (mit Modulen im Programm, bei `"shared"` unter Windows ein Hook). Eine Signatur, die erst zur Laufzeit entsteht, hat keinen: `Get` sagt es. Die Fehler wirft
   der fire-Code der Klasse (`LibraryException`, in VM und nativ gleich).
+* **`release:`** (`lib.Get(name, signatur, release: "free")`): die Freigabefunktion der Bibliothek (`void(void*)`) wird bei `Get` in derselben Bibliothek gesucht
+  (`__LibCall(2, ...)`). Ein zurückgegebener Zeiger wird im Prelude zu einem Objekt der Klasse `NativeHandle` (Adresse und Adresse der Freigabefunktion als Felder),
+  sein Destruktor ruft `__LibCall(7, release, adresse)` - nativ direkt `((void (*)(void*))release)(adresse)`, ohne Thunk; einmal, weil ein Destruktor einmal läuft.
+  Ein Argument, das ein `NativeHandle` ist, gibt seine Adresse (`NativeHandle.Arg` im Lambda, nur bei Signaturen mit Zeiger-Parametern; ein freigegebenes wirft
+  die `DestroyedException`). Ein zurückgegebener String: der Thunk bekommt die Freigabefunktion als Parameter (`FireLibThunk(fn, args, release, list)`), kopiert
+  den Text (`externResultString`) und gibt den C-Speicher gleich danach frei. `__LibCall(6, signatur)` sagt dem Prelude, ob das Ergebnis ein Zeiger oder ein String ist
+  und ob ein Parameter ein Zeiger ist (`fire_libSigShape`).
 
 ### Plugins (Phase D b)
 

@@ -1098,10 +1098,11 @@ namespace fire.Native
                         "bool" => "Bool(r_ != 0)",
                         "float" => "Float((Real)r_)",
                         "char" => "Char((uint32_t)r_)",
-                        "string" => "externResultString(r_, list)",
+                        // (Get's release: the library's own function frees the C text once it is copied)
+                        "string" => "externResultString(r_, list); if (release_ && r_) ((void (*)(void*))release_)((void*)(uintptr_t)r_)",
                         _ => "Int((int64_t)r_)",
                     }) + "; return v_;";
-                sb.AppendLine($"static Value fire_lt_{k}(void* fn_, const Value* a, OwnList* list) {{ (void)a; (void)list; {locals}{body} }}   /* {sig} */");
+                sb.AppendLine($"static Value fire_lt_{k}(void* fn_, const Value* a, void* release_, OwnList* list) {{ (void)a; (void)release_; (void)list; {locals}{body} }}   /* {sig} */");
                 rows.Add($"{{{CString(sig)}, fire_lt_{k}}}");
                 k++;
             }
@@ -3950,13 +3951,13 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
-                    if (native == LibraryMethods.NativeName && argc is >= 2 and <= 4)
+                    if (native == LibraryMethods.NativeName && argc is >= 2 and <= 5)
                     {
                         // `Library` (fire_rt.h libCall; the calls through the thunks of the program, see LibraryThunks)
                         _usesLibCall = true;
                         foreach (var cls in new[] { "ArgumentException", "LibraryException" }) if (!_errorClasses.Contains(cls)) _errorClasses.Add(cls);
                         int first = d - argc;
-                        E($"{S(first)} = libCall({S(first)}, {S(first + 1)}, {(argc > 2 ? S(first + 2) : "Undef()")}, {(argc > 3 ? S(first + 3) : "Undef()")}, &{OwnerList()});");
+                        E($"{S(first)} = libCall({S(first)}, {S(first + 1)}, {(argc > 2 ? S(first + 2) : "Undef()")}, {(argc > 3 ? S(first + 3) : "Undef()")}, {(argc > 4 ? S(first + 4) : "Undef()")}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }

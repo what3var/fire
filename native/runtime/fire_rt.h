@@ -5102,7 +5102,8 @@ FIRE_FN void externPtrFree(ExternPtr* e) {
 /* ---- `Library` (docs/language/18-native-code.md, fire.Standard.LibraryMethods): a native library loaded at run time and its functions by C signature.
  * The system's part is the platform layer's (fire_plat_dlopen, fire_plat_dlsym); a call goes through the thunk the program generated for the signature - one for
  * every text of the program that is a signature (fire_libThunk, NULL for any other). The errors are thrown by the fire code of the class (the same as in the VM). ---- */
-typedef Value (*FireLibThunk)(void* fn, const Value* args, OwnList* list);
+/* `release`: the library's `void(void*)` that frees a returned string after it is copied (Get's `release:`; NULL: never freed). */
+typedef Value (*FireLibThunk)(void* fn, const Value* args, void* release, OwnList* list);
 FireLibThunk fire_libThunk(const char* signature);   /* (generated: by the signature without white space) */
 
 /* The signature without white space; 0 when it does not fit. */
@@ -5156,8 +5157,20 @@ FIRE_FN int fire_libSigArity(const char* s) {
     }
 }
 
-/* `__LibCall(id, a, b, c)` (LibraryMethods: 1 load, 2 a function's address, 3 the number of parameters of a signature, 4 a call). */
-FIRE_FN Value libCall(Value id, Value a, Value b, Value c, OwnList* list) {
+/* What Get needs to know of a valid signature (without white space; LibraryMethod.Shape): 1 the result is a pointer, 2 it is a string, 4 a parameter is a pointer. */
+FIRE_FN int fire_libSigShape(const char* s) {
+    const char* open = strchr(s, '(');
+    int shape = 0;
+    if (!open) return 0;
+    if (open > s && open[-1] == '*') shape |= 1;
+    else if (open - s == 6 && memcmp(s, "string", 6) == 0) shape |= 2;
+    if (strchr(open, '*')) shape |= 4;
+    return shape;
+}
+
+/* `__LibCall(id, a, b, c, d)` (LibraryMethods: 1 load, 2 a function's address, 3 the number of parameters of a signature, 4 a call, 5 a fire plugin's classes,
+ * 6 the shape of a signature, 7 a NativeHandle's release). */
+FIRE_FN Value libCall(Value id, Value a, Value b, Value c, Value d, OwnList* list) {
     char text[512];
     switch (id.i) {
         case 1: {
@@ -5216,7 +5229,7 @@ FIRE_FN Value libCall(Value id, Value a, Value b, Value c, OwnList* list) {
                 snprintf(t, sizeof t, "The function expects %d argument(s), got %d.", n, args ? (int)args->length : 0);
                 return fireError("ArgumentException", t);
             }
-            return thunk((void*)(intptr_t)a.i, arrItems(args), list);
+            return thunk((void*)(intptr_t)a.i, arrItems(args), d.kind == K_Int ? (void*)(intptr_t)d.i : NULL, list);
         }
         case 5: {
             /* a fire plugin (it exports fire_module_info): its classes registered - an array of their names; undefined: no fire plugin; a string: why it does not fit */
@@ -5228,6 +5241,13 @@ FIRE_FN Value libCall(Value id, Value a, Value b, Value c, OwnList* list) {
             return Int(-1);   /* (this program cannot load fire plugins: not built with modules) */
 #endif
         }
+        case 6:
+            if (!fire_libSigNorm(a, text, sizeof text) || fire_libSigArity(text) < 0) return Int(0);
+            return Int(fire_libSigShape(text));
+        case 7:
+            /* a NativeHandle is destroyed (its destructor runs once): the library's own function frees its pointer */
+            if (a.kind == K_Int && a.i != 0 && b.kind == K_Int) ((void (*)(void*))(intptr_t)a.i)((void*)(intptr_t)b.i);
+            return Undef();
         default: fatal("__LibCall: unknown function");
     }
 }
