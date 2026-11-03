@@ -54,8 +54,8 @@ namespace Compression {
             else { this.handle = Compression.Errors.Check(__CmpInflateNew(format)) }
         }
 
-        bool CanRead { get { return !this.closed && this.mode == Compression.Mode.Decompress } }
-        bool CanWrite { get { return !this.closed && this.mode == Compression.Mode.Compress } }
+        override bool CanRead { get { return !this.closed && this.mode == Compression.Mode.Decompress } }
+        override bool CanWrite { get { return !this.closed && this.mode == Compression.Mode.Compress } }
 
         // The stream underneath.
         IO.Stream BaseStream { get { return this.inner } }
@@ -64,7 +64,7 @@ namespace Compression {
             if (this.closed) { throw new IO.StreamClosedException("The compression stream is closed.") }
         }
 
-        int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], int offset, int count) {
             this.Check()
             if (this.mode != Compression.Mode.Decompress) { throw new IO.IOException("This stream compresses: it cannot be read.", 8) }
             if (count == 0) { return 0 }
@@ -81,7 +81,7 @@ namespace Compression {
             }
         }
 
-        int Write(byte buffer[], int offset, int count) {
+        override int Write(byte buffer[], int offset, int count) {
             this.Check()
             if (this.mode != Compression.Mode.Compress) { throw new IO.IOException("This stream decompresses: it cannot be written.", 8) }
             if (!__CmpDeflateWrite(this.handle, buffer, offset, count)) { Compression.Errors.Throw() }
@@ -99,7 +99,7 @@ namespace Compression {
         }
 
         // Compressing: everything written so far goes out (a sync flush), so that a reader can decompress it already.
-        undefined Flush() {
+        override undefined Flush() {
             this.Check()
             if (this.mode == Compression.Mode.Compress) {
                 if (!__CmpDeflateFlush(this.handle, false)) { Compression.Errors.Throw() }
@@ -108,7 +108,7 @@ namespace Compression {
             this.inner.Flush()
         }
 
-        undefined Close() {
+        override undefined Close() {
             if (this.closed) { return }
             if (this.mode == Compression.Mode.Compress) {
                 if (!__CmpDeflateFlush(this.handle, true)) { Compression.Errors.Throw() }
@@ -306,8 +306,8 @@ namespace Zip {
             this.start = start
             this.length = length
         }
-        bool CanRead { get { return true } }
-        int Read(byte buffer[], int offset, int count) {
+        override bool CanRead { get { return true } }
+        override int Read(byte buffer[], int offset, int count) {
             var left = this.length - this.at
             if (left <= 0 || count <= 0) { return 0 }
             if (count > left) { count = left }
@@ -332,8 +332,8 @@ namespace Zip {
             try inner.TakeTo(this)
             this.entry = entry
         }
-        bool CanRead { get { return true } }
-        int Read(byte buffer[], int offset, int count) {
+        override bool CanRead { get { return true } }
+        override int Read(byte buffer[], int offset, int count) {
             var n = this.inner.Read(buffer, offset, count)
             if (n > 0) {
                 this.crc = __CmpCrc32(this.crc, buffer, offset, n)
@@ -346,7 +346,7 @@ namespace Zip {
             }
             return n
         }
-        undefined Close() { this.inner.Close() }
+        override undefined Close() { this.inner.Close() }
     }
 
     // What is written into an entry of an archive that is being written (CreateEntry): compressed into the archive; Close ends the entry.
@@ -364,8 +364,8 @@ namespace Zip {
             this.chunk = new byte[16384]
             this.handle = Compression.Errors.Check(__CmpDeflateNew(Compression.Format.Raw, level))
         }
-        bool CanWrite { get { return !this.closed } }
-        int Write(byte buffer[], int offset, int count) {
+        override bool CanWrite { get { return !this.closed } }
+        override int Write(byte buffer[], int offset, int count) {
             if (this.closed) { throw new IO.StreamClosedException("The entry is already closed.") }
             if (count <= 0) { return 0 }
             this.crc = __CmpCrc32(this.crc, buffer, offset, count)
@@ -382,7 +382,7 @@ namespace Zip {
                 this.entry.compressedLength = this.entry.compressedLength + n
             }
         }
-        undefined Close() {
+        override undefined Close() {
             if (this.closed) { return }
             this.closed = true
             if (!__CmpDeflateFlush(this.handle, true)) { Compression.Errors.Throw() }

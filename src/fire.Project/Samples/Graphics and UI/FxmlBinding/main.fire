@@ -2,7 +2,7 @@
 #import "ui"
 // The code-behind: the data the window is bound to, a converter, and the handler of the button.
 class UpperConverter : UI.Converter {
-    Convert(value) {
+    override Convert(value) {
         if (value == undefined) { return "" }        // nothing selected yet
         return value.ToUpper()
     }
@@ -35,7 +35,7 @@ class Model {
 }
 
 class PeopleWindow : MainBase {            // the inheritance is declared here, in the code-behind
-    AddPerson(sender) {
+    override AddPerson(sender) {
         var model = this.dataContext
         model.people.Add(new Person("new person " + model.people.Count))
         model.UpdateSummary()           // the label {Binding summary} follows

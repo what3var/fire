@@ -11,12 +11,12 @@ class Animal {
 
 class Dog : Animal {
     construct(string name) : base(name) { }
-    string Sound() { return "Woof" }
+    override string Sound() { return "Woof" }
 }
 
 class Cat : Animal {
     construct(string name) : base(name) { }
-    string Sound() { return "Meow" }
+    override string Sound() { return "Meow" }
 }
 
 var animals = new List()

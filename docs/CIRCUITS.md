@@ -446,8 +446,8 @@ alone again. The same holds for instruments of your own (any object with `Record
 /// A lamp: a resistor that glows above 1 W.
 class Lamp : Circuits.TwoTerminal {
     construct() : base("lamp") { }
-    undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / 50) }
-    float CurrentRaw() { return this.VoltageRaw() / 50 }
+    override undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / 50) }
+    override float CurrentRaw() { return this.VoltageRaw() / 50 }
     bool Glows() { return this.PowerRaw() > 1 }
 }
 ```
@@ -472,7 +472,7 @@ and the parts at the simulated devices below are attached parts too.
 /// A part in fire: drives its pin with a square wave of 1 kHz.
 class Blinker : Circuits.Attached {
     construct() : base("blink") { this.AddPin("out") }
-    undefined Update(float time) { this.DriveHigh(0, (Math.Floor(time * 2000)!int) % 2 == 0) }
+    override undefined Update(float time) { this.DriveHigh(0, (Math.Floor(time * 2000)!int) % 2 == 0) }
 }
 
 var c = new Circuits.Circuit()

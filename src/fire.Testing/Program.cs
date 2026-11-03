@@ -553,7 +553,7 @@ class Dog : Animal {
     construct(string name) : base(name) {
     }
 
-    Speak() {
+    override Speak() {
         base.Speak()
         print(42)
         return 1
@@ -6470,7 +6470,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
     // --- Inline caches: one call site, several classes
     CheckPerf("polymorphe Aufrufstelle: Klasse wechselt, Override, Feldzugriff", """
         class A { int v; construct() { this.v = 1 } Who() { return "A" + this.v } }
-        class B : A { construct() : base() { this.v = 2 } Who() { return "B" + this.v } }
+        class B : A { construct() : base() { this.v = 2 } override Who() { return "B" + this.v } }
         class C { int v; construct() { this.v = 3 } Who() { return "C" + this.v } }
         var items = [new A(), new B(), new C(), new A(), new C(), new B()]
         var text = ""
@@ -13575,7 +13575,7 @@ devNativeCases.Clear();
         print(d.WaitForString("hallo;"))
 
         class Ping : Command<IDevice> {
-            Execute(IDevice context) { return context.WriteString("ping;") }
+            override Execute(IDevice context) { return context.WriteString("ping;") }
         }
         print(d.DoCommand(new Ping()))
         print(d.WaitForString("ping;"))
@@ -15258,7 +15258,7 @@ DebuggerTests.Run();
             int y = 5
             string s = "init"
             int z
-            Setup() { this.x = 99; this.y = 7; this.z = 8 }
+            override Setup() { this.x = 99; this.y = 7; this.z = 8 }
         }
         var d = new D()
         print((d.x == undefined) + " " + d.y + " " + d.s + " " + (d.z == undefined))
@@ -15359,7 +15359,7 @@ DebuggerTests.Run();
 
     CheckSc("class X : Command<T> - eine generische Basisklasse mit Typ-Argumenten, Execute ueberschreiben, Lambda erben", """
         class Twice : Command<int> {
-            Execute(int context) { return context * 2 }
+            override Execute(int context) { return context * 2 }
         }
         class Plus : Command<int> {
             construct(int n) { this.Command = x => x + n }
@@ -15857,7 +15857,7 @@ else
                 construct(string s) { }
             }
             class SubShow : Show {
-                string Me(int x) { return "sub int" }
+                override string Me(int x) { return "sub int" }
             }
             print(Show.Of(1))
             print(Show.Of("s"))
@@ -15997,8 +15997,8 @@ else
                 string Over(any x) { return "base any" }
             }
             class Derived : Base {
-                string Hello(int x) { return "derived int" }
-                string Over(int x) { return "derived int" }
+                override string Hello(int x) { return "derived int" }
+                override string Over(int x) { return "derived int" }
             }
             var d = new Derived()
             print(d.Hello(1))
@@ -16047,7 +16047,7 @@ else
                 string Num(float f) { return "float" }
             }
             class SubPick : Pick {
-                string Num(int i) { return "sub int / " + base.Num(i) + " / " + base.Num(1.5) }
+                override string Num(int i) { return "sub int / " + base.Num(i) + " / " + base.Num(1.5) }
             }
 
             class Box<T> {
@@ -16206,11 +16206,11 @@ else
                           string Name() { return "shape" } }
             class Sq : Shape { float a = 0.0
                                      construct(float x) { this.a = x }
-                                     float Area() { return this.a * this.a }
-                                     int Name() { return 4 } }
+                                     override float Area() { return this.a * this.a }
+                                     override int Name() { return 4 } }
             class Ci : Shape { float r = 0.0
                                      construct(float x) { this.r = x }
-                                     float Area() { return 3.0 * this.r * this.r } }
+                                     override float Area() { return 3.0 * this.r * this.r } }
             """),
         ("Typ-Analyse nativ: Zahlen mit Einheiten (gleiche Einheit, Faktor, Skalar, Umrechnung, Deklarationen, Offset-Einheiten)", """
             float:m len = 0m
@@ -16315,7 +16315,7 @@ else
               string Describe(string prefix = ">") { return prefix + this.name + " " + this.Speak() + " " + this.legs }
               int Legs() { return this.legs } }
             class Dog : Animal { construct(string n) : base(n) { }
-              string Speak() { return "Woof" } }
+              override string Speak() { return "Woof" } }
             class Bird : Animal { construct(string n) : base(n) { this.legs = 2 } }
             Animal a = new Animal("generic")
             Dog d = new Dog("Rex")
@@ -17370,7 +17370,7 @@ else
             class Dog : Animal {
                 int tricks
                 construct(int id) : base(id) { this.tricks = 2 }
-                Speak() { base.Speak(); print(100 + this.tricks) }
+                override Speak() { base.Speak(); print(100 + this.tricks) }
             }
             class Holder {
                 Dog pet
@@ -17402,14 +17402,14 @@ else
             }
             class Rect : Shape {
                 construct(int w, int h) : base(w, h) { }
-                int Area() { return this.w * this.h }
+                override int Area() { return this.w * this.h }
             }
             class Square : Rect {
                 construct(int s) : base(s, s) { }
             }
             class Triangle : Shape {
                 construct(int w, int h) : base(w, h) { }
-                int Area() { return this.w * this.h / 2 }
+                override int Area() { return this.w * this.h / 2 }
             }
             class Other {
                 int pad
@@ -18471,7 +18471,7 @@ else
             }
             class Loud : Greeter {
                 construct(string g = "HEY") : base(g) { }
-                string Greet(string name, string suffix = "!!", int n = 7) { return base.Greet(name, suffix) + "/" + n }
+                override string Greet(string name, string suffix = "!!", int n = 7) { return base.Greet(name, suffix) + "/" + n }
             }
             class extends string {
                 string Wrap(string left = "[", string right = "]") { return left + this + right }
@@ -18526,7 +18526,7 @@ else
                 float hole = 1.0
                 construct(float r) : base(r) { }
                 float Width { get { return this.radius - this.hole } }
-                float Area { get { return this.radius * 3 - 3 } }
+                override float Area { get { return this.radius * 3 - 3 } }
             }
             var c = new Circle(5.0)
             print(c.Diameter)
@@ -19077,7 +19077,7 @@ else
             }
             class BigSquare : Square {
                 construct(int s) : base(s) { }
-                string Name() { return "big " + base.Name() }
+                override string Name() { return "big " + base.Name() }
             }
             class Disc : IShape {
                 int Area(int scale) { return 3 * scale }
@@ -20958,7 +20958,7 @@ else
             }
             class Square : Shape {
                 construct(int side) : base("square", side, side) { }
-                string Describe(string prefix = "[", string suffix = "]", int times = 2) { return "sq " + base.Describe(suffix: suffix, prefix: prefix) }
+                override string Describe(string prefix = "[", string suffix = "]", int times = 2) { return "sq " + base.Describe(suffix: suffix, prefix: prefix) }
             }
             print(new Shape("a").name)
             print(new Shape("b", height: 5).name)
@@ -21795,11 +21795,11 @@ else
             #import "spi"
             class Thermometer : Device {
                 construct(Driver driver) : base(driver, "thermo0") { }
-                any Read() { return 21 }
+                override any Read() { return 21 }
             }
             class ThermometerDriver : Driver {
                 construct() : base("thermo") { }
-                undefined Refresh(bool fastScan = true) {
+                override undefined Refresh(bool fastScan = true) {
                     if (this.Find("thermo0") == undefined) { this.Add(new Thermometer(this)) }
                 }
             }
@@ -23588,7 +23588,7 @@ else
             // a part in fire: drives its pin with a 1 kHz square wave
             class Blinker : Circuits.Attached {
                 construct() : base("blink") { this.AddPin("out") }
-                undefined Update(float time) { this.DriveHigh(0, (Math.Floor(time * 2000)!int) % 2 == 0) }
+                override undefined Update(float time) { this.DriveHigh(0, (Math.Floor(time * 2000)!int) % 2 == 0) }
             }
             var c = new Circuits.Circuit()
             var b = c.Add(new Blinker())
@@ -23685,7 +23685,7 @@ else
             class Counting : Simulation {
                 int n = 0
                 construct() : base() { }
-                undefined Advance() { this.n = this.n + 1 }
+                override undefined Advance() { this.n = this.n + 1 }
             }
             var counting = new Counting()
             Simulation.Start(counting)

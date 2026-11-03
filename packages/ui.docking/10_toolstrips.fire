@@ -85,7 +85,7 @@ namespace UI.Docking {
             this.OnClick = onClick
         }
 
-        string StyleKey() { return "ToolStripButton" }
+        override string StyleKey() { return "ToolStripButton" }
 
         bool HasSymbol() { return this.Icon != undefined || this.Image != undefined }
 
@@ -112,7 +112,7 @@ namespace UI.Docking {
             return w
         }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             this.cw = this.ContentWidth(root) + 10 + this.ExtraWidth()
             var symbol = 0
             if (this.HasSymbol()) { symbol = this.IconSize }
@@ -149,7 +149,7 @@ namespace UI.Docking {
             return root.theme.text
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             this.DrawFace(root, ax, ay, this.actualWidth - this.ExtraWidth())
             this.DrawContent(root, ax, ay)
@@ -167,11 +167,11 @@ namespace UI.Docking {
             if (this.ShowsText()) { this.DrawString(root, x, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.Text, color) }
         }
 
-        undefined MouseDown(UI.Root root, int button, int px, int py) {
+        override undefined MouseDown(UI.Root root, int button, int px, int py) {
             if (button == 1) { this.Pressed = true }
         }
 
-        undefined MouseUp(UI.Root root, int button, int px, int py) {
+        override undefined MouseUp(UI.Root root, int button, int px, int py) {
             var was = this.Pressed
             this.Pressed = false
             if (was && button == 1 && this.Contains(px, py)) { this.Click() }
@@ -188,7 +188,7 @@ namespace UI.Docking {
             this.items = new List()
         }
 
-        string StyleKey() { return "ToolStripSplitButton" }
+        override string StyleKey() { return "ToolStripSplitButton" }
 
         // Appends a menu row; it belongs to the button.
         UI.MenuItem Add(UI.MenuItem item) {
@@ -204,7 +204,7 @@ namespace UI.Docking {
             return item
         }
 
-        int ExtraWidth() { return 14 }
+        override int ExtraWidth() { return 14 }
 
         bool MenuOpen() {
             var root = this.host
@@ -228,7 +228,7 @@ namespace UI.Docking {
             this.Invalidate()
         }
 
-        undefined Poll(UI.Root root) {
+        override undefined Poll(UI.Root root) {
             base.Poll(root)
             if (this.menu != undefined && !root.IsPopup(this.menu)) {
                 this.menu = undefined
@@ -236,7 +236,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined Hover(UI.Root root, int px, int py) {
+        override undefined Hover(UI.Root root, int px, int py) {
             var hot = this.OverArrow(px, py)
             if (hot != this.arrowHot) {
                 this.arrowHot = hot
@@ -244,7 +244,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseDown(UI.Root root, int button, int px, int py) {
+        override undefined MouseDown(UI.Root root, int button, int px, int py) {
             if (button == 1 && this.OverArrow(px, py)) {
                 this.OpenMenu(root)
                 return
@@ -252,13 +252,13 @@ namespace UI.Docking {
             base.MouseDown(root, button, px, py)
         }
 
-        undefined MouseUp(UI.Root root, int button, int px, int py) {
+        override undefined MouseUp(UI.Root root, int button, int px, int py) {
             var was = this.Pressed
             this.Pressed = false
             if (was && button == 1 && this.Contains(px, py) && !this.OverArrow(px, py)) { this.Click() }
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var extra = this.ExtraWidth()
@@ -285,16 +285,16 @@ namespace UI.Docking {
 
         construct(string text = "") : base(text, 0, 0) { }
 
-        string StyleKey() { return "ToolStripLabel" }
+        override string StyleKey() { return "ToolStripLabel" }
 
         int RowWidth(UI.Root root) { return this.TextWidth(root, this.Text) + 38 }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             this.cw = this.TextWidth(root, this.Text) + 10
             this.ch = this.TextHeight(root) + 8
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var c = this.Color
             if (c == undefined) { c = this.Foreground }
@@ -316,7 +316,7 @@ namespace UI.Docking {
 
         construct() : base(0, 0, -1, -1) { }
 
-        string StyleKey() { return "ToolStripSeparator" }
+        override string StyleKey() { return "ToolStripSeparator" }
 
         int RowWidth(UI.Root root) { return 40 }
 
@@ -326,12 +326,12 @@ namespace UI.Docking {
             return !this.inOverflow && strip != undefined && strip is of UI.Docking.ToolStrip && strip.Horizontal
         }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             this.cw = 7
             this.ch = 7
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var pen = this.Pen
             if (pen == undefined) { pen = root.theme.border }
@@ -347,7 +347,7 @@ namespace UI.Docking {
 
         construct(string text = "", int width = 100) : base(text, 0, 0, width, 22) { }
 
-        string StyleKey() { return "ToolStripTextBox" }
+        override string StyleKey() { return "ToolStripTextBox" }
     }
 
     // A combo box in a toolstrip (`width` pixels wide); the same as UI.ComboBox.
@@ -357,7 +357,7 @@ namespace UI.Docking {
 
         construct(int width = 120) : base(0, 0, width, 22) { }
 
-        string StyleKey() { return "ToolStripComboBox" }
+        override string StyleKey() { return "ToolStripComboBox" }
     }
 
     // A progress bar for toolstrips and the status bar: `value` of `maximum`.
@@ -369,9 +369,9 @@ namespace UI.Docking {
 
         construct(int width = 100) : base(0, 0, width, 14) { }
 
-        string StyleKey() { return "ToolStripProgressBar" }
+        override string StyleKey() { return "ToolStripProgressBar" }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -392,14 +392,14 @@ namespace UI.Docking {
 
         construct() : base(0, 0, -1, -1) { }
 
-        string StyleKey() { return "ToolStripOverflow" }
+        override string StyleKey() { return "ToolStripOverflow" }
 
         int RowWidth(UI.Root root, any item) {
             if (Reflect.Has(item, "inOverflow")) { return item.RowWidth(root) }
             return item.dw + 8
         }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             var w = 120
             var h = 4
             if (this.strip != undefined) {
@@ -415,7 +415,7 @@ namespace UI.Docking {
             this.ch = h
         }
 
-        undefined ArrangeCore(UI.Root root, int w, int h) {
+        override undefined ArrangeCore(UI.Root root, int w, int h) {
             if (this.strip == undefined) { return }
             var items = this.strip.overflowItems
             var y = 2
@@ -426,7 +426,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, theme.menuBack)
@@ -439,7 +439,7 @@ namespace UI.Docking {
             }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             if (this.strip != undefined) {
                 var items = this.strip.overflowItems
@@ -454,7 +454,7 @@ namespace UI.Docking {
         }
 
         // a click on the » button of the strip only closes the list (instead of opening it again right away)
-        bool PopupOutside(UI.Root root, int px, int py) {
+        override bool PopupOutside(UI.Root root, int px, int py) {
             var consumed = this.strip != undefined && this.strip.OverOverflow(px, py)
             root.ClosePopup(this)
             return consumed
@@ -492,7 +492,7 @@ namespace UI.Docking {
             this.overflowPopup.strip = this
         }
 
-        string StyleKey() { return "ToolStrip" }
+        override string StyleKey() { return "ToolStrip" }
 
         // ---- adding items ----
 
@@ -593,7 +593,7 @@ namespace UI.Docking {
             return length
         }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             var along = this.GripSize() + 4
             var across = 16
             var always = false
@@ -619,7 +619,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined ArrangeCore(UI.Root root, int w, int h) {
+        override undefined ArrangeCore(UI.Root root, int w, int h) {
             var length = w
             var across = h
             if (!this.Horizontal) {
@@ -749,7 +749,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined Poll(UI.Root root) {
+        override undefined Poll(UI.Root root) {
             base.Poll(root)
             if (!this.HasOverflow() && this.OverflowOpen()) { this.CloseOverflow() }
         }
@@ -759,7 +759,7 @@ namespace UI.Docking {
             return root.theme.panel
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
@@ -807,7 +807,7 @@ namespace UI.Docking {
             }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.shown.Count - 1
             while (i >= 0) {
@@ -818,7 +818,7 @@ namespace UI.Docking {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             if (!this.Visible || !this.Enabled) { return }
             for (var i = 0; i < this.shown.Count; i = i + 1) { this.shown[i].Collect(list) }
         }
@@ -863,14 +863,14 @@ namespace UI.Docking {
             this.canOverflow = false
         }
 
-        string StyleKey() { return "StatusBar" }
+        override string StyleKey() { return "StatusBar" }
 
-        Brush BackBrush(UI.Root root) {
+        override Brush BackBrush(UI.Root root) {
             if (this.Background != undefined) { return this.Background }
             return root.theme.back
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, 1)) { root.renderer.DrawLine(ax, ay, ax + this.actualWidth - 1, ay, root.theme.border) }
         }
@@ -888,7 +888,7 @@ namespace UI.Docking {
             this.strips = new List()
         }
 
-        string StyleKey() { return "ToolStripPanel" }
+        override string StyleKey() { return "ToolStripPanel" }
 
         bool Horizontal() { return this.side == UI.Dock.Top || this.side == UI.Dock.Bottom }
 
@@ -1009,7 +1009,7 @@ namespace UI.Docking {
             return rows
         }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             this.Compact()
             var rows = this.RowCount()
             var thick = 0
@@ -1033,7 +1033,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined ArrangeCore(UI.Root root, int w, int h) {
+        override undefined ArrangeCore(UI.Root root, int w, int h) {
             var length = w
             if (!this.Horizontal()) { length = h }
             var rows = this.RowCount()
@@ -1081,12 +1081,12 @@ namespace UI.Docking {
             }
         }
 
-        undefined Poll(UI.Root root) {
+        override undefined Poll(UI.Root root) {
             base.Poll(root)
             for (var i = 0; i < this.strips.Count; i = i + 1) { this.strips[i].Poll(root) }
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
@@ -1100,7 +1100,7 @@ namespace UI.Docking {
             }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.strips.Count - 1
             while (i >= 0) {
@@ -1111,11 +1111,11 @@ namespace UI.Docking {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             for (var i = 0; i < this.strips.Count; i = i + 1) { this.strips[i].Collect(list) }
         }
 
-        UI.Element FindName(string name) {
+        override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             for (var i = 0; i < this.strips.Count; i = i + 1) {
                 var found = this.strips[i].FindName(name)

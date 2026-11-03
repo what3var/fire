@@ -51,11 +51,11 @@ print(sensor.ReadRegister(0))
 ```fire
 class Thermometer : Device {
     construct(Driver driver) : base(driver, "thermo0") { }
-    any Read() { return 21 }          // ask the hardware here
+    override any Read() { return 21 }          // ask the hardware here
 }
 class ThermometerDriver : Driver {
     construct() : base("thermo") { }
-    undefined Refresh(bool fastScan = true) {
+    override undefined Refresh(bool fastScan = true) {
         if (this.Find("thermo0") == undefined) { this.Add(new Thermometer(this)) }
     }
 }

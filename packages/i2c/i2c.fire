@@ -253,9 +253,9 @@ namespace I2c {
             }
         }
 
-        bool Connected() { return this.bus != undefined && !this.bus.IsClosed }
+        override bool Connected() { return this.bus != undefined && !this.bus.IsClosed }
 
-        bool Connect() {
+        override bool Connect() {
             try {
                 var b = this.Bus
                 return true
@@ -264,7 +264,7 @@ namespace I2c {
             }
         }
 
-        undefined Disconnect() {
+        override undefined Disconnect() {
             if (this.bus != undefined) { this.bus.Close() }
         }
 
@@ -299,10 +299,10 @@ namespace I2c {
         int Address { get { return this.address } }
         I2c.BusDevice OnBus { get { return this.busDevice } }
 
-        bool Connected() { return this.busDevice.Connected() }
-        bool Connect() { return this.busDevice.Connect() }
+        override bool Connected() { return this.busDevice.Connected() }
+        override bool Connect() { return this.busDevice.Connect() }
 
-        any Read() { return this.Read(this.ReadSize) }
+        override any Read() { return this.Read(this.ReadSize) }
 
         byte[] Read(int count) {
             var data = this.busDevice.Bus.Read(this.address, count)
@@ -310,7 +310,7 @@ namespace I2c {
             return data
         }
 
-        bool Write(any data) {
+        override bool Write(any data) {
             this.busDevice.Bus.Write(this.address, data)
             DeviceManager.Host.Trace(this, true, data)
             return true
@@ -344,14 +344,14 @@ class I2cDriver : Driver {
         this.speed = speed
     }
 
-    undefined Refresh(bool fastScan = true) {
+    override undefined Refresh(bool fastScan = true) {
         foreach (name in I2c.Board.Buses()) {
             if (this.Find(name) == undefined) { this.Add(new I2c.BusDevice(this, name, this.speed)) }
         }
     }
 
     /// <summary>A bus by its name, or a device `bus/0x48` (also `bus/72`).</summary>
-    Device Find(string name) {
+    override Device Find(string name) {
         var slash = name.IndexOf("/")
         if (slash < 0) {
             foreach (d in this.devices) {

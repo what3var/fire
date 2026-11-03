@@ -269,9 +269,9 @@ class SpiDevice : Device {
         }
     }
 
-    bool Connected() { return this.device != undefined && !this.device.IsClosed }
+    override bool Connected() { return this.device != undefined && !this.device.IsClosed }
 
-    bool Connect() {
+    override bool Connect() {
         try {
             var d = this.Port
             return true
@@ -280,11 +280,11 @@ class SpiDevice : Device {
         }
     }
 
-    undefined Disconnect() {
+    override undefined Disconnect() {
         if (this.device != undefined) { this.device.Close() }
     }
 
-    any Read() { return this.Read(this.ReadSize) }
+    override any Read() { return this.Read(this.ReadSize) }
 
     byte[] Read(int count) {
         var data = this.Port.Read(count)
@@ -292,7 +292,7 @@ class SpiDevice : Device {
         return data
     }
 
-    bool Write(any data) {
+    override bool Write(any data) {
         this.Port.Write(data)
         DeviceManager.Host.Trace(this, true, data)
         return true
@@ -319,7 +319,7 @@ class SpiDevice : Device {
 class SpiDriver : Driver {
     construct() : base("spi") { }
 
-    undefined Refresh(bool fastScan = true) {
+    override undefined Refresh(bool fastScan = true) {
         foreach (name in Spi.Board.Devices()) {
             if (this.Find(name) == undefined) { this.Add(new SpiDevice(this, name)) }
         }
