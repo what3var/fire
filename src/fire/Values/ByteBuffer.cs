@@ -42,6 +42,45 @@ namespace fire.Values
             Order = order;
         }
 
+        /// <summary>`fire handover` (see ObjectInstance.HandedOverTo): the buffer that took this one's place; this one is dead (destroyed) from then on.</summary>
+        public ByteBuffer? HandedOverTo { get; private set; }
+
+        internal ByteBuffer Relocate() => new(Bytes, Order) { LeafOwner = LeafOwner, _hash = GetHashCode() };
+
+        // `==` compares the buffer, not the instance (see ObjectInstance.Equals).
+        private int _hash;
+        public override int GetHashCode()
+        {
+            if (_hash == 0) _hash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this) | 1;
+            return _hash;
+        }
+        public override bool Equals(object? obj) =>
+            ReferenceEquals(this, obj)
+            || (obj is ByteBuffer other && (HandedOverTo != null || other.HandedOverTo != null) && ReferenceEquals(Latest(this), Latest(other)));
+        private static ByteBuffer Latest(ByteBuffer b)
+        {
+            while (b.HandedOverTo != null) b = b.HandedOverTo;
+            return b;
+        }
+
+        internal void RetireAfterHandover(ByteBuffer fresh)
+        {
+            HandedOverTo = fresh;
+            LeafOwner = null;
+            IsDestroyed = true;
+        }
+
+        /// <summary>See ObjectInstance.LivesInAnotherThread.</summary>
+        public bool LivesInAnotherThread
+        {
+            get
+            {
+                var current = HandedOverTo;
+                while (current?.HandedOverTo != null) current = current.HandedOverTo;
+                return current != null && !current.IsDestroyed;
+            }
+        }
+
         public ByteBuffer(byte[] bytes, ByteOrder order)
         {
             Bytes = bytes;

@@ -5986,7 +5986,9 @@ namespace fire.Runtime
         {
             var rc = ResolveClass("DestroyedException");
             string what = leaf.Kind == ValueKind.Buffer ? "buffer" : "array";
-            var instance = ConstructNested(rc, new[] { Value.MakeString($"Access to a destroyed {what}.") });
+            // (`fire handover`: a reference from before the handover - the array lives on in the thread, under a new identity)
+            bool handedOver = leaf.Kind == ValueKind.Buffer ? leaf.AsBuffer().LivesInAnotherThread : leaf.AsArray().LivesInAnotherThread;
+            var instance = ConstructNested(rc, new[] { Value.MakeString(handedOver ? $"Access to {(leaf.Kind == ValueKind.Buffer ? "a buffer" : "an array")} that was handed over to a thread ('fire handover')." : $"Access to a destroyed {what}.") });
             ThrowException(Value.MakeClassRef(instance));
         }
 
@@ -6023,7 +6025,8 @@ namespace fire.Runtime
         private void ThrowDestroyedObject(ObjectInstance obj)
         {
             var rc = ResolveClass("DestroyedException");
-            var instance = ConstructNested(rc, new[] { Value.MakeString("Access to a destroyed object.") });
+            // (`fire handover`: a reference from before the handover - the object lives on in the thread, under a new identity)
+            var instance = ConstructNested(rc, new[] { Value.MakeString(obj.LivesInAnotherThread ? "Access to an object that was handed over to a thread ('fire handover')." : "Access to a destroyed object.") });
             ThrowException(Value.MakeClassRef(instance));
         }
 

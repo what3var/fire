@@ -5102,7 +5102,9 @@ namespace fire.Native
                         sbf.Append(") ");
                     }
                     sbf.Append("{ OwnList* travel = newTravel(); Value av[" + Math.Max(1, argc) + "] = {}; ");
-                    for (int i = 0; i < takingCount; i++) sbf.Append(i < copyCount ? $"av[{i}] = takeCopy({S(first + i)}, travel); " : $"av[{i}] = handOver({S(first + i)}, travel); ");
+                    for (int i = 0; i < copyCount; i++) sbf.Append($"av[{i}] = takeCopy({S(first + i)}, travel); ");
+                    // (all `handover` values together - one may reach another; the sender's other references die, see fire_rt.h handOverAll)
+                    if (handoverCount > 0) sbf.Append($"handOverAll(tv + {copyCount}, av + {copyCount}, {handoverCount}, travel); ");
                     if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
                     sbf.Append($"ensureDomain(); fireThread({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");

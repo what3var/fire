@@ -227,6 +227,13 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   (there is no destructor), the inner arrays it owns (2.1) are destroyed with it.
 - **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
   nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** is treated the same way (2.3): dead objects throw `DestroyedException` (a shallow copy, 2.4, may point to one).
+- **References from before a `fire handover`** (THREADING_DESIGN.md section 1) are dead the same way: the handed-over value and everything reachable from it
+  belong to the thread, and every other reference to them that existed before - in the sender or anywhere else, in any thread - throws the
+  `DestroyedException` "Access to an object that was handed over to a thread ('fire handover')." (`an array`, `a buffer`; "Access to a destroyed object."
+  once the thread has destroyed it) wherever a destroyed one throws: a field or element read or written, `Length`, a method call, `is of`/`!` a class,
+  `throw`, `take`, `foreach` (`copy`/`flat`: the `ArgumentException` of a destroyed object). `==`/`!=`, `== undefined` and `is of class` are no use: they answer, and `==` compares the object (a dead reference
+  equals the thread's). Only the thread's variable and the references among the moved values work. VM and native the same (the moved values get a new
+  identity: a new instance in the VM, the next generation of the handle slot natively - no check is added anywhere else); not checked in `#performance`.
 - **Debug warning for references that outlive their object**: in Debug mode the VM notes when a field or an array element is given an object that belongs to a scope (a local, an
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
