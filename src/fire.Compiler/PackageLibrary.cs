@@ -52,7 +52,8 @@ namespace fire.Compiler
         }
 
         private static DateTime NewestSource(InstalledImport import) =>
-            import.Import.Native!.SourcesFor(HostPlatformKeys).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s))).DefaultIfEmpty(DateTime.MinValue).Max();
+            import.Import.Native!.SourcesFor(HostPlatformKeys).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s)))
+                .Concat(import.Package.DescriptionFile is { } d && File.Exists(d) ? new[] { File.GetLastWriteTimeUtc(d) } : Array.Empty<DateTime>()).DefaultIfEmpty(DateTime.MinValue).Max();
 
         /// <summary>The library of an import on this machine if there is one (prebuilt, or built earlier and not older than the sources); otherwise null.</summary>
         public static string? Locate(InstalledImport import)

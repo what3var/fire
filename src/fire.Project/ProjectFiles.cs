@@ -185,14 +185,17 @@ namespace fire.Projects
             return result;
         }
 
-        /// <summary>The files that `patterns` (files and patterns relative to `directory`, in this order) name: the matches of one pattern by name; a named file that does not exist is a problem.</summary>
-        public static List<string> Expand(string directory, IEnumerable<string> patterns, List<string>? problems = null, Func<string, int>? rank = null)
+        /// <summary>The files that `patterns` (files and patterns relative to `directory`, in this order) name: the matches of one pattern by name; a named file that does not exist is a problem.
+        /// `entryOf` gets, for each file, the index of the entry it came from.</summary>
+        public static List<string> Expand(string directory, IEnumerable<string> patterns, List<string>? problems = null, Func<string, int>? rank = null, List<int>? entryOf = null)
         {
             var result = new List<string>();
             var seen = new HashSet<string>(PathComparer);
             List<string>? walked = null;
+            int index = -1;
             foreach (var entry in patterns)
             {
+                index++;
                 if (IsPattern(entry))
                 {
                     walked ??= Walk(directory);
@@ -200,14 +203,14 @@ namespace fire.Projects
                     foreach (var rel in walked.Where(r => regex.IsMatch(r)).OrderBy(r => rank?.Invoke(r) ?? 0).ThenBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
                     {
                         string full = Path.GetFullPath(rel, directory);
-                        if (seen.Add(full)) result.Add(full);
+                        if (seen.Add(full)) { result.Add(full); entryOf?.Add(index); }
                     }
                 }
                 else
                 {
                     string full = Path.GetFullPath(entry.Replace('\\', '/'), directory);
                     if (!File.Exists(full)) { problems?.Add($"The file '{entry}' does not exist."); continue; }
-                    if (seen.Add(full)) result.Add(full);
+                    if (seen.Add(full)) { result.Add(full); entryOf?.Add(index); }
                 }
             }
             return result;

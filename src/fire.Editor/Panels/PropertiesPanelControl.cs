@@ -34,6 +34,8 @@ namespace fire.Editor
     {
         public bool IsSet { get; init; } = true;
         public bool CanClear { get; init; }
+        /// <summary>The value is only shown (a text that cannot be edited).</summary>
+        public bool IsReadOnly { get; init; }
         public string? Unit { get; init; }
         public IReadOnlyList<string>? Choices { get; init; }
         public string? Tip { get; init; }
@@ -57,7 +59,8 @@ namespace fire.Editor
         public Action<string, string>? Set { get; init; }
     }
 
-    /// <summary>A document whose selection has properties (the circuit editor, the UI markup editor): the property window follows the active one.</summary>
+    /// <summary>A document whose selection has properties (the circuit editor, the UI markup editor) - or the file selected in the solution explorer (see
+    /// <see cref="FilePropertiesHost"/>): the property window follows the active one.</summary>
     public interface IPropertyHost
     {
         PropertySet? Properties { get; }
@@ -198,7 +201,7 @@ namespace fire.Editor
             if (set == null)
             {
                 _title.Text = "";
-                _hint.Text = "Select something in a schematic or put the caret into an element of a UI markup file to see its properties here.";
+                _hint.Text = "Select something in a schematic, put the caret into an element of a UI markup file or select a file in the solution explorer to see its properties here.";
                 _hint.IsVisible = true;
                 Describe(null);
                 return;
@@ -327,6 +330,7 @@ namespace fire.Editor
             // a field of an earlier list (it lost the focus while the list was built anew) changes nothing
             if (set == null || !_cells.TryGetValue(name, out var cell) || !ReferenceEquals(cell.Field, field)) return;
             var entry = cell.Entry;
+            if (entry.IsReadOnly) return;
             if (entry.Kind != PropertyEditKind.Momentary && (entry.IsSet ? value == entry.Value : value == "")) return;
             set.Set?.Invoke(entry.Name, value);
         }
@@ -402,10 +406,11 @@ namespace fire.Editor
                 {
                     var box = new TextBox
                     {
-                        Text = entry.IsSet ? entry.Value : "", Watermark = entry.IsSet || entry.Value == "" ? null : entry.Value,
+                        Text = entry.IsSet ? entry.Value : "", Watermark = entry.IsSet || entry.Value == "" ? null : entry.Value, IsReadOnly = entry.IsReadOnly,
                         BorderThickness = new Thickness(0), Background = Brushes.Transparent, MinHeight = 0, Padding = new Thickness(4, 0), CornerRadius = new CornerRadius(0),
                         VerticalContentAlignment = VerticalAlignment.Center, VerticalAlignment = VerticalAlignment.Stretch,
                     };
+                    if (entry.IsReadOnly) box.Foreground = EditorTheme.TextDim;
                     if (entry.Unit is { Length: > 0 } unit)
                         box.InnerRightContent = new TextBlock { Text = unit, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0) };
                     if (entry.Kind == PropertyEditKind.Color)

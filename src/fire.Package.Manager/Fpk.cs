@@ -24,7 +24,12 @@ namespace fire.Package.Manager
             var manifest = PackageManifest.Load(forgeFile);
 
             string Absolute(string path) => Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(baseDir, path));
-            var problems = manifest.Validate(path => File.Exists(Absolute(path)));
+            var problems = manifest.Validate(path => File.Exists(Absolute(path))).ToList();
+            // the build order of the natives: a source that includes another source of its import comes after it (in every build: each platform too)
+            if (problems.Count == 0)
+                foreach (var import in manifest.Imports)
+                    if (import.Native != null)
+                        problems.AddRange(NativeSourceOrder.CheckAllPlatforms(import.Native, path => File.Exists(Absolute(path)) ? File.ReadAllText(Absolute(path)) : null).Select(p => $"Import '{import.Name}': {p}"));
             if (problems.Count > 0) throw new PackageException("The package description has problems:\n  " + string.Join("\n  ", problems));
 
             // the forge copy: the same file with every path absolute
@@ -35,8 +40,8 @@ namespace fire.Package.Manager
                 import.Resources = import.Resources?.ToDictionary(kv => kv.Key, kv => Absolute(kv.Value));
                 if (import.Native != null)
                 {
-                    import.Native.Sources = import.Native.Sources.Select(Absolute).ToList();
-                    import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Select(Absolute).ToList());
+                    import.Native.Sources = import.Native.Sources.Map(Absolute);
+                    import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Map(Absolute));
                     import.Native.Libraries = import.Native.Libraries.ToDictionary(kv => kv.Key, kv => Absolute(kv.Value));
                 }
             }
@@ -85,8 +90,8 @@ namespace fire.Package.Manager
                 }
                 if (import.Native != null)
                 {
-                    import.Native.Sources = import.Native.Sources.Select(s => Place(import.Name, s)).ToList();
-                    import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Select(s => Place(import.Name, s)).ToList());
+                    import.Native.Sources = import.Native.Sources.Map(s => Place(import.Name, s));
+                    import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Map(s => Place(import.Name, s)));
                     import.Native.Libraries = import.Native.Libraries.ToDictionary(kv => kv.Key, kv => Place(import.Name, kv.Value));
                 }
             }

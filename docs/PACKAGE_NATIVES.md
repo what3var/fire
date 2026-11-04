@@ -149,6 +149,23 @@ parts you need most:
   The key is the platform package (`posix`, `windows`, `freertos`) or the name of a target (`linux`, `macos`, `esp32`, ...). `platforms` lists where the C++ may be used:
   a build for another target is refused with a clear message (empty: everywhere).
 * **The virtual machine** runs on the machine it is on: the library is built for it (Windows: `windows`, Linux and macOS: `posix`) with its `platformSources`.
+* **Build order.** All sources of a build - first the `platformSources` of the target, then `sources` - are put into **one** file, one after the other. An `#include "x.h"` of another
+  source of the same import is taken out there (the source is in the file already), so whatever a source includes has to come **before** it. By default that is the order of the lists;
+  an entry can say it explicitly with an order value - the sources are sorted by it (smaller first, stable; an entry without one has order 0 and keeps its place among the others):
+
+  ```json
+  "sources": [
+    "native/sensor_bridge.h",
+    { "file": "native/sensor_types.h", "order": -10 },
+    { "file": "native/sensor_tables.h", "order": -5 }
+  ]
+  ```
+
+  The same works in `platformSources` (one sort over the whole build, so a common header can come before a platform file). The same order holds for the library of the
+  virtual machine, a native build (also a library module of linkage `static`/`shared`) and plugins. **Checked:** a source that includes another source of the import that comes after it is an
+  error when the package is packed (`ember pack`, Pack Library; for every platform of `platformSources`) and when it is built, with the file and the line:
+  `native/sensor_bridge.h:3: #include "sensor_types.h" is a source of the same package that is built after it - give 'native/sensor_types.h' a smaller build order ("order") than 'native/sensor_bridge.h', or list it before.`
+  (The includes are not resolved automatically on purpose: the order is written down, and the editor shows and sets it - *Properties* of the file, docs/PROJECTS.md.)
 
 ## 4. The virtual machine: what crosses the C boundary
 

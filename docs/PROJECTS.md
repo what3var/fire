@@ -48,7 +48,9 @@ it is compiled (docs/RESOURCES.md: the path is relative to the file that writes 
 `__name`; with `"native": { "language": "c" }` they are C (C99, the recommended choice - the template *Native Library (C)*), and every `static inline Value name(Value a, ...)` is one (a last parameter `OwnList* list` says that the function allocates its result and returns it). A library project wraps them in classes; programs that reference the library use
 them (in the virtual machine a shared library is built from the C++ for the machine; a native build puts the C++ into the generated file), and the package that is packed carries the C++.
 `native` can also name `sources` (files and patterns, default `native/**`), `platformSources`, `platforms`, `linkLibraries`, `exceptions`, `reset` and `functions` (to say more about a function,
-like `returnsReference`) - the same as in a package. `"discover": false` takes only the named `functions` (no search for `inline Value` functions in the files). `"standard": true` (top
+like `returnsReference`) - the same as in a package. An entry of `sources`/`platformSources` can have a **build order**, `{ "file": "native/x.h", "order": -10 }` (for a pattern: each of its files):
+the sources are put into one file sorted by it (smaller first; without one 0, equal ones in list order, the platform sources first), and a source that `#include`s a later source of the project
+is an error with file and line (docs/PACKAGE_NATIVES.md, "Build order"). The editor sets it in the *Properties* of the file (below). `"discover": false` takes only the named `functions` (no search for `inline Value` functions in the files). `"standard": true` (top
 level of the project) is for the standard libraries of `Source/Packages.firesln` (docs/PACKAGES.md): their import names are those of the compiler. `"serializable": false` (top level
 of a library) excludes all classes of the library from JSON, like `[NotSerializable]` on each (docs/JSON.md; the package carries it in `package.json`, the standard library `ui` has it).
 
@@ -168,6 +170,13 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   code (C++), a reference, set the startup project, build/run/pack, reveal in the file manager, remove, and open the project's properties; a file can also be opened *as text*, *as hex* or - a
   picture - in the *pixel editor*. The markup of an interface (`Name.fxml`) opens like a folder: its first row **Designer** opens the markup editor (as a double click on the
   file does), below it is the code-behind `Name.fire` of the same folder.
+* **Properties of a file**: selecting a file in the Solution Explorer shows it in the tool window **Properties** (until another document becomes active): name, folder, project, what the
+  project does with it (*Kind*: its place in the compile order, content, test). A C/C++ file of a project also has the category **Native build**: *Part of the native build* (puts it into
+  `native.sources` or takes it out - a file that comes from a pattern stays, the window says so), *Build order* (the `order` of its entry; empty: none, 0), *Platforms* (all, or one list
+  of `platformSources`; only for a file the project file names itself), *Position* (its place in the build) and *Listed as* (the file itself or the pattern). A build order that breaks an
+  `#include` is shown in red with file and line. A change is written to the `.fireproj` at once (as the project dialog writes it); an order for a file that comes from a pattern gives it an
+  entry of its own just before the pattern. The rows come from *file property providers* (`IFilePropertiesProvider` in `src/fire.Editor/Panels/FileProperties.cs`), so other kinds of files can
+  get properties of their own.
 * **Viewer for pictures**: any size and colour depth the platform decodes (PNG, BMP, GIF, JPEG), zoom with sharp pixels (Ctrl+wheel), a grid of pixels, a chequerboard that shows what is
   transparent; *Edit pixels* opens the picture in the pixel editor.
 * **Pixel editor** (File > New > Raster Image, or *Edit pixels*): a palette of 256 colours - the palette of fire with entry 0 transparent - or true colour; pencil, eraser, line, rectangle (filled or

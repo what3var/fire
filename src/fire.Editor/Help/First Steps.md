@@ -28,6 +28,7 @@ Every file you open gets its own tab. Scripts (`.fire`) open in the code editor,
 | **Error list** | The errors and warnings of the last build, each with a code (`E4022`, `W204`; see `docs/ERRORS.md`) - they stay until the next build replaces them. The two buttons on top show or hide the errors and the warnings; double-click a row to jump to the line. Before the first build it shows what is found while you type. |
 | **Threads, Scope, Stack** | Appear in use while you debug: all running threads, the variables of the selected frame, and the call stack. |
 | **Devices** | Serial and simulated devices you can talk to from scripts. |
+| **Properties** | The properties of what is selected: a part of a schematic, an element of a UI markup file - or a file selected in the Solution Explorer (its project, its kind; for a C/C++ file of a project whether it is part of the native build, its platforms and its *Build order*, written to the project file at once). |
 
 All panels can be dragged to any side of the window, stacked as tabs, floated as separate windows or auto-hidden. **View → Reset Layout** brings the original arrangement back.
 

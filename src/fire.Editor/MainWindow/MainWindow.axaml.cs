@@ -850,7 +850,7 @@ namespace fire.Editor
         private void RefreshActiveUi()
         {
             var doc = ActiveDocument;
-            _propertiesPanel.Attach(doc?.View as IPropertyHost);
+            AttachProperties(doc);
             RefreshCircuitUi();
             UpdateWindowTitle(WindowTitle(doc));
             CaretText.Text = doc == null ? "" : $"Line {doc.View.GetCaretLine()}";
