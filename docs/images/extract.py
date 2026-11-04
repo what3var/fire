@@ -29,6 +29,9 @@ for folder, _, files in os.walk(docs):
         text = open(os.path.join(folder, f), encoding="utf-8").read()
         for m in pattern.finditer(text):
             name, fxml_name, fxml, code, extra = m.group(1), m.group(2), m.group(3), m.group(4), (m.group(6) or "").strip()
+            target = os.path.join(src, name + ".fire")
+            if os.path.exists(target) and not open(target, encoding="utf-8").read().startswith("// Made from"):
+                continue    # a hand-written program makes this picture
             run = re.search(r"^(\s*)(\w+)\.Run\(\)\s*(//.*)?$", code, re.M)
             loop = re.search(r"^(\s*)while \((\w+)\.Tick\(\)\) \{ \}\s*(//.*)?$", code, re.M)
             fbvar = re.search(r"var (\w+) = new Framebuffer\(", code)

@@ -1,14 +1,15 @@
-// Made from docs/circuits/README.md by extract.py - edit the page, not this file.
+// Screenshot of docs/circuits/README.md (hand-written: the circuit view with the 555 blinker that ships with spark, after a moment of simulation).
 #import "circuits.ui"
-#include "Blinker.biscuit"
+#include "circuit/Blinker.biscuit"
 #include "shot.fire"
 
 var fb = new Framebuffer(800, 460)
 var win = new Window(fb, "Circuit")
 var ui = new UI.Root(fb, win)
 var blinker = new Blinker()
+blinker.Run(5ms)
 var view = new UI.CircuitView(blinker, 0, 0, 800, 460)
 ui.Add(view)
-ui.Tick()                   // the first layout: now the view knows its size
+ui.Tick()
 view.FitToView()
-Shot.Save(ui, "circuit-view.png")
+Shot.Save(ui, "circuit-view.png", 20)
