@@ -25384,14 +25384,15 @@ else
                 CheckNat("Weglassen (stripping): ein Debug-Build behaelt alles; \"stripping\" als Zahl und Name, \"trim\" und --keep-all als Aliase, --stripping, das Projekt",
                     trAliasChecks.All(c => c.Ok), string.Join(", ", trAliasChecks.Where(c => !c.Ok).Select(c => c.Name)));
 
-                // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11
+                // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11 (the style of part 3 - corners,
+                // shadows, the surfaces of popups, docs/UI_PLATFORM.md - added about 25 KB: 3.1 MB)
                 const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
                 var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
                 var trUiSizes = trLevels.Select(lv => fire.Native.CppGenerator.GenerateSources(trUiLinked, stripping: lv).Program.Length).ToArray();
                 int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
                 // (level 1 is about level 0 here: ui keeps little private code that no public member reaches; the names of the left out members cost a few bytes)
-                CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 3 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
-                    trUiSize == trUiSizes[3] && trUiSize < 3_000_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
+                CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 3,1 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
+                    trUiSize == trUiSizes[3] && trUiSize < 3_100_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
                     string.Join(" / ", trUiSizes.Select((s, i) => $"{i}: {s}")));
             }
         }, () =>
@@ -26046,7 +26047,7 @@ else
                         File.WriteAllText(Path.Combine(dir, "run.sh"),
                             $"FIRE_DISPLAY=x11 \"{forge}\" run \"{dir}/area.fire\" > \"{dir}/out.txt\" 2>&1 &\n" +
                             $"for i in $(seq 1 300); do grep -q ready \"{dir}/out.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 0.5\n" +
-                            $"import -window root \"{dir}/screen.ppm\"\nwait\n");
+                            $"import -window root -depth 8 \"{dir}/screen.ppm\"\nwait\n");
                         var psi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 400x300x24\" sh \"{dir}/run.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
                         using var proc = System.Diagnostics.Process.Start(psi)!;
                         proc.StandardOutput.ReadToEnd(); proc.StandardError.ReadToEnd();
@@ -26630,10 +26631,10 @@ else
                         }
                     }
                 };
-                // (at the same time: the window cases; the checks of FIRE_SDL, the VM on X11 and the drag cases one after the other - the VM (forge run) installs the
+                // (at the same time: the window cases; the checks of FIRE_SDL, the VM on X11, PresentArea and the drag cases one after the other - the VM (forge run) installs the
                 // standard packages on its first start, the drag cases share their files -; Wayland; the cases under Wine)
-                if (windowRuns.Count != 6) throw new InvalidOperationException("the window runs changed: " + windowRuns.Count);
-                TestJobs.Concurrently(windowRuns[0], () => { for (int i = 1; i < 5; i++) windowRuns[i](); }, windowRuns[5], wineRuns);
+                if (windowRuns.Count != 7) throw new InvalidOperationException("the window runs changed: " + windowRuns.Count);
+                TestJobs.Concurrently(windowRuns[0], () => { for (int i = 1; i < 6; i++) windowRuns[i](); }, windowRuns[6], wineRuns);
             }
 
             // ---- UI library: the same elements natively (fire's own display without a screen: FIRE_DISPLAY=headless) against the VM with the dummy
