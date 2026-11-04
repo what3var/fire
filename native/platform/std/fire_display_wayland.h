@@ -7,6 +7,8 @@
  * in pixels of the screen (the scale of the output, also a fractional one with wp_fractional_scale + wp_viewporter); positions are reported in logical pixels of
  * the window, as the other displays report pixels of their window. VSync: a frame waits for the compositor's frame callback of the one before.
  * Decorations: the compositor's (xdg-decoration, server side) - where it draws none (GNOME), the window draws a plain title bar of its own above the framebuffer
+ * (FIRE_WAYLAND_CSD=0 leaves it out: tests). A window with that title bar is not given to a presenter (fire_display_native: a GPU drawing into the surface would
+ * leave it out) - it shows the pixels
  * (move, resize at the edges, minimize, maximize, close; the title with the built-in font of the graphics bridge when the program has it).
  * Input: keys (the scan code from the evdev code, the key code and the text from the keymap of the compositor through libxkbcommon, dead keys with its compose
  * tables, repeat at the rate the compositor names), text through the input method of the compositor (text-input-v3: compositions as FIRE_EV_TEXT_EDITING), the
@@ -428,7 +430,9 @@ static void fire_dwl_toplevelConfigure(void* data, void* t, int32_t width, int32
 }
 static void fire_dwl_toplevelClose(void* data, void* t) { FireDwlWindow* w = (FireDwlWindow*)data; (void)t; fire_display_queueSimple(&w->queue, FIRE_EV_CLOSE_REQUEST); }
 static const struct { void (*configure)(void*, void*, int32_t, int32_t, FireWlArray*); void (*close)(void*, void*); } fire_dwlToplevelListener = { fire_dwl_toplevelConfigure, fire_dwl_toplevelClose };
-static void fire_dwl_decoConfigure(void* data, void* d, uint32_t mode) { FireDwlWindow* w = (FireDwlWindow*)data; (void)d; w->serverDecorations = mode == 2; w->csd = mode != 2; }
+/* (FIRE_WAYLAND_CSD=0: no title bar of fire's own - the tests, on a compositor that draws none) */
+static int fire_dwl_ownTitleBar(void) { const char* e = getenv("FIRE_WAYLAND_CSD"); return e == NULL || strcmp(e, "0") != 0; }
+static void fire_dwl_decoConfigure(void* data, void* d, uint32_t mode) { FireDwlWindow* w = (FireDwlWindow*)data; (void)d; w->serverDecorations = mode == 2; w->csd = mode != 2 && fire_dwl_ownTitleBar(); }
 static const struct { void (*configure)(void*, void*, uint32_t); } fire_dwlDecoListener = { fire_dwl_decoConfigure };
 
 /* ---- the cursor ---- */
@@ -1246,7 +1250,7 @@ static int fire_dwl_open(FireDwlWindow* w, const char* title, int width, int hei
     l->addListener(w->toplevel, (FireWlVoid*)(void*)&fire_dwlToplevelListener, w);
     FIRE_WL_REQ(l, w->toplevel, 2, w->title);
     FIRE_WL_REQ(l, w->toplevel, 3, "fire");
-    w->csd = 1;
+    w->csd = fire_dwl_ownTitleBar();
     if (w->decoMgr != NULL) {
         w->deco = fire_dwl_new1(l, w->decoMgr, 1, &fire_wlDeco, w->toplevel);
         l->addListener(w->deco, (FireWlVoid*)(void*)&fire_dwlDecoListener, w);
@@ -1502,7 +1506,7 @@ static void fire_dwl_presentArea(FireDwlWindow* w, const uint32_t* rgba, int wid
 static void fire_dwl_present(FireDwlWindow* w, const uint32_t* rgba, int width, int height) { fire_dwl_presentArea(w, rgba, width, height, 0, 0, width, height); }
 
 static int fire_dwl_native(FireDwlWindow* w, fire_native_window* out) {
-    if (w->d == NULL) return 0;
+    if (w->d == NULL || w->csd) return 0;   /* (fire's own title bar is in the buffer of the surface: the window shows the pixels) */
     out->kind = FIRE_NATIVE_WAYLAND;
     out->a = w->d;
     out->b = w->surface;

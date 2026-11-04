@@ -26645,6 +26645,61 @@ else
                             wproc.WaitForExit(120000);
                             string wlGot = File.Exists(Path.Combine(dir, "wl.ppm")) ? ScreenPictures.Squares(File.ReadAllBytes(Path.Combine(dir, "wl.ppm"))) : "kein Bild";
                             CheckNat(wlTitle, wlGot == "(0, 0, 255) (0, 0, 255) (0, 0, 255) (255, 0, 0) (255, 0, 0)", wlGot + "\n" + (File.Exists(Path.Combine(dir, "wl.txt")) ? File.ReadAllText(Path.Combine(dir, "wl.txt")) : ""));
+                            // part 4.4 with a transparent backdrop: an accelerated framebuffer goes premultiplied from the GPU into a swap chain that mixes (weston shows it over
+                            // its black background) - the same picture as in software, and nothing is read back (FIRE_WAYLAND_CSD=0: no title bar of fire's own, which keeps
+                            // a window on the pixels)
+                            string trTitle = "Fenster: ein beschleunigter Framebuffer mit transparentem Hintergrund auf Wayland (weston, lavapipe) - vormultipliziert von der GPU ins Fenster, wie in Software, nichts zurueckgelesen";
+                            var trGot = new List<string>();
+                            foreach (bool acc in new[] { true, false })
+                            {
+                                string name = acc ? "trgpu" : "trsw";
+                                File.WriteAllText(Path.Combine(dir, name + ".fire"), """
+                                    #import "windows"
+                                    #import "time"
+                                    var fb = new Framebuffer(200, 100)
+                                    fb.Accelerated = ACC
+                                    var r = new Renderer(fb)
+                                    var win = new Window(fb, "tr")
+                                    win.VSync = true
+                                    win.Backdrop = Backdrop.Transparent
+                                    r.AlphaBlending = false
+                                    r.FillRect(0, 0, 200, 100, new SolidBrush(0x800000FF))
+                                    r.FillRect(20, 20, 30, 30, new SolidBrush(0xFFFF0000))
+                                    win.Tick()
+                                    win.Tick()
+                                    win.Tick()
+                                    var before = Framebuffer.GpuReadbacks()
+                                    for (var i = 0; i < 20; i = i + 1) {
+                                        r.FillRect(120, 20, 30, 30, new SolidBrush(0x4000FF00))
+                                        win.Tick()
+                                    }
+                                    print("gpu " + fb.Accelerated + " " + (Framebuffer.GpuReadbacks() - before) + " " + win.Backdrop)
+                                    print("ready")
+                                    for (var i = 0; i < 100; i = i + 1) {
+                                        win.Tick()
+                                        Sleep(16)
+                                    }
+                                    """.Replace("ACC", acc ? "true" : "false"));
+                                string trSocket = $"wl-{name}-{Environment.ProcessId}";
+                                File.WriteAllText(Path.Combine(dir, name + ".sh"),
+                                    $"export XDG_RUNTIME_DIR=\"{runtime}\"\nchmod 700 \"$XDG_RUNTIME_DIR\"\n" +
+                                    $"\"{westonTool}\" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={trSocket} --config=\"{runtime}/weston.ini\" > \"{runtime}/{name}.log\" 2>&1 &\nwp=$!\n" +
+                                    $"for i in $(seq 1 100); do [ -S \"$XDG_RUNTIME_DIR/{trSocket}\" ] && break; sleep 0.1; done\n" +
+                                    $"FIRE_WAYLAND_CSD=0 FIRE_GFX_GPU=cpu WAYLAND_DISPLAY={trSocket} FIRE_DISPLAY=wayland \"{forge}\" run \"{dir}/{name}.fire\" > \"{dir}/{name}.txt\" 2>&1 &\npp=$!\n" +
+                                    $"for i in $(seq 1 300); do grep -q ready \"{dir}/{name}.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 1\n" +
+                                    $"import -window root -depth 8 \"{dir}/{name}.ppm\"\nwait $pp\nkill $wp\n");
+                                var tpsi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 800x600x24\" sh \"{dir}/{name}.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
+                                using (var tproc = System.Diagnostics.Process.Start(tpsi)!)
+                                {
+                                    tproc.StandardOutput.ReadToEnd(); tproc.StandardError.ReadToEnd();
+                                    tproc.WaitForExit(120000);
+                                }
+                                string outText = File.Exists(Path.Combine(dir, name + ".txt")) ? File.ReadAllText(Path.Combine(dir, name + ".txt")) : "";
+                                string line = outText.Split('\n').FirstOrDefault(l => l.StartsWith("gpu ")) ?? "keine Ausgabe";
+                                trGot.Add(line.Trim() + " | " + (File.Exists(Path.Combine(dir, name + ".ppm")) ? ScreenPictures.Mixed(File.ReadAllBytes(Path.Combine(dir, name + ".ppm"))) : "kein Bild"));
+                            }
+                            if (trGot[0].StartsWith("gpu False")) Console.WriteLine("(transparenter Hintergrund auf der GPU: uebersprungen - kein Vulkan-Geraet)");
+                            else CheckNat(trTitle, trGot[0] == "gpu True 0 Transparent | (0, 0, 255) (0, 64, 0)" && trGot[1] == "gpu False 0 Transparent | (0, 0, 255) (0, 64, 0)", string.Join("\n", trGot));
                         }
                     }
                 });
@@ -28216,6 +28271,28 @@ static class ScreenPictures
         for (int y = 0; y < height; y++)
             for (int x = 0; x < width; x++)
                 if (Px(x, y) == (255, 0, 0)) return $"innen {Px(x + 35, y + 35)} aussen {Px(x + 135, y + 35)}";
+        return "kein Fenster";
+    }
+
+    /// <summary>A window with a transparent backdrop over a black desktop: its top left corner is the first pixel of half red (128, 0, 0); what lies at (35, 35) and (135, 35).</summary>
+    public static string Mixed(byte[] ppm)
+    {
+        int pos = 2, field = 0;
+        var header = new int[3];
+        while (field < 3)
+        {
+            while (pos < ppm.Length && char.IsWhiteSpace((char)ppm[pos])) pos++;
+            if (pos < ppm.Length && ppm[pos] == '#') { while (pos < ppm.Length && ppm[pos] != '\n') pos++; continue; }
+            int v = 0;
+            while (pos < ppm.Length && char.IsDigit((char)ppm[pos])) v = v * 10 + (ppm[pos++] - '0');
+            header[field++] = v;
+        }
+        pos++;
+        int width = header[0], height = header[1], start = pos;
+        (int, int, int) Px(int x, int y) { int i = start + (y * width + x) * 3; return i + 2 < ppm.Length ? (ppm[i], ppm[i + 1], ppm[i + 2]) : (-1, -1, -1); }
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                if (Px(x, y) == (128, 0, 0)) return $"{Px(x + 35, y + 35)} {Px(x + 135, y + 35)}";
         return "kein Fenster";
     }
 

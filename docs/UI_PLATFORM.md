@@ -262,9 +262,15 @@ ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
   einen CAMetalLayer) - derselbe Presenter-Weg der Fensterbrücke wie scene3d DirectDrawing (`fire_present_fn`), ohne Overlay. Die ersten Frames gehen zusätzlich als
   Pixel mit (das Fenster nimmt den Presenter vielleicht nicht, z. B. die Host-Anzeige des Editors); sobald ein Fenster einen gezeigt hat, bleiben die Frames auf der GPU.
   Ein Presenter, der scheitert, gibt das Fenster zurück, die Frames werden wieder zurückgelesen.
-* **Grenzen:** ein Fenster mit transparentem Hintergrund (Backdrop) bekommt weiter Pixel (die Swapchain ist deckend); zeigen zwei Fenster denselben Framebuffer, bekommt
-  das zweite die Pixel. Der Presenter zeigt einen neuen Frame sofort, den alten nur ab und zu wieder (nicht in jedem Zyklus). VSync übernimmt die Swapchain (FIFO) - lavapipe wartet
-  dabei nicht auf den Bildschirm.
+* **Transparenter Hintergrund (Backdrop):** der Frame wird beim Kopieren auf der GPU vormultipliziert (ein Pass des Effekt-Shaders, Modus 4 - dieselbe Rechnung
+  `c·a/255` wie die Anzeigen in Software), die Swapchain mischt mit `VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR`; sie wird beim Wechsel neu gemacht. Eine Fläche, die so
+  nicht mischen kann (Win32: nur deckend; X11 ohne 32-Bit-Visual), bekommt diese Frames als Pixel. Macht die Anzeige ihr Fenster dafür neu (X11: anderes Visual), lässt
+  der Presenter das alte vorher los.
+* **Grenzen:** zeichnet die Wayland-Anzeige ihre eigene Titelleiste (der Kompositor zeichnet keine: GNOME, weston), gibt sie das Fenster keinem Presenter - die Leiste
+  liegt im Puffer der Fläche (`FIRE_WAYLAND_CSD=0` lässt sie weg: Tests); das gilt auch für scene3d DirectDrawing. Zeigen zwei Fenster denselben Framebuffer, bekommt
+  das zweite die Pixel. Der Presenter zeigt einen neuen Frame sofort, den alten nur ab und zu wieder (nicht in jedem Zyklus). VSync übernimmt die Swapchain (FIFO) -
+  lavapipe wartet dabei nicht auf den Bildschirm.
 * **Ein Schloss:** Programm-Thread (Zeichnen, Kopieren) und Fenster-Threads (Präsentieren) teilen sich die eine Queue; jeder Presenter hat seinen eigenen Command-Pool.
-* **Tests:** unter Xvfb mit lavapipe: das Bild im Fenster (Bildschirmfoto) stimmt, und nach den ersten Frames liest nichts mehr zurück (`Framebuffer.GpuReadbacks()`).
+* **Tests:** unter Xvfb mit lavapipe: das Bild im Fenster (Bildschirmfoto) stimmt, und nach den ersten Frames liest nichts mehr zurück (`Framebuffer.GpuReadbacks()`);
+  auf Wayland (weston) ein transparentes Fenster: dasselbe gemischte Bild wie in Software, 0 Readbacks.
 

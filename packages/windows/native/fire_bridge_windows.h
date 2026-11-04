@@ -106,7 +106,10 @@ static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, 
         fire_display_restore(&s->display);
     }
     if (fn != NULL && !(fn == s->failedFn && ctx == s->failedCtx)) {
+        fire_native_window before = s->native;
         if (fire_display_native(&s->display, &s->native)) {
+            /* (the display made its OS window anew - another visual for a transparent backdrop: the presenter lets go of the old one first) */
+            if (s->direct && (before.kind != s->native.kind || before.a != s->native.a || before.b != s->native.b || before.id != s->native.id)) fn(ctx, 0, &before, NULL, 0, 0);
             s->direct = 1; s->presentFn = fn; s->presentCtx = ctx;
             if (fn(ctx, 1, &s->native, pixels, width, height)) return;
             fn(ctx, 0, &s->native, NULL, 0, 0);
@@ -839,14 +842,14 @@ static uint32_t* fire_winb_resolve(const FireGfxFramebuffer* fb) {
 }
 
 /* The frame of the framebuffer for its windows: the presenter - a package's (scene3d DirectDrawing) or, for an accelerated framebuffer, the GPU's (part 4.4: the picture
- * goes into the window from the GPU) - and the pixels: NULL when the GPU's presenter shows the frames and none are needed (nothing is read back). A window with a
- * transparent backdrop takes the pixels (the swap chain is opaque). */
+ * goes into the window from the GPU) - and the pixels: NULL when the GPU's presenter shows the frames and none are needed (nothing is read back). A window that shows
+ * what lies behind it gets its frames premultiplied into a swap chain that mixes; while a new backdrop is still asked for, the frame goes as pixels. */
 static uint32_t* fire_winb_frame(FireWinState* w, fire_present_fn* fn, void** ctx) {
     *fn = (fire_present_fn)w->fb->presentFn; *ctx = w->fb->presentCtx;
-    if (*fn == NULL && w->sh->backdrop == FIRE_BACKDROP_NONE && w->sh->backdropReq <= 0) {
+    if (*fn == NULL && w->sh->backdropReq < 0) {
         void (*gpuFn)(void) = NULL;
         void* gpuCtx = NULL;
-        int needs = fire_gfx_gpuPublish(w->fb, &gpuFn, &gpuCtx);
+        int needs = fire_gfx_gpuPublish(w->fb, w->sh->backdrop != FIRE_BACKDROP_NONE, &gpuFn, &gpuCtx);
         *fn = (fire_present_fn)gpuFn; *ctx = gpuCtx;
         if (!needs) return NULL;
     }

@@ -2,6 +2,7 @@
 // The passes of fire_gfx_fxBlurMaterial, in whole numbers as the software computes them:
 //   mode 0  smaller: the average of f x f pixels of the source (within region x0, y0, x1, y1), floor(sum / n)
 //   mode 1  a box blur of radius p.x along x (mode 2: along y): (sum of 2r+1 values, the edge repeated, + div/2) / div
+//   mode 4  a frame premultiplied by its alpha (for a window with a transparent backdrop, part 4.4)
 //   mode 3  back into the framebuffer: bilinear (16.16, 8-bit fractions), saturation, tint, grain, the light rim; alpha = the coverage of the rounded rectangle
 // Push constants: region = bx0, by0, bx1, by1 (the source area); box = x, y, w, h (the rectangle); p = corner radius, blur radius, kind, rim light;
 // q = tint (RGBA), saturation (/256), tw, th (the size of the small picture).
@@ -44,6 +45,12 @@ int grain(int x, int y) {
 void main() {
     ivec2 pt = ivec2(floor(gl_FragCoord.xy));
     int f = pass.f;
+    if (pass.mode == 4) {
+        // a frame for a window that shows what lies behind it: premultiplied, as the displays do it in software (c * a / 255)
+        ivec4 t = texel(pt);
+        outColor = vec4(vec3(t.rgb * t.a / 255) / 255.0, float(t.a) / 255.0);
+        return;
+    }
     if (pass.mode == 0) {
         ivec4 sum = ivec4(0);
         int n = 0;
