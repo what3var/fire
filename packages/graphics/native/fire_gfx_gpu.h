@@ -143,6 +143,7 @@ typedef struct FireGfxGpuTwin {
     VkImage image; VkDeviceMemory memory; VkImageView view; VkFramebuffer framebuffer;
     FireGfxVkBuffer staging;          /* host memory of the size of the picture: uploads and readbacks */
     int cpuValid, gpuValid;           /* who holds the current pixels (both: the same) */
+    int dirty[4];                     /* x0, y0, x1, y1: what the GPU drew since the pixels of the CPU were last the same (x1 <= x0: nothing) - only that comes back */
     FireGfxGpuShape* shapes; uint32_t shapeCount, shapeCap;
     FireGfxGpuImage* images; uint32_t imageCount, imageCap;
     FireGfxGpuEffect* effects; uint32_t effectCount, effectCap;
@@ -1307,9 +1308,15 @@ static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, i
         }
         if (inPass) g_fireGfxVk.vkCmdEndRenderPass(cmd);
     }
-    if (fetch) {
+    if (fetch && t->dirty[2] > t->dirty[0]) {
+        /* back: only what the GPU drew since the pixels were the same (the rest of them is still right) */
+        VkBufferImageCopy back = region;
+        back.bufferOffset = ((VkDeviceSize)t->dirty[1] * (VkDeviceSize)t->width + (VkDeviceSize)t->dirty[0]) * 4;
+        back.bufferRowLength = (uint32_t)t->width;
+        back.imageOffset.x = t->dirty[0]; back.imageOffset.y = t->dirty[1];
+        back.imageExtent.width = (uint32_t)(t->dirty[2] - t->dirty[0]); back.imageExtent.height = (uint32_t)(t->dirty[3] - t->dirty[1]);
         fire_gfx_gpuBarrier(cmd, t->image, VK_IMAGE_LAYOUT_GENERAL);
-        g_fireGfxVk.vkCmdCopyImageToBuffer(cmd, t->image, VK_IMAGE_LAYOUT_GENERAL, t->staging.buffer, 1, &region);
+        g_fireGfxVk.vkCmdCopyImageToBuffer(cmd, t->image, VK_IMAGE_LAYOUT_GENERAL, t->staging.buffer, 1, &back);
     }
     if (!fire_gfx_gpuCheck(g_fireGfxVk.vkEndCommandBuffer(cmd), "vkEndCommandBuffer")) return 0;
     memset(&si, 0, sizeof si);
@@ -1322,7 +1329,18 @@ static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, i
     t->gpuValid = 1;
     t->shapeCount = 0; t->imageCount = 0; t->effectCount = 0; t->batchCount = 0;
     if (draw) t->cpuValid = 0;
-    if (fetch) { memcpy(fb->pixels, t->staging.mapped, bytes); t->cpuValid = 1; g_fireGfxVk.readbacks++; }
+    if (fetch) {
+        if (t->dirty[2] > t->dirty[0]) {
+            int y, x0 = t->dirty[0], n = (t->dirty[2] - t->dirty[0]) * 4;
+            for (y = t->dirty[1]; y < t->dirty[3]; y++) {
+                size_t at = ((size_t)y * (size_t)t->width + (size_t)x0) * 4;
+                memcpy((uint8_t*)fb->pixels + at, (const uint8_t*)t->staging.mapped + at, (size_t)n);
+            }
+            g_fireGfxVk.readbacks++;
+        }
+        t->cpuValid = 1;
+        t->dirty[0] = t->dirty[1] = t->dirty[2] = t->dirty[3] = 0;
+    }
     return 1;
 }
 
@@ -1382,6 +1400,17 @@ static int fire_gfx_gpuClip(const FireGfxGpuTwin* t, int* cl, int* ct, int* cr, 
     return *cr > *cl && *cb > *ct;
 }
 
+/* What the GPU draws (x0, y0)-(x1, y1) is no longer the same in the pixels of the CPU: it comes back with the next readback. */
+static void fire_gfx_gpuDirty(FireGfxGpuTwin* t, int x0, int y0, int x1, int y1) {
+    int* d = t->dirty;
+    if (x1 <= x0 || y1 <= y0) return;
+    if (d[2] <= d[0]) { d[0] = x0; d[1] = y0; d[2] = x1; d[3] = y1; return; }
+    if (x0 < d[0]) d[0] = x0;
+    if (y0 < d[1]) d[1] = y0;
+    if (x1 > d[2]) d[2] = x1;
+    if (y1 > d[3]) d[3] = y1;
+}
+
 /* The batch the next command of `kind` goes into: the last one when it fits, else a new one. NULL without memory. The twin has drawing to do from now on. */
 static FireGfxGpuBatch* fire_gfx_gpuBatch(FireGfxGpuTwin* t, int kind, int cl, int ct, int cr, int cb, int copy, VkDescriptorSet set) {
     FireGfxGpuBatch* b = t->batchCount > 0 ? &t->batches[t->batchCount - 1] : NULL;
@@ -1426,6 +1455,7 @@ static int fire_gfx_gpuShape(FireGfxFramebuffer* fb, int cl, int ct, int cr, int
     }
     b = fire_gfx_gpuBatch(t, 0, cl, ct, cr, cb, copy, FIRE_GFX_NO_SET);
     if (b == NULL) return 0;
+    fire_gfx_gpuDirty(t, x0, y0, x1, y1);
     s = &t->shapes[t->shapeCount++];
     s->quad[0] = (float)x0; s->quad[1] = (float)y0; s->quad[2] = (float)(x1 - x0); s->quad[3] = (float)(y1 - y0);
     s->box[0] = (float)x; s->box[1] = (float)y; s->box[2] = (float)w; s->box[3] = (float)h;
@@ -1455,6 +1485,7 @@ static int fire_gfx_gpuPicture(FireGfxGpuTwin* t, VkDescriptorSet set, int cl, i
     }
     b = fire_gfx_gpuBatch(t, 1, cl, ct, cr, cb, copy, set);
     if (b == NULL) return 0;
+    fire_gfx_gpuDirty(t, x0, y0, x1, y1);
     im = &t->images[t->imageCount++];
     im->quad[0] = (float)x0; im->quad[1] = (float)y0; im->quad[2] = (float)(x1 - x0); im->quad[3] = (float)(y1 - y0);
     im->dst[0] = dx; im->dst[1] = dy; im->dst[2] = dw; im->dst[3] = dh;
@@ -1640,6 +1671,7 @@ static int fire_gfx_gpuShadow(FireGfxFramebuffer* fb, int cl, int ct, int cr, in
     }
     b = fire_gfx_gpuBatch(t, 1, cl, ct, cr, cb, 0, g_fireGfxVk.atlasSet);
     if (b == NULL) return 0;
+    fire_gfx_gpuDirty(t, x0, y0, x1, y1);
     im = &t->images[t->imageCount++];
     im->quad[0] = (float)x0; im->quad[1] = (float)y0; im->quad[2] = (float)(x1 - x0); im->quad[3] = (float)(y1 - y0);
     im->dst[0] = x; im->dst[1] = y; im->dst[2] = w; im->dst[3] = h;
@@ -1667,6 +1699,7 @@ static int fire_gfx_gpuEffect(FireGfxFramebuffer* fb, int cl, int ct, int cr, in
     }
     b = fire_gfx_gpuBatch(t, 2, cl, ct, cr, cb, 0, FIRE_GFX_NO_SET);
     if (b == NULL) return 0;
+    fire_gfx_gpuDirty(t, x > cl ? x : cl, y > ct ? y : ct, x + w < cr ? x + w : cr, y + h < cb ? y + h : cb);
     e = &t->effects[t->effectCount++];
     e->clip[0] = cl; e->clip[1] = ct; e->clip[2] = cr; e->clip[3] = cb;
     e->x = x; e->y = y; e->w = w; e->h = h; e->corner = corner; e->radius = radius; e->kind = kind; e->rim = rim;
@@ -1936,7 +1969,8 @@ static int fire_gfx_gpuMakeSwapchain(FireGfxGpuTarget* g, const fire_native_wind
     if (g->swapchain && !g->stale && extent.width == g->extent.width && extent.height == g->extent.height && (w->vsync != 0) == (g->vsync != 0) && g->alpha == g->transparent) return 1;
     if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) return 0;
     /* (a window that shows what lies behind it: the swap chain mixes by the premultiplied alpha - where the surface cannot, those frames go as pixels) */
-    if (g->transparent && !(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)) { g->noAlpha = 1; return 0; }
+    if (g->transparent && !(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)
+        && !(w->kind == FIRE_NATIVE_X11 && (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR))) { g->noAlpha = 1; return 0; }
     if (g_fireGfxVk.vkGetPhysicalDeviceSurfaceFormatsKHR(g_fireGfxVk.phys, g->surface, &nf, NULL) != VK_SUCCESS || nf == 0) return 0;
     formats = (VkSurfaceFormatKHR*)malloc(sizeof(VkSurfaceFormatKHR) * nf);
     if (formats == NULL || g_fireGfxVk.vkGetPhysicalDeviceSurfaceFormatsKHR(g_fireGfxVk.phys, g->surface, &nf, formats) != VK_SUCCESS) { free(formats); return 0; }
@@ -1966,7 +2000,8 @@ static int fire_gfx_gpuMakeSwapchain(FireGfxGpuTarget* g, const fire_native_wind
     ci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ci.preTransform = caps.currentTransform;
-    ci.compositeAlpha = g->transparent ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+    /* (X11: INHERIT puts the premultiplied pixels into the window's 32-bit visual as they are - the X compositor mixes them, as it does those of the display) */
+    ci.compositeAlpha = g->transparent ? ((caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR)
                       : (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
                       : (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR) ? VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR : VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
     ci.presentMode = mode;

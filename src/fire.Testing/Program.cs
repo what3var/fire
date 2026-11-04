@@ -11447,6 +11447,38 @@ uiDrawScript = """
         }
         print("gpu " + (!b.Accelerated || worst <= 2) + " " + (b.Accelerated || Framebuffer.GpuError() != ""))
         """, new[] { "gpu True True" });
+    // only what the GPU drew comes back (its rectangle since the pixels were last the same): GPU and CPU drawing in turn, read in between - the same pixels as in software
+    CheckUi("GPU: nur das von der GPU Gezeichnete kommt zurueck - GPU und CPU abwechselnd, dazwischen gelesen, wie in Software", uiHead + """
+        var a = new Framebuffer(120, 80)
+        var b = new Framebuffer(120, 80)
+        a.Accelerated = false
+        b.Accelerated = true
+        var worst = 0
+        var same = true
+        foreach (fb in [a, b]) {
+            var r = new Renderer(fb)
+            r.ClearTo(0xFF202020)
+            for (var i = 0; i < 12; i = i + 1) {
+                r.FillRect(i * 9, i * 5, 14, 10, new SolidBrush(0xFF0000FF + i * 0x00140A00))
+                r.FillCircle(110 - i * 8, 10 + i * 5, 4, new SolidBrush(0xC000FF00))
+                r.GetPixel(i * 9 + 2, i * 5 + 2)
+                r.FillRoundRect(60 - i * 3, 40, 20, 12, 4, new SolidBrush(0x80FF0000 + i * 8))
+            }
+        }
+        var ra = new Renderer(a)
+        var rb = new Renderer(b)
+        for (var y = 0; y < 80; y = y + 1) {
+            for (var x = 0; x < 120; x = x + 1) {
+                var pa = ra.GetPixel(x, y)
+                var pb = rb.GetPixel(x, y)
+                for (var c = 0; c < 32; c = c + 8) {
+                    var d = Math.Abs(((pa >> c) & 255) - ((pb >> c) & 255))
+                    if (d > worst) { worst = d }
+                }
+            }
+        }
+        print("gpu " + (!b.Accelerated || worst <= 2) + " " + (b.Accelerated || Framebuffer.GpuError() != ""))
+        """, new[] { "gpu True True" });
     Environment.SetEnvironmentVariable("FIRE_GFX_GPU", null);
 
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """

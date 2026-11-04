@@ -264,12 +264,17 @@ ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
   Ein Presenter, der scheitert, gibt das Fenster zurück, die Frames werden wieder zurückgelesen.
 * **Transparenter Hintergrund (Backdrop):** der Frame wird beim Kopieren auf der GPU vormultipliziert (ein Pass des Effekt-Shaders, Modus 4 - dieselbe Rechnung
   `c·a/255` wie die Anzeigen in Software), die Swapchain mischt mit `VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR`; sie wird beim Wechsel neu gemacht. Eine Fläche, die so
-  nicht mischen kann (Win32: nur deckend; X11 ohne 32-Bit-Visual), bekommt diese Frames als Pixel. Macht die Anzeige ihr Fenster dafür neu (X11: anderes Visual), lässt
+  nicht mischen kann, bekommt diese Frames als Pixel: Win32 (die Treiber bieten nur deckend; mischen kann dort nur DWM über DirectComposition - offen). X11: ein
+  32-Bit-Fenster ohne `PRE_MULTIPLIED` (z. B. NVIDIA) nimmt `INHERIT` - das vormultiplizierte Bild geht so ins Visual, der X-Kompositor mischt es wie das der
+  Anzeige; ein 24-Bit-Fenster kann nicht durchscheinen (ohne Kompositor gibt die Anzeige ohnehin keinen transparenten Backdrop). Macht die Anzeige ihr Fenster dafür neu (X11: anderes Visual), lässt
   der Presenter das alte vorher los.
 * **Grenzen:** zeichnet die Wayland-Anzeige ihre eigene Titelleiste (der Kompositor zeichnet keine: GNOME, weston), gibt sie das Fenster keinem Presenter - die Leiste
   liegt im Puffer der Fläche (`FIRE_WAYLAND_CSD=0` lässt sie weg: Tests); das gilt auch für scene3d DirectDrawing. Zeigen zwei Fenster denselben Framebuffer, bekommt
   das zweite die Pixel. Der Presenter zeigt einen neuen Frame sofort, den alten nur ab und zu wieder (nicht in jedem Zyklus). VSync übernimmt die Swapchain (FIFO) -
   lavapipe wartet dabei nicht auf den Bildschirm.
+* **Zurücklesen nur des Gezeichneten:** jeder Zwilling führt das Rechteck mit, das die GPU seit dem letzten Gleichstand gezeichnet hat (Formen, Bilder, Glyphen,
+  Schatten, Effekte); ein Abgleich holt nur dieses zurück - der Rest der CPU-Pixel stimmt noch. Das macht jeden Pixelweg billig (Windows mit Transparenz, `GetPixel`,
+  PNG, die Host-Anzeige), wenn sich wenig ändert.
 * **Ein Schloss:** Programm-Thread (Zeichnen, Kopieren) und Fenster-Threads (Präsentieren) teilen sich die eine Queue; jeder Presenter hat seinen eigenen Command-Pool.
 * **Tests:** unter Xvfb mit lavapipe: das Bild im Fenster (Bildschirmfoto) stimmt, und nach den ersten Frames liest nichts mehr zurück (`Framebuffer.GpuReadbacks()`);
   auf Wayland (weston) ein transparentes Fenster: dasselbe gemischte Bild wie in Software, 0 Readbacks.
