@@ -31,6 +31,24 @@ player.Drain()
 var speaker = new Audio.Output(25, 8000)           // ESP32: PWM on GPIO 25 at 8000 Hz
 ```
 
+### Without speakers
+
+The simulated device `"sim"` records what is played - this runs everywhere, also in a test:
+
+```fire
+#import "audio"
+
+var out = new Audio.Output("sim", 22050)           // the simulated device records what is played
+out.Tone(440, 100)                                 // 100 ms of a 440 Hz sine
+out.Tone(660, 100, Audio.Wave.Square, 50)
+out.Drain()
+print(Audio.Sim.Played())                          // 8820 - 0.2 s x 22050 frames x 2 bytes
+var tone = Audio.Sound.Tone(880, 50, Audio.Wave.Triangle, 80, 8000)
+var wav = tone.ToWav()                             // the bytes of a WAV file
+var back = Audio.Sound.FromWav(wav)
+print(back.rate + " Hz, " + back.channels + " channel(s)")   // 8000 Hz, 1 channel(s)
+```
+
 ## The device
 
 `new Audio.Output(device = "default", rate = 44100, channels = 1)`:
