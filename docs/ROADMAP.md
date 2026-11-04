@@ -415,7 +415,8 @@ abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört z
 
 ## 13. Kleine und alte Ziele
 
-Ziel: fire auf Mikrocontrollern ab 32 KB RAM / 128 KB Flash (Cortex-M, ESP32, RISC-V, PIC32), auf DOS (Real Mode und DPMI), Win 3.x, Win9x und NT 3.51 bis XP.
+Ziel: fire auf Mikrocontrollern ab 32 KB RAM / 128 KB Flash (Cortex-M, ESP32, RISC-V, PIC32), auf DOS (Real Mode und DPMI), Win 3.x, Win9x und NT 3.51 bis XP,
+und ohne Betriebssystem auf dem PC (BIOS, UEFI).
 Grundlage ist die Analyse auf `native-c` (Größen gemessen mit arm-none-eabi-gcc und avr-gcc): ab 32 Bit sinnvoll, 8-Bit-PIC nie (Hardware-Stack, kein
 Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 
@@ -451,15 +452,52 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Dazu **`#intwidth 16`** (native Breite des 8086/286) und **`word`** (vorzeichenlos in Maschinenbreite, `word[8|16|32]`; die VM bekommt die Wortbreite des Ziels).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
-5. **`win16`** - Win 3.x: `wcc`, Large Model, GDI, kooperative Nachrichtenschleife (`Sleep` gibt ab), keine fire-Threads.
-6. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
+5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste
+   (`int 10h`, ...) über einen kurzen Rücksprung in den Real Mode; Start als Multiboot-Kernel (GRUB, `qemu -kernel`) oder über einen eigenen Bootsektor.
+   Kein Audio, keine Dateien, kein Netz, keine fire-Threads - nur Grafik, grober IO (Bildschirm/Konsole, Tastatur, serieller Port) und die Hardware-Packages.
+6. **`efi-x64`** - eine UEFI-Anwendung (PE32+; clang + lld-link oder mingw-w64 x86_64 ohne CRT), bleibt in den Boot Services: Konsole über ConIn/ConOut, Grafik über
+   den GOP-Framebuffer, Zeit und `Sleep` über Timer-Ereignisse, Speicher über `AllocatePool`. Keine fire-Threads; Audio, Dateien und Netz wie bei `bios-x86` nicht.
+   EFI mit 32 Bit nicht (solche Rechner haben praktisch immer ein CSM: dort läuft `bios-x86`).
+
+   Gemeinsam für `bios-x86` und `efi-x64`: eine kleine freistehende C-Bibliothek für die Runtime (Heap aus der Speicherkarte - E820 bzw. die der Firmware -,
+   `snprintf`, Strings, Mathe, `setjmp`).
+7. **`win16`** - Win 3.x: `wcc`, Large Model, GDI, kooperative Nachrichtenschleife (`Sleep` gibt ab), keine fire-Threads.
+8. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
    `CONDITION_VARIABLE`), `GetTickCount` statt `GetTickCount64`, ANSI/Unicode-Schicht für 9x, `inet_addr` statt `inet_pton` (NT 3.51: Winsock 1.1), TLS über
    mbedTLS statt Schannel, kein USB, GDI aus dem laufenden Umbau.
-7. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
+9. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
    gepackt pro Klasse später.
 
-Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht pro Familie; Tests mit DOSBox-X / dosemu2 ohne Fenster (`dos16`, `dos32`, Win 3.11),
+Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios-x86` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
+Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios-x86`; `efi-x64` mit der Firmware OVMF),
 9x und NT über QEMU-Images.
+
+**Grafik auf alter Hardware** (Render-Targets der `graphics`-Bibliothek, für `dos16`, `dos32` und `bios-x86`; `efi-x64` hat nur GOP):
+
+* **MDA** (Text 80x25, monochrom mit Attributen): ein Render-Target für Zeichenzellen; Grafik auf der Monochromkarte über **Hercules** (720x348, 1 Bit).
+* **CGA** (Text 40/80x25 in 16 Farben, 320x200 mit 4 Farben aus den beiden Paletten, 640x200 mit 2), **EGA** (320x200 und 640x200/350 mit 16 aus 64 Farben, Bitebenen),
+  **VGA** (Mode 13h: 320x200 mit 256, Mode 12h: 640x480 mit 16, Bitebenen) und **VESA** (Framebuffer mit 8/15/16/24/32 Bit).
+* Das Render-Target wandelt beim Present in das Layout der Hardware (die verschränkten Bänke der CGA, die Bitebenen der EGA/VGA über Plane-Masken, die Palette in die
+  Register der Karte) - nur die geänderten Bereiche.
+* Ein eigener **`PackedFramebuffer`** für 1, 2 und 4 Bit pro Pixel (Palette mit 2, 4 und 16 Einträgen) - der `Framebuffer` (RGBA, 8-Bit-Palette) bleibt
+  unverändert:
+  * gruppiert 8, 4 oder 2 Pixel in ein Byte, das linke Pixel in den oberen Bits (wie CGA, die Ebenen der EGA und Hercules: das Present ist eine Kopie);
+  * Spans, Füllen und Blits arbeiten in ganzen Maschinenwörtern (16 bzw. 32 Bit: das Doppelte bzw. Vierfache an Pixeln pro Schritt, die Farbe als wiederholtes
+    Muster, Masken nur an den Rändern); Blits mit Versatz tauschen die Bytes (x86 ist Little Endian) oder gehen in Bytes;
+  * Zeilen auf die Wortbreite des Ziels gerundet;
+  * bei 4 Bit wahlweise *chunky* (2 Pixel pro Byte) oder *planar* (4 Ebenen mit je 1 Bit: das Layout der EGA/VGA-16, jede Ebene bleibt unter 64 KB);
+    *planar* ist der Standard auf `dos16` und `bios-x86` (auch im Bootblock, solange der Code dort noch im Real Mode läuft), sonst *chunky*;
+  * dieselbe Zeichen-API wie der `Framebuffer` über eine gemeinsame Schnittstelle; ein Blit zwischen beiden bildet die Farben über die Palette ab.
+  Wer auf eine CGA/EGA zeichnet, kann ebenso einen 8-Bit-`Framebuffer` nehmen - das Render-Target bildet dann auf die Farben der Karte ab.
+
+**Hardware-Packages** (für `dos16`, `dos32`, `bios-x86`, teils `efi-x64`):
+
+* **`machine`** - die Hardware des PCs, auf jedem dieser Ziele gleich: Ports (`In`/`Out` mit 8/16/32 Bit), physischer Speicher (`Peek`/`Poke`, Bereiche abbilden),
+  PCI-Konfiguration, CPUID, PIT, CMOS/RTC, Interrupts (Handler eintragen, PIC/EOI, sperren/freigeben). Darunter je Ziel: DOS über die Vektoren von `int 21h`,
+  DPMI über die DPMI-Funktionen, `bios-x86` über eine eigene IDT; EFI ohne Interrupts (Abfragen, Timer-Ereignisse) und PCI über die Protokolle der Firmware.
+  Paralleler und serieller Port als Geräte des Gerätemanagers (`devices`).
+* Darauf die Dienste der Umgebung: **`dos`** (`int 21h`, `int86`, Speicher und Vektoren von DOS), **`dpmi`** (siehe 4), **`bios`** (`int 10h`/`13h`/`16h`/`1Ah` über den
+  Rücksprung in den Real Mode), **`efi`** (Protokolle der Firmware: GOP, Konsole, Variablen, Zeit), **`xms`** (siehe 3).
 
 **Dazwischen, klein:**
 
