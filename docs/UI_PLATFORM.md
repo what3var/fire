@@ -214,7 +214,7 @@ Noch offen:
 
 ## Stand Teil 4
 
-Stufen: **4.1** Grundgerüst, **4.2** Text über einen Glyphen-Atlas und Blits über Texturen, **4.3** Schatten, Blur und Materialien auf der GPU, **4.4** Präsentieren
+Stufen (alle umgesetzt): **4.1** Grundgerüst, **4.2** Text über einen Glyphen-Atlas und Blits über Texturen, **4.3** Schatten, Blur und Materialien auf der GPU, **4.4** Präsentieren
 ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
 
 4.1 (`packages/graphics/native/fire_gfx_gpu.h`):
@@ -254,5 +254,17 @@ ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
   `DrawMaterial` geht dieselben Zweige wie in Software (deckend, Tönung ohne Blur, Material) samt Haarlinie als Formen.
 * **Tests:** Schatten (auch negativ versetzt), Blur (Radius 3 bis 30), Glas, Acryl, Tönung, mit Clip und ohne Blending, nach einer Größenänderung - gegen Software
   höchstens 1 Stufe.
-* Noch offen bis 4.4: das Fenster bekommt die Pixel zurückgelesen.
+
+4.4 (direkt ins Fenster):
+
+* **Ohne Zurücklesen:** zeigt ein Fenster einen beschleunigten Framebuffer, kopiert das Veröffentlichen eines Frames (`Tick`, `Present`) das Bild des Zwillings auf der
+  GPU in das Bild seines Presenters; der Fenster-Thread blittet es über eine Swapchain ins Fenster (`VK_KHR_swapchain` auf einer Fläche für Win32, X11, Wayland oder
+  einen CAMetalLayer) - derselbe Presenter-Weg der Fensterbrücke wie scene3d DirectDrawing (`fire_present_fn`), ohne Overlay. Die ersten Frames gehen zusätzlich als
+  Pixel mit (das Fenster nimmt den Presenter vielleicht nicht, z. B. die Host-Anzeige des Editors); sobald ein Fenster einen gezeigt hat, bleiben die Frames auf der GPU.
+  Ein Presenter, der scheitert, gibt das Fenster zurück, die Frames werden wieder zurückgelesen.
+* **Grenzen:** ein Fenster mit transparentem Hintergrund (Backdrop) bekommt weiter Pixel (die Swapchain ist deckend); zeigen zwei Fenster denselben Framebuffer, bekommt
+  das zweite die Pixel. Der Presenter zeigt einen neuen Frame sofort, den alten nur ab und zu wieder (nicht in jedem Zyklus). VSync übernimmt die Swapchain (FIFO) - lavapipe wartet
+  dabei nicht auf den Bildschirm.
+* **Ein Schloss:** Programm-Thread (Zeichnen, Kopieren) und Fenster-Threads (Präsentieren) teilen sich die eine Queue; jeder Presenter hat seinen eigenen Command-Pool.
+* **Tests:** unter Xvfb mit lavapipe: das Bild im Fenster (Bildschirmfoto) stimmt, und nach den ersten Frames liest nichts mehr zurück (`Framebuffer.GpuReadbacks()`).
 

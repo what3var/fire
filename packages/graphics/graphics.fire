@@ -115,6 +115,8 @@ class Framebuffer {
         set { __GRPHFbSetAccelerated(this.id, value) }
     }
     static string GpuError() { return __GRPHFbGpuError() }
+    // How often pictures came back from the GPU to the CPU so far (a window that shows an accelerated framebuffer takes them from the GPU: part 4.4) - for tests
+    static int GpuReadbacks() { return __GRPHFbGpuReadbacks() }
     int ReadByte(int offset) { return __GRPHFbReadByte(this.id, offset) }
     undefined WriteByte(int offset, int value) { __GRPHFbWriteByte(this.id, offset, value) }
     byte[] ReadBytes() { return __GRPHFbReadBytes(this.id) }

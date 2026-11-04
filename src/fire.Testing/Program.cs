@@ -26551,6 +26551,51 @@ else
                         string screenFile = Path.Combine(dir, "screen.ppm");
                         string got = File.Exists(screenFile) ? ScreenPictures.Area(File.ReadAllBytes(screenFile)) : "kein Bild";
                         CheckNat(title, got == "innen (0, 0, 255) aussen (255, 0, 0)", got + "\n" + (File.Exists(Path.Combine(dir, "out.txt")) ? File.ReadAllText(Path.Combine(dir, "out.txt")) : ""));
+                        // part 4.4: an accelerated framebuffer in a window on X11 - its frames go from the GPU into the window (a swap chain of lavapipe: FIRE_GFX_GPU=cpu);
+                        // after the first frames nothing is read back, and the picture of the screen shows what the GPU drew
+                        string gpuTitle = "Fenster: ein beschleunigter Framebuffer auf X11 (Xvfb, lavapipe) - die Frames gehen von der GPU ins Fenster, nichts wird mehr zurueckgelesen";
+                        File.WriteAllText(Path.Combine(dir, "gpu.fire"), """
+                            #import "windows"
+                            #import "time"
+                            var fb = new Framebuffer(200, 100)
+                            fb.Accelerated = true
+                            var r = new Renderer(fb)
+                            var win = new Window(fb, "gpu")
+                            win.VSync = true
+                            r.FillRect(0, 0, 200, 100, new SolidBrush(0xFF0000FF))
+                            win.Tick()
+                            win.Tick()
+                            win.Tick()
+                            var before = Framebuffer.GpuReadbacks()
+                            r.FillRect(20, 20, 30, 30, new SolidBrush(0xFFFF0000))
+                            for (var i = 0; i < 10; i = i + 1) { win.Tick() }
+                            r.FillRect(120, 20, 30, 30, new SolidBrush(0xFF00FF00))
+                            for (var i = 0; i < 10; i = i + 1) { win.Tick() }
+                            print("gpu " + fb.Accelerated + " " + (Framebuffer.GpuReadbacks() - before) + " " + Framebuffer.GpuError())
+                            print("ready")
+                            for (var i = 0; i < 100; i = i + 1) {
+                                win.Tick()
+                                Sleep(16)
+                            }
+                            """);
+                        File.WriteAllText(Path.Combine(dir, "gpu.sh"),
+                            $"FIRE_GFX_GPU=cpu FIRE_DISPLAY=x11 \"{forge}\" run \"{dir}/gpu.fire\" > \"{dir}/gpu.txt\" 2>&1 &\n" +
+                            $"for i in $(seq 1 600); do grep -q ready \"{dir}/gpu.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 0.5\n" +
+                            $"import -window root -depth 8 \"{dir}/gpu.ppm\"\nwait\n");
+                        var gpsi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 400x300x24\" sh \"{dir}/gpu.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
+                        using (var gproc = System.Diagnostics.Process.Start(gpsi)!)
+                        {
+                            gproc.StandardOutput.ReadToEnd(); gproc.StandardError.ReadToEnd();
+                            gproc.WaitForExit(180000);
+                        }
+                        string gpuOut = File.Exists(Path.Combine(dir, "gpu.txt")) ? File.ReadAllText(Path.Combine(dir, "gpu.txt")) : "";
+                        if (gpuOut.Contains("gpu False")) Console.WriteLine("(beschleunigter Framebuffer unter Xvfb: uebersprungen - kein Vulkan-Geraet)");
+                        else
+                        {
+                            string gpuFile = Path.Combine(dir, "gpu.ppm");
+                            string gpuGot = File.Exists(gpuFile) ? ScreenPictures.Area(File.ReadAllBytes(gpuFile)) : "kein Bild";
+                            CheckNat(gpuTitle, gpuGot == "innen (0, 0, 255) aussen (0, 255, 0)" && gpuOut.Contains("gpu True 0 "), gpuGot + "\n" + gpuOut);
+                        }
                         // Wayland (weston with its X11 backend in Xvfb): two buffers in turn - each gets what it missed when it is drawn next; three squares reported one after
                         // the other must all be there (and what is between them unchanged)
                         string wlTitle = "Fenster: PresentArea auf Wayland (weston unter Xvfb) - zwei Puffer im Wechsel: drei nacheinander gemeldete Bereiche sind alle da, der Rest unveraendert";

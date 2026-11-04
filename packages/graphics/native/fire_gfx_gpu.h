@@ -49,6 +49,8 @@ static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, 
     (void)fb; (void)cl; (void)ct; (void)cr; (void)cb; (void)blend; (void)x; (void)y; (void)w; (void)h; (void)corner; (void)kind; (void)tint; (void)base; (void)flags;
     return 0;
 }
+static int fire_gfx_gpuPublish(FireGfxFramebuffer* fb, void (**fn)(void), void** ctx) { (void)fb; *fn = NULL; *ctx = NULL; return 1; }
+static unsigned fire_gfx_gpuReadbacks(void) { return 0; }
 
 #else
 
@@ -62,6 +64,7 @@ static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, 
 #  include <windows.h>
 #else
 #  include <dlfcn.h>
+#  include <pthread.h>
 #endif
 #ifndef FIRE_VK_DECLS_H
 #include "fire_gfx_vk.h"   /* (the same file as scene3d/native/s3d_vk.h: a native build with both has them once) */
@@ -72,7 +75,7 @@ static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, 
 
 #define FIRE_GFX_VK_INSTANCE_FUNCTIONS(X) \
     X(vkDestroyInstance) X(vkEnumeratePhysicalDevices) X(vkGetPhysicalDeviceProperties) X(vkGetPhysicalDeviceQueueFamilyProperties) \
-    X(vkGetPhysicalDeviceMemoryProperties) X(vkGetPhysicalDeviceFormatProperties) X(vkCreateDevice) X(vkGetDeviceProcAddr)
+    X(vkGetPhysicalDeviceMemoryProperties) X(vkGetPhysicalDeviceFormatProperties) X(vkCreateDevice) X(vkGetDeviceProcAddr) X(vkEnumerateDeviceExtensionProperties)
 #define FIRE_GFX_VK_DEVICE_FUNCTIONS(X) \
     X(vkDestroyDevice) X(vkGetDeviceQueue) X(vkDeviceWaitIdle) X(vkQueueSubmit) X(vkCreateCommandPool) X(vkDestroyCommandPool) \
     X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkResetCommandBuffer) X(vkCreateFence) X(vkDestroyFence) \
@@ -83,7 +86,40 @@ static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, 
     X(vkCreateGraphicsPipelines) X(vkDestroyPipeline) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCmdBindPipeline) X(vkCmdBindVertexBuffers) \
     X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdPushConstants) X(vkCmdDraw) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdPipelineBarrier) \
     X(vkCreateDescriptorSetLayout) X(vkDestroyDescriptorSetLayout) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) \
-    X(vkFreeDescriptorSets) X(vkUpdateDescriptorSets) X(vkCreateSampler) X(vkDestroySampler) X(vkCmdBindDescriptorSets)
+    X(vkFreeDescriptorSets) X(vkUpdateDescriptorSets) X(vkCreateSampler) X(vkDestroySampler) X(vkCmdBindDescriptorSets) X(vkCreateSemaphore) X(vkDestroySemaphore) \
+    X(vkCmdBlitImage) X(vkCmdCopyImage)
+/* For the windows (part 4.4: the picture straight into a window), where the driver has them (VK_KHR_surface, VK_KHR_swapchain): loaded when they are there. */
+#define FIRE_GFX_VK_WSI_INSTANCE_FUNCTIONS(X) \
+    X(vkDestroySurfaceKHR) X(vkGetPhysicalDeviceSurfaceSupportKHR) X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR) X(vkGetPhysicalDeviceSurfaceFormatsKHR) \
+    X(vkGetPhysicalDeviceSurfacePresentModesKHR)
+#define FIRE_GFX_VK_WSI_DEVICE_FUNCTIONS(X) \
+    X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) X(vkAcquireNextImageKHR) X(vkQueuePresentKHR)
+
+/* The window of a presenter (the same declarations as in native/abi/fire_pkg_abi.h, where they are described). */
+#ifndef FIRE_NATIVE_WINDOW_DEFINED
+#define FIRE_NATIVE_WINDOW_DEFINED 1
+enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4 };
+typedef struct fire_native_window { int32_t kind; int32_t width, height; int32_t vsync; void* a; void* b; uint64_t id; } fire_native_window;
+typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
+#endif
+/* The surfaces of the window systems (their declarations are in the platform headers of Vulkan, which need the headers of the window systems: written out here, as in
+ * scene3d's s3d_gpu_vk.h). */
+typedef struct FireGfxVkWin32SurfaceInfo { VkStructureType sType; const void* pNext; VkFlags flags; void* hinstance; void* hwnd; } FireGfxVkWin32SurfaceInfo;
+typedef struct FireGfxVkXlibSurfaceInfo { VkStructureType sType; const void* pNext; VkFlags flags; void* dpy; unsigned long window; } FireGfxVkXlibSurfaceInfo;
+typedef struct FireGfxVkWaylandSurfaceInfo { VkStructureType sType; const void* pNext; VkFlags flags; void* display; void* surface; } FireGfxVkWaylandSurfaceInfo;
+typedef struct FireGfxVkMetalSurfaceInfo { VkStructureType sType; const void* pNext; VkFlags flags; const void* pLayer; } FireGfxVkMetalSurfaceInfo;
+typedef VkResult (VKAPI_PTR *PFN_fireGfxCreateSurface)(VkInstance instance, const void* createInfo, const VkAllocationCallbacks* allocator, VkSurfaceKHR* surface);
+
+/* One lock for the backend: the program's thread draws, the windows' threads present, and both use the one queue. */
+#ifdef _WIN32
+static SRWLOCK g_fireGfxGpuLock = SRWLOCK_INIT;
+static void fire_gfx_gpuLock(void) { AcquireSRWLockExclusive(&g_fireGfxGpuLock); }
+static void fire_gfx_gpuUnlock(void) { ReleaseSRWLockExclusive(&g_fireGfxGpuLock); }
+#else
+static pthread_mutex_t g_fireGfxGpuLock = PTHREAD_MUTEX_INITIALIZER;
+static void fire_gfx_gpuLock(void) { pthread_mutex_lock(&g_fireGfxGpuLock); }
+static void fire_gfx_gpuUnlock(void) { pthread_mutex_unlock(&g_fireGfxGpuLock); }
+#endif
 
 /* One shape for the GPU (the vertex input of shaders/gfx_shape.vert): 52 bytes. */
 typedef struct FireGfxGpuShape { float quad[4], box[4], param[4]; uint32_t color; } FireGfxGpuShape;
@@ -128,10 +164,17 @@ static struct {
     void* lib;
     PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
     PFN_vkCreateInstance vkCreateInstance;
+    PFN_vkEnumerateInstanceExtensionProperties vkEnumerateInstanceExtensionProperties;
 #define FIRE_GFX_VK_DECLARE(name) PFN_##name name;
     FIRE_GFX_VK_INSTANCE_FUNCTIONS(FIRE_GFX_VK_DECLARE)
     FIRE_GFX_VK_DEVICE_FUNCTIONS(FIRE_GFX_VK_DECLARE)
+    FIRE_GFX_VK_WSI_INSTANCE_FUNCTIONS(FIRE_GFX_VK_DECLARE)
+    FIRE_GFX_VK_WSI_DEVICE_FUNCTIONS(FIRE_GFX_VK_DECLARE)
 #undef FIRE_GFX_VK_DECLARE
+    unsigned readbacks;        /* how often pictures came back to the CPU (Framebuffer.GpuReadbacks: the tests) */
+    int wsi;                   /* the instance has VK_KHR_surface (and a surface of a window system), the device VK_KHR_swapchain: pictures can go into windows */
+    PFN_fireGfxCreateSurface createWin32Surface, createXlibSurface, createWaylandSurface, createMetalSurface;
+    struct FireGfxGpuTarget* targets;   /* the presenters of the framebuffers (part 4.4); never freed while the backend lives - a window may hold one */
     VkInstance instance;
     VkPhysicalDevice phys;
     VkDevice device;
@@ -206,14 +249,25 @@ static int fire_gfx_gpuLoad(void) {
 #endif
     if (g_fireGfxVk.vkGetInstanceProcAddr == NULL) { fire_gfx_gpuFail("The Vulkan loader has no vkGetInstanceProcAddr."); return 0; }
     g_fireGfxVk.vkCreateInstance = (PFN_vkCreateInstance)g_fireGfxVk.vkGetInstanceProcAddr(NULL, "vkCreateInstance");
+    g_fireGfxVk.vkEnumerateInstanceExtensionProperties = (PFN_vkEnumerateInstanceExtensionProperties)g_fireGfxVk.vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceExtensionProperties");
     if (g_fireGfxVk.vkCreateInstance == NULL) { fire_gfx_gpuFail("The Vulkan loader is incomplete."); return 0; }
     return 1;
+}
+
+static int fire_gfx_gpuHasExtension(const VkExtensionProperties* list, uint32_t count, const char* name) {
+    uint32_t i;
+    for (i = 0; i < count; i++) if (strcmp(list[i].extensionName, name) == 0) return 1;
+    return 0;
 }
 
 static int fire_gfx_gpuInstance(void) {
     VkApplicationInfo app;
     VkInstanceCreateInfo ci;
     VkResult r;
+    VkExtensionProperties* exts;
+    const char* enabled[8];
+    uint32_t n = 0, count = 0;
+    int surface = 0;
     memset(&app, 0, sizeof app);
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.pApplicationName = "fire graphics";
@@ -222,6 +276,26 @@ static int fire_gfx_gpuInstance(void) {
     memset(&ci, 0, sizeof ci);
     ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ci.pApplicationInfo = &app;
+    if (g_fireGfxVk.vkEnumerateInstanceExtensionProperties != NULL && g_fireGfxVk.vkEnumerateInstanceExtensionProperties(NULL, &count, NULL) == VK_SUCCESS && count > 0) {
+        exts = (VkExtensionProperties*)malloc(sizeof(VkExtensionProperties) * count);
+        if (exts && g_fireGfxVk.vkEnumerateInstanceExtensionProperties(NULL, &count, exts) == VK_SUCCESS) {
+            static const char* const surfaces[4] = {"VK_KHR_win32_surface", "VK_KHR_xlib_surface", "VK_KHR_wayland_surface", "VK_EXT_metal_surface"};
+            int k;
+            /* MoltenVK (macOS) is a "portability" implementation: it is only listed when the program says it can take one */
+            if (fire_gfx_gpuHasExtension(exts, count, "VK_KHR_portability_enumeration")) {
+                enabled[n++] = "VK_KHR_portability_enumeration";
+                ci.flags = 0x00000001;   /* VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR */
+            }
+            /* the surfaces of the window systems, where they are there */
+            if (fire_gfx_gpuHasExtension(exts, count, "VK_KHR_surface")) {
+                enabled[n++] = "VK_KHR_surface";
+                for (k = 0; k < 4; k++) if (fire_gfx_gpuHasExtension(exts, count, surfaces[k])) { enabled[n++] = surfaces[k]; surface = 1; }
+            }
+        }
+        free(exts);
+    }
+    ci.enabledExtensionCount = n;
+    ci.ppEnabledExtensionNames = n > 0 ? enabled : NULL;
     r = g_fireGfxVk.vkCreateInstance(&ci, NULL, &g_fireGfxVk.instance);
     if (r != VK_SUCCESS) {
         if (r == VK_ERROR_INCOMPATIBLE_DRIVER) fire_gfx_gpuFail("There is no Vulkan driver on this machine.");
@@ -234,6 +308,16 @@ static int fire_gfx_gpuInstance(void) {
     if (g_fireGfxVk.name == NULL) { fire_gfx_gpuFail("The Vulkan loader lacks " #name "."); return 0; }
     FIRE_GFX_VK_INSTANCE_FUNCTIONS(FIRE_GFX_VK_LOAD_I)
 #undef FIRE_GFX_VK_LOAD_I
+    g_fireGfxVk.wsi = surface;
+    if (surface) {
+#define FIRE_GFX_VK_LOAD_WI(name) g_fireGfxVk.name = (PFN_##name)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, #name); if (g_fireGfxVk.name == NULL) g_fireGfxVk.wsi = 0;
+        FIRE_GFX_VK_WSI_INSTANCE_FUNCTIONS(FIRE_GFX_VK_LOAD_WI)
+#undef FIRE_GFX_VK_LOAD_WI
+        g_fireGfxVk.createWin32Surface = (PFN_fireGfxCreateSurface)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, "vkCreateWin32SurfaceKHR");
+        g_fireGfxVk.createXlibSurface = (PFN_fireGfxCreateSurface)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, "vkCreateXlibSurfaceKHR");
+        g_fireGfxVk.createWaylandSurface = (PFN_fireGfxCreateSurface)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, "vkCreateWaylandSurfaceKHR");
+        g_fireGfxVk.createMetalSurface = (PFN_fireGfxCreateSurface)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, "vkCreateMetalSurfaceEXT");
+    }
     return 1;
 }
 
@@ -295,6 +379,10 @@ static int fire_gfx_gpuDevice(void) {
     VkCommandPoolCreateInfo pi;
     VkCommandBufferAllocateInfo ai;
     VkFenceCreateInfo fi;
+    VkExtensionProperties* exts;
+    const char* enabled[4];
+    uint32_t n = 0, count = 0;
+    int swapchain = 0;
     memset(&qi, 0, sizeof qi);
     qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     qi.queueFamilyIndex = g_fireGfxVk.family;
@@ -304,12 +392,29 @@ static int fire_gfx_gpuDevice(void) {
     di.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     di.queueCreateInfoCount = 1;
     di.pQueueCreateInfos = &qi;
+    if (g_fireGfxVk.vkEnumerateDeviceExtensionProperties(g_fireGfxVk.phys, NULL, &count, NULL) == VK_SUCCESS && count > 0) {
+        exts = (VkExtensionProperties*)malloc(sizeof(VkExtensionProperties) * count);
+        if (exts && g_fireGfxVk.vkEnumerateDeviceExtensionProperties(g_fireGfxVk.phys, NULL, &count, exts) == VK_SUCCESS) {
+            /* a portability implementation has to be told that the program knows it is one */
+            if (fire_gfx_gpuHasExtension(exts, count, "VK_KHR_portability_subset")) enabled[n++] = "VK_KHR_portability_subset";
+            if (g_fireGfxVk.wsi && fire_gfx_gpuHasExtension(exts, count, "VK_KHR_swapchain")) { enabled[n++] = "VK_KHR_swapchain"; swapchain = 1; }
+        }
+        free(exts);
+    }
+    if (!swapchain) g_fireGfxVk.wsi = 0;
+    di.enabledExtensionCount = n;
+    di.ppEnabledExtensionNames = n > 0 ? enabled : NULL;
     if (!fire_gfx_gpuCheck(g_fireGfxVk.vkCreateDevice(g_fireGfxVk.phys, &di, NULL, &g_fireGfxVk.device), "vkCreateDevice")) return 0;
 #define FIRE_GFX_VK_LOAD_D(name) \
     g_fireGfxVk.name = (PFN_##name)g_fireGfxVk.vkGetDeviceProcAddr(g_fireGfxVk.device, #name); \
     if (g_fireGfxVk.name == NULL) { fire_gfx_gpuFail("The Vulkan driver lacks " #name "."); return 0; }
     FIRE_GFX_VK_DEVICE_FUNCTIONS(FIRE_GFX_VK_LOAD_D)
 #undef FIRE_GFX_VK_LOAD_D
+    if (g_fireGfxVk.wsi) {
+#define FIRE_GFX_VK_LOAD_WD(name) g_fireGfxVk.name = (PFN_##name)g_fireGfxVk.vkGetDeviceProcAddr(g_fireGfxVk.device, #name); if (g_fireGfxVk.name == NULL) g_fireGfxVk.wsi = 0;
+        FIRE_GFX_VK_WSI_DEVICE_FUNCTIONS(FIRE_GFX_VK_LOAD_WD)
+#undef FIRE_GFX_VK_LOAD_WD
+    }
     g_fireGfxVk.vkGetDeviceQueue(g_fireGfxVk.device, g_fireGfxVk.family, 0, &g_fireGfxVk.queue);
     memset(&pi, 0, sizeof pi);
     pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1099,7 +1204,15 @@ static int fire_gfx_gpuRun(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch)
     return fire_gfx_gpuRunOne(fb, t, fetch);
 }
 
+static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch);
 static int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch) {
+    int ok;
+    fire_gfx_gpuLock();
+    ok = fire_gfx_gpuRunOneLocked(fb, t, fetch);
+    fire_gfx_gpuUnlock();
+    return ok;
+}
+static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch) {
     VkCommandBuffer cmd = g_fireGfxVk.cmd;
     VkCommandBufferBeginInfo bi;
     VkSubmitInfo si;
@@ -1209,7 +1322,7 @@ static int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fet
     t->gpuValid = 1;
     t->shapeCount = 0; t->imageCount = 0; t->effectCount = 0; t->batchCount = 0;
     if (draw) t->cpuValid = 0;
-    if (fetch) { memcpy(fb->pixels, t->staging.mapped, bytes); t->cpuValid = 1; }
+    if (fetch) { memcpy(fb->pixels, t->staging.mapped, bytes); t->cpuValid = 1; g_fireGfxVk.readbacks++; }
     return 1;
 }
 
@@ -1236,7 +1349,8 @@ static void fire_gfx_gpuCpu(FireGfxFramebuffer* fb, int writes) {
 /* (fire_gfx.h asks through these: it knows nothing of the GPU) */
 static void fire_gfx_gpuSyncHook(FireGfxFramebuffer* fb, int writes) { fire_gfx_gpuCpu(fb, writes); }
 /* (a framebuffer goes: what others still draw from it is drawn first) */
-static void fire_gfx_gpuFreeHook(FireGfxFramebuffer* fb) { FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu; fb->gpu = NULL; fire_gfx_gpuUnlist(t); fire_gfx_gpuRunOthers(NULL); fire_gfx_gpuFreeTwin(t); }
+static void fire_gfx_gpuForget(FireGfxFramebuffer* fb);
+static void fire_gfx_gpuFreeHook(FireGfxFramebuffer* fb) { FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu; fb->gpu = NULL; fire_gfx_gpuForget(fb); fire_gfx_gpuUnlist(t); fire_gfx_gpuRunOthers(NULL); fire_gfx_gpuFreeTwin(t); }
 
 static int fire_gfx_gpuAttach(FireGfxFramebuffer* fb) {
     if (fb->gpu != NULL) return 1;
@@ -1254,6 +1368,7 @@ static void fire_gfx_gpuDetach(FireGfxFramebuffer* fb) {
     fire_gfx_gpuCpu(fb, 0);
     t = (FireGfxGpuTwin*)fb->gpu;
     fb->gpu = NULL;
+    fire_gfx_gpuForget(fb);
     if (t != NULL) { fire_gfx_gpuUnlist(t); fire_gfx_gpuRunOthers(NULL); }
     fire_gfx_gpuFreeTwin(t);
 }
@@ -1594,6 +1709,423 @@ static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, 
         if (h > 2 * corner + 2 && w - 2 * corner - 2 > 0 && !fire_gfx_gpuShape(fb, cl, ct, cr, cb, x + corner + 1, y + 1, w - 2 * corner - 2, 1, 0, 0, top, !blend)) return 0;
     }
     return 1;
+}
+
+/* ---- the picture straight into a window (part 4.4) ----
+ * A window that shows an accelerated framebuffer gets its picture from the GPU: when the program publishes a frame (Window.Present, Tick), the twin's picture is copied
+ * into the picture of the framebuffer's presenter (on the GPU - nothing comes back), and the window's thread draws that into the window through a swap chain
+ * (VK_KHR_swapchain on a surface for Win32, X11, Wayland or a CAMetalLayer) - the presenter of the windows bridge (fire_present_fn), as scene3d's DirectDrawing. The first
+ * frames are read back as well (the window may not take a presenter: then nothing changes); once a window showed one, the frames stay on the GPU. A presenter that fails
+ * gives the window back for good, and the frames are read back again. */
+
+typedef struct FireGfxGpuTarget {
+    FireGfxFramebuffer* fb;           /* whose frames (NULL: the framebuffer is gone or no longer accelerated) */
+    volatile int works;               /* 0: not known yet (the frames are read back as well), 1: a window shows them, -1: it failed */
+    volatile int others;              /* another window shows the framebuffer too: it needs the pixels */
+    int width, height;                /* the picture of the last frame */
+    VkImage image; VkDeviceMemory memory; int hasPicture, ready;
+    fire_native_window win;           /* the window of the surface */
+    VkSurfaceKHR surface; VkSwapchainKHR swapchain; VkExtent2D extent; int vsync, stale;
+    VkImage* images; VkSemaphore* rendered; uint32_t imageCount;
+    VkSemaphore acquired;
+    VkCommandPool pool; VkCommandBuffer cmd; VkFence fence; int fencePending;
+    struct FireGfxGpuTarget* next;
+} FireGfxGpuTarget;
+
+static unsigned fire_gfx_gpuReadbacks(void) { return g_fireGfxVk.readbacks; }
+
+static FireGfxGpuTarget* fire_gfx_gpuTargetOf(FireGfxFramebuffer* fb, int make) {
+    FireGfxGpuTarget* g;
+    for (g = g_fireGfxVk.targets; g != NULL; g = g->next) if (g->fb == fb) return g;
+    if (!make) return NULL;
+    /* (one that lost its framebuffer and its window is used again) */
+    for (g = g_fireGfxVk.targets; g != NULL; g = g->next) if (g->fb == NULL && !g->surface) { g->fb = fb; g->works = 0; g->others = 0; g->hasPicture = 0; return g; }
+    g = (FireGfxGpuTarget*)calloc(1, sizeof(FireGfxGpuTarget));
+    if (g == NULL) return NULL;
+    g->fb = fb;
+    g->next = g_fireGfxVk.targets;
+    g_fireGfxVk.targets = g;
+    return g;
+}
+
+/* (the framebuffer is gone or no longer accelerated: its presenter shows nothing new) */
+static void fire_gfx_gpuForget(FireGfxFramebuffer* fb) {
+    FireGfxGpuTarget* g;
+    fire_gfx_gpuLock();
+    for (g = g_fireGfxVk.targets; g != NULL; g = g->next) if (g->fb == fb) g->fb = NULL;
+    fire_gfx_gpuUnlock();
+}
+
+static void fire_gfx_gpuWaitTarget(FireGfxGpuTarget* g) {
+    if (!g->fencePending) return;
+    g_fireGfxVk.vkWaitForFences(g_fireGfxVk.device, 1, &g->fence, VK_TRUE, ~(uint64_t)0);
+    g->fencePending = 0;
+}
+
+static void fire_gfx_gpuFreeTargetPicture(FireGfxGpuTarget* g) {
+    fire_gfx_gpuWaitTarget(g);
+    if (g->image) g_fireGfxVk.vkDestroyImage(g_fireGfxVk.device, g->image, NULL);
+    if (g->memory) g_fireGfxVk.vkFreeMemory(g_fireGfxVk.device, g->memory, NULL);
+    g->image = 0; g->memory = 0; g->hasPicture = 0; g->ready = 0; g->width = g->height = 0;
+}
+
+/* The picture of the presenter, w x h (made anew for another size). */
+static int fire_gfx_gpuTargetPicture(FireGfxGpuTarget* g, int width, int height) {
+    VkImageCreateInfo ii;
+    VkMemoryRequirements req;
+    VkMemoryAllocateInfo ai;
+    int type;
+    if (g->image && g->width == width && g->height == height) return 1;
+    fire_gfx_gpuFreeTargetPicture(g);
+    memset(&ii, 0, sizeof ii);
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.extent.width = (uint32_t)width; ii.extent.height = (uint32_t)height; ii.extent.depth = 1;
+    ii.mipLevels = 1; ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkCreateImage(g_fireGfxVk.device, &ii, NULL, &g->image), "vkCreateImage")) { g->image = 0; return 0; }
+    g_fireGfxVk.vkGetImageMemoryRequirements(g_fireGfxVk.device, g->image, &req);
+    type = fire_gfx_gpuMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type < 0) type = fire_gfx_gpuMemoryType(req.memoryTypeBits, 0);
+    memset(&ai, 0, sizeof ai);
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = (uint32_t)(type < 0 ? 0 : type);
+    if (type < 0 || !fire_gfx_gpuCheck(g_fireGfxVk.vkAllocateMemory(g_fireGfxVk.device, &ai, NULL, &g->memory), "vkAllocateMemory")) { g->memory = 0; fire_gfx_gpuFreeTargetPicture(g); return 0; }
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkBindImageMemory(g_fireGfxVk.device, g->image, g->memory, 0), "vkBindImageMemory")) { fire_gfx_gpuFreeTargetPicture(g); return 0; }
+    g->width = width; g->height = height;
+    return 1;
+}
+
+/* The twin's picture into the presenter's (the lock is held). */
+static int fire_gfx_gpuSnapshotLocked(FireGfxGpuTarget* g, FireGfxGpuTwin* t) {
+    VkCommandBuffer cmd = g_fireGfxVk.cmd;
+    VkCommandBufferBeginInfo bi;
+    VkSubmitInfo si;
+    VkImageCopy region;
+    fire_gfx_gpuWaitTarget(g);   /* (the window's last picture read it) */
+    if (!fire_gfx_gpuTargetPicture(g, t->width, t->height)) return 0;
+    memset(&bi, 0, sizeof bi);
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    g_fireGfxVk.vkResetCommandBuffer(cmd, 0);
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkBeginCommandBuffer(cmd, &bi), "vkBeginCommandBuffer")) return 0;
+    fire_gfx_gpuBarrier(cmd, t->image, VK_IMAGE_LAYOUT_GENERAL);
+    fire_gfx_gpuBarrier(cmd, g->image, g->ready ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED);
+    memset(&region, 0, sizeof region);
+    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; region.srcSubresource.layerCount = 1;
+    region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; region.dstSubresource.layerCount = 1;
+    region.extent.width = (uint32_t)t->width; region.extent.height = (uint32_t)t->height; region.extent.depth = 1;
+    g_fireGfxVk.vkCmdCopyImage(cmd, t->image, VK_IMAGE_LAYOUT_GENERAL, g->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    fire_gfx_gpuBarrier(cmd, g->image, VK_IMAGE_LAYOUT_GENERAL);
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkEndCommandBuffer(cmd), "vkEndCommandBuffer")) return 0;
+    memset(&si, 0, sizeof si);
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
+    g_fireGfxVk.vkResetFences(g_fireGfxVk.device, 1, &g_fireGfxVk.fence);
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkQueueSubmit(g_fireGfxVk.queue, 1, &si, g_fireGfxVk.fence), "vkQueueSubmit")) return 0;
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkWaitForFences(g_fireGfxVk.device, 1, &g_fireGfxVk.fence, VK_TRUE, ~(uint64_t)0), "vkWaitForFences")) return 0;
+    g->ready = 1; g->hasPicture = 1;
+    return 1;
+}
+
+static int32_t fire_gfx_gpuPresent(void* ctx, int32_t op, const fire_native_window* w, const uint32_t* pixels, int32_t width, int32_t height);
+
+/* A frame of the framebuffer is published (on the program's thread): with a twin and windows the GPU can draw into, its picture goes to the presenter, and `fn`/`ctx` are
+ * the presenter for the windows. Returns 1 when the frame needs the pixels as well (no presenter, or none of the windows showed one yet), 0 when it does not. */
+static int fire_gfx_gpuPublish(FireGfxFramebuffer* fb, void (**fn)(void), void** ctx) {
+    FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
+    FireGfxGpuTarget* g;
+    int ok;
+    *fn = NULL; *ctx = NULL;
+    if (t == NULL || g_fireGfxVk.state != 1 || !g_fireGfxVk.wsi || t->width != fb->width || t->height != fb->height || fb->pixels == NULL) return 1;
+    fire_gfx_gpuLock();
+    g = fire_gfx_gpuTargetOf(fb, 1);
+    fire_gfx_gpuUnlock();
+    if (g == NULL || g->works < 0) return 1;
+    /* the frame as it is: the CPU's drawing goes up, the GPU's runs */
+    if ((!t->gpuValid || t->batchCount > 0) && !fire_gfx_gpuRun(fb, t, 0)) return 1;
+    fire_gfx_gpuLock();
+    ok = fire_gfx_gpuSnapshotLocked(g, t);
+    fire_gfx_gpuUnlock();
+    if (!ok) return 1;
+    *fn = (void (*)(void))fire_gfx_gpuPresent; *ctx = g;
+    return g->works != 1 || g->others;
+}
+
+/* ---- on the window's thread ---- */
+
+static int fire_gfx_gpuSameWindow(const fire_native_window* a, const fire_native_window* b) { return a->kind == b->kind && a->a == b->a && a->b == b->b && a->id == b->id; }
+
+static void fire_gfx_gpuFreeSwapchainImages(FireGfxGpuTarget* g) {
+    uint32_t i;
+    for (i = 0; i < g->imageCount; i++) if (g->rendered && g->rendered[i]) g_fireGfxVk.vkDestroySemaphore(g_fireGfxVk.device, g->rendered[i], NULL);
+    free(g->images); free(g->rendered);
+    g->images = NULL; g->rendered = NULL; g->imageCount = 0;
+}
+
+/* Lets go of the window: the swap chain and the surface. */
+static void fire_gfx_gpuFreeSurface(FireGfxGpuTarget* g) {
+    if (!g->surface && !g->swapchain) return;
+    fire_gfx_gpuWaitTarget(g);
+    g_fireGfxVk.vkDeviceWaitIdle(g_fireGfxVk.device);
+    fire_gfx_gpuFreeSwapchainImages(g);
+    if (g->swapchain) { g_fireGfxVk.vkDestroySwapchainKHR(g_fireGfxVk.device, g->swapchain, NULL); g->swapchain = 0; }
+    if (g->surface) { g_fireGfxVk.vkDestroySurfaceKHR(g_fireGfxVk.instance, g->surface, NULL); g->surface = 0; }
+    memset(&g->win, 0, sizeof g->win);
+    if (g->fb == NULL) fire_gfx_gpuFreeTargetPicture(g);   /* (nobody publishes into it any more) */
+}
+
+static int fire_gfx_gpuMakeSurface(FireGfxGpuTarget* g, const fire_native_window* w) {
+    VkResult r = VK_ERROR_EXTENSION_NOT_PRESENT;
+    VkBool32 supported = VK_FALSE;
+    switch (w->kind) {
+        case FIRE_NATIVE_WIN32: if (g_fireGfxVk.createWin32Surface) {
+            FireGfxVkWin32SurfaceInfo ci; memset(&ci, 0, sizeof ci);
+            ci.sType = (VkStructureType)1000009000; ci.hinstance = w->a; ci.hwnd = w->b;   /* VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR */
+            r = g_fireGfxVk.createWin32Surface(g_fireGfxVk.instance, &ci, NULL, &g->surface);
+        } break;
+        case FIRE_NATIVE_X11: if (g_fireGfxVk.createXlibSurface) {
+            FireGfxVkXlibSurfaceInfo ci; memset(&ci, 0, sizeof ci);
+            ci.sType = (VkStructureType)1000004000; ci.dpy = w->a; ci.window = (unsigned long)w->id;   /* VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR */
+            r = g_fireGfxVk.createXlibSurface(g_fireGfxVk.instance, &ci, NULL, &g->surface);
+        } break;
+        case FIRE_NATIVE_WAYLAND: if (g_fireGfxVk.createWaylandSurface) {
+            FireGfxVkWaylandSurfaceInfo ci; memset(&ci, 0, sizeof ci);
+            ci.sType = (VkStructureType)1000006000; ci.display = w->a; ci.surface = w->b;   /* VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR */
+            r = g_fireGfxVk.createWaylandSurface(g_fireGfxVk.instance, &ci, NULL, &g->surface);
+        } break;
+        case FIRE_NATIVE_METAL: if (g_fireGfxVk.createMetalSurface) {
+            FireGfxVkMetalSurfaceInfo ci; memset(&ci, 0, sizeof ci);
+            ci.sType = (VkStructureType)1000217000; ci.pLayer = w->b;   /* VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT */
+            r = g_fireGfxVk.createMetalSurface(g_fireGfxVk.instance, &ci, NULL, &g->surface);
+        } break;
+        default: break;
+    }
+    if (r != VK_SUCCESS) { g->surface = 0; return 0; }
+    if (g_fireGfxVk.vkGetPhysicalDeviceSurfaceSupportKHR(g_fireGfxVk.phys, g_fireGfxVk.family, g->surface, &supported) != VK_SUCCESS || !supported) {
+        g_fireGfxVk.vkDestroySurfaceKHR(g_fireGfxVk.instance, g->surface, NULL);
+        g->surface = 0;
+        return 0;
+    }
+    g->win = *w;
+    return 1;
+}
+
+/* The swap chain, as big as the window (made again when it changes): 1 ready, 2 the window has no size (minimized), 0 it cannot. The frame goes in by a blit: the
+ * images must take one (TRANSFER_DST, a UNORM format that can be blitted to - the bytes as they are, not sRGB). */
+static int fire_gfx_gpuMakeSwapchain(FireGfxGpuTarget* g, const fire_native_window* w) {
+    VkSurfaceCapabilitiesKHR caps;
+    VkSurfaceFormatKHR* formats = NULL;
+    VkPresentModeKHR modes[16];
+    VkFormatProperties fp;
+    uint32_t nf = 0, nm = 16, i, count = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkColorSpaceKHR space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
+    VkExtent2D extent;
+    VkSwapchainCreateInfoKHR ci;
+    VkSwapchainKHR old = g->swapchain;
+    VkSemaphoreCreateInfo sci;
+    if (g_fireGfxVk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_fireGfxVk.phys, g->surface, &caps) != VK_SUCCESS) return 0;
+    extent = caps.currentExtent;
+    if (extent.width == 0xFFFFFFFFu) {
+        /* (Wayland: the window takes the size of the swap chain) */
+        extent.width = (uint32_t)(w->width > 0 ? w->width : 1); extent.height = (uint32_t)(w->height > 0 ? w->height : 1);
+        if (extent.width < caps.minImageExtent.width) extent.width = caps.minImageExtent.width;
+        if (extent.height < caps.minImageExtent.height) extent.height = caps.minImageExtent.height;
+        if (caps.maxImageExtent.width > 0 && extent.width > caps.maxImageExtent.width) extent.width = caps.maxImageExtent.width;
+        if (caps.maxImageExtent.height > 0 && extent.height > caps.maxImageExtent.height) extent.height = caps.maxImageExtent.height;
+    }
+    if (extent.width == 0 || extent.height == 0) return 2;
+    if (g->swapchain && !g->stale && extent.width == g->extent.width && extent.height == g->extent.height && (w->vsync != 0) == (g->vsync != 0)) return 1;
+    if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) return 0;
+    if (g_fireGfxVk.vkGetPhysicalDeviceSurfaceFormatsKHR(g_fireGfxVk.phys, g->surface, &nf, NULL) != VK_SUCCESS || nf == 0) return 0;
+    formats = (VkSurfaceFormatKHR*)malloc(sizeof(VkSurfaceFormatKHR) * nf);
+    if (formats == NULL || g_fireGfxVk.vkGetPhysicalDeviceSurfaceFormatsKHR(g_fireGfxVk.phys, g->surface, &nf, formats) != VK_SUCCESS) { free(formats); return 0; }
+    if (nf == 1 && formats[0].format == VK_FORMAT_UNDEFINED) { format = VK_FORMAT_B8G8R8A8_UNORM; space = formats[0].colorSpace; }
+    for (i = 0; i < nf && format == VK_FORMAT_UNDEFINED; i++)
+        if (formats[i].format == VK_FORMAT_B8G8R8A8_UNORM || formats[i].format == VK_FORMAT_R8G8B8A8_UNORM) { format = formats[i].format; space = formats[i].colorSpace; }
+    free(formats);
+    if (format == VK_FORMAT_UNDEFINED) return 0;
+    g_fireGfxVk.vkGetPhysicalDeviceFormatProperties(g_fireGfxVk.phys, format, &fp);
+    if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) return 0;
+    /* VSync: FIFO (every driver has it); without: MAILBOX (no tearing) or IMMEDIATE */
+    if (!w->vsync && g_fireGfxVk.vkGetPhysicalDeviceSurfacePresentModesKHR(g_fireGfxVk.phys, g->surface, &nm, modes) >= 0) {
+        for (i = 0; i < nm; i++) if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) mode = VK_PRESENT_MODE_MAILBOX_KHR;
+        if (mode != VK_PRESENT_MODE_MAILBOX_KHR) for (i = 0; i < nm; i++) if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    }
+    fire_gfx_gpuWaitTarget(g);
+    fire_gfx_gpuFreeSwapchainImages(g);
+    memset(&ci, 0, sizeof ci);
+    ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    ci.surface = g->surface;
+    ci.minImageCount = caps.minImageCount + 1;
+    if (caps.maxImageCount > 0 && ci.minImageCount > caps.maxImageCount) ci.minImageCount = caps.maxImageCount;
+    ci.imageFormat = format;
+    ci.imageColorSpace = space;
+    ci.imageExtent = extent;
+    ci.imageArrayLayers = 1;
+    ci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ci.preTransform = caps.currentTransform;
+    ci.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+                      : (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR) ? VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR : VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+    ci.presentMode = mode;
+    ci.clipped = VK_TRUE;
+    ci.oldSwapchain = old;
+    if (g_fireGfxVk.vkCreateSwapchainKHR(g_fireGfxVk.device, &ci, NULL, &g->swapchain) != VK_SUCCESS) {
+        g->swapchain = 0;
+        if (old) g_fireGfxVk.vkDestroySwapchainKHR(g_fireGfxVk.device, old, NULL);
+        return 0;
+    }
+    if (old) g_fireGfxVk.vkDestroySwapchainKHR(g_fireGfxVk.device, old, NULL);
+    g->extent = extent; g->vsync = w->vsync != 0; g->stale = 0;
+    if (g_fireGfxVk.vkGetSwapchainImagesKHR(g_fireGfxVk.device, g->swapchain, &count, NULL) != VK_SUCCESS || count == 0) return 0;
+    g->images = (VkImage*)calloc(count, sizeof(VkImage));
+    g->rendered = (VkSemaphore*)calloc(count, sizeof(VkSemaphore));
+    if (!g->images || !g->rendered) return 0;
+    g->imageCount = count;
+    if (g_fireGfxVk.vkGetSwapchainImagesKHR(g_fireGfxVk.device, g->swapchain, &count, g->images) != VK_SUCCESS) return 0;
+    memset(&sci, 0, sizeof sci);
+    sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    for (i = 0; i < count; i++) if (g_fireGfxVk.vkCreateSemaphore(g_fireGfxVk.device, &sci, NULL, &g->rendered[i]) != VK_SUCCESS) { g->rendered[i] = 0; return 0; }
+    return 1;
+}
+
+/* What the presenter needs of its own: commands (a pool of its own - the program's thread records into the other one meanwhile), a fence, the semaphore of the acquire. */
+static int fire_gfx_gpuTargetCommands(FireGfxGpuTarget* g) {
+    VkCommandPoolCreateInfo pi;
+    VkCommandBufferAllocateInfo ai;
+    VkFenceCreateInfo fi;
+    VkSemaphoreCreateInfo si;
+    if (g->pool) return 1;
+    memset(&pi, 0, sizeof pi);
+    pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pi.queueFamilyIndex = g_fireGfxVk.family;
+    if (g_fireGfxVk.vkCreateCommandPool(g_fireGfxVk.device, &pi, NULL, &g->pool) != VK_SUCCESS) { g->pool = 0; return 0; }
+    memset(&ai, 0, sizeof ai);
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = g->pool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    memset(&fi, 0, sizeof fi);
+    fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    memset(&si, 0, sizeof si);
+    si.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    if (g_fireGfxVk.vkAllocateCommandBuffers(g_fireGfxVk.device, &ai, &g->cmd) != VK_SUCCESS
+        || g_fireGfxVk.vkCreateFence(g_fireGfxVk.device, &fi, NULL, &g->fence) != VK_SUCCESS
+        || g_fireGfxVk.vkCreateSemaphore(g_fireGfxVk.device, &si, NULL, &g->acquired) != VK_SUCCESS) {
+        /* (what was made stays: the presenter is not used again) */
+        return 0;
+    }
+    return 1;
+}
+
+static void fire_gfx_gpuImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to, VkAccessFlags srcAccess, VkAccessFlags dstAccess,
+                                     VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage) {
+    VkImageMemoryBarrier b;
+    memset(&b, 0, sizeof b);
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.srcAccessMask = srcAccess; b.dstAccessMask = dstAccess;
+    b.oldLayout = from; b.newLayout = to;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = image;
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b.subresourceRange.levelCount = 1; b.subresourceRange.layerCount = 1;
+    g_fireGfxVk.vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, NULL, 0, NULL, 1, &b);
+}
+
+/* The last frame into the window (the lock is held). 1: shown (or nothing to show: a minimized window), 0: it cannot. */
+static int fire_gfx_gpuPresentLocked(FireGfxGpuTarget* g, const fire_native_window* w) {
+    uint32_t index = 0;
+    int made, attempt;
+    VkResult r = VK_SUCCESS;
+    VkCommandBufferBeginInfo bi;
+    VkImageBlit blit;
+    VkSubmitInfo si;
+    VkPresentInfoKHR pi;
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    if (!g->hasPicture) return 0;
+    if (g->surface && !fire_gfx_gpuSameWindow(&g->win, w)) return 0;   /* (another window shows the same framebuffer: one window per presenter - that one shows the pixels) */
+    if (!fire_gfx_gpuTargetCommands(g)) return 0;
+    if (!g->surface && !fire_gfx_gpuMakeSurface(g, w)) return 0;
+    fire_gfx_gpuWaitTarget(g);
+    for (attempt = 0; ; attempt++) {
+        made = fire_gfx_gpuMakeSwapchain(g, w);
+        if (made == 0) return 0;
+        if (made == 2) return 1;
+        r = g_fireGfxVk.vkAcquireNextImageKHR(g_fireGfxVk.device, g->swapchain, ~(uint64_t)0, g->acquired, 0, &index);
+        if (r == VK_ERROR_OUT_OF_DATE_KHR && attempt == 0) { g->stale = 1; continue; }
+        break;
+    }
+    if (r == VK_SUBOPTIMAL_KHR) g->stale = 1;
+    else if (r != VK_SUCCESS) return 0;
+    memset(&bi, 0, sizeof bi);
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (g_fireGfxVk.vkResetCommandBuffer(g->cmd, 0) != VK_SUCCESS || g_fireGfxVk.vkBeginCommandBuffer(g->cmd, &bi) != VK_SUCCESS) return 0;
+    /* the frame (copied by the program's thread before, on the same queue) is read; the image of the swap chain is written once the acquire is done */
+    fire_gfx_gpuImageBarrier(g->cmd, g->image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    fire_gfx_gpuImageBarrier(g->cmd, g->images[index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    memset(&blit, 0, sizeof blit);
+    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; blit.srcSubresource.layerCount = 1;
+    blit.srcOffsets[1].x = g->width; blit.srcOffsets[1].y = g->height; blit.srcOffsets[1].z = 1;
+    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; blit.dstSubresource.layerCount = 1;
+    blit.dstOffsets[1].x = (int32_t)g->extent.width; blit.dstOffsets[1].y = (int32_t)g->extent.height; blit.dstOffsets[1].z = 1;
+    g_fireGfxVk.vkCmdBlitImage(g->cmd, g->image, VK_IMAGE_LAYOUT_GENERAL, g->images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+    fire_gfx_gpuImageBarrier(g->cmd, g->images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    if (g_fireGfxVk.vkEndCommandBuffer(g->cmd) != VK_SUCCESS) return 0;
+    memset(&si, 0, sizeof si);
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.waitSemaphoreCount = 1; si.pWaitSemaphores = &g->acquired; si.pWaitDstStageMask = &waitStage;
+    si.commandBufferCount = 1; si.pCommandBuffers = &g->cmd;
+    si.signalSemaphoreCount = 1; si.pSignalSemaphores = &g->rendered[index];
+    if (g_fireGfxVk.vkResetFences(g_fireGfxVk.device, 1, &g->fence) != VK_SUCCESS) return 0;
+    if (g_fireGfxVk.vkQueueSubmit(g_fireGfxVk.queue, 1, &si, g->fence) != VK_SUCCESS) return 0;
+    g->fencePending = 1;
+    memset(&pi, 0, sizeof pi);
+    pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    pi.waitSemaphoreCount = 1; pi.pWaitSemaphores = &g->rendered[index];
+    pi.swapchainCount = 1; pi.pSwapchains = &g->swapchain; pi.pImageIndices = &index;
+    r = g_fireGfxVk.vkQueuePresentKHR(g_fireGfxVk.queue, &pi);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) { g->stale = 1; return 1; }
+    return r == VK_SUCCESS;
+}
+
+/* The presenter of the windows that show an accelerated framebuffer (a fire_present_fn, on the window's thread): op 1 shows the last frame - `pixels` are not needed -, op 0
+ * lets go of the window. */
+static int32_t fire_gfx_gpuPresent(void* ctx, int32_t op, const fire_native_window* w, const uint32_t* pixels, int32_t width, int32_t height) {
+    FireGfxGpuTarget* g = (FireGfxGpuTarget*)ctx;
+    int ok = 0;
+    (void)pixels; (void)width; (void)height;
+    fire_gfx_gpuLock();
+    if (op == 0) {
+        if (w == NULL || !g->surface || fire_gfx_gpuSameWindow(&g->win, w)) {
+            if (g_fireGfxVk.state == 1) fire_gfx_gpuFreeSurface(g);
+            if (g->works == 1) g->works = 0;   /* (the frames are read back again until a window takes them) */
+        }
+        fire_gfx_gpuUnlock();
+        return 1;
+    }
+    if (g_fireGfxVk.state == 1 && g_fireGfxVk.wsi && w != NULL) {
+        ok = fire_gfx_gpuPresentLocked(g, w);
+        if (ok) g->works = 1;
+        else if (!g->surface || fire_gfx_gpuSameWindow(&g->win, w)) { fire_gfx_gpuFreeSurface(g); g->works = -1; }
+        else g->others = 1;
+    }
+    fire_gfx_gpuUnlock();
+    return ok;
 }
 
 #endif

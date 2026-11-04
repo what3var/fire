@@ -71,6 +71,7 @@ typedef struct FireWinShared {
     int shownArea[4], shownPart;
     fire_present_fn shownFn;
     void* shownCtx;
+    int refresh;                  /* cycles since a presenter showed the frame last (it is shown again now and then, not every cycle) */
     /* who shows the window (on the thread that owns it): the display, or a presenter (direct: the display gave the window to presentFn) */
     int direct;
     fire_present_fn presentFn;
@@ -114,6 +115,7 @@ static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, 
         }
         s->failedFn = fn; s->failedCtx = ctx;
     }
+    if (pixels == NULL) return;   /* (a frame only for the presenter, which could not show it: the next one comes with its pixels) */
 #ifdef FIRE_DISPLAY_PRESENT_AREA
     if (area != NULL && fn == NULL) { fire_display_presentArea(&s->display, pixels, width, height, area[0], area[1], area[2], area[3]); return; }
 #endif
@@ -516,7 +518,7 @@ static void fire_winb_pumpThread(void* arg) {
         fire_winb_unlock(&m->m);
         for (k = 0; k < listCount; k++) {
             FireWinShared* s = list[k];
-            int w, h, open;
+            int w, h, open, fresh;
             size_t e;
             fire_winb_lock(&s->m);
             if (s->release) {
@@ -554,6 +556,7 @@ static void fire_winb_pumpThread(void* arg) {
             open = fire_display_pump(&s->display, &events, w, h);
             for (e = 0; e < events.count; e++) if (s->inbox.count < FIRE_WIN_MAX_QUEUED_EVENTS) fire_display_push(&s->inbox, &events.items[e]);
             if (!open) s->closed = 1;
+            fresh = s->frontNew;
             if (s->frontNew) {
                 uint32_t* t = s->shown;
                 s->shown = s->front; s->front = t;
@@ -563,7 +566,9 @@ static void fire_winb_pumpThread(void* arg) {
             }
             fire_winb_unlock(&s->m);
             /* (the program publishes into `front` meanwhile; what is shown is the thread's own copy) */
-            if (s->shown != NULL) {
+            /* (a presenter keeps the last frame in the window: it gets a new one, and the old one now and then - not every cycle) */
+            if ((s->shown != NULL && s->shownFn == NULL) || (s->shownFn != NULL && (fresh || ++s->refresh >= 30))) {
+                s->refresh = 0;
                 fire_winb_showArea(s, s->shownFn, s->shownCtx, s->shown, s->shownW, s->shownH, s->shownPart ? s->shownArea : NULL);
                 s->shownPart = 1; s->shownArea[0] = s->shownArea[1] = s->shownArea[2] = s->shownArea[3] = 0;   /* (shown again unchanged: nothing to hand over) */
             }
@@ -833,13 +838,30 @@ static uint32_t* fire_winb_resolve(const FireGfxFramebuffer* fb) {
     return pixels;
 }
 
+/* The frame of the framebuffer for its windows: the presenter - a package's (scene3d DirectDrawing) or, for an accelerated framebuffer, the GPU's (part 4.4: the picture
+ * goes into the window from the GPU) - and the pixels: NULL when the GPU's presenter shows the frames and none are needed (nothing is read back). A window with a
+ * transparent backdrop takes the pixels (the swap chain is opaque). */
+static uint32_t* fire_winb_frame(FireWinState* w, fire_present_fn* fn, void** ctx) {
+    *fn = (fire_present_fn)w->fb->presentFn; *ctx = w->fb->presentCtx;
+    if (*fn == NULL && w->sh->backdrop == FIRE_BACKDROP_NONE && w->sh->backdropReq <= 0) {
+        void (*gpuFn)(void) = NULL;
+        void* gpuCtx = NULL;
+        int needs = fire_gfx_gpuPublish(w->fb, &gpuFn, &gpuCtx);
+        *fn = (fire_present_fn)gpuFn; *ctx = gpuCtx;
+        if (!needs) return NULL;
+    }
+    return fire_winb_resolve(w->fb);
+}
+
 /* The second half of a cycle: shows the framebuffer - here, or (a started manager) hands a copy to the manager's thread. */
 static Value fire_win_WinPresent(Value id) {
     FireWinState* w = fire_winb_windowOf(id);
     uint32_t* pixels;
+    fire_present_fn fn;
+    void* ctx;
     if (fire_winb_threaded(w)) {
         uint32_t* old;
-        pixels = fire_winb_resolve(w->fb);
+        pixels = fire_winb_frame(w, &fn, &ctx);
         fire_winb_lock(&w->sh->m);
         old = w->sh->front;
         w->sh->front = pixels;
@@ -849,15 +871,15 @@ static Value fire_win_WinPresent(Value id) {
         else { memcpy(w->sh->frontArea, w->area, sizeof w->area); w->sh->frontPart = 1; }
         w->areaSet = 0;
         w->sh->frontW = w->fb->width; w->sh->frontH = w->fb->height;
-        w->sh->frontFn = (fire_present_fn)w->fb->presentFn; w->sh->frontCtx = w->fb->presentCtx;
+        w->sh->frontFn = fn; w->sh->frontCtx = ctx;
         w->sh->frontNew = 1;
         fire_winb_unlock(&w->sh->m);
         free(old);
         return Undef();
     }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Undef();
-    pixels = fire_winb_resolve(w->fb);
-    fire_winb_showArea(w->sh, (fire_present_fn)w->fb->presentFn, w->fb->presentCtx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
+    pixels = fire_winb_frame(w, &fn, &ctx);
+    fire_winb_showArea(w->sh, fn, ctx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
     w->areaSet = 0;
     free(pixels);
     return Undef();
@@ -871,6 +893,8 @@ static Value fire_win_WinTick(Value id) {
     int64_t i;
     size_t k;
     uint32_t* pixels;
+    fire_present_fn fn;
+    void* ctx;
     if (fire_winb_threaded(w)) { Value o = fire_win_WinPump(id); if (g_fireWinList[(size_t)(int32_t)id.i]) fire_win_WinPresent(id); return o; }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
     open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);
@@ -879,8 +903,8 @@ static Value fire_win_WinTick(Value id) {
         for (k = 0; k < events.count; k++)
             if (events.items[k].type == FIRE_EV_RESIZE && fire_gfx_validSize(events.items[k].width, events.items[k].height)) fire_gfx_fbResize(w->fb, events.items[k].width, events.items[k].height);
     fire_winb_dropBlocked(w, &events);
-    pixels = fire_winb_resolve(w->fb);
-    fire_winb_showArea(w->sh, (fire_present_fn)w->fb->presentFn, w->fb->presentCtx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
+    pixels = fire_winb_frame(w, &fn, &ctx);
+    fire_winb_showArea(w->sh, fn, ctx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
     w->areaSet = 0;
     free(pixels);
     fire_winb_enqueue(w, &events);

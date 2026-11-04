@@ -104,6 +104,7 @@ namespace fire.Terminal.Bridge
                 ["SetAccelerated"] = args => Value.MakeUndefined() /*STUB*/,
                 ["GetAccelerated"] = args => Value.MakeUndefined() /*STUB*/,
                 ["GpuError"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GpuReadbacks"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -204,6 +205,7 @@ namespace fire.Terminal.Bridge
                 ["SetAccelerated"] = args => Value.MakeBool(false),
                 ["GetAccelerated"] = args => Value.MakeBool(false),
                 ["GpuError"] = args => Value.MakeString("The C# implementation of graphics has no GPU backend (the C library has)."),
+                ["GpuReadbacks"] = args => Value.MakeInt(0),
             };
         }
 

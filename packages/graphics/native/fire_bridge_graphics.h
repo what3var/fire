@@ -191,6 +191,7 @@ static Value fire_gfx_FbSetAccelerated(Value id, Value on) {
 }
 static Value fire_gfx_FbGetAccelerated(Value id) { return Bool(fire_gfxb_fbOf(id)->gpu != NULL); }
 static Value fire_gfx_FbGpuError(OwnList* list) { return fire_gfxb_strOf8(fire_gfx_gpuError(), list); }
+static Value fire_gfx_FbGpuReadbacks(void) { return Int((int64_t)fire_gfx_gpuReadbacks()); }
 static Value fire_gfx_FbDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
