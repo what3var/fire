@@ -424,9 +424,15 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>The class or interface a base reference names (`Command<IDevice>`: the generic `Command`).</summary>
-        private string NameOf(TypeRef baseRef) =>
-            baseRef.TypeArgs is { Count: > 0 } a ? GenericName(PlainName(baseRef.BaseName), a.Count) : PlainName(baseRef.BaseName);
+        /// <summary>The class or interface a base reference names (`Command<IDevice>`: the generic `Command`), resolved against the namespaces the reference
+        /// is written in (`class B : A` inside `namespace N`: `N.A`), like TypeRef.ResolveBaseName.</summary>
+        private string NameOf(TypeRef baseRef)
+        {
+            int count = baseRef.TypeArgs?.Count ?? 0;
+            bool Known(string n) => _classes.ContainsKey(n) || _interfaces.ContainsKey(n);
+            string name = (baseRef with { BaseName = PlainName(baseRef.BaseName) }).ResolveBaseName(n => Known(n) || count > 0 && Known(GenericClassNames.Mangle(n, count)));
+            return count > 0 ? GenericName(name, count) : name;
+        }
 
         /// <summary>`value` seen as its base class or interface `baseName` (with the type arguments it has there); null when it is none.</summary>
         private StaticType? AsBase(StaticType value, string baseName)

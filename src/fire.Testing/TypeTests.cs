@@ -650,6 +650,46 @@ static class TypeTests
                 """) is var nothing && nothing == "|ERROR TC015 TC015 TC015 TC015", nothing);
             Check("override: die Meldung nennt die Basisklasse und wie es geht", CompileTextStrict(ovBase + "class Dog : Animal { string Hello(string name) { return name } }")
                 is var text && text.Contains("The method 'Hello' of 'Dog' replaces the one of its base class 'Animal' - mark it 'override' (override string Hello(string name))"), text);
+            // inside a namespace the base class is found like any other type name: written short (`B : A` for N.A), in full, or in another namespace (#using)
+            const string nsBase = """
+                namespace Zoo {
+                    class Animal {
+                        string Speak() { return "..." }
+                        int Legs { get { return 4 } }
+                    }
+                }
+                namespace Farm {
+                    class Beast { string Speak() { return "beast" } }
+                }
+
+                """;
+            Check("override im Namespace: Basis kurz, voll qualifiziert und aus anderem Namespace - markiert ohne Befund (strikt)", Run(nsBase + """
+                namespace Zoo {
+                    class Dog : Animal { override string Speak() { return "Woof" } override int Legs { get { return 3 } } }
+                    class Cat : Zoo.Animal { override string Speak() { return "Miau" } }
+                    class Puppy : Dog { override string Speak() { return "Yip" } }
+                    class Cow : Farm.Beast { override string Speak() { return "Muh" } }
+                }
+                #using Farm
+                namespace Barn { class Pig : Beast { override string Speak() { return "Oink" } } }
+                Zoo.Animal a = new Zoo.Puppy()
+                print(new Zoo.Dog().Speak() + " " + new Zoo.Dog().Legs + " " + new Zoo.Cat().Speak() + " " + a.Speak() + " " + new Zoo.Cow().Speak() + " " + new Barn.Pig().Speak())
+                """, TypeCheckMode.Strict) is var nsMarked && nsMarked == "|Woof 3 Miau Yip Muh Oink", nsMarked);
+            Check("override im Namespace: fehlt - TC014 auch bei kurz geschriebener Basis (Methode, Property, zwei Stufen, anderer Namespace)", Run(nsBase + """
+                namespace Zoo {
+                    class Dog : Animal { string Speak() { return "Woof" } int Legs { get { return 3 } } }
+                    class Cat : Zoo.Animal { string Speak() { return "Miau" } }
+                    class Puppy : Dog { string Speak() { return "Yip" } }
+                }
+                #using Farm
+                namespace Barn { class Pig : Beast { string Speak() { return "Oink" } } }
+                print(new Zoo.Puppy().Speak())
+                """) is var nsMissing && nsMissing == "TC014 TC014 TC014 TC014 TC014|Yip", nsMissing);
+            Check("override im Namespace: TC015 nur ohne passendes Basis-Mitglied", Run(nsBase + """
+                namespace Zoo { class Dog : Animal { override string Speek() { return "typo" } } }
+                print(1)
+                """) is var nsNothing && nsNothing == "|ERROR TC015", nsNothing);
+            Check("override im Namespace: die Meldung nennt Klasse und Basis voll", CompileTextStrict(nsBase + "namespace Zoo { class Dog : Animal { string Speak() { return \"Woof\" } } }") is var nsText && nsText.Contains("The method 'Speak' of 'Zoo.Dog' replaces the one of its base class 'Zoo.Animal' - mark it 'override' (override string Speak())"), nsText);
         }
 
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
