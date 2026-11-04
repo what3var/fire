@@ -771,7 +771,7 @@ static const char* dbgKindName(Value v) {
         case K_String: return "string";
         case K_Class: return "object";
         case K_Lambda: return "lambda";
-        case K_Pointer: return "pointer";
+        case K_PtrVar: case K_PtrByte: case K_PtrElem: return "pointer";
         case K_Array: return "array";
         case K_Buffer: return "buffer";
         default: return "undefined";

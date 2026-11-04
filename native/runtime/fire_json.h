@@ -468,7 +468,7 @@ static void jsWriteItems(JsWriter* w, const Value* items, int64_t count, const c
         Value item = items[i];
         if (i > 0) jsPush16(w->J, &w->out, ',');
         jsNewLine(w);
-        if (item.kind == K_Lambda || item.kind == K_Pointer) { jsAscii(w->J, &w->out, "null"); continue; }
+        if (item.kind == K_Lambda || isPtr(item)) { jsAscii(w->J, &w->out, "null"); continue; }
         jsWriteValue(w, item, elementType, container, K_Array, false, 0);
     }
     w->depth--;
@@ -565,7 +565,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
         for (i = 0; i < c->njson && !J->failed; i++) {
             const JsonFieldInfo* f = &c->fields[i];
             Value value = objFields(o)[f->slot];
-            if (value.kind == K_Lambda || value.kind == K_Pointer) continue;
+            if (value.kind == K_Lambda || isPtr(value)) continue;
             jsKey(w, f->name, &first);
             jsWriteValue(w, value, jsSubstitute(J, f->type, o, c), o, K_Class, false, f->unit);
         }

@@ -57,7 +57,8 @@ Umwege in eine kurze Sequenz nativer Instruktionen übersetzen lassen
 | `NewArray` | – | pop size (int); push neues Array der Länge size |
 | `MakeArrayLiteral` | u16 count | pop count Werte (in Reihenfolge); push neues Array daraus |
 | `ArrayGet` | – | pop index, pop array; push array[index] |
-| `ArraySet` | – | pop value, pop index, pop array; array[index]=value; push value |
+| `ArraySet` | – | pop value, pop index, pop array; array[index]=value; push value (bei einem typisierten Array der umgewandelte Wert) |
+| `TypeArray` | u8 elemType, u8 rank, u16 unitIdx | das Array oben auf dem Stack (bei rank > 1 die inneren Arrays dieser Tiefe) wird typisiert (SPEC 8.4.2, `Values.ArrayElem`); 0xFFFF: Elemente ohne Einheit; peekt |
 | `RegisterHandler` | u16 handlerTemplateIdx | registriert einen try-Handler (siehe Chunk.Handlers) |
 | `UnregisterHandler` | – | entfernt den zuletzt registrierten Handler (try erfolgreich durchlaufen) |
 | `Throw` | – | pop value; wirft (siehe VM.ThrowException) |

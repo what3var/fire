@@ -1,3 +1,4 @@
+using System;
 using fire.Bytecode;
 using fire.Values;
 
@@ -10,7 +11,14 @@ namespace fire.Runtime
     /// </summary>
     public static class FloatNarrowing
     {
-        public static void Apply(CompiledProgram program)
+        public static void Apply(CompiledProgram program) => Narrow(program, c => c.Kind == ValueKind.Float ? Value.MakeFloat((double)(float)c.AsFloat(), c.Unit, c.Width) : null);
+
+        /// <summary>`#intwidth 32`: every int constant cut to 32 bits (two's complement), as an int32 CPU holds it; the arithmetic is cut by
+        /// <see cref="Value.Ints32"/> at run time.</summary>
+        public static void ApplyInts32(CompiledProgram program) =>
+            Narrow(program, c => c.Kind == ValueKind.Int && (long)(int)c.AsInt() != c.AsInt() ? (c.IsEnum ? Value.MakeEnum((int)c.AsInt(), c.Enum!) : Value.MakeInt((int)c.AsInt(), c.Unit, c.Width)) : null);
+
+        private static void Narrow(CompiledProgram program, Func<Value, Value?> narrow)
         {
             var seen = new HashSet<Chunk>(ReferenceEqualityComparer.Instance);
             void Visit(FunctionProto? proto)
@@ -23,9 +31,7 @@ namespace fire.Runtime
             {
                 for (int i = 0; i < chunk.Constants.Count; i++)
                 {
-                    var c = chunk.Constants[i];
-                    if (c.Kind == ValueKind.Float)
-                        chunk.ReplaceConstant(i, Value.MakeFloat((double)(float)c.AsFloat(), c.Unit, c.Width));
+                    if (narrow(chunk.Constants[i]) is { } narrowed) chunk.ReplaceConstant(i, narrowed);
                 }
                 foreach (var f in chunk.Functions) Visit(f);
             }

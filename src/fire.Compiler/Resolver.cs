@@ -1275,7 +1275,7 @@ namespace fire.Compiler
                 // identifier" - a pure follow-up error of the one
                 // real error.
                 if (stmt is VarDeclStmt vd && !_current.Slots.ContainsKey(vd.Name))
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0);
             }
         }
 
@@ -1368,7 +1368,7 @@ namespace fire.Compiler
                         throw new ResolverException(
                             $"'{vd.Name}[{sizeLit.Value.AsInt()}]' expects {sizeLit.Value.AsInt()} elements, " +
                             $"but the array literal initializer has {arrLit.Elements.Count}", vd.Line);
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0);
                     if (KnownClassOf(vd.Type, vd.Initializer, vd.ArrayRanks.Count > 0) is { } declaredClass) _current.KnownClasses[vd.Name] = declaredClass;
                     break;
 

@@ -139,6 +139,16 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Generation, jeder Zugriff vergleicht (`leafAlive`: eine Ladung und ein Vergleich) und meldet sonst die fangbare `DestroyedException`, bevor freigegebener
   Speicher berührt wird. Mit `#performance` definiert der Generator `FIRE_UNCHECKED`: keine Tabelle, keine Prüfung (undefiniert, wie in der VM-Doku).
   **Objekte** haben dasselbe Handle (siehe oben).
+* **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
+  `char`, `byte`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
+  und die Daten - eine C-Zahl pro Element statt eines `Value`. `undefined` ist ein Merker (ein selten benutzter Wert des Typs: `INT8_MIN`, ein NaN mit
+  festem Payload, `0xFF`, `0xFFFF`, bei `bool` die 2); nur wenn er als echte Zahl gespeichert wird, setzt das ein Bit in `real` (dann angelegt). Gelesen wird
+  die Maske also nur, wenn der Merker gefunden wird (`arrPackedGet`). `OpCode.TypeArray` wird `typeArray(...)` (wandelt die Elemente um und packt);
+  steht es direkt hinter `NewArray`, entsteht das Array gleich gepackt in einem Block (`newTypedArray`). `arraySet` wandelt um (Abschneiden, Runden,
+  Einheit, sonst die Ausnahme) und liefert den gespeicherten Wert, der auch das Ergebnis der Zuweisung ist. Wer die `Value`s braucht (`arrItems`: die
+  Natives der Packages, JSON, `ref a[i]`), entpackt das Array einmal (`arrUnpack`); der Typ bleibt und wird weiter durchgesetzt (auch beim Schreiben
+  über einen Zeiger, dafür kennen Zeiger in Arrays ihr Array über die Slot-Tabelle, `FIRE_ELEMPTRS`). `copy`, `taking` und `sync` kopieren die Zahlen
+  (`arrCopyTyped`).
 * **Strings und Lambdas werden gezählt** (sie werden frei weitergegeben: `var t = s`, in Feldern und Arrays gespeichert, zurückgegeben):
   * **Speicherorte halten einen Zähler**: Variablen, Parameter, Felder, Array-Elemente und statische Felder (`retain` beim Speichern, `release` beim
     Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts.
@@ -156,6 +166,18 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 
 Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung nur für Basic Latin, Latin-1, Griechisch und Kyrillisch
 (`char.IsDigit` nur ASCII-Ziffern). Zahlenformate: `X`, `D`, `B`, `F`, `E` wie in der VM (jedes andere ist dort ein Laufzeitfehler, nativ ein Fehler beim Erzeugen).
+
+### Breite von `int` und Größe eines Werts (`#intwidth 32`, SPEC 8.2.2)
+
+* `FIRE_INT32` (der Generator schreibt es bei `#intwidth 32`): `Value::i` ist ein `int32_t` (`FireInt`). Die Operationen bleiben, wie sie
+  sind - sie rechnen mit den auf 64 Bit erweiterten Operanden, und das Ergebnis wird beim Speichern in den `int32_t` abgeschnitten. Genau so
+  schneidet die VM jeden Int ab, den sie erzeugt (`Value.Ints32`); auch die Sonderfälle (`INT_MIN / -1`, Schieben um 32 und mehr) geben in
+  beiden dasselbe.
+* `FIRE_COMPACT` (von selbst, wenn `FIRE_INT32`, `FIRE_FLOAT32` und 32-Bit-Zeiger zusammenkommen; `FIRE_WIDE_VALUE` schaltet es ab): der
+  Kopf eines Werts sind 32 Bit als Bitfelder - `kind` 4, `reserved` 12 (Enum, Generation des Handles; die Generationen laufen dann modulo
+  4096, `FIRE_GEN_MASK`), `unit` 16 (Einheit, Slot des Handles, Versatz eines Zeigers auf eine Variable: `FIRE_UNIT_OFFSET` liest ihn mit
+  Vorzeichen) - dazu 32 Bit Nutzlast: 8 statt 16 Byte. Mehr als 65535 Einheiten oder gleichzeitig lebende Objekte/Arrays/Puffer beenden
+  das Programm mit einer Meldung. Geprüft wird es auf dem Rechner als 32-Bit-Build (`gcc -m32`, gcc-multilib).
 
 ### Regeln für die Runtime (gelernt)
 
@@ -640,7 +662,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
 ```
 
 Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines` (`NAME` oder `NAME=WERT`), `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`,
-`supportsThreads`, `floatWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+`supportsThreads`, `floatWidth`, `intWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
 **ESP32:** `build -t esp32 -o <projekt>/main` schreibt den Komponenten `main` eines ESP-IDF-Projekts (dazu eine `CMakeLists.txt` mit `include($ENV{IDF_PATH}/tools/cmake/project.cmake)`,
 dann `idf.py build`). `app_main` startet das Programm auf einem eigenen Task, weil der Main-Task von ESP-IDF nur 3,5 KB Stack hat: `FIRE_MAIN_STACK_BYTES` (Standard 16384, als `defines`
 des Ziels). Geprüft mit ESP-IDF 5.5 im Emulator (`qemu-system-xtensa`, Testfall "ESP32 (ESP-IDF, QEMU)", läuft, wenn `IDF_PATH` gesetzt ist).

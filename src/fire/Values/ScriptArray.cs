@@ -52,7 +52,7 @@ namespace fire.Values
 
         /// <summary>Was this array reached by a fire thread via the globals (see GlobalsBroker)? Then it belongs to the shared
         /// area: element accesses run under the tree lock, and a fire thread changes elements only inside a section.</summary>
-        public bool IsShared { get => _shared; set { _shared = value; Special = value || IsDestroyed; } }
+        public bool IsShared { get => _shared; set { _shared = value; Special = value || IsDestroyed || ElemType != 0; } }
         private bool _shared;
 
         /// <summary>Shared or destroyed: the VM's fast paths (element access) then take the slow path, which respects both.</summary>
@@ -113,6 +113,48 @@ namespace fire.Values
             Items = new Value[length];
             for (int i = 0; i < length; i++)
                 Items[i] = Value.MakeUndefined();
+        }
+
+        /// <summary>The element type of a typed array (<see cref="ArrayElem"/>; 0: untyped, any value). A typed array (`int a[]`, `int[8] a[]`, `float a[]`,
+        /// `bool a[]`, `char a[]`) holds only values of that type and `undefined`: an int is cut to the width, a float rounded, an int becomes a float in a
+        /// float array; anything else is an ArgumentException, a number with another unit a UnitMismatchException (SPEC 8.4.2). The native backend
+        /// stores such an array packed (one C number per element instead of a Value).</summary>
+        public byte ElemType { get; private set; }
+
+        /// <summary>The unit demand of the elements of a typed array (`int:cm a[]`: "cm"; null: the elements have no unit).</summary>
+        public string? ElemUnit { get; private set; }
+
+        /// <summary>Makes this (new) array a typed one: its elements are converted; the first that does not fit is reported (`error`, `message`, the element
+        /// in `offending`) and the array stays untyped.</summary>
+        public bool MakeTyped(byte elemType, string? elemUnit, out ArrayElem.Error error, out string? message, out Value offending)
+        {
+            var converted = new Value[Items.Length];
+            for (int i = 0; i < Items.Length; i++)
+            {
+                offending = Items[i];
+                if (!ArrayElem.TryConvert(elemType, elemUnit, Items[i], out converted[i], out error, out message)) return false;
+            }
+            System.Array.Copy(converted, Items, Items.Length);
+            ElemType = elemType;
+            ElemUnit = elemUnit;
+            Special = _shared || IsDestroyed || elemType != 0;
+            offending = default;
+            error = ArrayElem.Error.None;
+            message = null;
+            return true;
+        }
+
+        /// <summary>`array[index] = value` for a typed array: the value converted to the element type (<see cref="ArrayElem.TryConvert"/>), or the reason
+        /// why it does not fit. An untyped array takes the value as it is.</summary>
+        public bool TryConvertElement(Value value, out Value stored, out ArrayElem.Error error, out string? message) =>
+            ArrayElem.TryConvert(ElemType, ElemUnit, value, out stored, out error, out message);
+
+        /// <summary>Copies the element type of another array (a copy of a typed array is typed).</summary>
+        public void CopyTypeOf(ScriptArray other)
+        {
+            ElemType = other.ElemType;
+            ElemUnit = other.ElemUnit;
+            Special = _shared || IsDestroyed || ElemType != 0;
         }
 
         /// <summary>Returns `false` for an invalid index (`value` then

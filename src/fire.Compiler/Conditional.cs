@@ -9,7 +9,7 @@ namespace fire.Compiler
     /// Conditional compilation for the preprocessor (SPEC 8.1.6): `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#define`, `#undef`, `#error`.
     /// A line of a branch that is not taken is replaced by an empty line (line numbers stay), so what it contains - also `#import` and `#include` - is never read.
     /// The symbols are plain names (case-insensitive): the target (`windows`, `linux`, `macos`, `posix`, `esp32`, `freertos`), the engine (`vm`, `native`),
-    /// `float32`, whatever `-D name` / `#define name` adds. An unknown name is false.
+    /// `float32`, `int32`, whatever `-D name` / `#define name` adds. An unknown name is false.
     /// </summary>
     public static class ConditionalSymbols
     {
@@ -18,13 +18,14 @@ namespace fire.Compiler
         /// <summary>The symbols of a build: the symbols of the target (null: the machine the process runs on), the engine (`vm` or `native`), `float32` when the
         /// precision of `float` is 32 bits (the command line override, else the default of the target - `#floatwidth` is read later than the symbols are needed)
         /// and the defines of the command line.</summary>
-        public static HashSet<string> For(TargetProfile? target, string? engine = null, int? floatWidth = null, IEnumerable<string>? defines = null)
+        public static HashSet<string> For(TargetProfile? target, string? engine = null, int? floatWidth = null, IEnumerable<string>? defines = null, int? intWidth = null)
         {
             target ??= TargetProfile.Host;
             var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var s in target.Symbols) set.Add(s);
             set.Add(string.IsNullOrWhiteSpace(engine) ? DefaultEngine : engine);
             if ((floatWidth ?? target.FloatWidth) == 32) set.Add("float32");
+            if ((intWidth ?? target.IntWidth) == 32) set.Add("int32");
             if (defines != null) foreach (var d in defines) if (!string.IsNullOrWhiteSpace(d)) set.Add(d.Trim());
             return set;
         }

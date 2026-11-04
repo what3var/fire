@@ -26,6 +26,7 @@ Leitlinien:
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
 | 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
+| 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -411,3 +412,73 @@ abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört z
   eines Projekts hat *Part of the native build*, *Build order*, *Platforms*, *Position* und *Listed as*, geändert wird die `.fireproj` (`ProjectNativeFiles`).
 * Tests: `FIRE_TESTS_ONLY=projects` (Lesen/Schreiben, Sortierung, Meldung, Rundreise, eine C-Bibliothek mit voneinander abhängigen Headern in der VM und nativ, Packen, die Dateioptionen).
 * Offen: Header eines Pakets, von dem man abhängt, einbinden (scene3d nimmt den Vulkan-Ausschnitt von graphics) - die Quellen der Abhängigkeiten zuerst, jede einmal.
+
+## 13. Kleine und alte Ziele
+
+Ziel: fire auf Mikrocontrollern ab 32 KB RAM / 128 KB Flash (Cortex-M, ESP32, RISC-V, PIC32), auf DOS (Real Mode und DPMI), Win 3.x, Win9x und NT 3.51 bis XP.
+Grundlage ist die Analyse auf `native-c` (Größen gemessen mit arm-none-eabi-gcc und avr-gcc): ab 32 Bit sinnvoll, 8-Bit-PIC nie (Hardware-Stack, kein
+Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
+
+**Umgesetzt** (Branch `pointer-kinds`):
+
+* Drei Zeigerarten (`K_PtrVar`, `K_PtrByte`, `K_PtrElem`) statt `K_Pointer` + `width`; das Byte ist frei.
+* Typisierte Arrays (SPEC 8.4.2): `int`, `int[N]`, `float`, `float[N]`, `bool`, `char`, `byte` als Elementtyp - strikt (falscher Typ: `ArgumentException`,
+  andere Einheit: `UnitMismatchException`), `undefined` erlaubt; nativ gepackt (eine C-Zahl pro Element, `undefined` als Merker, Bitmaske erst bei Bedarf).
+* `int x[4]` legt das Array überall gleich an (Local, Global, Feld mit dem Objekt); `int x[]` bleibt `undefined`.
+* `#intwidth 32` (SPEC 8.2.2; `-i`, `intWidth` in Projekt und Ziel, `#if int32`); Standard bleibt 64 Bit, auch auf dem ESP32. Mit `#floatwidth 32` und 32-Bit-Zeigern
+  ist ein Wert 8 statt 16 Byte (`FIRE_COMPACT`).
+
+**Reihenfolge des Rests** (nach dem Abschluss von Abschnitt 9 auf `native-c`):
+
+1. **Kompaktes Format ohne Grenze bei den Objekten.** Heute: 16 Bit Slot, 12 Bit Generation (65535 lebende Objekte/Arrays/Puffer). Neu: ein Objekt, Array oder
+   Puffer trägt Slot (32 Bit, Nutzlast) und Generation (28 Bit, Kopf); der Zeiger steht in der Slot-Tabelle (Zeiger und Generation nebeneinander: eine Ladung).
+   Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `{Adresse, Slot, Generation, Zähler}` (16 Byte pro lebendem Zeiger, nicht pro
+   Array oder Element), gezählt wie Strings, wiederverwendet über eine Freiliste. Mit `#performance` (keine Tabelle) tragen alle direkt ihren Zeiger. Bleibt: 65535 Einheiten.
+   Später, wenn eine Messung es zeigt: einen Kasten mit Zähler 1 bei `p + 1` weiterschieben statt einen neuen zu holen.
+2. **Inline-C** - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
+
+   ```fire
+   inline c int Add(int a, int b) { return a + b; }
+   inline c undefined Beep(int hz) { _asm { mov al, 0B6h
+                                           out 43h, al } }
+   ```
+
+   Parameter und Ergebnis sind C-Typen (`int` -> `FireInt`, `float` -> `Real`, `byte[]` -> die Bytes, `any` -> `Value`); der Generator baut den Wrapper wie bei
+   den Natives der Packages. In der VM ist ein Aufruf ein Fehler (oder eine Alternative mit `#if native`); der Editor hebt den Rumpf als C hervor.
+3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
+   keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
+   paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).
+   Dazu **`#intwidth 16`** (native Breite des 8086/286) und **`word`** (vorzeichenlos in Maschinenbreite, `word[8|16|32]`; die VM bekommt die Wortbreite des Ziels).
+4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
+   Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
+5. **`win16`** - Win 3.x: `wcc`, Large Model, GDI, kooperative Nachrichtenschleife (`Sleep` gibt ab), keine fire-Threads.
+6. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
+   `CONDITION_VARIABLE`), `GetTickCount` statt `GetTickCount64`, ANSI/Unicode-Schicht für 9x, `inet_addr` statt `inet_pton` (NT 3.51: Winsock 1.1), TLS über
+   mbedTLS statt Schannel, kein USB, GDI aus dem laufenden Umbau.
+7. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
+   gepackt pro Klasse später.
+
+Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht pro Familie; Tests mit DOSBox-X / dosemu2 ohne Fenster (`dos16`, `dos32`, Win 3.11),
+9x und NT über QEMU-Images.
+
+**Dazwischen, klein:**
+
+* **Breiten pro Programm statt pro Prozess.** `Value.Ints32` und `Value.SingleFloats` sind statisch: Übersetzt der Editor ein Programm, während ein anderes mit
+  `#intwidth 32` läuft, schneidet er dessen Konstanten ab. Die Breiten gehören zum Programm und werden über ein Objekt weitergereicht (das Zahlenmodell des Programms:
+  der Linker und der Compiler bekommen es ausdrücklich, die VM setzt es für die Threads, auf denen das Programm läuft).
+* **Gepackte Arrays nicht entpacken, wo es nicht nötig ist - samt der Natives.** Heute entpackt `arrItems` ein gepacktes Array für immer (16 Byte pro Element).
+  * Runtime: JSON, der Debugger und `print` lesen gepackt (`arrElemGet`); eine API für Natives, die gepackte Arrays kennt (`arrGet`/`arrSet` pro Element,
+    `arrNumbers(a, E_F32)` für direkten Zugriff auf die Zahlen eines passend typisierten Arrays, sonst null); `ref a[i]` in ein gepacktes Array wird ein Zeiger,
+    der den Elementtyp kennt (16-Byte-Wert: das freie Byte; kompakt: im Kasten).
+  * Natives: alle Stellen unserer Packages, die ein übergebenes Array lesen oder beschreiben, auf diese API umstellen (rund 80 Aufrufe von `arrItems` in audio,
+    circuits, gpio, graphics, i2c, io, net, process, scene3d, spi, time, usb, wifi, windows und der Package-ABI; die Stellen, die ein neues Array füllen, bleiben).
+    Grafik und Audio bekommen bei `float[32]`/`int[16]`-Arrays direkt die Zahlen.
+  * `arrItems` bleibt nur als Notweg für fremde Natives; ein Test prüft, dass unsere Packages ein gepacktes Array nicht entpacken.
+* **Mehrdimensional und Literale gleich gepackt anlegen.** Nur `new int[n]` entsteht heute direkt gepackt; `int m[3][4]`, `new int[3][4]` und `int a[] = [1, 2, 3]`
+  legen erst Values an (die ungenutzt im Block bleiben). Der Generator erkennt `NewJagged` / `MakeArrayLiteral` vor `TypeArray` und baut gleich gepackt.
+* **Editor:** die Breite von `int` auch im Dialog des nativen Builds (die Projekteigenschaften haben sie schon).
+* **Mikrocontroller, schnelle Gewinne:** der GPIO-Simulator (8,4 KB RAM) nicht in die Firmware; kein `double`/`strtod` bei `#floatwidth 32` (~10 KB Flash, auch der
+  Faktor der Einheitentabelle als `Real`); AVR: `nearbyint`, `localtime_r` ohne Rückgabe.
+* **Ziele:** ESP32-C3/C6 als Varianten von `esp32`; ein generisches Ziel Cortex-M/RISC-V mit FreeRTOS (Vorgaben für STM32F4/H7, RP2040, SAMD51, PIC32);
+  AVR und PIC24 später mit einem eigenen kleinen Profil (Konstanten im Flash).
+* **Strikte Arrays für Strings und Klassen** (`string a[]`, `Dog a[]`): die Art beim Schreiben prüfen (ohne zu packen).

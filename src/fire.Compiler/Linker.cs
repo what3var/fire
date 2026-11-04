@@ -32,6 +32,8 @@ namespace fire.Compiler
 
         /// <summary>The mode the command line asked for (`--types lax|strict`); used by every linker that has no mode of its own set.</summary>
         public static TypeCheckMode? ProcessDefaultTypeChecking { get; set; }
+        /// <summary>The width of `int` the command line sets for every program of this process (`-i 32`); wins against `#intwidth`, the project and the target.</summary>
+        public static int? ProcessIntWidth { get; set; }
 
         /// <summary>Also check the preludes and libraries (not only the code of the user): used by the tests that keep the declared types of the standard library honest (`FIRE_TYPECHECK_ALL=1` does it for a build).</summary>
         public bool TypeCheckLibraries { get; set; } = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_ALL") == "1";
@@ -82,7 +84,14 @@ namespace fire.Compiler
         /// <summary>The settings of a project over what the tags of the source said (the order of docs/PROJECTS.md: project, solution, tags, defaults).</summary>
         public static void ApplySettings(AssemblyInfo info, fire.Projects.ProjectSettings? settings, ref int? floatWidth)
         {
+            int? intWidth = null;
+            ApplySettings(info, settings, ref floatWidth, ref intWidth);
+        }
+
+        public static void ApplySettings(AssemblyInfo info, fire.Projects.ProjectSettings? settings, ref int? floatWidth, ref int? intWidth)
+        {
             if (settings == null) return;
+            if (settings.IntWidth != null) intWidth = settings.IntWidth;
             if (settings.Subsystem != null) info.Subsystem = settings.Subsystem == "gui" ? Utilities.SubsystemType.GUI : Utilities.SubsystemType.Console;
             if (settings.Mode != null) info.ExecutionMode = settings.Mode switch { "debug" => VmExecutionMode.Debug, "performance" => VmExecutionMode.Performance, _ => VmExecutionMode.Release };
             if (settings.FloatWidth != null) floatWidth = settings.FloatWidth;
@@ -135,6 +144,11 @@ namespace fire.Compiler
             registry.Register("floatwidth", 1, (ctx, args, line) =>
             {
                 ParseFloatWidth(args[0]); // validated here, applied by CompileAndLink
+                return null;
+            });
+            registry.Register("intwidth", 1, (ctx, args, line) =>
+            {
+                ParseIntWidth(args[0]);
                 return null;
             });
 
@@ -217,6 +231,13 @@ namespace fire.Compiler
             int? ignoredFloatWidth = null;
             ApplySettings(assemblyInfo, settings, ref ignoredFloatWidth);   // what the project fixes is shown as it is
             return assemblyInfo;
+        }
+
+        /// <summary>The value of `#intwidth n` (32 or 64).</summary>
+        public static int ParseIntWidth(Value arg)
+        {
+            if (arg.Kind == ValueKind.Int && arg.AsInt() is 32 or 64) return (int)arg.AsInt();
+            throw new Exception("The 'intwidth' directive expects 32 or 64.");
         }
 
         /// <summary>The value of `#floatwidth n` (32 or 64).</summary>
@@ -329,9 +350,11 @@ namespace fire.Compiler
         /// <param name="floatWidthOverride">32 or 64: precision of `float` for this build (command line); overrides `#floatwidth` and the target.</param>
         /// <param name="target">The target the program is built for: its `#import` libraries are checked and its float precision is the
         /// default (`#floatwidth` and <paramref name="floatWidthOverride"/> win). Null = no restriction, 64 bits.</param>
-        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null, int? floatWidthOverride = null, TargetProfile? target = null)
+        /// <param name="intWidthOverride">32 or 64: the width of `int` for this build (command line); overrides `#intwidth`, the project and the target.</param>
+        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null, int? floatWidthOverride = null, TargetProfile? target = null, int? intWidthOverride = null)
         {
             int? directiveFloatWidth = null;
+            int? directiveIntWidth = null;
             var assemblyInfo = new AssemblyInfo();
             var natives = new NativeRegistry();
             var nativeImports = new HashSet<string>();
@@ -351,7 +374,7 @@ namespace fire.Compiler
             var registry = DirectiveRegistry.CreateDefault(); // completely empty, NOT CreateDefault()
             var resources = new ResourceTable();
             registry.Resources = resources;
-            foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, EffectiveDefines())) registry.Symbols.Add(symbol);
+            foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, EffectiveDefines(), intWidthOverride ?? ProcessIntWidth)) registry.Symbols.Add(symbol);
             var projectImports = new List<string>();   // libraries of the project that a source imports
             ProjectNativeOverlay.Register(Plan);   // the C++ natives of the project and its libraries are found like those of installed packages
             if (ProjectNativeOverlay.OwnKey(Plan) is { } ownNativeKey) nativeImports.Add(ownNativeKey);
@@ -400,6 +423,11 @@ namespace fire.Compiler
             registry.Register("floatwidth", 1, (ctx, args, line) =>
             {
                 directiveFloatWidth = ParseFloatWidth(args[0]);
+                return null;
+            });
+            registry.Register("intwidth", 1, (ctx, args, line) =>
+            {
+                directiveIntWidth = ParseIntWidth(args[0]);
                 return null;
             });
 
@@ -566,10 +594,13 @@ namespace fire.Compiler
                 foreach (var import in nativeImports)
                     if (!target.HasImport(import))
                         throw new NotSupportedException($"The library '{import}' is not available on the target '{target.Name}' (available: {string.Join(", ", target.Imports!)}).");
-            ApplySettings(assemblyInfo, Plan?.Settings, ref directiveFloatWidth);   // the project's settings before the tags of the source
+            ApplySettings(assemblyInfo, Plan?.Settings, ref directiveFloatWidth, ref directiveIntWidth);   // the project's settings before the tags of the source
             int floatWidth = floatWidthOverride ?? directiveFloatWidth ?? target?.FloatWidth ?? 64;
             if (floatWidth != 32 && floatWidth != 64) throw new ArgumentOutOfRangeException(nameof(floatWidthOverride), "The float width must be 32 or 64.");
             if (floatWidth == 32) FloatNarrowing.Apply(compiled);
+            int intWidth = intWidthOverride ?? ProcessIntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
+            if (intWidth != 32 && intWidth != 64) throw new ArgumentOutOfRangeException(nameof(intWidthOverride), "The int width must be 32 or 64.");
+            if (intWidth == 32) FloatNarrowing.ApplyInts32(compiled);
 
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
@@ -581,7 +612,7 @@ namespace fire.Compiler
                 graphicsNatives = natives.Names.Where(n => n.StartsWith("__GRPH", StringComparison.Ordinal)).OrderBy(natives.IndexOf).ToList();
                 (packageLibraryFiles ??= new List<string>()).Add(gfxLibrary);
             }
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, IntWidth = intWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
                 SourceHashes = SourceHashesOf(processedSources.Count - driverSources, sources).Concat(new string?[driverSources]).ToList(),
                 SourceModules = processedSources.Select((p, i) => i == 0 ? "core" : p.Module).ToList(), ModuleDeps = ModuleDependencies(processedSources),
                 SourceTextHashes = processedSources.Select(p => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(p.Source))).ToLowerInvariant()).ToList() };

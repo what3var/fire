@@ -159,6 +159,7 @@ namespace fire.Compiler
 
             var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode, floatWidth);
             Value.SingleFloats = linkedProgram.FloatWidth == 32; // the precision of float is process-wide while a program runs
+            Value.Ints32 = linkedProgram.IntWidth == 32;     // (likewise the width of int, SPEC 8.2.1)
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))
             {

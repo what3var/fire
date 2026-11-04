@@ -716,7 +716,7 @@ namespace fire.Native
             foreach (var (iface, name, argc) in _interfaceDispatchers) sb.AppendLine(InterfaceDispatcherSignature(iface, name, argc) + ";");
             foreach (var method in _operators) sb.AppendLine($"static Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list);");
             sb.AppendLine($"FIRE_MAYBE_UNUSED static inline Value {Px}aget_g(Value a, Value i, OwnList* list);");
-            sb.AppendLine($"FIRE_MAYBE_UNUSED static inline void {Px}aset_g(Value a, Value i, Value v, OwnList* list);");
+            sb.AppendLine($"FIRE_MAYBE_UNUSED static inline Value {Px}aset_g(Value a, Value i, Value v, OwnList* list);");
             foreach (var selector in _overloadSelectors.Values) sb.AppendLine(SelectorSignature(selector) + ";");
             sb.Append(ovTests);
             foreach (var code in fieldCode) sb.AppendLine(code);

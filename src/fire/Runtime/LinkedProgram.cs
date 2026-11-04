@@ -83,6 +83,10 @@ namespace fire.Runtime
         [MemoryPackIgnore]
         public IReadOnlyList<string>? SourceTextHashes { get; init; }
 
+        /// <summary>Width of `int`: 64 (the default, on every target) or 32 (`#intwidth 32`): every int is cut to 32 bits; natively an int is an int32_t and
+        /// on a target with 32-bit pointers together with `#floatwidth 32` a value takes 8 bytes instead of 16 (SPEC 8.2.1).</summary>
+        public int IntWidth { get; init; } = 64;
+
         public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports, int firstUserSource, VmExecutionMode executionMode = VmExecutionMode.Release)
         {
             Program = program;

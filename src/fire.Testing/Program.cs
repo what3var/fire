@@ -7806,7 +7806,7 @@ packerTests:
                     node.WaitForExit();
                     var vmLines = new List<string>();
                     RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
-                    Value.SingleFloats = false;
+                    Value.SingleFloats = false; Value.Ints32 = false;
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
                     // linkage "static" (ROADMAP 9): the modules as static libraries of Emscripten (emar), in a cache of their own; the same output
                     string? cacheBefore = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
@@ -22285,6 +22285,136 @@ else
             }
             print("end")
             """),
+        ("#intwidth 32: Ueberlauf, Division, Schieben, Konstanten, typisierte Arrays, Felder, Schleifen, Einheiten", """
+            #intwidth 32
+            var a = 2147483647
+            a = a + 1
+            print(a)
+            print(65536 * 65536)
+            var m = -2147483647 - 1
+            print(m / -1)
+            print(m % -1)
+            print(1 << 31)
+            print(1 << 32)
+            print(3000000000)
+            var big = 100000
+            print(big * big)
+            int u[3]
+            u[0] = 2147483647
+            u[0]++
+            print(u[0])
+            class P { int x }
+            var p = new P()
+            p.x = 70000 * 70000
+            print(p.x)
+            var s = 0
+            for (var i = 0; i < 100000; i++) { s += i * i }
+            print(s)
+            print(5cm + 3mm)
+            print(0.5 + 1)
+            """),
+        ("Typisierte Arrays: Breiten, undefined und der Merker (-128, NaN, 0xFF, 0xFFFF), strikte Typen, Einheiten, ++, Zuweisung liefert den gespeicherten Wert", """
+            int[8] a[] = new int[4]
+            a[0] = 300
+            a[1] = -129
+            print(a[0] + " " + a[1] + " " + a[2])
+            var d = a
+            d[2] = 1000
+            print(d[2])
+            a[3] = 127
+            a[3]++
+            print(a[3])
+            print(a[0] = 500)
+            try { a[0] = "x" } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = 2.5 } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = 5cm } catch (UnitMismatchException e) { print("U: " + e.message) }
+            a[0] = undefined
+            print(a[0])
+            a[0] = -128
+            print(a[0] + " " + a[1])
+            a[0] = undefined
+            a[2] = -128
+            a[2] = 5
+            print(a[0] + " " + a[2] + " " + a.length)
+            int big[3]
+            big[0] = -9223372036854775807 - 1
+            print(big[0] + " " + big[1])
+            char c[2]
+            c[0] = 'x'
+            print(c[0] + " " + c[1])
+            byte by[3]
+            by[0] = 300
+            by[1] = 255
+            print(by[0] + " " + by[1] + " " + by[2])
+            float[32] f[] = [1, 2.1, undefined]
+            print(f[0] + " " + f[1] + " " + f[2])
+            float[16] h[2]
+            h[0] = 0.1
+            print(h[0])
+            float n[2]
+            n[0] = 0.0 / 0.0
+            print(n[0] + " " + n[1])
+            bool b[3]
+            b[0] = true
+            try { b[1] = 1 } catch (ArgumentException e) { print("A: " + e.message) }
+            print(b[0] + " " + b[1])
+            float:cm w[] = [1cm, 2m]
+            print(w[1])
+            try { w[0] = 3s } catch (UnitMismatchException e) { print("U: " + e.message) }
+            try { int bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+            int[16] wide[] = [1, 2, 70000]
+            print(wide[2])
+            try { int[8] q[] = wide } catch (ArgumentException e) { print("A: " + e.message) }
+            """),
+        ("Typisierte Arrays: mehrdimensional, Felder (int x[4] legt das Array mit dem Objekt an), copy, ref auf Elemente, foreach, Json, Threads (taking)", """
+            #import "json"
+            class U { static Set(ref int x, int v) { x = v } }
+            class Sensor {
+                int[16] samples[]
+                float:cm sizes[]
+                construct() { this.samples = new int[4]; this.sizes = new float[2]; this.samples[0] = 70000 }
+            }
+            int m[2][3]
+            m[1][2] = 7
+            try { m[1][0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+            int[8] m8[2][2]
+            m8[0][1] = 200
+            print(m[1][2] + " " + m8[0][1])
+            var s = new Sensor()
+            s.samples[1] = 40000
+            s.sizes[0] = 2m
+            print(s.samples[0] + " " + s.samples[1] + " " + s.sizes[0])
+            s.samples = new int[2]
+            s.samples[0] = 70000
+            var t = copy s
+            t.samples[1] = 70000
+            print(s.samples[0] + " " + t.samples[1])
+            int[8] a[4]
+            U.Set(a[1], 1000)
+            print(a[1])
+            a[0] = -128
+            a[2] = 5
+            var sum = 0
+            foreach (x in a) { if (x != undefined) { sum += x } }
+            print(sum)
+            print(Json.Serialize(a))
+            class Holder {
+                int[8] x[4]
+                int y[]
+                float m[2][3]
+                static int s[3]
+            }
+            var h1 = new Holder()
+            print(h1.x.length + " " + h1.x[0] + " " + h1.y + " " + h1.m[1].length + " " + Holder.s.length)
+            h1.x[0] = 300
+            var h2 = new Holder()
+            h2.x[0] = 1
+            print(h1.x[0] + " " + h2.x[0])
+            delete h1
+            print(h2.m[0][2])
+            int g[3]
+            fire taking g { g[0] = 300; print("thread " + g[0]) }
+            """),
         ("Zeiger (unsafe): Arithmetik ueber Array- und Puffer-Elemente (ref), Vergleich, Zeiger auf Zeiger", """
             class F {
               static Sum(ref int first, int n) {
@@ -25889,7 +26019,7 @@ else
         var vmResults = new string[natCases.Length];
         int vmAt = 0;
         using (TestProgress.Heartbeat("VM (Faelle nativ == VM)", () => Volatile.Read(ref vmAt), natCases.Length, () => natCases[Math.Min(Volatile.Read(ref vmAt), natCases.Length - 1)].Name))
-            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Volatile.Write(ref vmAt, i + 1); }
+            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Value.Ints32 = false; Volatile.Write(ref vmAt, i + 1); }
         Value.SingleFloats = false;
         // what the native program of a case did: its output, stderr and exit code (Output null: it did not build - Stderr says why)
         var natRan = new (string? Output, string Stderr, int Exit)[natCases.Length];
@@ -26214,7 +26344,7 @@ else
 
         // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
         string out64 = vmOutput("print(0.1 + 0.2)\nprint(1.0 / 3)"), out32 = vmOutput("#floatwidth 32\nprint(0.1 + 0.2)\nprint(1.0 / 3)");
-        Value.SingleFloats = false;
+        Value.SingleFloats = false; Value.Ints32 = false;
         CheckNat("#floatwidth: 64 Bit ist der Standard", out64 == "0.30000000000000004\n0.3333333333333333\n", out64);
         CheckNat("#floatwidth 32: float rechnet und druckt mit 32 Bit", out32 == "0.3\n0.33333334\n", out32);
         var overridden = new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, floatWidthOverride: 32);
@@ -26226,6 +26356,73 @@ else
         CheckNat("Befehlszeile: -f 32 / -f 16", cli32.Error == null && cli32.FloatWidth == 32 && cliBad.Error != null && CommandLineParser.Parse(new[] { "run", "a.script" }).FloatWidth == null);
         var narrowed = new Linker().CompileAndLink(new[] { "var x = 0.1\nprint(x)" }, null, null, null, floatWidthOverride: 32);
         CheckNat("Konstanten werden auf 32 Bit gerundet", narrowed.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Float && c.AsFloat() == (double)0.1f));
+
+        // #intwidth (SPEC 8.2.1): int is 64 bits everywhere unless the program asks for 32
+        {
+            string int64 = vmOutput("print(2147483647 + 1)"), int32 = vmOutput("#intwidth 32\nprint(2147483647 + 1)\nprint(65536 * 65536)\nprint(3000000000)");
+            Value.SingleFloats = false; Value.Ints32 = false;
+            CheckNat("#intwidth: 64 Bit ist der Standard, auch auf dem esp32", int64 == "2147483648\n" && new Linker().CompileAndLink(new[] { "print(1)" }).IntWidth == 64
+                && new Linker().CompileAndLink(new[] { "print(1)" }, null, null, null, null, TargetProfile.Esp32).IntWidth == 64, int64);
+            CheckNat("#intwidth 32: int rechnet mit 32 Bit (Ergebnis abgeschnitten, Konstanten auch)", int32 == "-2147483648\n0\n-1294967296\n", int32);
+            try { new Linker().CompileAndLink(new[] { "#intwidth 16\nprint(1)" }); CheckNat("#intwidth 16 wird abgelehnt", false); }
+            catch (Exception ex) { CheckNat("#intwidth 16 wird abgelehnt", ex.Message.Contains("32 or 64"), ex.Message); }
+            var cliInt = CommandLineParser.Parse(new[] { "run", "a.script", "-i", "32" });
+            CheckNat("Befehlszeile: -i 32 / -i 16", cliInt.Error == null && cliInt.IntWidth == 32 && CommandLineParser.Parse(new[] { "run", "a.script", "-i", "16" }).Error != null
+                && CommandLineParser.Parse(new[] { "run", "a.script" }).IntWidth == null);
+            var intLinked = new Linker().CompileAndLink(new[] { "#intwidth 32\nvar x = 3000000000\nprint(x)" });
+            CheckNat("#intwidth 32: Konstanten werden auf 32 Bit abgeschnitten, das C bekommt FIRE_INT32", intLinked.IntWidth == 32
+                && intLinked.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Int && c.AsInt() == -1294967296)
+                && fire.Native.CppGenerator.Generate(intLinked, TargetProfile.Host).Contains("#define FIRE_INT32 1"));
+            Value.SingleFloats = false; Value.Ints32 = false;
+
+            // a value of 8 bytes (FIRE_COMPACT: int32, float32, 32-bit pointers): the same program as a 32-bit build, when the compiler can make one
+            string probe = Path.Combine(workDir, "m32probe.c");
+            File.WriteAllText(probe, "int main(void) { return sizeof(void*) == 4 ? 0 : 1; }\n");
+            RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 \"{probe}\" -o \"{probe}.bin\"", workDir, out int probeExit);
+            if (probeExit != 0 || RunProc($"{probe}.bin", "", workDir, out int probeRun) is var _ && probeRun != 0)
+                Console.WriteLine("SKIP: 8-Byte-Value - der C-Compiler baut keine 32-Bit-Programme (gcc-multilib)");
+            else
+            {
+                const string compactSource = """
+                    #intwidth 32
+                    #floatwidth 32
+                    var a = 2147483647
+                    a = a + 1
+                    print(a)
+                    var m = -2147483647 - 1
+                    print(m / -1)
+                    print(1 << 31)
+                    int[8] t[] = [300, 2]
+                    print(t[0])
+                    class P { int x; float y; string s }
+                    var p = new P()
+                    p.x = 70000 * 70000
+                    p.y = 1.1
+                    p.s = "s" + p.x
+                    print(p.x + " " + p.y + " " + p.s)
+                    var sum = 0
+                    for (var i = 0; i < 100000; i++) { sum += i * i }
+                    print(sum)
+                    print(5cm + 3mm)
+                    var arr = [1, "x", 2.5]
+                    print(arr[1] + arr.length)
+                    class U { static Inc(ref int x) { x++ } }
+                    int box = 1
+                    U.Inc(box)
+                    print(box)
+                    """;
+                string expectedCompact = vmOutput(compactSource);
+                Value.SingleFloats = false; Value.Ints32 = false;
+                string compactC = Path.Combine(workDir, "compact.c");
+                File.WriteAllText(compactC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { compactSource }), TargetProfile.Host)
+                    + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
+                Value.SingleFloats = false; Value.Ints32 = false;
+                string compactBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{compactC}\" -I\"{workDir}\" -o \"{compactC}.bin\" -lm", workDir, out int compactExit);
+                string compactOut = compactExit == 0 ? RunProc($"{compactC}.bin", "", workDir, out _) : compactBuild;
+                CheckNat("8-Byte-Value (#intwidth 32, #floatwidth 32, 32-Bit-Zeiger): dasselbe wie die VM", compactExit == 0 && !compactBuild.Contains("warning") && compactOut.Replace("\r", "") == expectedCompact,
+                    $"  erwartet (VM):\n{expectedCompact}\n  erhalten (32 Bit):\n{compactOut}");
+            }
+        }
 
         // Zielprofil
         var esp = TargetProfile.Esp32;
