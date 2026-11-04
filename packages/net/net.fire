@@ -129,8 +129,28 @@ namespace Net {
         static string First(string host) { return Net.Dns.Resolve(host)[0] }
     }
 
+    // A network connection (Net.TcpClient, Tls.Stream): a stream to a remote host with limits for Read and Write. An interface has methods only, so the
+    // properties of the classes (ReadTimeout, RemoteHost, ...) are here as Get/Set methods; the classes have both. What implements it is an IO.Stream (at least an
+    // IO.IStream): `connection!IO.IStream` gives it to code that only reads and writes.
+    interface IConnection {
+        int Read(byte buffer[], int offset, int count)
+        int Write(byte buffer[], int offset, int count)
+        undefined Flush()
+        undefined Close()
+        // The limit of Read and Write (milliseconds or a time like 5s; undefined: no limit), see ReadTimeout/WriteTimeout.
+        any GetReadTimeout()
+        undefined SetReadTimeout(any timeout)
+        any GetWriteTimeout()
+        undefined SetWriteTimeout(any timeout)
+        // The addresses of the two ends ("127.0.0.1", port).
+        string GetRemoteHost()
+        int GetRemotePort()
+        string GetLocalHost()
+        int GetLocalPort()
+    }
+
     // A connection (TCP): an IO.Stream. Read returns 0 when the other side has closed its end.
-    class TcpClient : IO.Stream {
+    class TcpClient : IO.Stream, Net.IConnection {
         int handle
         bool closed
         int readLimit
@@ -216,6 +236,16 @@ namespace Net {
                 return Net.NetErrors.Handle(__NetLocalPort(this.handle))
             }
         }
+
+        // Net.IConnection
+        any GetReadTimeout() { return this.ReadTimeout }
+        undefined SetReadTimeout(any timeout) { this.ReadTimeout = timeout }
+        any GetWriteTimeout() { return this.WriteTimeout }
+        undefined SetWriteTimeout(any timeout) { this.WriteTimeout = timeout }
+        string GetRemoteHost() { return this.RemoteHost }
+        int GetRemotePort() { return this.RemotePort }
+        string GetLocalHost() { return this.LocalHost }
+        int GetLocalPort() { return this.LocalPort }
 
         // The number the operating system gave the socket (for the tls package, which works on it): do not close or use it yourself.
         int NativeHandle {
