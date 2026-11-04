@@ -12,6 +12,7 @@
 static void fire_display_systemTheme(FireSystemTheme* t) {
     fire_display_themeDefaults(t);
     t->embedded = 1;
+    t->transparency = 0;   /* (a board: no glass, no transparency - flat and fast) */
     t->scale = 1.0;
     t->dark = 1;
     t->accent = 0x8854D0;

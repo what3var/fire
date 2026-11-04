@@ -6,7 +6,10 @@
  *
  * Values cross the boundary as plain data. Numbers, text and arrays of these are COPIED: a native that changes an array it was given does not change the array of the caller
  * (return the changed array instead). Byte buffers are passed BY REFERENCE: the caller keeps them in place for the call (the VM pins them), the native reads and writes the bytes
- * directly - no copy, so a framebuffer can be handed over at any size; the length is fixed. Objects, lambdas and pointers cannot cross. Units are not carried.
+ * directly - no copy, so a framebuffer can be handed over at any size; the length is fixed. Objects and pointers cannot cross. Units are not carried.
+ * A LAMBDA crosses as a handle of the host (FIRE_LAMBDA): the library may keep it and call it back through fire_host.call_lambda - during a call on the VM's thread it
+ * runs at once (nested, with the real globals), from another thread it runs at the VM's next safe point. A handle stays valid until the program ends.
+ * Calls are serialized per library, but a native that calls a lambda back may be called again by it (on the same thread): the library is re-entrant there.
  */
 #ifndef FIRE_PKG_ABI_H
 #define FIRE_PKG_ABI_H
@@ -25,7 +28,8 @@ enum {
     FIRE_CHAR = 4,      /* v.i: the code point */
     FIRE_STRING = 5,    /* v.p: UTF-16 (length UTF-16 code units, not zero terminated) */
     FIRE_ARRAY = 6,     /* v.p: `length` fire_val */
-    FIRE_BUFFER = 7     /* v.p: `length` bytes; an argument: the caller's memory (writable); a result: copied */
+    FIRE_BUFFER = 7,    /* v.p: `length` bytes; an argument: the caller's memory (writable); a result: copied */
+    FIRE_LAMBDA = 8     /* v.i: a handle of the host; `length`: its number of parameters (an argument only) */
 };
 
 typedef struct fire_val {
@@ -89,6 +93,13 @@ typedef struct fire_host {
      * instead of showing it (1: the framebuffer exists); win_detach ends that (only for the same ctx). Called on the thread of the VM; `present` is called on the window's. */
     int32_t (*win_attach)(int32_t framebuffer, fire_present_fn present, void* ctx);
     void (*win_detach)(int32_t framebuffer, void* ctx);
+    /* Lambdas (FIRE_LAMBDA): calls the lambda `handle` with `argc` arguments - on the VM's thread at once (0: it ran; 1: it threw, the VM reported it), from another thread at
+     * the VM's next safe point (0: queued). The arguments are copied before it returns. */
+    int32_t (*call_lambda)(int64_t handle, const fire_val* args, int32_t argc);
+    /* From any thread: the VM calls fire_pkg_service of the library at its next safe point, on its thread (a package with a thread of its own: the windows' managers). */
+    void (*request_service)(void);
+    /* From any thread: adds (negative: removes) holds on the end of the program - it waits at its end, serving what is posted to it, until they are gone. */
+    void (*hold)(int32_t delta);
 } fire_host;
 
 /* The entry points of a package library. */
@@ -100,6 +111,8 @@ int fire_pkg_function_arity(int index);
 void fire_pkg_set_host(const fire_host* host);
 /* Optional: a program has ended, the library stays loaded for the next one: forget what the program left behind (open streams, ...). */
 void fire_pkg_reset(void);
+/* Optional: what the library asked for with fire_host.request_service (its host services), on the VM's thread at a safe point. */
+void fire_pkg_service(void);
 /* Calls function `index`. Returns 0, then `*result` is the result; 1, then `error` holds a message (zero terminated, at most errorSize bytes) and the program stops with it;
  * or 2, then the native throws an exception of the program: `error` holds the name of the exception class, a line feed and the message (the VM constructs the class with the message).
  * Memory behind `*result` (text, array, buffer) belongs to the library and stays valid until the next call from the same thread: the caller copies it. */

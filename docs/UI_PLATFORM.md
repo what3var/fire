@@ -1,6 +1,6 @@
 # Eigene Plattformschicht statt SDL, Effekte und ein modernerer Stil
 
-Status: **Teil 1 umgesetzt** (Branch `ui-platform`, siehe [Stand](#stand-teil-1)); Teile 2-4 sind Entwurf. Dieses Dokument legt fest, wie fire Fenster, Eingaben und Grafik ohne SDL auf allen Zielen
+Status: **Teil 1 umgesetzt**, **Teil 2 zum großen Teil** (Branch `ui-platform`, siehe [Stand Teil 1](#stand-teil-1) und [Stand Teil 2](#stand-teil-2)); Teile 3-4 sind Entwurf. Dieses Dokument legt fest, wie fire Fenster, Eingaben und Grafik ohne SDL auf allen Zielen
 betreibt, wie Glas und Acryl hineinkommen und in welcher Reihenfolge das gebaut wird.
 
 Inspiration: [Raven](https://github.com/oscar-soirey/Raven) (Apache-2.0) - wir haben uns dort die Aufteilung der Plattformschichten,
@@ -155,4 +155,127 @@ Offen in Teil 1:
 * Wayland: Drag-out (`fire_dragout.h`) hört auf einer Verbindung - mit mehreren Fenstern auf verschiedenen Threads nur für das erste.
 * Win32: während der Nutzer das Fenster zieht oder seine Größe ändert (modale Schleife von Windows), zeichnet das Programm nicht nach.
 * Mit dem Emscripten 3.1.6 von Ubuntu laufen die wasm-Prüfungen der Suite nicht (schon ein Programm ohne Fenster startet nicht) - mit einem aktuellen emsdk prüfen.
-* Die VM benutzt noch SDL3-CS (Teil 2).
+* Die VM benutzte noch SDL3-CS - in Teil 2 entfernt.
+
+## Stand Teil 2
+
+Die VM benutzt für `graphics` und `windows` die C-Implementierung (Standard; `FIRE_VM_GRAPHICS=cs` nimmt die C#-Implementierung):
+
+* **Paket-ABI erweitert** (`native/abi/fire_pkg_abi.h`, abwärtskompatibel): ein Lambda geht als Handle hinüber (`FIRE_LAMBDA`); die Bibliothek ruft es mit
+  `fire_host.call_lambda` zurück - auf dem Thread der VM sofort (verschachtelt, mit den echten Globals), von einem anderen Thread am nächsten Safe Point.
+  `request_service` lässt die VM `fire_pkg_service` der Bibliothek auf ihrem Thread aufrufen (die Zyklen der Fenster-Manager), `hold` hält das Programmende
+  auf. Die Sperre der Aufrufe ist auf ihrem Thread wiedereintrittsfähig (ein Callback darf wieder Natives derselben Bibliothek rufen).
+* **Eine Bibliothek für beide** (`PackageLibrary.EnsureGraphics`, `libfire_gfx`): die Bridges von graphics und windows und die eigene Anzeige, die Natives aus
+  den Tabellen des Generators, Host-Funktionen in `native/abi/fire_gfx_host.h` (Pixel eines Framebuffers, Presenter für scene3d, Zurücksetzen am Programmende).
+  Die Fenster-Manager haben ihre Threads auch in der Bibliothek (die Thread-Dienste der Runtime kommen im Bibliotheksmodus vom Host).
+* **Gepackte Programme** (`forge build`) tragen die Bibliothek in ihrer Payload; SDL3 und die C#-Grafik kommen nicht mehr mit (ein Fensterprogramm: ~0,8 MB).
+* Was der Host an Umgebungsvariablen für das Programm setzt (`FIRE_*`, `DISPLAY`, ...), bekommt auch die C-Laufzeit des Prozesses.
+
+* **Editor-Werkzeuge auf der C-Schicht:** der UI-Designer (`UiPreview`) und der Circuit-Editor (`LiveSession`) lassen ihre Programme auf einer **Kopie** der
+  Bibliothek laufen (`GraphicsLibrary.Instance`, ein Pool: eine geladene Bibliothek hat einen Zustand je Prozess - ihre Framebuffer, Fenster, die Anzeige -, so
+  bleibt ein Programm daneben auf dem Desktop). Die Kopie bekommt eine **Anzeige, die der Host steuert** (`fire_gfx_host_display`, `FireDisplayHost` in
+  `fire_display_headless.h`): die Ereignisse holt das Fenster beim Pumpen vom Host, Bilder und Mauszeiger gehen an den Host (`IHostDisplay`); ohne Host ein
+  Fenster ohne Bildschirm (der Designer liest das Bild aus dem Framebuffer).
+* **Je Programm statt je Prozess:** der `fire_host` einer Bibliothek mit eigenen Diensten schickt `request_service` an die VM des Programms, das *diese*
+  Bibliothek benutzt; am Programmende werden nur die Bibliotheken des Programms zurückgesetzt (`PackageHost.Begin(..., libraries)`), Lambdas laufender Programme
+  bleiben gültig. **Holds gehören dem Programm** (`VM.AddHostHold` seiner Haupt-VM; die C-Bibliothek meldet sie über ihren eigenen `fire_host.hold`
+  an die VM, die sie benutzt): ein Fenster der Live-Ansicht hält kein Programm daneben auf, und nach dem Ende eines Programms hält nichts mehr.
+* **SDL3-CS ist entfernt** (`fire.Terminal.Sdl`, `SdlFramebufferRenderer`, `SdlClipboard`): die Fenster des Desktops zeigt in der VM nur noch die C-Bibliothek. Die
+  C#-Implementierung (`fire.Terminal`, `fire.Terminal.Windows`) bleibt als Rückfall, wo die Bibliothek nicht gebaut werden kann (kein C-Compiler) oder
+  `FIRE_VM_GRAPHICS=cs` sie wählt: Grafik geht, Fenster nur mit einem Renderer des Hosts (die Tests, der Editor über `HostRenderer`); sonst meldet das Fenster,
+  dass es keine Anzeige gibt.
+
+Noch offen:
+
+* Die Tests mit gefälschten Renderern (`FakeRenderer`, `ScriptedWindow` u. a.) und die Unit-Tests der C#-Grafik prüfen weiter die C#-Implementierung.
+* Der C#-Zwilling der Grafik für Programme fällt weg, sobald die Bibliothek vorgebaut mitgeliefert wird (dann braucht die VM keinen C-Compiler mehr dafür).
+
+## Stand Teil 3
+
+* **Zeichnen in C** (`packages/graphics/native/fire_gfx_fx.h`): abgerundete Rechtecke mit Antialiasing (Füllung und Umriss), feine Schatten (Maske auf 1/2 bzw. 1/4 der Größe,
+  weichgezeichnet, im Cache, nur der Ring um das Rechteck), Blur (verkleinern, Box-Blur mit gleitender Summe zweimal, bilinear zurück), Materialien Glas/Acryl/Tönung mit Haarlinie
+  und feinem Lichtrand, Schalter für Blur und Transparenz. Halbtransparente Spannen mischen zwei Kanäle je Wort (bitgleich zu `fire_gfx_mix`). Am `Renderer`: `FillRoundRect`,
+  `DrawRoundRect`, `DrawShadow`, `Blur`, `DrawMaterial` (`MaterialKind`, `MaterialOptions`); die C#-Rückfall-Implementierung zeichnet die einfachen Formen.
+* **Stil von `ui`:** Radien 4/8 px, weichere Ränder, Fokus als 2-px-Akzentrand, Auswahl als abgerundete Pille, Scrollbalken als Pillen, Menüs auf Acryl mit feinem Schatten (pro
+  Popup im Cache, neu nur wenn der Hintergrund samt Rand neu gezeichnet wurde), Schatten für alle schwebenden Elemente.
+* **Schalter:** `UI.Effects.Glass/Transparency`, `root.Glass/Transparency`; Standard nach `SystemTheme.transparency` (neu: Windows `EnableTransparency`, macOS
+  `reduceTransparency`, Browser `prefers-reduced-transparency`; Board: aus).
+* **Fenster-Hintergrund:** `root.WindowBackdrop` fordert ihn an; was der Desktop gibt, macht die Grundfläche durchscheinend.
+* **Nur Geändertes präsentieren:** `Window.PresentArea(x, y, w, h)` (optional in der HAL: `fire_display_presentArea`, `FIRE_DISPLAY_PRESENT_AREA`); X11 rechnet nur den
+  Bereich um und gibt nur ihn an den X-Server (`XShmPutImage`), Win32 rechnet nur ihn um. Mehrere Bereiche vor einem Bild werden vereinigt, im Thread des Managers auch über
+  mehrere veröffentlichte Bilder; ein Bild anderer Größe oder ohne Bereich geht ganz. `UI.Root` meldet sein Dirty-Rechteck selbst (nach vollem Neuzeichnen alles, im Leerlauf
+  nichts); `root.PartialPresent = false` für Programme, die zusätzlich selbst in den Framebuffer zeichnen.
+* **Tooltips:** `Element.ToolTip`, nach `root.toolTipDelay` unter dem Zeiger, ohne Eingaben.
+* **Holds** gehören dem Programm (siehe Teil 2), Raven steht in der About-Box.
+
+Noch offen:
+
+* macOS präsentiert noch das ganze Bild (ungetestet ohne Mac); das Web ist nur gebaut, nicht im Browser geprüft (das Emscripten im Container ist zu alt). Blur-Cache auch für eigene Programme.
+
+## Stand Teil 4
+
+Stufen (alle umgesetzt): **4.1** Grundgerüst, **4.2** Text über einen Glyphen-Atlas und Blits über Texturen, **4.3** Schatten, Blur und Materialien auf der GPU, **4.4** Präsentieren
+ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
+
+4.1 (`packages/graphics/native/fire_gfx_gpu.h`):
+
+* **Vulkan zur Laufzeit** (`dlopen`/`LoadLibrary`, nichts gelinkt); die Deklarationen erzeugt `tools/make_gfx_vk.py` aus `vulkan_core.h` (`fire_gfx_vk.h`), die Shader
+  `shaders/build.sh` (`fire_gfx_shaders.h`, SPIR-V). Ein Gerät (GPU vor CPU-Gerät; `FIRE_GFX_GPU=cpu` nimmt auch lavapipe), ein Bild je beschleunigtem Framebuffer.
+* **Zwei Kopien, ein Abgleich:** `fire_gfx_fbCpu(fb, writes)` steht vor jedem Lesen und Schreiben der CPU (Surface, Blit, GetPixel, Bytes, PNG, Fenster). Hat die GPU seit dem
+  letzten Abgleich gezeichnet, holt er die Pixel zurück (das Dirty-Flag); schreibt die CPU, lädt der nächste GPU-Befehl ihr Bild vorher hoch. Ohne Zwilling kostet der Haken
+  einen Vergleich.
+* **Auf der GPU:** `FillRect`, `FillRoundRect`, `DrawRoundRect`, `DrawRect` (Stift 1 px) - ein Instanz-Quad je Form, im Fragment-Shader dieselbe Abstandsfunktion wie
+  `fire_gfx_fx.h` (Abdeckung `clamp(0.5 - d)`), mit Blending wie `fire_gfx_mix` oder kopierend (ohne Blending). Die Befehle sammeln sich bis zum nächsten Abgleich.
+* **Schalter:** `Framebuffer.Accelerated` (`Framebuffer.GpuError()` sagt, warum nicht), `FIRE_GFX_GPU=1|cpu` beschleunigt jeden RGBA-Framebuffer. Auf Boards, im Browser und
+  ohne Vulkan bleibt alles Software; die C#-Rückfall-Implementierung hat keine GPU.
+* **Tests:** GPU gegen Software auf lavapipe (höchstens 2 Farbstufen Abweichung, gemessen 1), und die ganze UI-Gruppe läuft mit `FIRE_GFX_GPU=cpu` grün.
+
+4.2 (Text und Blits):
+
+* **Glyphen-Atlas:** eine Textur mit einem Byte Abdeckung je Pixel (2048×2048, in Regalen gefüllt, Schlüssel je Schrift, Größe und Glyphe); TrueType-Glyphen bringen ihr
+  Abdeckungsbild aus dem Cache der Schrift mit, Bitmap-Glyphen (Konsolenschrift, 8x8, 8x14) werden zu 0/255. Geändertes geht beim nächsten Lauf hoch; ist er voll, wird
+  erst gezeichnet, was ihn noch braucht, dann fängt er neu an. Hintergründe von Text sind Rechtecke.
+* **Blits:** eine RGBA-Quelle bekommt selbst einen Zwilling; beim Einreihen des Blits wird sie hochgeladen bzw. ihr eigenes Zeichnen ausgeführt - der Blit zeichnet, was sie
+  da war. Der Shader wählt das Quellpixel wie `fire_gfx_blit` (nächster Nachbar, ganzzahlig `s + (2f+1)·sw/(2|dw|)`, gespiegelt bei negativer Breite/Höhe); Kopie,
+  transparent und Blend. Palettenquellen und ein Framebuffer in sich selbst bleiben Software, ebenso die Konsolenausgabe (`Print`, Scrollen).
+* **Reihenfolge über mehrere Framebuffer:** Zwillinge mit offener Arbeit stehen in einer Liste in der Reihenfolge ihres ersten Befehls; ein Lauf führt erst die vor ihm
+  aus (sie lesen ihn womöglich noch im alten Zustand), die nach ihm warten (sie können neuere Befehle tragen).
+* **Tests:** Formen, Text (drei Schriftarten, Hintergründe, Clip) und Blits (alle Modi, skaliert, gespiegelt, Quelle danach geändert) gegen Software: höchstens 1 Stufe;
+  die ganze UI-Gruppe läuft auch komplett auf der GPU.
+
+4.3 (Schatten, Blur, Materialien):
+
+* **Schatten:** die weichgezeichnete Maske macht weiter die Software einmal (`fire_gfx_fxShadowMask`, mit ihrem Cache); sie kommt mit eigenem Schlüssel in den Atlas
+  (bis 1024 hoch). Ein Bild-Quad mit Modus 4 streckt sie bilinear in 16.16 wie `fire_gfx_fxSample`, lässt das Rechteck selbst aus und färbt mit der Deckkraft - eine Maske,
+  die nicht in den Atlas passt, bleibt Software.
+* **Blur und Materialien:** dieselben Schritte wie `fire_gfx_fxBlurMaterial`, ganzzahlig im Shader (`shaders/gfx_effect.*`): verkleinern (Mittel aus f×f), zweimal Box
+  längs x, zweimal längs y (Ping-Pong zwischen zwei Hilfsbildern, die mitwachsen), zurück bilinear mit Sättigung, Tönung, Korn und Lichtrand, Abdeckung der Ecken als
+  Alpha. Ein Effekt ist ein eigener Batch-Typ: der Render-Pass endet vor ihm, er liest, was bis dahin gezeichnet ist, und der Pass danach zeichnet darüber weiter.
+  `DrawMaterial` geht dieselben Zweige wie in Software (deckend, Tönung ohne Blur, Material) samt Haarlinie als Formen.
+* **Tests:** Schatten (auch negativ versetzt), Blur (Radius 3 bis 30), Glas, Acryl, Tönung, mit Clip und ohne Blending, nach einer Größenänderung - gegen Software
+  höchstens 1 Stufe.
+
+4.4 (direkt ins Fenster):
+
+* **Ohne Zurücklesen:** zeigt ein Fenster einen beschleunigten Framebuffer, kopiert das Veröffentlichen eines Frames (`Tick`, `Present`) das Bild des Zwillings auf der
+  GPU in das Bild seines Presenters; der Fenster-Thread blittet es über eine Swapchain ins Fenster (`VK_KHR_swapchain` auf einer Fläche für Win32, X11, Wayland oder
+  einen CAMetalLayer) - derselbe Presenter-Weg der Fensterbrücke wie scene3d DirectDrawing (`fire_present_fn`), ohne Overlay. Die ersten Frames gehen zusätzlich als
+  Pixel mit (das Fenster nimmt den Presenter vielleicht nicht, z. B. die Host-Anzeige des Editors); sobald ein Fenster einen gezeigt hat, bleiben die Frames auf der GPU.
+  Ein Presenter, der scheitert, gibt das Fenster zurück, die Frames werden wieder zurückgelesen.
+* **Transparenter Hintergrund (Backdrop):** der Frame wird beim Kopieren auf der GPU vormultipliziert (ein Pass des Effekt-Shaders, Modus 4 - dieselbe Rechnung
+  `c·a/255` wie die Anzeigen in Software), die Swapchain mischt mit `VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR`; sie wird beim Wechsel neu gemacht. Eine Fläche, die so
+  nicht mischen kann, bekommt diese Frames als Pixel: Win32 (die Treiber bieten nur deckend; mischen kann dort nur DWM über DirectComposition - offen). X11: ein
+  32-Bit-Fenster ohne `PRE_MULTIPLIED` (z. B. NVIDIA) nimmt `INHERIT` - das vormultiplizierte Bild geht so ins Visual, der X-Kompositor mischt es wie das der
+  Anzeige; ein 24-Bit-Fenster kann nicht durchscheinen (ohne Kompositor gibt die Anzeige ohnehin keinen transparenten Backdrop). Macht die Anzeige ihr Fenster dafür neu (X11: anderes Visual), lässt
+  der Presenter das alte vorher los.
+* **Grenzen:** zeichnet die Wayland-Anzeige ihre eigene Titelleiste (der Kompositor zeichnet keine: GNOME, weston), gibt sie das Fenster keinem Presenter - die Leiste
+  liegt im Puffer der Fläche (`FIRE_WAYLAND_CSD=0` lässt sie weg: Tests); das gilt auch für scene3d DirectDrawing. Zeigen zwei Fenster denselben Framebuffer, bekommt
+  das zweite die Pixel. Der Presenter zeigt einen neuen Frame sofort, den alten nur ab und zu wieder (nicht in jedem Zyklus). VSync übernimmt die Swapchain (FIFO) -
+  lavapipe wartet dabei nicht auf den Bildschirm.
+* **Zurücklesen nur des Gezeichneten:** jeder Zwilling führt das Rechteck mit, das die GPU seit dem letzten Gleichstand gezeichnet hat (Formen, Bilder, Glyphen,
+  Schatten, Effekte); ein Abgleich holt nur dieses zurück - der Rest der CPU-Pixel stimmt noch. Das macht jeden Pixelweg billig (Windows mit Transparenz, `GetPixel`,
+  PNG, die Host-Anzeige), wenn sich wenig ändert.
+* **Ein Schloss:** Programm-Thread (Zeichnen, Kopieren) und Fenster-Threads (Präsentieren) teilen sich die eine Queue; jeder Presenter hat seinen eigenen Command-Pool.
+* **Tests:** unter Xvfb mit lavapipe: das Bild im Fenster (Bildschirmfoto) stimmt, und nach den ersten Frames liest nichts mehr zurück (`Framebuffer.GpuReadbacks()`);
+  auf Wayland (weston) ein transparentes Fenster: dasselbe gemischte Bild wie in Software, 0 Readbacks.
+

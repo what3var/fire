@@ -106,7 +106,7 @@ static class WindowManagerTests
                     return fake;
                 }
             },
-            FireRuntime.AddHostHold);
+            d => vm?.AddHostHold(d));
         fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
         fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
         ReflectionNatives.Register(natives);
@@ -132,7 +132,7 @@ static class WindowManagerTests
         }
         VM.ResetTerminateForTests();
         string? unhandled = vm.UnhandledException != null ? new UncaughtScriptException(vm.UnhandledException).ToString() : null;
-        lock (fakes) return new Result(lines, fakes.ToList(), runnerId, unhandled, FireRuntime.HostHolds);
+        lock (fakes) return new Result(lines, fakes.ToList(), runnerId, unhandled, vm.HostHolds);
     }
 
     public static void Run()
@@ -148,7 +148,7 @@ static class WindowManagerTests
             Cooperative();
             AutoClose();
             ButtonSymbols();
-            ClipboardFormats();
+            HoldsPerProgram();
         }
         catch (Exception ex)
         {
@@ -157,36 +157,27 @@ static class WindowManagerTests
         Console.WriteLine(_failures == 0 ? "Alle Fenster-Manager-Pruefungen bestanden." : $"FEHLER: {_failures} Fenster-Manager-Pruefung(en) fehlgeschlagen.");
     }
 
-    // the formats of the desktop's clipboard that the VM writes itself (fire.Terminal.Sdl): DROPFILES of CF_HDROP (Windows; the clipboard itself is tested
-    // under Wine in the native checks) and text/uri-list
-    private static void ClipboardFormats()
-    {
-        string[] paths = { @"C:\fire\ein Ordner\datei ä.txt", @"C:\zwei", "D:\\😀" };
-        byte[] block = fire.Terminal.Sdl.DropFiles.Encode(paths);
-        string chars = System.Text.Encoding.Unicode.GetString(block, 20, block.Length - 20);
-        Check("CF_HDROP: der Block hat den Kopf von DROPFILES (pFiles 20, fWide 1), die Pfade in UTF-16 mit je einer 0 und einer weiteren am Ende",
-            BitConverter.ToUInt32(block, 0) == 20 && BitConverter.ToInt32(block, 4) == 0 && BitConverter.ToInt32(block, 8) == 0 && BitConverter.ToInt32(block, 12) == 0
-            && BitConverter.ToInt32(block, 16) == 1 && chars == string.Join("\0", paths) + "\0\0", chars);
-        string[] back = fire.Terminal.Sdl.DropFiles.Decode(block);
-        Check("CF_HDROP: was geschrieben wird, liest sich gleich zurueck", back.SequenceEqual(paths), string.Join("|", back));
-        // an old block without fWide (ANSI), with pFiles further on; broken blocks give nothing
-        var ansi = new byte[24 + 16];
-        BitConverter.TryWriteBytes(ansi.AsSpan(0, 4), 24u);
-        System.Text.Encoding.ASCII.GetBytes("C:\\a\0C:\\b\0\0").CopyTo(ansi, 24);
-        string[] old = fire.Terminal.Sdl.DropFiles.Decode(ansi, b => System.Text.Encoding.Latin1.GetString(b));
-        Check("CF_HDROP: ein alter Block ohne fWide (ANSI) und mit pFiles hinter dem Kopf; kaputte Bloecke ergeben nichts",
-            old.SequenceEqual(new[] { "C:\\a", "C:\\b" }) && fire.Terminal.Sdl.DropFiles.Decode(new byte[10]).Length == 0
-            && fire.Terminal.Sdl.DropFiles.Decode(new byte[20]).Length == 0 && fire.Terminal.Sdl.DropFiles.Decode(fire.Terminal.Sdl.DropFiles.Encode(Array.Empty<string>())).Length == 0,
-            string.Join("|", old));
-        string uris = fire.Terminal.Sdl.SdlClipboard.UriListFromPaths(new[] { "/tmp/ein Ordner/datei ä.txt", "/tmp/zwei" });
-        Check("text/uri-list: Pfade werden zu file://-URIs (Leerzeichen und Umlaute als %XX) und wieder zurueck",
-            uris == "file:///tmp/ein%20Ordner/datei%20%C3%A4.txt\r\nfile:///tmp/zwei\r\n"
-            && fire.Terminal.Sdl.SdlClipboard.PathsFromUriList(uris).SequenceEqual(new[] { "/tmp/ein Ordner/datei ä.txt", "/tmp/zwei" }), uris);
-    }
-
     private static string Show(Result r) => string.Join("\n", r.Lines) + (r.Unhandled != null ? "\nUNHANDLED: " + r.Unhandled : "");
 
     // Run(): the manager on the program's thread, blocking until the windows are closed
+    // Holds belong to the program they keep alive: a program next to it (the editor's live view and a run) ends when it is done, and nothing is held after its end
+    private static void HoldsPerProgram()
+    {
+        var held = fire.Compiler.RuntimeSession.Build(new[] { "print(\"a\")" }, VmExecutionMode.Release, args => Value.MakeUndefined());
+        held.VirtualMachine!.AddHostHold(1);   // (as an open window of a manager's thread would)
+        var other = fire.Compiler.RuntimeSession.Build(new[] { "print(\"b\")" }, VmExecutionMode.Release, args => Value.MakeUndefined());
+        var run = new Thread(() => other.Run());
+        run.Start();
+        bool otherEnded = run.Join(5000);
+        var first = new Thread(() => held.Run());
+        first.Start();
+        bool waits = !first.Join(300);
+        held.VirtualMachine.AddHostHold(-1);
+        bool firstEnded = first.Join(5000);
+        Check("Holds gehoeren ihrem Programm: ein anderes endet trotzdem, das gehaltene wartet bis zur Freigabe", otherEnded && waits && firstEnded && held.VirtualMachine.HostHolds == 0,
+            $"anderes beendet {otherEnded}, gehaltenes wartet {waits}, dann beendet {firstEnded}");
+    }
+
     private static void CurrentThread()
     {
         var r = Run("""

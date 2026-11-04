@@ -59,7 +59,7 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 #endif
 }
 
-#ifdef FIRE_THREADS
+#if defined(FIRE_THREADS) || defined(FIRE_LIBRARY)   /* (a library for the VM: a package with a thread of its own) */
 typedef struct { SRWLOCK l; } fire_mutex;
 typedef struct { CONDITION_VARIABLE c; } fire_cond;
 typedef struct fire_thread { HANDLE h; } fire_thread;

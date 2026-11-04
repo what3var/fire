@@ -120,6 +120,7 @@ typedef struct FireDw32Window {
     double lastFrame;
     BITMAPINFO bmi;
     uint32_t* bgra; size_t bgraCap;
+    int bgraW, bgraH, bgraBackdrop;   /* what `bgra` holds (an area is only converted into the same) */
     int mods;
     int textX, textY, textW, textH, composing;
     WCHAR highSurrogate;
@@ -654,9 +655,12 @@ static int fire_dw32_pump(FireDw32Window* w, FireDisplayEvents* out, int fbWidth
 }
 
 /* Shows the pixels (R,G,B,A per 32-bit word), stretched to the client area: converted to B,G,R,A (premultiplied when the window shows what lies behind it). */
-static void fire_dw32_present(FireDw32Window* w, const uint32_t* rgba, int width, int height) {
+/* Shows the frame; only the area (ax, ay, aw, ah) changed since the last one: when the size is the same, only it is converted and handed to the window (the bitmap
+ * keeps the rest; WM_PAINT shows all of it). */
+static void fire_dw32_presentArea(FireDw32Window* w, const uint32_t* rgba, int width, int height, int ax, int ay, int aw, int ah) {
     FireW32* lib = fire_dw32_lib();
-    size_t n, i;
+    size_t n;
+    int row, col, c0 = 0, c1 = width, r0 = 0, r1 = height;
     HDC dc;
     if (w->hwnd == NULL || w->direct || rgba == NULL || width <= 0 || height <= 0) return;
     n = (size_t)width * (size_t)height;
@@ -664,14 +668,24 @@ static void fire_dw32_present(FireDw32Window* w, const uint32_t* rgba, int width
         uint32_t* grown = (uint32_t*)realloc(w->bgra, n * 4);
         if (grown == NULL) return;
         w->bgra = grown; w->bgraCap = n;
+        w->bgraW = 0;
     }
-    if (w->backdrop == FIRE_BACKDROP_NONE)
-        for (i = 0; i < n; i++) { uint32_t v = rgba[i]; w->bgra[i] = 0xFF000000u | ((v & 0xFFu) << 16) | (v & 0xFF00u) | ((v >> 16) & 0xFFu); }
-    else
-        for (i = 0; i < n; i++) {
-            uint32_t v = rgba[i], a = v >> 24;
-            w->bgra[i] = (a << 24) | (((v & 0xFFu) * a / 255u) << 16) | ((((v >> 8) & 0xFFu) * a / 255u) << 8) | (((v >> 16) & 0xFFu) * a / 255u);
-        }
+    if (w->bgraW == width && w->bgraH == height && w->bgraBackdrop == w->backdrop) {
+        c0 = ax < 0 ? 0 : ax > width ? width : ax; c1 = ax + aw < 0 ? 0 : ax + aw > width ? width : ax + aw;
+        r0 = ay < 0 ? 0 : ay > height ? height : ay; r1 = ay + ah < 0 ? 0 : ay + ah > height ? height : ay + ah;
+    }
+    w->bgraW = width; w->bgraH = height; w->bgraBackdrop = w->backdrop;
+    for (row = r0; row < r1; row++) {
+        const uint32_t* src = rgba + (size_t)row * width;
+        uint32_t* d = w->bgra + (size_t)row * width;
+        if (w->backdrop == FIRE_BACKDROP_NONE)
+            for (col = c0; col < c1; col++) { uint32_t v = src[col]; d[col] = 0xFF000000u | ((v & 0xFFu) << 16) | (v & 0xFF00u) | ((v >> 16) & 0xFFu); }
+        else
+            for (col = c0; col < c1; col++) {
+                uint32_t v = src[col], a = v >> 24;
+                d[col] = (a << 24) | (((v & 0xFFu) * a / 255u) << 16) | ((((v >> 8) & 0xFFu) * a / 255u) << 8) | (((v >> 16) & 0xFFu) * a / 255u);
+            }
+    }
     memset(&w->bmi, 0, sizeof w->bmi);
     w->bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     w->bmi.bmiHeader.biWidth = width;
@@ -681,7 +695,16 @@ static void fire_dw32_present(FireDw32Window* w, const uint32_t* rgba, int width
     w->bmi.bmiHeader.biCompression = BI_RGB;
     dc = GetDC(w->hwnd);
     if (dc != NULL) {
-        if (width == w->winW && height == w->winH) SetDIBitsToDevice(dc, 0, 0, (DWORD)width, (DWORD)height, 0, 0, 0, (UINT)height, w->bgra, &w->bmi, DIB_RGB_COLORS);
+        if (width == w->winW && height == w->winH && (c0 > 0 || r0 > 0 || c1 < width || r1 < height)) {
+            /* only the area: the band of its rows as a bitmap of its own (top-down, starting at its first row; source y 0 is then its first row whichever way
+             * Windows counts), from its first column */
+            if (c1 > c0 && r1 > r0) {
+                BITMAPINFO band = w->bmi;
+                band.bmiHeader.biHeight = -(r1 - r0);
+                SetDIBitsToDevice(dc, c0, r0, (DWORD)(c1 - c0), (DWORD)(r1 - r0), c0, 0, 0, (UINT)(r1 - r0), w->bgra + (size_t)r0 * width, &band, DIB_RGB_COLORS);
+            }
+        }
+        else if (width == w->winW && height == w->winH) SetDIBitsToDevice(dc, 0, 0, (DWORD)width, (DWORD)height, 0, 0, 0, (UINT)height, w->bgra, &w->bmi, DIB_RGB_COLORS);
         else {
             SetStretchBltMode(dc, COLORONCOLOR);
             StretchDIBits(dc, 0, 0, w->winW, w->winH, 0, 0, width, height, w->bgra, &w->bmi, DIB_RGB_COLORS, SRCCOPY);
@@ -697,6 +720,8 @@ static void fire_dw32_present(FireDw32Window* w, const uint32_t* rgba, int width
         w->lastFrame = fire_dw32_now();
     }
 }
+
+static void fire_dw32_present(FireDw32Window* w, const uint32_t* rgba, int width, int height) { fire_dw32_presentArea(w, rgba, width, height, 0, 0, width, height); }
 
 static int fire_dw32_native(FireDw32Window* w, fire_native_window* out) {
     if (w->hwnd == NULL) return 0;

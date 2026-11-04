@@ -121,11 +121,10 @@ namespace UI {
             else if (this.Background != undefined) { face = this.Background }
             else if (this.Pressed && this.Hover) { face = theme.facePressed }
             else if (this.Hover) { face = theme.faceHover }
-            root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, face)
             var border = theme.border
             if (this.Pen != undefined) { border = this.Pen }
             if (this.Focused) { border = theme.borderFocus }
-            root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, face, border)
 
             var color = theme.text
             if (this.Foreground != undefined) { color = this.Foreground }
@@ -202,15 +201,15 @@ namespace UI {
             if (!this.Enabled) { back = theme.faceDisabled }
             else if (this.Background != undefined) { back = this.Background }
             else if (this.Hover) { back = theme.faceHover }
-            root.renderer.FillRect(ax, by, box, box, back)
             var border = theme.border
             if (this.Pen != undefined) { border = this.Pen }
             if (this.Focused) { border = theme.borderFocus }
-            root.renderer.DrawRect(ax, by, box, box, border)
+            var corner = UI.M.Min(theme.radius, 3)
+            root.Box(ax, by, box, box, back, border, corner)
             if (this.IsChecked) {
                 var mark = theme.accent
                 if (!this.Enabled) { mark = theme.textDisabled }
-                root.renderer.FillRect(ax + 3, by + 3, box - 6, box - 6, mark)
+                root.Box(ax + 3, by + 3, box - 6, box - 6, mark, undefined, UI.M.Min(corner, 2))
             }
             var color = theme.text
             if (this.Foreground != undefined) { color = this.Foreground }
@@ -608,11 +607,10 @@ namespace UI {
             var back = theme.inputBack
             if (!this.Enabled) { back = theme.faceDisabled }
             else if (this.Background != undefined) { back = this.Background }
-            root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             var border = theme.border
             if (this.Pen != undefined) { border = this.Pen }
             if (this.Focused) { border = theme.borderFocus }
-            root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, back, border)
 
             // the caret stays visible: the visible section moves along
             var room = this.actualWidth - 8

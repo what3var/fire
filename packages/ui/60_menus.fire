@@ -57,6 +57,8 @@ namespace UI {
 
         override string StyleKey() { return "MenuPopup" }
 
+        override int PopupRadius(Root root) { return root.theme.popupRadius }
+
         int RowHeight(Root root) { return this.TextHeight(root) + 8 }
 
         int HeightOf(Root root, any item) {
@@ -103,10 +105,8 @@ namespace UI {
             var r = root.renderer
             var back = this.Background
             if (back == undefined) { back = theme.menuBack }
-            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
-            var border = this.Pen
-            if (border == undefined) { border = theme.border }
-            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+            if (this.Pen != undefined) { root.Box(ax, ay, this.actualWidth, this.actualHeight, back, this.Pen, theme.popupRadius) }
+            else { root.PopupSurface(this, ax, ay, this.actualWidth, this.actualHeight, back) }
             var y = ay + 2
             for (var i = 0; i < this.entries.Count; i = i + 1) {
                 var item = this.entries[i]
@@ -120,7 +120,7 @@ namespace UI {
                 if (this.Foreground != undefined) { text = this.Foreground }
                 if (!item.Enabled) { text = theme.textDisabled }
                 if (i == this.hot && item.Enabled) {
-                    r.FillRect(ax + 2, y, this.actualWidth - 4, h, theme.selection)
+                    root.Box(ax + 3, y, this.actualWidth - 6, h, theme.selection, undefined, UI.M.Min(theme.radius, 4))
                     text = theme.selectionText
                 }
                 if (item.IsChecked) {
@@ -319,10 +319,10 @@ namespace UI {
                 var text = theme.text
                 if (this.Foreground != undefined) { text = this.Foreground }
                 if (i == this.openIndex) {
-                    root.renderer.FillRect(x, ay, w, this.actualHeight, theme.selection)
+                    root.Box(x + 1, ay + 2, w - 2, this.actualHeight - 4, theme.selection, undefined, UI.M.Min(theme.radius, 4))
                     text = theme.selectionText
                 } else if (i == this.hotIndex) {
-                    root.renderer.FillRect(x, ay, w, this.actualHeight, theme.faceHover)
+                    root.Box(x + 1, ay + 2, w - 2, this.actualHeight - 4, theme.faceHover, undefined, UI.M.Min(theme.radius, 4))
                 }
                 if (!item.Enabled) { text = theme.textDisabled }
                 this.DrawString(root, x + 8, ay + (this.actualHeight - this.TextHeight(root)) / 2, item.Header, text)
@@ -359,4 +359,33 @@ namespace UI {
             if (index >= 0 && index != this.openIndex) { this.Open(root, index) }
         }
     }
+
+    // The little window of Element.ToolTip (Root shows it): the text on the background of menus, with the corners of the theme and a fine shadow. It takes no
+    // input - the pointer under it still points at the element.
+    class ToolTipPopup : Element {
+        string Text
+
+        construct(string text) : base(0, 0, -1, -1) {
+            this.Text = text
+        }
+
+        override string StyleKey() { return "ToolTip" }
+
+        override int PopupRadius(Root root) { return root.theme.radius }
+
+        override undefined MeasureCore(Root root, int aw, int ah) {
+            this.cw = this.TextWidth(root, this.Text) + 16
+            this.ch = this.TextHeight(root) + 8
+        }
+
+        override UI.Element HitTest(int px, int py) { return undefined }
+
+        override undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, theme.menuBack, theme.border)
+            this.DrawString(root, ax + 8, ay + 4, this.Text, theme.text)
+        }
+    }
 }
+

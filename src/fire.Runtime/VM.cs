@@ -652,7 +652,7 @@ namespace fire.Runtime
         // and executed by the main program - at `sync globals` or automatically at a safe point (as `#globaljobs` says). This way they see the real
         // globals, and there is no concurrent access to them.
 
-        private readonly record struct InboundCallback(LambdaValue Lambda, Value[] Args, Action<string>? OnUnhandled);
+        private readonly record struct InboundCallback(LambdaValue? Lambda, Value[] Args, Action<string>? OnUnhandled, Action? HostAction = null);
         private readonly System.Collections.Concurrent.ConcurrentQueue<InboundCallback> _inbound = new();
         private volatile bool _acceptingCallbacks;
 
@@ -690,16 +690,34 @@ namespace fire.Runtime
             return true;
         }
 
+        /// <summary>Accepts an action of the host from ANY thread (a library's services: fire_host.request_service) and runs it at this VM's next safe point, on its thread.
+        /// false if the VM is not (any longer) running.</summary>
+        public bool PostHostAction(Action action)
+        {
+            if (!_acceptingCallbacks) return false;
+            _inbound.Enqueue(new InboundCallback(null, Array.Empty<Value>(), null, action));
+            RaiseSignal();
+            FireRuntime.WakeWaitingOwner();
+            return true;
+        }
+
         private int DrainInbound()
         {
             int handled = 0;
             while (_inbound.TryDequeue(out var callback))
             {
                 handled++;
+                if (callback.HostAction != null)
+                {
+                    try { callback.HostAction(); }
+                    catch (Exception ex) { Console.Error.WriteLine("(host: " + ex.Message + ")"); }
+                    if (_stopExecutionRequested) break;
+                    continue;
+                }
                 _noAutoSyncDepth++;   // (a callback runs for itself: its own safe points do not run the next one)
                 try
                 {
-                    var error = CallLambdaInline(callback.Lambda, callback.Args);
+                    var error = CallLambdaInline(callback.Lambda!, callback.Args);
                     if (error != null) callback.OnUnhandled?.Invoke(new UncaughtScriptException(error).Message);
                 }
                 catch (Exception ex)
@@ -951,7 +969,7 @@ namespace fire.Runtime
                     // afterwards the halt chunk is there again and the next read lands here again.
                     if (FinishDeferredShutdown()) continue;
                     // Windows that a window manager's thread shows keep the program alive: it serves them until they are closed.
-                    if (!_stopExecutionRequested && !IsFireThreadVm && FireRuntime.HostHolds > 0) { WaitForHostHolds(); if (FinishDeferredShutdown()) continue; }
+                    if (!_stopExecutionRequested && !IsFireThreadVm && HostHolds > 0) { WaitForHostHolds(); if (FinishDeferredShutdown()) continue; }
                     // Normal end or orderly leave/terminate (not the halt chunk of an unhandled exception).
                     if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
                     return;
@@ -960,12 +978,27 @@ namespace fire.Runtime
             }
         }
 
+        // Holds of the host on the end of THIS program (see AddHostHold).
+        private int _hostHolds;
+
+        /// <summary>Adds (or, negative, removes) holds on the end of this program: something of the host keeps it alive after its last statement - the open windows
+        /// that a window manager's thread shows. The program then waits at its end, serving what is posted to it, until they are gone. Only this program's main
+        /// VM waits for them; once it has ended they no longer matter.</summary>
+        public void AddHostHold(int delta)
+        {
+            Interlocked.Add(ref _hostHolds, delta);
+            FireRuntime.WakeWaitingOwner();
+        }
+
+        /// <summary>The holds on the end of this program (see <see cref="AddHostHold"/>).</summary>
+        public int HostHolds => Volatile.Read(ref _hostHolds);
+
         /// <summary>The program has run its last statement, but the host still holds it (open windows of a window manager's thread, see
-        /// FireRuntime.AddHostHold): it waits and runs what is posted to it (the managers' cycles, callbacks, jobs of fire threads) until the holds are
+        /// <see cref="AddHostHold"/>): it waits and runs what is posted to it (the managers' cycles, callbacks, jobs of fire threads) until the holds are
         /// gone or the program is ended (`leave`/`terminate` in a callback).</summary>
         private void WaitForHostHolds()
         {
-            while (FireRuntime.HostHolds > 0 && !_stopExecutionRequested)
+            while (HostHolds > 0 && !_stopExecutionRequested)
             {
                 if (!_inbound.IsEmpty) DrainInbound();
                 if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
@@ -1268,7 +1301,7 @@ namespace fire.Runtime
         /// debugger may have stopped them). Returns false (ended).</summary>
         private bool FinishAtHalt()
         {
-            if (!_stopExecutionRequested && !IsFireThreadVm && FireRuntime.HostHolds > 0) WaitForHostHolds();
+            if (!_stopExecutionRequested && !IsFireThreadVm && HostHolds > 0) WaitForHostHolds();
             if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
             _shutdownReleasePending = false;
             IsHalted = true;

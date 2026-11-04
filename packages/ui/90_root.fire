@@ -1,5 +1,16 @@
 namespace UI {
     // The topmost element: draws into `framebuffer` and receives the events from `window` (queue, see Tick).
+    // The kept surface of a floating element (Root.PopupSurface): its picture in pixels of the framebuffer, where it was.
+    class Surface {
+        Element owner
+        Framebuffer picture
+        Renderer renderer
+        int x = 0
+        int y = 0
+        int w = 0
+        int h = 0
+    }
+
     class Root {
         Framebuffer framebuffer
         Window window
@@ -77,6 +88,12 @@ namespace UI {
         int lastClickX = 0
         int lastClickY = 0
         int lastClickTime = 0
+        // Tooltips (Element.ToolTip): after the pointer rested `toolTipDelay` milliseconds on an element (the time of `clock`, else of the cycles), until it moves on,
+        // presses, scrolls or a key comes
+        int toolTipDelay = 500
+        Element tipElement
+        int tipSince = 0
+        UI.ToolTipPopup tipPopup
         // Invalidate: if something has changed, Update arranges anew and repaints - only the area that has changed, as long as no element has moved elsewhere.
         bool dirty = true
         bool fullRedraw = true
@@ -125,6 +142,51 @@ namespace UI {
         int accent = 0x0078D7
         // a board without a desktop: whole-number scaling, the fast built-in font
         bool embedded = false
+        // the materials of the floating elements, kept while nothing behind them is repainted (see PopupSurface)
+        List surfaces
+        Backdrop windowBackdrop = Backdrop.None
+        // After repainting only a part, the window hands over only that part (Window.PresentArea). A program that also draws into the framebuffer of the root
+        // itself (outside the elements) switches it off - then every frame goes whole.
+        bool PartialPresent = true
+        Backdrop givenBackdrop = Backdrop.None
+
+        // Glass and acrylic behind menus and popups. Starts with UI.Effects.Glass and the system (off where it switched transparency off, and on a board);
+        // setting it overrides that. Off: their plain background.
+        bool Glass {
+            get { return this.theme.glass }
+            set {
+                this.theme.glass = value
+                this.Invalidate()
+            }
+        }
+
+        // The material of the window itself, drawn by the desktop behind the interface: Backdrop.Mica (Windows 11), Acrylic, Blur (Windows 10/11, macOS, KDE),
+        // Transparent; None (the default): an opaque window. The desktop gives what it can (Window.Backdrop); where it gives something, the background of the
+        // interface becomes translucent so that it shows - panels and controls stay as they are. Without transparency (Root.Transparency) the window stays opaque.
+        Backdrop WindowBackdrop {
+            get { return this.windowBackdrop }
+            set {
+                this.windowBackdrop = value
+                if (this.window != undefined) {
+                    if (this.theme.transparency) { this.window.Backdrop = value }
+                    else { this.window.Backdrop = Backdrop.None }
+                }
+                this.Invalidate()
+            }
+        }
+
+        // Translucent surfaces and shadows at all. Starts with UI.Effects.Transparency and the system; setting it overrides that. Off: everything opaque, no shadows
+        // (and no glass).
+        bool Transparency {
+            get { return this.theme.transparency }
+            set {
+                this.theme.transparency = value
+                if (this.windowBackdrop != Backdrop.None && this.window != undefined) {
+                    if (value) { this.window.Backdrop = this.windowBackdrop } else { this.window.Backdrop = Backdrop.None }
+                }
+                this.Invalidate()
+            }
+        }
 
         // The scale of the interface: logical pixels -> pixels of the screen (1.5 = 150 %). Starts with the scaling of the system, like every other program on it;
         // setting it overrides that (`root.Scaling = 1.0`). The elements keep their sizes in logical pixels, the window and the framebuffer grow with it, text is
@@ -165,6 +227,7 @@ namespace UI {
             this.attached = new List()
             this.fontNames = new List()
             this.fontObjects = new List()
+            this.surfaces = new List()
             this.cw = this.renderer.CellWidth()
             this.ch = this.renderer.CellHeight()
             this.width = framebuffer.Width()
@@ -180,6 +243,8 @@ namespace UI {
                 if (system.fontSize > 0) { this.theme.fontSize = system.fontSize }
             }
             if (this.dark || this.accent != 0x0078D7) { this.theme.SetColors(this.dark, this.accent) }
+            this.theme.transparency = UI.Effects.Transparency && system.transparency && !this.embedded
+            this.theme.glass = UI.Effects.Glass && this.theme.transparency
             float systemScale = system.scale
             if (this.embedded) { systemScale = Math.Max(1.0, Math.Round(systemScale)) }
             this.content = new Panel(0, 0, this.width, this.height)
@@ -308,6 +373,14 @@ namespace UI {
         bool Update() {
             this.CheckSize()
             this.Poll()
+            // what the desktop gives behind the window can come later (when it opens, with a manager's thread after its cycle): the background follows it
+            if (this.windowBackdrop != Backdrop.None && this.window != undefined) {
+                var given = this.window.Backdrop
+                if (given != this.givenBackdrop) {
+                    this.givenBackdrop = given
+                    this.Invalidate()
+                }
+            }
             if (!this.dirty && !this.fullRedraw) { return false }
             this.painting = true
             this.layoutMoved = false
@@ -350,7 +423,7 @@ namespace UI {
                 var moved = this.layoutMoved
                 this.layoutMoved = false
                 popup.Arrange(this, popup.Left, popup.Top, popup.dw, popup.dh)
-                if (this.layoutMoved && !this.fullRedraw) { this.InvalidateRect(popup.rx, popup.ry, popup.actualWidth, popup.actualHeight) }
+                if (this.layoutMoved && !this.fullRedraw) { this.InvalidatePopup(popup, popup.rx, popup.ry) }
                 this.layoutMoved = moved
             }
         }
@@ -358,7 +431,7 @@ namespace UI {
         undefined Paint() {
             this.renderer.ResetClip()
             if (this.fullRedraw) {
-                this.renderer.FillRect(0, 0, this.width, this.height, this.theme.back)
+                this.FillBack(0, 0, this.width, this.height)
             } else if (this.hasDirtyRect) {
                 var x0 = UI.M.Max(0, this.dirtyX0)
                 var y0 = UI.M.Max(0, this.dirtyY0)
@@ -370,15 +443,148 @@ namespace UI {
                 this.dirtyX1 = x1
                 this.dirtyY1 = y1
                 this.PushClip(x0, y0, x1 - x0, y1 - y0)
-                this.renderer.FillRect(x0, y0, x1 - x0, y1 - y0, this.theme.back)
+                this.FillBack(x0, y0, x1 - x0, y1 - y0)
             } else { return }
             this.content.Draw(this, 0, 0)
             for (var i = 0; i < this.popups.Count; i = i + 1) {
                 var popup = this.popups[i]
+                this.PopupShadow(popup, popup.rx, popup.ry)
                 popup.Draw(this, popup.rx, popup.ry)
             }
             this.DrawDragImage()
-            if (!this.fullRedraw) { this.PopClip() }
+            if (!this.fullRedraw) {
+                this.PopClip()
+                if (this.PartialPresent && this.window != undefined) {
+                    var r = this.renderer
+                    this.window.PresentArea(r.Px(this.dirtyX0), r.Px(this.dirtyY0), r.Px(this.dirtyX1) - r.Px(this.dirtyX0), r.Px(this.dirtyY1) - r.Px(this.dirtyY0))
+                }
+            } else if (this.PartialPresent && this.window != undefined) {
+                // (all of it: a part painted after it before the next frame does not shrink what goes)
+                this.window.PresentArea(0, 0, this.framebuffer.Width(), this.framebuffer.Height())
+            }
+        }
+
+        // The background of the interface: the colour of the theme - translucent where the desktop draws a material behind the window (WindowBackdrop), so that
+        // it shows (copied with its alpha, not mixed).
+        undefined FillBack(int x, int y, int w, int h) {
+            var given = Backdrop.None
+            if (this.windowBackdrop != Backdrop.None && this.theme.transparency && this.window != undefined) { given = this.window.Backdrop }
+            if (given == Backdrop.None) {
+                this.renderer.FillRect(x, y, w, h, this.theme.back)
+                return
+            }
+            var alpha = 0xD0
+            if (given == Backdrop.Mica) { alpha = 0 }
+            else if (given == Backdrop.Acrylic) { alpha = 0x40 }
+            else if (given == Backdrop.Blur) { alpha = 0x80 }
+            var color = (UI.Theme.ColorOf(this.theme.back, 0xF0F0F0) & 0xFFFFFF) + alpha * 0x1000000
+            var blending = this.renderer.AlphaBlending
+            this.renderer.AlphaBlending = false
+            this.renderer.FillRect(x, y, w, h, new SolidBrush(color))
+            this.renderer.AlphaBlending = blending
+        }
+
+        // ---- the style: boxes with the corners of the theme, the surfaces of floating elements ----
+
+        // A box of the style: filled with `fill` and outlined with `border` (either may be undefined), with the corners of the theme (`radius` -1) or `radius`.
+        // A radius of 0 is the plain rectangle, as before.
+        undefined Box(int x, int y, int w, int h, Brush fill, Pen border, int radius = -1) {
+            if (radius < 0) { radius = this.theme.radius }
+            if (radius == 0) {
+                if (fill != undefined) { this.renderer.FillRect(x, y, w, h, fill) }
+                if (border != undefined) { this.renderer.DrawRect(x, y, w, h, border) }
+                return
+            }
+            if (fill != undefined) { this.renderer.FillRoundRect(x, y, w, h, radius, fill) }
+            if (border != undefined) { this.renderer.DrawRoundRect(x, y, w, h, radius, border) }
+        }
+
+        // How far the shadow of a floating element reaches beyond it (0 without transparency).
+        int ShadowMargin() {
+            if (!this.theme.transparency) { return 0 }
+            return this.theme.shadowSize + 3
+        }
+
+        // A floating element and its shadow must be repainted.
+        undefined InvalidatePopup(Element popup, int x, int y) {
+            var m = this.ShadowMargin()
+            this.InvalidateRect(x - m, y - m, popup.actualWidth + 2 * m, popup.actualHeight + 2 * m)
+        }
+
+        // The fine shadow under a floating element (before it is drawn; the element says its corners, see Element.PopupRadius).
+        undefined PopupShadow(Element popup, int x, int y) {
+            if (!this.theme.transparency || !popup.Visible) { return }
+            var color = 0x1F000000
+            if (this.dark) { color = 0x48000000 }
+            this.renderer.DrawShadow(x, y, popup.actualWidth, popup.actualHeight, popup.PopupRadius(this), this.theme.shadowSize, color, 2)
+        }
+
+        // The surface of a floating element (a menu): acrylic over what lies behind it - or, without glass, its plain background `back` - with the corners of the
+        // theme and a hairline. The acrylic is kept (a framebuffer per element) and only made anew when what lies behind it was repainted around it: a row that
+        // changes inside the menu does not blur the menu itself again.
+        undefined PopupSurface(Element popup, int x, int y, int w, int h, Brush back) {
+            var t = this.theme
+            var radius = t.popupRadius
+            if (!t.glass || !t.transparency) {
+                this.Box(x, y, w, h, back, t.border, radius)
+                return
+            }
+            var r = this.renderer
+            var px = r.Px(x)
+            var py = r.Px(y)
+            var pw = r.Px(x + w) - px
+            var ph = r.Px(y + h) - py
+            var cache = this.SurfaceOf(popup)
+            var pad = 16
+            bool behindFresh = this.fullRedraw || (this.hasDirtyRect && this.dirtyX0 <= x - pad && this.dirtyY0 <= y - pad && this.dirtyX1 >= x + w + pad && this.dirtyY1 >= y + h + pad)
+            if (!behindFresh && cache.picture != undefined && cache.x == px && cache.y == py && cache.w == pw && cache.h == ph) {
+                var scale = r.scale
+                r.scale = 1.0
+                r.BlitRegion(cache.picture, 0, 0, pw, ph, px, py)
+                r.scale = scale
+                return
+            }
+            var options = MaterialOptions.Blur + MaterialOptions.Transparency
+            if (this.dark) { options = options + MaterialOptions.Dark }
+            var color = UI.Theme.ColorOf(back, UI.Theme.ColorOf(t.menuBack, 0xF8F8F8)) & 0xFFFFFF
+            var tint = color + 0xC8000000
+            if (this.dark) { tint = color + 0xC0000000 }
+            r.DrawMaterial(MaterialKind.Acrylic, x, y, w, h, radius, tint, color, options)
+            if (cache.picture == undefined || cache.w != pw || cache.h != ph) {
+                if (cache.picture != undefined) { delete cache.picture }
+                cache.picture = new Framebuffer(pw, ph)
+                cache.picture.TakeTo(cache)
+                cache.renderer = new Renderer(cache.picture)
+                cache.renderer.TakeTo(cache)
+            }
+            cache.x = px
+            cache.y = py
+            cache.w = pw
+            cache.h = ph
+            cache.renderer.AlphaBlending = false
+            cache.renderer.BlitRegion(this.framebuffer, px, py, pw, ph, 0, 0)
+        }
+
+        // The kept surface of a floating element (made when missing).
+        UI.Surface SurfaceOf(Element popup) {
+            for (var i = 0; i < this.surfaces.Count; i = i + 1) {
+                if (this.surfaces[i].owner == popup) { return this.surfaces[i] }
+            }
+            var s = new Surface()
+            s.owner = popup
+            s.TakeTo(this)
+            this.surfaces.Add(s)
+            return s
+        }
+
+        undefined ForgetSurface(Element popup) {
+            for (var i = 0; i < this.surfaces.Count; i = i + 1) {
+                if (this.surfaces[i].owner == popup) {
+                    delete this.surfaces[i]
+                    this.surfaces.RemoveAt(i)
+                    return
+                }
+            }
         }
 
         // Restricts drawing to the rectangle (intersected with the current one); PopClip restores the previous one. The elements call both
@@ -427,7 +633,8 @@ namespace UI {
             for (var i = 0; i < this.popups.Count; i = i + 1) {
                 if (this.popups[i] == popup) {
                     this.popups.RemoveAt(i)
-                    this.InvalidateRect(popup.ax, popup.ay, popup.actualWidth, popup.actualHeight)
+                    this.InvalidatePopup(popup, popup.ax, popup.ay)
+                    this.ForgetSurface(popup)
                     if (this.hoverElement == popup) { this.hoverElement = undefined }
                     if (this.pressedElement == popup) { this.pressedElement = undefined }
                     if (this.focusElement == popup) { this.focusElement = undefined }
@@ -483,7 +690,8 @@ namespace UI {
             this.DispatchEvents()
             if (this.window.IsClosed) { this.closed = true }
             this.JoyRepeat()
-            this.Update()
+            this.ToolTipTick()
+            this.UpdateAndSay()
             var callback = this.onTick
             if (callback != undefined) { callback() }
         }
@@ -492,11 +700,57 @@ namespace UI {
         // points. `modal`: returns when the window is closed, the other windows of the manager take no input meanwhile.
         undefined Show(bool modal = false) { this.window.Show(modal) }
 
+        // ---- tooltips ----
+
+        // The element under the pointer, or the nearest one around it, that has a tooltip (undefined: none).
+        UI.Element ToolTipOf(Element element) {
+            var e = element
+            while (e != undefined) {
+                if (e.ToolTip != undefined && e.ToolTip != "") { return e }
+                e = e.parent
+            }
+            return undefined
+        }
+
+        // The pointer moved over `hit`: on another element the tooltip goes and the waiting starts anew; on the same one it stays.
+        undefined ToolTipMove(Element hit) {
+            var owner = this.ToolTipOf(hit)
+            if (owner == this.tipElement) { return }
+            this.HideToolTip()
+            this.tipElement = owner
+            this.tipSince = this.ClickTime()
+        }
+
+        // In every cycle: the tooltip appears once the pointer rested long enough (not while a button is held or something is dragged).
+        undefined ToolTipTick() {
+            var owner = this.tipElement
+            if (owner == undefined || this.tipPopup != undefined) { return }
+            if (this.pressedElement != undefined || this.dragging || !owner.Visible) { return }
+            if (this.ClickTime() - this.tipSince < this.toolTipDelay) { return }
+            var tip = new ToolTipPopup(owner.ToolTip)
+            this.tipPopup = tip
+            this.ShowPopup(tip, this.mouseX, this.mouseY + 20, false, owner)
+        }
+
+        undefined HideToolTip() {
+            var tip = this.tipPopup
+            if (tip == undefined) { return }
+            this.tipPopup = undefined
+            this.ClosePopup(tip)
+            delete tip
+        }
+
+        // Update - and when nothing was painted, the window hands over nothing of the next frame (an idle interface costs no copies to the window system).
+        undefined UpdateAndSay() {
+            if (!this.Update() && this.PartialPresent && this.window != undefined) { this.window.PresentArea(0, 0, 0, 0) }
+        }
+
         // The cycle of this root only (without the attached ones).
         bool TickOne() {
             this.cycles = this.cycles + 1
             this.JoyRepeat()
-            this.Update()
+            this.ToolTipTick()
+            this.UpdateAndSay()
             var open = this.window.Tick()
             this.DispatchEvents()
             if (!open) { this.closed = true }
@@ -893,6 +1147,7 @@ namespace UI {
         }
 
         undefined MouseWheel(int dx, int dy, int px, int py) {
+            this.HideToolTip()
             this.mouseX = px
             this.mouseY = py
             var e = this.Hit(px, py)
@@ -903,6 +1158,8 @@ namespace UI {
         }
 
         undefined MouseDown(int button, int px, int py) {
+            this.HideToolTip()
+            this.tipElement = undefined
             this.MouseDownCore(button, px, py)
             this.UpdateCursor(px, py)
         }
@@ -1004,6 +1261,7 @@ namespace UI {
                 this.hoverElement = hit
                 if (hit != undefined) { hit.Hover = true }
             }
+            this.ToolTipMove(hit)
             if (this.dragging) {
                 if (!this.DragOut(px, py)) {
                     this.DragMove(px, py)
@@ -1345,6 +1603,8 @@ namespace UI {
         }
 
         undefined KeyDown(int key, int mod) {
+            this.HideToolTip()
+            this.tipElement = undefined
             this.modifiers = mod
             if (this.dragging) {
                 if (key == UI.Keys.Escape()) { this.CancelDrag() }

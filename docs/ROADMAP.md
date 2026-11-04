@@ -25,6 +25,7 @@ Leitlinien:
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
+| 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -351,3 +352,41 @@ vier Stufen gegen die VM ("Weglassen (stripping)" in der nativen Gruppe, mit `st
   kommt, braucht `[Keep]` oder eine kleinere Stufe.
 * Was bleibt, ist beim `ui`-Programm echter Code (`UI.Root`: Ereignisse, Fokus, Popups, Ziehen und Ablegen); kleiner würde es nur durch weniger Code im Package oder ein `ui`, dessen
   Teile (Drag & Drop, Popups) erst beim Benutzen erreicht werden.
+
+## 12. Bau-Reihenfolge der Quellen von Paket-Natives
+
+**Problem.** Die Quellen der Natives eines Pakets (`native.sources` im `.fireproj`, davor `native.platformSources`) werden für die VM-Bibliothek und den nativen Build
+**in eine Datei** gelegt, genau in der Reihenfolge der Liste (`PackageStore.ReadNativeSources`). Ein `#include "x.h"` auf eine andere Quelle desselben Pakets wird dabei
+entfernt (`StripLocalIncludes`: "in this file already") - er wirkt also nicht. Was ein Header benutzt, muss in der Liste **vor** ihm stehen; sonst fehlen Typen und
+Funktionen, obwohl der Header sie selbst einbindet. Gemerkt wird das erst beim Bauen, und in der VM fiel die Grafik dann still auf C# zurück (inzwischen meldet sie es,
+`GraphicsLibrary.WarnFallback`).
+
+**Wie es aufgetreten ist (Teil 4, GPU-Backend von `graphics`).** `fire_gfx_gpu.h` bindet `fire_gfx_vk.h` (der erzeugte Ausschnitt der Vulkan-Header) und
+`fire_gfx_shaders.h` (die SPIR-V-Shader) ein. In `packages/graphics/graphics.fireproj` stand `fire_gfx_gpu.h` zuerst in der Liste; der Bau scheiterte mit
+`unknown type name 'VkBuffer'`. Getauscht: die beiden Header, die es braucht, stehen jetzt davor -
+
+```
+"native/fire_gfx_fx.h",
+"native/fire_gfx_vk.h",        (vorher nach fire_gfx_gpu.h)
+"native/fire_gfx_shaders.h",   (vorher nach fire_gfx_gpu.h)
+"native/fire_gfx_gpu.h",
+"native/fire_bridge_graphics.h"
+```
+
+Innerhalb einer Datei gilt ohnehin C: definiert vor benutzt (der GPU-Helfer `fire_gfxb_gpuShape` steht in `fire_bridge_graphics.h` vor den Natives, die ihn rufen).
+
+**Was es braucht (zum Vereinheitlichen).**
+* Eine **feste Bau-Reihenfolge**, die das Paket ausdrücklich angibt statt sie aus der Lage in der Liste zu folgern - z. B. ein Index je Quelle
+  (`{ "file": "native/fire_gfx_vk.h", "order": 10 }`) oder Gruppen (`"headers"` vor `"sources"`), gleich für `sources` und `platformSources`.
+* Alternativ (oder zusätzlich) die lokalen `#include`s **auflösen** statt sie zu streichen: eine Quelle wird an der Stelle ihres ersten `#include` eingesetzt (einmal je
+  Datei); dann ergibt sich die Reihenfolge aus den Abhängigkeiten selbst, und eine falsche Liste ist kein Fehler mehr.
+* Eine **Prüfung beim Packen** (`ember pack`, Paket-Tests): jede Quelle, die eine andere des Pakets einbindet, steht nach ihr - mit einer Meldung, die Datei und Zeile nennt.
+* Dieselben Regeln für alle Wege, die Quellen einsammeln: die VM-Bibliotheken (`PackageLibrary`, auch `EnsureGraphics`), der native Build (`CppGenerator`) und Plugins.
+
+**Zweiter Fall: dieselben Deklarationen in zwei Paketen.** `graphics` (GPU-Backend) und `scene3d` brauchen beide einen Ausschnitt der Vulkan-Header. Im nativen Build liegen die
+Quellen beider Pakete in einer Datei - zwei verschiedene Ausschnitte derselben Enums kollidierten (`redeclaration of 'enum VkResult'`). Gelöst ist es vorerst so: **ein**
+Generator (`packages/graphics/native/tools/make_gfx_vk.py`; der von scene3d ruft ihn nur auf) liest beide Backends und schreibt dieselbe Datei als
+`graphics/native/fire_gfx_vk.h` und `scene3d/native/s3d_vk.h`, unter einem gemeinsamen Include-Guard (`FIRE_VK_DECLS_H`); beide Backends binden sie nur ein, wenn der Guard
+noch nicht gesetzt ist. In der VM baut jedes Paket seine Bibliothek allein und hat seine vollständige Kopie. Sauberer wäre, wenn ein Paket Header eines Pakets, von dem es
+abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört zur festen Bau-Reihenfolge oben: die Quellen der Abhängigkeiten zuerst, jede einmal.
+

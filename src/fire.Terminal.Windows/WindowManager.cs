@@ -6,7 +6,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
-using static SDL3.SDL;
 using DropEvent = fire.Terminal.Event.DropEvent;
 
 namespace fire.Terminal.Windows
@@ -16,7 +15,7 @@ namespace fire.Terminal.Windows
     /// unique IDs (see IdManager) - each window shows ONE
     /// framebuffer (by ID, see FramebufferManager). Deliberately lives in
     /// this Windows project (not in the platform-independent core), since
-    /// ConsoleWindow itself requires SDL/window handling.
+    /// ConsoleWindow itself requires window handling.
     /// </summary>
     public sealed class WindowManager
     {
@@ -73,8 +72,9 @@ namespace fire.Terminal.Windows
         public static bool CooperativeManagers { get; set; } =
             OperatingSystem.IsMacOS() || Environment.GetEnvironmentVariable("FIRE_WINDOW_COOPERATIVE") == "1";
 
-        /// <param name="rendererFactory">Creates the renderer per window (default: SDL). Replaceable for tests and other backends.</param>
-        /// <param name="hold">Adds holds on the program end (fire.Runtime's FireRuntime.AddHostHold): the windows that a manager's thread shows keep the program alive.</param>
+        /// <param name="rendererFactory">Creates the renderer per window: the host's (the tests, an editor that shows the pictures itself). Without one there is no
+        /// window of the desktop here - the VM shows those through the C library of graphics and windows (fire.Compiler.GraphicsLibrary, docs/UI_PLATFORM.md).</param>
+        /// <param name="hold">Adds holds on the program end (the VM.AddHostHold of the program's main VM): the windows that a manager's thread shows keep the program alive.</param>
         public WindowManager(FramebufferManager framebuffers, Action<LambdaValue, Value[]> callbackRunner,
             Func<IFramebufferRenderer>? rendererFactory = null, Action<int>? hold = null)
         {
@@ -82,8 +82,8 @@ namespace fire.Terminal.Windows
             _framebuffers = framebuffers ?? throw new ArgumentNullException(nameof(framebuffers));
             _callbacks = new List<EventCallback>();
             _rendererFactory = rendererFactory;
-            // the clipboard of the desktop when the windows are SDL's; a renderer of a test (or another backend) gets one of the program's own
-            Clipboard = rendererFactory == null ? new fire.Terminal.Sdl.SdlClipboard() : new MemoryClipboard();
+            // the program's own clipboard (the desktop's is the C library's)
+            Clipboard = new MemoryClipboard();
 
             Callback = callbackRunner;
         }

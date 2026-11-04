@@ -125,6 +125,8 @@ namespace fire.Windows.Bridge
                 ["SetBackdrop"] = args => Value.MakeUndefined(),
                 ["GetBackdrop"] = args => Value.MakeInt(0),
                 ["GetScale"] = args => Value.MakeFloat(1.0),
+                // Window.PresentArea: the C# windows always hand over the whole frame
+                ["PresentArea"] = args => Value.MakeUndefined(),
             };
         }
         
@@ -181,6 +183,7 @@ namespace fire.Windows.Bridge
                 ["SetBackdrop"] = args => Value.MakeUndefined() /*STUB*/,
                 ["GetBackdrop"] = args => Value.MakeInt(0) /*STUB*/,
                 ["GetScale"] = args => Value.MakeFloat(1.0) /*STUB*/,
+                ["PresentArea"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 

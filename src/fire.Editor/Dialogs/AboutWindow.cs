@@ -43,12 +43,12 @@ namespace fire.Editor
             new Credit("libgit2", "the Git integration (native)", "libgit2 contributors", "GPL 2.0 with linking exception", "https://libgit2.org"),
             new Credit("MemoryPack", "binary serialization of compiled programs", "Cysharp, Inc.", "MIT", "https://github.com/Cysharp/MemoryPack"),
             new Credit("PropertyChanged.Fody", "property change notification", "Simon Cropp and contributors", "MIT", "https://github.com/Fody/PropertyChanged"),
-            new Credit("SDL3-CS", "windows, input and sound of fire programs", "Eduard Gushchin", "zlib", "https://github.com/edwardgushchin/SDL3-CS"),
-            new Credit("SDL", "windows, input and sound (SDL3 in the editor, SDL2 for native programs)", "Sam Lantinga and contributors", "zlib", "https://libsdl.org"),
+            new Credit("SDL", "the optional display of native programs (target \"sdl\": SDL2 or SDL3; fire's own display needs no SDL)", "Sam Lantinga and contributors", "zlib", "https://libsdl.org"),
             new Credit("System.IO.Ports", "serial ports of the device simulation", ".NET Foundation and contributors", "MIT", "https://dot.net"),
             new Credit("libschrift", "TrueType rendering (ported to C# and C++)", "Thomas Oltmann and contributors", "ISC", "https://github.com/tomolt/libschrift"),
             new Credit("pcface", "the 8x8 and 8x14 glyphs of the terminal font", "Susam Pal", "MIT", "https://github.com/susam/pcface"),
             new Credit("Material Design Icons", "icons of the tool strips", "Pictogrammers and Google", "Apache 2.0", "https://pictogrammers.com/library/mdi"),
+            new Credit("Raven", "inspiration for fire's own platform layer and its glass and acrylic materials (no code taken over)", "oscar-soirey", "Apache 2.0", "https://github.com/oscar-soirey/Raven"),
             new Credit("Falstad's circuit simulator", "the model the circuit simulation follows (no code taken over); the import reads its text format", "Paul Falstad", "-", "https://www.falstad.com/circuit"),
         };
 

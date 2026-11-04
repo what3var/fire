@@ -341,8 +341,8 @@ namespace UI.Docking {
             var size = this.ButtonSize(root)
             var y = this.ay + 3
             var r = root.renderer
-            if (this.pressedPart == part && this.hotPart == part) { r.FillRect(x, y, size, size, root.theme.facePressed) }
-            else if (this.hotPart == part) { r.FillRect(x, y, size, size, root.theme.faceHover) }
+            if (this.pressedPart == part && this.hotPart == part) { root.Box(x, y, size, size, root.theme.facePressed, undefined, UI.M.Min(root.theme.radius, 4)) }
+            else if (this.hotPart == part) { root.Box(x, y, size, size, root.theme.faceHover, undefined, UI.M.Min(root.theme.radius, 4)) }
             var cx = x + size / 2
             var cy = y + size / 2
             if (part == 3) {
@@ -1955,8 +1955,7 @@ namespace UI.Docking {
                 back = theme.accent
                 mark = theme.selectionText
             }
-            r.FillRect(x, y, g, g, back)
-            r.DrawRect(x, y, g, g, theme.borderFocus)
+            root.Box(x, y, g, g, back, theme.borderFocus, UI.M.Min(theme.radius, 4))
             var cx = x + g / 2
             var cy = y + g / 2
             if (arrow == UI.Dock.Left) { r.FillTriangle(cx + 4, cy - 6, cx + 4, cy + 6, cx - 5, cy, mark) }
@@ -1976,9 +1975,8 @@ namespace UI.Docking {
                 var shade = new SolidBrush(rgb + 1342177280)
                 var blending = r.AlphaBlending
                 r.AlphaBlending = true
-                r.FillRect(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, shade)
+                root.Box(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, shade, new Pen(color, 2))
                 r.AlphaBlending = blending
-                r.DrawRect(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, new Pen(color, 2))
             }
             foreach (side in UI.Dock.Values()) { this.DrawGuide(root, side!int, side!int) }
             var p = this.compassPane

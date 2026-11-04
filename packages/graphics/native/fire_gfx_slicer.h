@@ -386,6 +386,7 @@ static void fire_gfx_slice(const FireGfxSlicer* sl, const FireGfxFramebuffer* fb
     int w = fb->width, h = fb->height, x, y;
     char* mask = (char*)malloc(w && h ? (size_t)w * h : 1);
     if (mask == NULL) { result->failed = 1; return; }
+    fire_gfx_fbCpu(fb, 0);
     for (y = 0; y < h; y++)
         for (x = 0; x < w; x++) {
             size_t i = (size_t)y * w + x;

@@ -138,9 +138,11 @@ namespace UI.Docking {
             if (!this.Enabled) { return }
             var theme = root.theme
             var h = this.actualHeight
-            if (this.Pressed && this.Hover) { root.renderer.FillRect(ax, ay, w, h, theme.facePressed) }
-            else if (this.Hover || this.IsChecked) { root.renderer.FillRect(ax, ay, w, h, theme.faceHover) }
-            if (this.IsChecked || (this.Hover && !this.inOverflow)) { root.renderer.DrawRect(ax, ay, w, h, theme.borderFocus) }
+            var corner = UI.M.Min(theme.radius, 4)
+            var edge = undefined
+            if (this.IsChecked) { edge = theme.border }
+            if (this.Pressed && this.Hover) { root.Box(ax, ay, w, h, theme.facePressed, edge, corner) }
+            else if (this.Hover || this.IsChecked) { root.Box(ax, ay, w, h, theme.faceHover, edge, corner) }
         }
 
         Brush TextBrush(UI.Root root) {
@@ -267,8 +269,7 @@ namespace UI.Docking {
             if (this.Enabled && (open || this.Hover)) {
                 var face = theme.faceHover
                 if (open) { face = theme.facePressed }
-                root.renderer.FillRect(bx, ay, extra, this.actualHeight, face)
-                if (this.Hover && !this.inOverflow) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.borderFocus) }
+                root.Box(bx, ay, extra, this.actualHeight, face, undefined, UI.M.Min(theme.radius, 4))
             }
             this.DrawFace(root, ax, ay, this.actualWidth - extra)
             this.DrawContent(root, ax, ay)
@@ -426,11 +427,13 @@ namespace UI.Docking {
             }
         }
 
+        // (floating: acrylic with the corners of popups, its shadow follows them)
+        override int PopupRadius(UI.Root root) { return root.theme.popupRadius }
+
         override undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
-            root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, theme.menuBack)
-            root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.border)
+            root.PopupSurface(this, ax, ay, this.actualWidth, this.actualHeight, theme.menuBack)
             if (this.strip == undefined) { return }
             var items = this.strip.overflowItems
             for (var i = 0; i < items.Count; i = i + 1) {

@@ -1388,22 +1388,35 @@ static int fire_dx11_pump(FireDx11Window* w, FireDisplayEvents* out, int fbWidth
 }
 
 /* Shows the pixels (R,G,B,A per 32-bit word), stretched to the window: converted to the pixels of X (B,G,R,X in memory; premultiplied with a 32-bit visual). */
-static void fire_dx11_present(FireDx11Window* w, const uint32_t* rgba, int width, int height) {
+static int fire_gfx_dx11_clamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+/* Shows the frame; only the area (ax, ay, aw, ah) changed since the last one - when the frame is not stretched and the image is the same, only that is converted and
+ * handed to the X server (the rest of the image still holds the last frame; an Expose puts the whole image). */
+static void fire_dx11_presentArea(FireDx11Window* w, const uint32_t* rgba, int width, int height, int ax, int ay, int aw, int ah) {
     FireXlib* x = w->x;
-    int ww = w->winW, wh = w->winH, row;
+    int ww = w->winW, wh = w->winH, row, c0 = 0, c1, r0 = 0, r1;
     uint32_t* dst;
     size_t stride;
     if (w->d == NULL || w->direct || rgba == NULL || width <= 0 || height <= 0 || ww <= 0 || wh <= 0) return;
-    if ((w->imgW != ww || w->imgH != wh) && !fire_dx11_makeImage(w, ww, wh)) return;
+    if (w->imgW != ww || w->imgH != wh) {
+        if (!fire_dx11_makeImage(w, ww, wh)) return;
+        ax = 0; ay = 0; aw = width; ah = height;   /* (a new image: all of it) */
+    }
+    c1 = ww; r1 = wh;
+    if (ww == width && wh == height) {
+        c0 = fire_gfx_dx11_clamp(ax, 0, ww); c1 = fire_gfx_dx11_clamp(ax + aw, 0, ww);
+        r0 = fire_gfx_dx11_clamp(ay, 0, wh); r1 = fire_gfx_dx11_clamp(ay + ah, 0, wh);
+        if (c1 <= c0 || r1 <= r0) { if (w->vsync) fire_dx11_pace(&w->lastFrame); return; }
+    }
     dst = (uint32_t*)(void*)w->image->data;
     stride = (size_t)w->image->bytes_per_line / 4;
-    for (row = 0; row < wh; row++) {
+    for (row = r0; row < r1; row++) {
         const uint32_t* src = rgba + (size_t)(ww == width && wh == height ? row : (int)((long long)row * height / wh)) * (size_t)width;
         uint32_t* d = dst + (size_t)row * stride;
         int col;
         if (ww == width) {
-            if (!w->argb) for (col = 0; col < ww; col++) { uint32_t v = src[col]; d[col] = 0xFF000000u | ((v & 0xFFu) << 16) | (v & 0xFF00u) | ((v >> 16) & 0xFFu); }
-            else for (col = 0; col < ww; col++) {
+            if (!w->argb) for (col = c0; col < c1; col++) { uint32_t v = src[col]; d[col] = 0xFF000000u | ((v & 0xFFu) << 16) | (v & 0xFF00u) | ((v >> 16) & 0xFFu); }
+            else for (col = c0; col < c1; col++) {
                 uint32_t v = src[col], a = v >> 24;
                 uint32_t r = (v & 0xFFu) * a / 255u, g = ((v >> 8) & 0xFFu) * a / 255u, b = ((v >> 16) & 0xFFu) * a / 255u;
                 d[col] = (a << 24) | (r << 16) | (g << 8) | b;
@@ -1419,9 +1432,12 @@ static void fire_dx11_present(FireDx11Window* w, const uint32_t* rgba, int width
         }
     }
     if (w->vsync) fire_dx11_pace(&w->lastFrame);
-    if (w->useShm) { x->ShmPutImage(w->d, w->win, w->gc, w->image, 0, 0, 0, 0, (unsigned)ww, (unsigned)wh, 0); x->Sync(w->d, 0); }
-    else { x->PutImage(w->d, w->win, w->gc, w->image, 0, 0, 0, 0, (unsigned)ww, (unsigned)wh); x->Flush(w->d); }
+    if (w->useShm) { x->ShmPutImage(w->d, w->win, w->gc, w->image, c0, r0, c0, r0, (unsigned)(c1 - c0), (unsigned)(r1 - r0), 0); x->Sync(w->d, 0); }
+    else { x->PutImage(w->d, w->win, w->gc, w->image, c0, r0, c0, r0, (unsigned)(c1 - c0), (unsigned)(r1 - r0)); x->Flush(w->d); }
 }
+
+static void fire_dx11_present(FireDx11Window* w, const uint32_t* rgba, int width, int height) { fire_dx11_presentArea(w, rgba, width, height, 0, 0, width, height); }
+
 
 static int fire_dx11_native(FireDx11Window* w, fire_native_window* out) {
     if (w->d == NULL) return 0;

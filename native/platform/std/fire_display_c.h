@@ -39,6 +39,8 @@
  *                                                             method opens its window there
  *   int  fire_display_setBackdrop(w, kind)                    [FIRE_DISPLAY_BACKDROP] what the desktop shows behind the window (FIRE_BACKDROP_*); returns what it gives
  *   double fire_display_scale(w)                              [FIRE_DISPLAY_SCALE] pixels of the screen per logical pixel of the window's screen now
+ *   void fire_display_presentArea(w, rgba, width, height, x, y, aw, ah)   [FIRE_DISPLAY_PRESENT_AREA] like fire_display_present, but only the area (x, y, aw, ah;
+ *                                                             framebuffer pixels) changed since the last frame: a display may hand over only that (it may show more)
  * fire's own displays (fire_display_win32.h, _x11.h, _wayland.h, _cocoa.h, _web.h, _headless.h) share fire_display_common.h: the keys (fire_display_keys.h), the queue of a
  * window, drops, compositions and the events of the tests.
  * A board package of your own provides its own `fire_display.h` (see fire_display_headless.h for the simplest complete one) and puts the pixels on its screen. */
@@ -136,6 +138,7 @@ typedef struct FireSystemTheme {
     int accent;        /* 0xRRGGBB */
     char fonts[512];   /* candidates for the font of the interface, the best first, separated by ';' ("" = none known) */
     int fontSize;      /* the height of the letters in logical pixels (0 = not known) */
+    int transparency;  /* 1: the desktop allows transparency effects (Windows "Transparency effects", macOS "Reduce transparency" off); 0: the user switched them off */
 } FireSystemTheme;
 
 /* The defaults of a desktop (scale 1, light, the accent 0x0078D7, no font). */
@@ -146,6 +149,7 @@ static void fire_display_themeDefaults(FireSystemTheme* t) {
     t->accent = 0x0078D7;
     t->fonts[0] = 0;
     t->fontSize = 0;
+    t->transparency = 1;
 }
 
 /* ---- the clipboard beyond text ---- */

@@ -14,7 +14,10 @@ static class TypeTests
     }
 
     /// <summary>The codes of the warnings, then `|`, then the output or the errors of a build.</summary>
-    private static string Run(string source, TypeCheckMode? mode = null)
+    private static string Run(string source, TypeCheckMode? mode = null) => Run(source, mode, false);
+
+    /// <param name="verbose">the findings with their messages (where the standard library has one)</param>
+    private static string Run(string source, TypeCheckMode? mode, bool verbose)
     {
         var warnings = new DiagnosticCollector();
         var lines = new List<string>();
@@ -30,10 +33,10 @@ static class TypeTests
         }
         catch (Exception ex)
         {
-            errors = "ERROR " + string.Join(" ", CompileDiagnostics.Of(ex).Select(d => d.Code));
+            errors = "ERROR " + string.Join(" ", CompileDiagnostics.Of(ex).Select(d => verbose ? $"{d.Code} {d.File}:{d.Line} {d.Message}\n" : d.Code));
         }
         finally { Linker.ProcessDefaultTypeChecking = null; Value.SingleFloats = false; }
-        return string.Join(" ", warnings.Items.Select(d => d.Code)) + "|" + errors + string.Join("\n", lines);
+        return string.Join(" ", warnings.Items.Select(d => verbose ? $"{d.Code} {d.File}:{d.Line} {d.Message}\n" : d.Code)) + "|" + errors + string.Join("\n", lines);
     }
 
     /// <summary>The messages of the errors of a strict build ("" when it compiles).</summary>
@@ -865,7 +868,7 @@ static class TypeTests
         foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "json", "circuits", "circuits.ui", "net", "process", "hash", "compression", "http", "tls", "audio", "usb", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {
             Environment.SetEnvironmentVariable("FIRE_TYPECHECK_ALL", "1");
-            try { Check($"Bibliothek {import}: strikt typgeprueft ohne Befund", Run($"#import \"{import}\"\nprint(1)", TypeCheckMode.Strict) == "|1"); }
+            try { Check($"Bibliothek {import}: strikt typgeprueft ohne Befund", Run($"#import \"{import}\"\nprint(1)", TypeCheckMode.Strict, true) is var found && found == "|1", found); }
             finally { Environment.SetEnvironmentVariable("FIRE_TYPECHECK_ALL", null); }
         }
 

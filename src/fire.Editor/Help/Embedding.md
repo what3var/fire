@@ -26,7 +26,7 @@ The pipeline is *lexer → parser → resolver → compiler → virtual machine*
 | `MemoryPack.Core.dll` | Serialization used by `fire.dll` (NuGet package `MemoryPack`). |
 | `fire.IO.Bridge.dll` | The `IO` library (`#import "io"`). |
 | `fire.Device.Bridge.dll`, `fire.Device.Manager.dll`, `System.IO.Ports.dll` | The `devices` library: serial ports and simulated devices. |
-| `fire.Terminal.Bridge.dll`, `fire.Terminal.dll`, `fire.Terminal.Windows.dll`, `fire.Terminal.Sdl.dll`, `SDL3-CS.dll` and the native `SDL3` library | The `graphics` library: windows, framebuffers and the console. |
+| `fire.Terminal.Bridge.dll`, `fire.Terminal.dll`, `fire.Terminal.Windows.dll` | The `graphics` library in C# (framebuffers and the console); its windows need a renderer of the host. The windows of the desktop come from the C library of `graphics` and `windows` (`libfire_gfx`), which the compiler builds with a C compiler the first time a program needs it. |
 | `fire.UI.Bridge.dll` | The `ui` library, built on top of `graphics`. |
 
 `RuntimeSession` links against **all** of the bridges, so the simplest and safest way is to take the complete output folder of `fire.Compiler`: either add a **project reference** to `fire.Compiler` (everything is copied for you), or reference `fire.Compiler.dll` and copy the other files of its `bin` folder - including the `runtimes` subfolder with the native libraries - next to your application.

@@ -7498,11 +7498,15 @@ packerTests:
         "Plan: io ist ein Paket (C++ in einer Bibliothek): es bringt keine eigene DLL in das gepackte Programm");
     var planGfx = Plan(NativeImports.Print, NativeImports.Graphics);
     PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge")
-        && !planGfx.Assemblies.Keys.Any(n => n is "fire.Terminal.Windows" or "fire.Terminal.Sdl" or "fire.Windows.Bridge" or "SDL3-CS") && planGfx.Natives.Count == 0,
+        && !planGfx.Assemblies.Keys.Any(n => n is "fire.Terminal.Windows" or "fire.Windows.Bridge") && planGfx.Natives.Count == 0,
         "Plan: graphics bindet Terminal-Bridge und Terminal ein - ohne Fenster, SDL und native Bibliotheken");
     var planWin = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows);
-    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Windows.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planWin.Assemblies.ContainsKey) && planWin.Unresolved.Count == 0,
-        "Plan: windows bindet Fenster-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
+    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Windows.Bridge", "fire.Terminal", "fire.Terminal.Windows" }.All(planWin.Assemblies.ContainsKey) && planWin.Unresolved.Count == 0
+        && !planWin.Assemblies.Keys.Any(n => n.Contains("Sdl", StringComparison.OrdinalIgnoreCase) || n.Contains("SDL")),
+        "Plan: windows (die C#-Umsetzung) bindet Fenster-Bridge samt Terminal/Windows ein (Abhaengigkeiten aus den Metadaten) - kein SDL mehr");
+    var planWinC = PackagePlan.Create(new[] { NativeImports.Print, NativeImports.Graphics, NativeImports.Windows }, baseDir, graphicsInC: true);
+    PackCheck(!planWinC.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n == "fire.Windows.Bridge") && planWinC.Unresolved.Count == 0,
+        "Plan: graphics und windows in C - weder die C#-Bridges noch fire.Terminal kommen mit (ihre Bibliothek reist als native Datei)");
     var planDev = Plan(NativeImports.Print, "pkg:devices");
     var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows, NativeImports.Ui);
     PackCheck(planUi.Assemblies.Keys.SequenceEqual(planWin.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics und windows kommen ueber den Import)");
@@ -7510,8 +7514,7 @@ packerTests:
         "Plan: devices (ein Paket) bindet den Geraetemanager des Hosts und System.IO.Ports ein");
     PackCheck(planGfx.Unresolved.Count == 0 && planDev.Unresolved.Count == 0 && planIo.Unresolved.Count == 0 && planPrint.Unresolved.Count == 0,
         "Plan: alle Verweise aufloesbar (Datei neben dem Compiler oder Teil des Frameworks)");
-    PackCheck(planWin.Natives.Count == 0 || planWin.Natives.ContainsKey("SDL3.dll") || planWin.Natives.ContainsKey("libSDL3.so.0") || planWin.Natives.ContainsKey("libSDL3.dylib"),
-        "Plan: windows bringt SDL3 mit, wo es die Plattform gibt");
+    PackCheck(planWin.Natives.Count == 0, "Plan: windows bringt keine native Bibliothek mit (kein SDL)");
     // `windows` is separate from `graphics`: the window exists only with its own import, which brings `graphics` along; `graphics` alone does not know a Window
     {
         string LinkResult(string src)
@@ -9531,15 +9534,14 @@ uiDrawScript = """
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
 
-        var renderer = new FakeRenderer();
-        var fbManager = new fire.Terminal.FramebufferManager();
-        var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
-        var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
-        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
-        fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
+        // graphics and windows are the C library's (a copy of it, whose window the test drives: TestHostDisplay) - what a program runs on
+        var renderer = new TestHostDisplay();
+        var instance = fire.Compiler.GraphicsLibrary.Instance.Acquire() ?? throw new InvalidOperationException("the C library of graphics and windows cannot be built: " + fire.Compiler.GraphicsLibrary.Failure);
+        instance.Attach(renderer);
+        fire.Compiler.GraphicsLibrary.Register(natives, withWindows: true, instance: instance);
         ReflectionNatives.Register(natives);
 
-        natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
+        natives.Register("__TestClose", args => { renderer.Close(); return Value.MakeUndefined(); });
         var testClock = System.Diagnostics.Stopwatch.StartNew();
         natives.Register("__TestMillis", args => Value.MakeInt(testClock.ElapsedMilliseconds));
         natives.Register("__TestEvent", args =>
@@ -9556,7 +9558,11 @@ uiDrawScript = """
         var compiled = Compiler.Compile(program, resolveResult, natives);
         uiClasses = compiled.Classes;
         var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
-        vm.Run();
+        try
+        {
+            using (PackageHost.Begin(null, null, libraries: new[] { instance.File })) vm.Run();   // (its end resets the copy: windows, framebuffers)
+        }
+        finally { instance.Dispose(); }
         if (vm.UnhandledException != null)
             lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
         return lines;
@@ -11249,7 +11255,7 @@ uiDrawScript = """
         var t = ui.theme
         print("back " + (Px.Get(ui.renderer, 300, 190) == t.back.Color))
         print("face " + (Px.Get(ui.renderer, 12, 12) == t.face.Color))
-        print("border " + (Px.Get(ui.renderer, 10, 10) == t.border.Color))
+        print("border " + (Px.Get(ui.renderer, 10, 23) == t.border.Color && Px.Get(ui.renderer, 10, 10) != t.border.Color))   // (a straight edge; the corner is round)
         var textPixels = 0
         for (var y = 10; y < 36; y = y + 1) {
             for (var x = 10; x < 90; x = x + 1) {
@@ -11262,6 +11268,219 @@ uiDrawScript = """
         ui.Draw()
         print("hover " + (Px.Get(ui.renderer, 12, 12) == t.faceHover.Color))
         """, new[] { "back True", "face True", "border True", "text True", "hover True" });
+
+    // rounded rectangles and effects of the C library (packages/graphics/native/fire_gfx_fx.h)
+    CheckUi("Zeichnen: abgerundete Rechtecke (Kanten weich, gerade Kanten scharf), Umriss, feiner Schatten, Blur, Materialien mit ihren Schaltern", uiHead + """
+        var r = ui.renderer
+        var white = UI.Color.Rgb(255, 255, 255)
+        var red = UI.Color.Rgb(200, 0, 0)
+        r.ClearTo(white)
+        r.FillRoundRect(10, 10, 60, 40, 10, new SolidBrush(red))
+        var soft = Px.Get(r, 12, 13)
+        print("fuellen " + (Px.Get(r, 40, 30) == red) + " " + (Px.Get(r, 10, 30) == red) + " " + (Px.Get(r, 10, 10) == white) + " " + (soft != white && soft != red))
+        r.DrawRoundRect(80, 10, 60, 40, 8, new Pen(red, 2))
+        print("umriss " + (Px.Get(r, 80, 30) == red) + " " + (Px.Get(r, 81, 30) == red) + " " + (Px.Get(r, 82, 30) == white) + " " + (Px.Get(r, 110, 30) == white))
+        r.DrawShadow(160, 20, 60, 40, 8, 8, 0x40000000, 0)
+        var shade = Px.Get(r, 157, 40)
+        print("schatten " + (Px.Get(r, 190, 40) == white) + " " + (shade != white && (shade & 255) > 200) + " " + (Px.Get(r, 190, 95) == white))
+        r.FillRect(240, 10, 10, 40, new SolidBrush(UI.Color.Rgb(0, 0, 0)))
+        r.Blur(230, 10, 40, 40, 6)
+        var g = Px.Get(r, 251, 30) & 255
+        print("blur " + (g > 0 && g < 255))
+        r.DrawMaterial(MaterialKind.Glass, 10, 70, 60, 40, 6, 0x80000000, 0xC8C8C8, 0)
+        print("deckend " + (Px.Get(r, 40, 90) == UI.Color.Rgb(100, 100, 100)))
+        r.DrawMaterial(MaterialKind.Acrylic, 80, 70, 60, 40, 6, 0x40000000, 0xC8C8C8, MaterialOptions.Transparency)
+        print("ohne blur " + (Px.Get(r, 110, 90) == UI.Color.Rgb(96, 96, 96)))
+        r.FillRect(160, 70, 30, 40, new SolidBrush(UI.Color.Rgb(0, 0, 0)))
+        r.DrawMaterial(MaterialKind.Glass, 150, 70, 60, 40, 6, 0x30FFFFFF, 0xF0F0F0)
+        var glass = Px.Get(r, 190, 90) & 255
+        print("glas " + (glass > 20 && glass < 235))
+        """, new[] { "fuellen True True True True", "umriss True True True True", "schatten True True True", "blur True", "deckend True", "ohne blur True", "glas True" });
+
+    CheckUi("Stil: Fokus als 2-px-Akzentrand im Element, Fensterhintergrund (headless: Transparent) macht die Grundflaeche durchscheinend, ohne Transparenz deckend", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        ui.SetFocus(b)
+        ui.Draw()
+        var accent = ui.theme.borderFocus.Color
+        print("fokus " + (Px.Get(ui.renderer, 10, 23) == accent) + " " + (Px.Get(ui.renderer, 11, 23) == accent) + " " + (Px.Get(ui.renderer, 12, 23) != accent))
+        ui.WindowBackdrop = Backdrop.Acrylic
+        ui.Tick()
+        ui.Tick()
+        print("hintergrund " + win.Backdrop + " " + ((Px.Get(ui.renderer, 300, 190) >> 24) & 255))
+        ui.Transparency = false
+        ui.Tick()
+        ui.Tick()
+        print("deckend " + win.Backdrop + " " + ((Px.Get(ui.renderer, 300, 190) >> 24) & 255))
+        """, new[] { "fokus True True True", "hintergrund Transparent 208", "deckend None 255" });
+
+    CheckUi("Tooltip: erscheint nach der Wartezeit unter dem Zeiger (auch fuer ein Kind ohne eigenen), nimmt keinen Hover, geht bei Klick und beim Wegbewegen", uiHead + """
+        var p = new UI.StackPanel()
+        p.Left = 10
+        p.Top = 10
+        p.ToolTip = "Der Rahmen"
+        var b = new UI.Button("OK", 0, 0, 80, 26)
+        b.ToolTip = "Speichert alles"
+        p.Add(b)
+        var l = new UI.Label("ohne", 0, 0)
+        p.Add(l)
+        ui.Add(p)
+        ui.Draw()
+        __TestEvent(9, 20.0, 20.0)
+        ui.Tick()
+        print("sofort " + (ui.tipPopup == undefined))
+        for (var i = 0; i < 40; i = i + 1) { ui.Tick() }
+        print("da " + (ui.tipPopup != undefined) + " " + ui.tipPopup.Text + " " + ui.tipPopup.Top + " " + b.Hover)
+        __TestEvent(9, 20.0, 42.0)
+        ui.Tick()
+        for (var i = 0; i < 40; i = i + 1) { ui.Tick() }
+        print("kind " + ui.tipPopup.Text)
+        __TestEvent(8, 1, 20.0, 42.0)
+        ui.Tick()
+        print("klick " + (ui.tipPopup == undefined))
+        __TestEvent(11, 1, 20.0, 42.0)
+        __TestEvent(9, 300.0, 180.0)
+        ui.Tick()
+        for (var i = 0; i < 40; i = i + 1) { ui.Tick() }
+        print("weg " + (ui.tipPopup == undefined))
+        """, new[] { "sofort True", "da True Speichert alles 40 True", "kind Der Rahmen", "klick True", "weg True" });
+
+    // the GPU backend (part 4): the same shapes on the GPU and in software - at most 2 steps apart; text (software) in between keeps its order; a resize and
+    // drawing without blending. FIRE_GFX_GPU=cpu takes a Vulkan device that is a CPU (lavapipe); without Vulkan the check has nothing to compare.
+    Environment.SetEnvironmentVariable("FIRE_GFX_GPU", "cpu");
+    CheckUi("GPU: Formen, Text (Konsolen-, Bitmap-, TrueType-Schrift) und Blits (skaliert, gespiegelt, alle Modi) wie in Software (hoechstens 2 Stufen), Groesse aendern, ohne Blending", uiHead + """
+        var a = new Framebuffer(160, 100)
+        var b = new Framebuffer(160, 100)
+        a.Accelerated = false
+        b.Accelerated = true
+        var ra = new Renderer(a)
+        var rb = new Renderer(b)
+        var img = new Framebuffer(16, 12)
+        var ri = new Renderer(img)
+        ri.ClearTo(0x00000000)
+        ri.FillRect(0, 0, 8, 12, new SolidBrush(0xFF2050F0))
+        ri.FillRect(8, 0, 8, 6, new SolidBrush(0x80F02020))
+        var worst = 0
+        for (var pass = 0; pass < 2; pass = pass + 1) {
+            foreach (r in [ra, rb]) {
+                r.ClearTo(0xFFF0F0F0)
+                r.FillRect(5, 5, 50, 20, new SolidBrush(0xFF3366CC))
+                r.FillRoundRect(60, 5, 60, 30, 8, new SolidBrush(0x8000C000))
+                r.DrawText(62, 12, "fire", new SolidBrush(0xFF000000))
+                r.FillRect(60, 10, 30, 6, new SolidBrush(0x60FF0000))
+                r.DrawRoundRect(10, 40, 80, 40, 10, new Pen(0xFF202020, 2))
+                r.DrawRect(100, 50, 40, 30, new Pen(0xFF000000))
+                r.AlphaBlending = false
+                r.FillRoundRect(120, 5, 30, 30, 15, new SolidBrush(0x80FFFF00))
+                r.AlphaBlending = true
+                // text (the console font, a built-in one, TrueType where there is one) and blits (1:1, scaled, mirrored; copy, transparent, blend) - part 4.2
+                r.DrawText(2, 84, "Hallo fire!", new SolidBrush(0xFF000000), new SolidBrush(0xFFCCE0FF))
+                r.DrawText(100, 84, "small", new SolidBrush(0xC0800000), new SolidBrush(0x40000000), Fonts.Get("8x8"), 0)
+                r.DrawText(2, 60, "fire 1.0", new SolidBrush(0xC0303030), undefined, Fonts.Get("DejaVu Sans"), 15)
+                r.Blit(img, 100, 30)
+                r.Blit(img, 118, 30, 2)
+                r.Blit(img, 136, 30, 1)
+                r.BlitScaled(img, 0, 0, 16, 12, 100, 45, 37, 29, 2)
+                r.BlitScaled(img, 2, 1, 13, 9, 140, 45, -15, 25, 1)
+            }
+            ri.FillRect(0, 0, 4, 4, new SolidBrush(0xFF00FF00))   // (after the blits: what was drawn keeps the old picture)
+            for (var y = 0; y < a.Height(); y = y + 1) {
+                for (var x = 0; x < a.Width(); x = x + 1) {
+                    var pa = ra.GetPixel(x, y)
+                    var pb = rb.GetPixel(x, y)
+                    for (var c = 0; c < 32; c = c + 8) {
+                        var d = Math.Abs(((pa >> c) & 255) - ((pb >> c) & 255))
+                        if (d > worst) { worst = d }
+                    }
+                }
+            }
+            a.Resize(140, 90)
+            b.Resize(140, 90)
+        }
+        print("gpu " + (!b.Accelerated || worst <= 2) + " " + (b.Accelerated || Framebuffer.GpuError() != ""))
+        """, new[] { "gpu True True" });
+    // part 4.3: shadows, blur and the materials on the GPU - the passes of the software in whole numbers (at most 2 steps apart), between other drawing, clipped,
+    // without blending
+    CheckUi("GPU: Schatten, Blur, Glas, Acryl und Tönung wie in Software (hoechstens 2 Stufen), mit Clip, ohne Blending, Groesse aendern", uiHead + """
+        var a = new Framebuffer(200, 140)
+        var b = new Framebuffer(200, 140)
+        a.Accelerated = false
+        b.Accelerated = true
+        var ra = new Renderer(a)
+        var rb = new Renderer(b)
+        var worst = 0
+        for (var pass = 0; pass < 2; pass = pass + 1) {
+            foreach (r in [ra, rb]) {
+                r.ClearTo(0xFFF0F0F0)
+                for (var i = 0; i < 10; i = i + 1) { r.FillRect(i * 20, 0, 10, 140, new SolidBrush(0xFF000000 + i * 0x101B23)) }
+                r.DrawText(4, 4, "fire GPU effects", new SolidBrush(0xFF000000))
+                r.DrawShadow(20, 20, 60, 40, 8, 10, 0x50000000, 3)
+                r.FillRoundRect(20, 20, 60, 40, 8, new SolidBrush(0xFFFFFFFF))
+                r.DrawShadow(100, 15, 30, 20, 4, 2, 0x80000000, 1)
+                r.Blur(100, 50, 80, 30, 6, 6)
+                r.DrawMaterial(MaterialKind.Glass, 10, 80, 80, 50, 10, 0x30FFFFFF, 0xFFDDDDDD)
+                r.DrawMaterial(MaterialKind.Acrylic, 100, 85, 90, 45, 8, 0x80F0F0F0, 0xFFDDDDDD, 7)
+                r.SetClip(150, 10, 40, 30)
+                r.DrawMaterial(MaterialKind.Glass, 140, 5, 60, 40, 6, 0x20FFFFFF, 0xFFDDDDDD)
+                r.ResetClip()
+                r.DrawMaterial(MaterialKind.Tint, 130, 40, 60, 10, 4, 0x40FF0000, 0xFFDDDDDD, 0)
+                r.Blur(0, 100, 200, 40, 30, 0)
+                r.DrawShadow(150, 100, 30, 30, 15, 40, 0x60000000, -4)
+                r.AlphaBlending = false
+                r.DrawMaterial(MaterialKind.Glass, 60, 60, 50, 30, 6, 0x30FFFFFF, 0xFFDDDDDD)
+                r.DrawMaterial(MaterialKind.Acrylic, 120, 60, 50, 30, 6, 0x80FFFFFF, 0xFFDDDDDD, 1)
+                r.Blur(0, 0, 40, 40, 3, 4)
+                r.AlphaBlending = true
+                r.FillRect(0, 135, 200, 5, new SolidBrush(0xFF00AA00))
+            }
+            for (var y = 0; y < a.Height(); y = y + 1) {
+                for (var x = 0; x < a.Width(); x = x + 1) {
+                    var pa = ra.GetPixel(x, y)
+                    var pb = rb.GetPixel(x, y)
+                    for (var c = 0; c < 32; c = c + 8) {
+                        var d = Math.Abs(((pa >> c) & 255) - ((pb >> c) & 255))
+                        if (d > worst) { worst = d }
+                    }
+                }
+            }
+            a.Resize(180, 140)
+            b.Resize(180, 140)
+        }
+        print("gpu " + (!b.Accelerated || worst <= 2) + " " + (b.Accelerated || Framebuffer.GpuError() != ""))
+        """, new[] { "gpu True True" });
+    // only what the GPU drew comes back (its rectangle since the pixels were last the same): GPU and CPU drawing in turn, read in between - the same pixels as in software
+    CheckUi("GPU: nur das von der GPU Gezeichnete kommt zurueck - GPU und CPU abwechselnd, dazwischen gelesen, wie in Software", uiHead + """
+        var a = new Framebuffer(120, 80)
+        var b = new Framebuffer(120, 80)
+        a.Accelerated = false
+        b.Accelerated = true
+        var worst = 0
+        var same = true
+        foreach (fb in [a, b]) {
+            var r = new Renderer(fb)
+            r.ClearTo(0xFF202020)
+            for (var i = 0; i < 12; i = i + 1) {
+                r.FillRect(i * 9, i * 5, 14, 10, new SolidBrush(0xFF0000FF + i * 0x00140A00))
+                r.FillCircle(110 - i * 8, 10 + i * 5, 4, new SolidBrush(0xC000FF00))
+                r.GetPixel(i * 9 + 2, i * 5 + 2)
+                r.FillRoundRect(60 - i * 3, 40, 20, 12, 4, new SolidBrush(0x80FF0000 + i * 8))
+            }
+        }
+        var ra = new Renderer(a)
+        var rb = new Renderer(b)
+        for (var y = 0; y < 80; y = y + 1) {
+            for (var x = 0; x < 120; x = x + 1) {
+                var pa = ra.GetPixel(x, y)
+                var pb = rb.GetPixel(x, y)
+                for (var c = 0; c < 32; c = c + 8) {
+                    var d = Math.Abs(((pa >> c) & 255) - ((pb >> c) & 255))
+                    if (d > worst) { worst = d }
+                }
+            }
+        }
+        print("gpu " + (!b.Accelerated || worst <= 2) + " " + (b.Accelerated || Framebuffer.GpuError() != ""))
+        """, new[] { "gpu True True" });
+    Environment.SetEnvironmentVariable("FIRE_GFX_GPU", null);
 
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
         var c = new UI.CheckBox("Option", 10, 10)
@@ -25824,14 +26043,15 @@ else
                 CheckNat("Weglassen (stripping): ein Debug-Build behaelt alles; \"stripping\" als Zahl und Name, \"trim\" und --keep-all als Aliase, --stripping, das Projekt",
                     trAliasChecks.All(c => c.Ok), string.Join(", ", trAliasChecks.Where(c => !c.Ok).Select(c => c.Name)));
 
-                // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11
+                // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11 (the style of part 3 - corners,
+                // shadows, the surfaces of popups, docs/UI_PLATFORM.md - added about 25 KB; up to 4 MB is fine)
                 const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
                 var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
                 var trUiSizes = trLevels.Select(lv => fire.Native.CppGenerator.GenerateSources(trUiLinked, stripping: lv).Program.Length).ToArray();
                 int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
                 // (level 1 is about level 0 here: ui keeps little private code that no public member reaches; the names of the left out members cost a few bytes)
-                CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 3 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
-                    trUiSize == trUiSizes[3] && trUiSize < 3_000_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
+                CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 4 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
+                    trUiSize == trUiSizes[3] && trUiSize < 4_000_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
                     string.Join(" / ", trUiSizes.Select((s, i) => $"{i}: {s}")));
             }
         }, () =>
@@ -26420,10 +26640,10 @@ else
                     finally { Environment.SetEnvironmentVariable("FIRE_SDL", savedFireSdl); }
                 });
 
-                // ---- the VM with the real SDL3 (SDL3-CS) on X11: it puts text, a picture and files on the clipboard (forge run under Xvfb), a native program with SDL3 reads them
+                // ---- the VM (the C library: fire's own display) on X11: it puts text, a picture and files on the clipboard (forge run under Xvfb), a native program with SDL3 reads them
                 windowRuns.Add(() =>
                 {
-                    string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) gibt einem nativen Programm Text, Bild und Dateien ueber die Zwischenablage";
+                    string title = "Fenster: die VM (die C-Bibliothek) auf X11 (Xvfb) gibt einem nativen Programm Text, Bild und Dateien ueber die Zwischenablage";
                     string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
                     if (!TestSelected(title)) { }
                     else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
@@ -26435,10 +26655,10 @@ else
                             "", 3, "x11-two", writerScript, $"\"{forge}\" run \"{writer}\"");
                     }
                 });
-                // ---- the VM as the reader that starts after a native program copied (SDL 3.2 alone would not see it: SdlClipboard asks once, like fire_display_sdl3.h)
+                // ---- the VM as the reader that starts after a native program copied (the VM's windows are the C library's: the same display as the native program)
                 windowRuns.Add(() =>
                 {
-                    string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) sieht, was ein natives Programm vor ihrem Start kopiert hat";
+                    string title = "Fenster: die VM (die C-Bibliothek, fire's eigene Anzeige) auf X11 (Xvfb) sieht, was ein natives Programm vor ihrem Start kopiert hat";
                     string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
                     if (!TestSelected(title)) { }
                     else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
@@ -26447,6 +26667,204 @@ else
                         string reader = Path.Combine(workDir, "vmlatereader.fire");
                         File.WriteAllText(reader, lateReaderScript);
                         RunWindowCase(title, lateReaderScript, lateExpected, "", 3, "x11-late", lateWriterScript, null, $"\"{forge}\" run \"{reader}\"");
+                    }
+                });
+
+                // ---- Window.PresentArea on X11: only the reported area goes to the X server (a picture of the screen by ImageMagick's import shows it); idle frames
+                //      with an empty area overwrite nothing
+                windowRuns.Add(() =>
+                {
+                    string title = "Fenster: PresentArea auf X11 (Xvfb) - nur der gemeldete Bereich geht an den X-Server, leere Bereiche im Leerlauf ueberschreiben nichts";
+                    string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                    string? xvfbRunTool = FindProgram("xvfb-run"), importTool = FindProgram("import");
+                    if (!TestSelected(title)) { }
+                    else if (!File.Exists(forge) || xvfbRunTool == null || importTool == null || OperatingSystem.IsWindows()) Console.WriteLine("(PresentArea unter Xvfb: uebersprungen - forge, xvfb-run oder import fehlt)");
+                    else
+                    {
+                        string dir = Path.Combine(workDir, "presentarea");
+                        Directory.CreateDirectory(dir);
+                        File.WriteAllText(Path.Combine(dir, "area.fire"), """
+                            #import "windows"
+                            var fb = new Framebuffer(200, 100)
+                            var r = new Renderer(fb)
+                            var win = new Window(fb, "area")
+                            win.VSync = false
+                            r.FillRect(0, 0, 200, 100, new SolidBrush(0xFF0000FF))
+                            win.Tick()
+                            win.Tick()
+                            r.FillRect(20, 20, 30, 30, new SolidBrush(0xFFFF0000))
+                            r.FillRect(120, 20, 30, 30, new SolidBrush(0xFF00FF00))
+                            win.PresentArea(20, 20, 30, 30)
+                            win.Tick()
+                            print("ready")
+                            win.VSync = true
+                            for (var i = 0; i < 120; i = i + 1) {
+                                win.PresentArea(0, 0, 0, 0)
+                                win.Tick()
+                            }
+                            """);
+                        File.WriteAllText(Path.Combine(dir, "run.sh"),
+                            $"FIRE_DISPLAY=x11 \"{forge}\" run \"{dir}/area.fire\" > \"{dir}/out.txt\" 2>&1 &\n" +
+                            $"for i in $(seq 1 300); do grep -q ready \"{dir}/out.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 0.5\n" +
+                            $"import -window root -depth 8 \"{dir}/screen.ppm\"\nwait\n");
+                        var psi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 400x300x24\" sh \"{dir}/run.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
+                        using var proc = System.Diagnostics.Process.Start(psi)!;
+                        proc.StandardOutput.ReadToEnd(); proc.StandardError.ReadToEnd();
+                        proc.WaitForExit(120000);
+                        // the picture: inside the area blue, outside it still red (the green was not reported)
+                        string screenFile = Path.Combine(dir, "screen.ppm");
+                        string got = File.Exists(screenFile) ? ScreenPictures.Area(File.ReadAllBytes(screenFile)) : "kein Bild";
+                        CheckNat(title, got == "innen (0, 0, 255) aussen (255, 0, 0)", got + "\n" + (File.Exists(Path.Combine(dir, "out.txt")) ? File.ReadAllText(Path.Combine(dir, "out.txt")) : ""));
+                        // part 4.4: an accelerated framebuffer in a window on X11 - its frames go from the GPU into the window (a swap chain of lavapipe: FIRE_GFX_GPU=cpu);
+                        // after the first frames nothing is read back, and the picture of the screen shows what the GPU drew
+                        string gpuTitle = "Fenster: ein beschleunigter Framebuffer auf X11 (Xvfb, lavapipe) - die Frames gehen von der GPU ins Fenster, nichts wird mehr zurueckgelesen";
+                        File.WriteAllText(Path.Combine(dir, "gpu.fire"), """
+                            #import "windows"
+                            #import "time"
+                            var fb = new Framebuffer(200, 100)
+                            fb.Accelerated = true
+                            var r = new Renderer(fb)
+                            var win = new Window(fb, "gpu")
+                            win.VSync = true
+                            r.FillRect(0, 0, 200, 100, new SolidBrush(0xFF0000FF))
+                            win.Tick()
+                            win.Tick()
+                            win.Tick()
+                            var before = Framebuffer.GpuReadbacks()
+                            r.FillRect(20, 20, 30, 30, new SolidBrush(0xFFFF0000))
+                            for (var i = 0; i < 10; i = i + 1) { win.Tick() }
+                            r.FillRect(120, 20, 30, 30, new SolidBrush(0xFF00FF00))
+                            for (var i = 0; i < 10; i = i + 1) { win.Tick() }
+                            print("gpu " + fb.Accelerated + " " + (Framebuffer.GpuReadbacks() - before) + " " + Framebuffer.GpuError())
+                            print("ready")
+                            for (var i = 0; i < 100; i = i + 1) {
+                                win.Tick()
+                                Sleep(16)
+                            }
+                            """);
+                        File.WriteAllText(Path.Combine(dir, "gpu.sh"),
+                            $"FIRE_GFX_GPU=cpu FIRE_DISPLAY=x11 \"{forge}\" run \"{dir}/gpu.fire\" > \"{dir}/gpu.txt\" 2>&1 &\n" +
+                            $"for i in $(seq 1 600); do grep -q ready \"{dir}/gpu.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 0.5\n" +
+                            $"import -window root -depth 8 \"{dir}/gpu.ppm\"\nwait\n");
+                        var gpsi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 400x300x24\" sh \"{dir}/gpu.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
+                        using (var gproc = System.Diagnostics.Process.Start(gpsi)!)
+                        {
+                            gproc.StandardOutput.ReadToEnd(); gproc.StandardError.ReadToEnd();
+                            gproc.WaitForExit(180000);
+                        }
+                        string gpuOut = File.Exists(Path.Combine(dir, "gpu.txt")) ? File.ReadAllText(Path.Combine(dir, "gpu.txt")) : "";
+                        if (gpuOut.Contains("gpu False")) Console.WriteLine("(beschleunigter Framebuffer unter Xvfb: uebersprungen - kein Vulkan-Geraet)");
+                        else
+                        {
+                            string gpuFile = Path.Combine(dir, "gpu.ppm");
+                            string gpuGot = File.Exists(gpuFile) ? ScreenPictures.Area(File.ReadAllBytes(gpuFile)) : "kein Bild";
+                            CheckNat(gpuTitle, gpuGot == "innen (0, 0, 255) aussen (0, 255, 0)" && gpuOut.Contains("gpu True 0 "), gpuGot + "\n" + gpuOut);
+                        }
+                        // Wayland (weston with its X11 backend in Xvfb): two buffers in turn - each gets what it missed when it is drawn next; three squares reported one after
+                        // the other must all be there (and what is between them unchanged)
+                        string wlTitle = "Fenster: PresentArea auf Wayland (weston unter Xvfb) - zwei Puffer im Wechsel: drei nacheinander gemeldete Bereiche sind alle da, der Rest unveraendert";
+                        if (FindProgram("weston") is not { } westonTool) Console.WriteLine("(PresentArea unter Wayland: uebersprungen - weston fehlt)");
+                        else
+                        {
+                            string runtime = Path.Combine(dir, "wlrun");
+                            Directory.CreateDirectory(runtime);
+                            File.WriteAllText(Path.Combine(dir, "squares.fire"), """
+                                #import "windows"
+                                var fb = new Framebuffer(200, 100)
+                                var r = new Renderer(fb)
+                                var win = new Window(fb, "area")
+                                win.VSync = false
+                                r.FillRect(0, 0, 200, 100, new SolidBrush(0xFF0000FF))
+                                win.Tick()
+                                win.Tick()
+                                var blue = new SolidBrush(0xFFFF0000)
+                                r.FillRect(20, 20, 30, 30, blue)
+                                win.PresentArea(20, 20, 30, 30)
+                                win.Tick()
+                                r.FillRect(120, 20, 30, 30, blue)
+                                win.PresentArea(120, 20, 30, 30)
+                                win.Tick()
+                                r.FillRect(70, 60, 30, 30, blue)
+                                win.PresentArea(70, 60, 30, 30)
+                                win.Tick()
+                                print("ready")
+                                win.VSync = true
+                                for (var i = 0; i < 120; i = i + 1) {
+                                    win.PresentArea(0, 0, 0, 0)
+                                    win.Tick()
+                                }
+                                """);
+                            string socket = $"wl-area-{Environment.ProcessId}";
+                            File.WriteAllText(Path.Combine(dir, "wl.sh"),
+                                $"export XDG_RUNTIME_DIR=\"{runtime}\"\nchmod 700 \"$XDG_RUNTIME_DIR\"\n" +
+                                $"printf '[core]\\nidle-time=0\\n[shell]\\npanel-position=none\\nbackground-color=0xff000000\\n' > \"{runtime}/weston.ini\"\n" +
+                                $"\"{westonTool}\" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={socket} --config=\"{runtime}/weston.ini\" > \"{runtime}/weston.log\" 2>&1 &\nwp=$!\n" +
+                                $"for i in $(seq 1 100); do [ -S \"$XDG_RUNTIME_DIR/{socket}\" ] && break; sleep 0.1; done\n" +
+                                $"WAYLAND_DISPLAY={socket} FIRE_DISPLAY=wayland \"{forge}\" run \"{dir}/squares.fire\" > \"{dir}/wl.txt\" 2>&1 &\npp=$!\n" +
+                                $"for i in $(seq 1 300); do grep -q ready \"{dir}/wl.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 1\n" +
+                                $"import -window root -depth 8 \"{dir}/wl.ppm\"\nwait $pp\nkill $wp\n");
+                            var wpsi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 800x600x24\" sh \"{dir}/wl.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
+                            using var wproc = System.Diagnostics.Process.Start(wpsi)!;
+                            wproc.StandardOutput.ReadToEnd(); wproc.StandardError.ReadToEnd();
+                            wproc.WaitForExit(120000);
+                            string wlGot = File.Exists(Path.Combine(dir, "wl.ppm")) ? ScreenPictures.Squares(File.ReadAllBytes(Path.Combine(dir, "wl.ppm"))) : "kein Bild";
+                            CheckNat(wlTitle, wlGot == "(0, 0, 255) (0, 0, 255) (0, 0, 255) (255, 0, 0) (255, 0, 0)", wlGot + "\n" + (File.Exists(Path.Combine(dir, "wl.txt")) ? File.ReadAllText(Path.Combine(dir, "wl.txt")) : ""));
+                            // part 4.4 with a transparent backdrop: an accelerated framebuffer goes premultiplied from the GPU into a swap chain that mixes (weston shows it over
+                            // its black background) - the same picture as in software, and nothing is read back (FIRE_WAYLAND_CSD=0: no title bar of fire's own, which keeps
+                            // a window on the pixels)
+                            string trTitle = "Fenster: ein beschleunigter Framebuffer mit transparentem Hintergrund auf Wayland (weston, lavapipe) - vormultipliziert von der GPU ins Fenster, wie in Software, nichts zurueckgelesen";
+                            var trGot = new List<string>();
+                            foreach (bool acc in new[] { true, false })
+                            {
+                                string name = acc ? "trgpu" : "trsw";
+                                File.WriteAllText(Path.Combine(dir, name + ".fire"), """
+                                    #import "windows"
+                                    #import "time"
+                                    var fb = new Framebuffer(200, 100)
+                                    fb.Accelerated = ACC
+                                    var r = new Renderer(fb)
+                                    var win = new Window(fb, "tr")
+                                    win.VSync = true
+                                    win.Backdrop = Backdrop.Transparent
+                                    r.AlphaBlending = false
+                                    r.FillRect(0, 0, 200, 100, new SolidBrush(0x800000FF))
+                                    r.FillRect(20, 20, 30, 30, new SolidBrush(0xFFFF0000))
+                                    win.Tick()
+                                    win.Tick()
+                                    win.Tick()
+                                    var before = Framebuffer.GpuReadbacks()
+                                    for (var i = 0; i < 20; i = i + 1) {
+                                        r.FillRect(120, 20, 30, 30, new SolidBrush(0x4000FF00))
+                                        win.Tick()
+                                    }
+                                    print("gpu " + fb.Accelerated + " " + (Framebuffer.GpuReadbacks() - before) + " " + win.Backdrop)
+                                    print("ready")
+                                    for (var i = 0; i < 100; i = i + 1) {
+                                        win.Tick()
+                                        Sleep(16)
+                                    }
+                                    """.Replace("ACC", acc ? "true" : "false"));
+                                string trSocket = $"wl-{name}-{Environment.ProcessId}";
+                                File.WriteAllText(Path.Combine(dir, name + ".sh"),
+                                    $"export XDG_RUNTIME_DIR=\"{runtime}\"\nchmod 700 \"$XDG_RUNTIME_DIR\"\n" +
+                                    $"\"{westonTool}\" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={trSocket} --config=\"{runtime}/weston.ini\" > \"{runtime}/{name}.log\" 2>&1 &\nwp=$!\n" +
+                                    $"for i in $(seq 1 100); do [ -S \"$XDG_RUNTIME_DIR/{trSocket}\" ] && break; sleep 0.1; done\n" +
+                                    $"FIRE_WAYLAND_CSD=0 FIRE_GFX_GPU=cpu WAYLAND_DISPLAY={trSocket} FIRE_DISPLAY=wayland \"{forge}\" run \"{dir}/{name}.fire\" > \"{dir}/{name}.txt\" 2>&1 &\npp=$!\n" +
+                                    $"for i in $(seq 1 300); do grep -q ready \"{dir}/{name}.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 1\n" +
+                                    $"import -window root -depth 8 \"{dir}/{name}.ppm\"\nwait $pp\nkill $wp\n");
+                                var tpsi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 800x600x24\" sh \"{dir}/{name}.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
+                                using (var tproc = System.Diagnostics.Process.Start(tpsi)!)
+                                {
+                                    tproc.StandardOutput.ReadToEnd(); tproc.StandardError.ReadToEnd();
+                                    tproc.WaitForExit(120000);
+                                }
+                                string outText = File.Exists(Path.Combine(dir, name + ".txt")) ? File.ReadAllText(Path.Combine(dir, name + ".txt")) : "";
+                                string line = outText.Split('\n').FirstOrDefault(l => l.StartsWith("gpu ")) ?? "keine Ausgabe";
+                                trGot.Add(line.Trim() + " | " + (File.Exists(Path.Combine(dir, name + ".ppm")) ? ScreenPictures.Mixed(File.ReadAllBytes(Path.Combine(dir, name + ".ppm"))) : "kein Bild"));
+                            }
+                            if (trGot[0].StartsWith("gpu False")) Console.WriteLine("(transparenter Hintergrund auf der GPU: uebersprungen - kein Vulkan-Geraet)");
+                            else CheckNat(trTitle, trGot[0] == "gpu True 0 Transparent | (0, 0, 255) (0, 64, 0)" && trGot[1] == "gpu False 0 Transparent | (0, 0, 255) (0, 64, 0)", string.Join("\n", trGot));
+                        }
                     }
                 });
 
@@ -26579,7 +26997,7 @@ else
                 windowRuns.Add(() =>
                 {
                     string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
-                    var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (SDL3-CS)", 3, false, true), ("fire", 0, false, false), ("fire, Window.Show: der Thread des Managers zieht", 0, true, false) };
+                    var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (die C-Bibliothek)", 3, false, true), ("fire", 0, false, false), ("fire, Window.Show: der Thread des Managers zieht", 0, true, false) };
                     string[] dragExpected = { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" };
                     string DragBuild(string script, int version, string name)
                     {
@@ -26929,135 +27347,50 @@ else
                                     string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
                                     CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
                                 }
-                            }
-                        }
-
-                        // ---- the VM's clipboard under Windows (Wine): files as CF_HDROP (SdlClipboard + WinClipboard). A small harness with fire.Terminal.Sdl is published for win-x64
-                        // (self-contained; its own artifacts folder, so that the projects of the repository keep theirs) and runs under Wine: it puts two files on the clipboard,
-                        // checks them with the shell (DragQueryFileW) and reads them back; a native program (MinGW, SDL3) reads them and puts its own there, which the harness reads.
-                        {
-                            string title = "Fenster: die VM unter Windows (win-x64 unter Wine): Dateien in der Zwischenablage als CF_HDROP, auch mit einem nativen Programm";
-                            string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
-                            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
-                            string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
-                                : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
-                            var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
-                            string? sdlProject = null;
-                            for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null && sdlProject == null; dir = dir.Parent)
-                            {
-                                string candidate = Path.Combine(dir.FullName, "src", "fire.Terminal.Sdl", "fire.Terminal.Sdl.csproj");
-                                if (File.Exists(candidate)) sdlProject = candidate;
-                            }
-                            if (!TestSelected(title)) { }
-                            else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null || sdlProject == null)
-                                Console.WriteLine("(die VM unter Wine: uebersprungen - MinGW, Wine, xvfb-run, das MinGW-Paket von SDL3 oder die Quellen von fire.Terminal.Sdl fehlen)");
-                            else
-                            {
-                                string vmDir = Path.Combine(workDir, "wine_vmclip");
-                                Directory.CreateDirectory(vmDir);
-                                File.WriteAllText(Path.Combine(vmDir, "harness.csproj"), $"""
-                                    <Project Sdk="Microsoft.NET.Sdk">
-                                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
-                                      <ItemGroup><ProjectReference Include="{sdlProject}" /></ItemGroup>
-                                    </Project>
-                                    """);
-                                File.WriteAllText(Path.Combine(vmDir, "Program.cs"), """
-                                    using System.Runtime.InteropServices;
-                                    using System.Text;
-                                    using fire.Terminal.Sdl;
-                                    static class P
-                                    {
-                                        [DllImport("user32.dll")] static extern int OpenClipboard(IntPtr owner);
-                                        [DllImport("user32.dll")] static extern int CloseClipboard();
-                                        [DllImport("user32.dll")] static extern int IsClipboardFormatAvailable(uint format);
-                                        [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);
-                                        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern uint DragQueryFileW(IntPtr drop, uint index, StringBuilder? file, uint size);
-                                        static string ShellFiles()
-                                        {
-                                            if (OpenClipboard(IntPtr.Zero) == 0) return "not open";
-                                            try
-                                            {
-                                                IntPtr h = GetClipboardData(15);
-                                                if (h == IntPtr.Zero) return "none";
-                                                uint n = DragQueryFileW(h, 0xFFFFFFFF, null, 0);
-                                                var line = n.ToString();
-                                                for (uint i = 0; i < n; i++) { var sb = new StringBuilder(1024); DragQueryFileW(h, i, sb, 1024); line += " [" + sb + "]"; }
-                                                return line;
-                                            }
-                                            finally { CloseClipboard(); }
-                                        }
-                                        static string Files(string[] files) => files.Length + string.Concat(files.Select(f => " [" + f + "]"));
-                                        static int Main(string[] args)
-                                        {
-                                            Console.OutputEncoding = Encoding.UTF8;
-                                            var c = new SdlClipboard();
-                                            if (args.Length > 0 && args[0] == "read") { Console.WriteLine("vm read " + Files(c.GetFiles()) + " " + c.HasFiles + " " + c.HasText); return 0; }
-                                            string[] paths = { @"C:\fire\ein Ordner\datei ä.txt", @"C:\zwei" };
-                                            Console.WriteLine("vm set " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText + " " + c.HasImage);
-                                            Console.WriteLine("vm shell " + ShellFiles());
-                                            Console.WriteLine("vm get " + Files(c.GetFiles()));
-                                            Console.WriteLine("vm text " + c.SetText("Text") + " " + c.HasFiles + " " + (IsClipboardFormatAvailable(15) != 0) + " " + c.HasText + " " + c.GetText());
-                                            Console.WriteLine("vm again " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText);
-                                            return 0;
-                                        }
-                                    }
-                                    """);
-                                string publish = RunProc("dotnet", $"publish -c Release -r win-x64 --self-contained -o out --artifacts-path artifacts -p:NuGetAudit=false", vmDir, out int publishExit);
-                                string harness = Path.Combine(vmDir, "out", "harness.exe");
-                                if (publishExit != 0 || !File.Exists(harness))
-                                    Console.WriteLine("(die VM unter Wine: uebersprungen - `dotnet publish -r win-x64` ging nicht (ohne Netz fehlt das Laufzeitpaket fuer win-x64): "
-                                        + string.Join(" ", publish.Split('\n').Where(l => l.Contains("error")).Take(2)) + ")");
-                                else
+                                // Window.PresentArea under Windows: only the reported area reaches the window (the band of its rows, SetDIBitsToDevice), idle frames overwrite
+                                // nothing - a picture of the X server Wine draws on (ImageMagick's import)
+                                if (FindProgram("import") == null) Console.WriteLine("(PresentArea unter Wine: uebersprungen - ImageMagick import fehlt)");
+                                else try
                                 {
-                                    var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
-                                    fire.Native.NativeRuntimeFiles.WriteTo(vmDir, "windows");
-                                    File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(vmDir, "SDL3.dll"), true);
-                                    string RunWine(string tool, string arguments, out int exit)
-                                    {
-                                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = vmDir };
-                                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
-                                        info.Environment["WINEDEBUG"] = "-all";
-                                        info.Environment["LANG"] = "C.UTF-8";
-                                        using var p = System.Diagnostics.Process.Start(info)!;
-                                        var errTask = p.StandardError.ReadToEndAsync();
-                                        string output = p.StandardOutput.ReadToEnd();
-                                        if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
-                                        exit = p.ExitCode;
-                                        return output + errTask.Result;
-                                    }
-                                    RunWine(wine, "wineboot --init", out _);
-                                    const string nativeScript = """
+                                    const string areaScript = """
                                     #import "windows"
-                                    var got = Clipboard.GetFiles()
-                                    var line = "native " + got.length
-                                    foreach (f in got) { line = line + " [" + f + "]" }
-                                    print(line + " " + Clipboard.HasFiles + " " + Clipboard.HasText)
-                                    var paths = new List<string>()
-                                    paths.Add("C:\\nativ\\drei ö.txt")
-                                    print("native set " + Clipboard.SetFiles(paths))
+                                    var fb = new Framebuffer(200, 100)
+                                    var r = new Renderer(fb)
+                                    var win = new Window(fb, "area")
+                                    win.VSync = false
+                                    r.FillRect(0, 0, 200, 100, new SolidBrush(0xFF0000FF))
+                                    win.Tick()
+                                    win.Tick()
+                                    r.FillRect(20, 20, 30, 30, new SolidBrush(0xFFFF0000))
+                                    r.FillRect(120, 20, 30, 30, new SolidBrush(0xFF00FF00))
+                                    win.PresentArea(20, 20, 30, 30)
+                                    win.Tick()
+                                    print("ready")
+                                    win.VSync = true
+                                    for (var i = 0; i < 180; i = i + 1) {
+                                        win.PresentArea(0, 0, 0, 0)
+                                        win.Tick()
+                                    }
                                     """;
-                                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { nativeScript }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
-                                    string nativeExe = Path.Combine(vmDir, "nativeclip.exe");
-                                    string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-                                    string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, vmDir, "nativeclip",
-                                        $"{NativeTestBuild.Opt} -Wall -Wextra -I\"{Path.Combine(sdl3Mingw, "include")}\"", nativeExe, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
-                                    if (buildExit != 0 || build.Contains("warning:")) CheckNat(title, false, "MinGW: " + links + "\n" + build);
+                                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { areaScript }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                                    string exeFile = Path.Combine(winDir, "area.exe");
+                                    string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()));
+                                    string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, "area",
+                                        $"{NativeTestBuild.Opt} -Wall -Wextra ", exeFile, out int buildExit, links);
+                                    if (buildExit != 0 || build.Contains("warning:")) CheckNat($"{title}: PresentArea", false, "MinGW: " + links + "\n" + build);
                                     else
                                     {
-                                        // (one X server for all three, so that they share Wine's desktop and its clipboard)
-                                        string script = Path.Combine(vmDir, "run.sh");
-                                        File.WriteAllText(script, $"export SDL_VIDEODRIVER=windows\n\"{wine}\" \"{harness}\" && \"{wine}\" \"{nativeExe}\" && \"{wine}\" \"{harness}\" read\n");
-                                        string actual = RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out int runExit);
-                                        actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => l != "" && !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
-                                        string want = string.Join("\n", new[]
-                                        {
-                                            "vm set True True False False", "vm shell 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]", "vm get 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]",
-                                            "vm text True False False True Text", "vm again True True False",
-                                            "native 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei] True False", "native set True", "vm read 1 [C:\\nativ\\drei ö.txt] True False",
-                                        });
-                                        CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                                        string outFile = Path.Combine(winDir, "area.txt"), screen = Path.Combine(winDir, "area.ppm"), script = Path.Combine(winDir, "area.sh");
+                                        File.WriteAllText(script, $"FIRE_DISPLAY=win32 \"{wine}\" \"{exeFile}\" > \"{outFile}\" 2>&1 &\n" +
+                                            $"for i in $(seq 1 600); do grep -q ready \"{outFile}\" 2>/dev/null && break; sleep 0.1; done\nsleep 1\n" +
+                                            $"import -window root -depth 8 \"{screen}\"\nwait\n");
+                                        RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out _);
+                                        string got = File.Exists(screen) ? ScreenPictures.Area(File.ReadAllBytes(screen)) : "kein Bild";
+                                        CheckNat($"{title}: PresentArea - nur der gemeldete Bereich kommt im Fenster an, leere Bereiche im Leerlauf ueberschreiben nichts",
+                                            got == "innen (0, 0, 255) aussen (255, 0, 0)", got + "\n" + (File.Exists(outFile) ? File.ReadAllText(outFile) : ""));
                                     }
                                 }
+                                catch (Exception ex) { CheckNat($"{title}: PresentArea", false, ex.ToString()); }
                             }
                         }
 
@@ -27130,10 +27463,10 @@ else
                         }
                     }
                 };
-                // (at the same time: the window cases; the checks of FIRE_SDL, the VM on X11 and the drag cases one after the other - the VM (forge run) installs the
+                // (at the same time: the window cases; the checks of FIRE_SDL, the VM on X11, PresentArea and the drag cases one after the other - the VM (forge run) installs the
                 // standard packages on its first start, the drag cases share their files -; Wayland; the cases under Wine)
-                if (windowRuns.Count != 6) throw new InvalidOperationException("the window runs changed: " + windowRuns.Count);
-                TestJobs.Concurrently(windowRuns[0], () => { for (int i = 1; i < 5; i++) windowRuns[i](); }, windowRuns[5], wineRuns);
+                if (windowRuns.Count != 7) throw new InvalidOperationException("the window runs changed: " + windowRuns.Count);
+                TestJobs.Concurrently(windowRuns[0], () => { for (int i = 1; i < 6; i++) windowRuns[i](); }, windowRuns[6], wineRuns);
             }
 
             // ---- UI library: the same elements natively (fire's own display without a screen: FIRE_DISPLAY=headless) against the VM with the dummy
@@ -27898,6 +28231,62 @@ sealed class PixelOnlyFont : fire.Terminal.IGlyphFont
 }
 
 /// <summary>Renderer dummy for the UI tests: delivers the stored events at the next PumpEvents, draws nothing.</summary>
+/// <summary>The window of a UI test on the C library (fire.Compiler.IHostDisplay): `__TestEvent` hands it events, `__TestClose` closes it, StartDrag answers what the test says.</summary>
+sealed class TestHostDisplay : fire.Compiler.IHostDisplay
+{
+    private readonly List<fire.Compiler.HostDisplayEvent> _pending = new();
+    public int DragAnswer { get; set; }
+    public bool CanDrag { get; set; } = true;
+    public Action<string, string[]>? Dragged { get; set; }
+
+    public void Close() { lock (_pending) _pending.Add(new fire.Compiler.HostDisplayEvent { Type = (int)fire.Terminal.Event.EventType.Close }); }
+
+    /// <summary>An event as FakeRenderer.Push takes it: args[0] type, then mouse (button, x, y) or motion (x, y), key (keycode, modifier), text (text).</summary>
+    public void Push(int type, IReadOnlyList<Value> args)
+    {
+        var e = new fire.Compiler.HostDisplayEvent { Type = type };
+        switch ((fire.Terminal.Event.EventType)type)
+        {
+            case fire.Terminal.Event.EventType.MouseDown:
+            case fire.Terminal.Event.EventType.MouseUp: e.Button = (int)args[1].AsInt(); e.X = (float)args[2].AsFloat(); e.Y = (float)args[3].AsFloat(); break;
+            case fire.Terminal.Event.EventType.MouseMove: e.X = (float)args[1].AsFloat(); e.Y = (float)args[2].AsFloat(); break;
+            case fire.Terminal.Event.EventType.MouseScroll: e.Dx = (float)args[1].AsFloat(); e.Dy = (float)args[2].AsFloat(); e.X = args.Count > 3 ? (float)args[3].AsFloat() : 0; e.Y = args.Count > 4 ? (float)args[4].AsFloat() : 0; break;
+            case fire.Terminal.Event.EventType.KeyDown:
+            case fire.Terminal.Event.EventType.KeyUp: e.KeyCode = (int)args[1].AsInt(); e.Modifiers = (int)args[2].AsInt(); break;
+            case fire.Terminal.Event.EventType.TextInput: e.Text = args[1].AsString(); break;
+            case fire.Terminal.Event.EventType.Resize: e.Width = (int)args[1].AsInt(); e.Height = (int)args[2].AsInt(); break;
+            case fire.Terminal.Event.EventType.TouchDown:
+            case fire.Terminal.Event.EventType.TouchMove:
+            case fire.Terminal.Event.EventType.TouchUp: e.Finger = args[1].AsInt(); e.X = (float)args[2].AsFloat(); e.Y = (float)args[3].AsFloat(); e.Pressure = 1f; break;
+            case fire.Terminal.Event.EventType.JoystickAxis: e.Joystick = (int)args[1].AsInt(); e.Index = (int)args[2].AsInt(); e.Value = (float)args[3].AsFloat(); break;
+            case fire.Terminal.Event.EventType.JoystickHat: e.Joystick = (int)args[1].AsInt(); e.Index = (int)args[2].AsInt(); e.Value = args[3].AsInt(); break;
+            case fire.Terminal.Event.EventType.JoystickButtonDown:
+            case fire.Terminal.Event.EventType.JoystickButtonUp: e.Joystick = (int)args[1].AsInt(); e.Index = (int)args[2].AsInt(); break;
+            case fire.Terminal.Event.EventType.JoystickAdded:
+            case fire.Terminal.Event.EventType.JoystickRemoved: e.Joystick = (int)args[1].AsInt(); break;
+            case fire.Terminal.Event.EventType.DropFiles:
+            case fire.Terminal.Event.EventType.DropText: e.Data = args[1].AsString(); e.X = (float)args[2].AsFloat(); e.Y = (float)args[3].AsFloat(); break;
+            case fire.Terminal.Event.EventType.DragHover: e.X = (float)args[1].AsFloat(); e.Y = (float)args[2].AsFloat(); break;
+        }
+        lock (_pending) _pending.Add(e);
+    }
+
+    public bool NextEvent(int window, out fire.Compiler.HostDisplayEvent e)
+    {
+        lock (_pending)
+        {
+            if (_pending.Count == 0) { e = default; return false; }
+            e = _pending[0];
+            _pending.RemoveAt(0);
+            return true;
+        }
+    }
+    public void Present(int window, ReadOnlySpan<uint> rgba, int width, int height, bool vsync) { }
+    public void Cursor(int window, int cursor) { }
+    public int StartDrag(int window, string text, string[] files) { Dragged?.Invoke(text, files); return DragAnswer; }
+    public bool CanStartDrag(int window) => CanDrag;
+}
+
 sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
 {
     private readonly List<fire.Terminal.Event.IEvent> _pending = new();
@@ -28021,4 +28410,75 @@ sealed class ArrayTarget : fire.Terminal.IRenderTarget
     public byte[]? Indices => null;
     public int TransparentIndex => -1;
     public void MarkDirty() { }
+}
+
+/// <summary>Pictures of the screen of the window tests (ImageMagick's import, PPM with 8 bits).</summary>
+static class ScreenPictures
+{
+    /// <summary>The PresentArea cases: the window's top left corner is the first red pixel; what is inside the reported area (35, 35) and outside it (135, 35).</summary>
+    public static string Area(byte[] ppm)
+    {
+        int pos = 2, field = 0;
+        var header = new int[3];
+        while (field < 3)
+        {
+            while (pos < ppm.Length && char.IsWhiteSpace((char)ppm[pos])) pos++;
+            if (pos < ppm.Length && ppm[pos] == '#') { while (pos < ppm.Length && ppm[pos] != '\n') pos++; continue; }
+            int v = 0;
+            while (pos < ppm.Length && char.IsDigit((char)ppm[pos])) v = v * 10 + (ppm[pos++] - '0');
+            header[field++] = v;
+        }
+        pos++;
+        int width = header[0], height = header[1], start = pos;
+        if (header[2] != 255) return "kein 8-Bit-Bild (" + header[2] + ")";
+        (int, int, int) Px(int x, int y) { int i = start + (y * width + x) * 3; return i + 2 < ppm.Length ? (ppm[i], ppm[i + 1], ppm[i + 2]) : (-1, -1, -1); }
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                if (Px(x, y) == (255, 0, 0)) return $"innen {Px(x + 35, y + 35)} aussen {Px(x + 135, y + 35)}";
+        return "kein Fenster";
+    }
+
+    /// <summary>A window with a transparent backdrop over a black desktop: its top left corner is the first pixel of half red (128, 0, 0); what lies at (35, 35) and (135, 35).</summary>
+    public static string Mixed(byte[] ppm)
+    {
+        int pos = 2, field = 0;
+        var header = new int[3];
+        while (field < 3)
+        {
+            while (pos < ppm.Length && char.IsWhiteSpace((char)ppm[pos])) pos++;
+            if (pos < ppm.Length && ppm[pos] == '#') { while (pos < ppm.Length && ppm[pos] != '\n') pos++; continue; }
+            int v = 0;
+            while (pos < ppm.Length && char.IsDigit((char)ppm[pos])) v = v * 10 + (ppm[pos++] - '0');
+            header[field++] = v;
+        }
+        pos++;
+        int width = header[0], height = header[1], start = pos;
+        (int, int, int) Px(int x, int y) { int i = start + (y * width + x) * 3; return i + 2 < ppm.Length ? (ppm[i], ppm[i + 1], ppm[i + 2]) : (-1, -1, -1); }
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                if (Px(x, y) == (128, 0, 0)) return $"{Px(x + 35, y + 35)} {Px(x + 135, y + 35)}";
+        return "kein Fenster";
+    }
+
+    /// <summary>The PresentArea case of a display with two buffers (Wayland): three squares reported one after the other are all there, the red between them too.</summary>
+    public static string Squares(byte[] ppm)
+    {
+        int pos = 2, field = 0;
+        var header = new int[3];
+        while (field < 3)
+        {
+            while (pos < ppm.Length && char.IsWhiteSpace((char)ppm[pos])) pos++;
+            if (pos < ppm.Length && ppm[pos] == '#') { while (pos < ppm.Length && ppm[pos] != '\n') pos++; continue; }
+            int v = 0;
+            while (pos < ppm.Length && char.IsDigit((char)ppm[pos])) v = v * 10 + (ppm[pos++] - '0');
+            header[field++] = v;
+        }
+        pos++;
+        int width = header[0], height = header[1], start = pos;
+        (int, int, int) Px(int x, int y) { int i = start + (y * width + x) * 3; return i + 2 < ppm.Length ? (ppm[i], ppm[i + 1], ppm[i + 2]) : (-1, -1, -1); }
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                if (Px(x, y) == (255, 0, 0)) return string.Join(" ", new[] { (35, 35), (135, 35), (85, 75), (100, 10), (10, 80) }.Select(p => Px(x + p.Item1, y + p.Item2)));
+        return "kein Fenster";
+    }
 }

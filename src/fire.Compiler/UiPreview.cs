@@ -31,16 +31,6 @@ namespace fire.Compiler
     /// window that shows nothing, and reports where the elements are. No handlers run and no code of the program (see <see cref="FireUiGenerator.GeneratePreview"/>).</summary>
     public static class UiPreview
     {
-        /// <summary>A window that is never shown: it has no events and stays open.</summary>
-        private sealed class HiddenWindow : IFramebufferRenderer
-        {
-            public bool VSync { get; set; }
-            public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) { }
-            public WindowPumpResult PumpEvents() => new() { StillOpen = true, Events = Array.Empty<IEvent>() };
-            public void Present(Framebuffer framebuffer) { }
-            public void Dispose() { }
-        }
-
         /// <param name="sourcePath">The file of the markup: files that the markup embeds (`Image source="..."`) are looked for next to it.</param>
         public static UiPreviewResult Render(MarkupDocument document, string? sourcePath = null)
         {
@@ -61,14 +51,14 @@ namespace fire.Compiler
                     output.Add(line);
                     // the picture is taken the moment the script reports it: when the program ends, its framebuffer is destroyed
                     if (line.StartsWith("@fb ", StringComparison.Ordinal) && int.TryParse(line.AsSpan(4), NumberStyles.Integer, CultureInfo.InvariantCulture, out int id)
-                        && session?.FramebufferManager?.GetFramebuffer(id) is { } shot)
+                        && session?.FramebufferPixels(id, out int w, out int h) is { } shot)
                     {
-                        pixels = (uint[])shot.Pixels.Clone();
-                        width = shot.Width;
-                        height = shot.Height;
+                        pixels = shot;
+                        width = w;
+                        height = h;
                     }
                     return Value.MakeUndefined();
-                }, basePath: string.IsNullOrEmpty(sourcePath) ? null : Path.GetDirectoryName(Path.GetFullPath(sourcePath)), windowRenderer: () => new HiddenWindow());
+                }, basePath: string.IsNullOrEmpty(sourcePath) ? null : Path.GetDirectoryName(Path.GetFullPath(sourcePath)), hostWindows: new HostWindows(null));   // (a window without a screen: no events, it stays open)
                 try { session.Run(); }
                 finally { session.CloseHostResources(); }
                 if (session.VirtualMachine?.UnhandledException != null)

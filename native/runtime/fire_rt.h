@@ -429,6 +429,32 @@ FIRE_NORETURN FIRE_FN void unsupported(const char* what) {
 FIRE_NORETURN FIRE_FN Value fireError(const char* cls, const char* utf8) { fireLibraryJump(2, cls, utf8); }
 /* (in a package library an exception of the language goes to the VM, which throws it there) */
 FIRE_NORETURN FIRE_FN void fatalException(const char* cls, const char* message) { fireLibraryJump(2, cls, message); }
+#ifndef FIRE_THREADS
+/* The services of the runtime for a package with a thread of its own (the windows' managers), in a library for the VM: what the main program of a native build does
+ * at its safe points, the VM does - the library asks it (fire_host.request_service), and it calls fire_pkg_service of the library back on its thread. The holds on the
+ * end of the program are the VM's (fire_host.hold). The GIL of a native build is the lock of the library's calls (fire_pkg_wrapper.h): a native that waits lets go of it. */
+typedef void (*HostService)(void);
+extern HostService g_hostServices[8];
+extern uint32_t g_hostServiceCount;
+extern fire_atomic32 g_hostPending;
+#define FIRE_HOST_HAS(field) (g_libraryHost != NULL && (size_t)g_libraryHost->size >= offsetof(fire_host, field) + sizeof g_libraryHost->field && g_libraryHost->field != NULL)
+FIRE_FN void hostAddService(HostService service) { if (g_hostServiceCount < 8) g_hostServices[g_hostServiceCount++] = service; }
+FIRE_FN void hostRequest(void) {
+    fire_atomic_store(&g_hostPending, 1);
+    if (FIRE_HOST_HAS(request_service)) g_libraryHost->request_service();
+}
+FIRE_FN void hostHold(int32_t delta) { if (FIRE_HOST_HAS(hold)) g_libraryHost->hold(delta); }
+/* (fire_pkg_service: the library's services, if one was asked for) */
+FIRE_FN void hostServe(void) {
+    uint32_t i;
+    if (fire_atomic_exchange(&g_hostPending, 0) == 0) return;
+    for (i = 0; i < g_hostServiceCount; i++) g_hostServices[i]();
+}
+void fire_pkgLock(void);
+void fire_pkgUnlock(void);
+FIRE_FN void gilAcquire(void) { fire_pkgLock(); }
+FIRE_FN void gilRelease(void) { fire_pkgUnlock(); }
+#endif
 #else
 FIRE_NORETURN FIRE_COLD FIRE_FN void fatal(const char* message) {
     fflush(stdout);
@@ -6492,6 +6518,11 @@ FIRE_FN void fire_threadsInit(void) {
 jmp_buf* g_libraryJump = NULL;
 FireLibraryError g_libraryError;
 const fire_host* g_libraryHost = NULL;
+#ifndef FIRE_THREADS
+HostService g_hostServices[8];
+uint32_t g_hostServiceCount = 0;
+fire_atomic32 g_hostPending;
+#endif
 #endif
 #if defined(FIRE_THREADS) && defined(FIRE_DLL)
 ThreadLocals* fire_tl(void) { return &fire_tlsBlock; }   /* (linkage "shared" on Windows: the block of the calling thread) */
