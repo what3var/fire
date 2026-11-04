@@ -1,4 +1,4 @@
-/* fire native bridge "process" (C): the natives behind `#import "process"` (docs/PROCESS.md) - starting programs, their standard input, output and error as pipes,
+/* fire native bridge "process" (C): the natives behind `#import "process"` (docs/stdlib/process.md) - starting programs, their standard input, output and error as pipes,
  * waiting for them, their exit code, ending them. The fire side (Process, ProcessOptions, ProcessResult, ProcessStream - fire source) is the same in the VM and in a
  * native build; this file is what its `__Proc...` functions do.
  *

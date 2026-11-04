@@ -120,7 +120,7 @@ namespace fire.Windows.Bridge
                 // Window.CanStartDrag: can StartDrag hand a drag to the desktop here (Windows, X11)?
                 ["CanStartDrag"] = args => Value.MakeBool(mgr.CanStartDrag((int)args[0].AsInt())),
                 // Window.SetTextInputArea, Window.Backdrop, Window.Scale: the VM's window has no input method, shows nothing behind itself and reports scale 1
-                // (it moves to the C display of the native builds, docs/UI_PLATFORM.md)
+                // (it moves to the C display of the native builds, docs/spec/UI_PLATFORM.md)
                 ["SetTextInputRect"] = args => Value.MakeUndefined(),
                 ["SetBackdrop"] = args => Value.MakeUndefined(),
                 ["GetBackdrop"] = args => Value.MakeInt(0),

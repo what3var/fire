@@ -20,7 +20,7 @@ namespace fire.Debugging
     }
 
     /// <summary>
-    /// The listening side of the native debug protocol (docs/NATIVE_DEBUG_PROTOCOL.md, ROADMAP 8.2): spark listens on 127.0.0.1 on a free port and hands
+    /// The listening side of the native debug protocol (docs/spec/NATIVE_DEBUG_PROTOCOL.md, ROADMAP 8.2): spark listens on 127.0.0.1 on a free port and hands
     /// the program <see cref="EnvironmentValue"/> as FIRE_DEBUG; the program connects and sends `hello` with the token. <see cref="Accept"/> takes the
     /// first connection whose hello carries the token (others are closed) and stops listening.
     /// </summary>
@@ -82,7 +82,7 @@ namespace fire.Debugging
     }
 
     /// <summary>
-    /// A native debug build under the debugger, over the protocol of docs/NATIVE_DEBUG_PROTOCOL.md: a transport (<see cref="INativeDebugTransport"/>) - a
+    /// A native debug build under the debugger, over the protocol of docs/spec/NATIVE_DEBUG_PROTOCOL.md: a transport (<see cref="INativeDebugTransport"/>) - a
     /// TCP connection with one JSON message per line (the desktop), or a framed one that carries the program's console too (the console UART of an ESP32,
     /// stdio: <see cref="OpenFramed"/>). A reader thread takes the answers (`re`) to their requests and the events (`stopped`, `thread`, `threadExited`,
     /// `exited`) to the threads. Over TCP the output of the program is the output of its process (<see cref="AttachProcess"/>); over a framed transport it
@@ -425,7 +425,7 @@ namespace fire.Debugging
             }
         }
 
-        /// <summary>`sources`: a plugin's sources (docs/NATIVE_DEBUG_PROTOCOL.md) - the lists grow, the breakpoints go to the program again (it waits for them), with those
+        /// <summary>`sources`: a plugin's sources (docs/spec/NATIVE_DEBUG_PROTOCOL.md) - the lists grow, the breakpoints go to the program again (it waits for them), with those
         /// by file in the new sources. On the reader thread: the request is sent from another one.</summary>
         private void OnSources(Dictionary<string, object?> message)
         {

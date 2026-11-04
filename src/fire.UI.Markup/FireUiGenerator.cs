@@ -3,7 +3,7 @@ using System.Text;
 
 namespace fire.UI.Markup
 {
-    /// <summary>Translates a <see cref="MarkupDocument"/> into the fire script of the interface (docs/UI_MARKUP.md). The script defines ONE class, the base class of the code-behind:
+    /// <summary>Translates a <see cref="MarkupDocument"/> into the fire script of the interface (docs/ui/markup.md). The script defines ONE class, the base class of the code-behind:
     /// it builds the elements (fields for the named ones), connects the handlers (`onClick="Save"` calls the method `Save(sender)`, empty here and overridden in the derived class)
     /// and the data bindings (probes, see SPEC 8.14) and brings `Run()` (window) or `Attach(container)` (view). The code-behind declares `class MyWindow : MyWindowBase { ... }`
     /// and never needs to know more of the generated code than the names it chose itself.</summary>

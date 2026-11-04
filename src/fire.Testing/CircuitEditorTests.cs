@@ -3,7 +3,7 @@ using fire.Runtime;
 using fire.UI.Markup;
 using fire.Values;
 
-/// <summary>The editors of circuits (docs/CIRCUITS.md): the generator of `.biscuit` files, the import of Falstad circuits, the CircuitView of the package circuits.ui
+/// <summary>The editors of circuits (docs/circuits/README.md): the generator of `.biscuit` files, the import of Falstad circuits, the CircuitView of the package circuits.ui
 /// (driven with mouse and keys in the virtual machine) and the live session that spark runs it in.</summary>
 static class CircuitEditorTests
 {

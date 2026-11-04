@@ -1,4 +1,4 @@
-// The catalogue of the messages of the compiler that have a code of their own (see ErrorCatalog and docs/ERRORS.md). `{*}` stands for a part of the message that varies (a name, a number).
+// The catalogue of the messages of the compiler that have a code of their own (see ErrorCatalog and docs/tools/errors.md). `{*}` stands for a part of the message that varies (a name, a number).
 // The codes are fixed once given: a message that changes its text keeps its code, a new message gets the next free number of its area (the area decides the thousands: 1 lexer,
 // 2 preprocessor, 3 parser, 4 resolver, 5 bytecode compiler, 6 linker). A message that has no entry here has the general code of its area (E1000, E2000, ...).
 namespace fire.Compiler

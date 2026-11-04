@@ -5,7 +5,7 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Binds the natives of packages (docs/PACKAGE_NATIVES.md) to the virtual machine: they are C++ built into a shared library with the C ABI of native/abi/fire_pkg_abi.h.
+    /// Binds the natives of packages (docs/packages/natives.md) to the virtual machine: they are C++ built into a shared library with the C ABI of native/abi/fire_pkg_abi.h.
     /// A native is registered as a function that loads its library on first use (by path, or - in a packed program - by name from the payload), copies the arguments into
     /// the plain data of the ABI, calls the entry point and copies the result back. Numbers, text, byte buffers and arrays of these cross; a lambda crosses as a handle the
     /// library calls back (PackageHost: call_lambda); objects and pointers do not.
@@ -44,7 +44,7 @@ namespace fire.Runtime
         private static readonly object Lock = new();
         private static readonly Dictionary<string, (string File, Func<string, string?>? Locate)> Locations = new(StringComparer.Ordinal);
 
-        // For measuring natives outside the VM (docs/PACKAGE_NATIVES.md, "Tracing calls"): FIRE_PKG_TRACE names a file that gets a line per call of a native whose name
+        // For measuring natives outside the VM (docs/packages/natives.md, "Tracing calls"): FIRE_PKG_TRACE names a file that gets a line per call of a native whose name
         // starts with FIRE_PKG_TRACE_PREFIX (default: every native) - the name and the arguments - so that a small C++ program can replay them against the library.
         private static readonly string? TracePath = Environment.GetEnvironmentVariable("FIRE_PKG_TRACE");
         private static readonly string TracePrefix = Environment.GetEnvironmentVariable("FIRE_PKG_TRACE_PREFIX") ?? "";

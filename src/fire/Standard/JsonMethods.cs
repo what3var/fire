@@ -23,7 +23,7 @@ namespace fire.Standard
     }
 
     /// <summary>
-    /// JSON (docs/JSON.md, `#import "json"`): `Json.Serialize(value)`, `Json.Deserialize&lt;T&gt;(text)`, `Json.Parse(text)`. One native function
+    /// JSON (docs/stdlib/json.md, `#import "json"`): `Json.Serialize(value)`, `Json.Deserialize&lt;T&gt;(text)`, `Json.Parse(text)`. One native function
     /// `__JsonCall(id, ...)` like Math/String; the native backend implements the same (fire_json.h).
     ///
     /// The format is plain JSON. An object is a JSON object with its fields (in declaration order, base class first; `[NonSerialized]` leaves a field

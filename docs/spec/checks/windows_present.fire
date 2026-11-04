@@ -1,0 +1,39 @@
+// A check for real Windows (docs/spec/UI_PLATFORM.md, part 4.4): how a window shows its frames - "gpu+directcomposition", "directcomposition", "gpu" or "pixels".
+// Build it natively for Windows (or run it in the VM: forge run windows_present.fire) and look at the window:
+//   G  GPU on/off (Framebuffer.Accelerated)       B  backdrop: None -> Transparent -> Acrylic -> Mica
+// Expected on Windows 10/11 with a Vulkan driver: "gpu+directcomposition", the readbacks stay put while it animates, and with a backdrop the desktop shows
+// through the left half (alpha 0) and dimmed through the right one (alpha 128). FIRE_DCOMP=0 switches DirectComposition off (then "pixels").
+#import "windows"
+#import "time"
+
+var fb = new Framebuffer(480, 300)
+fb.Accelerated = true
+var r = new Renderer(fb)
+var win = new Window(fb, "fire: present path")
+win.VSync = true
+var kinds = [Backdrop.None, Backdrop.Transparent, Backdrop.Acrylic, Backdrop.Mica]
+var kind = 0
+win.RegisterTextInput(func(string t) => {
+    if (t == "g" || t == "G") { fb.Accelerated = !fb.Accelerated }
+    if (t == "b" || t == "B") {
+        kind = (kind + 1) % 4
+        win.Backdrop = kinds[kind]
+    }
+})
+var frame = 0
+var before = Framebuffer.GpuReadbacks()
+while (win.Tick()) {
+    r.AlphaBlending = false
+    r.FillRect(0, 0, 240, 300, new SolidBrush(0x00000000))
+    r.FillRect(240, 0, 240, 300, new SolidBrush(0x80402010))
+    r.AlphaBlending = true
+    var x = (frame * 3) % 440
+    r.FillRoundRect(x, 200, 40, 40, 10, new SolidBrush(0xFF30A0FF))
+    r.FillRect(10, 10, 460, 110, new SolidBrush(0xE0FFFFFF))
+    r.DrawText(20, 20, "path: " + win.PresentPath(), new SolidBrush(0xFF000000))
+    r.DrawText(20, 40, "accelerated: " + fb.Accelerated + "  " + Framebuffer.GpuError(), new SolidBrush(0xFF000000))
+    r.DrawText(20, 60, "backdrop: " + win.Backdrop + " (asked " + kinds[kind] + ")", new SolidBrush(0xFF000000))
+    r.DrawText(20, 80, "readbacks since start: " + (Framebuffer.GpuReadbacks() - before), new SolidBrush(0xFF000000))
+    r.DrawText(20, 100, "G: GPU on/off   B: next backdrop", new SolidBrush(0xFF404040))
+    frame = frame + 1
+}

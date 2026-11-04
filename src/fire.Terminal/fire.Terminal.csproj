@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    PLATFORM-INDEPENDENT core (see docs/CONSOLE.md): framebuffer,
+    PLATFORM-INDEPENDENT core (see docs/spec/GRAPHICS_LAYER.md): framebuffer,
     PixelColor, renderer, IGlyphFont, IFramebufferRenderer - deliberately
     WITHOUT any Windows/SDL/GDI-specific dependency, so that a later
     port (e.g. to C++, or a scripting-language bridge directly on

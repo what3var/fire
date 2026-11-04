@@ -1,7 +1,7 @@
 #import "ui"
 #import "filesystem"
 
-// Dialogs (docs/DIALOGS.md): open, save and folder dialogs and message boxes, like the common dialogs of Windows - built with the user interface library, so they look
+// Dialogs (docs/ui/dialogs.md): open, save and folder dialogs and message boxes, like the common dialogs of Windows - built with the user interface library, so they look
 // and work the same on every system that has windows (also in a native program). A dialog is modal for the code that opens it: ShowDialog() returns when the user is
 // done. The quick way:
 //

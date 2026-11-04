@@ -18,7 +18,7 @@ namespace fire.Compiler
         public string RawMessage { get; }
         /// <summary>The file the error is in (set for a program of several files, see ProcessedSource.Name).</summary>
         public string? FileName { get; }
-        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        /// <summary>The code of the message (docs/tools/errors.md).</summary>
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Parser, RawMessage);
 
         public ParseException(string message, int line, int column, string? fileName = null)
@@ -1930,7 +1930,7 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Multithreading (docs/THREADING_DESIGN.md) - first development stage:
+        // Multithreading (docs/spec/THREADING_DESIGN.md) - first development stage:
         // only `fire { ... }` / `fire taking X { ... }`.
         // -----------------------------------------------------------
 
@@ -1950,7 +1950,7 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LParen)
                 return ParseFireCallForm(line);
 
-            // `fire global { ... }`: job for the main program instead of a new thread (docs/THREADING_DESIGN.md section 7)
+            // `fire global { ... }`: job for the main program instead of a new thread (docs/spec/THREADING_DESIGN.md section 7)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking || PeekAt(1).Type == TokenType.Handover))
                 return ParseFireGlobal(line);
 
@@ -1970,7 +1970,7 @@ namespace fire.Compiler
             return new Stmt.BlockStmt(_sourceIndex, fire.Line, statements);
         }
 
-        /// <summary>`sync global { ... }` (docs/THREADING_DESIGN.md section 7): a block that runs with exclusive access to the globals.
+        /// <summary>`sync global { ... }` (docs/spec/THREADING_DESIGN.md section 7): a block that runs with exclusive access to the globals.
         /// Desugared to `SectionEnter; try { Body } finally { SectionExit }` - the section thus also ends on a `throw` in the block.</summary>
         private Stmt ParseSyncGlobalBlock()
         {

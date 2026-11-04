@@ -1,6 +1,6 @@
 using fire.Git;
 
-/// <summary>Git for the editor (docs/GIT.md): status, commit, history, diff, branches, and the server (a local folder serves as the server).</summary>
+/// <summary>Git for the editor (docs/tools/git.md): status, commit, history, diff, branches, and the server (a local folder serves as the server).</summary>
 static class GitTests
 {
     private static int _failures;

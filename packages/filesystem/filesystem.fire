@@ -1,7 +1,7 @@
 #import "io"
 #import "time"
 
-// The file system (docs/FILESYSTEM.md): files, directories and paths, like System.IO in .NET. The classes live in the namespace IO next to the streams of
+// The file system (docs/stdlib/filesystem.md): files, directories and paths, like System.IO in .NET. The classes live in the namespace IO next to the streams of
 // `io` (IO.Stream, IO.TextReader, ...): `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileStream`. Every access goes through the host's policy; errors are
 // IO.IOException and its derivatives (IO.FileNotFoundException, IO.DirectoryNotFoundException, IO.PermissionException, IO.FileExistsException).
 namespace IO {

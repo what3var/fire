@@ -3,7 +3,7 @@ using fire.Package.Manager;
 
 namespace fire.Projects
 {
-    /// <summary>The C++ natives of a project (or of a library project), ready to build: what the project's `native` part and the folder `native/` give (docs/PROJECTS.md).</summary>
+    /// <summary>The C++ natives of a project (or of a library project), ready to build: what the project's `native` part and the folder `native/` give (docs/tools/projects.md).</summary>
     public sealed record NativePart(string ImportName, string ProjectName, string Directory, PackageNative Native)
     {
         /// <summary>The project file: the build order of the sources is written there, so a library built from them is older than it when it changed.</summary>

@@ -1,4 +1,4 @@
-/* fire native bridge "compression" (C): the natives behind `#import "compression"` (docs/COMPRESSION.md) - Deflate, zlib and gzip as streams and in one go,
+/* fire native bridge "compression" (C): the natives behind `#import "compression"` (docs/stdlib/compression.md) - Deflate, zlib and gzip as streams and in one go,
  * and the byte work the Zip code of the prelude needs (little-endian fields, copies, CRC-32, finding the end record). The engine is fire_cmp_deflate.h (our own
  * Deflate, no library: the same bytes on every target).
  *

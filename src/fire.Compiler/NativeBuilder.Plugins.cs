@@ -55,7 +55,7 @@ namespace fire.Compiler
             return linked;
         }
 
-        /// <summary>`--linkage plugin` (ROADMAP 9 phase D b, docs/NATIVE_BACKEND.md "Plugins"): the classes of the program's own sources as a fire plugin - a shared library
+        /// <summary>`--linkage plugin` (ROADMAP 9 phase D b, docs/spec/NATIVE_BACKEND.md "Plugins"): the classes of the program's own sources as a fire plugin - a shared library
         /// (`<output>.so`/`.dll`) that a program with linkage "shared" loads with `Library.Load`, and its bytecode for the VM (`<output>.fireplugin`). With `--host <program>`
         /// it is built for that program (its switches, the files of its libraries - on Windows needed: the DLL imports from them).</summary>
         private static NativeBuildResult BuildPlugin(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,

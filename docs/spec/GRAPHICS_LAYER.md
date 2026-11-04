@@ -1,0 +1,504 @@
+# fire.Terminal – Framebuffer, Zeichnen und Fenster
+
+Die Grafikschicht von fire in eigenen Projekten, unabhängig vom Editor (`fire.Editor` referenziert sie nicht und wird nicht von ihnen
+referenziert). Der native Build hat dieselbe Schicht pixelgleich in C (`packages/graphics/native/fire_bridge_graphics.h`, `packages/windows/native/fire_bridge_windows.h`).
+
+## Projekt-Aufteilung
+
+```
+fire.Terminal                  (net10.0, plattformunabhängig)
+  PixelColor, Palette, Framebuffer, Renderer, Surface (Blending), Brush, Pen, Shapes (sink-basiert),
+  Blitter, Bilder (PNG/BMP/GIF), Schriften (IntegratedGlyphFont, TrueType), Slicer,
+  IGlyphFont, IFramebufferRenderer, IdManager, FramebufferManager, RendererManager
+
+(fire.Terminal.Sdl mit SDL3-CS gibt es nicht mehr: die Fenster des Desktops zeigt die VM über die C-Bibliothek von graphics und windows,
+docs/spec/UI_PLATFORM.md "Stand Teil 2"; die C#-Fenster brauchen einen Renderer des Hosts.)
+
+fire.Terminal.Windows          (net10.0, referenziert .Terminal)
+  ConsoleWindow                   – zeigt EINEN Framebuffer in einem Fenster an
+  WindowManager                   – verwaltet ConsoleWindow-Instanzen über IDs
+
+fire.Terminal.Bridge           (referenziert fire + .Terminal - KEIN Fenster, kein SDL)
+  GraphicsBridge.cs                – Framebuffer, Renderer, Brush, Pen, Slicer: native Funktionen + fire-Prelude (`#import "graphics"`)
+
+fire.Windows.Bridge            (referenziert fire + .Terminal + .Windows)
+  WindowsBridge.cs                 – `Window`, `EventType` und der WindowManager als native Funktionen (`#import "windows"`)
+```
+
+**Warum diese Trennung**: `fire.Terminal` selbst enthält keine SDL- oder Fenster-Abhängigkeit. Ein Programm, das nur `graphics` importiert,
+läuft auch dort, wo es kein Fenster gibt (ein Display auf einem Board, eine Datei als Ausgabe).
+
+## Die Brücke zur Skriptsprache (`fire.Terminal.Bridge`)
+
+**Grafik und Fenster sind getrennt** (`#import "graphics"` und `#import "windows"`): `graphics` bringt `Framebuffer`, `Renderer`, `Brush`, `Pen` und `Slicer` und braucht
+weder SDL noch ein Fenster - auf einer Plattform ohne Fenster (Embedded) importiert ein Programm nur `graphics` und bindet statt `Window` ein Display ein.
+`#import "windows"` bringt `Window` und `EventType` (SDL, eigene Assembly `fire.Windows.Bridge`) und schaltet `graphics` mit zu; `#import "ui"` schaltet beide zu.
+`GraphicsBridge.RegisterAll(natives, framebuffers, consoles, readFile)` und `WindowsBridge.RegisterAll(natives, windows)`
+registrieren die Manager als native Funktionen - über
+`NativeRegistry.RegisterGroup(prefix, functions)` (SPEC 8.1.6): jede
+Funktionsgruppe bekommt ein eigenes Namens-Präfix
+(`__GRPHFb`/`__GRPHCon`/`__GRPHWin`), der tatsächlich registrierte Name ist
+`prefix + suffix` (z.B. `__GRPHFbCreate`). Bewusst "grob" gehalten - nicht
+jede Manager-Methode ist abgebildet, nur Erzeugen/Zerstören plus eine
+repräsentative Auswahl der gängigsten Operationen je Ressourcenart.
+
+`GraphicsBridge.PreludeSource` ist fire-Quelltext (nach demselben
+Muster wie `Standard.Prelude.Source`, siehe Parser.ParseWithPrelude), der
+diese nativen Funktionen hinter drei gewöhnlichen Klassen versteckt:
+
+```
+class Framebuffer {
+    int id
+    construct(int width, int height) {
+        this.id = __GRPHFbCreate(width, height)
+        if (this.id == -1) {
+            throw new HandleUnavailableException("Framebuffer konnte nicht erstellt werden.")
+        }
+    }
+    destruct() { __GRPHFbDestroy(this.id) }
+    int Width() { return __GRPHFbWidth(this.id) }
+    ...
+}
+```
+
+Jede Klasse (`Framebuffer`/`Renderer`/`Window`) registriert sich in ihrem
+Konstruktor selbst beim passenden Manager (über die native `Create`-
+Funktion) und merkt sich die zurückgelieferte ID als Feld - jede weitere
+Methode reicht `this.id` automatisch an die zugehörige native Funktion
+weiter, Skript-Code selbst sieht nie eine rohe ID. Schlägt die Erzeugung
+fehl (die `Create`-Wrapper in `GraphicsBridge` fangen dafür JEDE Exception
+aus dem jeweiligen Manager ab und liefern `-1` als Sentinel statt sie roh
+durch die VM durchschlagen zu lassen), wirft der Konstruktor eine neue,
+per `try`/`catch` fangbare `HandleUnavailableException` - eine gewöhnliche,
+in `PreludeSource` selbst definierte `Exception`-Unterklasse, nach exakt
+demselben Muster wie die eingebaute `IndexOutOfBoundsException` (SPEC 8.5).
+`destruct()` gibt die Manager-Ressource automatisch frei, wenn das Skript-
+Objekt vom Ownership-Modell zerstört wird.
+
+Seit den Farbmodi und Bildern kennt die Prelude zusätzlich `enum ColorMode`, `enum BlitMode`, `GraphicsException` und `ImageException` und erweitert `Framebuffer` (Modus, Rohdaten, Palette, `FromFile`/`FromImage`/`FromPixels`) und `Renderer` (Formen, `Blit`).
+Die statischen Fabrikmethoden legen den Framebuffer über einen leeren Rahmen an (`new Framebuffer(0, 0, -2)`, intern) und setzen dessen `id`; schlägt eine native Bild-Funktion fehl, liefert sie `-1` und der Grund steht in `__GRPHFbLastError()`, aus dem die Prelude die Exception macht
+(wie bei den IO-Funktionen mit Fehlercodes). Neue native Funktionen stehen immer AM ENDE ihrer Gruppe (Reihenfolge = Index, Stubs und echte Funktionen in derselben Reihenfolge).
+
+Ein kombiniertes Programm besteht damit aus drei Teilen, konkateniert und
+zusammen geparst (`Standard.Prelude.Source + GraphicsBridge.PreludeSource
++ nutzerSkript`, dann `Parser.Parse(...)`): die Standardbibliothek, die
+Grafik-Brücke, und das eigentliche Nutzer-Skript.
+
+### Zeichnen mit Pixel-Koordinaten, Text, Mausposition, Ereignis-Warteschlange
+
+- **Text schnell:** `Renderer.DrawGlyph`/`Print` schreiben ein Zeichen zeilenweise (eine Schrift mit `IBitmapGlyphFont`, z.B. `IntegratedGlyphFont`): pro Bitmap-Zeile
+  ein Tabellenzugriff (`GlyphMasks`, Masken für vier Pixel je `Vector128`) und ein `ConditionalSelect` statt einer Abfrage je Pixel - ca. 30 ns statt 370 ns pro Zeichen (80x30 Zeichen: ~0,07 ms
+  statt ~0,9 ms). Liegt die Zelle nicht vollständig im Framebuffer oder hat die Schrift keine Bitmap-Zeilen, bleibt der pixelweise Weg (`IsPixelSet` + `SetPixel` mit Clipping). Zeichen
+  außerhalb der 256 der Tabelle werden als `?` gezeichnet. `Framebuffer.FillRect` füllt zeilenweise per `Span.Fill`.
+- **`Renderer`-Methoden mit Pixel-Koordinaten** (Bridge): `SetPixel`, `FillRect`, `DrawRect`, `DrawLine`, `DrawText(x, y, text, color, background)`, `CellWidth()`, `CellHeight()` und die Formen des Abschnitts "Mehr Zeichenfunktionen".
+  Eine Farbe ist eine Zahl: **0 bis 255 ist ein Palette-Index, jede andere ein direkter Wert** (`r + g*256 + b*65536 + a*16777216`, Alpha 255 = deckend) - siehe "Farbmodi und Farbangaben". Beim HINTERGRUND von `DrawText` ist `0`
+  (und jeder direkte Wert mit Alpha 0) "transparent"; einen Palette-Index als Textuntergrund gibt es dort nicht (vorher ein Rechteck füllen). `GetPixel` liefert die Farbe als 32-Bit-Zahl MIT Vorzeichen (deckende Farben also negativ).
+- **Mausposition in Framebuffer-Pixeln:** SDL meldet Fenster-Koordinaten, das Fenster darf aber skaliert werden (der Framebuffer wird gestreckt); `SdlFramebufferRenderer` rechnet Position und Bewegung
+  auf Framebuffer-Pixel um. Texteingabe (`SDL.StartTextInput`) ist eingeschaltet.
+- **Ereignisse abfragen statt Callback:** Ein `Window`-Callback läuft auf einer eigenen VM mit einer ISOLIERTEN KOPIE der globalen Variablen (SPEC 8.1.4) - Objekte mit Lambdas oder Verweisen auf
+  fremde Objekte lassen sich dabei nicht kopieren, und Änderungen am Original gehen verloren. Deshalb gibt es daneben `Window.EnableEvents()` und `Window.NextEvent()`: die Ereignisse, die `Tick`
+  abholt, landen zusätzlich in einer Warteschlange (`WindowManager.EnableEventQueue`/`NextEvent`, höchstens 4096), und das Skript holt sie im Hauptprogramm ab. Ein Ereignis ist ein Array: `[0]` der
+  Typ (`EventType`), der Rest je Typ - `MouseDown`/`MouseUp` `[typ, taste, x, y]`, `MouseMove` `[typ, x, y, tasten]`, `MouseScroll` `[typ, scrollX, scrollY, x, y]`, `KeyDown`/`KeyUp`
+  `[typ, keycode, scancode, modifier, wiederholt]`, `TextInput` `[typ, text]`, `Close` `[typ]`; Positionen sind ganze Pixel. `WindowManager` nimmt dafür optional eine Renderer-Fabrik entgegen
+  (`Func<IFramebufferRenderer>`, Vorgabe SDL) - so lassen sich Fenster ohne SDL testen.
+- Die Oberflächen-Bibliothek `#import "ui"` baut darauf auf, siehe `docs/ui/README.md`.
+
+## Drei unabhängig verwaltete Ressourcenarten, jede über eine eigene ID
+
+Der zentrale Architekturpunkt dieser Ausbaustufe: **Framebuffer**, **Renderer**
+(vormals Konsole) und **Fenster** (`ConsoleWindow`) sind DREI GETRENNTE,
+jeweils über einen eigenen Manager mit aufsteigenden IDs verwaltete
+Ressourcenarten - kein Objekt "besitzt" mehr ein anderes automatisch:
+
+```
+FramebufferManager  .CreateFramebuffer(w, h)      -> int fbId
+                     .DestroyFramebuffer(fbId)     -> bool
+RendererManager       .CreateRenderer(fbId)          -> int rendererId   (an EINEN Framebuffer gebunden)
+                     .DestroyRenderer(rendererId)    -> bool
+WindowManager        .CreateWindow(fbId)           -> int windowId    (zeigt EINEN Framebuffer an)
+                     .DestroyWindow(windowId)      -> bool
+```
+
+IDs sind pro Manager aufsteigend und werden NIE wiederverwendet (siehe
+`IdManager<T>`) - eine zu spät weitergereichte, bereits zerstörte ID zeigt
+verlässlich ins Leere statt versehentlich auf ein neues, andersartiges
+Objekt. Alle drei Manager-Klassen bilden zusammen das **rein funktionale
+API**: praktisch jede Operation (Print/Color/Locate/SetPixel/DrawLine/...)
+ist eine Methode, die nur eine Ressourcen-ID plus Primitive (int/byte/string)
+nimmt, NIE eine Objektreferenz - genau die Form, die sich später 1:1 an eine
+Skriptsprachen-Bridge (`NativeRegistry`-Funktionen) weiterreichen lässt.
+`GetFramebuffer(id)`/`GetRenderer(id)`/`GetWindow(id)` sind die einzigen
+Ausnahmen (liefern die echte C#-Instanz) - für C#-seitige Weiterverwendung,
+kein Teil der eigentlichen Oberfläche.
+
+**Warum ein Fenster keinen eigenen Framebuffer mehr besitzt**: `ConsoleWindow`
+ist jetzt eine dünne Hülle, die NUR das Rendering eines EXTERN übergebenen
+Framebuffers übernimmt. Das erlaubt z.B., einen Framebuffer OHNE Fenster zu
+betreiben (reines Offscreen-Rendering), oder ihn später an ein anderes
+Fenster umzuhängen, ohne die Konsole/den Inhalt neu aufzubauen.
+
+## Farben: `PixelColor`, `Palette`, direkter Wert ODER Palette-Index
+
+- **`PixelColor` konvertiert implizit zu `int`** (ein 32-Bit-Farbwert, R,G,B,A
+  in fester Byte-Reihenfolge, siehe unten) - jede Funktion, die einen
+  `int color`-Parameter nimmt, akzeptiert deshalb auch direkt eine
+  `PixelColor`-Konstante wie `PixelColor.Yellow`, ohne Umweg.
+- **`Palette`**: eine anpassbare 256-Farben-Palette (Index 0-255), jeder
+  Eintrag per `SetColor(byte index, int color)` frei überschreibbar
+  (klassisches VGA-Palettenregister-Verhalten - der Index bleibt, die
+  dahinterliegende Farbe kann sich ändern). Default-Belegung im
+  xterm-256-Stil: Index 0-15 die klassischen 16 CGA/QBasic-Farben, 16-231
+  ein 6x6x6-Farbwürfel (216 Farben), 232-255 ein 24-stufiger Graukeil -
+  bewusst NICHT der exakte historische VGA-Standard-DAC (dessen genaue Werte
+  sich ohne Testmöglichkeit hier nicht verlässlich reproduzieren ließen),
+  sondern eine nachvollziehbare, garantiert korrekte Formel; da die Palette
+  ohnehin frei überschreibbar ist, zählt das für die Defaults mehr als
+  historische Exaktheit.
+- Die Palette gehört dem **Framebuffer** (`Framebuffer.Palette`), nicht der Konsole: mehrere Konsolen auf demselben Framebuffer teilen sie, und bei einem Palette-Framebuffer IST sie die Farbtabelle des Bildes.
+  (Früher hatte jede `Renderer` eine eigene; wer die Konsole auf einen anderen Framebuffer umhängt, bekommt dessen Palette.)
+- **Zwei Überladungen** für Color/SetPixel/DrawLine/DrawRect/FillRect: eine
+  nimmt einen direkten `PixelColor`/`int`-Wert, eine einen `byte`-
+  Palette-Index (schlägt intern in der Palette nach). Über `RendererManager`
+  heißen die Index-Varianten `...ByIndex` (z.B. `SetPixelByIndex`), da C#
+  hier keine reine Überladung nach Rückgabetyp/ID-Signatur zulässt.
+
+## Farbmodi und Farbangaben (`ColorMode`, `Paint`, `Pixel`)
+
+Ein Framebuffer hat einen **Farbmodus** (`new Framebuffer(w, h, ColorMode.Rgba | ColorMode.Palette)` in fire, `ColorMode.Rgba | Indexed` in C#):
+
+- **`Rgba`** (Vorgabe): 4 Byte je Pixel (R, G, B, A), jede Farbe direkt.
+- **`Palette`** (`ColorMode.Indexed`): 1 Byte je Pixel, ein Index in die 256-Farben-`Palette` des Framebuffers (wie VGA-Modus 13h). Wer einen Palette-Eintrag ändert, ändert die Farbe ALLER Pixel mit diesem Index
+  (Paletten-Animation). Das sichtbare Abbild (`Framebuffer.Pixels`, was die Renderer lesen) wird erst bei Bedarf aus den Indizes und der Palette berechnet (`Framebuffer.Resolve()`, vom Fenster und vom SDL-Renderer vor
+  dem Anzeigen aufgerufen, nur wenn sich etwas geändert hat); `Framebuffer.Indices` ist die Index-Ebene (nach direktem Schreiben `MarkDirty()`). `Framebuffer.TransparentIndex` merkt den durchsichtigen Index eines geladenen Bildes.
+
+**Speicherlayout und Palette-Index.** Ein Pixel ist ein 32-Bit-Wort `r + g*256 + b*65536 + a*16777216`, im Speicher die Bytes R, G, B, A (SDL: `ABGR8888` = `RGBA32` auf Little-Endian). Ein Palette-Index (0-255) belegt dabei nur das unterste Byte, also den **R-Kanal**; G, B und **Alpha bleiben 0** - der Index überschreibt den Alpha-Kanal nie, ein Wechsel des Kanals oder des SDL-Formats ist nicht nötig. Die einzige Kollision sind durchsichtige Farben mit G = B = 0 (vor allem `0` = durchsichtiges Schwarz, das als QBasic-Schwarz, Index 0, gelesen würde). Darum ist die **kanonische durchsichtige Farbe `(0, 1, 0, 0)` = 256** (`PixelColor.Transparent`, `Paint.Transparent`, `UI.Color.Transparent()`): komplett durchsichtig, aber kein Index. `GetPixel` gibt ein Pixel, das als Index gelesen würde (also immer ein durchsichtiges), als 256 zurück - so bleibt ein gelesenes und wieder geschriebenes Pixel durchsichtig (`Paint.ToArgument`).
+
+Welche Farbe ein Aufruf meint, sagt die **Farbangabe** (`Paint`): **eine Zahl von 0 bis 255 ist ein Palette-Index, jede andere ein direkter RGBA-Wert** - dieselbe Regel wie schon bei `Renderer.SetColor`. Der Framebuffer löst sie für sich auf (`ResolvePixel`
+-> `Pixel`): in einem RGBA-Framebuffer wird ein Index über die Palette zur Farbe, in einem Palette-Framebuffer ein direkter Wert auf den nächsten Eintrag der Palette abgebildet (kleinster Abstand in R, G, B; Alpha zählt nicht,
+`Palette.FindNearest`). So zeichnet jeder Aufruf in jedem Modus, und ein RGBA-Framebuffer kann nach Belieben mit Palette-Indizes arbeiten ("hybrid"). Ein Palette-Index bleibt bis zum Zeichnen ein Index: `Renderer.SetColor(14, 1)`
+färbt NEU gezeichneten Text um, wenn man die Palette danach ändert. Bereits gezeichnete Pixel eines RGBA-Framebuffers ändern sich nicht (sie speichern Farben), die eines Palette-Framebuffers schon.
+
+**Änderung gegenüber früher:** `FillRect`/`DrawRect`/`DrawLine`/`DrawText`/`SetPixel` behandelten jede Zahl als direkten Wert; jetzt sind 0-255 Palette-Indizes. Ein direkter Wert mit nur dem niedrigsten Byte (Alpha 0, R beliebig, G = B = 0) war ohnehin
+durchsichtig und nicht sinnvoll als Farbe; `0` (Schwarz) ist jetzt Palette-Eintrag 0 (deckendes Schwarz) statt durchsichtigem Schwarz. `Renderer.SetColor(vordergrund, hintergrund)` war defekt (der Hintergrund wurde falsch aufgelöst) und folgt jetzt derselben Regel.
+
+**Palette aus fire** (`Framebuffer`): `GetPaletteColor(i)` (vorzeichenlose Zahl), `SetPaletteColor(i, farbe)`, `SetPaletteRgb(i, r, g, b)`, `ReadPalette(mitAlpha = false)` / `WritePalette(puffer)` als Puffer (768 Byte R,G,B oder 1024 Byte R,G,B,A), `TransparentIndex`.
+Ein falscher Index oder eine falsche Pufferlänge ist eine `GraphicsException`.
+
+## Renderer, Brush, Pen, Alpha-Blending
+
+Die Konsole heißt jetzt **Renderer** (`Renderer`, `RendererManager`, natives `__GRPHRnd...`; Cursor, `Print`, `Locate`, Zellen, Textfarben bleiben wie sie waren). Er zeichnet auf ein **`IRenderTarget`** (Breite, Höhe, Modus, Palette,
+Pixel-/Index-Array, `MarkDirty`); der `Framebuffer` implementiert es, ein eigenes Ziel (z.B. ein Fenster-Puffer) kann es ebenfalls.
+
+**Zeichenfunktionen nehmen keine Farben mehr, sondern Pinsel und Stifte.** Beide tragen eine Farbe nach dem bekannten Schema (`Paint`: 0-255 = Palette-Index, sonst direkter RGBA-Wert) und bieten die eigentlichen Zeichenfunktionen an; der Renderer reicht ihnen nur die Oberfläche (`Surface`: Ziel + Blending-Schalter):
+
+- **`Brush`** (abstrakt, jetzt `SolidBrush(farbe)`): alle Füllungen und die Flächenfüllung - `FillRect`, `FillCircle`, `FillEllipse`, `FillTriangle`, `FillPolygon`, `FloodFill`, `FloodFillBorder`. Am Renderer: `r.FillRect(x, y, w, h, pinsel)`, `r.Fill(pinsel)` (ganzer Schirm),
+  `r.FillCircle(cx, cy, rad, pinsel)`, `r.FillEllipse(cx, cy, rx, ry, pinsel)`, `r.FillTriangle(x0, y0, x1, y1, x2, y2, pinsel)`, `r.FillPolygon(punkte, pinsel)`, `r.FloodFill(x, y, pinsel)`, `r.FloodFillBorder(x, y, pinsel, randFarbe)`.
+  Die Fläche eines Flood-Fills wird zuerst festgestellt und dann gefüllt (eine halbdurchsichtige Füllung ändert die Fläche also nicht mitten im Füllen).
+- **`Pen(farbe, breite = 1, form = PenShape.Round)`**: Punkt, Linie oder Pfad - `DrawPoint(x, y, stift)`, `DrawLine(x0, y0, x1, y1, stift)`, `DrawPath(punkte, stift, geschlossen = false)`; dazu die Umrisse `DrawRect`, `DrawCircle`, `DrawEllipse`, `DrawTriangle`,
+  `DrawPolygon` (sie sind Pfade). Breite 1..512; `PenShape.Round` (Kreisspitze: Pixel mit `(2i-(w-1))^2 + (2j-(w-1))^2 <= w^2-1`) oder `PenShape.Square`. Die Spitze wird **vorgerendert** (die Zeilen des Stempels) und dann nur noch kopiert bzw. gemischt;
+  ein halbdurchsichtiger Stift mischt die VEREINIGUNG aller Stempel genau einmal (Überlappungen werden nicht doppelt gemischt).
+- Eigenschaften: `SolidBrush.Color`, `Pen.Color/Width/Shape` (änderbar; ein Stift rendert dann neu).
+- Text: `DrawText(x, y, text, vordergrundPinsel, hintergrundPinsel = undefined)`; ohne Hintergrundpinsel bleibt die Zelle unberührt. Mit `font` und `size` als weiteren Argumenten (`DrawText(x, y, text, pinsel, hintergrund, Fonts.Get("Name"), 18)`) wird eine andere Schrift benutzt - eine der beiden eingebauten Bitmap-Schriften (`"8x14"`, `"8x8"`) oder eine TrueType-Schrift (eingebettet oder auf dem System); siehe docs/graphics/fonts.md. `SetPixel`/`GetPixel`/`GetPixelIndex` und `Clear`/`Clear(farbe)` bleiben farbbasiert.
+
+**Alpha-Blending** ist schaltbar (`renderer.AlphaBlending`, Vorgabe an; C#: `Renderer.AlphaBlending`):
+
+- Gemischt wird nur in einem **32-Bit-(RGBA-)Puffer** und nur bei an. Ein deckendes Pixel (Alpha 255) wird kopiert, ein durchsichtiges (0) lässt das Ziel unverändert, dazwischen wird nach Alpha gemischt (`Surface.Mix`, in C# und C++ identisch).
+- In einem **Palette-Puffer** gibt es kein Blending: Alpha >= 128 = Kopie, sonst bleibt das Ziel unverändert.
+- Aus: jedes Pixel wird kopiert (alle Pixel ohne Alpha-Prüfung; `BlitMode.Blend` verhält sich wie `Transparent`).
+- `Clear`, `Clear(farbe)` und das Scrollen setzen Pixel immer roh (ohne Blending).
+
+**Beschneidungsrechteck:** `renderer.SetClip(x, y, w, h)` beschränkt alle Zeichenfunktionen (Füllungen, Formen, Text, `Print`, `Blit...`) auf das Rechteck (geschnitten mit dem Framebuffer); `renderer.ResetClip()` hebt es auf
+(C#: `Renderer.SetClip/ResetClip/GetClip`, `Surface.ClipLeft/ClipTop/ClipRight/ClipBottom`, `Blitter.Blit(..., clipLeft, clipTop, clipRight, clipBottom)`). `Clear`, `Clear(farbe)` und das Scrollen des Terminals gelten immer für den ganzen Framebuffer. Die UI-Bibliothek
+nutzt es für Bildlauf-Ausschnitte und Listen (`Root.PushClip/PopClip`).
+
+C-Spiegel: `packages/graphics/native/fire_gfx.h` (`FireGfxSurface`, `FireGfxBrush`, `FireGfxPen`, `FireGfxRenderer`) liefert dieselben Pixel; die nativen Funktionen heißen `__GRPHRnd...`, `__GRPHBsh...`, `__GRPHPen...`. Nur der Software-Renderer ist umgesetzt; eine Beschleunigung
+(GPU) bleibt hinter derselben Schnittstelle möglich.
+
+## Mehr Zeichenfunktionen
+
+Alle in Pixel-Koordinaten, am Rand still beschnitten, in beiden Farbmodi mit denselben Pixeln (`Shapes`, ganzzahlig, ohne Fließkomma; sie schreiben in eine Senke - Pinsel füllen Zeilen, Stifte stempeln). Füllungen gehören dem `Brush`, Umrisse dem `Pen` (siehe oben):
+
+- **Kreis, Ellipse:** `DrawCircle(cx, cy, r, stift)`, `FillCircle(cx, cy, r, pinsel)`, `DrawEllipse(cx, cy, rx, ry, stift)`, `FillEllipse`. Die Fläche ist die Menge der Pixel um die Mitte mit `(2dx)^2/(2rx+1)^2 + (2dy)^2/(2ry+1)^2 <= 1` (beim Kreis `dx^2 + dy^2 <= r^2 + r`);
+  Linie und Füllung kommen aus denselben Zeilen, die Linie ist also lückenlos und liegt genau auf dem Rand der Fläche. Radius 0 = ein Pixel; ein negativer Radius zeichnet nichts; Radien über 16384 werden begrenzt (`Shapes.MaxRadius`).
+- **Dreieck, Polygon:** `DrawTriangle`/`FillTriangle` (sechs Koordinaten), `DrawPolygon(punkte, stift, geschlossen = true)` / `FillPolygon(punkte, pinsel)` mit `punkte` = Array `[x0, y0, x1, y1, ...]`. Gefüllt wird nach der Even-Odd-Regel (ein Pentagramm
+  hat ein leeres Zentrum), die Randpixel gehören zur Fläche. Zu wenige Punkte zeichnen höchstens einen Strich, nie eine Ausnahme.
+- **Fläche füllen:** `FloodFill(x, y, pinsel)` füllt die 4er-zusammenhängende Fläche, die die Farbe (den Index) des Startpixels hat; `FloodFillBorder(x, y, pinsel, rand)` füllt bis zu Pixeln der Farbe `rand` (wie `PAINT` in QBasic). Zeilenweise mit eigenem Stapel, also
+  auch für ganze Bildschirme ohne Rekursionstiefe.
+- **Kopieren (`Blit`):** `Blit(quelle, x, y, modus = 0, schluessel = -1)` kopiert einen anderen Framebuffer (z.B. ein geladenes Bild), `BlitRegion(quelle, sx, sy, sw, sh, dx, dy, ...)` einen Ausschnitt, `BlitScaled(quelle, sx, sy, sw, sh, dx, dy, dw, dh, ...)` skaliert auf
+  `dw x dh` (nächster Nachbar; eine NEGATIVE Breite/Höhe spiegelt). `BlitMode`: `Copy` (alles), `Transparent` (durchsichtige Quellpixel bleiben aus: RGBA-Quelle Alpha 0, Palette-Quelle der Farbschlüssel `schluessel` bzw. der `TransparentIndex` des Bildes),
+  `Blend` (halbdurchsichtige RGBA-Pixel werden nach Alpha mit dem Ziel gemischt - nur bei eingeschaltetem `AlphaBlending` und RGBA-Ziel; in einem Palette-Ziel zählt Alpha ab 128 als deckend). Über die Farbmodi hinweg: Palette -> RGBA über die Palette der Quelle; RGBA -> Palette auf den nächsten Eintrag der Ziel-Palette;
+  Palette -> Palette direkt, wenn beide Paletten gleich sind, sonst über den nächsten Eintrag (wer ein Bild mit seiner eigenen Palette auf den Schirm bringen will, übernimmt vorher dessen Palette: `schirm.WritePalette(bild.ReadPalette(true))`). Derselbe Framebuffer als Quelle und Ziel ist erlaubt.
+- `GetPixelIndex(x, y)`: der Palette-Index des Pixels (RGBA: der nächste Eintrag).
+
+## Bilder laden
+
+`ImageDecoder.Decode(bytes)` (C#, plattformunabhängig, keine Fremdbibliothek) erkennt **PNG, BMP und GIF** an den ersten Bytes (nicht an der Endung) und liefert ein `ImageData`: entweder **indiziert** (Indizes + Palette bis 256 Farben + `TransparentIndex`) oder **Truecolor** (RGBA je Pixel).
+- **PNG:** alle Farbarten (Grau, RGB, Palette, Grau+Alpha, RGBA) in 1, 2, 4, 8 und 16 Bit, Adam7-Verschränkung, `tRNS` (Palette, Grau-/RGB-Schlüssel), Prüfsummen. 16 Bit wird auf 8 Bit gekürzt. Palette-Bilder bleiben indiziert, Grau und alles andere wird Truecolor.
+- **BMP:** 1, 4, 8 Bit mit Palette (auch RLE4/RLE8) -> indiziert; 16, 24, 32 Bit (auch mit Bitmasken, 32 Bit mit unbenutztem Alpha-Byte = deckend) -> Truecolor; von oben oder unten; OS/2-Kopfzeile.
+- **GIF:** das ERSTE Bild (eine Animation liefert ihr erstes Einzelbild), LZW, verschränkt, Transparenz; immer indiziert. Größe des logischen Bildschirms.
+- Fehler (unbekannt, abgeschnitten, Prüfsumme, absurde Größe über 64 Millionen Pixel, nicht unterstützte Variante) sind `ImageFormatException`; beschädigte Dateien lösen nie eine andere Ausnahme aus (Test: 3360 zufällig veränderte Dateien).
+
+Aus fire (`#import "graphics"`):
+- `Framebuffer.FromFile(pfad, modus = -1)` und `Framebuffer.FromImage(puffer, modus = -1)` (ein `byte`-Puffer mit den Bytes einer Bilddatei, z.B. aus `IO.File.ReadAllBytes` oder einem Stream) legen einen NEUEN Framebuffer in der Größe des Bildes an. `modus -1`: wie das Bild -
+  indiziert (PNG mit Palette, GIF, BMP bis 8 Bit) wird ein **Palette-Framebuffer mit der Palette der Datei**, alles andere **RGBA**. `ColorMode.Rgba`/`ColorMode.Palette` erzwingt einen Modus: ein indiziertes Bild in einen RGBA-Framebuffer wird über seine Palette aufgelöst, ein Truecolor-Bild in einen
+  Palette-Framebuffer je Pixel auf den nächsten Eintrag der Standard-Palette abgebildet (ohne eigene Palette zu berechnen, Alpha geht dabei verloren).
+- `FromFile` liest nur, was die **`IoPolicy` des Hosts** (`IoPolicy`, siehe `docs/spec/BYTECODE.md` Abschnitt 23) zum Lesen erlaubt, wie `IO.File`; `GraphicsBridge.RegisterAll(..., readFile)` nimmt dafür eine Lesefunktion entgegen (Vorgabe: die Datei einfach lesen). Das Bild muss nicht per `#import "filesystem"` geladen werden.
+- `framebuffer.ToPng()`: der Framebuffer als Bytes einer PNG-Datei (RGBA, 8 Bit je Kanal; ein Palette-Framebuffer über seine Palette, sein durchsichtiger Index wird durchsichtig) - zum Speichern
+  (`IO.File.WriteAllBytes`) oder für die Zwischenablage; `Framebuffer.FromImage` liest es zurück. VM: `ImageEncoder.EncodePng`, nativ: `fire_gfx_encodePng` (Deflate mit den festen Huffman-Codes und LZ77).
+- `Framebuffer.FromPixels(breite, hoehe, puffer, modus = 0, palette = undefined)`: ein Framebuffer aus rohen Pixeln, zeilenweise von oben nach unten - `Rgba` `breite*hoehe*4` Byte (R, G, B, A je Pixel), `Palette` `breite*hoehe` Byte (je Pixel ein Index) und optional eine Palette (768 oder 1024 Byte).
+  `ReadBytes()`/`WriteBytes(puffer)` lesen und schreiben den ganzen Inhalt im selben Format (siehe "Byteweiser Framebuffer-Zugriff").
+- Fehler sind `ImageException` (eine `GraphicsException`): unbekanntes Format, beschädigt, Datei nicht lesbar oder nicht erlaubt, falsche Pufferlänge.
+
+## Slicer: Bild -> Maske -> Werkzeugbahnen
+
+Zerlegt ein Bild in Linien fester Stärke (Fräs-/Plotterbahnen). `ImageSlicer` (C#, `fire.Terminal`, Algorithmus aus `ImageToToolpath`) arbeitet auf einer Maske: Euklidische Distanztransformation (Felzenszwalb/Huttenlocher), die Werkzeugmitte darf nur dort liegen, wo der Abstand zum Rand
+mindestens der Linienradius ist; die Isolinie auf diesem Niveau ist die Randkontur (subpixelgenau per Marching Squares, Douglas-Peucker-Reduktion), das Innere wird mit Bahnen im Abstand `StepOver = Linienstärke * (1 - Overlap)` gefüllt. Alle Koordinaten sind Millimeter und beschreiben die Werkzeugmitte.
+
+Aus fire (`#import "graphics"`):
+
+```
+var bild = Framebuffer.FromFile("logo.png")
+var maske = bild.ToMask()                    // NEUER Palette-Framebuffer: Index 1 (weiß) = ausfräsen, Index 0 (schwarz) = nicht
+var slicer = new Slicer(3.0, 0.1)            // 3-mm-Fräser, 0,1 mm je Pixel
+slicer.overlap = 0.5
+slicer.strategy = FillStrategy.Contour       // Contour | ZigZag | OutlineOnly
+var bahnen = slicer.Slice(maske)             // eine List von ToolPath
+foreach (b in bahnen) { print(b.kind + " " + b.closed + " " + b.Count()) ; print(b.X(0) + "," + b.Y(0)) }
+```
+
+- `Framebuffer.ToMask(threshold = 128, darkIsRemoved = true, alphaThreshold = 128)`: Pixel mit geringerer Deckkraft als `alphaThreshold` zählen nie; sonst entscheidet die Helligkeit `0,299 R + 0,587 G + 0,114 B` gegen `threshold` (dunkle Pixel werden ausgefräst, mit `darkIsRemoved = false` die hellen). Bei einem Palette-Bild wird jeder Palette-Eintrag nur einmal bewertet.
+  Die Maske ist ein gewöhnlicher Framebuffer (auch mit `Blit`/`GetPixelIndex` benutzbar, Index 0 ist ihr `TransparentIndex`).
+- `Slicer(linienstaerke, pixelgroesse)` mit den Feldern `overlap` (0 bis 0.95, Vorgabe 0.5; ab 0.5 bleiben bei `Contour` keine Restinseln), `strategy`, `simplifyTolerance` (mm; negativ = automatisch 1/4 Pixel, 0 = keine Reduktion), `flipY` (Vorgabe true: Y nach oben wie bei Maschinenkoordinaten, von der Bildhöhe gezählt) und der Eigenschaft `StepOver`.
+  `Slice(maske)` nimmt jeden Framebuffer als Maske (Palette: Index ungleich 0; RGBA: sichtbar und nicht schwarz) und liefert eine `List` von `ToolPath` - leer, wenn keine Stelle breit genug für die Linienstärke ist. Bei `Contour` kommen die Innenringe von innen nach außen, bei `ZigZag` waagerechte Zweipunktbahnen (abwechselnd links/rechts), zuletzt immer die Randkontur als Schlichtbahn.
+- `ToolPath`: `kind` (`PathKind.Fill`/`PathKind.Outline`), `closed`, `points` (flaches Array `[x0, y0, x1, y1, ...]`), `Count()`, `X(i)`, `Y(i)`.
+- Ein Wert außerhalb des Bereichs (Linienstärke/Pixelgröße <= 0, Überlappung außerhalb von 0 bis 0.95) ist eine `GraphicsException`.
+- Der frühere `SdlMaskLoader` entfällt: geladen wird mit `Framebuffer.FromFile`/`FromImage` (PNG, BMP, GIF), die Maske kommt aus `ToMask`.
+
+## Byteweiser Framebuffer-Zugriff
+
+`FramebufferManager` bietet sowohl byteweisen als auch blockweisen Zugriff
+auf die rohen Pixel-Daten:
+
+- Im **Palette-Modus** ist ein Byte ein Pixel: der Palette-Index (Offset = `y * Breite + x`), `ReadBytes`/`WriteBytes` haben `Breite * Hoehe` Byte; der Rest dieses Abschnitts beschreibt den RGBA-Modus.
+- `ReadByte(id, offset)` / `WriteByte(id, offset, value)` - IMMER korrekt
+  (manuell pro Kanal geschoben/maskiert, unabhängig von der Host-Endianness).
+  Byte-Offset 0 = R des ersten Pixels, 1 = G, 2 = B, 3 = A, 4 = R des
+  zweiten Pixels, usw. (feste Reihenfolge, siehe `PixelColor`).
+- `ReadBytes(id)` / `WriteBytes(id, data)` - NICHT zwingend, aber aus
+  Convenience-/Geschwindigkeitsgründen: kopiert den GESAMTEN Puffer per
+  `Buffer.BlockCopy` (roher Speicherzugriff, schneller als eine Schleife) -
+  das ergibt exakt dieselbe R,G,B,A-Byte-Reihenfolge, WEIL .NET auf allen
+  realistischen Zielplattformen (x86/x64/ARM im Normalbetrieb) little-endian
+  ist und `PixelColor`s Speicher-Layout genau dafür ausgelegt ist (siehe
+  unten) - anders als `ReadByte`/`WriteByte` verlässt sich das hier also
+  bewusst auf die Host-Endianness, für den Geschwindigkeitsgewinn.
+
+## Kernideen (weiterhin gültig)
+
+- **Ein Framebuffer ist die einzige Wahrheit.** `Renderer` schreibt
+  ausschließlich in einen `Framebuffer` (nie direkt ins Fenster); ein
+  `IFramebufferRenderer` liest den fertigen Inhalt nur noch aus.
+- **`PixelColor`: feste Byte-Reihenfolge, ohne Overhead abrufbar.** `R`, `G`,
+  `B`, `A` liegen IMMER in genau dieser Reihenfolge im Speicher (Byte 0-3),
+  unabhängig von der Host-Endianness. Über
+  `[StructLayout(LayoutKind.Explicit)]` liegt zusätzlich ein `Packed`-Feld
+  (uint) auf DENSELBEN 4 Bytes - beide Sichten sind buchstäblich derselbe
+  Speicher, keine Umrechnung, kein zusätzlicher Speicherverbrauch.
+- **"Wählbarer Framebuffer".** `Renderer.Target` (bzw.
+  `RendererManager.SetTargetFramebuffer`) ist jederzeit umschaltbar – Cursor-
+  Position, Farben UND Palette gehören dem `Renderer`-Objekt selbst,
+  nicht dem jeweiligen Puffer.
+- **Terminal-Emulation ist QBasic-artig.** `Print`/`Color`/`Locate` verändern
+  Text, Vorder-/Hintergrundfarbe und Cursor-Position. Jedes geschriebene
+  Zeichen übermalt immer die **gesamte Zelle** (außer `Background == null`,
+  "optional transparent").
+- **Kein Scrollback.** Erreicht der Cursor das Bildschirmende, verschiebt
+  `Framebuffer.ScrollUp` den gesamten Inhalt eine Zellenhöhe nach oben; was
+  oben herausfällt, ist unwiderruflich verloren.
+- **Fenstergröße ist unabhängig vom Zeichenraster.** `SdlFramebufferRenderer`
+  zeichnet den Framebuffer immer auf die gesamte aktuelle Fenstergröße
+  gestreckt/gestaucht.
+- **Kein eigenes Alpha-Blending.** `Framebuffer.SetPixel`/`FillRect`
+  schreiben ein Zielpixel immer vollständig, es wird nichts gemischt.
+- **SDL-Texturformat passend zu `PixelColor`.** `SDL.PixelFormat.ABGR8888` (SDL nennt gepackte Formate nach der Bit-Reihenfolge des Worts; auf Little-Endian ist das die Byte-Reihenfolge R,G,B,A, früher stand hier ARGB8888 und vertauschte Rot und Blau)
+  (in SDL3 der Name für das gepackte 32-Bit-RGBA-Format) - "R,G,B,A in genau
+  dieser Byte-Reihenfolge im Speicher", passend zu `PixelColor.Packed`.
+
+## Zwei Nutzungsarten von `ConsoleWindow`/`WindowManager`
+
+- `ConsoleWindow.Run()` – blockierende Standalone-Schleife für EIN Fenster.
+- `WindowManager.Tick(id)` / `WindowManager.TickAll()` – ein einzelner Zyklus
+  (Events abholen + zeichnen) für einen Host mit eigener Schleife -
+  `TickAll()` bedient dabei beliebig viele gleichzeitig offene Fenster und
+  räumt automatisch jedes auf, das der Nutzer währenddessen geschlossen hat.
+
+## Fenster-Manager (`WindowManager`, fire)
+
+Im Skript (`#import "windows"`) taktet ein **`WindowManager`** die Fenster, die an ihm hängen: jedes holt seine Ereignisse (Callbacks, Warteschlange), ruft sein `onCycle`
+(ein `UI.Root` zeichnet dort) und zeigt sein Bild.
+
+| | |
+|---|---|
+| `new Window(fb, "Titel", manager)` | das Fenster hängt sich gleich an `manager` (der Parameter ist optional); `window.Manager` ist sein Manager |
+| `window.Show(modal = false)` | zeigt das Fenster auf seinem Manager (dem aus dem Konstruktor, sonst `WindowManager.Default`). Läuft der Manager noch nicht, wird er **gestartet**: ein eigener Thread öffnet die Fenster, holt ihre Ereignisse und zeigt ihre Bilder (etwa 60-mal je Sekunde). Das Programm läuft weiter. Läuft der Manager schon (sein Thread, ein `Run`, ein Ereignis eines seiner Fenster), wird nur angezeigt |
+| `window.Show(true)` | **modal**: wie oben, aber der Aufruf kehrt erst zurück, wenn das Fenster geschlossen ist; solange bekommen die anderen Fenster des Managers keine Eingaben (sie werden weiter gezeigt, `window.IsBlocked`). Die Zyklen laufen auf dem aufrufenden Thread - auch wenn `Show(true)` aus einem Ereignis eines anderen Fensters kommt. Fenster, die währenddessen aufgehen, arbeiten normal; modale Fenster können verschachtelt werden |
+| `window.Run()` | der Startpunkt eines Fensterprogramms (wie die Nachrichtenschleife eines STA-Threads): zeigt das Fenster wie `Show` und lässt den Manager - wenn ihn noch niemand betreibt - **blockierend auf dem aufrufenden Thread** laufen, bis alle seine Fenster geschlossen sind. Ein zweiter Aufruf startet keinen eigenen Loop: läuft der Manager schon, wird das Fenster dort nur gezeigt (aus einem Ereignis kehrt `Run` sofort zurück); läuft auf diesem Thread schon der Loop eines anderen Managers, bekommt dieser Manager einen eigenen Thread. Gestartet wartet `Run`, bis seine Fenster zu sind |
+| `window.AutoClose` | `true` (Vorgabe): fordert der Nutzer das Schließen an (Knopf im Rahmen, Alt+F4), geht das Fenster zu - `Tick`/`Cycle` sagen `false`, ein `Run` oder `Show(true)` endet; Handler von `RegisterCloseRequest` hören es trotzdem. `false`: die Anfrage wird nur gemeldet (`EventType.CloseRequest`), das Programm entscheidet (etwa „Speichern?“) und schließt selbst mit `Close()` |
+| `window.Close()` | schließt das Fenster (der nächste Zyklus nimmt es heraus, ein wartendes `Show(true)` kehrt zurück); `window.IsClosed` |
+| `window.Tick()` | ein Zyklus nur dieses Fensters (wie bisher, ohne Manager) |
+| `WindowManager.Default` | der Manager der Fenster, die keinen anderen haben; ein Programm kann weitere anlegen (`new WindowManager()`) |
+| `manager.Attach(window)`, `manager.Detach(window)` | hängt an (von einem anderen Manager weg) bzw. nimmt heraus; nur das erste Fenster eines Managers wartet auf den Bildaufbau (VSync) |
+| `manager.Start()` | startet den Thread (einmal); `false`, wo die Plattform keine Threads hat (WebAssembly, Geräte ohne Threads) - dort `Run`/`Tick` nehmen. Unter macOS gibt der Thread nur den Takt vor (unten) |
+| `manager.Run()`, `manager.Tick()` | alle Fenster bis zum Schließen bzw. ein Zyklus aller Fenster auf dem aufrufenden Thread (die Regeln von `window.Run()`); `Run` auf einem gestarteten Manager wartet, bis seine Fenster zu sind |
+| `manager.IsStarted`, `manager.IsRunning`, `manager.Count` | läuft der Thread? betreibt jemand die Fenster (Thread, `Run`, ein modales Fenster)? wie viele Fenster sind noch offen? |
+
+**Was auf welchem Thread läuft.** Der Thread des Managers besitzt nur die Fenster des Betriebssystems (SDL bedient ein Fenster nur auf dem Thread, der es erzeugt hat - daher
+öffnet sich ein Fenster erst, wenn der Thread, der es zeigt, es zum ersten Mal pumpt). Alles, was das Programm berührt - Callbacks, `NextEvent`, `onCycle`, das Zeichnen -
+läuft weiter auf dem Programm-Thread: der Thread des Managers bittet das Hauptprogramm nach jedem Zyklus um einen Lauf von `manager.Tick()`, das Hauptprogramm macht ihn an
+seinem nächsten sicheren Punkt (wie Host-Callbacks: nach einem nativen Aufruf, in Schleifen, in `Sleep`, bei `sync globals`; mit `#nosync` nur bei `sync globals`). Das Bild
+gibt das Programm am Ende des Zyklus als Kopie an den Thread weiter. Es gibt also keinen geteilten Speicher und keine Kopien der Objekte.
+
+**macOS.** Dort dürfen Fenster nur auf dem Hauptthread leben. Ein gestarteter Manager hat deshalb einen Thread, der nur den **Takt** gibt: etwa 60-mal je Sekunde bittet er
+das Programm um einen Zyklus, und das Programm öffnet, pumpt und zeigt die Fenster an seinen sicheren Punkten selbst (wie bei `Run`, nur ohne Blockieren). Für das Programm sieht
+das genauso aus wie mit eigenem Thread: `Show` kehrt zurück, die Ereignisse kommen an den sicheren Punkten, am Ende wartet es. Nur: rechnet das Programm lange ohne sicheren Punkt,
+steht das Fenster so lange (anderswo zeigt der Thread des Managers dann wenigstens das letzte Bild). In der VM schaltet `FIRE_WINDOW_COOPERATIVE=1` das auch auf anderen
+Systemen ein, nativ `-D FIRE_WINDOW_COOPERATIVE` (zum Testen).
+
+**Programmende.** Solange ein gestarteter Manager offene Fenster hat, endet das Programm nach seiner letzten Anweisung nicht: es wartet und macht die Zyklen, bis die Fenster zu
+sind (ein `terminate` beendet es trotzdem). So reicht für ein Fensterprogramm:
+
+```
+#import "ui"
+var fb = new Framebuffer(320, 200)
+var win = new Window(fb, "Hallo")
+var ui = new UI.Root(fb, win)
+ui.Add(new UI.Label("Hallo", 20, 20))
+win.Show()                  // oder ui.Show(); das Programm wartet am Ende, bis das Fenster zu ist
+```
+
+Nativ schaltet ein Programm, das `Start` (also auch `Show`) benutzt, die fire-Threads ein (GIL, sichere Punkte); ein Programm, das nur `Run`/`Tick` nimmt, bleibt ohne.
+
+## VSync und die Dauer von `Tick`
+
+`Tick` zeigt den Framebuffer an. Mit **VSync** (Vorgabe, `IFramebufferRenderer.VSync`, im Skript `window.VSync`) wartet jedes Tick auf die Bildwiederholung des Monitors: bei 60 Hz dauert es 16,7 ms, egal wie wenig
+gezeichnet wurde. Das ist gewollt für Animationen (ein Durchlauf = ein Bild) und Warteschleifen (`while (win.Tick()) { ... }` belastet den Prozessor kaum), hat aber eine Falle: eine Zeichenschleife mit EINEM Tick je
+Durchlauf braucht bei 256 Durchläufen 256 x 16,7 ms = 4,3 s, obwohl das Zeichnen selbst nur wenige Millisekunden dauert (gemessen: 256 x `Print` + `Tick` ohne VSync in ~10 ms). Abhilfe: seltener `Tick` rufen (zum Beispiel
+einmal nach der Schleife) oder `win.VSync = false` setzen, dann kehrt `Tick` sofort zurück - bei einer Schleife, die dann ungebremst läuft; wer animiert, bremst sie selbst (`Sleep`) oder lässt VSync an.
+
+## Fenstergröße ändern (`AutoResize`)
+
+Ein Fenster darf vom Nutzer in der Größe geändert werden. Ohne weiteres (Vorgabe) wird der Framebuffer dann auf das Fenster **gestreckt**. Mit `window.AutoResize = true` bekommt der Framebuffer stattdessen genau die neue
+Größe des Fensters - das Bild wird nicht gestreckt, die Mauspositionen sind Pixel des Framebuffers 1:1, und das Programm zeichnet in der neuen Größe neu. Dazu:
+
+- `framebuffer.Resize(breite, höhe)` (auch von Hand zu rufen) liefert `true`, wenn die Größe **gültig** ist: beide Seiten von 1 bis 16384 und höchstens 64 Millionen Pixel. Eine ungültige Größe lässt den Framebuffer
+  unverändert und liefert `false` - ein minimiertes Fenster meldet zum Beispiel die Größe 0 und wird einfach übergangen. Der Inhalt bleibt oben links erhalten, was dazukommt ist durchsichtig (RGBA) bzw. Index 0 (Palette);
+  Modus, Palette und durchsichtiger Index bleiben. Ein `Renderer` auf dem Framebuffer folgt der neuen Größe (Zeilen/Spalten für `Print`, der Cursor wird ins Raster zurückgeholt). Wer sich Zeiger auf die Pixel
+  gemerkt hat (`unsafe`), holt sie nach einem Resize neu.
+- Das Ereignis `EventType.Resize` (4) meldet die neue Größe des Fensters: in der Warteschlange `[4, breite, höhe]`, als Callback `window.RegisterResize(func (int w, int h) => { ... })`. Bei `AutoResize` hat der
+  Framebuffer die Größe schon, wenn das Ereignis ankommt (und ist sie ungültig, behält er die alte).
+- VM und natives Backend verhalten sich gleich (`__GRPHFbResize`, `__GRPHWinSetAutoResize`/`GetAutoResize`; die Plattform liefert `EV_RESIZE` mit `width`/`height`).
+
+Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe docs/ui/README.md, "Fenstergröße").
+
+
+`window.SetSize(breite, höhe)` gibt dem Fenster selbst eine neue Größe in Bildschirmpixeln (vor dem ersten Zeigen: die Größe, mit der es aufgeht); der Framebuffer behält seine, mit `AutoResize` folgt er.
+
+`SystemTheme.Current()` sagt, wie Programme auf dem Desktop aussehen sollen: `scale` (1.5 = 150 %), `dark`, `accent` (0xRRGGBB), `font` (die erste installierte Schrift der Oberfläche, `""` = keine),
+`fontSize` (logische Pixel) und `embedded` (ein Board ohne Desktop). Die UI-Bibliothek nutzt es von selbst (docs/ui/README.md "Systemaussehen"); `FIRE_SYSTEM_THEME=off` schaltet die Abfrage ab.
+
+## Touchscreen und Joystick
+
+Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM und natives Backend gleich). Die Ereignisse kommen wie die anderen über die Warteschlange (`window.EnableEvents()`, `NextEvent()`) oder als Callback
+(`RegisterTouchDown(...)` usw.):
+
+| Ereignis | `EventType` | Warteschlange | Callback |
+|---|---|---|---|
+| Finger setzt auf / bewegt sich / hebt ab | `TouchDown` 16, `TouchMove` 17, `TouchUp` 18 | `[typ, finger, x, y, druck]` | `(int finger, float x, float y, float druck)` |
+| Achse | `JoystickAxis` 32 | `[typ, joystick, achse, stellung]` | `(int joystick, int achse, float stellung)` |
+| Knopf gedrückt / losgelassen | `JoystickButtonDown` 33, `JoystickButtonUp` 34 | `[typ, joystick, knopf]` | `(int joystick, int knopf)` |
+| Kreuz (Hat) | `JoystickHat` 35 | `[typ, joystick, hat, richtungen]` | `(int joystick, int hat, int richtungen)` |
+| angesteckt / abgezogen | `JoystickAdded` 36, `JoystickRemoved` 37 | `[typ, joystick]` | `(int joystick)` |
+
+- Fingerpositionen sind Pixel des Framebuffers (wie die Maus); `finger` unterscheidet mehrere gleichzeitige Finger, `druck` geht von 0 bis 1 (Geräte ohne Druckmessung melden 1).
+- Eine Achse steht von -1 bis 1 (0 ist die Mitte; die Ruhelage kann um ein paar Prozent daneben liegen - eine Totzone ist Sache des Programms). `richtungen` beim Kreuz ist eine Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links, 0 Mitte.
+- `joystick` ist die Nummer des Geräts, solange es angesteckt ist. Alle Geräte, die schon beim Start da sind (und später angesteckte), werden geöffnet und melden `JoystickAdded`. Ohne Joystick-Treiber öffnet sich das Fenster trotzdem.
+- `window.TouchMouse` (Vorgabe `true`): SDL macht aus einem Finger zusätzlich Mausereignisse, ein Programm, das nur auf die Maus hört, ist so auch mit dem Finger bedienbar. Mit `false` kommen nur die Touch-Ereignisse
+  (die UI-Bibliothek schaltet es aus und wertet die Finger selbst aus, siehe docs/ui/README.md "Bedienung").
+- Im nativen Backend liefert die Anzeige `EV_TOUCH_*` und `EV_JOY_*` (Felder `finger`, `pressure`, `joystick`, `index`, `value`, `x`, `y`); ein Board-Paket ohne Touchscreen oder Joystick meldet sie einfach nicht.
+
+## Drag & Drop aus anderen Programmen, Zwischenablage
+
+Was der Nutzer aus einem anderen Programm auf das Fenster zieht (Dateien aus dem Dateimanager, Text aus einem Browser), kommt als Ereignis an - in der Warteschlange oder als Callback:
+
+| Ereignis | `EventType` | Warteschlange | Callback |
+|---|---|---|---|
+| Dateien fallen gelassen | `DropFiles` 40 | `[typ, pfade (string[]), x, y]` | `window.RegisterDropFiles(func (any pfade, float x, float y) => ...)` |
+| Text fallen gelassen | `DropText` 41 | `[typ, text, x, y]` | `window.RegisterDropText(func (string text, float x, float y) => ...)` |
+| etwas wird über das Fenster gezogen | `DragHover` 42 | `[typ, x, y]` | `window.RegisterDragHover(func (float x, float y) => ...)` |
+| es verlässt das Fenster, ohne fallen gelassen zu werden | `DragLeave` 43 | `[typ]` | `window.RegisterDragLeave(func () => ...)` |
+
+- Mehrere Dateien eines Zugs kommen in einem Ereignis (SDL: `DROPBEGIN` .. `DROPCOMPLETE`); die Position ist in Pixeln des Framebuffers. SDL3 (die VM, native Builds mit SDL3) nennt sie selbst,
+  SDL2 (native Builds ohne SDL3) nicht: dort ist es die Stelle des Mauszeigers beim Loslassen.
+- `DragHover` kommt, solange etwas aus einem anderen Programm über dem Fenster ist (bei jeder Bewegung; SDL3: `SDL_EVENT_DROP_POSITION`), `DragLeave`, wenn es das Fenster wieder verlässt, ohne fallen
+  gelassen zu werden. Was gezogen wird, sagt das Betriebssystem erst beim Drop. Ein nativer Build mit SDL2 meldet beides nicht.
+- Die UI-Bibliothek reicht die Drops an das Element darunter weiter (docs/ui/README.md "Drag & Drop").
+
+**Aus dem Fenster heraus** zieht `window.StartDrag(text, dateien)` einen Text und/oder Dateien (ihre Pfade: `string[]` oder eine `List`; `undefined`: keine) in ein anderes Programm - einen
+Dateimanager, einen Editor, einen Browser. Das Programm ruft es auf, während eine Maustaste gehalten wird (typisch: der Zeiger verlässt bei einem eigenen Ziehen das Fenster - SDL meldet die Maus
+außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das von selbst, docs/ui/README.md "Drag & Drop"). Der Aufruf kehrt zurück, wenn der Nutzer loslässt:
+
+| Rückgabe | |
+|---|---|
+| `0` | nichts geschah: kein Programm nahm es, der Nutzer brach mit Escape ab, keine Taste war gedrückt - oder die Plattform kann es nicht |
+| `1` | das andere Programm hat es kopiert |
+| `2` | es hat es verschoben (ein Dateimanager hat die Dateien verschoben: das Programm kann sie vergessen) |
+
+`window.CanStartDrag()` sagt vorher, ob die Plattform ein solches Ziehen überhaupt übernehmen kann: `true` unter Windows und X11 (der Videotreiber `windows` bzw. `x11` - in der VM gefragt in
+`SdlDragOut.CanStart`, nativ `fire_display_canStartDrag` der Anzeige), `false` in der VM unter Wayland, unter macOS, mit dem Dummy-/Offscreen-Treiber, ohne Desktop (`fire_display_none.h`) und solange das Fenster nicht
+offen ist; ein eigenes Board-Package ohne `FIRE_DISPLAY_CAN_START_DRAG` sagt ebenfalls `false`. Die UI-Bibliothek lässt ein Ziehen dann im Fenster weiterlaufen, statt es beim Verlassen zu beenden.
+
+- **Windows**: OLE (`DoDragDrop`) mit einem eigenen `IDataObject` - der Text als `CF_UNICODETEXT`, die Dateien als `CF_HDROP` - und einer `IDropSource`; nativ in C (die COM-Objekte als
+  Strukturen mit ihren Funktionstabellen, `ole32.dll` wird beim ersten Ziehen geladen), in der VM genauso (die VM benutzt dieselbe C-Anzeige). `DoDragDrop` ist modal und
+  holt die Nachrichten des Threads selbst ab, bis losgelassen wird. Angeboten werden Kopieren und Verschieben; welches, entscheidet das Ziel (und die Tasten).
+- **X11**: das XDND-Protokoll als Quelle (Version 5: `XdndEnter`/`XdndPosition`/`XdndLeave`/`XdndDrop` an das Fenster mit `XdndAware` unter dem Zeiger, `XdndStatus`/`XdndFinished` zurück; die
+  Auswahl `XdndSelection` gehört dem Fenster und liefert `text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING` und `text/plain`). Kopieren, mit Umschalt Verschieben. libX11 wird zur Laufzeit
+  geladen (ohne X11 - ein Board - gibt es eben kein Ziehen). Die Schleife benutzt die Verbindung von SDL und hält dabei die Sperre, unter der auch die Fenster ihre Ereignisse abholen: sie
+  nimmt nur die Antworten des Ziels und die Anfragen nach den Daten aus der Warteschlange, alles andere bleibt für SDL. Den Zeiger hält der Druck, mit dem das Ziehen begann (der implizite Grab der
+  Taste bzw. das Festhalten der Maus durch SDL; ein eigener Grab scheitert, solange SDL3 die Maus über XInput2 hält): die Schleife fragt den Server, wo der Zeiger ist und welche Tasten gedrückt
+  sind, bis losgelassen wird; Escape bricht ab.
+- **Wayland** (nur nativ mit SDL3): `wl_data_device.start_drag` mit einer eigenen `wl_data_source` (`text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING`, `text/plain`; Kopieren und
+  Verschieben, welches, entscheidet das Ziel bzw. der Compositor). Den Zug kann nur beginnen, wer die Seriennummer des Tastendrucks kennt, der den Zeiger hält - SDL gibt sie nicht heraus. Deshalb hört
+  fire auf SDLs Verbindung (`wl_display`) mit einer eigenen Warteschlange selbst mit: ein eigener `wl_seat`, ein eigener `wl_pointer` (der Compositor meldet jeden Tastendruck allen Zeigern des
+  Programms) und der `wl_data_device_manager`; nach jedem Abholen der Ereignisse durch SDL nimmt die Anzeige ihre Warteschlange dran. libwayland-client wird zur Laufzeit geladen. Während des Ziehens
+  gehört der Zeiger dem Compositor (SDL bekommt ein Verlassen und lässt seine Tasten los). Die VM kann unter Wayland noch nicht nach außen ziehen (`0`).
+- **macOS**, der Browser, Boards: noch kein Ziehen nach außen (`0`).
+- Ein Fenster, das der Thread seines Managers zeigt (`Show`), zieht auf diesem Thread - dem, dem das Fenster des Betriebssystems gehört; das Programm wartet auf die Antwort (nativ ohne die GIL,
+  die anderen Threads des Programms laufen weiter).
+- Im nativen Backend: `fire_display_startDrag(fenster, text, pfade)` der Anzeige (`fire_display_c.h`; die Pfade zeilenweise), umgesetzt in `platform/std/fire_dragout.h` für SDL3 und SDL2
+  (das Fenster des Betriebssystems: SDL3 über die Eigenschaften des Fensters, SDL2 über `SDL_GetWindowWMInfo`); eine Anzeige ohne Desktop sagt `0`. Ein eigenes Board-Paket, das die Funktion
+  nicht hat, bekommt ebenfalls `0`.
+
+Die **Zwischenablage** des Desktops (Text, Bilder, Dateien) gehört zu `#import "windows"`. Sie hält eine Sache zur Zeit: ein Bild hineinlegen nimmt den Text heraus.
+
+| | |
+|---|---|
+| `Clipboard.GetText()` | der Text in der Zwischenablage, `""` wenn keiner da ist (oder etwas anderes, etwa ein Bild) |
+| `Clipboard.SetText(text)` | legt Text hinein; `false`, wenn der Desktop ablehnt |
+| `Clipboard.HasText` | liegt Text darin? |
+| `Clipboard.GetImage()` | das Bild darin als neuer Framebuffer (RGBA, oder mit der Palette der Datei), `undefined`, wenn keins da ist |
+| `Clipboard.SetImage(fb)` | legt den Framebuffer als Bild hinein (als PNG, unter Windows auch als BMP/`CF_DIB`); `false`, wenn der Desktop ablehnt - oder ein nativer Build mit SDL2 (nur Text) |
+| `Clipboard.HasImage` | liegt ein Bild darin? |
+| `Clipboard.GetFiles()` | die Pfade der Dateien darin (was ein Dateimanager kopiert; `text/uri-list`, unter Windows `CF_HDROP`), ein leeres Array, wenn keine da sind |
+| `Clipboard.SetFiles(pfade)` | legt Pfade hinein (`string[]` oder eine `List`), zum Einfügen in einem Dateimanager |
+| `Clipboard.HasFiles` | liegen Dateien darin? |
+
+Sie braucht kein offenes Fenster (SDL startet seinen Video-Teil dafür einmal). Ohne Desktop - ein Board, die Tests mit einem Ersatz-Renderer - hat das Programm eine eigene Zwischenablage,
+die innerhalb des Programms genauso funktioniert. Zugriffe auf die Zwischenablage und das Abholen der Fenster-Ereignisse schließen sich gegenseitig aus (unter X11 wartet SDL auf die Antwort des
+Besitzers der Zwischenablage, indem es selbst Ereignisse abholt). Ein Programm ohne Fenster beantwortet die Fragen anderer Programme nach dem, was es hineingelegt hat, während es `Clipboard`
+aufruft (dort holt SDL die Ereignisse der Zwischenablage ab). SDL 3.2 unter X11 fragt nach den Arten in der Zwischenablage nur, wenn ihr Besitzer wechselt, während das Programm läuft; damit auch
+da ist, was ein anderes Programm vor dem Start kopiert hat, sagt fire SDL beim ersten Zugriff einmal, der Besitzer habe gewechselt (VM und nativ; danach fragt SDL selbst). Unter Windows hat SDL3 keine Dateilisten: VM und nativer Build sprechen dafür selbst mit der Zwischenablage von Windows
+(`CF_HDROP`, wie der Explorer beim Kopieren von Dateien).
+
+Im nativen Backend: `fire_display_clipboardSet/Get/Has` (Text), `fire_display_clipboardGetImage/SetImage/HasImage` und `GetFiles/SetFiles/HasFiles` der Anzeige (`fire_display_c.h`; SDL3, SDL2 sagt "nicht
+vorhanden", ohne Desktop die eigene des Programms), die Drops als `EV_DROP_FILES`/`EV_DROP_TEXT` mit `data` (Pfade zeilenweise bzw. der Text), das Schweben als `EV_DRAG_HOVER`/`EV_DRAG_LEAVE`
+(siehe docs/spec/NATIVE_BACKEND.md "SDL3 oder SDL2").

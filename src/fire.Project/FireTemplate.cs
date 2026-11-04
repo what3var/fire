@@ -7,7 +7,7 @@ namespace fire.Projects
     /// <summary>What a template makes: files for a project that exists (<see cref="Code"/>: a script, a class, a window) or a whole project (<see cref="Project"/>).</summary>
     public enum TemplateScope { Code, Project }
 
-    /// <summary>The optional `template.json` of a template folder (docs/TEMPLATES.md): every field is optional - a folder without it is a template too.</summary>
+    /// <summary>The optional `template.json` of a template folder (docs/tools/templates.md): every field is optional - a folder without it is a template too.</summary>
     public sealed class TemplateDescription
     {
         public string? Title { get; set; }

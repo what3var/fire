@@ -178,7 +178,7 @@ namespace fire.Compiler
 
             var session = new RuntimeSession(linkedProgram.Program);
             
-            // the C implementation of graphics and windows (the same as a native build: fire's own display, no SDL) - docs/UI_PLATFORM.md, part 2. Where the host drives the
+            // the C implementation of graphics and windows (the same as a native build: fire's own display, no SDL) - docs/spec/UI_PLATFORM.md, part 2. Where the host drives the
             // windows (`hostWindows`: the editor's live and design views), the program gets a copy of the library of its own; the C# implementation stays where the host
             // renders them itself (`windowRenderer` alone: the tests' renderers), where FIRE_VM_GRAPHICS=cs asks for it, and where the library cannot be had (no C compiler)
             string? graphicsFile = null;

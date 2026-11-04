@@ -6,7 +6,7 @@ namespace fire.Runtime
     /// <summary>
     /// Describes a target a fire program is built for: the operating system or board, the defaults that depend on it
     /// (precision of `float`, stack size of threads), which `#import` libraries exist there, and which platform package
-    /// of the C++ runtime (HAL, see docs/NATIVE_BACKEND.md) implements them.
+    /// of the C++ runtime (HAL, see docs/spec/NATIVE_BACKEND.md) implements them.
     ///
     /// One description is shared by the linker (validates the imports and picks the default float precision), the native
     /// backend (entry point, defines, platform package) and - later - the preprocessor, whose `#if` symbols are
@@ -163,7 +163,7 @@ namespace fire.Runtime
         public bool SupportsThreads { get; init; } = true;
 
         /// <summary>The SDL a window on the desktop (`#import "windows"` on posix and windows) is built with: 2 or 3; 0: the build decides - SDL3 when the toolchain
-        /// can compile and link it (a probe that is remembered), else SDL2; null (the default): no SDL - fire's own display (docs/UI_PLATFORM.md), unless the environment
+        /// can compile and link it (a probe that is remembered), else SDL2; null (the default): no SDL - fire's own display (docs/spec/UI_PLATFORM.md), unless the environment
         /// variable FIRE_SDL=2|3|auto asks for SDL.</summary>
         public int? Sdl { get; init; }
 

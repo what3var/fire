@@ -77,7 +77,7 @@ namespace fire.Terminal.Windows
             OperatingSystem.IsMacOS() || Environment.GetEnvironmentVariable("FIRE_WINDOW_COOPERATIVE") == "1";
 
         /// <param name="rendererFactory">Creates the renderer per window: the host's (the tests, an editor that shows the pictures itself). Without one there is no
-        /// window of the desktop here - the VM shows those through the C library of graphics and windows (fire.Compiler.GraphicsLibrary, docs/UI_PLATFORM.md).</param>
+        /// window of the desktop here - the VM shows those through the C library of graphics and windows (fire.Compiler.GraphicsLibrary, docs/spec/UI_PLATFORM.md).</param>
         /// <param name="hold">Adds holds on the program end (the VM.AddHostHold of the program's main VM): the windows that a manager's thread shows keep the program alive.</param>
         public WindowManager(FramebufferManager framebuffers, Action<LambdaValue, Value[]> callbackRunner,
             Func<IFramebufferRenderer>? rendererFactory = null, Action<int>? hold = null)
@@ -462,7 +462,7 @@ namespace fire.Terminal.Windows
         }
 
         // ---------------------------------------------------------------------------------------------------------------------------------------------
-        // Window managers (fire's `WindowManager`, docs/UI.md): a manager cycles the windows attached to it - on the program's thread (Tick/Run), or,
+        // Window managers (fire's `WindowManager`, docs/ui/README.md): a manager cycles the windows attached to it - on the program's thread (Tick/Run), or,
         // once started, with a thread of its own that owns the OS windows: it opens them, fetches their events and shows the last frame the program
         // published, about 60 times a second. The program's side of a cycle (callbacks, the queue, drawing) still runs on the program's thread: the
         // thread posts the manager's service lambda to it (see the callback runner), which the main program runs at its next safe point.

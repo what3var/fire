@@ -12,7 +12,7 @@ using fire.Projects;
 
 namespace fire.Editor
 {
-    // Projects and solutions (docs/PROJECTS.md): the workspace, the solution explorer, the Project menu, what Start and Build act on.
+    // Projects and solutions (docs/tools/projects.md): the workspace, the solution explorer, the Project menu, what Start and Build act on.
     public partial class MainWindow
     {
         private static readonly FilePickerFileType AllFilesType = new("All files") { Patterns = new[] { "*" } };

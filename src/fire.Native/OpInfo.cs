@@ -5,7 +5,7 @@ namespace fire.Native
     /// <summary>A decoded instruction: address, opcode, operands (in the order of the ISA table), address of the next instruction.</summary>
     public sealed record Instr(int Addr, OpCode Op, int[] A, int Next);
 
-    /// <summary>Operand sizes in bytes per opcode (1 = u8, 2 = u16 little endian), see docs/BYTECODE.md.</summary>
+    /// <summary>Operand sizes in bytes per opcode (1 = u8, 2 = u16 little endian), see docs/spec/BYTECODE.md.</summary>
     public static class OpInfo
     {
         private static IReadOnlyDictionary<OpCode, int[]> Sizes => OperandSizes.Table;

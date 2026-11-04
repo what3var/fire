@@ -14,7 +14,7 @@ namespace fire.Editor
     internal enum TodoScope { Project, Solution }
 
     /// <summary>
-    /// The Todo window (docs/NOTES.md): the tasks of `notes/todo.md` of a project or the solution, grouped by the headings of the file. A click on the mark moves a task on
+    /// The Todo window (docs/tools/notes.md): the tasks of `notes/todo.md` of a project or the solution, grouped by the headings of the file. A click on the mark moves a task on
     /// (open → in progress → done → open), the context menu sets any state (blocked as well), a double click edits the text, the box at the bottom adds a task. Blocked tasks
     /// come first in their group. Every change goes to the file at once, but only to the lines it concerns (<see cref="TodoList"/>).
     /// The window knows only the text: which list it is and where it is written decides the main window (MainWindow.Notes.cs).

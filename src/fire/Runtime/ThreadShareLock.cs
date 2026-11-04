@@ -4,7 +4,7 @@ namespace fire.Runtime
 {
     /// <summary>
     /// A lock assigned to an ENTIRE checked-out ownership tree
-    /// (see docs/THREADING_DESIGN.md section 4.5 "Locking") - not to a
+    /// (see docs/spec/THREADING_DESIGN.md section 4.5 "Locking") - not to a
     /// single node. As soon as an object becomes the target of `taking` for the first time,
     /// it (and recursively all objects owned by it, see
     /// ObjectInstance.ActivateThreadSharing) is assigned a common instance of this

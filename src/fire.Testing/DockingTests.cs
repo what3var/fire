@@ -5,7 +5,7 @@ using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>The ComboBox of the UI library and the package `ui.docking` (docs/DOCKING.md) in the virtual machine: the scripts drive a UI.Root directly with mouse and
+/// <summary>The ComboBox of the UI library and the package `ui.docking` (docs/ui/docking.md) in the virtual machine: the scripts drive a UI.Root directly with mouse and
 /// keys (ui.MouseDown/MouseMove/MouseUp/KeyDown) and print the state.</summary>
 static class DockingTests
 {
@@ -452,7 +452,7 @@ static class DockingTests
             """, new[] { "drag True drop Side side Right preview 200,0 200x300", "right Right 1 0 0", "compass True drop Tab", "tab True 2 active Output right 0 spare 1", "after drop After explorer tabs 1",
                 "after 3 2 Left", "floating True 2 at 220,114" });
 
-        Check("Beispiel wie in docs/DOCKING.md: Symbole aus dem Aufruf und geteilte, alles zusammen gezeichnet", """
+        Check("Beispiel wie in docs/ui/docking.md: Symbole aus dem Aufruf und geteilte, alles zusammen gezeichnet", """
             var dock = new UI.Docking.DockManager()
             ui.Add(dock)
             var tools = new UI.Docking.ToolStrip("Standard")

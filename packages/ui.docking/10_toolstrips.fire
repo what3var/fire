@@ -1,6 +1,6 @@
 #import "ui"
 
-// ui.docking (docs/DOCKING.md): toolstrips (movable bars with buttons, labels, separators, text fields, combo boxes and split buttons; what does not fit goes into an
+// ui.docking (docs/ui/docking.md): toolstrips (movable bars with buttons, labels, separators, text fields, combo boxes and split buttons; what does not fit goes into an
 // overflow menu), the panels at the edges of a window that hold them in rows, a status bar, and a dock manager for tool windows (DockManager, see 30_dock.fire).
 namespace UI.Docking {
     // Where an item of a ToolStrip goes when the strip is too short: AsNeeded (into the overflow menu when it does not fit), Never (always stays in the strip),

@@ -1,4 +1,4 @@
-// JSON (docs/JSON.md): objects to JSON text and back, and free JSON as JsonObject. The work is done by the runtime (__JsonCall).
+// JSON (docs/stdlib/json.md): objects to JSON text and back, and free JSON as JsonObject. The work is done by the runtime (__JsonCall).
 
 /// <summary>A JSON text that cannot be read (with line and column), or a value that does not fit the type it is read into.</summary>
 class JsonException : Exception {

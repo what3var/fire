@@ -11,7 +11,7 @@ namespace fire.Compiler
     }
 
     /// <summary>
-    /// Finds the tests of files (docs/TESTING.md): the methods with `[Test]` of the classes of a file, as `forge test` would run them. The file is only parsed - its `#include`s are
+    /// Finds the tests of files (docs/tools/testing.md): the methods with `[Test]` of the classes of a file, as `forge test` would run them. The file is only parsed - its `#include`s are
     /// left out (what they bring is found in their own file), nothing is compiled or run, so it is quick enough for an editor that refreshes its list after every save.
     /// </summary>
     public static class TestDiscovery

@@ -3,7 +3,7 @@ using fire.Compiler;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>The scene3d package (docs/SCENE3D.md): the program below runs in the VM and as a native build and must print the same.</summary>
+/// <summary>The scene3d package (docs/graphics/3d.md): the program below runs in the VM and as a native build and must print the same.</summary>
 static class Scene3DTests
 {
     public const string Name = "Scene3D: Szene, Kamera, Objekte, Texturen, Licht, Einheiten - nativ == VM";

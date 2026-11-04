@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace fire.Editor
 {
-    /// <summary>Colours for C and C++ (the natives of a project, docs/PROJECTS.md): one pass with one expression, so the parts never overlap - comments and strings first, then preprocessor lines, numbers, words.</summary>
+    /// <summary>Colours for C and C++ (the natives of a project, docs/tools/projects.md): one pass with one expression, so the parts never overlap - comments and strings first, then preprocessor lines, numbers, words.</summary>
     internal static class CppHighlighter
     {
         private static readonly string Keywords = string.Join('|', new[]

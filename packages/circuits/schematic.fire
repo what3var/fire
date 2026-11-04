@@ -1,6 +1,6 @@
 #import "json"
 
-// Schematics (docs/CIRCUITS.md, "Schaltpläne"): a circuit drawn on a grid, the way Paul Falstad's simulator does it. Every element lies between two points of the
+// Schematics (docs/circuits/README.md, "Schaltpläne"): a circuit drawn on a grid, the way Paul Falstad's simulator does it. Every element lies between two points of the
 // grid (a resistor from one end to the other, a transistor from its base to the line of collector and emitter); pins at the same point are connected, wires
 // connect their two ends. The schematic makes the parts of its circuit from the elements and connects their ports; a `.biscuit` file is a schematic as JSON.
 namespace Circuits {

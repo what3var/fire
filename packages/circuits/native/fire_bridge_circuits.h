@@ -1,4 +1,4 @@
-/* fire native bridge "circuits" (C): the kernel behind `#import "circuits"` (docs/CIRCUITS.md). The fire side (Circuits.Circuit and its parts) compiles a circuit
+/* fire native bridge "circuits" (C): the kernel behind `#import "circuits"` (docs/circuits/README.md). The fire side (Circuits.Circuit and its parts) compiles a circuit
  * into a plan the first time it steps after a change: the nodes and branches, the matrix of the parts that do not change from step to step, and tables of the parts
  * that this kernel steps itself (capacitors, inductors, sources). This file runs that plan:
  *

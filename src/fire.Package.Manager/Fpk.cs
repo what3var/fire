@@ -8,7 +8,7 @@ namespace fire.Package.Manager
     {
         public const string ManifestEntry = "package.json";
         public const string Extension = ".fpk";
-        /// <summary>The folder of a package with its templates (docs/TEMPLATES.md).</summary>
+        /// <summary>The folder of a package with its templates (docs/tools/templates.md).</summary>
         public const string TemplatesEntry = "templates";
 
         /// <summary>The result of <see cref="Forge"/>.</summary>

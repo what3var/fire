@@ -462,7 +462,7 @@ namespace UI {
         bool Dragging() { return false }
         bool PanBy(Root root, int dx, int dy) { return false }
 
-        // ---- Drag & drop (docs/UI.md) ----
+        // ---- Drag & drop (docs/ui/README.md) ----
         // A drag starts when the left mouse button is held on the element and the pointer moves a few pixels: OnDragStart (x, y of the press) gives what
         // is dragged (a UI.DragData; undefined: no drag from here - the element around it is asked next). AllowDrop makes the element a target:
         // OnDragOver (data, x, y) says what a drop would do (a UI.DropEffect; undefined: Copy), OnDrop (data, x, y) takes it, OnDragLeave when the pointer

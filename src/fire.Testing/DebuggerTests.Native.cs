@@ -5,7 +5,7 @@ using fire.Debugging;
 using fire.Runtime;
 
 /// <summary>
-/// NativeDebugTarget against a fake agent: a small TCP client in this process that speaks docs/NATIVE_DEBUG_PROTOCOL.md like a native debug build would
+/// NativeDebugTarget against a fake agent: a small TCP client in this process that speaks docs/spec/NATIVE_DEBUG_PROTOCOL.md like a native debug build would
 /// (hello, stopped, thread, exited; breakpoints, continue, step, pause, trace, scopes, globals, this, expand, set, resume, terminate) over a simulated
 /// program - so the spark side is tested without the runtime of the native backend.
 /// </summary>
@@ -71,7 +71,7 @@ static partial class DebuggerTests
             (_loop, _runner) = Begin(mainSteps, token, loopFrom);
         }
 
-        /// <summary>A board on a serial line (framed, docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): first the boot log and a garbled frame, then the hello
+        /// <summary>A board on a serial line (framed, docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport"): first the boot log and a garbled frame, then the hello
         /// (in two pieces, the second after a pause), between the messages console lines, and one frame in the middle of a console line.</summary>
         public FakeAgent(Stream wire, List<FakeStep> mainSteps, List<FakeStep>? threadSteps = null)
         {

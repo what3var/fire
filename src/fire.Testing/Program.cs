@@ -10,7 +10,7 @@ using fire.Values;
 
 // The standard libraries (time, io, graphics, ...): packed from their projects (Source next to the program, copied from packages/ of the repository) and installed into a store of their
 // own for this run (the C++ libraries of their natives are built on first use).
-// every check line numbered against the count of the last run ("OK: [12/530] ..."), every line flushed at once (TestUtils.cs, docs/TESTING.md)
+// every check line numbered against the count of the last run ("OK: [12/530] ..."), every line flushed at once (TestUtils.cs, docs/tools/testing.md)
 TestProgress.Install();
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
@@ -2748,7 +2748,7 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 // =====================================================================
-// Multithreading-Architektur (docs/THREADING_DESIGN.md): Threads + Locking
+// Multithreading-Architektur (docs/spec/THREADING_DESIGN.md): Threads + Locking
 // + taking copy + sync - everything tested directly via the C# API, still without
 // parser/language syntax for fire/taking/sync/process/leave/terminate.
 // =====================================================================
@@ -3001,7 +3001,7 @@ try
         var obj = (ObjectInstance)args[0].AsObjectRef();
         var result = SyncEngine.Sync(obj, blocking: true);
         // The same mapping that the real language syntax will use later
-        // (see docs/THREADING_DESIGN.md 4.1): true/false/undefined.
+        // (see docs/spec/THREADING_DESIGN.md 4.1): true/false/undefined.
         return result switch
         {
             SyncResult.Success => Value.MakeBool(true),
@@ -21984,7 +21984,7 @@ else
             """),
     }).ToArray();
 
-    // Processes (#import "process", docs/PROCESS.md): POSIX shells and pipes - the same in the VM and natively
+    // Processes (#import "process", docs/stdlib/process.md): POSIX shells and pipes - the same in the VM and natively
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Prozesse: Run, Pipes in beide Richtungen, Zeilen-Ereignisse, Umgebung, Arbeitsordner, Fehler, Timeout, Kill, Argumente", """
@@ -22030,7 +22030,7 @@ else
             """),
     }).ToArray();
 
-    // Hash functions (#import "hash", docs/HASH.md): the same digests in the VM and natively, errors as ArgumentException
+    // Hash functions (#import "hash", docs/stdlib/hash.md): the same digests in the VM and natively, errors as ArgumentException
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Hash: SHA-256/1/384/512, MD5, CRC-32, Adler-32, HMAC, Hex, Streams, Fehler", """
@@ -22056,7 +22056,7 @@ else
             """),
     }).ToArray();
 
-    // Compression (#import "compression", docs/COMPRESSION.md): the same bytes in the VM and natively (the Deflate is the package's own C)
+    // Compression (#import "compression", docs/stdlib/compression.md): the same bytes in the VM and natively (the Deflate is the package's own C)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Compression: Deflate/zlib/gzip in einem Rutsch und als Streams, Zip schreiben/lesen/entpacken, kaputte Daten, Zip-Slip", """
@@ -22518,7 +22518,7 @@ else
             """),
     }).ToArray();
 
-    // JSON (#import "json", docs/JSON.md): the VM (JsonMethods) and the native runtime (fire_json.h) write and read the same text
+    // JSON (#import "json", docs/stdlib/json.md): the VM (JsonMethods) and the native runtime (fire_json.h) write and read the same text
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Json: Zyklen ($id/$ref), Einheiten, NonSerialized/JsonName, List, any-Werte, eingerueckt, Lesen, Parse, Fehler", """
@@ -22806,7 +22806,7 @@ else
             """),
     }).ToArray();
 
-    // The device framework (docs/DEVICES.md): drivers of gpio, i2c and spi with their simulated devices
+    // The device framework (docs/devices/README.md): drivers of gpio, i2c and spi with their simulated devices
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Devices: DeviceManager.AddDriver/Get, GPIO-Port (ganzer Port, PinAt), I2C-Bus und Geraet an Adresse, SPI, NotSupportedException, eigener Treiber", """
@@ -26078,7 +26078,7 @@ else
         // (the trim cases and the TLS case under Wine at the same time)
         TestJobs.Concurrently(() =>
         {
-            // Leaving out what the program does not reach (docs/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): the stripping levels 0 (none, = the VM),
+            // Leaving out what the program does not reach (docs/spec/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): the stripping levels 0 (none, = the VM),
             // 1 (protected: every class and public member stays), 2 (methods: every class with constructors, fields and properties, a method only when used) and
             // 3 (all, the default: only what is reached); names given as literals to reflection always stay, a lookup of what was left out is an error that says so
             // (the VM has every class and member, so only a native build can hit it).
@@ -26282,7 +26282,7 @@ else
                     trAliasChecks.All(c => c.Ok), string.Join(", ", trAliasChecks.Where(c => !c.Ok).Select(c => c.Name)));
 
                 // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11 (the style of part 3 - corners,
-                // shadows, the surfaces of popups, docs/UI_PLATFORM.md - added about 25 KB; up to 4 MB is fine)
+                // shadows, the surfaces of popups, docs/spec/UI_PLATFORM.md - added about 25 KB; up to 4 MB is fine)
                 const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
                 var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
                 var trUiSizes = trLevels.Select(lv => fire.Native.CppGenerator.GenerateSources(trUiLinked, stripping: lv).Program.Length).ToArray();
@@ -26466,7 +26466,7 @@ else
         Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
         TestJobs.Concurrently(() =>
         {
-            // ---- The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): the program driven over the protocol, against the VM (NativeDebugTests.cs)
+            // ---- The debugger of native debug builds (docs/spec/NATIVE_DEBUG_PROTOCOL.md): the program driven over the protocol, against the VM (NativeDebugTests.cs)
             NativeDebugTests.Run(CheckNat, cxx, workDir, sanitize);
         }, () =>
         {

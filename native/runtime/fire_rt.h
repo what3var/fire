@@ -1,6 +1,6 @@
 /* fire native runtime - the core that the code `fire.Native` generates from the bytecode is built on.
  *
- * Design rules (see docs/NATIVE_BACKEND.md):
+ * Design rules (see docs/spec/NATIVE_BACKEND.md):
  *  * Same semantics as the C# VM; the test suite runs programs on both and compares the output.
  *  * Plain C11 (no exceptions, no RTTI, no C++): the generated program is C and builds with any C compiler - gcc, clang, MSVC, TinyCC, the compilers of
  *    microcontrollers. The file compiles as C++ as well: the natives of packages that are written in C++ include it (their functions are then in namespace
@@ -29,7 +29,7 @@
 #include "fire_pkg_abi.h"   /* (the library for the VM: the host structure) */
 #endif
 
-/* The platform layer (docs/NATIVE_BACKEND.md, "Plattformschicht"): everything that depends on the operating system or the board - exit, clock, and for fire
+/* The platform layer (docs/spec/NATIVE_BACKEND.md, "Plattformschicht"): everything that depends on the operating system or the board - exit, clock, and for fire
  * threads the mutex, the condition variable, the thread and where the per-thread state lives - is one header per platform package. The generated file names
  * it (FIRE_PLATFORM_HEADER, from the target configuration); without a name the host's own is taken. */
 #ifndef FIRE_PLATFORM_HEADER
@@ -86,7 +86,7 @@
 #define FIRE_TLS
 #endif
 
-/* Linkage "shared" on Windows (FIRE_DLL, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): the runtime is a DLL of its own (FIRE_DLL_RUNTIME: the translation unit that
+/* Linkage "shared" on Windows (FIRE_DLL, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): the runtime is a DLL of its own (FIRE_DLL_RUNTIME: the translation unit that
  * is it), the program and the DLLs of the library modules import its state (FIRE_RT_DATA) and functions (FIRE_RT_FN). A DLL cannot import from the program: what the
  * runtime or a module calls of the program's code (the hooks: makeClassError, the JSON tables, ...) and the program's data (g_dimNames, the tables of the modules) are
  * pointers in the DLL (FIRE_DLL_LINKED: the generated head names them `(*fire_hp_name)`), filled by its fire_link_* function from the program's table when it starts. */
@@ -2011,7 +2011,7 @@ FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
  * and its base classes (derived class first, NULL: none), ToString() (NULL: none) and the exception types (the ids of `catch (T e)`, HandlerInfo.types) an
  * object of the class is, ending with -1 (NULL: none). */
 #ifdef FIRE_MODULES
-/* Modules (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): every module serves the members of its own classes itself (its dispatchers switch over
+/* Modules (ROADMAP 9, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): every module serves the members of its own classes itself (its dispatchers switch over
  * them); an object of a class it does not know - of a module that needs it, of the program, of a plugin - is served through the members the class's module
  * declares by name. A table of one module for one class: its methods sorted by name (strcmp) and number of arguments (one row per number a method takes, with
  * its number of parameters), its fields sorted by name; `k` is the class as the functions of that module number it. A function of a row serves the class `k`
@@ -2060,7 +2060,7 @@ FIRE_RT_FN const TArg* fireTArgOf(Obj* o, const char* cls, int k);
 FIRE_RT_FN void fireProbeRawSet(Value obj, const char* name, Value value, OwnList* list, uint32_t caller);
 FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
 
-/* ---- fire plugins (ROADMAP 9, phase D b; docs/NATIVE_BACKEND.md "Plugins"): a library module built on its own (`--linkage plugin`), loaded while the program
+/* ---- fire plugins (ROADMAP 9, phase D b; docs/spec/NATIVE_BACKEND.md "Plugins"): a library module built on its own (`--linkage plugin`), loaded while the program
  * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
  * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
  * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
@@ -2108,7 +2108,7 @@ typedef struct FirePlugin {
     uint32_t nexts;
     const char* const* extClasses;
     const FireMembers* const* extTables;
-    /* a debug build (0/NULL otherwise; docs/NATIVE_DEBUG_PROTOCOL.md "sources"): its sources (file, hash) in the order of fire_dbgsrc_<p>, which the runtime fills with
+    /* a debug build (0/NULL otherwise; docs/spec/NATIVE_DEBUG_PROTOCOL.md "sources"): its sources (file, hash) in the order of fire_dbgsrc_<p>, which the runtime fills with
      * their indexes after the program's (the debugger hears them), and its class k for the debugger (const DbgClass*: the names of its fields) */
     uint32_t nsources;
     const char* const* srcFiles;
@@ -3127,7 +3127,7 @@ FIRE_FN Value charCall(int64_t method, Value ch, OwnList* list) {
     }
 }
 
-/* ---- embedded files: `new Resource("path")` (docs/RESOURCES.md) ------------------------------------------------------------------------------------------------- */
+/* ---- embedded files: `new Resource("path")` (docs/stdlib/resources.md) ------------------------------------------------------------------------------------------------- */
 /* The files the compiler embedded in the program: the generated file points these at its table (a library without resources has none). */
 typedef struct ResEntry { const char* name; const uint8_t* data; uint32_t length; } ResEntry;
 extern FIRE_RT_DATA const ResEntry* g_resources;
@@ -3451,7 +3451,7 @@ typedef struct RfClass {
     const char* const* declIfaces; uint32_t nDeclIfaces;    /* the ones it names itself: Type.DeclaredInterfaces */
     const RfMember* members; uint32_t nMembers;
     Value (*attrs)(OwnList* list);    /* the attributes before the class (generated), null: none */
-    const char* const* stripped; uint32_t nStripped;   /* the methods stripping left out, after the highest level that keeps them ("1Bark"; docs/NATIVE_BACKEND.md) */
+    const char* const* stripped; uint32_t nStripped;   /* the methods stripping left out, after the highest level that keeps them ("1Bark"; docs/spec/NATIVE_BACKEND.md) */
     Value (*make)(int argc, const Value* items, OwnList* list, uint32_t caller);   /* a class of a plugin: Reflect.New (NULL: the program knows the class) */
 } RfClass;
 
@@ -5910,7 +5910,7 @@ FIRE_FN Value print(Value v, OwnList* list) {
 
 #ifdef FIRE_THREADS
 /* ---------------------------------------------------------------------------------------------------------------------
- * Fire threads (docs/THREADING_DESIGN.md): `fire { }` starts a real thread. All fire code runs while the thread holds the GIL (a fair ticket lock); a thread
+ * Fire threads (docs/spec/THREADING_DESIGN.md): `fire { }` starts a real thread. All fire code runs while the thread holds the GIL (a fair ticket lock); a thread
  * gives it up when it waits (sync, process, Sleep) and now and then at a safe point, so the ownership structures, the handle table and the reference counts
  * never see two threads at once. The mutexes and condition variables are set up by fire_threadsInit() (called by the generated main before anything else).
  * --------------------------------------------------------------------------------------------------------------------- */
@@ -6846,7 +6846,7 @@ FIRE_FN void hostServe(void) {
     g_noSyncDepth--;
 }
 
-/* When the main program serves its queue by itself (docs/THREADING_DESIGN.md section 7; `SetAutoSync`, the same values as fire.Runtime.GlobalJobsMode):
+/* When the main program serves its queue by itself (docs/spec/THREADING_DESIGN.md section 7; `SetAutoSync`, the same values as fire.Runtime.GlobalJobsMode):
  * GJ_SAFEPOINTS (the default) at a loop's jump back and while waiting (`Sleep`, the wait functions), GJ_SLEEP only while waiting, GJ_SYNC never (`#nosync`);
  * `sync globals` and the end of the program always. A call (function entry) and a native call (`print`) are no safe points for it - as in the VM. */
 enum { GJ_SYNC = 0, GJ_SAFEPOINTS = 1, GJ_SLEEP = 2 };

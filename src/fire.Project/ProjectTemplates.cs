@@ -18,7 +18,7 @@ namespace fire.Projects
 
         /// <summary>The starting header of a project that gets natives later ("Add Native Code").</summary>
         public static string NativeHeader(string name, string ident) => $$"""
-            // The natives of {{name}}: C++ functions on Value, in namespace fire (docs/PACKAGE_NATIVES.md).
+            // The natives of {{name}}: C++ functions on Value, in namespace fire (docs/packages/natives.md).
             // Every `inline Value name(Value a, ...)` below becomes the fire function `__name` that the prelude wraps.
             #pragma once
             #include <cstdint>

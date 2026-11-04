@@ -9,7 +9,7 @@ namespace UI {
         static int Transparent() { return 256 }
     }
 
-    // Layout: how an element sits in the slot its container gives it (docs/UI.md). Enums are plain ints.
+    // Layout: how an element sits in the slot its container gives it (docs/ui/README.md). Enums are plain ints.
     enum HAlign { Stretch = 0, Left = 1, Center = 2, Right = 3 }
     enum VAlign { Stretch = 0, Top = 1, Center = 2, Bottom = 3 }
     // Where a child of a DockPanel sits (the last child fills what is left, unless lastChildFill is off)
@@ -339,7 +339,7 @@ namespace UI {
         bool External { get { return this.Source == undefined } }
     }
 
-    // Converters of the data bindings of the markup (docs/UI_MARKUP.md): Convert goes from the source to the property of the element, ConvertBack the other
+    // Converters of the data bindings of the markup (docs/ui/markup.md): Convert goes from the source to the property of the element, ConvertBack the other
     // way (TwoWay). Derive from Converter for your own and override what you need.
     class Converter {
         any Convert(any value) { return value }

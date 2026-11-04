@@ -21,7 +21,7 @@ namespace fire.Package.Manager
         public List<string> Dependencies { get; set; } = new();
         /// <summary>The imports (`#import "name"`) the package provides.</summary>
         public List<PackageImport> Imports { get; set; } = new();
-        /// <summary>A folder with the templates the package brings (`Code/` and `Project/` below it, see docs/TEMPLATES.md): in the forge file a path (relative to the file; none given: `templates/` next to
+        /// <summary>A folder with the templates the package brings (`Code/` and `Project/` below it, see docs/tools/templates.md): in the forge file a path (relative to the file; none given: `templates/` next to
         /// it, if there is one), in the package `templates`.</summary>
         public string? Templates { get; set; }
 
@@ -122,12 +122,12 @@ namespace fire.Package.Manager
         public List<string> Requires { get; set; } = new();
         /// <summary>The natives as C++ source (only for the native backend). Optional.</summary>
         public PackageNative? Native { get; set; }
-        /// <summary>The files the prelude embeds with `new Resource("path")` (docs/RESOURCES.md): the key is the path as the prelude writes it (relative to the prelude's folder,
+        /// <summary>The files the prelude embeds with `new Resource("path")` (docs/stdlib/resources.md): the key is the path as the prelude writes it (relative to the prelude's folder,
         /// with `/`), the value the file - in a forge file where it is now, in a package where it lies in the package (the prelude's folder + the key).</summary>
         public Dictionary<string, string>? Resources { get; set; }
         /// <summary>The device drivers of the import (classes of the device framework, made with `new Class()`): the IDE loads them and lists their devices. null: none.</summary>
         public List<string>? Drivers { get; set; }
-        /// <summary>`false`: the classes of the prelude cannot be written to or read from JSON (docs/JSON.md; like `[NotSerializable]` on each, derived classes included) - a
+        /// <summary>`false`: the classes of the prelude cannot be written to or read from JSON (docs/stdlib/json.md; like `[NotSerializable]` on each, derived classes included) - a
         /// native build never keeps them for JSON. null: serializable.</summary>
         public bool? Serializable { get; set; }
     }

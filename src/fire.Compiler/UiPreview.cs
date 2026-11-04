@@ -27,7 +27,7 @@ namespace fire.Compiler
         public IReadOnlyList<PreviewRect> Rects { get; init; } = Array.Empty<PreviewRect>();
     }
 
-    /// <summary>The design view of the editor (docs/UI_MARKUP.md): draws the interface of a markup document with the library `ui` itself - the same code that runs in the program - into a framebuffer behind a
+    /// <summary>The design view of the editor (docs/ui/markup.md): draws the interface of a markup document with the library `ui` itself - the same code that runs in the program - into a framebuffer behind a
     /// window that shows nothing, and reports where the elements are. No handlers run and no code of the program (see <see cref="FireUiGenerator.GeneratePreview"/>).</summary>
     public static class UiPreview
     {

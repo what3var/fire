@@ -7,7 +7,7 @@ using fire.Projects;
 namespace fire.Compiler
 {
     /// <summary>
-    /// The standard libraries as projects (docs/PACKAGES.md): the folder <c>Source</c> next to the programs holds <c>Packages.firesln</c> with one library project per import (`time`, `io`,
+    /// The standard libraries as projects (docs/packages/README.md): the folder <c>Source</c> next to the programs holds <c>Packages.firesln</c> with one library project per import (`time`, `io`,
     /// `graphics`, ...): its prelude as fire source, its C++ in <c>native/</c>, its tests in <c>testing/</c>. When spark, forge or ember start, <see cref="EnsureInstalled"/> packs the projects
     /// that are not installed yet, or that changed since they were installed, and installs them (without their tests). A library that was built for this machine with the programs
     /// (<c>Prebuilt/</c>, see <see cref="Prebuild"/>) goes along when its C++ is still the same, so that the virtual machine needs no C++ compiler for it.

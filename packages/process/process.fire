@@ -120,7 +120,7 @@ class ProcessStream : IO.Stream {
     }
 }
 
-/// <summary>A program that runs as a process of its own (docs/PROCESS.md).
+/// <summary>A program that runs as a process of its own (docs/stdlib/process.md).
 ///
 ///     var r = Process.Run("git", ["status", "--short"])
 ///     print(r.ExitCode + ": " + r.Output)

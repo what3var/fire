@@ -54,7 +54,7 @@ namespace fire.Runtime
         /// the ESP32). The VM and the native backend compute with the same precision (SPEC 8.2.1).</summary>
         public int FloatWidth { get; init; } = 64;
 
-        /// <summary>The natives of graphics and windows in registration order when the program runs them through their C implementation (docs/UI_PLATFORM.md, part 2): a packed program
+        /// <summary>The natives of graphics and windows in registration order when the program runs them through their C implementation (docs/spec/UI_PLATFORM.md, part 2): a packed program
         /// binds them to the library of both in its payload (null: the C# implementation, or no graphics).</summary>
         public List<string>? GraphicsNatives { get; init; }
 
@@ -64,11 +64,11 @@ namespace fire.Runtime
         public IReadOnlyList<string?>? SourceFiles { get; init; }
 
         /// <summary>The SHA-256 (hex, lower case) of the UTF-8 text of each source of the program as the compiler got it, by source index; null for the prelude, the libraries and
-        /// the preludes of imports. Only known while linking (not serialized): a native debug build sends them to the debugger (docs/NATIVE_DEBUG_PROTOCOL.md).</summary>
+        /// the preludes of imports. Only known while linking (not serialized): a native debug build sends them to the debugger (docs/spec/NATIVE_DEBUG_PROTOCOL.md).</summary>
         [MemoryPackIgnore]
         public IReadOnlyList<string?>? SourceHashes { get; init; }
 
-        /// <summary>The module of each source of the program, by source index (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Uebersetzung"): `core` for the prelude of the compiler,
+        /// <summary>The module of each source of the program, by source index (ROADMAP 9, docs/spec/NATIVE_BACKEND.md "Getrennte Uebersetzung"): `core` for the prelude of the compiler,
         /// the import key for the prelude of an import, the import name for the files of a library of the project, null for the program itself. Only known while
         /// linking (not serialized): the native backend builds each module on its own when the linkage asks for it.</summary>
         [MemoryPackIgnore]

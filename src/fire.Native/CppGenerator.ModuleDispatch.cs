@@ -8,7 +8,7 @@ using fire.Ast;
 namespace fire.Native
 {
     /// <summary>
-    /// Every module serves its own classes (ROADMAP 9, phase B2; docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): with modules (linkage "static", FIRE_MODULES=1)
+    /// Every module serves its own classes (ROADMAP 9, phase B2; docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): with modules (linkage "static", FIRE_MODULES=1)
     /// each module - a library or the program - generates the dispatchers, field helpers, `is of`, operators, class scores and type arguments of objects for
     /// the call sites of its own code, switching over its own classes only (a library numbers them from 0: `cls - fire_mb_M`). An object of a class the module
     /// does not serve - of another module, a class of the program derived from a class of a library, later a plugin - goes through the runtime: every module

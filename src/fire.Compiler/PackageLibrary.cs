@@ -7,7 +7,7 @@ using fire.Runtime;
 namespace fire.Compiler
 {
     /// <summary>
-    /// The natives of a package for the virtual machine (docs/PACKAGE_NATIVES.md): the C++ source of an import is built into a shared library with the C ABI of native/abi/fire_pkg_abi.h
+    /// The natives of a package for the virtual machine (docs/packages/natives.md): the C++ source of an import is built into a shared library with the C ABI of native/abi/fire_pkg_abi.h
     /// - a generated wrapper around the functions, compiled together with the runtime and the sources, for the platform of this machine (`platformSources` of the package for it are
     /// used) - and the VM calls it. A package may bring a prebuilt library for the machine (<c>native.libraries</c>), which is used as it is. The built libraries are kept in the
     /// folder of the package (<c>lib/&lt;runtime identifier&gt;/</c>; a folder in the temporary files when that cannot be written) and are built again when a source is newer.

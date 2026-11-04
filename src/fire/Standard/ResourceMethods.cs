@@ -27,7 +27,7 @@ namespace fire.Standard
 
         public static string PreludeSource { get; } = """
 
-            // An embedded file (docs/RESOURCES.md): `new Resource("images/logo.png")` - the compiler reads the file, embeds it and replaces the path by the number of the resource.
+            // An embedded file (docs/stdlib/resources.md): `new Resource("images/logo.png")` - the compiler reads the file, embeds it and replaces the path by the number of the resource.
             class Resource {
                 int id
 

@@ -87,7 +87,7 @@ namespace fire.Compiler
             return path;
         }
 
-        /// <summary>The stripping level of a build (docs/NATIVE_BACKEND.md "Größe des Programms"): the command line (`--stripping`, `--keep-all`), then the project's
+        /// <summary>The stripping level of a build (docs/spec/NATIVE_BACKEND.md "Größe des Programms"): the command line (`--stripping`, `--keep-all`), then the project's
         /// setting, then fire.native.json; null: the default (3; a debug build keeps everything).</summary>
         public static StrippingLevel? StrippingOf(NativeConfig config, fire.Projects.BuildPlan? plan) =>
             !config.StrippingFromCommandLine && Strippings.Parse(plan?.Settings.Stripping) is { } fromProject ? fromProject : config.Stripping;
@@ -193,7 +193,7 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Linkage "static" (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): every library module (the prelude, each import, each library of the project) is a
+        /// <summary>Linkage "static" (ROADMAP 9, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): every library module (the prelude, each import, each library of the project) is a
         /// static library in the user-wide cache, built once for its content and the switches of the program; the program's own C is compiled and linked with them. A module
         /// that cannot be built on its own yet: the build falls back to linkage "source" and says so.</summary>
         private static NativeBuildResult BuildStatic(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
@@ -401,7 +401,7 @@ namespace fire.Compiler
             return null;
         }
 
-        /// <summary>Linkage "static" with a toolchain that only writes files (an ESP-IDF component, docs/NATIVE_BACKEND.md): the program's C and the C of every library module
+        /// <summary>Linkage "static" with a toolchain that only writes files (an ESP-IDF component, docs/spec/NATIVE_BACKEND.md): the program's C and the C of every library module
         /// (from the cache, generated once) as translation units of their own; the build system of the board (idf.py) compiles them into the component's library.</summary>
         private static NativeBuildResult WriteStaticFiles(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode, int? floatWidth, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths)
@@ -581,7 +581,7 @@ namespace fire.Compiler
                         if (!libs.Contains(flag)) libs.Add(flag);
                     }
             // a debug build (mode debug, `#define FIRE_DEBUG 1` at the top of the program): no optimization, debug information, not stripped - for the debugger of spark
-            // and for gdb/lldb (docs/NATIVE_BACKEND.md "Debug-Builds") (a debug plugin too: its lines are debugged in the program)
+            // and for gdb/lldb (docs/spec/NATIVE_BACKEND.md "Debug-Builds") (a debug plugin too: its lines are debugged in the program)
             bool debugBuild = (!sharedLibrary || Path.GetFileName(linkSource) == "fire_plugin.c") && File.Exists(linkSource) && File.ReadLines(linkSource).Take(60).Any(l => l.StartsWith("#define FIRE_DEBUG 1", StringComparison.Ordinal));
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
             var libDirs = new List<string>();

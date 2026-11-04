@@ -1,4 +1,4 @@
-/* fire native bridge "tls" (C): the natives behind `#import "tls"` (docs/NETWORK.md) - TLS on top of a TCP socket of the net package: a client handshake
+/* fire native bridge "tls" (C): the natives behind `#import "tls"` (docs/networking/README.md) - TLS on top of a TCP socket of the net package: a client handshake
  * (certificate and host name verified), a server with a certificate, reading and writing the encrypted stream. The fire side (Net.TlsStream, Net.TlsServer, ...
  * - fire source) is the same in the VM and in a native build.
  *

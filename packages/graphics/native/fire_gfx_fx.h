@@ -1,4 +1,4 @@
-/* fire graphics package: drawing helpers and effects in software (docs/UI_PLATFORM.md, "Zeichnen: Helfer und Effekte") - for the VM and native builds alike, and the
+/* fire graphics package: drawing helpers and effects in software (docs/spec/UI_PLATFORM.md, "Zeichnen: Helfer und Effekte") - for the VM and native builds alike, and the
  * reference for a GPU backend later.
  *
  *   fire_gfx_fxFillRoundRect    a rounded rectangle, antialiased at its edges (coverage per pixel only where the edge is; the inside is spans)

@@ -165,7 +165,7 @@ Member 'Dog.Wag' was left out of the build (stripping 2). Add [Keep] to 'Dog.Wag
 ```
 
 (a `ReflectionException`; for a private member the advice is stripping 0). `Type.Names()` lists the classes that are there, `Reflect.Has(obj, name)` is false for a
-method that was left out. The JSON `"$type"` is data of the run as well: at level 3 it can only name the classes reading can make (docs/JSON.md).
+method that was left out. The JSON `"$type"` is data of the run as well: at level 3 it can only name the classes reading can make (docs/stdlib/json.md).
 
 ```fire
 #import "reflection"

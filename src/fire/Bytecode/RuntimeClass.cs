@@ -124,7 +124,7 @@ namespace fire.Bytecode
         /// <summary>The members of THIS class that are marked `[Keep]` (fields, properties, methods by name); null: none.</summary>
         public List<string>? KeptMembers { get; set; }
 
-        /// <summary>The class itself is excluded from JSON (`[NotSerializable]` before it, or `"serializable": false` in the package that declares it, docs/JSON.md);
+        /// <summary>The class itself is excluded from JSON (`[NotSerializable]` before it, or `"serializable": false` in the package that declares it, docs/stdlib/json.md);
         /// a derived class is excluded as well (see <see cref="IsNotSerializable"/>).</summary>
         public bool NotSerializable { get; set; }
 
@@ -265,7 +265,7 @@ namespace fire.Bytecode
         /// (see Compiler.CompileConstructorProto).
         /// Basis for FieldIndex/Runtime.FieldStore (SPEC optimisation:
         /// field access via a fixed array slot instead of a dictionary
-        /// lookup per access, see docs/BYTECODE.md). Computed once
+        /// lookup per access, see docs/spec/BYTECODE.md). Computed once
         /// and cached - as with FindMethod (see there) the same holds: Fields/Base
         /// are filled ONLY during the one-time compilation, never
         /// changed afterwards at runtime, so the cache is permanently

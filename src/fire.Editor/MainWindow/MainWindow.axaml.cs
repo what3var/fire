@@ -69,7 +69,7 @@ namespace fire.Editor
             Markdown,
             /// <summary>A packet trace (recorded live or loaded from a .fplog file).</summary>
             PacketLog,
-            /// <summary>The markup of a user interface (.fxml, docs/UI_MARKUP.md) with its design view.</summary>
+            /// <summary>The markup of a user interface (.fxml, docs/ui/markup.md) with its design view.</summary>
             UiMarkup,
             /// <summary>A text file that is no fire code: the C++ of natives, notes, data.</summary>
             Text,
@@ -79,7 +79,7 @@ namespace fire.Editor
             Pixel,
             /// <summary>Any file as bytes in the hex editor.</summary>
             Hex,
-            /// <summary>The schematic of a circuit (.biscuit, docs/CIRCUITS.md), edited and simulated live.</summary>
+            /// <summary>The schematic of a circuit (.biscuit, docs/circuits/README.md), edited and simulated live.</summary>
             Circuit,
         }
 
@@ -154,7 +154,7 @@ namespace fire.Editor
         private static DocumentKind KindOfPath(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
-            if (ext is ".md" or ".xmd" or ".markdown" or ".mdown") return DocumentKind.Markdown;   // .xmd: a canvas (docs/NOTES.md)
+            if (ext is ".md" or ".xmd" or ".markdown" or ".mdown") return DocumentKind.Markdown;   // .xmd: a canvas (docs/tools/notes.md)
             if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
             if (ext == ".fxml") return DocumentKind.UiMarkup;
             if (ext == ".biscuit") return DocumentKind.Circuit;

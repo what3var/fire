@@ -13,7 +13,7 @@ namespace fire.Runtime
     }
 
     /// <summary>
-    /// The network policy of the HOST (editor, runtime, an embedding program) for scripts that use the net package (docs/NETWORK.md): every connection, listener, datagram and name lookup asks
+    /// The network policy of the HOST (editor, runtime, an embedding program) for scripts that use the net package (docs/networking/README.md): every connection, listener, datagram and name lookup asks
     /// <see cref="IsAllowed"/> first. The script can neither see nor change the policy; a refused access becomes a catchable <c>Net.PermissionException</c> in fire. Like
     /// <see cref="fire.IO.Bridge.IoPolicy"/> for files. The default of a program started by hand is <see cref="AllowAll"/>.
     /// </summary>

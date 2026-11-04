@@ -5,7 +5,7 @@ using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>fire's `WindowManager` in the virtual machine (docs/UI.md): windows cycled on the program's thread (`Run`, `Tick`) or shown by a thread of the
+/// <summary>fire's `WindowManager` in the virtual machine (docs/ui/README.md): windows cycled on the program's thread (`Run`, `Tick`) or shown by a thread of the
 /// manager (`Show`, `Start`), whose cycles the program runs at its safe points and at its end. The OS window is a fake that closes after a number of pumps
 /// and remembers the thread that opened and pumped it.</summary>
 static class WindowManagerTests

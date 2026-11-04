@@ -181,7 +181,7 @@ static void fire_winb_stateDelete(FireWinState* w) {
 #define FIRE_WIN_MAX_QUEUED_EVENTS 4096
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------------
- * Window managers (fire's WindowManager, docs/UI.md): a manager cycles the windows attached to it - on the program's thread (Tick/Run), or, once started,
+ * Window managers (fire's WindowManager, docs/ui/README.md): a manager cycles the windows attached to it - on the program's thread (Tick/Run), or, once started,
  * with a thread of its own that opens the OS windows, fetches their events and shows the last frame the program published, about 60 times a second. The
  * program's side of a cycle (callbacks, the queue, drawing) still runs on the program's thread: the thread asks the main program (hostRequest) to run the
  * manager's service lambda at its next safe point.

@@ -107,7 +107,7 @@ class Framebuffer {
     // Raw data: RGBA 4 bytes per pixel (R, G, B, A), palette 1 byte per pixel (the index); ByteCount() is the size.
     int ByteCount() { return __GRPHFbByteCount(this.id) }
 
-    // On the GPU (docs/UI_PLATFORM.md, part 4): the drawing the GPU does goes there; the pixels come back only when something reads them (GetPixel, a window, a
+    // On the GPU (docs/spec/UI_PLATFORM.md, part 4): the drawing the GPU does goes there; the pixels come back only when something reads them (GetPixel, a window, a
     // drawing the GPU does not do) - and only when the GPU drew since. false where there is no GPU (Framebuffer.GpuError() says why), for a palette framebuffer,
     // on a board. FIRE_GFX_GPU=1 in the environment puts every RGBA framebuffer there.
     bool Accelerated {
@@ -604,7 +604,7 @@ class Renderer {
         pen.Width = w
     }
 
-    // ---- rounded rectangles and effects (docs/UI_PLATFORM.md): antialiased at their edges; the radius is clamped to half the shorter side (0: a plain rectangle) ----
+    // ---- rounded rectangles and effects (docs/spec/UI_PLATFORM.md): antialiased at their edges; the radius is clamped to half the shorter side (0: a plain rectangle) ----
     undefined FillRoundRect(int x, int y, int w, int h, int radius, Brush brush) {
         if (this.scale == 1.0) { __GRPHRndFillRoundRect(this.id, x, y, w, h, radius, brush.id); return }
         __GRPHRndFillRoundRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), brush.id)

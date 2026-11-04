@@ -11,7 +11,7 @@ using fire.Package.Manager;
 namespace fire.Editor
 {
     /// <summary>
-    /// The package manager (ember) in the editor: search the package sources, install and remove packages (docs/PACKAGES.md). It works on the same global store and sources as the
+    /// The package manager (ember) in the editor: search the package sources, install and remove packages (docs/packages/README.md). It works on the same global store and sources as the
     /// command line tool `ember`: what is installed here can be imported (`#import "name"`) by every script.
     /// </summary>
     public partial class PackageManagerDialog : Window

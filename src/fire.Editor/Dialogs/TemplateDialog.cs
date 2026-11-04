@@ -30,7 +30,7 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// "New Solution", "New Project" and "New File" (docs/TEMPLATES.md): the templates in ONE flat list (what ships with fire, the user's own and those of packages side by side) with a
+    /// "New Solution", "New Project" and "New File" (docs/tools/templates.md): the templates in ONE flat list (what ships with fire, the user's own and those of packages side by side) with a
     /// search bar; each shows an icon, its title, a short description and where it comes from ("Local" or "From Package 1.2.3"). Below: the name - for a file the extension is shown behind
     /// it and added automatically - and, for a project or a solution, the place. The result is in <see cref="Template"/>, <see cref="Name"/> and <see cref="Location"/>.
     /// </summary>

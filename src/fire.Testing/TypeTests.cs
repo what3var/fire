@@ -2,7 +2,7 @@ using fire.Compiler;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>The type checker (docs/TYPES.md, step 1): conflicts between known types are warnings (lax) or errors (strict), `var` needs an initializer.</summary>
+/// <summary>The type checker (docs/spec/TYPES.md, step 1): conflicts between known types are warnings (lax) or errors (strict), `var` needs an initializer.</summary>
 static class TypeTests
 {
     private static int _failures;

@@ -1,4 +1,4 @@
-/* fire native bridge "i2c" (C): the natives behind `#import "i2c"` (docs/NETWORK.md, "I2C"): the I2C bus as a controller - write to a device, read from it, write
+/* fire native bridge "i2c" (C): the natives behind `#import "i2c"` (docs/networking/README.md, "I2C"): the I2C bus as a controller - write to a device, read from it, write
  * then read with a repeated start, look which addresses answer. The fire side (I2c.Bus, I2c.Board, I2c.Sim - fire source) is the same in the VM and in a native
  * build; this file is what its `__I2c...` functions do.
  *

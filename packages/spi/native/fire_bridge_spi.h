@@ -1,4 +1,4 @@
-/* fire native bridge "spi" (C): the natives behind `#import "spi"` (docs/NETWORK.md, "SPI"): the SPI bus as a controller - a device is a bus with one chip
+/* fire native bridge "spi" (C): the natives behind `#import "spi"` (docs/networking/README.md, "SPI"): the SPI bus as a controller - a device is a bus with one chip
  * select; a transfer sends and receives bytes at the same time. The fire side (Spi.Device, Spi.Board, Spi.Sim - fire source) is the same in the VM and in a
  * native build; this file is what its `__Spi...` functions do.
  *

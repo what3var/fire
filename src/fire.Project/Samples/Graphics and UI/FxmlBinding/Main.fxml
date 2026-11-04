@@ -1,4 +1,4 @@
-<!-- The interface. The compiler turns it into a base class; main.fire (the code-behind) inherits from it. docs/UI_MARKUP.md -->
+<!-- The interface. The compiler turns it into a base class; main.fire (the code-behind) inherits from it. docs/ui/markup.md -->
 <Window Class="Main" Title="People" Width="520" Height="320">
   <Resources>
     <Converter Key="Upper" Type="UpperConverter"/>

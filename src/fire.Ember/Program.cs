@@ -2,7 +2,7 @@ using fire.Package.Manager;
 
 namespace fire.Ember
 {
-    /// <summary>ember: the command line of the package manager (docs/PACKAGES.md).</summary>
+    /// <summary>ember: the command line of the package manager (docs/packages/README.md).</summary>
     internal static class Program
     {
         private const string Usage = """

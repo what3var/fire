@@ -12,7 +12,7 @@ namespace fire.Compiler
         public int Column { get; }
         /// <summary>The message without the position.</summary>
         public string RawMessage { get; }
-        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        /// <summary>The code of the message (docs/tools/errors.md).</summary>
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Lexer, RawMessage);
 
         public LexException(string message, int line, int column)

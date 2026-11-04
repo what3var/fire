@@ -8,7 +8,7 @@ namespace fire.Runtime
 {
     /// <summary>
     /// The VM's side of the reflection library (`#import "reflection"`, see <see cref="ReflectionNatives"/> and
-    /// docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): accesses to members by name go via the same paths as normal code
+    /// docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md): accesses to members by name go via the same paths as normal code
     /// (access check, units, property accessors, sections of the globals) - except that the "caller" for private/protected accesses is the
     /// code that called the library (<see cref="ReflectionCallerClass"/>).
     /// </summary>

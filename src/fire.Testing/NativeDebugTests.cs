@@ -11,7 +11,7 @@ using fire.Runtime;
 using fire.Values;
 
 /// <summary>
-/// The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): a client that launches a native program and drives it over the protocol, the same
+/// The debugger of native debug builds (docs/spec/NATIVE_DEBUG_PROTOCOL.md): a client that launches a native program and drives it over the protocol, the same
 /// way spark drives the VM. The wire is one of spark's transports (fire.Debugging): TCP (FIRE_DEBUG=tcp:..., <see cref="Launch"/>), framed over the
 /// program's stdio (FIRE_DEBUG=stdio, the FreeRTOS simulator: <see cref="LaunchStdio"/>), or framed over any stream (QEMU's serial port: <see cref="Attach"/>).
 /// </summary>
@@ -1052,7 +1052,7 @@ static class NativeDebugTests
         });
     }
 
-    /// <summary>The framed transports (docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): stdio on the desktop (FIRE_DEBUG=stdio) and on the FreeRTOS simulator
+    /// <summary>The framed transports (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport"): stdio on the desktop (FIRE_DEBUG=stdio) and on the FreeRTOS simulator
     /// (native/sim: a FreeRTOS build, whose transport is stdio), the same plans as over TCP against the VM; the console between the frames, garbled frames,
     /// the program's standard input through the agent, the wait of 3 s for a debugger; and an ESP32 on QEMU (the console UART on a socket).</summary>
     static void RunTransports(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)

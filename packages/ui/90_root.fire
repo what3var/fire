@@ -45,7 +45,7 @@ namespace UI {
         lambda<int, int> onResize
         // Sees every key first (key, modifier): when it returns true, the key is used up and no element gets it (a dialog takes Escape this way)
         lambda<int, int> onKeyPreview
-        // Drag & drop between the elements (docs/UI.md): the press a drag may start from, what is dragged, its source, the element under the pointer that
+        // Drag & drop between the elements (docs/ui/README.md): the press a drag may start from, what is dragged, its source, the element under the pointer that
         // takes it and what it would do
         Element dragFrom
         int dragX0 = 0

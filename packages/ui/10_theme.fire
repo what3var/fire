@@ -26,7 +26,7 @@ namespace UI {
         // on the system; "" is the console font of the renderer. fontSize is the height of the letters in pixels (TrueType fonts; the bitmap fonts ignore it).
         string font = ""
         int fontSize = 14
-        // The shape (docs/UI_PLATFORM.md, "Materialien und Stil"): the corners of controls and of floating elements (menus, popups; 0: square, as before), the softness
+        // The shape (docs/spec/UI_PLATFORM.md, "Materialien und Stil"): the corners of controls and of floating elements (menus, popups; 0: square, as before), the softness
         // of their shadows. Metrics belong to the theme, not to the controls.
         int radius = 4
         int popupRadius = 8

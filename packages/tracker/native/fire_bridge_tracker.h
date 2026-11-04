@@ -1,4 +1,4 @@
-/* fire native bridge "tracker" (C): the natives behind `#import "tracker"` (docs/TRACKER.md): a player for ProTracker modules (.mod, 4 to 32 channels) - the music of
+/* fire native bridge "tracker" (C): the natives behind `#import "tracker"` (docs/audio/tracker.md): a player for ProTracker modules (.mod, 4 to 32 channels) - the music of
  * the Amiga demos and games, made of short recorded samples instead of the synthesizer voices that MIDI leaves to the sound card (which is why a module sounds the same
  * everywhere). The fire side (Tracker.Song, Tracker.Player - fire source) is the same in the VM and in a native build; this file is what its `__Tracker...` functions do.
  *

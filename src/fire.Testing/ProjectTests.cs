@@ -4,7 +4,7 @@ using fire.Projects;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>Projects and solutions (docs/PROJECTS.md): the model, the files, the workspace, the build plan, the settings precedence, libraries and their packing.</summary>
+/// <summary>Projects and solutions (docs/tools/projects.md): the model, the files, the workspace, the build plan, the settings precedence, libraries and their packing.</summary>
 static class ProjectTests
 {
     private static int _failures;
@@ -315,7 +315,7 @@ static class ProjectTests
         Check("Lauf: Projekt mit zwei Dateien und zwei Bibliotheken; Einstellungen des Projekts vor den Tags im Quelltext", ran == "Hello, projects!\n42\n0.3\nPRJ\n", ran);
         var tagsOnly = BuildPlan.Create(ws, ws.FindByName("Tool")!);
         Check("Lauf: ein Projekt ohne Einstellungen folgt den Tags", RunPlan(tagsOnly) == "tool\n");
-        // settings.globalJobs (docs/THREADING_DESIGN.md section 7): goes before `#globaljobs` in the source; --global-jobs goes before it
+        // settings.globalJobs (docs/spec/THREADING_DESIGN.md section 7): goes before `#globaljobs` in the source; --global-jobs goes before it
         Write(s, "Jobs/Jobs.fireproj", """{ "name": "Jobs", "settings": { "globalJobs": "sync" } }""");
         Write(s, "Jobs/main.script", "#globaljobs safepoints\nfire global { print(\"job\") }\nfor (var i = 0; i < 2; i++) { print(\"loop \" + i) }\nprint(\"n \" + (sync globals))\n");
         var jobsWs = Workspace.Open(Path.Combine(s, "Jobs", "Jobs.fireproj"));
@@ -579,7 +579,7 @@ static class ProjectTests
         standalone.Load(alone);
         Check("Vorlagen: ein Projekt ohne Mappe bekommt ebenfalls seinen Ordner", alone == Path.Combine(t, "alone", "Solo", "Solo.fireproj") && standalone.Solution == null && standalone.Projects.Count == 1);
 
-        // ---- templates as folders (docs/TEMPLATES.md): code templates, placeholders in names and text, the user's folder, packages ---------------------------
+        // ---- templates as folders (docs/tools/templates.md): code templates, placeholders in names and text, the user's folder, packages ---------------------------
         var codeTitles = catalog.Code.Select(x => x.Title).ToList();
         Check("Vorlagen: die eingebauten Code-Vorlagen", codeTitles.SequenceEqual(new[] { "Script", "Fire Class", "Test Class", "FXML Window", "FXML View", "Circuit" }) && catalog.Code.All(x => x.Source == "Local" && x.Description != null && x.Scope == TemplateScope.Code), string.Join(",", codeTitles));
         Check("Vorlagen: die Erweiterung kommt aus der Datei mit $name$ im Namen", Tpl(TemplateScope.Code, "Script").Extension == ".fire" && Tpl(TemplateScope.Code, "Fire Class").Extension == ".fire" && Tpl(TemplateScope.Code, "FXML Window").Extension == ".fxml" && Tpl(TemplateScope.Code, "FXML View").Extension == ".fxml");

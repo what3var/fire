@@ -28,22 +28,22 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 |---|---|
 | `"time"` | `Sleep(duration)`, `DateTime` (`Now`, `UtcNow`, `Today`, `Parse`, arithmetic), `TimeSpan` |
 | `"random"` | `PseudoRandom`: `Next()`, `Next(max)`, `Next(min, max)`, `NextFloat()`, `NextBool()`, `Pick(list)`, `Shuffle(list)` (a `List` or an array) |
-| `"json"` | `Json.Serialize(value)`, `Json.Deserialize<T>(text)`, `Json.Parse(text)` (`JsonObject`), `[NonSerialized]`/`[JsonName "x"]` on fields - see docs/JSON.md |
-| `"circuits"` | circuit simulation after Falstad: `Circuits.Circuit`, parts (`Resistor`, `Capacitor`, `Inductor`, sources, `Switch`) with ports, nested circuits, `Scope`, `Multimeter`, `Fft`; the units `V`, `A`, `Ohm`, `F`, `H`, `Hz` - see docs/CIRCUITS.md |
-| `"testing"` | namespace `Testing`: `Assert` (`AreEqual`, `IsTrue`, `Throws`, ...) for the tests that `forge test` runs - see docs/TESTING.md |
+| `"json"` | `Json.Serialize(value)`, `Json.Deserialize<T>(text)`, `Json.Parse(text)` (`JsonObject`), `[NonSerialized]`/`[JsonName "x"]` on fields - see docs/stdlib/json.md |
+| `"circuits"` | circuit simulation after Falstad: `Circuits.Circuit`, parts (`Resistor`, `Capacitor`, `Inductor`, sources, `Switch`) with ports, nested circuits, `Scope`, `Multimeter`, `Fft`; the units `V`, `A`, `Ohm`, `F`, `H`, `Hz` - see docs/circuits/README.md |
+| `"testing"` | namespace `Testing`: `Assert` (`AreEqual`, `IsTrue`, `Throws`, ...) for the tests that `forge test` runs - see docs/tools/testing.md |
 | `"linq"` | queries over arrays, lists and `IEnumerable`s - see [Arrays and lists](07-arrays-and-lists.md#queries-import-linq) |
-| `"process"` | `Process.Run(file, args)` (exit code and output), `Process.Start` with pipes as IO streams, `WaitForExit`, `Kill`, the output line by line as events - see docs/PROCESS.md |
-| `"hash"` | `Hash.Sha256.HexOf(data)` / `.Of(data)` (also `Sha1`, `Sha384`, `Sha512`, `Md5`), `Hash.Crc32.Of`, `Hash.Adler32.Of`, `Hash.Hmac`, incremental hashers (`Update`, `Finish`), `Hash.Hex`; data is bytes, a string (UTF-8) or a stream - see docs/HASH.md |
-| `"compression"` | `Compression.GZip.Compress/Decompress` (also `Deflate`, `ZLib`), `GZipStream`/`DeflateStream`/`ZLibStream` as IO streams, Zip archives: `Zip.Archive.Open`/`Create`, `Entries`, `ExtractTo`, `Add`, `CreateFromDirectory` - see docs/COMPRESSION.md |
+| `"process"` | `Process.Run(file, args)` (exit code and output), `Process.Start` with pipes as IO streams, `WaitForExit`, `Kill`, the output line by line as events - see docs/stdlib/process.md |
+| `"hash"` | `Hash.Sha256.HexOf(data)` / `.Of(data)` (also `Sha1`, `Sha384`, `Sha512`, `Md5`), `Hash.Crc32.Of`, `Hash.Adler32.Of`, `Hash.Hmac`, incremental hashers (`Update`, `Finish`), `Hash.Hex`; data is bytes, a string (UTF-8) or a stream - see docs/stdlib/hash.md |
+| `"compression"` | `Compression.GZip.Compress/Decompress` (also `Deflate`, `ZLib`), `GZipStream`/`DeflateStream`/`ZLibStream` as IO streams, Zip archives: `Zip.Archive.Open`/`Create`, `Entries`, `ExtractTo`, `Add`, `CreateFromDirectory` - see docs/stdlib/compression.md |
 | `"reflection"` | `Type`, `Member`, `Reflect`, selectors - see [Probes and reflection](16-probes-and-reflection.md) |
 | `"io"` | namespace `IO`: streams (`MemoryStream`, your own), text (`TextReader`, `TextWriter`, `Utf8`), console input and output (`Stdio`) |
-| `"filesystem"` | the file system in namespace `IO`, named like .NET: `File`, `Directory`, `Path`, `FileStream` - see docs/FILESYSTEM.md |
-| `"ui.docking"` | namespace `UI.Docking`: a `DockManager` for tool windows (docked, tabbed, floating) and movable toolstrips with an overflow menu, a `StatusBar` - see docs/DOCKING.md |
-| `"dialogs"` | open, save and folder dialogs and message boxes: `Dialogs.OpenFileDialog`, `SaveFileDialog`, `FolderBrowserDialog`, `MessageBox` - see docs/DIALOGS.md |
+| `"filesystem"` | the file system in namespace `IO`, named like .NET: `File`, `Directory`, `Path`, `FileStream` - see docs/stdlib/filesystem.md |
+| `"ui.docking"` | namespace `UI.Docking`: a `DockManager` for tool windows (docked, tabbed, floating) and movable toolstrips with an overflow menu, a `StatusBar` - see docs/ui/docking.md |
+| `"dialogs"` | open, save and folder dialogs and message boxes: `Dialogs.OpenFileDialog`, `SaveFileDialog`, `FolderBrowserDialog`, `MessageBox` - see docs/ui/dialogs.md |
 | `"net"` | namespace `Net`: TCP clients and servers, UDP, DNS |
 | `"http"` | namespace `Http`: HTTP client and server (HTTPS with `"tls"`) |
 | `"tls"` | namespace `Tls`: encrypted connections |
-| `"devices"` | the device framework: `Device`, `Driver`, `DeviceManager` (`AddDriver`, `Get`), serial ports (`SerialDriver`) - see docs/DEVICES.md |
+| `"devices"` | the device framework: `Device`, `Driver`, `DeviceManager` (`AddDriver`, `Get`), serial ports (`SerialDriver`) - see docs/devices/README.md |
 | `"gpio"`, `"i2c"`, `"spi"`, `"wifi"` | hardware access on boards like the Raspberry Pi and the ESP32; `GpioDriver`, `I2cDriver`, `SpiDriver` make them devices of the device framework |
 | `"graphics"` | framebuffers, drawing, images, fonts |
 | `"windows"` | a window for a framebuffer, keyboard, mouse, touch and joystick events, files and text dropped from other programs, `Clipboard` (text); `WindowManager` cycles windows (`window.Show()` goes on - a manager nobody runs gets a thread of its own; `window.Show(true)` is modal; `window.Run()` is the start of the program, on this thread) |
@@ -111,7 +111,7 @@ print(greeting + ", " + Environment.Args[0])
 ```
 
 The arguments come from the command line: `forge run greet.fire -- Ada` (everything after `--`), a built program `greet Ada`, in spark *Run > Program
-Arguments...*, in a project `settings.arguments` (docs/PROJECTS.md). A program on a board (ESP32, FreeRTOS) has no arguments. In the virtual machine
+Arguments...*, in a project `settings.arguments` (docs/tools/projects.md). A program on a board (ESP32, FreeRTOS) has no arguments. In the virtual machine
 `Set` changes only the program's view of the variables (not the environment of spark or `forge`); a native program changes its process's environment.
 
 ### Time

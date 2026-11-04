@@ -29,7 +29,7 @@ namespace fire.Editor
 
         // build
         private readonly Segmented segEngine = new("Virtual machine", "Native");
-        // (the stripping levels, docs/NATIVE_BACKEND.md "Größe des Programms"; the first entry: not set - the default, 3)
+        // (the stripping levels, docs/spec/NATIVE_BACKEND.md "Größe des Programms"; the first entry: not set - the default, 3)
         private static readonly string[] StrippingChoices =
         {
             "Default (3 - all)", "0 - none: everything stays (like the VM)", "1 - protected: every class and public member stays",

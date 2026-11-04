@@ -54,7 +54,7 @@ namespace fire.Ast
         bool AutoCapture = true) : Expr(Line);
 
     /// <summary>`sync X` / `try sync X` / `sync flat X` / `try sync flat X`
-    /// (docs/THREADING_DESIGN.md section 4) - an EXPRESSION (not a
+    /// (docs/spec/THREADING_DESIGN.md section 4) - an EXPRESSION (not a
     /// statement), yields `true`/`false`/`undefined` (see
     /// Bytecode.VM.OpCode.Sync). `IsTry`: `false` = blocking (only `true`
     /// or `undefined` possible), `true` = non-blocking (additionally
@@ -66,16 +66,16 @@ namespace fire.Ast
     /// Runtime.SyncEngine).</summary>
     public sealed record SyncExpr(int Line, bool IsTry, bool IsFlat, Expr Target) : Expr(Line);
 
-    /// <summary>`sync globals` (docs/THREADING_DESIGN.md section 7) - in the main program: processes what the fire threads have
+    /// <summary>`sync globals` (docs/spec/THREADING_DESIGN.md section 7) - in the main program: processes what the fire threads have
     /// registered as changes to the globals; returns the number of entries processed (int).</summary>
     public sealed record SyncGlobalsExpr(int Line) : Expr(Line);
 
-    /// <summary>`probe obj.member changed|changing handler` (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): registers a handler for write accesses to the
+    /// <summary>`probe obj.member changed|changing handler` (docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md): registers a handler for write accesses to the
     /// member `Member` of the object `Target` (`Member == null`: `probe obj.* ...`, all members). Evaluates to the probe handle (int).
     /// `Handler` is a lambda (from the block/`=>` short form or any lambda expression).</summary>
     public sealed record ProbeExpr(int Line, Expr Target, string? Member, bool IsChanging, Expr Handler) : Expr(Line);
 
-    /// <summary>`try process X` (docs/THREADING_DESIGN.md section 2) -
+    /// <summary>`try process X` (docs/spec/THREADING_DESIGN.md section 2) -
     /// non-blocking variant of Ast.ProcessStmt: returns `true` if
     /// a message was processed, otherwise `false` (never `undefined` -
     /// unlike `sync` there is no "target gone" scenario at this

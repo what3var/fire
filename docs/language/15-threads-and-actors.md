@@ -134,7 +134,7 @@ print(sync globals)                                  // 0: nothing left
 - A call and a native function (`print`) are never such a point; with `safepoints` the job above would run after `loop 0`.
 - `sync globals` runs everything that is queued and returns how many entries that were.
 - Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
-- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive (docs/PROJECTS.md).
+- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive (docs/tools/projects.md).
 
 ## Actors
 

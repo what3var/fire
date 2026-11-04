@@ -20,7 +20,7 @@ namespace fire.Runtime
         public required IReadOnlyDictionary<string, RuntimeClass> Classes { get; init; }
         public required IReadOnlyDictionary<string, ExternSignature> ExternSignatures { get; init; }
 
-        /// <summary>The files embedded by `new Resource("path")` (docs/RESOURCES.md); the id of a resource is its index. Set by the linker after compiling.</summary>
+        /// <summary>The files embedded by `new Resource("path")` (docs/stdlib/resources.md); the id of a resource is its index. Set by the linker after compiling.</summary>
         public List<ResourceEntry> Resources { get; set; } = new();
 
         /// <summary>The units the program declares (`unit Inch: in { ... }`); the VM makes them known before it runs the program (Unit.UseCustomUnits).</summary>

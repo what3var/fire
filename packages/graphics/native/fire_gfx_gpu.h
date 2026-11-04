@@ -1,4 +1,4 @@
-/* fire graphics: the GPU backend (docs/UI_PLATFORM.md, part 4) - a framebuffer may also live on the GPU (Vulkan, loaded at run time). Drawing that the GPU does
+/* fire graphics: the GPU backend (docs/spec/UI_PLATFORM.md, part 4) - a framebuffer may also live on the GPU (Vulkan, loaded at run time). Drawing that the GPU does
  * goes into a list of commands; it runs when the pixels are needed: a read of the framebuffer (GetPixel, a window that shows it, a drawing the GPU does not do)
  * fetches them back - only when the GPU drew since (a dirty flag) - and a drawing of the CPU after that uploads them again before the GPU draws on.
  * The software is the reference: the GPU draws the same shapes (the same coverage at the edges), small differences in the rounding of colours are allowed.

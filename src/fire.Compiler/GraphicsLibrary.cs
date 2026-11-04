@@ -6,7 +6,7 @@ using fire.Runtime;
 namespace fire.Compiler
 {
     /// <summary>
-    /// `graphics` and `windows` in the virtual machine through their C implementation (docs/UI_PLATFORM.md, part 2): the same bridges and the same display as a native build,
+    /// `graphics` and `windows` in the virtual machine through their C implementation (docs/spec/UI_PLATFORM.md, part 2): the same bridges and the same display as a native build,
     /// as one shared library (PackageLibrary.EnsureGraphics) whose natives are bound like those of a package (PackageNativeBinding). The names are registered in the order of the
     /// compiler's stubs (GraphicsBridge, WindowsBridge: the calls address natives by index).
     /// </summary>

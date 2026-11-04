@@ -92,7 +92,7 @@ namespace fire.Runtime
             // exactly match that when translating (see ImportedPreludes.Insert): graphics, reflection, time, devices, io.
             if (linkedProgram.GraphicsNatives is { } graphicsNatives)
             {
-                // graphics and windows in C: their library is in the payload (docs/UI_PLATFORM.md, part 2)
+                // graphics and windows in C: their library is in the payload (docs/spec/UI_PLATFORM.md, part 2)
                 PackageNativeBinding.Register(natives, graphicsNatives, graphicsNatives.Select(_ => GraphicsLibraryFile).ToList(), null);
                 PackageHost.GraphicsInC = true;
             }
