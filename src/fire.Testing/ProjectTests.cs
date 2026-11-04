@@ -119,6 +119,55 @@ static class ProjectTests
         catch (Exception ex) { return ex; }
     }
 
+    /// <summary>The serial port and the baud rate of a board (project settings, a target of fire.native.json) and the ESP-IDF folder of spark keep their JSON keys through
+    /// a save and a load (spark's dialogs write them); the list of ports and the check of ESP-IDF.</summary>
+    private static void BoardSettingsRoundTrip(string s)
+    {
+        Directory.CreateDirectory(s);
+        var project = new FireProject { Name = "Board", FilePath = Path.Combine(s, "Board.fireproj"), Settings = new ProjectSettings { Port = "/dev/ttyUSB3", Baud = 921600 } };
+        project.Save();
+        string projectText = File.ReadAllText(project.FilePath!);
+        var loaded = FireProject.Load(project.FilePath!);
+        Check("Board: port und baud des Projekts bleiben beim Speichern und Laden (settings.port, settings.baud)",
+            loaded.Settings?.Port == "/dev/ttyUSB3" && loaded.Settings?.Baud == 921600 && projectText.Contains("\"port\": \"/dev/ttyUSB3\"") && projectText.Contains("\"baud\": 921600"), projectText);
+        loaded.Settings!.Port = null; loaded.Settings.Baud = null;
+        loaded.Save();
+        string cleared = File.ReadAllText(project.FilePath!);
+        Check("Board: auto (kein Wert) laesst die Schluessel weg", !cleared.Contains("\"port\"") && !cleared.Contains("\"baud\""), cleared);
+
+        string configPath = Path.Combine(s, fire.Native.NativeConfig.FileName);
+        var config = fire.Native.NativeConfig.Parse("""{ "targets": { "esp32": { "port": "COM5", "baud": 460800 } } }""");
+        config.Save(configPath);
+        var again = fire.Native.NativeConfig.FindFor(Path.Combine(s, "Board.fireproj"));
+        var esp = again.ResolveTarget("esp32");
+        string configText = File.ReadAllText(configPath);
+        Check("Board: port und baud eines Ziels in fire.native.json bleiben (targets.esp32.port/baud)",
+            esp.Native.Port == "COM5" && esp.Native.Baud == 460800 && configText.Contains("\"port\": \"COM5\"") && configText.Contains("\"baud\": 460800"), configText);
+
+        string settingsFile = Path.Combine(s, "spark-settings.json");
+        new EditorSettings { IdfPath = "/opt/esp-idf" }.Save(settingsFile);
+        Check("Board: idfPath der spark-Einstellungen bleibt", EditorSettings.Load(settingsFile).IdfPath == "/opt/esp-idf" && File.ReadAllText(settingsFile).Contains("\"idfPath\": \"/opt/esp-idf\""), File.ReadAllText(settingsFile));
+
+        string idf = Path.Combine(s, "esp-idf");
+        Check("Board: ESP-IDF ohne Ordner: nicht gefunden", !fire.Debugging.Esp32Launch.CheckIdf(idf).Ok, fire.Debugging.Esp32Launch.CheckIdf(idf).Message);
+        Write(idf, OperatingSystem.IsWindows() ? "export.bat" : "export.sh", "");
+        Check("Board: ESP-IDF mit export-Skript, aber ohne tools/idf.py: nicht gefunden", !fire.Debugging.Esp32Launch.CheckIdf(idf).Ok, fire.Debugging.Esp32Launch.CheckIdf(idf).Message);
+        Write(idf, "tools/idf.py", "");
+        var found = fire.Debugging.Esp32Launch.CheckIdf(idf);
+        Check("Board: ESP-IDF mit export-Skript und tools/idf.py: gefunden", found.Ok && found.Message.Contains("idf.py found"), found.Message);
+        var ports = fire.Debugging.Esp32Launch.SerialPorts();
+        var usb = fire.Debugging.SerialFramedTransport.CandidatePorts();
+        Check("Board: die Liste der seriellen Schnittstellen hat die USB-Ports zuerst und keinen doppelt",
+            ports.Distinct().Count() == ports.Count && ports.Take(usb.Count).SequenceEqual(usb), string.Join(", ", ports));
+        Check("Board: die Port-Auswahl - leer und auto heissen auto (kein Wert), ein Port bleibt wie getippt",
+            fire.Debugging.Esp32Launch.PortChoice("") == null && fire.Debugging.Esp32Launch.PortChoice("auto") == null && fire.Debugging.Esp32Launch.PortChoice("auto - now /dev/ttyUSB0") == null
+            && fire.Debugging.Esp32Launch.PortChoice(" COM7 ") == "COM7" && fire.Debugging.Esp32Launch.PortChoice("/dev/serial/by-id/usb-Silicon_Labs-if00") == "/dev/serial/by-id/usb-Silicon_Labs-if00");
+        Check("Board: die Baud-Auswahl - leer ist der Standard, eine Zahl die Rate, anderes wird abgelehnt",
+            fire.Debugging.Esp32Launch.BaudChoice("") == (true, null) && fire.Debugging.Esp32Launch.BaudChoice("921600") == (true, 921600) && fire.Debugging.Esp32Launch.BaudChoice("fast").Ok == false
+            && fire.Debugging.Esp32Launch.BaudChoice("-5").Ok == false && fire.Debugging.Esp32Launch.BaudChoice("0").Ok == false);
+        Check("Board: die ueblichen Baudraten beginnen mit 115200", fire.Debugging.Esp32Launch.CommonBauds[0] == 115200 && fire.Debugging.Esp32Launch.CommonBauds.Contains(921600));
+    }
+
     private static string Describe(Exception ex) => ex is ProjectException ? ex.Message : CompileErrors.Describe(ex);
 
     public static void Run()
@@ -509,6 +558,7 @@ static class ProjectTests
         var cImport = fire.Package.Manager.Fpk.ReadManifest(ProjectBuilder.PackLibrary(cLibPlan, Path.Combine(t, "NC", "out"))).Imports[0];
         Check("Natives (C): das Paket enthaelt das C, die Sprache und die Funktionen", cImport.Native != null && cImport.Native.IsC && cImport.Native.Functions.Count == 3 && cImport.Native.Sources.Count == 1, cImport.Native?.Language ?? "(none)");
         PackageNativesPhase(Path.Combine(t, "PN"));
+        BoardSettingsRoundTrip(Path.Combine(t, "Board"));
         var noSources = new FireProject { Name = "Empty", Type = OutputType.Library, Native = new ProjectNative(), FilePath = Path.Combine(t, "Empty", "Empty.fireproj") };
         Directory.CreateDirectory(Path.Combine(t, "Empty")); noSources.Save();
         var emptyWs = Workspace.Open(noSources.FilePath!);

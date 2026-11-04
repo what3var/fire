@@ -180,7 +180,7 @@ Stand: **Generator, Runtime und Agent umgesetzt** (Punkte 1, 3, 4, 5 für TCP, s
 Protokoll: [NATIVE_DEBUG_PROTOCOL.md](NATIVE_DEBUG_PROTOCOL.md)); getestet gegen die VM (`NativeDebugTests.cs`). spark-Seite (2, 8) ebenfalls umgesetzt (`IDebugTarget`, `NativeDebugTarget`, Engine-Box, natives Run/Debug; Tests `FIRE_TESTS_ONLY=debugger`).
 **ESP32 umgesetzt** (8.6): Transport UART gerahmt (CRC-16), 3 s Wartezeit, Standardeingabe durch den Agenten, spark baut/flasht über `idf.py` und debuggt bzw. zeigt die Konsole
 über die serielle Schnittstelle (docs/NATIVE_BACKEND.md "Ziel `esp32`: Run und Debug auf dem Board"); getestet unter QEMU, nicht auf einem echten Board. Offen:
-WLAN (TCP auf dem Board), andere Chips (USB-Serial-JTAG der C3/S3) als eigene Ziele, wasm; die serielle Schnittstelle im Einstellungsdialog von spark (heute `port`/`baud` im JSON). Nicht getestet: `set` eines Felds mit Probes (die gibt es nur mit Reflection; geprüft ist der Setter mit der Prüfung
+WLAN (TCP auf dem Board), andere Chips (USB-Serial-JTAG der C3/S3) als eigene Ziele, wasm. Die serielle Schnittstelle, die Baudrate und der Ordner von ESP-IDF sind in spark einzustellen (Projekteigenschaften, Toolchain Settings; nicht von Hand durchgeklickt). Nicht getestet: `set` eines Felds mit Probes (die gibt es nur mit Reflection; geprüft ist der Setter mit der Prüfung
 der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Windows).
 
 1. ~~**`#line`** im erzeugten C (alle Modi)~~: gdb/lldb und Absturzberichte zeigen fire-Zeilen (`"lineDirectives": false` schaltet es ab).

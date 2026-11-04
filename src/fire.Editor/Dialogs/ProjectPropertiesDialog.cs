@@ -397,6 +397,12 @@ namespace fire.Editor
             return Page("Native & Toolchain", "The target a native build runs on and the C++ toolchain that compiles it. Used when General > Runs as is Native.",
                 Group("Target", Row("Target", target), Hint("The built-in targets and those of fire.native.json.")),
                 Group("Toolchain", Row("Toolchain", toolchain), Row("", edit)),
+                Group("Board (ESP32)",
+                    Row("Serial port", BoardFields.Port(s.Port, _inherited?.Port, v => s.Port = v)),
+                    Row("Baud rate", BoardFields.Baud(s.Baud, _inherited?.Baud, v => s.Baud = v)),
+                    Hint("Run and Debug on an ESP32 flash the board on this port and talk to its console there (settings \"port\" and \"baud\"). auto: the port of the target "
+                        + "in fire.native.json, else ESPPORT, else the only USB serial port of this machine, else the one esptool uses; the baud rate is 115200 unless set."),
+                    BoardFields.IdfStatus(fire.Projects.EditorSettings.Load().IdfPath)),
                 Group("Size", Row("Stripping", stripping),
                     Hint("What a native build leaves out of what the program does not reach: 0 nothing (like the VM), 1 private and protected members nothing uses, 2 also methods "
                         + "nothing uses, 3 also classes the program never makes (the default). Names given as literals to reflection and [Keep] always stay; a debug build keeps everything.")),

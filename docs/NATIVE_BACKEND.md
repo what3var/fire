@@ -822,6 +822,12 @@ startet das Board neu (RTS, wie `idf.py monitor`):
 * **Port**: `"port"` in den Einstellungen des Projekts (`settings.port`) oder im Ziel von `fire.native.json` (`"targets": {"esp32": {"port": "/dev/ttyUSB0"}}`),
   sonst `ESPPORT`, sonst die einzige USB-Seriell-Schnittstelle des Rechners (Linux `/dev/ttyUSB*`, `/dev/ttyACM*`; macOS `/dev/cu.usbserial*`, ...; Windows die
   COM-Ports), sonst die, die esptool beim Flashen nimmt und nennt (`Serial port ...`). **Baud**: `"baud"` (Standard 115200).
+* **In spark einstellen**: *Project Properties > Native & Toolchain > Board (ESP32)* (`settings.port`/`settings.baud`) und *Tools > Toolchain Settings > Target > Board*
+  (`port`/`baud` des Ziels in `fire.native.json`): der Port aus einer Liste der seriellen Schnittstellen des Rechners (`Esp32Launch.SerialPorts`: die USB-Seriellen von
+  `CandidatePorts` zuerst, dann die übrigen von System.IO.Ports; *Refresh* sucht neu) oder getippt, *auto*/leer schreibt keinen Schlüssel; die Baudrate aus den üblichen
+  (`Esp32Launch.CommonBauds`, 115200 zuerst) oder getippt (keine Zahl: markiert, nicht übernommen). Der Ordner von ESP-IDF unter *Tools > Toolchain Settings > ESP32 Board*
+  (`idfPath` in `spark-settings.json`, leer: `IDF_PATH`) mit Ordnerauswahl und der Prüfung `Esp32Launch.CheckIdf` (*idf.py found* - `export.sh`/`export.bat` und
+  `tools/idf.py` sind da - oder warum nicht); die Projekteigenschaften zeigen diese Prüfung mit an.
 * **Run** (Release/Performance): die Konsole des Boards im Output-Panel (Rahmen eines Debug-Builds werden ausgefiltert); unter dem Output-Panel ist eine
   **Eingabezeile**, deren Zeilen das Board als Standardeingabe bekommt. *Stop* schließt die Schnittstelle.
 * **Debug**: ein Debug-Build (`FIRE_DEBUG_TRANSPORT_UART`, Hauptstack der Task 32 KB statt 16 KB) sagt beim Start `hello` über die Konsolen-UART und wartet 3 s auf
@@ -835,8 +841,10 @@ mitten in einer Konsolenzeile, Threads mit ihren eigenen Globals, Eingabe, ein z
 **QEMU** (`qemu-system-xtensa` von ESP-IDF, `-serial tcp:...,server=on,wait=on`: die Konsolen-UART ist ein Socket; Fälle "Native-Debugger: ESP32 (QEMU, UART)",
 mit `IDF_PATH`, Projekt in `~/.cache/fire-tests/esp32-dbg`): das Boot-Log vor dem `hello`, ein Plan aus Haltepunkt, Step Over/Into/Out, Scopes, `this`,
 Globals, unbehandelter Ausnahme mit `resume` gegen die VM, die Eingabe über die UART; dasselbe Programm ohne Debugger läuft nach 3 s allein, liest seine
-Eingabe von der UART und endet an seiner Ausnahme. **Nicht geprüft**: ein echtes Board (USB-Seriell-Chip, RTS-Reset, Port-Erkennung, `idf.py flash`) und
-die Klicks in spark.
+Eingabe von der UART und endet an seiner Ausnahme. Ohne Fenster (`FIRE_TESTS_ONLY=projects`, "Board: ..."): `port`/`baud` des Projekts und eines Ziels und `idfPath`
+bleiben beim Speichern und Laden (auto schreibt keinen Schlüssel), `CheckIdf` (kein Ordner, nur `export.sh`, mit `tools/idf.py`), die Liste der Ports und die Auswahl
+von Port und Baud. **Nicht geprüft**: ein echtes Board (USB-Seriell-Chip, RTS-Reset, Port-Erkennung, `idf.py flash`) und die Klicks in spark (auch die neuen Felder:
+die Dialoge sind hier nicht zu bedienen).
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
