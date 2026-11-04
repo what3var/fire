@@ -121,6 +121,8 @@ static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, 
     if (pixels == NULL) return;   /* (a frame only for the presenter, which could not show it: the next one comes with its pixels) */
 #ifdef FIRE_DISPLAY_PRESENT_AREA
     if (area != NULL && fn == NULL) { fire_display_presentArea(&s->display, pixels, width, height, area[0], area[1], area[2], area[3]); return; }
+#else
+    (void)area;   /* (a display without partial present - SDL - shows the whole frame) */
 #endif
     fire_display_present(&s->display, pixels, width, height);
 }
