@@ -359,4 +359,33 @@ namespace UI {
             if (index >= 0 && index != this.openIndex) { this.Open(root, index) }
         }
     }
+
+    // The little window of Element.ToolTip (Root shows it): the text on the background of menus, with the corners of the theme and a fine shadow. It takes no
+    // input - the pointer under it still points at the element.
+    class ToolTipPopup : Element {
+        string Text
+
+        construct(string text) : base(0, 0, -1, -1) {
+            this.Text = text
+        }
+
+        string StyleKey() { return "ToolTip" }
+
+        int PopupRadius(Root root) { return root.theme.radius }
+
+        undefined MeasureCore(Root root, int aw, int ah) {
+            this.cw = this.TextWidth(root, this.Text) + 16
+            this.ch = this.TextHeight(root) + 8
+        }
+
+        UI.Element HitTest(int px, int py) { return undefined }
+
+        undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, theme.menuBack, theme.border)
+            this.DrawString(root, ax + 8, ay + 4, this.Text, theme.text)
+        }
+    }
 }
+

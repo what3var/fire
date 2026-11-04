@@ -239,10 +239,12 @@ static double fire_dwl_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTO
 
 /* ---- a window ---- */
 #define FIRE_DWL_TITLE 30   /* the height of fire's own title bar (logical pixels) */
-typedef struct FireDwlBuffer { void* buffer; uint32_t* data; size_t size; int width, height, busy; } FireDwlBuffer;
+/* (`dirty`: what changed in the frames since this buffer was drawn last - x0, y0, x1, y1 of the framebuffer; dirtyAll: all of it, e.g. a new buffer) */
+typedef struct FireDwlBuffer { void* buffer; uint32_t* data; size_t size; int width, height, busy; int dirty[4], dirtyAll; } FireDwlBuffer;
 typedef struct FireDwlOffer { void* offer; char mimes[8][48]; int mimeCount; } FireDwlOffer;
 
 typedef struct FireDwlWindow {
+    int damage[4], damageAll;   /* what the next draw tells the compositor changed (x0, y0, x1, y1 of the framebuffer; damageAll: all of it) */
     FireWlc* l;
     void* d;
     void* registry;
@@ -1190,7 +1192,7 @@ static FireDwlBuffer* fire_dwl_getBuffer(FireDwlWindow* w, int width, int height
         FIRE_WL_REQ0(l, pool, 1);   /* destroy the pool (the buffer keeps the memory) */
         l->destroy(pool);
         close(fd);
-        b->size = size; b->width = width; b->height = height; b->busy = 0;
+        b->size = size; b->width = width; b->height = height; b->busy = 0; b->dirtyAll = 1;
         l->addListener(b->buffer, (FireWlVoid*)(void*)&fire_dwlBufferListener, w);
         return b;
     }
@@ -1407,7 +1409,7 @@ static void fire_dwl_draw(FireDwlWindow* w) {
     FireWlc* l = w->l;
     double s = fire_dwl_scaleOf(w);
     int T = fire_dwl_titleH(w), lw = w->winW, lh = w->winH + T;
-    int bw = (int)(lw * s + 0.5), bh = (int)(lh * s + 0.5), th = (int)(T * s + 0.5), ch = bh - th, row;
+    int bw = (int)(lw * s + 0.5), bh = (int)(lh * s + 0.5), th = (int)(T * s + 0.5), ch = bh - th, row, r0, r1, c0, c1;
     const uint32_t* rgba = w->lastFrame;
     int width = w->lastW, height = w->lastH, opaque = w->backdrop == FIRE_BACKDROP_NONE;
     FireDwlBuffer* b;
@@ -1415,12 +1417,20 @@ static void fire_dwl_draw(FireDwlWindow* w) {
     b = fire_dwl_getBuffer(w, bw, bh);
     if (b == NULL) return;
     if (th > 0) fire_dwl_drawTitle(w, b->data, bw, th, s);
-    for (row = 0; row < ch; row++) {
+    /* unstretched, the buffer only gets what changed since it was drawn last (it holds an older frame); stretched or new, all of it */
+    {
+        int unstretched = bw == width && ch == height;
+        if (!unstretched || b->dirtyAll) { r0 = 0; r1 = ch; c0 = 0; c1 = bw; }
+        else { c0 = b->dirty[0]; r0 = b->dirty[1]; c1 = b->dirty[2]; r1 = b->dirty[3]; }
+        b->dirtyAll = 0; b->dirty[0] = b->dirty[1] = b->dirty[2] = b->dirty[3] = 0;
+        if (!unstretched) w->damageAll = 1;
+    }
+    for (row = r0; row < r1; row++) {
         const uint32_t* src = rgba + (size_t)(ch == height ? row : (int)((long long)row * height / ch)) * (size_t)width;
         uint32_t* d = b->data + (size_t)(row + th) * (size_t)bw;
-        uint32_t step = (uint32_t)(((uint64_t)width << 16) / (uint32_t)bw), pos = step / 2;
+        uint32_t step = (uint32_t)(((uint64_t)width << 16) / (uint32_t)bw), pos = step / 2 + step * (uint32_t)c0;
         int col;
-        for (col = 0; col < bw; col++) {
+        for (col = c0; col < c1; col++) {
             uint32_t v = bw == width ? src[col] : src[(pos += step, (pos - step) >> 16)];
             uint32_t a = opaque ? 255u : v >> 24;
             if (a == 255u) d[col] = 0xFF000000u | ((v & 0xFFu) << 16) | (v & 0xFF00u) | ((v >> 16) & 0xFFu);
@@ -1431,8 +1441,13 @@ static void fire_dwl_draw(FireDwlWindow* w) {
     else if (w->compositorVersion >= 3) FIRE_WL_REQ(l, w->surface, 8, (int32_t)(s + 0.5));   /* set_buffer_scale */
     if (w->csd) FIRE_WL_REQ(l, w->xdgSurface, 3, 0, 0, lw, lh);   /* set_window_geometry */
     FIRE_WL_REQ(l, w->surface, 1, b->buffer, 0, 0);   /* attach */
-    if (w->compositorVersion >= 4) FIRE_WL_REQ(l, w->surface, 9, 0, 0, bw, bh);   /* damage_buffer */
+    if (w->compositorVersion >= 4 && !w->damageAll) {
+        /* damage_buffer: only what changed, below the title bar (nothing: none - the commit still counts for VSync) */
+        if (w->damage[2] > w->damage[0] && w->damage[3] > w->damage[1]) FIRE_WL_REQ(l, w->surface, 9, w->damage[0], w->damage[1] + th, w->damage[2] - w->damage[0], w->damage[3] - w->damage[1]);
+    }
+    else if (w->compositorVersion >= 4) FIRE_WL_REQ(l, w->surface, 9, 0, 0, bw, bh);   /* damage_buffer */
     else FIRE_WL_REQ(l, w->surface, 2, 0, 0, lw, lh);   /* damage */
+    w->damageAll = 1; w->damage[0] = w->damage[1] = w->damage[2] = w->damage[3] = 0;   /* (a draw without a present - the title bar: all of it) */
     if (w->frameCallback == NULL) {
         w->frameCallback = fire_dwl_new(l, w->surface, 3, l->iCallback);   /* frame */
         l->addListener(w->frameCallback, (FireWlVoid*)(void*)&fire_dwlFrameListener, w);
@@ -1443,8 +1458,21 @@ static void fire_dwl_draw(FireDwlWindow* w) {
     l->flush(w->d);
 }
 
-static void fire_dwl_present(FireDwlWindow* w, const uint32_t* rgba, int width, int height) {
+/* (x0, y0, x1, y1) into the union `a` (an empty `a` - x1 <= x0 - takes it as it is) */
+static void fire_dwl_union(int* a, int x0, int y0, int x1, int y1) {
+    if (x1 <= x0 || y1 <= y0) return;
+    if (a[2] <= a[0] || a[3] <= a[1]) { a[0] = x0; a[1] = y0; a[2] = x1; a[3] = y1; return; }
+    if (x0 < a[0]) a[0] = x0;
+    if (y0 < a[1]) a[1] = y0;
+    if (x1 > a[2]) a[2] = x1;
+    if (y1 > a[3]) a[3] = y1;
+}
+
+/* Shows the frame; only (ax, ay, aw, ah) changed since the last one: both buffers note it (each gets what it misses when it is drawn next), the compositor hears
+ * only of it. A frame of another size is all of it. */
+static void fire_dwl_presentArea(FireDwlWindow* w, const uint32_t* rgba, int width, int height, int ax, int ay, int aw, int ah) {
     size_t n;
+    int k, all, x0, y0, x1, y1;
     if (w->d == NULL || w->direct || rgba == NULL || width <= 0 || height <= 0) return;
     pthread_mutex_lock(&w->lock);
     /* VSync: the compositor's frame callback of the frame before (at most 50 ms - a hidden window gets none) */
@@ -1453,6 +1481,13 @@ static void fire_dwl_present(FireDwlWindow* w, const uint32_t* rgba, int width, 
         while (w->framePending && !w->closed && fire_dwl_now() < until) fire_dwl_dispatch(w, 5);
     }
     n = (size_t)width * (size_t)height;
+    all = w->lastFrame == NULL || w->lastW != width || w->lastH != height;
+    x0 = ax < 0 ? 0 : ax > width ? width : ax; x1 = ax + aw < 0 ? 0 : ax + aw > width ? width : ax + aw;
+    y0 = ay < 0 ? 0 : ay > height ? height : ay; y1 = ay + ah < 0 ? 0 : ay + ah > height ? height : ay + ah;
+    for (k = 0; k < 2; k++) { if (all) w->buffers[k].dirtyAll = 1; else fire_dwl_union(w->buffers[k].dirty, x0, y0, x1, y1); }
+    w->damageAll = all;
+    w->damage[0] = w->damage[1] = w->damage[2] = w->damage[3] = 0;
+    if (!all) fire_dwl_union(w->damage, x0, y0, x1, y1);
     if (w->lastFrame == NULL || w->lastW != width || w->lastH != height) {
         uint32_t* grown = (uint32_t*)realloc(w->lastFrame, n * 4);
         if (grown == NULL) { pthread_mutex_unlock(&w->lock); return; }
@@ -1463,6 +1498,8 @@ static void fire_dwl_present(FireDwlWindow* w, const uint32_t* rgba, int width, 
     fire_dwl_draw(w);
     pthread_mutex_unlock(&w->lock);
 }
+
+static void fire_dwl_present(FireDwlWindow* w, const uint32_t* rgba, int width, int height) { fire_dwl_presentArea(w, rgba, width, height, 0, 0, width, height); }
 
 static int fire_dwl_native(FireDwlWindow* w, fire_native_window* out) {
     if (w->d == NULL) return 0;

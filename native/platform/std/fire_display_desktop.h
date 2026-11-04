@@ -263,11 +263,13 @@ static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int
 #undef FIRE_DD_B
 }
 
-/* Only the area (x, y, aw, ah; framebuffer pixels) changed since the last frame: X11 and Win32 hand over only that, the others show the whole frame. */
+/* Only the area (x, y, aw, ah; framebuffer pixels) changed since the last frame: X11, Win32, Wayland and the browser hand over only that; macOS shows the whole frame. */
 static void fire_display_presentArea(FireDisplayWindow* w, const uint32_t* rgba, int width, int height, int x, int y, int aw, int ah) {
     switch (w->kind) {
         FIRE_DD_IF_X11(case FIRE_DD_KIND_X11: fire_dx11_presentArea(&w->u.x11, rgba, width, height, x, y, aw, ah); return;)
         FIRE_DD_IF_W32(case FIRE_DD_KIND_WIN32: fire_dw32_presentArea(&w->u.w32, rgba, width, height, x, y, aw, ah); return;)
+        FIRE_DD_IF_WL(case FIRE_DD_KIND_WAYLAND: fire_dwl_presentArea(&w->u.wl, rgba, width, height, x, y, aw, ah); return;)
+        FIRE_DD_IF_WEB(case FIRE_DD_KIND_WEB: fire_dweb_presentArea(&w->u.web, rgba, width, height, x, y, aw, ah); return;)
         default: fire_display_present(w, rgba, width, height); return;
     }
 }

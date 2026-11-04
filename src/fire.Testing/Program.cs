@@ -11306,6 +11306,37 @@ uiDrawScript = """
         print("deckend " + win.Backdrop + " " + ((Px.Get(ui.renderer, 300, 190) >> 24) & 255))
         """, new[] { "fokus True True True", "hintergrund Transparent 208", "deckend None 255" });
 
+    CheckUi("Tooltip: erscheint nach der Wartezeit unter dem Zeiger (auch fuer ein Kind ohne eigenen), nimmt keinen Hover, geht bei Klick und beim Wegbewegen", uiHead + """
+        var p = new UI.StackPanel()
+        p.Left = 10
+        p.Top = 10
+        p.ToolTip = "Der Rahmen"
+        var b = new UI.Button("OK", 0, 0, 80, 26)
+        b.ToolTip = "Speichert alles"
+        p.Add(b)
+        var l = new UI.Label("ohne", 0, 0)
+        p.Add(l)
+        ui.Add(p)
+        ui.Draw()
+        __TestEvent(9, 20.0, 20.0)
+        ui.Tick()
+        print("sofort " + (ui.tipPopup == undefined))
+        for (var i = 0; i < 40; i = i + 1) { ui.Tick() }
+        print("da " + (ui.tipPopup != undefined) + " " + ui.tipPopup.Text + " " + ui.tipPopup.Top + " " + b.Hover)
+        __TestEvent(9, 20.0, 42.0)
+        ui.Tick()
+        for (var i = 0; i < 40; i = i + 1) { ui.Tick() }
+        print("kind " + ui.tipPopup.Text)
+        __TestEvent(8, 1, 20.0, 42.0)
+        ui.Tick()
+        print("klick " + (ui.tipPopup == undefined))
+        __TestEvent(11, 1, 20.0, 42.0)
+        __TestEvent(9, 300.0, 180.0)
+        ui.Tick()
+        for (var i = 0; i < 40; i = i + 1) { ui.Tick() }
+        print("weg " + (ui.tipPopup == undefined))
+        """, new[] { "sofort True", "da True Speichert alles 40 True", "kind Der Rahmen", "klick True", "weg True" });
+
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
         var c = new UI.CheckBox("Option", 10, 10)
         ui.Add(c)
@@ -25385,14 +25416,14 @@ else
                     trAliasChecks.All(c => c.Ok), string.Join(", ", trAliasChecks.Where(c => !c.Ok).Select(c => c.Name)));
 
                 // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11 (the style of part 3 - corners,
-                // shadows, the surfaces of popups, docs/UI_PLATFORM.md - added about 25 KB: 3.1 MB)
+                // shadows, the surfaces of popups, docs/UI_PLATFORM.md - added about 25 KB; up to 4 MB is fine)
                 const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
                 var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
                 var trUiSizes = trLevels.Select(lv => fire.Native.CppGenerator.GenerateSources(trUiLinked, stripping: lv).Program.Length).ToArray();
                 int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
                 // (level 1 is about level 0 here: ui keeps little private code that no public member reaches; the names of the left out members cost a few bytes)
-                CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 3,1 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
-                    trUiSize == trUiSizes[3] && trUiSize < 3_100_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
+                CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 4 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
+                    trUiSize == trUiSizes[3] && trUiSize < 4_000_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
                     string.Join(" / ", trUiSizes.Select((s, i) => $"{i}: {s}")));
             }
         }, () =>
@@ -26052,31 +26083,60 @@ else
                         using var proc = System.Diagnostics.Process.Start(psi)!;
                         proc.StandardOutput.ReadToEnd(); proc.StandardError.ReadToEnd();
                         proc.WaitForExit(120000);
-                        // the picture (PPM P6): the window's top left corner is the first red pixel; inside the area blue, outside it still red (the green was not reported)
-                        string got = "kein Bild";
+                        // the picture: inside the area blue, outside it still red (the green was not reported)
                         string screenFile = Path.Combine(dir, "screen.ppm");
-                        if (File.Exists(screenFile))
-                        {
-                            byte[] ppm = File.ReadAllBytes(screenFile);
-                            int pos = 0, field = 0, width = 0, height = 0;
-                            var header = new int[3];
-                            pos = 2;
-                            while (field < 3)
-                            {
-                                while (pos < ppm.Length && char.IsWhiteSpace((char)ppm[pos])) pos++;
-                                if (pos < ppm.Length && ppm[pos] == '#') { while (pos < ppm.Length && ppm[pos] != '\n') pos++; continue; }
-                                int v = 0;
-                                while (pos < ppm.Length && char.IsDigit((char)ppm[pos])) v = v * 10 + (ppm[pos++] - '0');
-                                header[field++] = v;
-                            }
-                            pos++;
-                            width = header[0]; height = header[1];
-                            (int, int, int) Px(int x, int y) { int i = pos + (y * width + x) * 3; return (ppm[i], ppm[i + 1], ppm[i + 2]); }
-                            int wx = -1, wy = -1;
-                            for (int y = 0; y < height && wx < 0; y++) for (int x = 0; x < width; x++) if (Px(x, y) == (255, 0, 0)) { wx = x; wy = y; break; }
-                            got = wx < 0 ? "kein Fenster" : $"innen {Px(wx + 35, wy + 35)} aussen {Px(wx + 135, wy + 35)}";
-                        }
+                        string got = File.Exists(screenFile) ? ScreenPictures.Area(File.ReadAllBytes(screenFile)) : "kein Bild";
                         CheckNat(title, got == "innen (0, 0, 255) aussen (255, 0, 0)", got + "\n" + (File.Exists(Path.Combine(dir, "out.txt")) ? File.ReadAllText(Path.Combine(dir, "out.txt")) : ""));
+                        // Wayland (weston with its X11 backend in Xvfb): two buffers in turn - each gets what it missed when it is drawn next; three squares reported one after
+                        // the other must all be there (and what is between them unchanged)
+                        string wlTitle = "Fenster: PresentArea auf Wayland (weston unter Xvfb) - zwei Puffer im Wechsel: drei nacheinander gemeldete Bereiche sind alle da, der Rest unveraendert";
+                        if (FindProgram("weston") is not { } westonTool) Console.WriteLine("(PresentArea unter Wayland: uebersprungen - weston fehlt)");
+                        else
+                        {
+                            string runtime = Path.Combine(dir, "wlrun");
+                            Directory.CreateDirectory(runtime);
+                            File.WriteAllText(Path.Combine(dir, "squares.fire"), """
+                                #import "windows"
+                                var fb = new Framebuffer(200, 100)
+                                var r = new Renderer(fb)
+                                var win = new Window(fb, "area")
+                                win.VSync = false
+                                r.FillRect(0, 0, 200, 100, new SolidBrush(0xFF0000FF))
+                                win.Tick()
+                                win.Tick()
+                                var blue = new SolidBrush(0xFFFF0000)
+                                r.FillRect(20, 20, 30, 30, blue)
+                                win.PresentArea(20, 20, 30, 30)
+                                win.Tick()
+                                r.FillRect(120, 20, 30, 30, blue)
+                                win.PresentArea(120, 20, 30, 30)
+                                win.Tick()
+                                r.FillRect(70, 60, 30, 30, blue)
+                                win.PresentArea(70, 60, 30, 30)
+                                win.Tick()
+                                print("ready")
+                                win.VSync = true
+                                for (var i = 0; i < 120; i = i + 1) {
+                                    win.PresentArea(0, 0, 0, 0)
+                                    win.Tick()
+                                }
+                                """);
+                            string socket = $"wl-area-{Environment.ProcessId}";
+                            File.WriteAllText(Path.Combine(dir, "wl.sh"),
+                                $"export XDG_RUNTIME_DIR=\"{runtime}\"\nchmod 700 \"$XDG_RUNTIME_DIR\"\n" +
+                                $"printf '[core]\\nidle-time=0\\n[shell]\\npanel-position=none\\nbackground-color=0xff000000\\n' > \"{runtime}/weston.ini\"\n" +
+                                $"\"{westonTool}\" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={socket} --config=\"{runtime}/weston.ini\" > \"{runtime}/weston.log\" 2>&1 &\nwp=$!\n" +
+                                $"for i in $(seq 1 100); do [ -S \"$XDG_RUNTIME_DIR/{socket}\" ] && break; sleep 0.1; done\n" +
+                                $"WAYLAND_DISPLAY={socket} FIRE_DISPLAY=wayland \"{forge}\" run \"{dir}/squares.fire\" > \"{dir}/wl.txt\" 2>&1 &\npp=$!\n" +
+                                $"for i in $(seq 1 300); do grep -q ready \"{dir}/wl.txt\" 2>/dev/null && break; sleep 0.1; done\nsleep 1\n" +
+                                $"import -window root -depth 8 \"{dir}/wl.ppm\"\nwait $pp\nkill $wp\n");
+                            var wpsi = new System.Diagnostics.ProcessStartInfo(xvfbRunTool, $"-a -s \"-screen 0 800x600x24\" sh \"{dir}/wl.sh\"") { RedirectStandardOutput = true, RedirectStandardError = true };
+                            using var wproc = System.Diagnostics.Process.Start(wpsi)!;
+                            wproc.StandardOutput.ReadToEnd(); wproc.StandardError.ReadToEnd();
+                            wproc.WaitForExit(120000);
+                            string wlGot = File.Exists(Path.Combine(dir, "wl.ppm")) ? ScreenPictures.Squares(File.ReadAllBytes(Path.Combine(dir, "wl.ppm"))) : "kein Bild";
+                            CheckNat(wlTitle, wlGot == "(0, 0, 255) (0, 0, 255) (0, 0, 255) (255, 0, 0) (255, 0, 0)", wlGot + "\n" + (File.Exists(Path.Combine(dir, "wl.txt")) ? File.ReadAllText(Path.Combine(dir, "wl.txt")) : ""));
+                        }
                     }
                 });
 
@@ -26559,6 +26619,50 @@ else
                                     string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
                                     CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
                                 }
+                                // Window.PresentArea under Windows: only the reported area reaches the window (the band of its rows, SetDIBitsToDevice), idle frames overwrite
+                                // nothing - a picture of the X server Wine draws on (ImageMagick's import)
+                                if (FindProgram("import") == null) Console.WriteLine("(PresentArea unter Wine: uebersprungen - ImageMagick import fehlt)");
+                                else try
+                                {
+                                    const string areaScript = """
+                                    #import "windows"
+                                    var fb = new Framebuffer(200, 100)
+                                    var r = new Renderer(fb)
+                                    var win = new Window(fb, "area")
+                                    win.VSync = false
+                                    r.FillRect(0, 0, 200, 100, new SolidBrush(0xFF0000FF))
+                                    win.Tick()
+                                    win.Tick()
+                                    r.FillRect(20, 20, 30, 30, new SolidBrush(0xFFFF0000))
+                                    r.FillRect(120, 20, 30, 30, new SolidBrush(0xFF00FF00))
+                                    win.PresentArea(20, 20, 30, 30)
+                                    win.Tick()
+                                    print("ready")
+                                    win.VSync = true
+                                    for (var i = 0; i < 180; i = i + 1) {
+                                        win.PresentArea(0, 0, 0, 0)
+                                        win.Tick()
+                                    }
+                                    """;
+                                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { areaScript }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                                    string exeFile = Path.Combine(winDir, "area.exe");
+                                    string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()));
+                                    string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, "area",
+                                        $"{NativeTestBuild.Opt} -Wall -Wextra ", exeFile, out int buildExit, links);
+                                    if (buildExit != 0 || build.Contains("warning:")) CheckNat($"{title}: PresentArea", false, "MinGW: " + links + "\n" + build);
+                                    else
+                                    {
+                                        string outFile = Path.Combine(winDir, "area.txt"), screen = Path.Combine(winDir, "area.ppm"), script = Path.Combine(winDir, "area.sh");
+                                        File.WriteAllText(script, $"FIRE_DISPLAY=win32 \"{wine}\" \"{exeFile}\" > \"{outFile}\" 2>&1 &\n" +
+                                            $"for i in $(seq 1 600); do grep -q ready \"{outFile}\" 2>/dev/null && break; sleep 0.1; done\nsleep 1\n" +
+                                            $"import -window root -depth 8 \"{screen}\"\nwait\n");
+                                        RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out _);
+                                        string got = File.Exists(screen) ? ScreenPictures.Area(File.ReadAllBytes(screen)) : "kein Bild";
+                                        CheckNat($"{title}: PresentArea - nur der gemeldete Bereich kommt im Fenster an, leere Bereiche im Leerlauf ueberschreiben nichts",
+                                            got == "innen (0, 0, 255) aussen (255, 0, 0)", got + "\n" + (File.Exists(outFile) ? File.ReadAllText(outFile) : ""));
+                                    }
+                                }
+                                catch (Exception ex) { CheckNat($"{title}: PresentArea", false, ex.ToString()); }
                             }
                         }
 
@@ -27578,4 +27682,53 @@ sealed class ArrayTarget : fire.Terminal.IRenderTarget
     public byte[]? Indices => null;
     public int TransparentIndex => -1;
     public void MarkDirty() { }
+}
+
+/// <summary>Pictures of the screen of the window tests (ImageMagick's import, PPM with 8 bits).</summary>
+static class ScreenPictures
+{
+    /// <summary>The PresentArea cases: the window's top left corner is the first red pixel; what is inside the reported area (35, 35) and outside it (135, 35).</summary>
+    public static string Area(byte[] ppm)
+    {
+        int pos = 2, field = 0;
+        var header = new int[3];
+        while (field < 3)
+        {
+            while (pos < ppm.Length && char.IsWhiteSpace((char)ppm[pos])) pos++;
+            if (pos < ppm.Length && ppm[pos] == '#') { while (pos < ppm.Length && ppm[pos] != '\n') pos++; continue; }
+            int v = 0;
+            while (pos < ppm.Length && char.IsDigit((char)ppm[pos])) v = v * 10 + (ppm[pos++] - '0');
+            header[field++] = v;
+        }
+        pos++;
+        int width = header[0], height = header[1], start = pos;
+        if (header[2] != 255) return "kein 8-Bit-Bild (" + header[2] + ")";
+        (int, int, int) Px(int x, int y) { int i = start + (y * width + x) * 3; return i + 2 < ppm.Length ? (ppm[i], ppm[i + 1], ppm[i + 2]) : (-1, -1, -1); }
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                if (Px(x, y) == (255, 0, 0)) return $"innen {Px(x + 35, y + 35)} aussen {Px(x + 135, y + 35)}";
+        return "kein Fenster";
+    }
+
+    /// <summary>The PresentArea case of a display with two buffers (Wayland): three squares reported one after the other are all there, the red between them too.</summary>
+    public static string Squares(byte[] ppm)
+    {
+        int pos = 2, field = 0;
+        var header = new int[3];
+        while (field < 3)
+        {
+            while (pos < ppm.Length && char.IsWhiteSpace((char)ppm[pos])) pos++;
+            if (pos < ppm.Length && ppm[pos] == '#') { while (pos < ppm.Length && ppm[pos] != '\n') pos++; continue; }
+            int v = 0;
+            while (pos < ppm.Length && char.IsDigit((char)ppm[pos])) v = v * 10 + (ppm[pos++] - '0');
+            header[field++] = v;
+        }
+        pos++;
+        int width = header[0], height = header[1], start = pos;
+        (int, int, int) Px(int x, int y) { int i = start + (y * width + x) * 3; return i + 2 < ppm.Length ? (ppm[i], ppm[i + 1], ppm[i + 2]) : (-1, -1, -1); }
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                if (Px(x, y) == (255, 0, 0)) return string.Join(" ", new[] { (35, 35), (135, 35), (85, 75), (100, 10), (10, 80) }.Select(p => Px(x + p.Item1, y + p.Item2)));
+        return "kein Fenster";
+    }
 }

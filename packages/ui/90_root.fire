@@ -88,6 +88,12 @@ namespace UI {
         int lastClickX = 0
         int lastClickY = 0
         int lastClickTime = 0
+        // Tooltips (Element.ToolTip): after the pointer rested `toolTipDelay` milliseconds on an element (the time of `clock`, else of the cycles), until it moves on,
+        // presses, scrolls or a key comes
+        int toolTipDelay = 500
+        Element tipElement
+        int tipSince = 0
+        UI.ToolTipPopup tipPopup
         // Invalidate: if something has changed, Update arranges anew and repaints - only the area that has changed, as long as no element has moved elsewhere.
         bool dirty = true
         bool fullRedraw = true
@@ -684,6 +690,7 @@ namespace UI {
             this.DispatchEvents()
             if (this.window.IsClosed) { this.closed = true }
             this.JoyRepeat()
+            this.ToolTipTick()
             this.UpdateAndSay()
             var callback = this.onTick
             if (callback != undefined) { callback() }
@@ -692,6 +699,46 @@ namespace UI {
         // Shows the window (Window.Show): on its manager, which gets a thread of its own if nobody runs it yet; the events are handled at the program's safe
         // points. `modal`: returns when the window is closed, the other windows of the manager take no input meanwhile.
         undefined Show(bool modal = false) { this.window.Show(modal) }
+
+        // ---- tooltips ----
+
+        // The element under the pointer, or the nearest one around it, that has a tooltip (undefined: none).
+        UI.Element ToolTipOf(Element element) {
+            var e = element
+            while (e != undefined) {
+                if (e.ToolTip != undefined && e.ToolTip != "") { return e }
+                e = e.parent
+            }
+            return undefined
+        }
+
+        // The pointer moved over `hit`: on another element the tooltip goes and the waiting starts anew; on the same one it stays.
+        undefined ToolTipMove(Element hit) {
+            var owner = this.ToolTipOf(hit)
+            if (owner == this.tipElement) { return }
+            this.HideToolTip()
+            this.tipElement = owner
+            this.tipSince = this.ClickTime()
+        }
+
+        // In every cycle: the tooltip appears once the pointer rested long enough (not while a button is held or something is dragged).
+        undefined ToolTipTick() {
+            var owner = this.tipElement
+            if (owner == undefined || this.tipPopup != undefined) { return }
+            if (this.pressedElement != undefined || this.dragging || !owner.Visible) { return }
+            if (this.ClickTime() - this.tipSince < this.toolTipDelay) { return }
+            var tip = new ToolTipPopup(owner.ToolTip)
+            this.tipPopup = tip
+            this.ShowPopup(tip, this.mouseX, this.mouseY + 20, false, owner)
+        }
+
+        undefined HideToolTip() {
+            var tip = this.tipPopup
+            if (tip == undefined) { return }
+            this.tipPopup = undefined
+            this.ClosePopup(tip)
+            delete tip
+        }
 
         // Update - and when nothing was painted, the window hands over nothing of the next frame (an idle interface costs no copies to the window system).
         undefined UpdateAndSay() {
@@ -702,6 +749,7 @@ namespace UI {
         bool TickOne() {
             this.cycles = this.cycles + 1
             this.JoyRepeat()
+            this.ToolTipTick()
             this.UpdateAndSay()
             var open = this.window.Tick()
             this.DispatchEvents()
@@ -1099,6 +1147,7 @@ namespace UI {
         }
 
         undefined MouseWheel(int dx, int dy, int px, int py) {
+            this.HideToolTip()
             this.mouseX = px
             this.mouseY = py
             var e = this.Hit(px, py)
@@ -1109,6 +1158,8 @@ namespace UI {
         }
 
         undefined MouseDown(int button, int px, int py) {
+            this.HideToolTip()
+            this.tipElement = undefined
             this.MouseDownCore(button, px, py)
             this.UpdateCursor(px, py)
         }
@@ -1210,6 +1261,7 @@ namespace UI {
                 this.hoverElement = hit
                 if (hit != undefined) { hit.Hover = true }
             }
+            this.ToolTipMove(hit)
             if (this.dragging) {
                 if (!this.DragOut(px, py)) {
                     this.DragMove(px, py)
@@ -1551,6 +1603,8 @@ namespace UI {
         }
 
         undefined KeyDown(int key, int mod) {
+            this.HideToolTip()
+            this.tipElement = undefined
             this.modifiers = mod
             if (this.dragging) {
                 if (key == UI.Keys.Escape()) { this.CancelDrag() }

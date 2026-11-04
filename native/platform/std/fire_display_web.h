@@ -153,11 +153,13 @@ EM_JS(void, fire_dwebjs_destroy, (int id), {
     if (w.ownCanvas && w.canvas.parentNode) w.canvas.parentNode.removeChild(w.canvas);
     Module.fireWins[id] = null;
 });
-EM_JS(void, fire_dwebjs_put, (int id, const void* pixels, int width, int height), {
+/* (only the area x, y, aw, ah of it - the canvas keeps the rest; a canvas of another size is cleared: all of it) */
+EM_JS(void, fire_dwebjs_put, (int id, const void* pixels, int width, int height, int x, int y, int aw, int ah), {
     var w = Module.fireWins[id];
     if (!w) return;
-    if (w.canvas.width != width || w.canvas.height != height) { w.canvas.width = width; w.canvas.height = height; }
-    w.ctx.putImageData(new ImageData(new Uint8ClampedArray(HEAPU8.buffer, pixels, width * height * 4), width, height), 0, 0);
+    if (w.canvas.width != width || w.canvas.height != height) { w.canvas.width = width; w.canvas.height = height; x = 0; y = 0; aw = width; ah = height; }
+    if (aw <= 0 || ah <= 0) return;
+    w.ctx.putImageData(new ImageData(new Uint8ClampedArray(HEAPU8.buffer, pixels, width * height * 4), width, height), 0, 0, x, y, aw, ah);
 });
 EM_JS(void, fire_dwebjs_setCssSize, (int id, int width, int height), {
     var w = Module.fireWins[id];
@@ -288,15 +290,21 @@ static int fire_dweb_pump(FireDwebWindow* w, FireDisplayEvents* out, int fbWidth
     return !w->queue.quit;
 }
 
-static void fire_dweb_present(FireDwebWindow* w, const uint32_t* rgba, int width, int height) {
+/* Shows the frame; only (ax, ay, aw, ah) changed since the last one: only it goes into the canvas. */
+static void fire_dweb_presentArea(FireDwebWindow* w, const uint32_t* rgba, int width, int height, int ax, int ay, int aw, int ah) {
+    int x0, y0, x1, y1;
     if (!w->open || rgba == NULL || width <= 0 || height <= 0) return;
-    fire_dwebjs_put(w->id, rgba, width, height);
+    x0 = ax < 0 ? 0 : ax > width ? width : ax; x1 = ax + aw < 0 ? 0 : ax + aw > width ? width : ax + aw;
+    y0 = ay < 0 ? 0 : ay > height ? height : ay; y1 = ay + ah < 0 ? 0 : ay + ah > height ? height : ay + ah;
+    fire_dwebjs_put(w->id, rgba, width, height, x0, y0, x1 - x0, y1 - y0);
     if (w->vsync) {
         double now = emscripten_get_now(), next = w->lastFrame + 1000.0 / 60.0;
         emscripten_sleep(w->lastFrame > 0 && now < next ? (unsigned)(next - now) : 0);   /* (the page draws it while the thread is handed back) */
         w->lastFrame = emscripten_get_now();
     } else emscripten_sleep(0);
 }
+
+static void fire_dweb_present(FireDwebWindow* w, const uint32_t* rgba, int width, int height) { fire_dweb_presentArea(w, rgba, width, height, 0, 0, width, height); }
 
 static int fire_dweb_native(FireDwebWindow* w, fire_native_window* out) { (void)w; (void)out; return 0; }
 static void fire_dweb_restore(FireDwebWindow* w) { (void)w; }

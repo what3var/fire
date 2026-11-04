@@ -348,6 +348,13 @@ gibt, was er kann (`win.Backdrop`); wo er etwas gibt, wird der Hintergrund der O
 Die Effekte zeichnet die C-Bibliothek von `graphics` (`Renderer.FillRoundRect`, `DrawRoundRect`, `DrawShadow`, `Blur`, `DrawMaterial` - auch für eigene Programme); siehe
 docs/UI_PLATFORM.md.
 
+## Tooltips
+
+Jedes Element kann einen kurzen Hinweistext haben: `button.ToolTip = "Speichert alles"`. Ruht der Zeiger `root.toolTipDelay` Millisekunden (500) darauf, erscheint er
+unter dem Zeiger (mit feinem Schatten, auf dem Hintergrund der Menüs); ein Kind ohne eigenen zeigt den seines Elternelements. Er nimmt keine Eingaben - der Zeiger zeigt
+weiter auf das Element - und geht, sobald der Zeiger auf ein anderes Element wechselt, gedrückt, gescrollt oder eine Taste gedrückt wird. Die Zeit kommt aus `root.clock`
+(wie beim Doppelklick), sonst aus den Zyklen.
+
 ## Show, Run und der Fenster-Manager
 
 Die Fenster laufen über einen `WindowManager` (docs/CONSOLE.md, *Fenster-Manager*): der Root hängt sich an den Zyklus seines Fensters (`window.onCycle`) und verteilt dort die

@@ -35,6 +35,8 @@ namespace UI {
         bool Pressed = false
         bool Focused = false
         Element parent
+        // A short text that appears under the pointer when it rests on the element (Root.toolTipDelay); "" none. A child without one shows its parent's.
+        string ToolTip = ""
         // Appearance: undefined = the control takes the colours of the theme (states like hover then change them themselves)
         Brush Background
         Brush Foreground

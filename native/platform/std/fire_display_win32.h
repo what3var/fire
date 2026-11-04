@@ -655,8 +655,8 @@ static int fire_dw32_pump(FireDw32Window* w, FireDisplayEvents* out, int fbWidth
 }
 
 /* Shows the pixels (R,G,B,A per 32-bit word), stretched to the client area: converted to B,G,R,A (premultiplied when the window shows what lies behind it). */
-/* Shows the frame; only the area (ax, ay, aw, ah) changed since the last one: when the size is the same, only it is converted (the bitmap keeps the rest; WM_PAINT shows
- * all of it). The window gets the whole bitmap. */
+/* Shows the frame; only the area (ax, ay, aw, ah) changed since the last one: when the size is the same, only it is converted and handed to the window (the bitmap
+ * keeps the rest; WM_PAINT shows all of it). */
 static void fire_dw32_presentArea(FireDw32Window* w, const uint32_t* rgba, int width, int height, int ax, int ay, int aw, int ah) {
     FireW32* lib = fire_dw32_lib();
     size_t n;
@@ -695,7 +695,16 @@ static void fire_dw32_presentArea(FireDw32Window* w, const uint32_t* rgba, int w
     w->bmi.bmiHeader.biCompression = BI_RGB;
     dc = GetDC(w->hwnd);
     if (dc != NULL) {
-        if (width == w->winW && height == w->winH) SetDIBitsToDevice(dc, 0, 0, (DWORD)width, (DWORD)height, 0, 0, 0, (UINT)height, w->bgra, &w->bmi, DIB_RGB_COLORS);
+        if (width == w->winW && height == w->winH && (c0 > 0 || r0 > 0 || c1 < width || r1 < height)) {
+            /* only the area: the band of its rows as a bitmap of its own (top-down, starting at its first row; source y 0 is then its first row whichever way
+             * Windows counts), from its first column */
+            if (c1 > c0 && r1 > r0) {
+                BITMAPINFO band = w->bmi;
+                band.bmiHeader.biHeight = -(r1 - r0);
+                SetDIBitsToDevice(dc, c0, r0, (DWORD)(c1 - c0), (DWORD)(r1 - r0), c0, 0, 0, (UINT)(r1 - r0), w->bgra + (size_t)r0 * width, &band, DIB_RGB_COLORS);
+            }
+        }
+        else if (width == w->winW && height == w->winH) SetDIBitsToDevice(dc, 0, 0, (DWORD)width, (DWORD)height, 0, 0, 0, (UINT)height, w->bgra, &w->bmi, DIB_RGB_COLORS);
         else {
             SetStretchBltMode(dc, COLORONCOLOR);
             StretchDIBits(dc, 0, 0, w->winW, w->winH, 0, 0, width, height, w->bgra, &w->bmi, DIB_RGB_COLORS, SRCCOPY);
