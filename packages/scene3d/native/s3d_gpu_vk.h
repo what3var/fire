@@ -65,9 +65,16 @@ static void s3d_gpu_detach(S3dFrame* f) { (void)f; }
 /* The window of a package's presenter (the same declarations as in native/abi/fire_pkg_abi.h, where they are described). */
 #ifndef FIRE_NATIVE_WINDOW_DEFINED
 #define FIRE_NATIVE_WINDOW_DEFINED 1
-enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4 };
+enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4, FIRE_NATIVE_DCOMP = 5 };
 typedef struct fire_native_window { int32_t kind; int32_t width, height; int32_t vsync; void* a; void* b; uint64_t id; } fire_native_window;
 typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
+typedef struct fire_dcomp_bridge {
+    int32_t size;
+    uint32_t luidLow; int32_t luidHigh;
+    int32_t premultiplied;
+    void* (*texture)(struct fire_dcomp_bridge* bridge, int32_t width, int32_t height);
+    int32_t (*present)(struct fire_dcomp_bridge* bridge);
+} fire_dcomp_bridge;
 #endif
 
 /* The surfaces of the window systems (their declarations are in the platform headers of Vulkan, vulkan_win32.h & co., which need the headers of the window systems: the

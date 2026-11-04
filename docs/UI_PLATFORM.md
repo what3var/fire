@@ -264,7 +264,7 @@ ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
   Ein Presenter, der scheitert, gibt das Fenster zurück, die Frames werden wieder zurückgelesen.
 * **Transparenter Hintergrund (Backdrop):** der Frame wird beim Kopieren auf der GPU vormultipliziert (ein Pass des Effekt-Shaders, Modus 4 - dieselbe Rechnung
   `c·a/255` wie die Anzeigen in Software), die Swapchain mischt mit `VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR`; sie wird beim Wechsel neu gemacht. Eine Fläche, die so
-  nicht mischen kann, bekommt diese Frames als Pixel: Win32 (die Treiber bieten nur deckend; mischen kann dort nur DWM über DirectComposition - offen). X11: ein
+  nicht mischen kann, bekommt diese Frames als Pixel (Windows: siehe DirectComposition). X11: ein
   32-Bit-Fenster ohne `PRE_MULTIPLIED` (z. B. NVIDIA) nimmt `INHERIT` - das vormultiplizierte Bild geht so ins Visual, der X-Kompositor mischt es wie das der
   Anzeige; ein 24-Bit-Fenster kann nicht durchscheinen (ohne Kompositor gibt die Anzeige ohnehin keinen transparenten Backdrop). Macht die Anzeige ihr Fenster dafür neu (X11: anderes Visual), lässt
   der Presenter das alte vorher los.
@@ -272,6 +272,18 @@ ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
   liegt im Puffer der Fläche (`FIRE_WAYLAND_CSD=0` lässt sie weg: Tests); das gilt auch für scene3d DirectDrawing. Zeigen zwei Fenster denselben Framebuffer, bekommt
   das zweite die Pixel. Der Presenter zeigt einen neuen Frame sofort, den alten nur ab und zu wieder (nicht in jedem Zyklus). VSync übernimmt die Swapchain (FIFO) -
   lavapipe wartet dabei nicht auf den Bildschirm.
+* **Windows: DirectComposition als Brücke** (`native/platform/std/fire_display_dcomp.h`): ist sie da (Windows 8 und später; `FIRE_DCOMP=0` schaltet sie ab),
+  bekommt jedes Fenster beim Anlegen `WS_EX_NOREDIRECTIONBITMAP` und zeigt *alle* Frames über genau ein Visual mit einer Composition-Swapchain (R8G8B8A8; Alpha
+  ignoriert bei deckendem, vormultipliziert bei transparentem Hintergrund - DWM mischt, auch Mica und Acryl; Blur-Behind ist nicht mehr nötig). Die UI merkt
+  davon nichts: die Pixel der CPU gehen nur im geänderten Bereich in das Bild des Fensters (eine D3D11-Textur, `UpdateSubresource`), das pro Frame in den
+  Back Buffer kopiert und präsentiert wird (VSync über `Present`). Der GPU-Presenter bekommt das Fenster als `FIRE_NATIVE_DCOMP` (`fire_dcomp_bridge` in
+  `fire_pkg_abi.h`): Vulkan importiert die geteilte Textur (`VK_KHR_external_memory_win32`, Handle der Art D3D11_TEXTURE_KMT, gleicher Adapter über die LUID),
+  kopiert den Frame hinein und lässt die Anzeige präsentieren - nichts kommt zurück, eine Vulkan-Swapchain gibt es unter Windows dann nicht. Rückfälle: ohne
+  DirectComposition (Windows 7, Wine) oder wenn sie für ein Fenster scheitert, wird es ohne den Stil (neu) angelegt - GDI wie bisher; geht das Device verloren,
+  ist sie für den Prozess aus und die Fenster werden neu angelegt; ohne Interop gehen die GPU-Frames als Pixel (nur das Gezeichnete zurückgelesen). scene3d
+  DirectDrawing kennt `FIRE_NATIVE_DCOMP` noch nicht und liest dort zurück. COM in C über Vtable-Plätze; `tools/check_dcomp.sh` (und ein Test unter Wine)
+  vergleicht Plätze, GUIDs und Strukturen mit dem SDK von MinGW. `Window.PresentPath()` sagt, welcher Weg es war; `docs/checks/windows_present.fire` ist die
+  Prüfung für ein echtes Windows (unter Wine ist DirectComposition ein Stub: dort ist nur der Rückfall getestet).
 * **Zurücklesen nur des Gezeichneten:** jeder Zwilling führt das Rechteck mit, das die GPU seit dem letzten Gleichstand gezeichnet hat (Formen, Bilder, Glyphen,
   Schatten, Effekte); ein Abgleich holt nur dieses zurück - der Rest der CPU-Pixel stimmt noch. Das macht jeden Pixelweg billig (Windows mit Transparenz, `GetPixel`,
   PNG, die Host-Anzeige), wenn sich wenig ändert.

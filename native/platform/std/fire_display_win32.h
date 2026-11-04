@@ -10,7 +10,10 @@
  * (IMM: WM_IME_COMPOSITION - drawn by the program, the candidates at the spot it names), the mouse, the wheels, fingers (WM_POINTER on Windows 8 and later; mouse
  * messages Windows makes of a finger only with TouchMouse), what other programs drop (OLE's IDropTarget: files and text, with the position while it is dragged).
  * Behind the window (fire_display_setBackdrop): per-pixel alpha (DWM's blur-behind with an empty region), blur (the accent policy of Windows 10), acrylic (Windows
- * 11 22H2: the system backdrop, else the acrylic accent of Windows 10) and Mica (Windows 11). The title bar follows the dark mode of the system. */
+ * 11 22H2: the system backdrop, else the acrylic accent of Windows 10) and Mica (Windows 11). The title bar follows the dark mode of the system.
+ * Where DirectComposition is there (fire_display_dcomp.h: Windows 8 and later), every window shows its frames through it instead of GDI - made with
+ * WS_EX_NOREDIRECTIONBITMAP, a swap chain that DWM mixes by the premultiplied alpha (then that is the per-pixel transparency; blur-behind is not needed) - and a GPU
+ * presenter gets it as FIRE_NATIVE_DCOMP. If DirectComposition fails for a window, it is made anew without (GDI). */
 #ifndef FIRE_DISPLAY_WIN32_H
 #define FIRE_DISPLAY_WIN32_H
 
@@ -23,6 +26,7 @@
 #include <string.h>
 #include "fire_display_common.h"
 #include "fire_dragout.h"
+#include "fire_display_dcomp.h"
 
 /* ---- what is loaded at run time ---- */
 typedef struct FireW32CompForm { DWORD dwStyle; POINT ptCurrentPos; RECT rcArea; } FireW32CompForm;       /* COMPOSITIONFORM */
@@ -129,6 +133,9 @@ typedef struct FireDw32Window {
     FireW32DropTarget drop;
     int oleDrop;
     FireDisplayQueue queue;
+    FireDcompWindow dc;    /* DirectComposition (dc.on: the window shows its frames that way) */
+    WCHAR* title;          /* (to make the window anew) */
+    int askedBackdrop;     /* what the program asked for behind the window (made anew: asked again) */
 } FireDw32Window;
 
 static ULONG STDMETHODCALLTYPE fire_dw32_dropAddRef(FireW32DropTarget* t) { return (ULONG)InterlockedIncrement(&t->refs); }
@@ -335,7 +342,7 @@ static LRESULT CALLBACK fire_dw32_wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC dc = BeginPaint(hwnd, &ps);
-            if (w->bgra != NULL && !w->direct)
+            if (w->bgra != NULL && !w->direct && !w->dc.on)
                 StretchDIBits(dc, 0, 0, w->winW, w->winH, 0, 0, w->bmi.bmiHeader.biWidth, -w->bmi.bmiHeader.biHeight, w->bgra, &w->bmi, DIB_RGB_COLORS, SRCCOPY);
             EndPaint(hwnd, &ps);
             return 0;
@@ -520,19 +527,70 @@ static void fire_dw32_darkTitle(FireDw32Window* w) {
     if (lib->DwmSetWindowAttribute(w->hwnd, 20, &dark, sizeof dark) != S_OK) lib->DwmSetWindowAttribute(w->hwnd, 19, &dark, sizeof dark);
 }
 
+/* Makes the OS window (`ex`: WS_EX_NOREDIRECTIONBITMAP for DirectComposition) with its outer size at (x, y) - CW_USEDEFAULT: where Windows puts it - and what belongs
+ * to it: the dark title bar, what other programs drop. 0: it failed. */
+static int fire_dw32_create(FireDw32Window* w, DWORD ex, int x, int y, int ow, int oh) {
+    FireW32* lib = fire_dw32_lib();
+    w->hwnd = CreateWindowExW(ex, fire_dw32_class(), w->title ? w->title : L"", WS_OVERLAPPEDWINDOW, x, y, ow, oh, NULL, NULL, GetModuleHandleW(NULL), w);
+    if (w->hwnd == NULL) return 0;
+    fire_dw32_darkTitle(w);
+    /* what other programs drop: OLE (positions while it is dragged, files and text) on this thread */
+    w->oleDrop = 0;
+    if (lib->OleInitialize != NULL && lib->RegisterDragDrop != NULL) {
+        HRESULT ole = lib->OleInitialize(NULL);
+        if (ole == S_OK || ole == S_FALSE) {
+            w->drop.vtbl = &fire_dw32DropVtbl; w->drop.refs = 1; w->drop.w = w;
+            w->oleDrop = lib->RegisterDragDrop(w->hwnd, &w->drop) == S_OK;
+        }
+    }
+    return 1;
+}
+
+/* Lets go of the OS window (the program's window stays). */
+static void fire_dw32_destroy(FireDw32Window* w) {
+    FireW32* lib = fire_dw32_lib();
+    fire_dcomp_close(&w->dc);
+    if (w->hwnd == NULL) return;
+    if (w->oleDrop && lib->RevokeDragDrop) lib->RevokeDragDrop(w->hwnd);
+    SetWindowLongPtrW(w->hwnd, GWLP_USERDATA, 0);
+    DestroyWindow(w->hwnd);
+    w->hwnd = NULL;
+}
+
+static int fire_dw32_setBackdrop(FireDw32Window* w, int kind);
+
+/* DirectComposition failed for the window (or its device went away): the OS window is made anew without it, where it was - GDI shows its frames from now on. */
+static void fire_dw32_toGdi(FireDw32Window* w) {
+    RECT r;
+    int visible;
+    if (w->hwnd == NULL) return;
+    GetWindowRect(w->hwnd, &r);
+    visible = IsWindowVisible(w->hwnd) != 0;
+    fire_dw32_destroy(w);
+    w->bgraW = 0;   /* (the next frame is shown whole) */
+    if (!fire_dw32_create(w, 0, r.left, r.top, r.right - r.left, r.bottom - r.top)) { w->closed = 1; return; }
+    if (w->askedBackdrop > FIRE_BACKDROP_NONE) fire_dw32_setBackdrop(w, w->askedBackdrop);
+    if (visible) ShowWindow(w->hwnd, SW_SHOWNOACTIVATE);
+}
+
 static int fire_dw32_open(FireDw32Window* w, const char* title, int width, int height, int vsync) {
     FireW32* lib = fire_dw32_lib();
-    WCHAR* wide;
-    int ow, oh;
+    int ow, oh, dcomp;
     if (width <= 0 || height <= 0) return 0;
     fire_display_queueInit(&w->queue);
     w->vsync = vsync;
     w->winW = width; w->winH = height;
-    wide = fire_dw32_wide(title ? title : "");
+    free(w->title);
+    w->title = fire_dw32_wide(title ? title : "");
     fire_dw32_outer(w, width, height, &ow, &oh);
-    w->hwnd = CreateWindowExW(0, fire_dw32_class(), wide ? wide : L"", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, ow, oh, NULL, NULL, GetModuleHandleW(NULL), w);
-    free(wide);
-    if (w->hwnd == NULL) return 0;
+    /* (DirectComposition: decided before the window is made - its style depends on it) */
+    dcomp = fire_dcomp_available();
+    if (!fire_dw32_create(w, dcomp ? 0x00200000u /* WS_EX_NOREDIRECTIONBITMAP */ : 0, CW_USEDEFAULT, CW_USEDEFAULT, ow, oh)) return 0;
+    if (dcomp && !fire_dcomp_open(&w->dc, w->hwnd)) {
+        /* (a window without a bitmap of GDI shows nothing without DirectComposition: made anew without) */
+        fire_dw32_destroy(w);
+        if (!fire_dw32_create(w, 0, CW_USEDEFAULT, CW_USEDEFAULT, ow, oh)) return 0;
+    }
     /* the client area at the asked size on the window's own screen (its scale may differ from the primary one's) */
     if (lib->GetDpiForWindow != NULL) {
         UINT dpi = lib->GetDpiForWindow(w->hwnd);
@@ -541,15 +599,6 @@ static int fire_dw32_open(FireDw32Window* w, const char* title, int width, int h
         SetWindowPos(w->hwnd, NULL, 0, 0, ow, oh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
     w->winW = width; w->winH = height;
-    fire_dw32_darkTitle(w);
-    /* what other programs drop: OLE (positions while it is dragged, files and text) on this thread */
-    if (lib->OleInitialize != NULL && lib->RegisterDragDrop != NULL) {
-        HRESULT ole = lib->OleInitialize(NULL);
-        if (ole == S_OK || ole == S_FALSE) {
-            w->drop.vtbl = &fire_dw32DropVtbl; w->drop.refs = 1; w->drop.w = w;
-            w->oleDrop = lib->RegisterDragDrop(w->hwnd, &w->drop) == S_OK;
-        }
-    }
     ShowWindow(w->hwnd, SW_SHOW);
     UpdateWindow(w->hwnd);
 #ifdef FIRE_DISPLAY_HAS_SELFTEST
@@ -559,13 +608,8 @@ static int fire_dw32_open(FireDw32Window* w, const char* title, int width, int h
 }
 
 static void fire_dw32_close(FireDw32Window* w) {
-    FireW32* lib = fire_dw32_lib();
-    if (w->hwnd != NULL) {
-        if (w->oleDrop && lib->RevokeDragDrop) lib->RevokeDragDrop(w->hwnd);
-        SetWindowLongPtrW(w->hwnd, GWLP_USERDATA, 0);
-        DestroyWindow(w->hwnd);
-        w->hwnd = NULL;
-    }
+    fire_dw32_destroy(w);
+    free(w->title); w->title = NULL;
     free(w->bgra); w->bgra = NULL; w->bgraCap = 0;
     fire_display_queueFree(&w->queue);
 }
@@ -595,13 +639,16 @@ static int fire_dw32_setBackdrop(FireDw32Window* w, int kind) {
     FireW32* lib = fire_dw32_lib();
     FireW32Margins all = { -1, -1, -1, -1 }, none = { 0, 0, 0, 0 };
     int got = FIRE_BACKDROP_NONE, type;
-    if (w->hwnd == NULL || lib->DwmEnableBlurBehindWindow == NULL) { w->backdrop = FIRE_BACKDROP_NONE; return w->backdrop; }
+    w->askedBackdrop = kind;
+    w->dc.full = 1;   /* (the next frame goes in whole - premultiplied or not) */
+    if (w->hwnd == NULL || (lib->DwmEnableBlurBehindWindow == NULL && !w->dc.on)) { w->backdrop = FIRE_BACKDROP_NONE; return w->backdrop; }
     /* back to plain first */
     if (lib->SetWindowCompositionAttribute != NULL) { FireW32Accent a = { 0, 0, 0, 0 }; FireW32CompAttrib c; c.attrib = 19; c.data = &a; c.size = sizeof a; lib->SetWindowCompositionAttribute(w->hwnd, &c); }
     type = 1;   /* DWMSBT_NONE */
     if (lib->DwmSetWindowAttribute != NULL && lib->build >= 22621) lib->DwmSetWindowAttribute(w->hwnd, 38, &type, sizeof type);
     if (lib->DwmExtendFrameIntoClientArea != NULL) lib->DwmExtendFrameIntoClientArea(w->hwnd, &none);
-    {
+    if (w->dc.on) got = kind > FIRE_BACKDROP_NONE ? FIRE_BACKDROP_TRANSPARENT : FIRE_BACKDROP_NONE;   /* (DirectComposition: the swap chain's alpha is the transparency) */
+    else {
         FireW32BlurBehind b;
         HRGN empty = CreateRectRgn(0, 0, -1, -1);
         b.dwFlags = 0x1 | 0x2;   /* DWM_BB_ENABLE | DWM_BB_BLURREGION */
@@ -663,6 +710,17 @@ static void fire_dw32_presentArea(FireDw32Window* w, const uint32_t* rgba, int w
     int row, col, c0 = 0, c1 = width, r0 = 0, r1 = height;
     HDC dc;
     if (w->hwnd == NULL || w->direct || rgba == NULL || width <= 0 || height <= 0) return;
+    if (w->dc.on) {
+        /* DirectComposition: the area into the window's picture, presented (Present waits for the screen with VSync) */
+        w->dc.premultiplied = w->backdrop != FIRE_BACKDROP_NONE;
+        w->dc.viewW = w->winW; w->dc.viewH = w->winH;
+        w->dc.vsync = w->vsync;
+        if (fire_dcomp_presentPixels(&w->dc, rgba, width, height, ax, ay, aw, ah)) return;
+        if (!w->dc.lost) return;
+        fire_dw32_toGdi(w);   /* (the device went away: GDI from now on) */
+        if (w->hwnd == NULL) return;
+        ax = 0; ay = 0; aw = width; ah = height;
+    }
     n = (size_t)width * (size_t)height;
     if (n > w->bgraCap) {
         uint32_t* grown = (uint32_t*)realloc(w->bgra, n * 4);
@@ -725,14 +783,30 @@ static void fire_dw32_present(FireDw32Window* w, const uint32_t* rgba, int width
 
 static int fire_dw32_native(FireDw32Window* w, fire_native_window* out) {
     if (w->hwnd == NULL) return 0;
-    out->kind = FIRE_NATIVE_WIN32;
-    out->a = GetModuleHandleW(NULL);
+    if (w->dc.lost) fire_dw32_toGdi(w);
+    if (w->hwnd == NULL) return 0;
+    memset(out, 0, sizeof *out);
+    if (w->dc.on) {
+        /* DirectComposition: the presenter draws into the window's picture (fire_dcomp_bridge), not into the HWND */
+        w->dc.premultiplied = w->backdrop != FIRE_BACKDROP_NONE;
+        w->dc.bridge.premultiplied = w->dc.premultiplied;
+        w->dc.viewW = w->winW; w->dc.viewH = w->winH;
+        w->dc.vsync = w->vsync;
+        out->kind = FIRE_NATIVE_DCOMP;
+        out->a = &w->dc.bridge;
+    } else {
+        out->kind = FIRE_NATIVE_WIN32;
+        out->a = GetModuleHandleW(NULL);
+    }
     out->b = w->hwnd;
     out->width = w->winW; out->height = w->winH;
+    out->vsync = w->vsync;
     w->direct = 1;
     return 1;
 }
-static void fire_dw32_restore(FireDw32Window* w) { w->direct = 0; }
+static void fire_dw32_restore(FireDw32Window* w) { w->direct = 0; w->dc.full = 1; w->bgraW = 0; }
+/* How the window shows its frames: 2 DirectComposition, 1 GDI (Window.PresentPath). */
+static int fire_dw32_presentPath(FireDw32Window* w) { return w->dc.on ? 2 : 1; }
 
 static int fire_dw32_startDrag(FireDw32Window* w, const char* text, const char* files) { return w->hwnd != NULL ? fire_dragout_win32(w->hwnd, text, files) : 0; }
 static int fire_dw32_canStartDrag(FireDw32Window* w) { return w->hwnd != NULL; }

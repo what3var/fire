@@ -127,6 +127,8 @@ namespace fire.Windows.Bridge
                 ["GetScale"] = args => Value.MakeFloat(1.0),
                 // Window.PresentArea: the C# windows always hand over the whole frame
                 ["PresentArea"] = args => Value.MakeUndefined(),
+                // Window.PresentPath: the C# windows show pixels
+                ["PresentPath"] = args => Value.MakeString("pixels"),
             };
         }
         
@@ -184,6 +186,7 @@ namespace fire.Windows.Bridge
                 ["GetBackdrop"] = args => Value.MakeInt(0) /*STUB*/,
                 ["GetScale"] = args => Value.MakeFloat(1.0) /*STUB*/,
                 ["PresentArea"] = args => Value.MakeUndefined() /*STUB*/,
+                ["PresentPath"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 

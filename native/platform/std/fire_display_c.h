@@ -41,6 +41,8 @@
  *   double fire_display_scale(w)                              [FIRE_DISPLAY_SCALE] pixels of the screen per logical pixel of the window's screen now
  *   void fire_display_presentArea(w, rgba, width, height, x, y, aw, ah)   [FIRE_DISPLAY_PRESENT_AREA] like fire_display_present, but only the area (x, y, aw, ah;
  *                                                             framebuffer pixels) changed since the last frame: a display may hand over only that (it may show more)
+ *   int  fire_display_presentPath(w)                        [FIRE_DISPLAY_PRESENT_PATH] how the window shows its frames: 2 through DirectComposition (Windows),
+ *                                                             1 the display's usual way (Window.PresentPath)
  * fire's own displays (fire_display_win32.h, _x11.h, _wayland.h, _cocoa.h, _web.h, _headless.h) share fire_display_common.h: the keys (fire_display_keys.h), the queue of a
  * window, drops, compositions and the events of the tests.
  * A board package of your own provides its own `fire_display.h` (see fire_display_headless.h for the simplest complete one) and puts the pixels on its screen. */
@@ -54,9 +56,16 @@
 /* A window that a package draws into itself (the same declarations as in native/abi/fire_pkg_abi.h, where they are described). */
 #ifndef FIRE_NATIVE_WINDOW_DEFINED
 #define FIRE_NATIVE_WINDOW_DEFINED 1
-enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4 };
+enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4, FIRE_NATIVE_DCOMP = 5 };
 typedef struct fire_native_window { int32_t kind; int32_t width, height; int32_t vsync; void* a; void* b; uint64_t id; } fire_native_window;
 typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
+typedef struct fire_dcomp_bridge {
+    int32_t size;
+    uint32_t luidLow; int32_t luidHigh;
+    int32_t premultiplied;
+    void* (*texture)(struct fire_dcomp_bridge* bridge, int32_t width, int32_t height);
+    int32_t (*present)(struct fire_dcomp_bridge* bridge);
+} fire_dcomp_bridge;
 #endif
 
 /* The numbers are those of `EventType` in the windows prelude.
