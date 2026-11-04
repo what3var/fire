@@ -101,6 +101,9 @@ namespace fire.Terminal.Bridge
                 ["ToMask"] = args => Value.MakeUndefined() /*STUB*/,
                 ["Resize"] = args => Value.MakeUndefined() /*STUB*/,
                 ["ToPng"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetAccelerated"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetAccelerated"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GpuError"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -197,6 +200,10 @@ namespace fire.Terminal.Bridge
                 ["Resize"] = args => Value.MakeBool(mgr.Resize(I(args[0]), I(args[1]), I(args[2]))),
                 // Framebuffer.ToPng: the bytes of a PNG file (RGBA)
                 ["ToPng"] = args => Value.MakeBuffer(new ByteBuffer(mgr.ToPng(I(args[0])), ByteConversions.HostByteOrder)),
+                // Framebuffer.Accelerated: the GPU backend is the C library's (packages/graphics/native/fire_gfx_gpu.h); here always software
+                ["SetAccelerated"] = args => Value.MakeBool(false),
+                ["GetAccelerated"] = args => Value.MakeBool(false),
+                ["GpuError"] = args => Value.MakeString("The C# implementation of graphics has no GPU backend (the C library has)."),
             };
         }
 

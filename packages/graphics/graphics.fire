@@ -106,6 +106,15 @@ class Framebuffer {
 
     // Raw data: RGBA 4 bytes per pixel (R, G, B, A), palette 1 byte per pixel (the index); ByteCount() is the size.
     int ByteCount() { return __GRPHFbByteCount(this.id) }
+
+    // On the GPU (docs/UI_PLATFORM.md, part 4): the drawing the GPU does goes there; the pixels come back only when something reads them (GetPixel, a window, a
+    // drawing the GPU does not do) - and only when the GPU drew since. false where there is no GPU (Framebuffer.GpuError() says why), for a palette framebuffer,
+    // on a board. FIRE_GFX_GPU=1 in the environment puts every RGBA framebuffer there.
+    bool Accelerated {
+        get { return __GRPHFbGetAccelerated(this.id) }
+        set { __GRPHFbSetAccelerated(this.id, value) }
+    }
+    static string GpuError() { return __GRPHFbGpuError() }
     int ReadByte(int offset) { return __GRPHFbReadByte(this.id, offset) }
     undefined WriteByte(int offset, int value) { __GRPHFbWriteByte(this.id, offset, value) }
     byte[] ReadBytes() { return __GRPHFbReadBytes(this.id) }

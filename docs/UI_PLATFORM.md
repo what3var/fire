@@ -212,3 +212,22 @@ Noch offen:
 
 * macOS präsentiert noch das ganze Bild (ungetestet ohne Mac); das Web ist nur gebaut, nicht im Browser geprüft (das Emscripten im Container ist zu alt). Blur-Cache auch für eigene Programme.
 
+## Stand Teil 4
+
+Stufen: **4.1** Grundgerüst (umgesetzt), **4.2** Text über einen Glyphen-Atlas und Blits über Texturen, **4.3** Schatten, Blur und Materialien auf der GPU, **4.4** Präsentieren
+ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
+
+4.1 (`packages/graphics/native/fire_gfx_gpu.h`):
+
+* **Vulkan zur Laufzeit** (`dlopen`/`LoadLibrary`, nichts gelinkt); die Deklarationen erzeugt `tools/make_gfx_vk.py` aus `vulkan_core.h` (`fire_gfx_vk.h`), die Shader
+  `shaders/build.sh` (`fire_gfx_shaders.h`, SPIR-V). Ein Gerät (GPU vor CPU-Gerät; `FIRE_GFX_GPU=cpu` nimmt auch lavapipe), ein Bild je beschleunigtem Framebuffer.
+* **Zwei Kopien, ein Abgleich:** `fire_gfx_fbCpu(fb, writes)` steht vor jedem Lesen und Schreiben der CPU (Surface, Blit, GetPixel, Bytes, PNG, Fenster). Hat die GPU seit dem
+  letzten Abgleich gezeichnet, holt er die Pixel zurück (das Dirty-Flag); schreibt die CPU, lädt der nächste GPU-Befehl ihr Bild vorher hoch. Ohne Zwilling kostet der Haken
+  einen Vergleich.
+* **Auf der GPU:** `FillRect`, `FillRoundRect`, `DrawRoundRect`, `DrawRect` (Stift 1 px) - ein Instanz-Quad je Form, im Fragment-Shader dieselbe Abstandsfunktion wie
+  `fire_gfx_fx.h` (Abdeckung `clamp(0.5 - d)`), mit Blending wie `fire_gfx_mix` oder kopierend (ohne Blending). Die Befehle sammeln sich bis zum nächsten Abgleich.
+* **Schalter:** `Framebuffer.Accelerated` (`Framebuffer.GpuError()` sagt, warum nicht), `FIRE_GFX_GPU=1|cpu` beschleunigt jeden RGBA-Framebuffer. Auf Boards, im Browser und
+  ohne Vulkan bleibt alles Software; die C#-Rückfall-Implementierung hat keine GPU.
+* **Tests:** GPU gegen Software auf lavapipe (höchstens 2 Farbstufen Abweichung, gemessen 1), und die ganze UI-Gruppe läuft mit `FIRE_GFX_GPU=cpu` grün.
+* Noch langsamer als Software, solange Text und Blits den Abgleich erzwingen (4.2); der Schalter ist bis dahin zum Ausprobieren gedacht.
+

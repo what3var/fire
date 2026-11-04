@@ -40,6 +40,16 @@ namespace fire.Compiler
         /// <summary>Why the library cannot be had (null: it can).</summary>
         public static string? Failure => _failure;
 
+        private static int _warned;
+
+        /// <summary>The VM takes the C# implementation because the library cannot be had: said once per process (on the error output), with the reason - a failed
+        /// build must not hide behind it (the C# windows have no display).</summary>
+        public static void WarnFallback()
+        {
+            if (Interlocked.Exchange(ref _warned, 1) != 0) return;
+            Console.Error.WriteLine("(graphics and windows run in their C# implementation - without windows of the desktop: the C library cannot be had: " + (_failure ?? "unknown") + ")");
+        }
+
         [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "setenv")] private static extern int SetEnvC(string name, string value, int overwrite);
         [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "unsetenv")] private static extern int UnsetEnvC(string name);
         [System.Runtime.InteropServices.DllImport("msvcrt", EntryPoint = "_wputenv_s", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] private static extern int PutEnvW(string name, string value);
@@ -49,7 +59,7 @@ namespace fire.Compiler
         private static void SyncEnvironment()
         {
             var names = Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(n => n.StartsWith("FIRE_", StringComparison.Ordinal))
-                .Concat(new[] { "FIRE_DISPLAY", "FIRE_SYSTEM_THEME", "FIRE_FONT_DIRS", "SDL_VIDEODRIVER", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" }).Distinct();
+                .Concat(new[] { "FIRE_DISPLAY", "FIRE_SYSTEM_THEME", "FIRE_FONT_DIRS", "FIRE_GFX_GPU", "SDL_VIDEODRIVER", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" }).Distinct();
             foreach (string name in names)
             {
                 string? value = Environment.GetEnvironmentVariable(name);

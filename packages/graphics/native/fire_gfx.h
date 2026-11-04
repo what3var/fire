@@ -97,7 +97,14 @@ typedef struct FireGfxFramebuffer {
     int refs;   /* the table of the bridge, every canvas and every window that shows it: it lives as long as one of them does */
     void (*presentFn)(void);   /* a presenter of a package that the windows showing it call instead (a fire_present_fn, fire_display_c.h; scene3d DirectDrawing), or NULL */
     void* presentCtx;
+    void* gpu;   /* its twin on the GPU (fire_gfx_gpu.h), or NULL */
 } FireGfxFramebuffer;
+
+/* The GPU backend (fire_gfx_gpu.h) is asked before the CPU reads (`writes` 0) or draws (1) the pixels of a framebuffer that has a twin there - it fetches them back
+ * when the GPU drew since - and when a framebuffer goes. NULL without it. */
+static void (*g_fireGfxCpuHook)(FireGfxFramebuffer* fb, int writes);
+static void (*g_fireGfxFreeHook)(FireGfxFramebuffer* fb);
+static void fire_gfx_fbCpu(const FireGfxFramebuffer* fb, int writes) { if (fb->gpu != NULL && g_fireGfxCpuHook != NULL) g_fireGfxCpuHook((FireGfxFramebuffer*)fb, writes); }
 
 #define FIRE_GFX_MAX_SIDE ((int64_t)16384)
 #define FIRE_GFX_MAX_PIXELS ((int64_t)64 * 1024 * 1024)
@@ -110,6 +117,7 @@ static void fire_gfx_fbInit(FireGfxFramebuffer* fb) {
     fb->transparentIndex = -1;
     fb->refs = 1;
     fb->presentFn = NULL; fb->presentCtx = NULL;
+    fb->gpu = NULL;
 }
 /* A new empty framebuffer (malloc), NULL without memory. */
 static FireGfxFramebuffer* fire_gfx_fbNew(void) {
@@ -118,7 +126,7 @@ static FireGfxFramebuffer* fire_gfx_fbNew(void) {
     return fb;
 }
 static void fire_gfx_fbFreePixels(FireGfxFramebuffer* fb) { free(fb->pixels); free(fb->indices); fb->pixels = NULL; fb->indices = NULL; }
-static void fire_gfx_fbDelete(FireGfxFramebuffer* fb) { if (fb == NULL) return; fire_gfx_fbFreePixels(fb); free(fb); }
+static void fire_gfx_fbDelete(FireGfxFramebuffer* fb) { if (fb == NULL) return; if (fb->gpu != NULL && g_fireGfxFreeHook != NULL) g_fireGfxFreeHook(fb); fire_gfx_fbFreePixels(fb); free(fb); }
 
 /* Allocates the pixels; 0 when the size is invalid or does not fit in memory. */
 static int fire_gfx_fbCreate(FireGfxFramebuffer* fb, int64_t w, int64_t h, int m) {
@@ -141,6 +149,7 @@ static int fire_gfx_fbResize(FireGfxFramebuffer* fb, int64_t w, int64_t h) {
     uint32_t* newPixels = NULL;
     if (!fire_gfx_validSize(w, h)) return 0;
     if (w == fb->width && h == fb->height) return 1;
+    fire_gfx_fbCpu(fb, 1);
     n = (size_t)(w * h);
     copyW = (int)fire_gfx_lmin(w, fb->width); copyH = (int)fire_gfx_lmin(h, fb->height);
     if (fb->indices) { newIndices = (uint8_t*)calloc(n, 1); if (!newIndices) return 0; }
@@ -162,24 +171,28 @@ static size_t fire_gfx_fbByteCount(const FireGfxFramebuffer* fb) { return fb->in
 /* The pixels as colors, also for a palette framebuffer (for a window that shows the framebuffer). */
 static void fire_gfx_fbResolveTo(const FireGfxFramebuffer* fb, uint32_t* out) {
     size_t i, n = fire_gfx_fbPixelCount(fb);
+    fire_gfx_fbCpu(fb, 0);
     if (!fb->indices) { if (n) memcpy(out, fb->pixels, n * 4); return; }
     for (i = 0; i < n; i++) out[i] = fb->palette.entries[fb->indices[i]];
 }
 
 static uint32_t fire_gfx_fbGetRaw(const FireGfxFramebuffer* fb, int x, int y) {
     size_t i;
+    fire_gfx_fbCpu(fb, 0);
     if ((unsigned)x >= (unsigned)fb->width || (unsigned)y >= (unsigned)fb->height) return 0;
     i = (size_t)y * fb->width + x;
     return fb->indices ? fb->indices[i] : fb->pixels[i];
 }
 static uint8_t fire_gfx_fbGetIndex(const FireGfxFramebuffer* fb, int x, int y) {
     size_t i;
+    fire_gfx_fbCpu(fb, 0);
     if ((unsigned)x >= (unsigned)fb->width || (unsigned)y >= (unsigned)fb->height) return 0;
     i = (size_t)y * fb->width + x;
     return fb->indices ? fb->indices[i] : fire_gfx_paletteNearest(&fb->palette, fb->pixels[i]);
 }
 static uint32_t fire_gfx_fbGetPixel(const FireGfxFramebuffer* fb, int x, int y) {
     size_t i;
+    fire_gfx_fbCpu(fb, 0);
     if ((unsigned)x >= (unsigned)fb->width || (unsigned)y >= (unsigned)fb->height) return 0;
     i = (size_t)y * fb->width + x;
     return fb->indices ? fire_gfx_paletteGet(&fb->palette, fb->indices[i]) : fb->pixels[i];
@@ -200,6 +213,7 @@ static uint8_t fire_gfx_maskDecide(uint32_t packed, uint8_t threshold, int darkI
 /* A palette framebuffer of the same size that marks the pixels to cut out: index 1 (white) = set, index 0 (black) = not (see the slicer). */
 static int fire_gfx_makeMask(const FireGfxFramebuffer* src, uint8_t threshold, int darkIsRemoved, uint8_t alphaThreshold, FireGfxFramebuffer* mask) {
     size_t i, n;
+    fire_gfx_fbCpu(src, 0);
     if (!fire_gfx_fbCreate(mask, src->width, src->height, FIRE_GFX_INDEXED)) return 0;
     fire_gfx_paletteSet(&mask->palette, 0, fire_gfx_rgb(0, 0, 0));
     fire_gfx_paletteSet(&mask->palette, 1, fire_gfx_rgb(255, 255, 255));
@@ -265,6 +279,7 @@ typedef struct FireGfxSurface {
 
 static FireGfxSurface fire_gfx_surface(FireGfxFramebuffer* f, int b, int cl, int ct, int cr, int cb) {
     FireGfxSurface s;
+    fire_gfx_fbCpu(f, 1);   /* (the CPU draws: the pixels are fetched from the GPU first, where it drew since) */
     s.fb = f; s.pixels = f->pixels; s.indices = f->indices; s.width = f->width; s.height = f->height; s.blend = b;
     s.clipLeft = fire_gfx_imax(0, cl); s.clipTop = fire_gfx_imax(0, ct); s.clipRight = fire_gfx_imin(f->width, cr); s.clipBottom = fire_gfx_imin(f->height, cb);
     return s;
@@ -788,6 +803,8 @@ static void fire_gfx_blit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* src
     FireGfxCachedIndex* cache = NULL;
     if (!blend && mode == FIRE_GFX_BLIT_BLEND) mode = FIRE_GFX_BLIT_TRANSPARENT;
     if (sw <= 0 || sh <= 0 || dw == 0 || dh == 0) return;
+    fire_gfx_fbCpu(srcIn, 0);
+    fire_gfx_fbCpu(dst, 1);
     absDw = llabs((int64_t)dw); absDh = llabs((int64_t)dh);
     flipX = dw < 0; flipY = dh < 0;
 
@@ -942,6 +959,7 @@ static FireGfxPixel fire_gfx_rendererClearPixel(const FireGfxRenderer* r) {
 }
 static void fire_gfx_rendererClearAll(FireGfxRenderer* r, const FireGfxPixel* p) {
     size_t n = fire_gfx_fbPixelCount(r->target), k;
+    fire_gfx_fbCpu(r->target, 1);
     if (r->target->indices) memset(r->target->indices, p->index, n);
     else for (k = 0; k < n; k++) r->target->pixels[k] = p->rgba;
 }
@@ -953,6 +971,7 @@ static void fire_gfx_rendererScrollUp(FireGfxRenderer* r, int pixelRows, const F
     int w = r->target->width, h = r->target->height;
     size_t keep, moved, k;
     if (pixelRows <= 0) return;
+    fire_gfx_fbCpu(r->target, 1);
     if (pixelRows >= h) { fire_gfx_rendererClearAll(r, fill); return; }
     keep = (size_t)(h - pixelRows) * w; moved = (size_t)pixelRows * w;
     if (r->target->indices) { memmove(r->target->indices, r->target->indices + moved, keep); memset(r->target->indices + keep, fill->index, moved); return; }

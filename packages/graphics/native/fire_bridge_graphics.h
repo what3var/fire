@@ -18,6 +18,7 @@
 #include "fire_gfx_images.h"
 #include "fire_gfx_slicer.h"
 #include "fire_gfx_fx.h"
+#include "fire_gfx_gpu.h"
 
 /* The framebuffers, renderers, brushes and pens by id (ids start at 1 and are not used again, like the VM's IdManager). */
 typedef struct FireGfxTables {
@@ -179,8 +180,17 @@ static Value fire_gfx_FbCreate(Value w, Value h, Value mode) {
     FireGfxFramebuffer* fb = fire_gfx_fbNew();
     if (fb == NULL) fire_gfxb_outOfMemory();
     if (!fire_gfx_fbCreate(fb, fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(mode))) { fire_gfx_fbDelete(fb); return Int(-1); }
+    if (fb->pixels != NULL && fire_gfx_gpuWanted()) fire_gfx_gpuAttach(fb);   /* (FIRE_GFX_GPU: every RGBA framebuffer on the GPU) */
     return Int(fire_gfxb_addFramebuffer(fb));
 }
+/* Framebuffer.Accelerated: on the GPU (1: it is now; 0: there is none, or it is a palette framebuffer - GpuError says why). */
+static Value fire_gfx_FbSetAccelerated(Value id, Value on) {
+    FireGfxFramebuffer* fb = fire_gfxb_fbOf(id);
+    if (on.i == 0) { fire_gfx_gpuDetach(fb); return Bool(false); }
+    return Bool(fire_gfx_gpuAttach(fb) != 0);
+}
+static Value fire_gfx_FbGetAccelerated(Value id) { return Bool(fire_gfxb_fbOf(id)->gpu != NULL); }
+static Value fire_gfx_FbGpuError(OwnList* list) { return fire_gfxb_strOf8(fire_gfx_gpuError(), list); }
 static Value fire_gfx_FbDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
@@ -209,6 +219,7 @@ static Value fire_gfx_FbReadByte(Value id, Value offset) {
     FireGfxFramebuffer* fb = fire_gfxb_fbOf(id);
     int off = fire_gfxb_I(offset);
     fire_gfxb_checkByteOffset(fb, off);
+    fire_gfx_fbCpu(fb, 0);
     if (fb->indices) return Int(fb->indices[off]);
     return Int((fb->pixels[off / 4] >> ((off % 4) * 8)) & 0xFF);
 }
@@ -218,6 +229,7 @@ static Value fire_gfx_FbWriteByte(Value id, Value offset, Value value) {
     uint8_t b = (uint8_t)value.i;
     uint32_t* px;
     fire_gfxb_checkByteOffset(fb, off);
+    fire_gfx_fbCpu(fb, 1);
     if (fb->indices) { fb->indices[off] = b; return Undef(); }
     shift = (off % 4) * 8;
     px = &fb->pixels[off / 4];
@@ -230,6 +242,7 @@ static Value fire_gfx_FbReadBytes(Value id, OwnList* list) {
     size_t n = fire_gfx_fbByteCount(fb), i, count;
     Buf* b = allocBuf((uint32_t)n, list);
     uint8_t* bytes = bufBytes(b);
+    fire_gfx_fbCpu(fb, 0);
     if (fb->indices) { if (n) memcpy(bytes, fb->indices, n); }
     else for (i = 0, count = fire_gfx_fbPixelCount(fb); i < count; i++) {
         uint32_t px = fb->pixels[i];
@@ -278,6 +291,7 @@ static Value fire_gfx_FbWriteBytes(Value id, Value data) {
         return Bool(false);
     }
     bytes = bufBytes(b);
+    fire_gfx_fbCpu(fb, 1);
     if (fb->indices) { if (expected) memcpy(fb->indices, bytes, expected); }
     else for (i = 0, count = fire_gfx_fbPixelCount(fb); i < count; i++)
         fb->pixels[i] = bytes[i * 4] | ((uint32_t)bytes[i * 4 + 1] << 8) | ((uint32_t)bytes[i * 4 + 2] << 16) | ((uint32_t)bytes[i * 4 + 3] << 24);
@@ -602,26 +616,42 @@ static int* fire_gfxb_readPoints(Value array, size_t* count) {
     return points;
 }
 
+/* A shape on the GPU when the framebuffer has a twin there (1: drawn - or nothing to draw; 0: the software draws it). */
+static int fire_gfxb_gpuShape(FireGfxRenderer* r, int x, int y, int w, int h, int radius, int stroke, FireGfxPaint paint) {
+    uint32_t rgba;
+    if (r->target->gpu == NULL) return 0;
+    rgba = fire_gfx_paintIsIndex(paint) ? fire_gfx_paletteGet(&r->target->palette, (uint8_t)paint.index) : paint.rgba;
+    if (r->alphaBlending && (rgba >> 24) == 0) return 1;
+    return fire_gfx_gpuShape(r->target, r->clipLeft, r->clipTop, r->clipRight, r->clipBottom, x, y, w, h, radius, stroke, rgba, !r->alphaBlending);
+}
+
 /* fills (brush) */
 static Value fire_gfx_RndFillRect(Value id, Value x, Value y, Value w, Value h, Value brush) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
-    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    FireGfxSurface s;
+    if (fire_gfxb_gpuShape(r, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), 0, 0, fire_gfxb_brushOf(brush)->color)) return Undef();
+    s = fire_gfx_rendererSurface(r);
     fire_gfx_brushFillRect(fire_gfxb_brushOf(brush), &s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h));
     return Undef();
 }
 /* rounded rectangles and effects (fire_gfx_fx.h) */
 static Value fire_gfx_RndFillRoundRect(Value id, Value x, Value y, Value w, Value h, Value radius, Value brush) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
-    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    FireGfxSurface s;
+    if (fire_gfxb_gpuShape(r, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), 0, fire_gfxb_brushOf(brush)->color)) return Undef();
+    s = fire_gfx_rendererSurface(r);
     FireGfxPixel p = fire_gfx_resolve(&s, fire_gfxb_brushOf(brush)->color);
     fire_gfx_fxFillRoundRect(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), &p);
     return Undef();
 }
 static Value fire_gfx_RndDrawRoundRect(Value id, Value x, Value y, Value w, Value h, Value radius, Value pen) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
-    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    FireGfxSurface s;
     FireGfxPen* pn = fire_gfxb_penOf(pen);
-    FireGfxPixel p = fire_gfx_resolve(&s, pn->color);
+    FireGfxPixel p;
+    if (fire_gfxb_gpuShape(r, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), pn->width, pn->color)) return Undef();
+    s = fire_gfx_rendererSurface(r);
+    p = fire_gfx_resolve(&s, pn->color);
     fire_gfx_fxStrokeRoundRect(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), pn->width, &p);
     return Undef();
 }
@@ -710,7 +740,12 @@ static Value fire_gfx_RndDrawPath(Value id, Value points, Value pen, Value close
     return Undef();
 }
 static Value fire_gfx_RndDrawRect(Value id, Value x, Value y, Value w, Value h, Value pen) {
-    FireGfxSurface s = fire_gfx_rendererSurface(fire_gfxb_rendererOf(id));
+    FireGfxRenderer* r = fire_gfxb_rendererOf(id);
+    FireGfxSurface s;
+    FireGfxPen* pn = fire_gfxb_penOf(pen);
+    /* (a pen of one pixel: an outline on the GPU; a wider one stamps its tip - the software) */
+    if (pn->width == 1 && fire_gfxb_gpuShape(r, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), 0, 1, pn->color)) return Undef();
+    s = fire_gfx_rendererSurface(r);
     fire_gfx_penDrawRect(fire_gfxb_penOf(pen), &s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h));
     return Undef();
 }

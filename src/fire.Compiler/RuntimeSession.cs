@@ -194,6 +194,7 @@ namespace fire.Compiler
                 else if (GraphicsLibrary.Locate() != null)
                     graphicsFile = GraphicsLibrary.Register(natives, linkedProgram.NativeImports.Contains(NativeImports.Windows));
                 session.UsesGraphicsLibrary = graphicsFile != null;
+                if (graphicsFile == null) GraphicsLibrary.WarnFallback();
             }
             if (graphics && graphicsFile == null)
             {

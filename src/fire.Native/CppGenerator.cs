@@ -221,6 +221,7 @@ namespace fire.Native
             ["FbMode"] = (1, false), ["FbByteCount"] = (1, false), ["FbReadBytes"] = (1, true), ["FbWriteBytes"] = (2, false), ["FbGetPaletteColor"] = (2, false), ["FbSetPaletteColor"] = (3, false),
             ["FbReadPalette"] = (2, true), ["FbWritePalette"] = (2, false), ["FbLoadImage"] = (2, false), ["FbLoadFile"] = (2, false), ["FbFromPixels"] = (5, false), ["FbLastError"] = (0, true), ["FbToPng"] = (1, true),
             ["FbResize"] = (3, false), ["FbGetTransparentIndex"] = (1, false), ["FbSetTransparentIndex"] = (2, false), ["FbToMask"] = (4, false),
+            ["FbSetAccelerated"] = (2, false), ["FbGetAccelerated"] = (1, false), ["FbGpuError"] = (0, true),
             ["RndCreate"] = (1, false), ["RndDestroy"] = (1, false), ["RndPrint"] = (2, false), ["RndLocate"] = (3, false), ["RndClear"] = (1, false),
             ["RndClearTo"] = (2, false), ["RndSetColor"] = (3, false), ["RndSetPixel"] = (4, false), ["RndGetPixel"] = (3, false), ["RndGetPixelIndex"] = (3, false),
             ["RndCellWidth"] = (1, false), ["RndCellHeight"] = (1, false), ["RndGetAlphaBlending"] = (1, false), ["RndSetAlphaBlending"] = (2, false),
@@ -278,7 +279,7 @@ namespace fire.Native
 
         /// <summary>The natives of `#import "windows"` whose C function takes the list of the scope as its last argument (they hand out what they make).</summary>
         public static readonly IReadOnlySet<string> WindowsNeedsList = new HashSet<string> { "WinNextEvent", "WinSystemTheme", "WinClipboardGetText", "WinClipboardGetImage", "WinClipboardGetFiles" };
-        public static readonly IReadOnlySet<string> GraphicsNeedsList = new HashSet<string> { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName", "FbToPng" };
+        public static readonly IReadOnlySet<string> GraphicsNeedsList = new HashSet<string> { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName", "FbToPng", "FbGpuError" };
 
         /// <summary>The program declares actors (classes with IsActor): calls of their methods are messages.</summary>
         private bool _usesActors;

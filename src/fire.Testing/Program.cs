@@ -11344,6 +11344,47 @@ uiDrawScript = """
         print("weg " + (ui.tipPopup == undefined))
         """, new[] { "sofort True", "da True Speichert alles 40 True", "kind Der Rahmen", "klick True", "weg True" });
 
+    // the GPU backend (part 4): the same shapes on the GPU and in software - at most 2 steps apart; text (software) in between keeps its order; a resize and
+    // drawing without blending. FIRE_GFX_GPU=cpu takes a Vulkan device that is a CPU (lavapipe); without Vulkan the check has nothing to compare.
+    Environment.SetEnvironmentVariable("FIRE_GFX_GPU", "cpu");
+    CheckUi("GPU: Formen auf der GPU wie in Software (hoechstens 2 Stufen), Text dazwischen in Reihenfolge, Groesse aendern, ohne Blending", uiHead + """
+        var a = new Framebuffer(160, 100)
+        var b = new Framebuffer(160, 100)
+        a.Accelerated = false
+        b.Accelerated = true
+        var ra = new Renderer(a)
+        var rb = new Renderer(b)
+        var worst = 0
+        for (var pass = 0; pass < 2; pass = pass + 1) {
+            foreach (r in [ra, rb]) {
+                r.ClearTo(0xFFF0F0F0)
+                r.FillRect(5, 5, 50, 20, new SolidBrush(0xFF3366CC))
+                r.FillRoundRect(60, 5, 60, 30, 8, new SolidBrush(0x8000C000))
+                r.DrawText(62, 12, "fire", new SolidBrush(0xFF000000))
+                r.FillRect(60, 10, 30, 6, new SolidBrush(0x60FF0000))
+                r.DrawRoundRect(10, 40, 80, 40, 10, new Pen(0xFF202020, 2))
+                r.DrawRect(100, 50, 40, 30, new Pen(0xFF000000))
+                r.AlphaBlending = false
+                r.FillRoundRect(120, 5, 30, 30, 15, new SolidBrush(0x80FFFF00))
+                r.AlphaBlending = true
+            }
+            for (var y = 0; y < a.Height(); y = y + 1) {
+                for (var x = 0; x < a.Width(); x = x + 1) {
+                    var pa = ra.GetPixel(x, y)
+                    var pb = rb.GetPixel(x, y)
+                    for (var c = 0; c < 32; c = c + 8) {
+                        var d = Math.Abs(((pa >> c) & 255) - ((pb >> c) & 255))
+                        if (d > worst) { worst = d }
+                    }
+                }
+            }
+            a.Resize(140, 90)
+            b.Resize(140, 90)
+        }
+        print("gpu " + (!b.Accelerated || worst <= 2) + " " + (b.Accelerated || Framebuffer.GpuError() != ""))
+        """, new[] { "gpu True True" });
+    Environment.SetEnvironmentVariable("FIRE_GFX_GPU", null);
+
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
         var c = new UI.CheckBox("Option", 10, 10)
         ui.Add(c)
