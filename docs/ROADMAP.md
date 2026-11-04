@@ -431,7 +431,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 
 **Reihenfolge des Rests** (nach dem Abschluss von Abschnitt 9 auf `native-c`):
 
-1. **Kompaktes Format ohne Grenze bei den Objekten.** Heute: 16 Bit Slot, 12 Bit Generation (65535 lebende Objekte/Arrays/Puffer). Neu: ein Objekt, Array oder
+1. ~~**Kompaktes Format ohne Grenze bei den Objekten.**~~ **Umgesetzt** (Branch `targets`; NATIVE_BACKEND "Breite von `int`"). Vorher: 16 Bit Slot, 12 Bit Generation (65535 lebende Objekte/Arrays/Puffer). Neu: ein Objekt, Array oder
    Puffer trägt Slot (32 Bit, Nutzlast) und Generation (28 Bit, Kopf); der Zeiger steht in der Slot-Tabelle (Zeiger und Generation nebeneinander: eine Ladung).
    Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `{Adresse, Slot, Generation, Zähler}` (16 Byte pro lebendem Zeiger, nicht pro
    Array oder Element), gezählt wie Strings, wiederverwendet über eine Freiliste. Mit `#performance` (keine Tabelle) tragen alle direkt ihren Zeiger. Bleibt: 65535 Einheiten.

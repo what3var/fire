@@ -171,9 +171,15 @@ typedef int64_t FireInt;
 /* A runtime value, trivially copyable. `kind` says what it is; `unit` indexes the program's unit table (0 = unitless) - for an object, array or buffer it
  * is the slot of its handle and `reserved` the generation (for an enum value `reserved` is its enum). Usually 16 bytes; with `#intwidth 32`,
  * `#floatwidth 32` and 32-bit pointers (FIRE_COMPACT: a microcontroller) 8 bytes - the head is packed into 32 bits (kind 4, reserved 12, unit 16 bits:
- * up to 65535 units and live objects/arrays/buffers, 4095 enums, generations wrap at 4096) and the payload has 32 bits. */
+ * up to 65535 units, 4095 enums) and the payload has 32 bits. A compact value of an object, array or buffer (FIRE_SLOTREF: compact and checked) carries its
+ * slot in the payload and its generation in the 28 bits of the head behind the kind (`reserved` + `unit`); the address is in the slot table, next to the
+ * generation (one load). A pointer into an array or a buffer then points to a counted box (PtrBox: the address and the slot; the generation is in the head).
+ * Without checks (`#performance`) a compact value carries its address directly, as a wide one does. */
 #if defined(FIRE_INT32) && defined(FIRE_FLOAT32) && UINTPTR_MAX == 0xFFFFFFFFu && !defined(FIRE_WIDE_VALUE)
 #define FIRE_COMPACT 1
+#endif
+#if defined(FIRE_COMPACT) && !defined(FIRE_UNCHECKED)
+#define FIRE_SLOTREF 1
 #endif
 #ifdef FIRE_COMPACT
 typedef struct Value {
@@ -184,14 +190,23 @@ typedef struct Value {
         FireInt i;
         Real f;
         const void* p;
+        uint32_t s;     /* FIRE_SLOTREF: the slot of an object, array or buffer */
     };
 } Value;
 FIRE_STATIC_ASSERT(sizeof(Value) == 8, "A compact Value takes 8 bytes");
 #define FIRE_PAD0(r)
-#define FIRE_GEN_MASK 0xFFFu
+typedef uint32_t FireGen;
+#define FIRE_GEN_MASK 0x0FFFFFFFu
 #define FIRE_UNIT_MAX 0xFFFFu
-#define FIRE_SLOT_MAX 0xFFFFu
 #define FIRE_UNIT_OFFSET(v) ((int32_t)(int16_t)(uint16_t)(v).unit)   /* (the offset of a K_PtrVar pointer: signed) */
+/* the 28 bits of the head behind the kind: the generation of an object, array or buffer (and of a pointer into one) */
+#define FIRE_VGEN(v) ((FireGen)(v).reserved | ((FireGen)(v).unit << 12))
+#define FIRE_SETGEN(r, g) do { FireGen fire_g_ = (FireGen)(g); (r).reserved = fire_g_ & 0xFFFu; (r).unit = (fire_g_ >> 12) & 0xFFFFu; } while (0)
+#ifdef FIRE_SLOTREF
+#define FIRE_SLOT_MAX 0xFFFFFFFEu
+#else
+#define FIRE_SLOT_MAX 0x0FFFFFFFu   /* (#performance: the slot of a pointer into an array travels in the head) */
+#endif
 #else
 typedef struct Value {
     uint8_t kind;
@@ -206,10 +221,13 @@ typedef struct Value {
 } Value;
 FIRE_STATIC_ASSERT(sizeof(Value) == 16, "Value must stay 16 bytes");
 #define FIRE_PAD0(r) (r).pad = 0;
+typedef uint16_t FireGen;
 #define FIRE_GEN_MASK 0xFFFFu
 #define FIRE_UNIT_MAX 0xFFFFFFFFu
 #define FIRE_SLOT_MAX 0xFFFFFFFEu
 #define FIRE_UNIT_OFFSET(v) ((int32_t)(v).unit)
+#define FIRE_VGEN(v) ((FireGen)(v).reserved)
+#define FIRE_SETGEN(r, g) ((r).reserved = (FireGen)(g))
 #endif
 FIRE_FN bool isPtr(Value v) { return FIRE_IS_PTR_KIND(v.kind); }
 
@@ -286,7 +304,7 @@ typedef struct Owned Owned;
 typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
 /* Property accessors (SPEC 2.2 "Ownership in property accessors"): what the `this` of the running getters took over (a `return` of it goes to the caller after
  * all), and the argument list in which a property assignment of an accessor hands a value to the setter it calls (the setter takes it on entry). */
-typedef struct AccEntry { Owned* o; uint32_t slot; uint16_t gen; } AccEntry;
+typedef struct AccEntry { Owned* o; uint32_t slot; FireGen gen; } AccEntry;
 typedef struct AccState { AccEntry* items; uint32_t top, cap; OwnList* handOff; } AccState;
 #ifdef __cplusplus
 #define FIRE_ZERO_INIT {}
@@ -333,7 +351,9 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
     X(BridgeError, g_ioError, FIRE_ZERO_INIT)      /* the IO bridge: the last error of this thread */ \
     X(BridgeError, g_deviceError, FIRE_ZERO_INIT)  /* the device bridge */ \
     X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */ \
-    X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */
+    X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */ \
+    X(void*, g_boxFree, NULL)                      /* FIRE_SLOTREF: the free boxes of pointers into arrays and buffers (PtrBox) */ \
+    X(uint32_t, g_boxFreeN, 0)
 
 #if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL))
 typedef struct ThreadLocals {
@@ -398,6 +418,8 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_deviceError FIRE_TLV(g_deviceError)
 #define g_gfxError FIRE_TLV(g_gfxError)
 #define g_acc FIRE_TLV(g_acc)
+#define g_boxFree FIRE_TLV(g_boxFree)
+#define g_boxFreeN FIRE_TLV(g_boxFreeN)
 #ifdef FIRE_DEBUG
 #define g_dbgTop FIRE_TLV(g_dbgTop)
 #define g_dbgNest FIRE_TLV(g_dbgNest)
@@ -1209,11 +1231,11 @@ FIRE_FN bool unitOfText(const fire_char16* s, uint32_t n, uint32_t* out) {
  * Every heap value starts with its header (`h`): a pointer to the value is a pointer to its header.
  * --------------------------------------------------------------------------------------------------------------------- */
 #define IMMORTAL 0xFFFFFFFFu
-enum { R_Str, R_Lam };
+enum { R_Str, R_Lam, R_Box };
 
 struct Ref {
     uint32_t rc;     /* number of holders; IMMORTAL for constants */
-    uint8_t type;    /* R_Str / R_Lam */
+    uint8_t type;    /* R_Str / R_Lam / R_Box */
 };
 
 /* Immutable UTF-16 string. A heap string stores its characters right behind the header. */
@@ -1259,7 +1281,7 @@ struct Owned {
     Owned* next;
     OwnList* owner;    /* the list this value is in; null while it travels as a return value to its new owner */
     uint32_t slot;     /* the slot in the handle table (see below) */
-    uint16_t gen;      /* ... and its generation */
+    FireGen gen;       /* ... and its generation */
     uint8_t okind;     /* O_Object / O_Array / O_Buffer */
     uint8_t flags;     /* bit 0: destroyed (or being destroyed) */
 };
@@ -1339,46 +1361,53 @@ typedef struct Buf {
 FIRE_FN uint8_t* bufBytes(Buf* b) { return b->data; }
 
 /* ---- Handles. A destroyed array or buffer must not be used any more (SPEC 2.5): in the checked modes a Value of an array or buffer carries the slot of its
- * header in a table of generations (`unit` = slot, `reserved` = generation); the slot of a destroyed value gets a new generation, so a stale Value is
- * recognized before the freed memory is touched. With FIRE_UNCHECKED (`#performance`) there is no table and nothing is checked. */
-#ifndef FIRE_UNCHECKED
+ * header in a table of generations (wide: `unit` = slot, `reserved` = generation; compact: the payload is the slot, the head the generation); the slot of a
+ * destroyed value gets a new generation, so a stale Value is recognized before the freed memory is touched. With FIRE_UNCHECKED (`#performance`) nothing
+ * is checked and there is no table - unless the program takes pointers into arrays (FIRE_ELEMPTRS): those find their array in the table. */
 /* FIRE_ELEMPTRS: the program takes pointers into arrays (`ref a[i]`) - they find their array in the slot table (a typed array converts what is written
  * through them), also with `#performance`, where FIRE_PTRBOUNDS (the bounds checks) is off. */
 #if defined(FIRE_PTRBOUNDS) && !defined(FIRE_ELEMPTRS)
 #define FIRE_ELEMPTRS 1
 #endif
+#if !defined(FIRE_UNCHECKED) || defined(FIRE_ELEMPTRS)
+#define FIRE_SLOTS 1
+#endif
+#if defined(FIRE_ELEMPTRS) || defined(FIRE_SLOTREF)
+#define FIRE_SLOT_HDR 1   /* the table knows the header in each slot */
+#endif
+#ifdef FIRE_SLOTS
+/* One slot: its generation and - when the table knows it - the header of the value in it, side by side (one load for `arrOf` and the check). */
+typedef struct SlotEntry {
+#ifdef FIRE_SLOT_HDR
+    Owned* hdr;
+#endif
+    FireGen gen;
+} SlotEntry;
 typedef struct SlotTable {
-    uint16_t* gen;
+    SlotEntry* e;
     /* the generation of each slot when its value was made (or the slot was freed): a stale Value of the value that lives in the slot now - its generation
      * between `born` and `gen` - is a reference from before a `fire handover` (the value lives on in a thread under the next generation, handOverAll) */
-    uint16_t* born;
+    FireGen* born;
     uint32_t* freed;
     uint32_t count, cap, nfree, freedCap;
-#ifdef FIRE_ELEMPTRS
-    Owned** hdr;   /* the header of the array or buffer in each slot: the pointers into arrays and buffers (`p + n`) find the bounds here */
-#endif
 } SlotTable;
 extern FIRE_RT_DATA SlotTable g_slots;
+#define slotGen(slot) (g_slots.e[slot].gen)
+#ifdef FIRE_SLOT_HDR
+#define slotHdr(slot) (g_slots.e[slot].hdr)
+#endif
 
 FIRE_COLD FIRE_FN uint32_t slotGrow(void) {
     uint32_t cap = g_slots.cap ? g_slots.cap * 2 : 256;
-    uint16_t* gen = (uint16_t*)realloc(g_slots.gen, cap * sizeof(uint16_t));
-    if (!gen) outOfMemory();
-    memset(gen + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(uint16_t));
-    g_slots.gen = gen;
-    {
-        uint16_t* born = (uint16_t*)realloc(g_slots.born, cap * sizeof(uint16_t));
-        if (!born) outOfMemory();
-        memset(born + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(uint16_t));
-        g_slots.born = born;
-    }
-#ifdef FIRE_ELEMPTRS
-    {
-        Owned** hdr = (Owned**)realloc(g_slots.hdr, cap * sizeof(Owned*));
-        if (!hdr) outOfMemory();
-        g_slots.hdr = hdr;
-    }
-#endif
+    SlotEntry* e = (SlotEntry*)realloc(g_slots.e, cap * sizeof(SlotEntry));
+    FireGen* born;
+    if (!e) outOfMemory();
+    memset(e + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(SlotEntry));
+    g_slots.e = e;
+    born = (FireGen*)realloc(g_slots.born, cap * sizeof(FireGen));
+    if (!born) outOfMemory();
+    memset(born + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(FireGen));
+    g_slots.born = born;
     g_slots.cap = cap;
     return cap;
 }
@@ -1386,20 +1415,23 @@ FIRE_FN void slotAcquire(Owned* o) {
     uint32_t slot;
     if (g_slots.nfree) slot = g_slots.freed[--g_slots.nfree];
     else {
-        if (FIRE_UNLIKELY(g_slots.count == g_slots.cap)) slotGrow();
-        if (FIRE_UNLIKELY(g_slots.count >= FIRE_SLOT_MAX)) fatal("Too many objects, arrays and buffers at once (a compact value holds 65535).");
+#ifdef FIRE_SLOTREF
+        if (FIRE_UNLIKELY(g_slots.count == 0)) g_slots.count = 1;   /* (slot 0 stays free: a compact handle 0 is no value) */
+#endif
+        if (FIRE_UNLIKELY(g_slots.count >= g_slots.cap)) slotGrow();
+        if (FIRE_UNLIKELY(g_slots.count >= FIRE_SLOT_MAX)) fatal("Too many objects, arrays and buffers at once.");
         slot = g_slots.count++;
     }
     o->slot = slot;
-    o->gen = g_slots.gen[slot];
-#ifdef FIRE_ELEMPTRS
-    g_slots.hdr[slot] = o;
+    o->gen = slotGen(slot);
+#ifdef FIRE_SLOT_HDR
+    slotHdr(slot) = o;
 #endif
 }
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
-    g_slots.gen[slot] = (uint16_t)((g_slots.gen[slot] + 1) & FIRE_GEN_MASK);
-    g_slots.born[slot] = g_slots.gen[slot];
+    slotGen(slot) = (FireGen)((slotGen(slot) + 1) & FIRE_GEN_MASK);
+    g_slots.born[slot] = slotGen(slot);
     if (g_slots.nfree == g_slots.freedCap) {
         uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
         uint32_t* freed = (uint32_t*)realloc(g_slots.freed, cap * sizeof(uint32_t));
@@ -1409,10 +1441,69 @@ FIRE_FN void slotRelease(Owned* o) {
     }
     g_slots.freed[g_slots.nfree++] = slot;
 }
+/* The next generation of a slot whose value lives on (a part that `fire handover` moves into a thread): every older Value of it is dead. */
+FIRE_FN void slotBump(Owned* o) {
+    slotGen(o->slot) = (FireGen)((slotGen(o->slot) + 1) & FIRE_GEN_MASK);
+    o->gen = slotGen(o->slot);
+}
 #else
 FIRE_FN void slotAcquire(Owned* o) { o->slot = 0; o->gen = 0; }
 FIRE_FN void slotRelease(Owned* o) { (void)o; }
 #endif
+
+/* The handle of an object, array or buffer in a Value, and back. */
+FIRE_FN void leafSet(Value* r, const Owned* h) {
+#ifdef FIRE_SLOTREF
+    FIRE_SETGEN(*r, h->gen);
+    r->s = h->slot;
+#else
+    r->reserved = h->gen;
+    r->unit = h->slot;
+    r->p = h;
+#endif
+}
+/* The slot of an object, array or buffer (or of the array or buffer of a pointer into it: wide only). */
+#ifdef FIRE_SLOTREF
+#define FIRE_VSLOT(v) ((v).s)
+#else
+#define FIRE_VSLOT(v) ((v).unit)
+#endif
+/* The header behind a Value of an object, array or buffer. (Compact: from the slot table - of a stale Value whatever lives in its slot now: check first.) */
+FIRE_FN Owned* leafOf(Value v) {
+#ifdef FIRE_SLOTREF
+    return slotHdr(v.s);
+#else
+    return (Owned*)v.p;
+#endif
+}
+/* Do two Values of objects, arrays or buffers name the same one? Compact: the same slot and a generation of the same life of it - from when the value was
+ * made (`born`) to now; a `fire handover` gives a value the next generation, and the sender's old reference still names it (`==` is true, as in the VM). */
+FIRE_FN bool sameLeaf(Value a, Value b) {
+#ifdef FIRE_SLOTREF
+    FireGen ga = FIRE_VGEN(a), gb = FIRE_VGEN(b), born, life;
+    if (a.s != b.s) return false;
+    if (ga == gb) return true;
+    born = g_slots.born[a.s];
+    life = (slotGen(a.s) - born) & FIRE_GEN_MASK;
+    return ((ga - born) & FIRE_GEN_MASK) <= life && ((gb - born) & FIRE_GEN_MASK) <= life;
+#else
+    return a.p == b.p;
+#endif
+}
+/* The same reference: the same object, array or buffer (sameLeaf), the same string or lambda (not the same text). */
+FIRE_FN bool sameRef(Value a, Value b) {
+    if (a.kind != b.kind) return false;
+    if (a.kind == K_Class || a.kind == K_Array || a.kind == K_Buffer) return sameLeaf(a, b);
+    return a.p == b.p;
+}
+/* What tells a live Value of an object, array or buffer apart (an address, compact its slot) - as a key. 0: none. */
+FIRE_FN uintptr_t leafKey(Value v) {
+#ifdef FIRE_SLOTREF
+    return (uintptr_t)v.s;   /* (a stale Value is never asked: its slot may hold another value) */
+#else
+    return (uintptr_t)v.p;
+#endif
+}
 
 /* Is the array or buffer behind this value still alive? */
 FIRE_FN bool leafAlive(Value v) {
@@ -1420,7 +1511,7 @@ FIRE_FN bool leafAlive(Value v) {
     (void)v;
     return true;
 #else
-    return FIRE_LIKELY(g_slots.gen[v.unit] == v.reserved);
+    return FIRE_LIKELY(slotGen(FIRE_VSLOT(v)) == FIRE_VGEN(v));
 #endif
 }
 /* A dead Value of an object, array or buffer that still lives - in a fire thread it was handed over to (`fire handover`, handOverAll): the sender's reference
@@ -1430,22 +1521,26 @@ FIRE_FN bool handedOverRef(Value v) {
     (void)v;
     return false;
 #else
-    uint16_t born;
-    if ((v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) || v.unit >= g_slots.cap) return false;
-    born = g_slots.born[v.unit];
-    return (uint16_t)(v.reserved - born) < (uint16_t)(g_slots.gen[v.unit] - born);
+    FireGen born;
+    if ((v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) || FIRE_VSLOT(v) >= g_slots.cap) return false;
+    born = g_slots.born[FIRE_VSLOT(v)];
+    return ((FIRE_VGEN(v) - born) & FIRE_GEN_MASK) < ((slotGen(FIRE_VSLOT(v)) - born) & FIRE_GEN_MASK);
 #endif
 }
 
 FIRE_FN Value StrV(const Str* s) { Value r; r.kind = K_String; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.p = s; return r; }
-FIRE_FN Value ArrV(Arr* a) { Value r; r.kind = K_Array; FIRE_PAD0(r) r.reserved = a->h.gen; r.unit = a->h.slot; r.p = a; return r; }
-FIRE_FN Value BufV(Buf* b) { Value r; r.kind = K_Buffer; FIRE_PAD0(r) r.reserved = b->h.gen; r.unit = b->h.slot; r.p = b; return r; }
+FIRE_FN Value ArrV(Arr* a) { Value r; r.kind = K_Array; FIRE_PAD0(r) leafSet(&r, &a->h); return r; }
+FIRE_FN Value BufV(Buf* b) { Value r; r.kind = K_Buffer; FIRE_PAD0(r) leafSet(&r, &b->h); return r; }
 
+#ifdef FIRE_SLOTREF
+FIRE_FN bool isRef(Value v) { return ((0x350u >> v.kind) & 1u) != 0; }  /* String, Lambda, the box of a pointer into an array or buffer (counted values) */
+#else
 FIRE_FN bool isRef(Value v) { return ((0x50u >> v.kind) & 1u) != 0; }  /* String, Lambda (counted values) */
+#endif
 FIRE_FN Ref* refOf(Value v) { return (Ref*)v.p; }
 FIRE_FN const Str* strOf(Value v) { return (const Str*)v.p; }
-FIRE_FN Arr* arrOf(Value v) { return (Arr*)v.p; }
-FIRE_FN Buf* bufOf(Value v) { return (Buf*)v.p; }
+FIRE_FN Arr* arrOf(Value v) { return (Arr*)leafOf(v); }
+FIRE_FN Buf* bufOf(Value v) { return (Buf*)leafOf(v); }
 FIRE_FN Lam* lamOf(Value v) { return (Lam*)v.p; }
 FIRE_FN Value LamV(Lam* l) { Value r; r.kind = K_Lambda; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.p = l; return r; }
 
@@ -1481,6 +1576,93 @@ FIRE_FN void poolRelease(uint32_t mark) {
         Ref* r = g_pool.items[--g_pool.top];
         if (--r->rc == 0) freeRef(r);
     }
+}
+
+/* ---- Pointers into arrays and buffers (K_PtrByte, K_PtrElem; see "`ref` parameters"): the address of the element and the handle of the array or buffer.
+ * Wide: the address in the payload, slot and generation in the head. Compact without checks: the address in the payload, the slot (for FIRE_ELEMPTRS) in the
+ * 28 bits of the head. Compact and checked (FIRE_SLOTREF): the generation in the head, the payload points to a box with the address and the slot - 16 bytes
+ * per live pointer (not per array or element), counted like a string, reused through a free list per thread. */
+#ifdef FIRE_SLOTREF
+typedef struct PtrBox {
+    Ref h;            /* (rc, R_Box - with the padding behind `type`: 8 bytes) */
+    void* addr;
+    uint32_t slot;
+} PtrBox;
+FIRE_STATIC_ASSERT(sizeof(PtrBox) == 16, "A pointer box takes 16 bytes");
+#define FIRE_BOX_KEEP 64u   /* the free boxes a thread keeps */
+/* A fresh box (count 1, held by the temporary pool like a fresh string). */
+FIRE_FN PtrBox* boxNew(void* addr, uint32_t slot) {
+    PtrBox* b = (PtrBox*)g_boxFree;
+    if (FIRE_LIKELY(b != NULL)) { g_boxFree = b->addr; g_boxFreeN--; }
+    else {
+        b = (PtrBox*)malloc(sizeof(PtrBox));
+        if (FIRE_UNLIKELY(!b)) fatal("Out of memory.");
+        b->h.type = R_Box;
+    }
+    b->addr = addr;
+    b->slot = slot;
+    b->h.rc = 1;
+    poolPush(&b->h);
+    return b;
+}
+/* The last holder let go: back to the free list of this thread (`addr` links it), or to the heap when the list is full. */
+FIRE_FN void boxFree(PtrBox* b) {
+    if (g_boxFreeN >= FIRE_BOX_KEEP) { free(b); return; }
+    b->addr = g_boxFree;
+    g_boxFree = b;
+    g_boxFreeN++;
+}
+#endif
+/* The address of the element (K_PtrByte, K_PtrElem). */
+FIRE_FN void* ptrAddr(Value p) {
+#ifdef FIRE_SLOTREF
+    return ((const PtrBox*)p.p)->addr;
+#else
+    return (void*)p.p;
+#endif
+}
+/* The slot of its array or buffer. */
+FIRE_FN uint32_t ptrSlot(Value p) {
+#if defined(FIRE_SLOTREF)
+    return ((const PtrBox*)p.p)->slot;
+#elif defined(FIRE_COMPACT)
+    return FIRE_VGEN(p);
+#else
+    return p.unit;
+#endif
+}
+/* A condition that only the checked modes look at. */
+#ifdef FIRE_UNCHECKED
+#define FIRE_UNCHECKED_OR(c) 1
+#else
+#define FIRE_UNCHECKED_OR(c) (c)
+#endif
+/* A pointer of kind `kind` to `addr` in the array or buffer `h`. */
+FIRE_FN Value leafPtrV(uint8_t kind, void* addr, const Owned* h) {
+    Value r;
+    r.kind = kind; FIRE_PAD0(r)
+#if defined(FIRE_SLOTREF)
+    FIRE_SETGEN(r, h->gen);
+    r.p = boxNew(addr, h->slot);
+#elif defined(FIRE_COMPACT)
+    FIRE_SETGEN(r, h->slot);
+    r.p = addr;
+#else
+    r.reserved = h->gen;
+    r.unit = h->slot;
+    r.p = addr;
+#endif
+    return r;
+}
+/* The same pointer, `bytes` further. */
+FIRE_FN Value leafPtrMove(Value p, intptr_t bytes) {
+#ifdef FIRE_SLOTREF
+    const PtrBox* b = (const PtrBox*)p.p;
+    p.p = boxNew((void*)((uintptr_t)b->addr + (uintptr_t)bytes), b->slot);
+#else
+    p.p = (const void*)((uintptr_t)p.p + (uintptr_t)bytes);
+#endif
+    return p;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -1683,7 +1865,7 @@ FIRE_FN Value ptrOffset(Value p, int64_t n) {
     Value r = p;
     if (n == 0) return p;
     if (p.kind == K_PtrVar) r.unit = (uint32_t)(FIRE_UNIT_OFFSET(p) + (int32_t)n);   /* a variable or a field: an "array" with one element, the offset travels in `unit` */
-    else r.p = (const void*)((uintptr_t)p.p + (uintptr_t)((intptr_t)n * (p.kind == K_PtrByte ? 1 : (intptr_t)sizeof(Value))));
+    else r = leafPtrMove(p, (intptr_t)n * (p.kind == K_PtrByte ? 1 : (intptr_t)sizeof(Value)));
     return r;
 }
 
@@ -1964,7 +2146,9 @@ FIRE_FN bool eq(Value a, Value b) {
             const Str* y = strOf(b);
             return x == y || (x->length == y->length && memcmp(x->data, y->data, x->length * sizeof(fire_char16)) == 0);
         }
-        case K_PtrVar: case K_PtrByte: case K_PtrElem: return a.p == b.p && a.unit == b.unit;
+        case K_PtrVar: return a.p == b.p && a.unit == b.unit;
+        case K_PtrByte: case K_PtrElem: return ptrAddr(a) == ptrAddr(b);
+        case K_Class: case K_Array: case K_Buffer: return sameLeaf(a, b);
         default: return a.p == b.p;
     }
 }
@@ -2143,13 +2327,13 @@ FIRE_RT_FN const TArg* firePluginTArgFor(const char* text);
 /* Runs the destructors of the object's class chain, derived class first (the descriptor of its class). */
 FIRE_RT_FN void runDestructors(Obj* o);
 
-FIRE_FN Value ObjV(Obj* o) { Value r; r.kind = K_Class; FIRE_PAD0(r) r.reserved = o->h.gen; r.unit = o->h.slot; r.p = o; return r; }
+FIRE_FN Value ObjV(Obj* o) { Value r; r.kind = K_Class; FIRE_PAD0(r) leafSet(&r, &o->h); return r; }
 FIRE_FN Obj* asObj(Value v) {
     if (FIRE_UNLIKELY(v.kind != K_Class)) fatal("A member was accessed on something that is not an object.");
-    return (Obj*)v.p;
+    return (Obj*)leafOf(v);
 }
 /* The object of a value the generator proved to be one (an object of a known class). */
-FIRE_FN Obj* objAt(Value v) { return (Obj*)v.p; }
+FIRE_FN Obj* objAt(Value v) { return (Obj*)leafOf(v); }
 
 #ifdef FIRE_THREADS
 extern FIRE_RT_DATA bool g_domainOn;   /* a fire thread exists: the objects of the global scope are the shared domain (flag 64) */
@@ -2312,7 +2496,7 @@ FIRE_FN void leave(OwnList* list) {
 
 /* The header of an object, an array or a buffer (null for any other value, and for an array or buffer that is already destroyed). */
 FIRE_FN Owned* ownedOf(Value v) {
-    if ((v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) && leafAlive(v)) return (Owned*)v.p;
+    if ((v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) && leafAlive(v)) return leafOf(v);
     return NULL;
 }
 
@@ -2348,6 +2532,9 @@ FIRE_FN Value adoptV(Value v, OwnList* list) {
  * Memory of the reference-counted values
  * --------------------------------------------------------------------------------------------------------------------- */
 FIRE_FN void freeRef(Ref* r) {
+#ifdef FIRE_SLOTREF
+    if (r->type == R_Box) { boxFree((PtrBox*)r); return; }
+#endif
     if (r->type == R_Lam) {
         Lam* l = (Lam*)r;
         Value* caps = lamCaps(l);
@@ -2535,8 +2722,8 @@ FIRE_COLD FIRE_FN void adaptArrayUnit(Value v, uint32_t unit, bool dimensionOnly
     Value* items;
     uint32_t i, n;
     if (!leafAlive(v) || depth > 32) return;
-    items = arrItems((Arr*)v.p);
-    n = ((Arr*)v.p)->length;
+    items = arrItems(arrOf(v));
+    n = arrOf(v)->length;
     for (i = 0; i < n; i++) {
         Value e = items[i];
         if (e.kind == K_Array) adaptArrayUnit(e, unit, dimensionOnly, toFloat, expectedText, depth + 1);
@@ -3542,6 +3729,8 @@ FIRE_FN int64_t keyHash(Value x) {
         }
         case K_Undefined: return 0;
         case K_Char: case K_Bool: return (int64_t)fire_mixHash((uint64_t)x.i ^ ((uint64_t)x.kind << 56));
+        case K_Class: case K_Array: case K_Buffer: return (int64_t)fire_mixHash((uint64_t)leafKey(x));
+        case K_PtrByte: case K_PtrElem: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)ptrAddr(x));
         default: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)x.p);
     }
 }
@@ -3835,7 +4024,7 @@ FIRE_FN Value fire_throwValue1(Value exception) { return throwValueR(exception, 
 FIRE_FN void resumeThrow(Value exception, Value value) {
     Pending* p;
     for (p = g_pending; p; p = p->prev)
-        if (!p->cleared && p->exception.p == exception.p) {
+        if (!p->cleared && sameRef(p->exception, exception)) {
             if (!p->resumable) fatal("resume() across a finally block or a rethrow is not supported by the native backend.");
             p->cleared = 1;
             retain(value);
@@ -3849,7 +4038,7 @@ FIRE_FN void resumeThrow(Value exception, Value value) {
 FIRE_FN void clearPending(Value exception) {
     Pending* p;
     for (p = g_pending; p; p = p->prev)
-        if (!p->cleared && p->exception.p == exception.p) { p->cleared = 1; return; }
+        if (!p->cleared && sameRef(p->exception, exception)) { p->cleared = 1; return; }
 }
 
 /* Run-time errors the language reports as exceptions (index out of range). */
@@ -4630,11 +4819,11 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
 /* ---------------------------------------------------------------------------------------------------------------------
  * `ref` parameters (SPEC 5.4.2): the argument is a pointer to the variable, the field or the element of the caller.
  * A pointer has one of three kinds: K_PtrVar a variable or a field (`unit` = the offset in elements: such a pointer is an "array" with one element), K_PtrByte
- * an element of a byte buffer, K_PtrElem an element of an array (both carry the handle of the buffer or array: `unit` = slot, `reserved` = generation).
+ * an element of a byte buffer, K_PtrElem an element of an array (both carry the handle of the buffer or array: see leafPtrV).
  * --------------------------------------------------------------------------------------------------------------------- */
 FIRE_FN Value PtrV(Value* p) { Value r; r.kind = K_PtrVar; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.p = p; return r; }
-FIRE_FN Value BytePtrV(uint8_t* p, const Owned* buf) { Value r; r.kind = K_PtrByte; FIRE_PAD0(r) r.reserved = buf->gen; r.unit = buf->slot; r.p = p; return r; }
-FIRE_FN Value ElemPtrV(Value* p, const Owned* arr) { Value r; r.kind = K_PtrElem; FIRE_PAD0(r) r.reserved = arr->gen; r.unit = arr->slot; r.p = p; return r; }
+FIRE_FN Value BytePtrV(uint8_t* p, const Owned* buf) { return leafPtrV(K_PtrByte, p, buf); }
+FIRE_FN Value ElemPtrV(Value* p, const Owned* arr) { return leafPtrV(K_PtrElem, p, arr); }
 
 /* May the pointer be used (dereferenced)? Not outside its range: a pointer to a variable or a field only at offset 0, a pointer into an array or a buffer only
  * inside it - and not when the array or buffer is destroyed. Otherwise the exception is thrown (`err` has the value of the throw) and false is returned. With
@@ -4652,15 +4841,17 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
     {
         Owned* h;
         int64_t index, length;
-        if (FIRE_UNLIKELY(g_slots.gen[p.unit] != p.reserved)) {
+        uint32_t slot = ptrSlot(p);
+        intptr_t addr = (intptr_t)ptrAddr(p);
+        if (FIRE_UNLIKELY(slotGen(slot) != FIRE_VGEN(p))) {
             Value leaf = Undef();
             leaf.kind = p.kind == K_PtrByte ? K_Buffer : K_Array;
             *err = destroyedError(leaf);
             return false;
         }
-        h = g_slots.hdr[p.unit];
-        if (p.kind == K_PtrByte) { Buf* b = (Buf*)h; index = (int64_t)((intptr_t)p.p - (intptr_t)b->data); length = b->length; }
-        else { Arr* a = (Arr*)h; index = (int64_t)(((intptr_t)p.p - (intptr_t)arrItems(a)) / (intptr_t)sizeof(Value)); length = a->length; }
+        h = slotHdr(slot);
+        if (p.kind == K_PtrByte) { Buf* b = (Buf*)h; index = (int64_t)(addr - (intptr_t)b->data); length = b->length; }
+        else { Arr* a = (Arr*)h; index = (int64_t)((addr - (intptr_t)arrItems(a)) / (intptr_t)sizeof(Value)); length = a->length; }
         if (FIRE_UNLIKELY((uint64_t)index >= (uint64_t)length)) { *err = indexError("Array index", index, length); return false; }
     }
 #else
@@ -4674,15 +4865,16 @@ FIRE_FN Value ptrRead(Value p) {
     Value err;
     if (FIRE_UNLIKELY(!isPtr(p))) fatal("Dereference of a value that is not a pointer.");
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return err;
-    return p.kind == K_PtrByte ? Int(*(const uint8_t*)p.p) : *(const Value*)p.p;
+    if (p.kind == K_PtrVar) return *(const Value*)p.p;
+    return p.kind == K_PtrByte ? Int(*(const uint8_t*)ptrAddr(p)) : *(const Value*)ptrAddr(p);
 }
 
 /* `p - q` for two pointers into the same array, buffer, variable or field: the number of elements between them. */
 FIRE_FN Value ptrDiff(Value a, Value b) {
-    if (a.kind != b.kind || (a.kind == K_PtrVar ? a.p != b.p : (a.unit != b.unit || a.reserved != b.reserved)))
+    if (a.kind != b.kind || (a.kind == K_PtrVar ? a.p != b.p : (ptrSlot(a) != ptrSlot(b) || FIRE_VGEN(a) != FIRE_VGEN(b))))
         fatal("Pointer difference ('ptr1 - ptr2') needs two pointers into the same array or the same variable.");
     if (a.kind == K_PtrVar) return Int((int64_t)FIRE_UNIT_OFFSET(a) - (int64_t)FIRE_UNIT_OFFSET(b));
-    return Int((int64_t)(((intptr_t)a.p - (intptr_t)b.p) / (a.kind == K_PtrByte ? (intptr_t)1 : (intptr_t)sizeof(Value))));
+    return Int((int64_t)(((intptr_t)ptrAddr(a) - (intptr_t)ptrAddr(b)) / (a.kind == K_PtrByte ? (intptr_t)1 : (intptr_t)sizeof(Value))));
 }
 
 /* `*p = v`: the storage holds a count of what it holds now. */
@@ -4691,11 +4883,11 @@ FIRE_FN void ptrWrite(Value p, Value v) {
     Value* target;
     if (FIRE_UNLIKELY(!isPtr(p))) fatal("Assignment through a value that is not a pointer.");
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return;
-    if (p.kind == K_PtrByte) { *(uint8_t*)p.p = (uint8_t)v.i; return; }
+    if (p.kind == K_PtrByte) { *(uint8_t*)ptrAddr(p) = (uint8_t)v.i; return; }
 #ifdef FIRE_ELEMPTRS
-    if (p.kind == K_PtrElem && g_slots.gen[p.unit] == p.reserved) {
+    if (p.kind == K_PtrElem && (FIRE_UNCHECKED_OR(slotGen(ptrSlot(p)) == FIRE_VGEN(p)))) {
         /* an element of a typed array (unpacked when the pointer was taken): the value is converted like `a[i] = v`, or it is the exception */
-        Arr* arr = (Arr*)g_slots.hdr[p.unit];
+        Arr* arr = (Arr*)slotHdr(ptrSlot(p));
         if (FIRE_UNLIKELY(arr->typed != NULL)) {
             bool ok;
             v = arrElemConvert(arr->typed, v, &ok);
@@ -4703,7 +4895,7 @@ FIRE_FN void ptrWrite(Value p, Value v) {
         }
     }
 #endif
-    target = (Value*)p.p;
+    target = p.kind == K_PtrVar ? (Value*)p.p : (Value*)ptrAddr(p);
     old = *target;
     *target = v;
     retain(v);
@@ -5038,7 +5230,7 @@ FIRE_FN Owned* accMine(Value v, OwnList* const* lists, int n, OwnList* mine) {
 /* `this.field = v` (after the store): `this` takes v over; a getter (`track`) remembers it for its `return` (accReturn). */
 FIRE_FN void accKeep(Value self, Value obj, Value v, OwnList* const* lists, int n, OwnList* mine, bool track) {
     Owned* o;
-    if (obj.kind != K_Class || self.kind != K_Class || obj.p != self.p || !leafAlive(self)) return;
+    if (obj.kind != K_Class || self.kind != K_Class || !sameLeaf(obj, self) || !leafAlive(self)) return;
     o = accMine(v, lists, n, mine);
     if (!o || o == &asObj(self)->h) return;
     takeToObject(o, asObj(self));
@@ -5278,7 +5470,7 @@ FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList
     /* the result of a call that was passed on (`f(g())`, `f(take x)`) belongs to the called function: natively it travels in the argument list of the call,
      * which the caller made one call level up */
     if (!mine && o->owner && !o->owner->holder && o->owner->mark == AL_MARK && o->owner->depth + 1 == g_callDepth) mine = true;
-    if (!mine && thisValue.kind == K_Class && leafAlive(thisValue)) mine = o->owner == &((Obj*)thisValue.p)->owned;
+    if (!mine && thisValue.kind == K_Class && leafAlive(thisValue)) mine = o->owner == &objAt(thisValue)->owned;
     if (!mine || (o->flags & 1)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
     return true;
@@ -5603,7 +5795,7 @@ FIRE_FN void deleteValue(Value v) {
     if (v.kind == K_Class) {
         Obj* o;
         if (!leafAlive(v)) return;   /* already dead: nothing to do (like in the VM) */
-        o = (Obj*)v.p;
+        o = objAt(v);
         if (o->h.owner) ownUnlink(&o->h);
         destroy(o);
     } else if (v.kind == K_Array || v.kind == K_Buffer) {
@@ -5705,9 +5897,9 @@ FIRE_FN void externPtrInit(ExternPtr* e, Value v) {
     if (v.kind == K_Undefined) return;
     if (v.kind == K_Int) { e->raw = (void*)(intptr_t)v.i; return; }   /* an address that was handed over as a number */
     if (!isPtr(v)) fatal("A pointer argument of an extern function expects a pointer.");
-    if (v.kind == K_PtrByte) { e->raw = (void*)v.p; return; }   /* a pointer into a byte buffer: its bytes */
+    if (v.kind == K_PtrByte) { e->raw = ptrAddr(v); return; }   /* a pointer into a byte buffer: its bytes */
     if (v.kind == K_PtrVar && FIRE_UNIT_OFFSET(v) != 0) fatal("A pointer argument of an extern function points outside of its variable.");
-    e->target = (Value*)v.p;
+    e->target = v.kind == K_PtrVar ? (Value*)v.p : (Value*)ptrAddr(v);
     cur = *e->target;
     e->kind = cur.kind;
     switch (cur.kind) {
@@ -6569,8 +6761,8 @@ FIRE_FN bool handoverFree(const Value* vs, uint32_t n) {
 #ifndef FIRE_UNCHECKED
 /* (a reference to a moved part: the next generation - the one the part gets) */
 FIRE_FN void handoverRehome(Value* v, CopyMap* seen) {
-    if ((v->kind == K_Class || v->kind == K_Array || v->kind == K_Buffer) && leafAlive(*v) && copyMapFind(seen, (Owned*)v->p))
-        v->reserved = (uint16_t)(v->reserved + 1);
+    if ((v->kind == K_Class || v->kind == K_Array || v->kind == K_Buffer) && leafAlive(*v) && copyMapFind(seen, leafOf(*v)))
+        FIRE_SETGEN(*v, (FIRE_VGEN(*v) + 1) & FIRE_GEN_MASK);
 }
 #endif
 /* What the thread gets for the `handover` values `vs` of one `fire` (all together: one may reach another): each value itself, moved (see above); a string or
@@ -6620,9 +6812,7 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
     }
     for (i = 0; i < n; i++) handoverRehome(&out[i], &seen);
     for (i = 0; i < count; i++) {
-        Owned* h = parts[i];
-        g_slots.gen[h->slot] = (uint16_t)(g_slots.gen[h->slot] + 1);
-        h->gen = g_slots.gen[h->slot];
+        slotBump(parts[i]);
     }
 #endif
     copyMapFree(&seen);
@@ -7015,7 +7205,7 @@ uint32_t g_udCount = 0, g_udCap = 0;
 bool g_dimsAdded = false;
 const TextUnit* g_textUnits = NULL;
 uint32_t g_textUnitCount = 0;
-#ifndef FIRE_UNCHECKED
+#ifdef FIRE_SLOTS
 SlotTable g_slots;
 #endif
 bool g_domainOn = false;

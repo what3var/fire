@@ -174,10 +174,18 @@ Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung
   schneidet die VM jeden Int ab, den sie erzeugt (`Value.Ints32`); auch die Sonderfälle (`INT_MIN / -1`, Schieben um 32 und mehr) geben in
   beiden dasselbe.
 * `FIRE_COMPACT` (von selbst, wenn `FIRE_INT32`, `FIRE_FLOAT32` und 32-Bit-Zeiger zusammenkommen; `FIRE_WIDE_VALUE` schaltet es ab): der
-  Kopf eines Werts sind 32 Bit als Bitfelder - `kind` 4, `reserved` 12 (Enum, Generation des Handles; die Generationen laufen dann modulo
-  4096, `FIRE_GEN_MASK`), `unit` 16 (Einheit, Slot des Handles, Versatz eines Zeigers auf eine Variable: `FIRE_UNIT_OFFSET` liest ihn mit
-  Vorzeichen) - dazu 32 Bit Nutzlast: 8 statt 16 Byte. Mehr als 65535 Einheiten oder gleichzeitig lebende Objekte/Arrays/Puffer beenden
-  das Programm mit einer Meldung. Geprüft wird es auf dem Rechner als 32-Bit-Build (`gcc -m32`, gcc-multilib).
+  Kopf eines Werts sind 32 Bit als Bitfelder - `kind` 4, `reserved` 12 (Enum), `unit` 16 (Einheit, Versatz eines Zeigers auf eine Variable:
+  `FIRE_UNIT_OFFSET` liest ihn mit Vorzeichen) - dazu 32 Bit Nutzlast: 8 statt 16 Byte. Mehr als 65535 Einheiten beenden das Programm mit
+  einer Meldung. Geprüft wird es auf dem Rechner als 32-Bit-Build (`gcc -m32`, gcc-multilib).
+* Objekte, Arrays und Puffer im kompakten Format (`FIRE_SLOTREF`: kompakt und geprüft): die Nutzlast ist der **Slot** (32 Bit), die 28 Bit
+  des Kopfs hinter `kind` sind die **Generation** (`FIRE_VGEN`/`FIRE_SETGEN`, `FIRE_GEN_MASK`); die Adresse steht in der Slot-Tabelle neben
+  der Generation (`SlotEntry {hdr, gen}`: eine Ladung für `arrOf`/`objAt` und die Prüfung). Keine Grenze bei den lebenden Objekten (Slot 0
+  bleibt frei). Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `PtrBox {rc/type, Adresse, Slot}` (16 Byte pro
+  lebendem Zeiger, die Generation im Kopf des Werts), gezählt wie Strings (`isRef`) und über eine Freiliste pro Thread wiederverwendet
+  (`boxNew`/`boxFree`, höchstens 64 frei). `==` vergleicht Slot und Lebenszeit (eine Generation zwischen `born` und heute: der alte Verweis
+  vor einem `fire handover` ist dasselbe Objekt). Mit `#performance` (`FIRE_UNCHECKED`) trägt jeder Wert seine Adresse direkt; nimmt das
+  Programm Zeiger in Arrays (`FIRE_ELEMPTRS`), bleibt die Slot-Tabelle für sie (der Slot steht dann im Kopf des Zeigers).
+  Die Runtime liest Handles nur über `leafOf`, `leafSet`, `sameLeaf`, `leafKey`, `ptrAddr`, `ptrSlot`, `leafPtrV` - nie über `.p`.
 
 ### Regeln für die Runtime (gelernt)
 

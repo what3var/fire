@@ -371,7 +371,7 @@ static void jsDiscover(JsWriter* w, Value start) {
         JsSeen* e;
         if (v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) continue;
         if (!leafAlive(v)) continue;
-        key = v.p;
+        key = leafOf(v);
         e = jsSeenGet(J, &w->map, key);
         if (p.container && jsOwns(p.container, p.containerKind, (const Owned*)key)) e->ownerInGraph = 1;
         if (e->seen > 0) { e->seen++; continue; }

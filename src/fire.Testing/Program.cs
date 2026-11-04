@@ -22226,6 +22226,33 @@ else
                 print(*r)
             }
             """),
+        ("Zeiger (unsafe): #performance mit ref a[i] - auch in ein typisiertes Array und einen Puffer (die Slot-Tabelle bleibt fuer die Zeiger)", """
+            #performance
+            class F {
+              static Zero(ref int first, int n) {
+                unsafe { int* p = &first
+                  for (var i = 0; i < n; i++) { *p = 0; p = p + 1 } }
+              }
+              static Put(ref float x) { unsafe { float* p = &x
+                *p = 3 } }
+              static Sum(ref byte first, int n) {
+                var t = 0
+                unsafe { byte* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+                return t
+              }
+            }
+            int a[] = new int[4]
+            a[0] = 1; a[1] = 2; a[2] = 3; a[3] = 4
+            F.Zero(a[1], 2)
+            print(a[0] + " " + a[1] + " " + a[2] + " " + a[3])
+            float f[] = new float[2]
+            F.Put(f[1])
+            print(f[1])
+            var b = new byte[3]
+            b[0] = 5; b[1] = 6; b[2] = 7
+            print(F.Sum(b[0], 3))
+            """),
         ("Zeiger (unsafe): Grenzen, Versatz bei Variablen und Feldern, Differenz", """
             class Box { int v = 1
               int w = 2 }
@@ -26421,6 +26448,81 @@ else
                 string compactOut = compactExit == 0 ? RunProc($"{compactC}.bin", "", workDir, out _) : compactBuild;
                 CheckNat("8-Byte-Value (#intwidth 32, #floatwidth 32, 32-Bit-Zeiger): dasselbe wie die VM", compactExit == 0 && !compactBuild.Contains("warning") && compactOut.Replace("\r", "") == expectedCompact,
                     $"  erwartet (VM):\n{expectedCompact}\n  erhalten (32 Bit):\n{compactOut}");
+
+                // ROADMAP 13.1: no limit of 65535 live objects, arrays and buffers (the slot in the payload, 28 bits of generation in the head), pointers into
+                // arrays and buffers as counted boxes - checked and with #performance (no table: the address in the value; `ref a[i]` finds its typed array)
+                const string slotSource = """
+                    #intwidth 32
+                    #floatwidth 32
+                    class Node { int v
+                        construct(int v) { this.v = v } }
+                    class F {
+                      static Sum(ref int first, int n) {
+                        var t = 0
+                        unsafe { int* p = &first
+                          for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+                        return t
+                      }
+                      static Same(ref int a, ref int b) { unsafe { int* p = &a
+                        int* q = &b
+                        return (p + 1 == q) + " " + (q - p) } }
+                      static Put(ref float x) { unsafe { float* p = &x
+                        *p = 3 } }
+                      static Bytes(ref byte first, int n) {
+                        var t = 0
+                        unsafe { byte* p = &first
+                          for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+                        return t
+                      }
+                    }
+                    // more than 65535 live objects at once
+                    var all = new int[70000][1]
+                    for (var i = 0; i < 70000; i++) { all[i][0] = i }
+                    var total = 0
+                    for (var i = 0; i < 70000; i++) { total = total + all[i][0] % 7 }
+                    var nodes = new Node[70000]
+                    for (var i = 0; i < 70000; i++) { nodes[i] = take new Node(i) }
+                    var one = nodes[69999]
+                    print("live: " + all.length + " " + total + " " + all[69999][0] + " " + one.v + " " + nodes[12345].v)
+                    // generations past 4096: one slot made and destroyed again and again, a stale reference stays dead
+                    var keep = new Node(1)
+                    var stale = new Node(2)
+                    delete stale
+                    for (var i = 0; i < 5000; i++) { var t = new Node(i)
+                      delete t }
+                    try { print(stale.v) } catch (DestroyedException e) { print("stale: " + e.message) }
+                    print("keep: " + keep.v + " " + (keep == keep))
+                    // many pointers: every `p + 1` is a new box, the old ones come back
+                    var a = new int[100]
+                    for (var i = 0; i < 100; i++) { a[i] = i }
+                    var s = 0
+                    for (var k = 0; k < 2000; k++) { s = s + F.Sum(a[k % 50], 50) }
+                    print("sum: " + s)
+                    print("ptr: " + F.Same(a[3], a[4]))
+                    float fs[] = new float[3]
+                    F.Put(fs[1])
+                    print("typed: " + fs[1])
+                    var buf = new byte[4]
+                    buf[0] = 1; buf[1] = 2; buf[2] = 3; buf[3] = 4
+                    print("bytes: " + F.Bytes(buf[1], 3))
+                    delete a
+                    try { print(F.Sum(a[0], 1)) } catch (DestroyedException e) { print("gone: " + e.message) }
+                    """;
+                foreach (bool perf in new[] { false, true })
+                {
+                    string source = perf ? "#performance\n" + string.Join("\n", slotSource.Split('\n').Where(l => !l.Contains("stale") && !l.Contains("gone"))) : slotSource;
+                    string expected = vmOutput(source);
+                    Value.SingleFloats = false; Value.Ints32 = false;
+                    string slotC = Path.Combine(workDir, perf ? "compactslotsperf.c" : "compactslots.c");
+                    File.WriteAllText(slotC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { source }), TargetProfile.Host)
+                        + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
+                    Value.SingleFloats = false; Value.Ints32 = false;
+                    string slotBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{slotC}\" -I\"{workDir}\" -o \"{slotC}.bin\" -lm", workDir, out int slotExit);
+                    string slotOut = slotExit == 0 ? RunProc($"{slotC}.bin", "", workDir, out _) : slotBuild;
+                    CheckNat($"8-Byte-Value{(perf ? " (#performance)" : "")}: mehr als 65535 lebende Objekte/Arrays, Generationen ueber 4096, Zeiger in Arrays und Puffer (Kaesten)",
+                        slotExit == 0 && !slotBuild.Contains("warning") && slotOut.Replace("\r", "") == expected && expected.StartsWith("live: 70000"),
+                        $"  erwartet (VM):\n{expected}\n  erhalten (32 Bit):\n{slotOut}");
+                }
             }
         }
 

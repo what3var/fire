@@ -1641,7 +1641,8 @@ runs), the native backend stores an int in an `int32_t` (`FIRE_INT32`) - the sam
 target's `intWidth` in `fire.native.json`; `#if int32` sees the width the command line or the target gives (the directive is read
 later than the symbols). Natively, `#intwidth 32` together with `#floatwidth 32` on a target with 32-bit pointers (a
 microcontroller) makes every value 8 bytes instead of 16 (`FIRE_COMPACT`): fields, array elements, variables and stack slots take
-half the memory - such a program can have up to 65535 objects, arrays and buffers alive at once and up to 65535 different units.
+half the memory - without a limit on the objects, arrays and buffers alive at once (a pointer into an array or a buffer then takes a
+counted box of 16 bytes while it lives), and with up to 65535 different units.
 
 ### 8.3 Pointers & `unsafe`
 
