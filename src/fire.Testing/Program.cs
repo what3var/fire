@@ -60,6 +60,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") goto uiTests;
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "native") goto nativeTests;
 // FIRE_TESTS_ONLY=packer: only the packer (single file, payload, loader) and the native targets checked there (wasm with Emscripten and the browser)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") goto packerTests;
+// FIRE_TESTS_ONLY=callbacks: only the host callbacks in the VM (nested on the VM thread, queued from a host thread, the isolated copy after the end)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") goto callbackTests;
 // FIRE_TESTS_FILTER=text: of the checks that are listed as cases (the native cases, the native device and window cases, the UI checks) only those whose name contains
 // the text (several texts separated by '|'; case does not matter) - together with FIRE_TESTS_ONLY a run of a minute instead of half an hour.
 static bool TestSelected(string name)
@@ -12808,7 +12810,9 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
 
 // ---------------------------------------------------------------------------
 // Native callbacks (window events) run nested on the VM of the thread: real globals, no copying
+// (FIRE_TESTS_ONLY=callbacks: only this section)
 // ---------------------------------------------------------------------------
+callbackTests:
 {
     Console.WriteLine();
     Console.WriteLine("=== Callbacks auf dem VM-Thread ===");
@@ -12847,6 +12851,10 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
             t.Join();
             return Value.MakeUndefined();
         });
+        // after the end of the program (the globals stay, as for a host that still holds them): the remembered lambda from another thread - the VM
+        // does not run any more, the callback gets the isolated copy of the globals
+        bool runAfterEnd = false;
+        natives.Register("__RunKeptAfterEnd", args => { runAfterEnd = true; vm!.DestroyGlobalsAtEnd = false; return Value.MakeUndefined(); });
 
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -12854,6 +12862,13 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
         VM.ResetTerminateForTests();
         vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
         vm.Run();
+        if (runAfterEnd)
+        {
+            var t = new Thread(() => FireRuntime.RunCallback(kept[0], Array.Empty<Value>(), natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm));
+            t.Start();
+            t.Join();
+            lines.Add("main afterwards: " + string.Join(" ", vm.SnapshotGlobals().Where(v => v.Kind == ValueKind.Int).Select(v => v.ToString())));
+        }
         VM.ResetTerminateForTests();
         if (vm.UnhandledException != null)
             lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
@@ -13015,7 +13030,48 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
         print("weiter")
         """, new[] { "CB: Unhandled exception of type 'Exception': kaputt", "weiter" });
 
+    CheckCb("Host-Thread-Callback nach dem Programmende: laeuft auf der isolierten Kopie der Globals (das Hauptprogramm behaelt seine Werte)", cbHead + """
+        class Item { int v }
+        var counter = 41
+        var item = new Item()
+        item.v = 1
+        __Keep(func () => { counter = counter + 1; item.v = 5; print("cb " + counter + " " + item.v) })
+        __RunKeptAfterEnd()
+        """, new[] { "cb 42 5", "main afterwards: 41" });
+
+    CheckCb("Host-Thread-Callback nach dem Programmende: ein [NoCopy]-Objekt in den Globals - die Kopie wird vorher abgelehnt, der Callback laeuft nicht (ArgumentException als Text)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        class Holder { Res res }
+        var counter = 1
+        var holder = new Holder()
+        holder.res = new Res()
+        __Keep(func () => { counter = counter + 1; print("never") })
+        __RunKeptAfterEnd()
+        """, new[] { "CB: Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' reaches an instance of it (a field or an element of the copied value), which exists only once.", "main afterwards: 1" });
+
+    CheckCb("Host-Thread-Callback nach dem Programmende: ein [NoCopy]-Objekt direkt in einem Global, eines in einem Array (geteilt, nicht kopiert)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        var list = [new Res()]
+        var res = new Res()
+        __Keep(func () => { print("never") })
+        __RunKeptAfterEnd()
+        """, new[] { "CB: Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' would copy an instance of it, which exists only once.", "main afterwards: " });
+
+    CheckCb("Host-Thread-Callback, waehrend das Hauptprogramm laeuft: ein [NoCopy]-Global ist kein Problem (echte Globals, keine Kopie)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        var res = new Res()
+        res.id = 7
+        __Keep(func () => { res.id = res.id + 1; print("cb " + res.id) })
+        __RunKeptOnOtherThread()
+        for (var i = 0; i < 1; i++) { }
+        print("res " + res.id)
+        """, new[] { "cb 8", "res 8" });
+
     Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
+    if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") return;
 }
 
 // ---------------------------------------------------------------------------

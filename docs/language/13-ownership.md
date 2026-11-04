@@ -264,6 +264,8 @@ thread, every one copies it; `handover` moves it instead (the way to give a reso
 | `sync x`, `try sync x` | a new object in the copy is copied into the original (case A); an object on both sides stays and is synced field by field (case C) | refused before anything is written back when case A reaches one, or when case C would write one into another instance |
 | `sync flat x`, `try sync flat x` | like `sync`, but case C keeps the reference and copies nothing | case A is refused as with `sync`; case C is fine |
 | `fire with a`, the global variables (also in `sync global { }`) | shared: the actor or the object itself, no copy | fine - a resource in a global variable is used by the threads in a section |
+| a host callback (an event from a thread of the host) while the program runs | shared: it runs in the main program with the real global variables | fine |
+| a host callback after the end of the program (VM only, while the host still holds the globals) | an isolated copy of the global variables: an object is copied, an array is shared as it is | refused when a global variable (a field, an element of one of its objects) reaches one: the callback does not run, the host gets the `ArgumentException` as the text of an unhandled exception (`'host callback' would copy ...`). A native program runs no callback after its end, so it copies nothing |
 
 The text names the form: "'Connection' cannot be copied ([NoCopy]) - 'taking' would copy an instance of it, which exists only once." (`'sync' reaches an
 instance of it ...` for a field or an element). A resource a thread needs is therefore created in the thread, handed over with `fire handover x`, or kept in a global variable.

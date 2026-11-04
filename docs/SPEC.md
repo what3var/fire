@@ -1116,7 +1116,7 @@ stripping level 0-3, docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSeria
 derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md); `[NoCopy]` (before a class) -
 an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
 `ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
-`taking`, the arguments of `fire global`, what `sync` copies back - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+`taking`, the arguments of `fire global`, what `sync` copies back, the isolated copy of the globals for a host callback after the end of the program - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
 and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
 editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
@@ -1406,7 +1406,12 @@ The actual novelty lies on the C# side:
   **never** the real, shared global scope of the main program, exactly
   as required. An unhandled script exception in the callback body
   does NOT propagate out into the native caller, but only goes
-  to an optional `onUnhandled` callback.
+  to an optional `onUnhandled` callback. The copy follows the `[NoCopy]` rules (5.12) like every other copy: when an object of the snapshot (a
+  field, an element of it) reaches an instance of a `[NoCopy]` class, it is refused before anything is copied - the callback does not run, and
+  `onUnhandled` gets "Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' would copy an instance
+  of it, which exists only once." (`reaches an instance of it ...` for a field or an element); a lambda or a pointer in a field is refused the same
+  way. An array of the snapshot is shared, not copied (so a `[NoCopy]` instance in it is fine). A native program has no such copy: a host service
+  runs only in the main program, never after its end.
 
 This matches the existing lambda semantics exactly (SPEC 4.2,
 `Runtime.LambdaValue`): a lambda anyway ALWAYS sees only its own

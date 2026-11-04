@@ -272,9 +272,9 @@ Dynamisches Laden:
   startenden Thread; Lambdas/Pointer darin sind eine `ArgumentException`. **Umgesetzt:** wann `fire global`-Aufträge (und Sektionen, Host-Callbacks)
   automatisch laufen, ist eine Build-Einstellung (`#globaljobs safepoints|sleep|sync`, `#nosync` = `sync`, Projekt `globalJobs`, fire.native.json, `--global-jobs`)
   mit EINER Liste sicherer Punkte für VM und nativ (Rücksprung einer Schleife, `Sleep`/Wartefunktionen, `sync globals`, Programmende; THREADING_DESIGN.md
-  Abschnitt 7) - der Rückgabewert von `sync globals` ist in beiden gleich. Offen: andere Verweise des Senders auf übergebene Objekte werden nicht erkannt;
-  die isolierte Kopie der Globals für einen
-  Host-Callback, wenn das Hauptprogramm nicht mehr läuft, prüft `[NoCopy]` nicht (VM). `is of`/`!`/`throw` eines zerstörten Objekts
+  Abschnitt 7) - der Rückgabewert von `sync globals` ist in beiden gleich. Offen: andere Verweise des Senders auf übergebene Objekte werden nicht erkannt.
+  **Umgesetzt:** die isolierte Kopie der Globals für einen Host-Callback, wenn das Hauptprogramm nicht mehr läuft (VM; nativ läuft dann keiner mehr),
+  folgt den `[NoCopy]`-Regeln (vor jedem Kopieren abgelehnt, der Callback läuft nicht, der Host bekommt die `ArgumentException` als Text). `is of`/`!`/`throw` eines zerstörten Objekts
   sind in VM und nativ eine `DestroyedException` (nativ las `isof_*` vorher den freigegebenen Speicher).
 * **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert
   ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie; Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.

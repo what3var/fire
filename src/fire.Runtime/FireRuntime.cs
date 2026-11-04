@@ -6,6 +6,13 @@ using fire.Values;
 
 namespace fire.Runtime
 {
+    /// <summary>A host callback that cannot run on its isolated copy of the globals (FireRuntime.CallCallback): the copy is refused before anything is copied
+    /// (a `[NoCopy]` instance, a lambda or a pointer in a field). The message is the text the host gets, like that of an unhandled exception of the callback.</summary>
+    public sealed class CallbackRefusedException : Exception
+    {
+        public CallbackRefusedException(string message) : base(message) { }
+    }
+
     /// <summary>Handle to a running/finished fire thread. Since `fire`
     /// has no return values (docs/THREADING_DESIGN.md section 1),
     /// this handle is of no use in the language itself later (no
@@ -277,10 +284,32 @@ namespace fire.Runtime
             Action<Exception>? onUnhandled = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug)
         {
-            var scope = new Scope(null, isGlobal: true);
-            foreach (var v in globalSnapshot) DefineSnapshotSlot(scope, v);
+            // `[NoCopy]` (SPEC 5.12): the isolated copy copies every object of the globals (an array is shared as it is, like the arguments of
+            // `fire global`) - an instance of such a class reachable from one is refused before anything is copied: the callback does not run, the host
+            // gets the ArgumentException as text (like an unhandled exception of the callback). A lambda or a pointer in a field cannot be copied either.
+            try
+            {
+                foreach (var v in globalSnapshot)
+                    if (v.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(v, "host callback");
+            }
+            catch (InvalidOperationException ex)
+            {
+                onUnhandled?.Invoke(new CallbackRefusedException("Unhandled exception of type 'ArgumentException': " + ex.Message));
+                return Value.MakeUndefined();
+            }
 
-            var vm = new VM(callback.Proto.Chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+            var scope = new Scope(null, isGlobal: true);
+            VM vm;
+            try
+            {
+                foreach (var v in globalSnapshot) DefineSnapshotSlot(scope, v);
+                vm = new VM(callback.Proto.Chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+            }
+            catch (TakingViolationException ex)
+            {
+                onUnhandled?.Invoke(new CallbackRefusedException("Unhandled exception of type 'ArgumentException': " + ex.Message));
+                return Value.MakeUndefined();
+            }
             try
             {
                 return vm.CallLambdaEntry(callback, args);

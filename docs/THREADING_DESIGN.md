@@ -403,7 +403,11 @@ keinen Snapshot und keine Kopie mehr:
   an den Programmanfang (0 = sync, 1 = safepoints, 2 = sleep; nur wenn nicht `safepoints`).
 - **Host-Callbacks.** Ein Callback von einem fremden Thread (z.B. ein Seriell-Ereignis) läuft nicht mehr auf einer isolierten Kopie, sondern wird dem
   Hauptprogramm eingereiht (`VM.PostCallback`) und dort mit den echten Globals ausgeführt - automatisch (wie `#globaljobs` sagt) oder bei `sync globals`. Eine
-  unbehandelte Exception darin geht als Text an den Host. Läuft das Hauptprogramm nicht (mehr), gilt weiter die isolierte Kopie. Callbacks, die beim
+  unbehandelte Exception darin geht als Text an den Host. Läuft das Hauptprogramm nicht (mehr), gilt weiter die isolierte Kopie (VM, `FireRuntime.CallCallback`: Objekte kopiert, Arrays
+  geteilt); sie folgt den `[NoCopy]`-Regeln wie jede Kopie: erreicht ein Global (ein Feld, ein Element) eine `[NoCopy]`-Instanz, wird vor jedem Kopieren
+  abgelehnt - der Callback läuft nicht, der Host bekommt die `ArgumentException` als Text einer unbehandelten Exception ("'Res' cannot be copied
+  ([NoCopy]) - 'host callback' would copy an instance of it, which exists only once."); ebenso ein Lambda/Pointer in einem Feld. Nativ gibt es diesen Weg
+  nicht: ein Host-Dienst (`hostRequest`) läuft nur im Hauptprogramm, nach seinem Ende keiner mehr - kopiert wird also nie. Callbacks, die beim
   Programmende noch eingereiht sind, verfallen.
 
 ## 8. Offene Implementierungspunkte (bewusst hier vermerkt, nicht vergessen)
