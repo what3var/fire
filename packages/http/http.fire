@@ -797,7 +797,7 @@ namespace Http {
             while (!this.stopped) { this.ServeOne(250) }
         }
 
-        undefined Handle(IO.Stream connection) {
+        undefined Handle(any connection) {
             try {
                 connection.ReadTimeout = this.readTimeout
                 connection.WriteTimeout = this.readTimeout
@@ -823,7 +823,7 @@ namespace Http {
         }
 
         // The request, or undefined if the client closed without sending one.
-        Http.Request ReadRequest(IO.Stream connection) {
+        Http.Request ReadRequest(any connection) {
             var reader = new Http.Reader(connection)
             var line = reader.ReadLine(8192)
             while (line != undefined && line.Length == 0) { line = reader.ReadLine(8192) }

@@ -509,8 +509,8 @@ static class LinkageTests
             }
             class FastDevice : Api.Device {
                 construct(string id) : base(id) { }
-                string Describe() { return "fast " + this.id }
-                int Speed() { return 9 }
+                override string Describe() { return "fast " + this.id }
+                override int Speed() { return 9 }
             }
             class KitError : Exception {
                 construct(string m) : base(m) { }

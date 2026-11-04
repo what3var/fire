@@ -269,12 +269,12 @@ namespace Circuits {
             }
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             solver.Conductance(this.A, this.B, 1.0 / this.r)
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.r) }
-        float CurrentRaw() { return this.VoltageRaw() / this.r }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.r) }
+        override float CurrentRaw() { return this.VoltageRaw() / this.r }
     }
 
     /// <summary>A capacitor (trapezoidal rule). `initial`: its voltage at time 0.</summary>
@@ -298,21 +298,21 @@ namespace Circuits {
             }
         }
 
-        undefined Reset() {
+        override undefined Reset() {
             this.vPrev = this.initial
             this.iPrev = 0.0
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddReactive(0, this.A, this.B, this.c, this.vPrev, this.iPrev)
             return true
         }
-        undefined Save(Circuits.Solver solver) {
+        override undefined Save(Circuits.Solver solver) {
             this.vPrev = solver.State(0, this.index, 0)
             this.iPrev = solver.State(0, this.index, 1)
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 1, this.index, 0, 0.0) }
-        float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 1, this.index, 0, 0.0) }
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return this.iPrev }
             return plan.State(0, this.index, 1)
@@ -340,21 +340,21 @@ namespace Circuits {
             }
         }
 
-        undefined Reset() {
+        override undefined Reset() {
             this.iPrev = this.initial
             this.vPrev = 0.0
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddReactive(1, this.A, this.B, this.l, this.vPrev, this.iPrev)
             return true
         }
-        undefined Save(Circuits.Solver solver) {
+        override undefined Save(Circuits.Solver solver) {
             this.vPrev = solver.State(1, this.index, 0)
             this.iPrev = solver.State(1, this.index, 1)
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 2, this.index, 0, 0.0) }
-        float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 2, this.index, 0, 0.0) }
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return this.iPrev }
             return plan.State(1, this.index, 1)
@@ -397,19 +397,19 @@ namespace Circuits {
         /// <summary>The voltage at time t (seconds).</summary>
         float Value(float t) { return this.volts }
 
-        int Branches() { return 1 }
-        bool Compile(Circuits.Solver solver) {
+        override int Branches() { return 1 }
+        override bool Compile(Circuits.Solver solver) {
             solver.VoltageBranch(this.branch, this.A, this.B)
             this.index = solver.AddSource(this.A, this.B, this.branch, this.wave, this.p0, this.p1, this.p2, this.p3)
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 3, this.branch, 0, 0.0) }
-        float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 3, this.branch, 0, 0.0) }
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return this.current }
             return -plan.BranchCurrent(this.branch)
         }
-        undefined Save(Circuits.Solver solver) { this.current = -solver.BranchCurrent(this.branch) }
+        override undefined Save(Circuits.Solver solver) { this.current = -solver.BranchCurrent(this.branch) }
     }
 
     /// <summary>A sine voltage: offset + amplitude * sin(2 pi f t + phase).</summary>
@@ -452,7 +452,7 @@ namespace Circuits {
             }
         }
 
-        float Value(float t) { return this.offset + this.amplitude * Math.Sin(2.0 * Math.PI * this.frequency * t + this.phase) }
+        override float Value(float t) { return this.offset + this.amplitude * Math.Sin(2.0 * Math.PI * this.frequency * t + this.phase) }
     }
 
     /// <summary>A square voltage between `low` and `high`: high for `duty` of every period.</summary>
@@ -487,7 +487,7 @@ namespace Circuits {
             }
         }
 
-        float Value(float t) {
+        override float Value(float t) {
             var cycles = t * this.frequency
             var part = cycles - Math.Floor(cycles)
             if (part < this.duty) { return this.high }
@@ -627,17 +627,17 @@ namespace Circuits {
             this.everyStep = true
         }
 
-        float Value(float t) {
+        override float Value(float t) {
             var f = this.function
             return Circuits.Units.Volts(f(t))
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             solver.VoltageBranch(this.branch, this.A, this.B)
             this.stepsInFire = true
             return false
         }
-        undefined StampStep(Circuits.Solver solver) { solver.BranchValue(this.branch, this.Value(solver.time + solver.dt)) }
+        override undefined StampStep(Circuits.Solver solver) { solver.BranchValue(this.branch, this.Value(solver.time + solver.dt)) }
     }
 
     /// <summary>A current source: drives `current` from A through the source to B (out of B into the circuit).</summary>
@@ -657,12 +657,12 @@ namespace Circuits {
 
         float Value(float t) { return this.amps }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddSource(this.A, this.B, -1, 0, this.amps, 0.0, 0.0, 0.0)
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 5, this.index, 0, 0.0) }
-        float CurrentRaw() { return this.amps }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 5, this.index, 0, 0.0) }
+        override float CurrentRaw() { return this.amps }
     }
 
     /// <summary>A switch: closed it is a wire (a tiny resistance), open it is not there.</summary>
@@ -682,16 +682,16 @@ namespace Circuits {
 
         undefined Toggle() { this.Closed = !this.closed }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             if (this.closed) { solver.Conductance(this.A, this.B, 1000000.0) }
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) {
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) {
             var g = 0.0
             if (this.closed) { g = 1000000.0 }
             return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), g)
         }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             if (this.closed) { return this.VoltageRaw() * 1000000.0 }
             return 0.0
         }
@@ -701,7 +701,7 @@ namespace Circuits {
     class Ground : Part {
         construct() : base("GND") { this.AddPort("g") }
         Port G { get { return this.ports[0] } }
-        bool Compile(Circuits.Solver solver) { return true }
+        override bool Compile(Circuits.Solver solver) { return true }
     }
 
     /// <summary>The numbers of a kind of part, like a .model line of SPICE: `kind` is "D" (diode), "NPN", "PNP", "NMOS", "PMOS" or "OPAMP".
@@ -943,14 +943,14 @@ namespace Circuits {
 
         Circuits.Model Model { get { return this.model } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddNonlinear(0, this.A, this.B, this.B, this.model.p0, this.model.p1, this.model.p2, this.model.p3)
             var m = this.model
             solver.SetCaps(this.index, m.Param("CJO"), 0.0, m.Param("VJ", 0.7), m.Param("M", 0.5), m.Param("TT"))
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
-        float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -999,7 +999,7 @@ namespace Circuits {
         Circuits.Model Model { get { return this.model } }
         bool IsPnp { get { return this.model.kind == "PNP" } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var kind = 1
             if (this.IsPnp) { kind = 2 }
             this.index = solver.AddNonlinear(kind, this.C, this.B, this.E, this.model.p0, this.model.p1, this.model.p2, 0.0)
@@ -1007,7 +1007,7 @@ namespace Circuits {
             solver.SetCaps(this.index, m.Param("CJE"), m.Param("CJC"), m.Param("VJ", 0.75), m.Param("M", 0.33), m.Param("TF"), m.Param("TR"))
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         float Terminal(int t) {
             var plan = this.Plan()
@@ -1018,7 +1018,7 @@ namespace Circuits {
         float:A CollectorCurrent { get { return this.Terminal(0) * 1A } }
         float:A BaseCurrent { get { return this.Terminal(1) * 1A } }
         float:A EmitterCurrent { get { return this.Terminal(2) * 1A } }
-        float CurrentRaw() { return this.Terminal(0) }
+        override float CurrentRaw() { return this.Terminal(0) }
     }
 
     /// <summary>A MOSFET (level 1): ports D, G, S. `model`: "nmos", "pmos", "2N7000", "BS250", "IRF540", ... or a Model.</summary>
@@ -1039,7 +1039,7 @@ namespace Circuits {
         Circuits.Model Model { get { return this.model } }
         bool IsPChannel { get { return this.model.kind == "PMOS" } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var kind = 3
             if (this.IsPChannel) { kind = 4 }
             this.index = solver.AddNonlinear(kind, this.D, this.G, this.S, this.model.p0, this.model.p1, this.model.p2, 0.0)
@@ -1047,11 +1047,11 @@ namespace Circuits {
             solver.SetCaps(this.index, m.Param("CGS"), m.Param("CGD"), 0.7, 0.0, 0.0)
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         /// <summary>The current flowing into the drain.</summary>
         float:A DrainCurrent { get { return this.CurrentRaw() * 1A } }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1076,15 +1076,15 @@ namespace Circuits {
         Port Out { get { return this.ports[2] } }
         Circuits.Model Model { get { return this.model } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddNonlinear(5, this.Plus, this.Minus, this.Out, this.model.p0, this.model.p1, this.model.p2, this.model.p3)
             if (this.index < 0) { throw new ArgumentException(solver.Error()) }
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 2, 0.0) }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 2, 0.0) }
 
         /// <summary>The current flowing into the output (negative: the op amp drives current out).</summary>
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 2)
@@ -1120,12 +1120,12 @@ namespace Circuits {
             this.Invalidate()
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddFormula(this.A, this.B, undefined, this.current, "", this.parameters)
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
-        float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1167,11 +1167,11 @@ namespace Circuits {
             this.Invalidate()
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddFormula(this.X, this.Y, this.Ref, this.current1, this.current2, this.parameters)
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         float Terminal(int t) {
             var plan = this.Plan()
@@ -1181,7 +1181,7 @@ namespace Circuits {
         /// <summary>The currents into X and Y.</summary>
         float:A CurrentX { get { return this.Terminal(0) * 1A } }
         float:A CurrentY { get { return this.Terminal(1) * 1A } }
-        float CurrentRaw() { return this.Terminal(0) }
+        override float CurrentRaw() { return this.Terminal(0) }
     }
 
     /// <summary>A logic gate (or a D flip-flop): reads its inputs after every step (high above half the supply) and drives its output through a small resistance
@@ -1213,7 +1213,7 @@ namespace Circuits {
         Port In(int i) { return this.ports[i] }
         Port Out { get { return this.ports[this.inputCount] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var nodes = new int[this.inputCount]
             for (int i = 0; i < this.inputCount; i++) { nodes[i] = solver.Node(this.ports[i]) }
             this.index = solver.AddGate(this.kind, nodes, solver.Node(this.Out), -1, this.supply, this.supply / 2, this.rout)
@@ -1250,7 +1250,7 @@ namespace Circuits {
         Port Q { get { return this.ports[2] } }
         Port NotQ { get { return this.ports[3] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var nodes = new int[2]
             nodes[0] = solver.Node(this.D)
             nodes[1] = solver.Node(this.Clock)
@@ -1285,7 +1285,7 @@ namespace Circuits {
         Port Minus { get { return this.ports[1] } }
         Port Out { get { return this.ports[2] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var nodes = new int[2]
             nodes[0] = solver.Node(this.Plus)
             nodes[1] = solver.Node(this.Minus)
@@ -1327,7 +1327,7 @@ namespace Circuits {
         Port NotQ { get { return this.ports[3] } }
         Port Reset { get { return this.ports[4] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var count = 2
             if (this.withReset) { count = 3 }
             var nodes = new int[count]
@@ -1394,14 +1394,14 @@ namespace Circuits {
         float Upper() { return Math.Max(this.r * this.position, 0.001) }
         float Lower() { return Math.Max(this.r * (1.0 - this.position), 0.001) }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             solver.Conductance(this.A, this.Wiper, 1.0 / this.Upper())
             solver.Conductance(this.Wiper, this.B, 1.0 / this.Lower())
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.Wiper), 1.0 / this.Upper()) }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.Wiper), 1.0 / this.Upper()) }
         /// <summary>The current from A into the wiper.</summary>
-        float CurrentRaw() { return (this.A.Raw() - this.Wiper.Raw()) / this.Upper() }
+        override float CurrentRaw() { return (this.A.Raw() - this.Wiper.Raw()) / this.Upper() }
         /// <summary>The current from the wiper to B.</summary>
         float:A LowerCurrent { get { return (this.Wiper.Raw() - this.B.Raw()) / this.Lower() * 1A } }
     }
@@ -1457,24 +1457,24 @@ namespace Circuits {
             }
         }
 
-        undefined Reset() {
+        override undefined Reset() {
             this.i1 = 0.0
             this.i2 = 0.0
             this.v1 = 0.0
             this.v2 = 0.0
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddCoupled(this.P1, this.P2, this.S1, this.S2, this.l1, this.l1 * this.ratio * this.ratio, this.k, this.i1, this.i2, this.v1, this.v2)
             return true
         }
-        undefined Save(Circuits.Solver solver) {
+        override undefined Save(Circuits.Solver solver) {
             this.v1 = solver.State(2, this.index, 0)
             this.i1 = solver.State(2, this.index, 1)
             this.v2 = solver.State(2, this.index, 2)
             this.i2 = solver.State(2, this.index, 3)
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 7, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 7, this.index, 0, 0.0) }
 
         float Winding(int what, float saved) {
             var plan = this.Plan()
@@ -1482,7 +1482,7 @@ namespace Circuits {
             return plan.State(2, this.index, what)
         }
         /// <summary>The current of the primary (from P1 through the winding to P2).</summary>
-        float CurrentRaw() { return this.Winding(1, this.i1) }
+        override float CurrentRaw() { return this.Winding(1, this.i1) }
         /// <summary>The current of the secondary (from S1 through the winding to S2).</summary>
         float:A SecondaryCurrent { get { return this.Winding(3, this.i2) * 1A } }
     }
@@ -1516,7 +1516,7 @@ namespace Circuits {
         Port NotQ { get { return this.ports[4] } }
         Port Reset { get { return this.ports[5] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var count = 3
             if (this.withReset) { count = 4 }
             var nodes = new int[count]
@@ -1562,7 +1562,7 @@ namespace Circuits {
         Port In { get { return this.ports[0] } }
         Port Out { get { return this.ports[1] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var nodes = new int[1]
             nodes[0] = solver.Node(this.In)
             var kind = 12
@@ -1601,15 +1601,15 @@ namespace Circuits {
             this.AddPort("no")
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var to = this.ports[1]
             if (this.pulled) { to = this.ports[2] }
             solver.Conductance(this.ports[0], to, 1.0 / this.ron)
             this.commitsInFire = true
             return false
         }
-        undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
-        undefined Commit(Circuits.Solver solver) {
+        override undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
+        override undefined Commit(Circuits.Solver solver) {
             var i = Math.Abs(this.coil.CurrentRaw())
             if (!this.pulled && i >= this.onCurrent) {
                 this.pulled = true
@@ -1619,8 +1619,8 @@ namespace Circuits {
                 this.InvalidateSoon()
             }
         }
-        undefined Reset() { this.pulled = false }
-        float CurrentRaw() {
+        override undefined Reset() { this.pulled = false }
+        override float CurrentRaw() {
             var to = this.ports[1]
             if (this.pulled) { to = this.ports[2] }
             return (this.ports[0].Raw() - to.Raw()) / this.ron
@@ -1716,11 +1716,11 @@ namespace Circuits {
         /// <summary>To the next position (after the last one back to the first).</summary>
         undefined Toggle() { this.Position = (this.position + 1) % this.Positions }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             if (this.position < this.throws) { solver.Conductance(this.ports[0], this.ports[this.position + 1], 1000000.0) }
             return true
         }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             if (this.position >= this.throws) { return 0.0 }
             return (this.ports[0].Raw() - this.ports[this.position + 1].Raw()) * 1000000.0
         }
@@ -1747,7 +1747,7 @@ namespace Circuits {
             this.p3 = p3
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddNonlinear(this.kind, this.A, this.B, this.B, this.p0, this.p1, this.p2, this.p3)
             if (this.saved) {
                 solver.NlSet(this.index, 4, this.s0)
@@ -1755,13 +1755,13 @@ namespace Circuits {
             }
             return true
         }
-        undefined Save(Circuits.Solver solver) {
+        override undefined Save(Circuits.Solver solver) {
             this.s0 = solver.NlState(this.index, 4)
             this.s1 = solver.NlState(this.index, 5)
             this.saved = true
         }
-        undefined Reset() { this.saved = false }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override undefined Reset() { this.saved = false }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         // the state (0 or 1) now; undefined before the first step
         any StateOf(int what) {
@@ -1772,7 +1772,7 @@ namespace Circuits {
             return this.s1
         }
 
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1891,13 +1891,13 @@ namespace Circuits {
         Port B { get { return this.ports[1] } }
         Port Control { get { return this.ports[2] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var inv = 0.0
             if (this.inverting) { inv = 1.0 }
             this.index = solver.AddNonlinear(11, this.A, this.B, this.Control, this.ron, this.roff, this.threshold, inv)
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         bool IsOn {
             get {
@@ -1906,7 +1906,7 @@ namespace Circuits {
                 return plan.NlState(this.index, 4) != 0.0
             }
         }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1964,17 +1964,17 @@ namespace Circuits {
             this.AddPort("aux")
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddNonlinear(this.kind, this.ports[0], this.ports[1], this.ports[2], this.trigger, this.holding, this.gateResistance, 0.0)
             if (this.kind == 12) { solver.NlSet(this.index, 6, solver.Node(this.ports[3])) }
             if (this.saved) { solver.NlSet(this.index, 4, this.s0) }
             return true
         }
-        undefined Save(Circuits.Solver solver) {
+        override undefined Save(Circuits.Solver solver) {
             this.s0 = solver.NlState(this.index, 4)
             this.saved = true
         }
-        undefined Reset() { this.saved = false }
+        override undefined Reset() { this.saved = false }
 
         bool IsOn {
             get {
@@ -1983,7 +1983,7 @@ namespace Circuits {
                 return this.saved && this.s0 != 0.0
             }
         }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -2016,7 +2016,7 @@ namespace Circuits {
         Port Gate { get { return this.ports[1] } }
         Port Cathode { get { return this.ports[2] } }
         bool IsOn { get { return this.sw.IsOn } }
-        float CurrentRaw() { return this.sw.CurrentRaw() }
+        override float CurrentRaw() { return this.sw.CurrentRaw() }
     }
 
     /// <summary>A triac, as Falstad's: fires in both directions when the gate current (gate to MT1) exceeds `triggerCurrent`, goes out when the current
@@ -2048,7 +2048,7 @@ namespace Circuits {
         Port MT2 { get { return this.ports[1] } }
         Port Gate { get { return this.ports[2] } }
         bool IsOn { get { return this.sw.IsOn } }
-        float CurrentRaw() { return this.sw.CurrentRaw() }
+        override float CurrentRaw() { return this.sw.CurrentRaw() }
     }
 
     /// <summary>A diac: conducts in both directions once the voltage across it exceeds `breakdown`, until the current falls below `holdCurrent` (a spark gap
@@ -2073,7 +2073,7 @@ namespace Circuits {
         Port A { get { return this.ports[0] } }
         Port B { get { return this.ports[1] } }
         bool IsOn { get { return this.gap.IsOn } }
-        float CurrentRaw() { return this.gap.CurrentRaw() }
+        override float CurrentRaw() { return this.gap.CurrentRaw() }
     }
 
     /// <summary>A junction FET (Falstad's): a depletion MOSFET (`threshold` -4 V, `beta` 1.25 mA/V^2) with the gate junction to the source; ports D, G, S.</summary>
@@ -2109,7 +2109,7 @@ namespace Circuits {
         Port G { get { return this.ports[1] } }
         Port S { get { return this.ports[2] } }
         float:A DrainCurrent { get { return this.fet.DrainCurrent } }
-        float CurrentRaw() { return this.fet.CurrentRaw() }
+        override float CurrentRaw() { return this.fet.CurrentRaw() }
     }
 
     /// <summary>A Darlington pair: two transistors of `model`, the emitter of the first on the base of the second; ports C, B, E.</summary>
@@ -2135,7 +2135,7 @@ namespace Circuits {
         Port C { get { return this.ports[0] } }
         Port B { get { return this.ports[1] } }
         Port E { get { return this.ports[2] } }
-        float CurrentRaw() { return this.q1.CurrentRaw() + this.q2.CurrentRaw() }
+        override float CurrentRaw() { return this.q1.CurrentRaw() + this.q2.CurrentRaw() }
     }
 
     /// <summary>A varactor: a diode whose junction capacitance is `capacitance` at 0 V and falls with the reverse voltage.</summary>
@@ -2312,7 +2312,7 @@ namespace Circuits {
             this.Invalidate()
         }
 
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         float Terminal(int t) {
             var plan = this.Plan()
@@ -2323,7 +2323,7 @@ namespace Circuits {
 
         /// <summary>The current into the plate.</summary>
         float:A PlateCurrent { get { return this.Terminal(0) * 1A } }
-        float CurrentRaw() { return this.Terminal(0) }
+        override float CurrentRaw() { return this.Terminal(0) }
     }
 
     /// <summary>A vacuum diode (a rectifier like the 5Y3 or EZ81, a signal diode like the 6AL5): Ip = k * Vpk^1.5 (Child and Langmuir). Ports Plate, Cathode.
@@ -2334,7 +2334,7 @@ namespace Circuits {
         Port Plate { get { return this.ports[0] } }
         Port Cathode { get { return this.ports[1] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddTube(14, this.ports, this.Parameters)
             return true
         }
@@ -2349,7 +2349,7 @@ namespace Circuits {
         Port Grid { get { return this.ports[1] } }
         Port Cathode { get { return this.ports[2] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             if (this.model.name.ToUpper() == "FALSTAD") {
                 this.index = solver.AddFormula(this.Plate, this.Grid, this.Cathode, "if(V2 + V1/mu, pow(max(V2 + V1/mu, 0), 1.5)/kg1, 0.00000001*V1)",
                                                "if(V2 - 0.01, V2/6000, 0.00000001*V2)", this.Parameters)
@@ -2371,7 +2371,7 @@ namespace Circuits {
         Port Grid { get { return this.ports[2] } }
         Port Cathode { get { return this.ports[3] } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddTube(16, this.ports, this.Parameters)
             return true
         }
@@ -2394,14 +2394,14 @@ namespace Circuits {
 
         Port InPlus { get { return this.ports[2] } }
         Port InMinus { get { return this.ports[3] } }
-        int Branches() { return 1 }
-        bool Compile(Circuits.Solver solver) {
+        override int Branches() { return 1 }
+        override bool Compile(Circuits.Solver solver) {
             solver.VoltageBranch(this.branch, this.A, this.B)
             solver.Entry(this.branch, solver.Node(this.InPlus), -this.gain)
             solver.Entry(this.branch, solver.Node(this.InMinus), this.gain)
             return true
         }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return -plan.BranchCurrent(this.branch)
@@ -2421,7 +2421,7 @@ namespace Circuits {
 
         Port InPlus { get { return this.ports[2] } }
         Port InMinus { get { return this.ports[3] } }
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var a = solver.Node(this.A)
             var b = solver.Node(this.B)
             var p = solver.Node(this.InPlus)
@@ -2432,7 +2432,7 @@ namespace Circuits {
             solver.Entry(b, n, this.gain)
             return true
         }
-        float CurrentRaw() { return this.gain * (this.InPlus.Raw() - this.InMinus.Raw()) }
+        override float CurrentRaw() { return this.gain * (this.InPlus.Raw() - this.InMinus.Raw()) }
     }
 
     /// <summary>A current-controlled current source: the current that flows from InPlus to InMinus (through a short) times `gain` is driven from A
@@ -2448,15 +2448,15 @@ namespace Circuits {
 
         Port InPlus { get { return this.ports[2] } }
         Port InMinus { get { return this.ports[3] } }
-        int Branches() { return 1 }
-        bool Compile(Circuits.Solver solver) {
+        override int Branches() { return 1 }
+        override bool Compile(Circuits.Solver solver) {
             // the sense: a voltage source of 0 V from InPlus to InMinus; its branch current is the current into InPlus
             solver.VoltageBranch(this.branch, this.InPlus, this.InMinus)
             solver.Entry(solver.Node(this.A), this.branch, this.gain)
             solver.Entry(solver.Node(this.B), this.branch, -this.gain)
             return true
         }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return this.gain * plan.BranchCurrent(this.branch)
@@ -2475,15 +2475,15 @@ namespace Circuits {
 
         Port InPlus { get { return this.ports[2] } }
         Port InMinus { get { return this.ports[3] } }
-        int Branches() { return 2 }
-        bool Compile(Circuits.Solver solver) {
+        override int Branches() { return 2 }
+        override bool Compile(Circuits.Solver solver) {
             var sense = this.branch + 1
             solver.VoltageBranch(sense, this.InPlus, this.InMinus)
             solver.VoltageBranch(this.branch, this.A, this.B)
             solver.Entry(this.branch, sense, -this.gain)
             return true
         }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return -plan.BranchCurrent(this.branch)
@@ -2504,8 +2504,8 @@ namespace Circuits {
         Port X { get { return this.ports[0] } }
         Port Y { get { return this.ports[1] } }
         Port Z { get { return this.ports[2] } }
-        int Branches() { return 1 }
-        bool Compile(Circuits.Solver solver) {
+        override int Branches() { return 1 }
+        override bool Compile(Circuits.Solver solver) {
             // V(X) - V(Y) = 0 as a branch from X to ground; its current flows out of X into the circuit
             var k = this.branch
             var x = solver.Node(this.X)
@@ -2516,7 +2516,7 @@ namespace Circuits {
             solver.Entry(solver.Node(this.Z), k, this.gain)
             return true
         }
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.BranchCurrent(this.branch)
@@ -2555,12 +2555,12 @@ namespace Circuits {
         }
         float:any Resistance { get { return this.ResistanceRaw() * 1Ohm } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
-        float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        override float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
     }
 
     /// <summary>An NTC thermistor: `resistance25` at 25 °C, R = R25 exp(B (1/T - 1/298.15 K)) at `Temperature` (°C).</summary>
@@ -2588,12 +2588,12 @@ namespace Circuits {
         float ResistanceRaw() { return this.r25 * Math.Exp(this.beta * (1.0 / (this.temperature + 273.15) - 1.0 / 298.15)) }
         float:any Resistance { get { return this.ResistanceRaw() * 1Ohm } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
-        float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        override float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
     }
 
     /// <summary>A lossless transmission line of `impedance` that delays a wave by `delay`: one end between A1 (the conductor) and B1 (its return), the
@@ -2620,12 +2620,12 @@ namespace Circuits {
         float:any Impedance { get { return this.z * 1Ohm } }
         float:any Delay { get { return this.delay * 1s } }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddLine(this.A1, this.B1, this.A2, this.B2, this.z, this.delay)
             return true
         }
         /// <summary>The current into the line at A1.</summary>
-        float CurrentRaw() {
+        override float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.State(3, this.index, 0)
@@ -2771,7 +2771,7 @@ namespace Circuits {
 
         List Parts() { return this.parts }
 
-        bool Compile(Circuits.Solver solver) { return true }
+        override bool Compile(Circuits.Solver solver) { return true }
 
         // ---- parameters ----
         /// <summary>Sets a parameter of the circuit (a value with a unit or a plain number): the bindings of this circuit and of the circuits in it run again.
@@ -3122,7 +3122,7 @@ namespace Circuits {
         /// <summary>Is the circuit compiled (since its last change)?</summary>
         bool IsCompiled { get { return !this.Top().dirty } }
 
-        undefined Invalidate() {
+        override undefined Invalidate() {
             var top = this.Top()
             if (top.dirty) { return }
             top.Release()
@@ -3185,7 +3185,7 @@ namespace Circuits {
         }
 
         /// <summary>Back to time 0 (the parts take their initial state).</summary>
-        undefined Reset() {
+        override undefined Reset() {
             var top = this.Top()
             top.Invalidate()
             top.time = 0.0
@@ -3867,7 +3867,7 @@ namespace Circuits {
         /// <summary>The pin i in the order of Falstad's chip.</summary>
         Port At(int i) { return this.ports[i] }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             var n = this.ports.Count
             var nodes = new int[n]
             var modes = new int[n]
@@ -3887,7 +3887,7 @@ namespace Circuits {
             return true
         }
 
-        undefined Save(Circuits.Solver solver) {
+        override undefined Save(Circuits.Solver solver) {
             if (this.index < 0) { return }
             this.savedVal.Clear()
             this.savedSt.Clear()
@@ -3899,7 +3899,7 @@ namespace Circuits {
             this.hasSaved = true
         }
 
-        undefined Reset() {
+        override undefined Reset() {
             this.hasSaved = false
             this.Invalidate()
         }
@@ -4459,7 +4459,7 @@ namespace Circuits {
         bool Energized { get { return this.contact.pulled } }
         /// <summary>The current through the coil.</summary>
         float:A CoilCurrent { get { return this.coil.CurrentRaw() * 1A } }
-        float CurrentRaw() { return this.coil.CurrentRaw() }
+        override float CurrentRaw() { return this.coil.CurrentRaw() }
     }
 
     /// <summary>A quartz crystal: its motional arm (resistance, inductance and series capacitance) from A to B with the capacitance of its holder in
@@ -4496,17 +4496,17 @@ namespace Circuits {
 
         construct(Circuits.RelayCoil coil) : base("coilstate") { this.coil = coil }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             this.commitsInFire = true
             return false
         }
-        undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
-        undefined Reset() {
+        override undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
+        override undefined Reset() {
             this.avg = 0.0
             this.state = 0
             this.coil.position = 0
         }
-        undefined Commit(Circuits.Solver solver) {
+        override undefined Commit(Circuits.Solver solver) {
             var k = this.coil
             var a = Math.Exp(-solver.dt * 1000.0)
             this.avg = a * this.avg + (1.0 - a) * Math.Abs(k.inductor.CurrentRaw())
@@ -4592,7 +4592,7 @@ namespace Circuits {
         /// <summary>Is it pulled in (the contacts of its label switched over)?</summary>
         bool Energized { get { return this.Leader().position == 1 } }
         float:A CoilCurrent { get { return this.inductor.CurrentRaw() * 1A } }
-        float CurrentRaw() { return this.inductor.CurrentRaw() }
+        override float CurrentRaw() { return this.inductor.CurrentRaw() }
 
         undefined Switch(int position) {
             var lead = this.Leader()
@@ -4634,12 +4634,12 @@ namespace Circuits {
             return this.roff
         }
 
-        bool Compile(Circuits.Solver solver) {
+        override bool Compile(Circuits.Solver solver) {
             solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
             return true
         }
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
-        float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        override float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
     }
 
     /// <summary>A stream of samples at a fixed rate between a circuit and the program: a ring of volts (docs/CIRCUITS.md, "Streams"). Circuit.Output fills it

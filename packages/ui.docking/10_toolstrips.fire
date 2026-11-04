@@ -711,7 +711,7 @@ namespace UI.Docking {
         }
 
         // the grip moves the strip
-        UI.Cursor CursorAt(UI.Root root, int px, int py) {
+        override UI.Cursor CursorAt(UI.Root root, int px, int py) {
             if (this.OverGrip(px, py)) { return UI.Cursor.SizeAll }
             return this.cursor
         }
@@ -823,7 +823,7 @@ namespace UI.Docking {
             for (var i = 0; i < this.shown.Count; i = i + 1) { this.shown[i].Collect(list) }
         }
 
-        undefined Hover(UI.Root root, int px, int py) {
+        override undefined Hover(UI.Root root, int px, int py) {
             var hot = this.OverOverflow(px, py)
             if (hot != this.overflowHot) {
                 this.overflowHot = hot
@@ -831,7 +831,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseDown(UI.Root root, int button, int px, int py) {
+        override undefined MouseDown(UI.Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.OverOverflow(px, py)) {
                 this.ToggleOverflow(root)
@@ -843,11 +843,11 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseMove(UI.Root root, int px, int py) {
+        override undefined MouseMove(UI.Root root, int px, int py) {
             if (this.dragging && this.manager != undefined) { this.manager.DragMove(root, px, py) }
         }
 
-        undefined MouseUp(UI.Root root, int button, int px, int py) {
+        override undefined MouseUp(UI.Root root, int button, int px, int py) {
             if (this.dragging) {
                 this.dragging = false
                 if (this.manager != undefined) { this.manager.DragEnd(root, px, py) }

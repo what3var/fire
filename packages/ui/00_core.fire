@@ -347,12 +347,12 @@ namespace UI {
     }
 
     class NotConverter : Converter {
-        bool Convert(any value) { return !value }
-        bool ConvertBack(any value) { return !value }
+        override bool Convert(any value) { return !value }
+        override bool ConvertBack(any value) { return !value }
     }
 
     class IsEmptyConverter : Converter {
-        bool Convert(any value) {
+        override bool Convert(any value) {
             if (value == undefined) { return true }
             var text = "" + value
             return text == ""
@@ -360,7 +360,7 @@ namespace UI {
     }
 
     class NotEmptyConverter : Converter {
-        bool Convert(any value) {
+        override bool Convert(any value) {
             if (value == undefined) { return false }
             var text = "" + value
             return text != ""
@@ -368,7 +368,7 @@ namespace UI {
     }
 
     class TextConverter : Converter {
-        any Convert(any value) {
+        override any Convert(any value) {
             if (value == undefined) { return "" }
             return "" + value
         }

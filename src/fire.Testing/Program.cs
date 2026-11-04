@@ -5514,8 +5514,8 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         class Upper : IO.Stream {
             any inner
             construct(inner) { this.inner = inner }
-            bool CanWrite { get { return true } }
-            int Write(buffer, offset, count) {
+            override bool CanWrite { get { return true } }
+            override int Write(buffer, offset, count) {
                 var chunk = new byte[count]
                 for (var i = 0; i < count; i++) {
                     var c = buffer[offset + i]
@@ -10399,7 +10399,7 @@ uiDrawScript = """
         class CountingArea : UI.TextArea {
             int drawn = 0
             construct(string text, int x, int y, int w, int h) : base(text, x, y, w, h) { }
-            undefined DrawRow(UI.Root root, int row, int left, int y, int selStart, int selEnd, Brush color) {
+            override undefined DrawRow(UI.Root root, int row, int left, int y, int selStart, int selEnd, Brush color) {
                 this.drawn = this.drawn + 1
                 base.DrawRow(root, row, left, y, selStart, selEnd, color)
             }
@@ -10556,7 +10556,7 @@ uiDrawScript = """
         class Counter : UI.Element {
             int painted = 0
             construct(int x, int y) : base(x, y, 40, 40) { }
-            undefined Draw(UI.Root root, int ax, int ay) {
+            override undefined Draw(UI.Root root, int ax, int ay) {
                 if (!this.NeedsDraw(root, ax, ay)) { return }
                 this.painted = this.painted + 1
             }
@@ -22404,20 +22404,20 @@ else
             /// a lamp: only Stamp (the circuit stops calling it after the first step)
             class Lamp : Circuits.TwoTerminal {
                 construct() : base("lamp") { }
-                undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / 50) }
-                float CurrentRaw() { return this.VoltageRaw() / 50 }
+                override undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / 50) }
+                override float CurrentRaw() { return this.VoltageRaw() / 50 }
             }
             /// a current source written in fire: StampStep every step
             class Pump : Circuits.TwoTerminal {
                 float amps
                 int steps = 0
                 construct(float amps) : base("pump") { this.amps = amps }
-                undefined StampStep(Circuits.Solver solver) {
+                override undefined StampStep(Circuits.Solver solver) {
                     solver.CurrentInto(this.A, -this.amps)
                     solver.CurrentInto(this.B, this.amps)
                 }
-                undefined Commit(Circuits.Solver solver) { this.steps = this.steps + 1 }
-                float CurrentRaw() { return this.amps }
+                override undefined Commit(Circuits.Solver solver) { this.steps = this.steps + 1 }
+                override float CurrentRaw() { return this.amps }
             }
             var c = new Circuits.Circuit()
             var b = c.Add(new Circuits.VoltageSource(10V))

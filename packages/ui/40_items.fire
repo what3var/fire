@@ -181,7 +181,7 @@ namespace UI {
 
         int Count { get { return this.Rows().Count } }
 
-        bool Focusable() { return true }
+        override bool Focusable() { return true }
 
         // Appends an element; an object belongs to the list from now on (numbers and text belong to nobody).
         any Add(any item) {
@@ -244,7 +244,7 @@ namespace UI {
         }
 
         // If the list changes from outside (list.Add) or the view, it is repainted.
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             if (this.SelectedIndex != this.seenSelected) {
                 // set from outside (e.g. by a binding): treat like a selection
@@ -338,7 +338,7 @@ namespace UI {
             else if ((index + 1) * h > this.scroller.offset + this.viewH) { this.scroller.Set((index + 1) * h - this.viewH) }
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             if (this.view != undefined) { this.view.Update() }
             var rows = this.Rows()
             var widest = 0
@@ -347,7 +347,7 @@ namespace UI {
             this.ch = rows.Count * this.RowHeight(root) + this.headerHeight + 2
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             var rows = this.Rows()
             var rh = this.RowHeight(root)
             this.viewH = UI.M.Max(0, h - 2 - this.headerHeight)
@@ -385,7 +385,7 @@ namespace UI {
         }
 
         // Draw a row: (x, y) is its top left corner, w x h the size; `text` the font colour (Brush).
-        undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
+        undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, Brush text) {
             if (this.ItemTemplate != undefined) {
                 var row = this.rowElements[index]
                 if (row != undefined && row.Visible) { row.Draw(root, x + row.rx, y + row.ry) }
@@ -396,7 +396,7 @@ namespace UI {
 
         undefined DrawHeader(Root root, int x, int y, int w) { }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -445,7 +445,7 @@ namespace UI {
             return this.scroller.Needed() && px >= this.ax + this.actualWidth - 1 - this.scroller.size && py >= this.ay + 1 + this.headerHeight
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.OverBar(px, py)) {
                 this.scroller.Press(py - (this.ay + 1 + this.headerHeight), this.viewH)
@@ -465,46 +465,46 @@ namespace UI {
         }
 
         // A drag of a row shows the label with its text, not a picture of the whole list.
-        bool DragSnapshot() { return false }
+        override bool DragSnapshot() { return false }
 
         undefined HeaderClick(Root root, int px, int py) { }
 
-        undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, int px, int py) {
             if (this.scroller.dragging) { this.scroller.Drag(py - (this.ay + 1 + this.headerHeight), this.viewH) }
         }
 
-        undefined MouseUp(Root root, int button, int px, int py) { this.scroller.Release() }
+        override undefined MouseUp(Root root, int button, int px, int py) { this.scroller.Release() }
 
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             this.hotIndex = this.RowAt(root, px, py)
             this.scroller.SetHover(this.OverBar(px, py))
         }
 
-        bool MouseWheel(Root root, int dx, int dy) {
+        override bool MouseWheel(Root root, int dx, int dy) {
             if (!this.scroller.Needed()) { return false }
             this.scroller.By(-dy * this.RowHeight(root) * 3)
             return true
         }
 
-        bool CanPan() { return this.scroller.Needed() }
+        override bool CanPan() { return this.scroller.Needed() }
 
-        bool Dragging() { return this.scroller.dragging }
+        override bool Dragging() { return this.scroller.dragging }
 
-        bool PanBy(Root root, int dx, int dy) {
+        override bool PanBy(Root root, int dx, int dy) {
             if (!this.scroller.Needed()) { return false }
             this.scroller.By(-dy)
             return true
         }
 
         // Up and Down select another row - at the first or last entry the list releases the key (the focus moves on)
-        bool WantsKey(int key) {
+        override bool WantsKey(int key) {
             var last = this.Rows().Count - 1
             if (key == UI.Keys.Down()) { return this.SelectedIndex < last }
             if (key == UI.Keys.Up()) { return this.SelectedIndex > 0 }
             return key == UI.Keys.Home() || key == UI.Keys.End() || key == UI.Keys.PageUp() || key == UI.Keys.PageDown()
         }
 
-        undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, int key, int mod) {
             var rows = this.Rows()
             var index = this.SelectedIndex
             var page = UI.M.Max(1, this.viewH / this.RowHeight(root))
@@ -524,11 +524,11 @@ namespace UI {
             this.EnsureVisible(root, index)
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             if (this.Visible && this.Enabled && this.Focusable()) { list.Add(this) }
         }
 
-        UI.ItemsControl FindName(string name) {
+        override UI.ItemsControl FindName(string name) {
             if (this.Name == name) { return this }
             return undefined
         }
@@ -538,7 +538,7 @@ namespace UI {
     class ListBox : ItemsControl {
         construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) { }
 
-        string StyleKey() { return "ListBox" }
+        override string StyleKey() { return "ListBox" }
     }
 
     // Like the ListBox, but with columns and a header row: `AddColumn("Name", "name", 120)` shows the property `name` of the elements.
@@ -553,7 +553,7 @@ namespace UI {
             this.columns = new List()
         }
 
-        string StyleKey() { return "ListView" }
+        override string StyleKey() { return "ListView" }
 
         UI.GridColumn AddColumn(string header, string member = "", int width = 100) {
             var column = new GridColumn(header, member, width)
@@ -562,7 +562,7 @@ namespace UI {
             return column
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             this.headerHeight = this.RowHeight(root)
             base.MeasureCore(root, aw, ah)
             var w = 0
@@ -579,7 +579,7 @@ namespace UI {
             return UI.M.Max(20, total - used)
         }
 
-        undefined DrawHeader(Root root, int x, int y, int w) {
+        override undefined DrawHeader(Root root, int x, int y, int w) {
             var theme = root.theme
             var r = root.renderer
             var h = this.headerHeight
@@ -605,7 +605,7 @@ namespace UI {
             r.DrawLine(x, y + h - 1, x + w - 1, y + h - 1, theme.border)
         }
 
-        undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
+        override undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, Brush text) {
             if (this.ItemTemplate != undefined || this.columns.Count == 0) {
                 base.DrawRow(root, index, item, x, y, w, h, text)
                 return
@@ -622,7 +622,7 @@ namespace UI {
         }
 
         // A click on a title sorts by the column (once more: reversed).
-        undefined HeaderClick(Root root, int px, int py) {
+        override undefined HeaderClick(Root root, int px, int py) {
             if (py < this.ay + 1 || py >= this.ay + 1 + this.headerHeight) { return }
             var x = this.ax + 1
             for (var i = 0; i < this.columns.Count; i = i + 1) {
