@@ -387,8 +387,8 @@ Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2
   * Spans, Füllen und Blits arbeiten in ganzen Maschinenwörtern (16 bzw. 32 Bit: das Doppelte bzw. Vierfache an Pixeln pro Schritt, die Farbe als wiederholtes
     Muster, Masken nur an den Rändern); Blits mit Versatz tauschen die Bytes (x86 ist Little Endian) oder gehen in Bytes;
   * Zeilen auf die Wortbreite des Ziels gerundet;
-  * bei 4 Bit wahlweise *chunky* (2 Pixel pro Byte) oder *planar* (4 Ebenen mit je 1 Bit: das Layout der EGA/VGA-16, jede Ebene bleibt unter 64 KB - der
-    Standard für `dos16`);
+  * bei 4 Bit wahlweise *chunky* (2 Pixel pro Byte) oder *planar* (4 Ebenen mit je 1 Bit: das Layout der EGA/VGA-16, jede Ebene bleibt unter 64 KB);
+    *planar* ist der Standard auf `dos16` und `bios-x86` (auch im Bootblock, solange der Code dort noch im Real Mode läuft), sonst *chunky*;
   * dieselbe Zeichen-API wie der `Framebuffer` über eine gemeinsame Schnittstelle; ein Blit zwischen beiden bildet die Farben über die Palette ab.
   Wer auf eine CGA/EGA zeichnet, kann ebenso einen 8-Bit-`Framebuffer` nehmen - das Render-Target bildet dann auf die Farben der Karte ab.
 
