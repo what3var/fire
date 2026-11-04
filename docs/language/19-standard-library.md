@@ -116,6 +116,8 @@ Arguments...*, in a project `settings.arguments` (docs/PROJECTS.md). A program o
 
 ### Time
 
+More in [Time](20-time.md).
+
 ```fire
 #import "time"
 var start = DateTime.Now

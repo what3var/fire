@@ -20,7 +20,7 @@ print(b[2])                 // undefined
 - The size never changes; for a collection that grows, use `List<T>` (below).
 - **The brackets stand after the name**: `int values[]`, `string names[10]`. Brackets after the type are a bit width (`int[8] small`, see
   [Types](02-types.md#bit-widths)).
-- An array literal may hold different types (`[1, "two", 3.0]`); a typed declaration (`int values[]`) lets the type checker check the elements.
+- An array literal may hold different types (`[1, "two", 3.0]`); a typed declaration (`int values[]`) makes a **typed array** (below).
 - A unit at the declaration (`float:km/h speeds[]`, `int sizes[3] : mm`) converts every element stored into the array (see
   [Units in declarations](05-units.md#units-in-declarations)).
 
@@ -46,6 +46,45 @@ print(grid[0].length)       // 3
 var rows = [[1, 2], [3]]
 print(rows[1][0])           // 3
 ```
+
+## Typed arrays
+
+An array stored in a variable or a field declared with the element type `int`, `int[8|16|32|64]`, `float`, `float[8|16|32|64]`, `bool`, `char` or
+`byte` becomes a **typed array**: the array itself knows its element type, so every write keeps it - through any reference, also `ref a[i]` and `a[i]++`:
+
+```fire
+int[8] small[4]                 // four 8-bit ints, made right here
+small[0] = 300
+print(small[0])                 // 44 - cut to 8 bits like an int[8] variable
+var alias = small               // the same array
+alias[1] = 129
+print(small[1])                 // -127
+byte raw[2]
+raw[0] = 263
+print(raw[0])                   // 7 (0 .. 255)
+float[32] f[] = [1, 2.5]
+print(f[0])                     // 1 - the int became a float
+float:cm sizes[] = [1cm, 2m]
+print(sizes[1])                 // 200cm - every element is converted to the unit
+try {
+    any v = "x"
+    small[3] = v
+} catch (ArgumentException e) {
+    print(e.message)            // An element of an array of int[8] must be an int (or undefined), not String.
+}
+```
+
+- `undefined` fits every element type (it is what a new array holds). Any other value is an `ArgumentException`, a number with another unit a
+  `UnitMismatchException`; the type checker reports both already where it can see them (`TC001`, `TC006`).
+- An assignment yields the stored value: `print(a[0] = 300)` prints `44` for an `int[8]` array.
+- The array becomes typed where it is stored: the declaration's initializer, a declaration with a size (`int a[10]`), a later assignment to the
+  variable or field. Its elements are converted then. An array typed already for another element type is an `ArgumentException`.
+- Parameters do not type what they receive. Copies (`copy`, `flat`, [`taking`](15-threads-and-actors.md)) of a typed array are typed.
+- `int m[3][4]` types the inner arrays. `var`, `any`, strings, classes and pointers declare no element type: such an array takes any value.
+- **A declaration with a size makes the array** - a local or global where it is declared, a field together with its object
+  (`class Box { int data[3] }`: `new Box().data.length` is 3). Without a size (`int arr[]`) the variable or field stays `undefined` until an array is assigned.
+- Natively a typed array is **packed**: one C number per element (`int8_t` for `int[8]`, `float` for `float[32]`, one byte for `bool`) instead of a
+  16-byte value - `int[8] a[100000]` needs 100 KB instead of 1.6 MB.
 
 ## Arrays as parameters and return values
 
