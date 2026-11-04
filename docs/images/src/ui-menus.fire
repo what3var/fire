@@ -12,4 +12,4 @@ class EditorWindow : EditorBase {
 var window = new EditorWindow()
 window.ui.Tick()
 window.menu.Open(window.ui, 0)
-Shot.Save(window, "ui-menus.png")
+Shot.Save(window.ui, "ui-menus.png")

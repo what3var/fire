@@ -10,4 +10,4 @@ class DarkWindow : DarkBase {
 }
 
 var window = new DarkWindow()
-Shot.Save(window, "ui-dark.png")
+Shot.Save(window.ui, "ui-dark.png")

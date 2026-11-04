@@ -13,4 +13,4 @@ class TilesWindow : TilesBase {
 }
 
 var window = new TilesWindow()
-Shot.Save(window, "ui-scroll.png")
+Shot.Save(window.ui, "ui-scroll.png")

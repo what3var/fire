@@ -76,5 +76,8 @@ caret and under the mouse.
 
 - TrueType collections (`.ttc`) and OpenType fonts with PostScript outlines (`CFF`) are not read; hinting, bold/italic synthesis and sub-pixel positioning are not done (pick the bold file instead:
   `Fonts.Get("DejaVu Sans Bold")`).
+- A **family name** finds one file of the family, not necessarily the regular one: `Fonts.Get("Noto Sans")` can give *Noto Sans Bold*. Name the
+  file when it matters (`Fonts.Get("NotoSans-Regular")`). The same applies to the font of the system theme (KDE's default "Noto Sans").
+- GNOME's default font Cantarell is an OpenType font with CFF outlines and is not read - the UI then takes the next font of its list.
 - Text is laid out left to right, one line, without shaping (no ligatures, no right-to-left, no combining marks beyond what the font's `cmap` offers).
 - The console font stays CP437 (characters above 255 show as `?`); a TrueType font shows what its `cmap` has.

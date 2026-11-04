@@ -5,4 +5,4 @@
 class StyledWindow : StyledBase { }
 
 var window = new StyledWindow()
-Shot.Save(window, "ui-styles.png")
+Shot.Save(window.ui, "ui-styles.png")

@@ -5,4 +5,4 @@
 class LayoutWindow : LayoutBase { }
 
 var window = new LayoutWindow()
-Shot.Save(window, "ui-layout.png")
+Shot.Save(window.ui, "ui-layout.png")

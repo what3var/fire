@@ -10,4 +10,4 @@ class GreeterWindow : GreeterBase {     // GreeterBase is generated from the mar
 var window = new GreeterWindow()
 window.nameBox.Text = "Ada"
 window.Greet(undefined)
-Shot.Save(window, "ui-first.png")
+Shot.Save(window.ui, "ui-first.png")

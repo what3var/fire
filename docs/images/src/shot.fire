@@ -3,10 +3,8 @@
 
 class Shot {
     // Runs `cycles` cycles of the UI, then saves what its framebuffer shows to `file` (relative to docs/images).
-    // `target` is a UI.Root or a window made from markup (its field `ui`).
-    static undefined Save(any target, string file, int cycles = 8) {
-        any ui = target
-        if (!(target is of UI.Root)) { ui = target.ui }
+    // `ui` is a UI.Root (of a window made from markup: its field `ui`).
+    static undefined Save(any ui, string file, int cycles = 8) {
         for (var i = 0; i < cycles; i++) { ui.Tick() }
         IO.File.WriteAllBytes(file, ui.framebuffer.ToPng())
         print("wrote " + file)
