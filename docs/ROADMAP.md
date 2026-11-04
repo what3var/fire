@@ -390,3 +390,19 @@ Generator (`packages/graphics/native/tools/make_gfx_vk.py`; der von scene3d ruft
 noch nicht gesetzt ist. In der VM baut jedes Paket seine Bibliothek allein und hat seine vollständige Kopie. Sauberer wäre, wenn ein Paket Header eines Pakets, von dem es
 abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört zur festen Bau-Reihenfolge oben: die Quellen der Abhängigkeiten zuerst, jede einmal.
 
+
+**Umgesetzt (Branch `native-c`).**
+* **Feste Bau-Reihenfolge je Quelle**: ein Eintrag von `sources`/`platformSources` (Paket und `.fireproj`) ist ein Pfad oder `{ "file": "native/x.h", "order": 10 }`
+  (`NativeSourceList`, `src/fire.Package.Manager/NativeSources.cs`; im Projekt gilt die Zahl für jede Datei eines Musters). Alle Quellen eines Baus - erst die Plattformquellen, dann die
+  gemeinsamen - werden **stabil** nach `order` sortiert (ohne Angabe 0: einfache Einträge behalten ihre Lage wie bisher). Eine einzige Stelle (`PackageNativeExtensions.SourcesFor`, gelesen von
+  `InstalledImport.ReadNativeSources`) bedient alle Wege: die VM-Bibliotheken (`PackageLibrary`, der Fingerabdruck in `StandardSources`; `EnsureGraphics` von `ui-platform` liest dieselbe Methode), den nativen Build
+  (`CppGenerator`), Plugins und die Bibliotheksmodule (`static`/`shared`, `StaticLinkage`). `ember pack`/Pack Library schreiben die Zahlen ins `package.json` des Pakets.
+* **Prüfung statt Auflösung**: eine Quelle, die eine spätere Quelle desselben Imports einbindet, ist ein Fehler mit Datei und Zeile -
+  `native/a.h:3: #include "b.h" is a source of the same package that is built after it - give 'native/b.h' a smaller build order ("order") than 'native/a.h', or list it before.` -
+  beim Bauen (`ReadNativeSources`: VM, nativ, Plugins) und beim Packen (`Fpk.Forge`, für jeden Schlüssel von `platformSources`). Die lokalen `#include`s werden bewusst **nicht**
+  automatisch aufgelöst: die Reihenfolge steht ausdrücklich da und ist im Editor sichtbar. Keines der Pakete von `native-c` und `ui-platform` verletzt die Regel.
+* Die VM-Bibliothek eines Projekts wird neu gebaut, wenn die Projektdatei neuer ist (`InstalledPackage.DescriptionFile`) - eine neue Reihenfolge ändert keine Quelle.
+* **Editor**: das Werkzeugfenster *Properties* zeigt die Eigenschaften der im Projektmappen-Explorer gewählten Datei (`FilePropertiesHost` mit `IFilePropertiesProvider`); eine C/C++-Datei
+  eines Projekts hat *Part of the native build*, *Build order*, *Platforms*, *Position* und *Listed as*, geändert wird die `.fireproj` (`ProjectNativeFiles`).
+* Tests: `FIRE_TESTS_ONLY=projects` (Lesen/Schreiben, Sortierung, Meldung, Rundreise, eine C-Bibliothek mit voneinander abhängigen Headern in der VM und nativ, Packen, die Dateioptionen).
+* Offen: Header eines Pakets, von dem man abhängt, einbinden (scene3d nimmt den Vulkan-Ausschnitt von graphics) - die Quellen der Abhängigkeiten zuerst, jede einmal.

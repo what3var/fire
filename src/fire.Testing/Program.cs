@@ -27934,7 +27934,7 @@ else
                     foreach (var (key, value) in new[] { ("posix", 1), ("windows", 2), ("freertos", 3) })
                     {
                         File.WriteAllText(Path.Combine(d, key + ".hpp"), $"namespace fire {{ inline Value pk_which_{key}() {{ return Int({value}); }} }}\n");
-                        native.PlatformSources[key] = new List<string> { Path.Combine(d, key + ".hpp") };
+                        native.PlatformSources[key] = new fire.Package.Manager.NativeSourceList { Path.Combine(d, key + ".hpp") };
                     }
                     File.WriteAllText(Path.Combine(d, "common.hpp"), "namespace fire {\n#if defined(FIRE_HAL_WINDOWS)\ninline Value pk_which() { return pk_which_windows(); }\n#elif defined(FIRE_HAL_FREERTOS)\ninline Value pk_which() { return pk_which_freertos(); }\n#else\ninline Value pk_which() { return pk_which_posix(); }\n#endif\n}\n");
                     native.Sources.Clear();

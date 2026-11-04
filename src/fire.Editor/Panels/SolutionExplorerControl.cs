@@ -77,6 +77,9 @@ namespace fire.Editor
         /// <summary>A command of a context menu or of the empty page: its id and the row it concerns (null: none).</summary>
         public event Action<string, ExplorerNode?>? CommandRequested;
 
+        /// <summary>Another row was selected by the user (null: none): the property window shows the properties of a file.</summary>
+        public event Action<ExplorerNode?>? SelectionChanged;
+
         public SolutionExplorerControl()
         {
             _tree.ItemsSource = _roots;
@@ -86,6 +89,7 @@ namespace fire.Editor
                 Setters = { new Setter(TreeViewItem.IsExpandedProperty, new Binding("IsExpanded") { Mode = BindingMode.TwoWay }) },
             });
             _tree.ContextMenu = _menu;
+            _tree.SelectionChanged += (_, _) => { if (!_refreshing) SelectionChanged?.Invoke(_tree.SelectedItem as ExplorerNode); };
             _menu.Opening += (_, e) => { if (!FillMenu()) e.Cancel = true; };
             _tree.AddHandler(PointerPressedEvent, OnPointerPressed, RoutingStrategies.Tunnel);
             // a double click opens: a file, the designer of a markup (instead of folding it), the properties of a project or the solution, the overview of the notes;
@@ -123,6 +127,9 @@ namespace fire.Editor
             _tree.IsVisible = hasContent;
             _empty.IsVisible = !hasContent;
         }
+
+        // (the tree is built anew: the selection it loses is no choice of the user)
+        private bool _refreshing;
 
         /// <summary>The row that is selected.</summary>
         public ExplorerNode? Selected => _tree.SelectedItem as ExplorerNode;
@@ -169,7 +176,8 @@ namespace fire.Editor
             _git = git;
             _branch = branch;
             RememberCollapsed(_roots);
-            _roots.Clear();
+            _refreshing = true;
+            try { _roots.Clear(); } finally { _refreshing = false; }
             if (!workspace.IsOpen) { Show(false); return; }
             Show(true);
 

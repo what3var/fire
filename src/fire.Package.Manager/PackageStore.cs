@@ -10,6 +10,8 @@ namespace fire.Package.Manager
         public InstalledPackage(PackageManifest manifest, string directory) { Manifest = manifest; Directory = directory; }
         /// <summary>Where the libraries that are built from the natives of the package are kept (instead of `lib/` in <see cref="Directory"/>): a package that stands for a project.</summary>
         public string? BuildDirectory { get; init; }
+        /// <summary>The file that describes the natives besides the sources (the project file of a project): a library built before it changed (a new build order) is built again.</summary>
+        public string? DescriptionFile { get; init; }
         public string Name => Manifest.Name;
         public string Version => Manifest.Version;
     }
@@ -30,13 +32,25 @@ namespace fire.Package.Manager
         /// <summary>The prelude (fire source), null if the import has none.</summary>
         public string? ReadPrelude() => string.IsNullOrWhiteSpace(Import.Prelude) ? null : File.ReadAllText(PathOf(Import.Prelude));
 
-        /// <summary>The C++ files of the natives for a build for <paramref name="platformKeys"/> (the platform package and the name of the target), in the order of the description.</summary>
+        /// <summary>The C/C++ files of the natives for a build for <paramref name="platformKeys"/> (the platform package and the name of the target), in build order (the platform
+        /// sources first, then the common ones, sorted by their `order`; see <see cref="NativeSourceOrder"/>). A source that includes another source of the import that comes after it
+        /// is a <see cref="PackageException"/> naming the file and the line - the include is taken out in the one file the sources are put into, so it would not work.</summary>
         public IEnumerable<(string Name, string Text)> ReadNativeSources(IEnumerable<string> platformKeys)
         {
-            if (Import.Native == null) yield break;
+            if (Import.Native == null) return Array.Empty<(string, string)>();
             var sources = Import.Native.SourcesFor(platformKeys);
-            var names = new HashSet<string>(sources.Select(s => Path.GetFileName(s.Replace('\\', '/'))), StringComparer.Ordinal);
-            foreach (var src in sources) yield return (src, StripLocalIncludes(StripPragmaOnce(File.ReadAllText(PathOf(src))), names));
+            var texts = sources.Select(src => (Name: src, Text: File.ReadAllText(PathOf(src)))).ToList();
+            // (shown relative to the package - or the project - when the path is in its folder)
+            string Display(string name)
+            {
+                if (!Path.IsPathRooted(name)) return name;
+                string rel = Path.GetRelativePath(Package.Directory, name);
+                return rel.StartsWith("..") || Path.IsPathRooted(rel) ? name : rel.Replace('\\', '/');
+            }
+            var problems = NativeSourceOrder.CheckIncludes(texts, Display);
+            if (problems.Count > 0) throw new PackageException($"The build order of the natives of '{Import.Name}' is wrong:\n  " + string.Join("\n  ", problems));
+            var names = new HashSet<string>(sources.Select(NativeSourceOrder.FileNameOf), StringComparer.Ordinal);
+            return texts.Select(t => (t.Name, StripLocalIncludes(StripPragmaOnce(t.Text), names))).ToList();
         }
 
         /// <summary>The sources go into one file in the order of the package (what a file includes comes before it): an `#include "x.hpp"` of another source of the package is

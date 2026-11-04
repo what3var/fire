@@ -563,6 +563,7 @@ static class ProjectTests
         Directory.CreateDirectory(Path.Combine(t, "Empty")); noSources.Save();
         var emptyWs = Workspace.Open(noSources.FilePath!);
         Check("Natives: ohne C++-Dateien meldet der Plan es", BuildPlan.Create(emptyWs, emptyWs.Projects[0]).Errors.Any(e => e.Contains("no C++ files")));
+        BuildOrder(t);
 
         // a project made in a folder of the solution lives in a subfolder of it; the folder is kept in the solution file
         var inFolder = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Terminal"), Path.Combine(t, "F"), "F");
@@ -831,6 +832,119 @@ static class ProjectTests
         var o2 = new StringWriter(); var e2 = new StringWriter();
         int code2 = CommandLineRunner.Run(new[] { "build", slnPath, "-o", Path.Combine(outDir, "app.out") }, o2, e2);
         return code2 == 0 && File.Exists(Path.Combine(outDir, "app.out"));
+    }
+
+    /// <summary>The build order of the natives (ROADMAP 12): `{ "file": ..., "order": n }` in `native.sources` / `native.platformSources`, the stable sort, the check of the includes,
+    /// the file options of the editor (ProjectNativeFiles) and a library in C whose headers include each other - in the VM and in a native build, in the order given.</summary>
+    private static void BuildOrder(string t)
+    {
+        // ---- the model: reading, writing, sorting ----
+        var parsed = FireProject.Parse("""{ "name": "O", "type": "library", "native": { "language": "c", "sources": [ "native/a.h", { "file": "native/b.h", "order": -5 }, "native/c.h" ], "platformSources": { "posix": [ { "file": "native/p.h", "order": 3 }, "native/q.h" ] } } }""");
+        var ns = parsed.Native!.Sources!;
+        Check("Bau-Reihenfolge: \"order\" wird gelesen, einfache Eintraege bleiben ohne", ns.Count == 3 && ns.OrderOf("native/b.h") == -5 && ns.OrderOf("native/a.h") == null && parsed.Native.PlatformSources!["posix"].OrderOf("native/p.h") == 3, string.Join(",", ns));
+        string json = parsed.ToJson();
+        var again = FireProject.Parse(json);
+        Check("Bau-Reihenfolge: in der Projektdatei steht { \"file\", \"order\" } in einer Zeile, der Rest als Text; Laden ergibt dasselbe",
+            json.Contains("{ \"file\": \"native/b.h\", \"order\": -5 }") && json.Contains("\"native/a.h\",") && again.Native!.Sources!.SequenceEqual(ns) && again.Native.Sources!.OrderOf("native/b.h") == -5
+            && again.Native.PlatformSources!["posix"].OrderOf("native/p.h") == 3 && again.ToJson() == json, json);
+        Check("Bau-Reihenfolge: ein falscher Eintrag ist ein ProjectException", Throws(() => FireProject.Parse("""{ "name": "O", "native": { "sources": [ { "order": 1 } ] } }""")) && Throws(() => FireProject.Parse("""{ "name": "O", "native": { "sources": [ { "file": "x.h", "order": "1" } ] } }""")));
+        var pn = new fire.Package.Manager.PackageNative();
+        foreach (var f in new[] { "a", "b", "c" }) pn.Sources.Add(f);
+        pn.Sources.SetOrder("b", -5);
+        pn.PlatformSources["posix"] = new fire.Package.Manager.NativeSourceList { "p", "q" };
+        pn.PlatformSources["posix"].SetOrder("p", 3);
+        string posix = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "posix" }));
+        string common = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "windows" }));
+        Check("Bau-Reihenfolge: sortiert nach order, stabil (ohne order 0, Plattformquellen zuerst)", posix == "b,q,a,c,p" && common == "b,a,c", posix + " | " + common);
+        var problems = fire.Package.Manager.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
+        Check("Bau-Reihenfolge: die Pruefung nennt Datei und Zeile des #include, das auf eine spaetere Quelle zeigt", problems.Count == 2
+            && problems[0].StartsWith("native/top.h:2: #include \"mid.h\"") && problems[0].Contains("give 'native/mid.h' a smaller build order") && problems[1].StartsWith("native/mid.h:2: #include \"base.h\""), string.Join("\n", problems));
+
+        // ---- a library in C with headers that need each other; the list names them the wrong way round, the orders put them right ----
+        string dir = Path.Combine(t, "ORD");
+        string lib = Path.Combine(dir, "Ord");
+        Write(lib, "native/base.h", "#ifndef ORD_BASE_H\n#define ORD_BASE_H\ntypedef struct { int64_t v; } OrdBox;\nstatic int64_t ord_base(int64_t x) { return x + 1; }\n#endif\n");
+        Write(lib, "native/mid.h", "#include \"base.h\"\nstatic int64_t ord_mid(int64_t x) { OrdBox b = { ord_base(x) }; return b.v * 10; }\n");
+        Write(lib, "native/top.h", "#include \"mid.h\"\nstatic inline Value ord_calc(Value a) { return Int(ord_mid(a.i)); }\n");
+        Write(lib, "ord.fire", "namespace Ord {\n    class Native {\n        static int Calc(int a) { return __ord_calc(a) }\n    }\n}\n");
+        string ordered = """{ "name": "Ord", "type": "library", "native": { "language": "c", "sources": [ { "file": "native/top.h", "order": 30 }, { "file": "native/mid.h", "order": 20 }, { "file": "native/base.h", "order": 10 } ] } }""";
+        Write(dir, "App/App.fireproj", """{ "name": "App", "references": [ { "project": "../Ord/Ord.fireproj" } ] }""");
+        Write(dir, "App/main.script", "#import \"Ord\"\nprint(Ord.Native.Calc(4))\n");
+        Write(dir, "ORD.firesln", """{ "projects": [ "App/App.fireproj", "Ord/Ord.fireproj" ], "startup": "App" }""");
+        // ---- first without the orders: the list order is wrong - the build says where (first: a library once loaded stays loaded in this process) ----
+        string projFile = Write(lib, "Ord.fireproj", ordered.Replace("{ \"file\": \"native/top.h\", \"order\": 30 }", "\"native/top.h\"").Replace("{ \"file\": \"native/mid.h\", \"order\": 20 }", "\"native/mid.h\"").Replace("{ \"file\": \"native/base.h\", \"order\": 10 }", "\"native/base.h\""));
+        var ws = Workspace.Open(Path.Combine(dir, "ORD.firesln"));
+        // the library of the virtual machine (built as a run would build it; a run makes the call of the native fail with this reason - and the process keeps a library it loaded)
+        var badPlan = BuildPlan.Create(ws, ws.FindByName("App")!);
+        ProjectNativeOverlay.Register(badPlan);
+        string badErr = Catch(() => PackageLibrary.Ensure(fire.Package.Manager.PackageStore.Default.FindKey(ProjectNativeOverlay.KeyOf("Ord"))!));
+        fire.Package.Manager.PackageStore.Default.ClearOverlay();
+        Check("Bau-Reihenfolge (Projekt): die Meldung nennt die Quellen relativ zum Projekt", badErr.Contains("'native/mid.h'"), badErr);
+        Check("Bau-Reihenfolge (Projekt): falsche Reihenfolge - die VM nennt Datei, Zeile und was zu tun ist", badErr.Contains("top.h:1: #include \"mid.h\"") && badErr.Contains("smaller build order"), badErr);
+        string packErr = Catch(() => ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Ord")!), Path.Combine(dir, "out2")));
+        Check("Bau-Reihenfolge (Projekt): falsche Reihenfolge - Packen lehnt ab", packErr.Contains("mid.h:1: #include \"base.h\"") && packErr.Contains("top.h:1"), packErr);
+        string exe = Path.Combine(dir, "app-native");
+        var bo = new StringWriter(); var be = new StringWriter();
+        int code = CommandLineRunner.Run(new[] { "build", Path.Combine(dir, "ORD.firesln"), "-p", "App", "--engine", "native", "-o", exe + "2" }, bo, be);
+        Check("Bau-Reihenfolge (Projekt): falsche Reihenfolge - der native Build meldet es", code != 0 && (be.ToString() + bo).Contains("top.h:1: #include \"mid.h\""), be.ToString() + bo);
+
+        // ---- now with the orders: they put the sources right ----
+        File.WriteAllText(projFile, ordered);
+        ws = Workspace.Open(Path.Combine(dir, "ORD.firesln"));
+        var ord = ws.FindByName("Ord")!;
+        var resolved = ProjectNatives.Resolve(ord)!;
+        Check("Bau-Reihenfolge (Projekt): die Quellen kommen in der Reihenfolge von order", string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(resolved.Native, Array.Empty<string>()).Select(Path.GetFileName)) == "base.h,mid.h,top.h");
+        string vmOut = "";
+        string vmErr = Catch(() => vmOut = RunPlan(BuildPlan.Create(ws, ws.FindByName("App")!)));
+        Check("Bau-Reihenfolge (Projekt): die Bibliothek der VM baut in der angegebenen Reihenfolge", vmOut.Trim() == "50", vmErr + vmOut);
+        bo = new StringWriter(); be = new StringWriter();
+        code = CommandLineRunner.Run(new[] { "build", Path.Combine(dir, "ORD.firesln"), "-p", "App", "--engine", "native", "-o", exe }, bo, be);
+        string run = "";
+        if (code == 0 && File.Exists(exe))
+        {
+            using var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, UseShellExecute = false })!;
+            run = proc.StandardOutput.ReadToEnd().Replace("\r\n", "\n"); proc.WaitForExit();
+        }
+        Check("Bau-Reihenfolge (Projekt): ein nativer Build legt die Quellen in derselben Reihenfolge ab", run.Trim() == "50", be.ToString() + bo + run);
+        var packed = fire.Package.Manager.Fpk.ReadManifest(ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ord), Path.Combine(dir, "out"))).Imports[0].Native!;
+        Check("Bau-Reihenfolge (Projekt): das Paket behaelt die Reihenfolge", packed.Sources.Count == 3 && packed.Sources.Select(s => packed.Sources.OrderOf(s)).SequenceEqual(new int?[] { 30, 20, 10 })
+            && string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(packed, Array.Empty<string>()).Select(Path.GetFileName)) == "base.h,mid.h,top.h", string.Join(",", packed.Sources));
+
+        // ---- the editor's file options (Properties window) ----
+        var info = ProjectNativeFiles.Describe(ord.Project, Path.Combine(lib, "native", "base.h"))!;
+        Check("Dateieigenschaften: eine Quelle der Natives - im Bau, order, Platz, als Datei genannt", info.InBuild && info.HasOrder && info.Order == 10 && info.Position == 1 && info.Count == 3 && info.Explicit && info.Groups.Count == 1 && info.Groups[0] == null && info.Problems.Count == 0,
+            $"{info.InBuild} {info.Order} {info.Position}/{info.Count} {info.Explicit}");
+        Check("Dateieigenschaften: eine fire-Datei hat keine nativen Optionen", ProjectNativeFiles.Describe(ord.Project, Path.Combine(lib, "ord.fire")) == null);
+        var copy = FireProject.Parse(ord.Project.ToJson());
+        copy.FilePath = ord.FilePath;
+        string? e1 = ProjectNativeFiles.SetOrder(copy, Path.Combine(lib, "native", "base.h"), 40);
+        var wrong = ProjectNativeFiles.Describe(copy, Path.Combine(lib, "native", "mid.h"))!;
+        Check("Dateieigenschaften: order setzen; die Pruefung meldet das #include der Datei", e1 == null && copy.Native!.Sources!.OrderOf("native/base.h") == 40 && wrong.Problems.Count == 1 && wrong.Problems[0].StartsWith("native/mid.h:1: #include \"base.h\""), e1 + string.Join("\n", wrong.Problems));
+        string? e2 = ProjectNativeFiles.SetGroup(copy, Path.Combine(lib, "native", "base.h"), "posix");
+        var moved = ProjectNativeFiles.Describe(copy, Path.Combine(lib, "native", "base.h"))!;
+        Check("Dateieigenschaften: die Plattform wechseln nimmt die order mit", e2 == null && moved.Groups.SequenceEqual(new string?[] { "posix" }) && copy.Native!.PlatformSources!["posix"].OrderOf("native/base.h") == 40 && !copy.Native.Sources!.Contains("native/base.h"), e2);
+        string? e3 = ProjectNativeFiles.SetInBuild(copy, Path.Combine(lib, "native", "base.h"), false);
+        string? e4 = ProjectNativeFiles.SetOrder(copy, Path.Combine(lib, "native", "base.h"), 1);
+        Check("Dateieigenschaften: aus dem Bau nehmen; dann hat die Datei keine order", e3 == null && !ProjectNativeFiles.Describe(copy, Path.Combine(lib, "native", "base.h"))!.InBuild && e4 != null && e4.Contains("not part of the native build"), e3 + " / " + e4);
+        string? e5 = ProjectNativeFiles.SetInBuild(copy, Path.Combine(lib, "native", "base.h"), true);
+        Check("Dateieigenschaften: wieder in den Bau (native.sources)", e5 == null && copy.Native!.Sources!.Last() == "native/base.h", e5);
+        // a project that relies on the default sources (everything in native/, headers first): an order gives the file an entry of its own, before the pattern
+        string defDir = Path.Combine(t, "ORDDEF");
+        Write(defDir, "native/a.h", "static int def_a;\n");
+        Write(defDir, "native/b.c", "static int def_b;\n");
+        var def = new FireProject { Name = "Def", Type = OutputType.Library, Native = new ProjectNative(), FilePath = Path.Combine(defDir, "Def.fireproj") };
+        var defB = ProjectNativeFiles.Describe(def, Path.Combine(defDir, "native", "b.c"))!;
+        string? e6 = ProjectNativeFiles.SetOrder(def, Path.Combine(defDir, "native", "b.c"), -1);
+        var defB2 = ProjectNativeFiles.Describe(def, Path.Combine(defDir, "native", "b.c"))!;
+        Check("Dateieigenschaften: ohne native.sources - die Datei bekommt einen Eintrag vor dem Muster", defB.InBuild && !defB.Explicit && defB.Position == 2 && e6 == null && defB2.Explicit && defB2.Position == 1 && def.Native.Sources!.SequenceEqual(new[] { "native/**/*.{h,hpp,hh}", "native/b.c", "native/**/*.{c,cc,cpp,cxx}" }),
+            string.Join(",", (IEnumerable<string>?)def.Native.Sources ?? Array.Empty<string>()) + " " + defB.Position + "/" + defB2.Position);
+        string? e7 = ProjectNativeFiles.SetGroup(def, Path.Combine(defDir, "native", "b.c"), "posix");
+        string? e8 = ProjectNativeFiles.SetInBuild(def, Path.Combine(defDir, "native", "a.h"), false);
+        Check("Dateieigenschaften: was ein Muster bringt, wechselt die Plattform nicht und bleibt im Bau (mit Meldung)", e7 != null && e7.Contains("pattern") && e8 != null && e8.Contains("pattern") && def.Native.PlatformSources == null, e7 + " / " + e8);
+        def.Save();
+        var defBack = FireProject.Load(def.FilePath!);
+        Check("Dateieigenschaften: gespeichert und geladen bleibt es gleich", defBack.Native!.Sources!.SequenceEqual(def.Native.Sources!) && defBack.Native.Sources!.OrderOf("native/b.c") == -1, File.ReadAllText(def.FilePath!));
+
     }
 
     private static bool Ok(Action action) { try { action(); return true; } catch (Exception) { return false; } }

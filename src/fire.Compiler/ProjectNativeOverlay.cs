@@ -22,7 +22,7 @@ namespace fire.Compiler
             {
                 var manifest = new PackageManifest { Name = "project:" + part.ProjectName, Version = ProjectBuilder.PackageVersion(plan.Settings.Version) };
                 manifest.Imports.Add(new PackageImport { Name = part.ImportName, Native = part.Native });
-                PackageStore.Default.AddOverlay(new InstalledPackage(manifest, part.Directory) { BuildDirectory = Path.Combine(part.Directory, "obj", "native") });
+                PackageStore.Default.AddOverlay(new InstalledPackage(manifest, part.Directory) { BuildDirectory = Path.Combine(part.Directory, "obj", "native"), DescriptionFile = part.ProjectFile });
             }
         }
 

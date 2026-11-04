@@ -4,7 +4,11 @@ using fire.Package.Manager;
 namespace fire.Projects
 {
     /// <summary>The C++ natives of a project (or of a library project), ready to build: what the project's `native` part and the folder `native/` give (docs/PROJECTS.md).</summary>
-    public sealed record NativePart(string ImportName, string ProjectName, string Directory, PackageNative Native);
+    public sealed record NativePart(string ImportName, string ProjectName, string Directory, PackageNative Native)
+    {
+        /// <summary>The project file: the build order of the sources is written there, so a library built from them is older than it when it changed.</summary>
+        public string? ProjectFile { get; init; }
+    }
 
     /// <summary>
     /// Finds the natives of a project: its C++ files (default: everything in the folder `native/`, the headers first) and the functions in them. Every `inline Value name(Value a, ...)` is a native
@@ -41,11 +45,11 @@ namespace fire.Projects
             if (n == null) return null;
             string dir = project.Directory;
             var found = new List<string>();
-            var sources = ProjectFiles.Expand(dir, n.Sources ?? ProjectNative.DefaultSources.ToList(), found, n.Sources == null ? Rank : null);
             var native = new PackageNative { Reset = n.Reset, Language = n.Language };
-            native.Sources.AddRange(sources);
+            native.Sources = ExpandOrdered(dir, n.Sources ?? new NativeSourceList(ProjectNative.DefaultSources), found, n.Sources == null ? Rank : null);
+            var sources = native.Sources;
             if (n.PlatformSources != null)
-                foreach (var (key, patterns) in n.PlatformSources) native.PlatformSources[key] = ProjectFiles.Expand(dir, patterns, found);
+                foreach (var (key, patterns) in n.PlatformSources) native.PlatformSources[key] = ExpandOrdered(dir, patterns, found);
             if (n.Platforms != null) native.Platforms.AddRange(n.Platforms);
             if (n.LinkLibraries != null) foreach (var (key, libs) in n.LinkLibraries) native.LinkLibraries[key] = libs.ToList();
             if (n.Exceptions != null) native.Exceptions.AddRange(n.Exceptions);
@@ -66,7 +70,17 @@ namespace fire.Projects
                     if (!explicitCpp.Contains(f.Symbol) && !native.Functions.Any(x => x.Name == f.Name)) native.Functions.Add(f);
                 }
             }
-            return new NativePart(project.Project.ImportName, project.Name, dir, native);
+            return new NativePart(project.Project.ImportName, project.Name, dir, native) { ProjectFile = project.FilePath };
+        }
+
+        /// <summary>The files of the entries (patterns expanded, as <see cref="ProjectFiles.Expand"/>), each with the build order of the entry it came from.</summary>
+        internal static NativeSourceList ExpandOrdered(string dir, NativeSourceList entries, List<string>? problems, Func<string, int>? rank = null)
+        {
+            var from = new List<int>();
+            var files = ProjectFiles.Expand(dir, entries, problems, rank, from);
+            var result = new NativeSourceList(files);
+            for (int i = 0; i < files.Count; i++) if (entries.OrderOf(entries[from[i]]) is int o) result.SetOrder(files[i], o);
+            return result;
         }
     }
 }
