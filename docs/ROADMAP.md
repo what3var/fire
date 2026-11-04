@@ -27,6 +27,7 @@ Leitlinien:
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
 | 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
 | 6 | [UI-Markup: fehlende Eigenschaften](#14-ui-markup-fehlende-eigenschaften) | - | klein; `.fxml` ist der Hauptweg für Oberflächen, dort fehlen ToolTip, Cursor und Drag & Drop |
+| 0 | [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
@@ -502,4 +503,26 @@ Canvas-Anordnung - ein Kind bekommt nur seine Wunschgröße, `HorizontalAlign`/`
 `<Grid>` direkt im `<Window>` braucht deshalb `Width`/`Height` (gleich der Fenstergröße) und wächst beim Vergrößern des Fensters nicht mit; nur der
 `DockManager` von `ui.docking` rechnet selbst mit `root.width`/`root.height`. Vorschlag: `Root.content` ordnet Kinder ohne feste Größe (und ohne
 `Left`/`Top`) wie ein Grid mit einer Zelle an - gestreckt auf die Fenstergröße, mit `Margin` und Ausrichtung; Kinder mit Position bleiben wie heute.
+
+## 15. Arrays statt Byte-Puffer an Natives
+
+Gefunden beim Durchgehen der Doku (Branch `doc-2611-1`): ein Array an einem `byte[]`-Parameter eines Packages bringt die VM zum **Absturz**
+(Segmentation fault) statt zu einer Exception:
+
+```fire
+#import "filesystem"
+IO.File.WriteAllBytes("x.bin", [1, 2, 3])        // Segfault
+byte data[] = [0x9F]                              // ein typisiertes byte-Array - auch kein Puffer
+Spi.Sim.Reply(data)                               // Segfault (ebenso I2C bus.Write(0x10, [1, 2]))
+```
+
+`Net.UdpSocket.SendTo([1, 2, 3], ...)` meldet "Bad address". Ursache: Parameter typisieren nicht, was sie bekommen (SPEC 8.4.2), und die Natives
+lesen ein Argument mit `bufOf(value)` als Byte-Puffer, ohne die Art zu prüfen (`fire_bridge_spi.h` `fire_spib_checkRange`, i2c, io, ...).
+
+* Sofort: jede Stelle, die `bufOf` auf ein Argument anwendet, prüft die Art (`K_Buffer`) und meldet sonst eine `ArgumentException`
+  ("expects a byte buffer (new byte[n]), not an array") - am besten einmal in der Package-ABI für Parameter, die als Puffer deklariert sind.
+* Danach: Arrays aus Zahlen und typisierte `byte`-Arrays an einem `byte[]`-Parameter in einen Puffer wandeln (eine Kopie; Ergebnisse, die
+  zurückgeschrieben werden - `Read(buffer, ...)` - brauchen dann einen echten Puffer), oder `byte a[] = [...]` legt gleich einen Puffer an. Für
+  Nutzer sind beide heute nicht zu unterscheiden.
+* Test: jedes Package mit `byte[]`-Parametern bekommt einen Fall mit einem Array (VM und nativ).
 
