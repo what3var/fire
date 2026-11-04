@@ -1,0 +1,13 @@
+// Made from docs/ui/README.md by extract.py - edit the page, not this file.
+// main.fire - the code-behind
+#include "ui-first/Greeter.fxml"                 // in a project the .fxml files are compiled with it, no #include needed
+#include "shot.fire"
+
+class GreeterWindow : GreeterBase {     // GreeterBase is generated from the markup
+    override undefined Greet(any sender) { this.answer.Text = "Hello, " + this.nameBox.Text + "!" }
+}
+
+var window = new GreeterWindow()
+window.nameBox.Text = "Ada"
+window.Greet(undefined)
+Shot.Save(window, "ui-first.png")

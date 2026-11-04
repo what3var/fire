@@ -26,6 +26,7 @@ Leitlinien:
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
 | 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
+| 6 | [UI-Markup: fehlende Eigenschaften](#14-ui-markup-fehlende-eigenschaften) | - | klein; `.fxml` ist der Hauptweg für Oberflächen, dort fehlen ToolTip, Cursor und Drag & Drop |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
@@ -482,3 +483,23 @@ Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht 
 * **Ziele:** ESP32-C3/C6 als Varianten von `esp32`; ein generisches Ziel Cortex-M/RISC-V mit FreeRTOS (Vorgaben für STM32F4/H7, RP2040, SAMD51, PIC32);
   AVR und PIC24 später mit einem eigenen kleinen Profil (Konstanten im Flash).
 * **Strikte Arrays für Strings und Klassen** (`string a[]`, `Dog a[]`): die Art beim Schreiben prüfen (ohne zu packen).
+
+## 14. UI-Markup: fehlende Eigenschaften
+
+Oberflächen werden in erster Linie mit `.fxml` gebaut (docs/ui/markup.md). Einige Eigenschaften, die jedes `UI.Element` hat, kennt das Schema des
+Markups (`src/fire.UI.Markup/MarkupSchema.cs`, `Common`) noch nicht - sie gehen heute nur im Code-Behind:
+
+* **`ToolTip`** (Text; `Element.ToolTip`).
+* **`Cursor`** (`UI.Cursor`: `Arrow`, `IBeam`, `Hand`, `SizeWE`, ...; `Element.Cursor`) - als Enum-Eigenschaft wie `HorizontalAlign`.
+* **Drag & Drop:** `AllowDrop` (bool) und die Ereignisse `OnDragStart(x, y)`, `OnDragOver(data, x, y)`, `OnDrop(data, x, y)`, `OnDragLeave()`,
+  `OnDragDone(data, effect)` als Handler (mit Rückgabewert: `UI.DragData` bzw. `UI.DropEffect` - die Handler-Methoden des generierten Codes
+  geben heute nichts zurück, das braucht eine Erweiterung von `EventDef`).
+
+Dazu jeweils: Properties-Fenster und Completion in spark, die Entwurfsansicht (ToolTip/Cursor zeigen dort nichts), Tests im Generator.
+
+Ebenfalls hier, weil es vor allem Markup-Fenster trifft: **der oberste Container füllt das Fenster nicht.** `Root.content` ist ein `Panel` mit
+Canvas-Anordnung - ein Kind bekommt nur seine Wunschgröße, `HorizontalAlign`/`VerticalAlign = Stretch` wirken dort nicht. Ein `<DockPanel>` oder
+`<Grid>` direkt im `<Window>` braucht deshalb `Width`/`Height` (gleich der Fenstergröße) und wächst beim Vergrößern des Fensters nicht mit; nur der
+`DockManager` von `ui.docking` rechnet selbst mit `root.width`/`root.height`. Vorschlag: `Root.content` ordnet Kinder ohne feste Größe (und ohne
+`Left`/`Top`) wie ein Grid mit einer Zelle an - gestreckt auf die Fenstergröße, mit `Margin` und Ausrichtung; Kinder mit Position bleiben wie heute.
+

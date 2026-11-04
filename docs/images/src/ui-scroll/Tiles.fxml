@@ -1,0 +1,5 @@
+<Window Class="Tiles" Title="Tiles" Width="340" Height="220">
+  <ScrollViewer Width="340" Height="220">
+    <WrapPanel Name="tiles" ItemWidth="96" ItemHeight="40"/>
+  </ScrollViewer>
+</Window>

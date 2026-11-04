@@ -1,0 +1,20 @@
+// Shared by the screenshot programs of the documentation (docs/images/make.sh): lets a UI settle, then writes its picture as a PNG.
+#import "filesystem"
+
+class Shot {
+    // Runs `cycles` cycles of the UI, then saves what its framebuffer shows to `file` (relative to docs/images).
+    // `target` is a UI.Root or a window made from markup (its field `ui`).
+    static undefined Save(any target, string file, int cycles = 8) {
+        any ui = target
+        if (!(target is of UI.Root)) { ui = target.ui }
+        for (var i = 0; i < cycles; i++) { ui.Tick() }
+        IO.File.WriteAllBytes(file, ui.framebuffer.ToPng())
+        print("wrote " + file)
+    }
+
+    // The same for a plain framebuffer (graphics without the UI).
+    static undefined SaveFramebuffer(Framebuffer fb, string file) {
+        IO.File.WriteAllBytes(file, fb.ToPng())
+        print("wrote " + file)
+    }
+}

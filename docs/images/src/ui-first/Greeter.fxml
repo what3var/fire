@@ -1,0 +1,8 @@
+<Window Class="Greeter" Title="Greeter" Width="360" Height="200">
+  <StackPanel Margin="16" Spacing="8">
+    <Label Text="Your name:"/>
+    <TextBox Name="nameBox" OnEnter="Greet"/>
+    <Button Text="Greet" OnClick="Greet"/>
+    <Label Name="answer" Text="Type a name and press Greet."/>
+  </StackPanel>
+</Window>
