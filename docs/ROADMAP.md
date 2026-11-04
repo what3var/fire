@@ -383,3 +383,10 @@ Innerhalb einer Datei gilt ohnehin C: definiert vor benutzt (der GPU-Helfer `fir
 * Eine **Prüfung beim Packen** (`ember pack`, Paket-Tests): jede Quelle, die eine andere des Pakets einbindet, steht nach ihr - mit einer Meldung, die Datei und Zeile nennt.
 * Dieselben Regeln für alle Wege, die Quellen einsammeln: die VM-Bibliotheken (`PackageLibrary`, auch `EnsureGraphics`), der native Build (`CppGenerator`) und Plugins.
 
+**Zweiter Fall: dieselben Deklarationen in zwei Paketen.** `graphics` (GPU-Backend) und `scene3d` brauchen beide einen Ausschnitt der Vulkan-Header. Im nativen Build liegen die
+Quellen beider Pakete in einer Datei - zwei verschiedene Ausschnitte derselben Enums kollidierten (`redeclaration of 'enum VkResult'`). Gelöst ist es vorerst so: **ein**
+Generator (`packages/graphics/native/tools/make_gfx_vk.py`; der von scene3d ruft ihn nur auf) liest beide Backends und schreibt dieselbe Datei als
+`graphics/native/fire_gfx_vk.h` und `scene3d/native/s3d_vk.h`, unter einem gemeinsamen Include-Guard (`FIRE_VK_DECLS_H`); beide Backends binden sie nur ein, wenn der Guard
+noch nicht gesetzt ist. In der VM baut jedes Paket seine Bibliothek allein und hat seine vollständige Kopie. Sauberer wäre, wenn ein Paket Header eines Pakets, von dem es
+abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört zur festen Bau-Reihenfolge oben: die Quellen der Abhängigkeiten zuerst, jede einmal.
+

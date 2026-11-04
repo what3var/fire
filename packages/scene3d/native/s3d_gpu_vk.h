@@ -45,8 +45,8 @@ static void s3d_gpu_detach(S3dFrame* f) { (void)f; }
 #ifdef FIRE_S3D_VK_SYSTEM_HEADERS
 #include <vulkan/vulkan.h>       /* (to check s3d_vk.h against the real header) */
 #else
-#ifndef FIRE_S3D_VK_H
-#include "s3d_vk.h"
+#ifndef FIRE_VK_DECLS_H
+#include "s3d_vk.h"   /* (the same file as graphics/native/fire_gfx_vk.h: a native build with both has them once) */
 #endif
 #endif
 #ifndef FIRE_S3D_SHADERS_H

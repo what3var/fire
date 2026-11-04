@@ -39,7 +39,9 @@ static int fire_gfx_gpuWanted(void) { return 0; }
 #else
 #  include <dlfcn.h>
 #endif
-#include "fire_gfx_vk.h"
+#ifndef FIRE_VK_DECLS_H
+#include "fire_gfx_vk.h"   /* (the same file as scene3d/native/s3d_vk.h: a native build with both has them once) */
+#endif
 #include "fire_gfx_shaders.h"
 
 #define FIRE_GFX_VK_INSTANCE_FUNCTIONS(X) \
