@@ -370,7 +370,7 @@ namespace fire.Editor
                 return;
             }
             // what the tools said (the C++ compiler with its stdout and stderr), then the errors and warnings of the fire compiler
-            if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+            AppendBuildResultLog(job, result.Log);
             if (result.Cancelled)
             {
                 EndBuildJob(job, BuildOutcome.Cancelled);

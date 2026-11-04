@@ -217,6 +217,11 @@ namespace fire.Compiler
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
                     windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer ?? (hostWindows != null ? () => new HostRenderer(hostWindows.Display) : null), d => session.VirtualMachine?.AddHostHold(d));   // windowRenderer: null = a SDL window
+                    // no renderer, no display: `new Window` throws why (the build of the C library failed: its compiler output; FIRE_VM_GRAPHICS=cs) - never a window that silently counts as closed
+                    if (windowRenderer == null && hostWindows == null)
+                        windowManager.NoDisplayReason = GraphicsLibrary.Wanted(false)
+                            ? "No display: the windows of the desktop are shown by the C library of graphics and windows, and it cannot be had: " + (GraphicsLibrary.Failure ?? "unknown")
+                            : "No display: FIRE_VM_GRAPHICS=cs runs graphics and windows in their C# implementation, which has no windows of the desktop.";
                     fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
                 }
             }

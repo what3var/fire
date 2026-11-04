@@ -36,7 +36,7 @@ namespace fire.Windows.Bridge
                 ["Create"] = args =>
                 {
                     try { return Value.MakeInt(mgr.CreateWindow((int)args[0].AsInt(), args[1].AsString())); }
-                    catch { return Value.MakeInt(InvalidHandle); }
+                    catch (Exception ex) when (ex is not NoDisplayException) { return Value.MakeInt(InvalidHandle); }   // (no display: the program hears it)
                 },
                 ["Destroy"] = args => Value.MakeBool(mgr.DestroyWindow((int)args[0].AsInt())),
                 ["Tick"] = args => Value.MakeBool(mgr.Tick((int)args[0].AsInt())),

@@ -25,6 +25,8 @@
     <!-- the debug session of spark (no user interface): tested headless against the debug targets (DebuggerTests) -->
     <Compile Include="..\fire.Editor\Debugging\DebugSession.cs" Link="Editor\DebugSession.cs" />
     <Compile Include="..\fire.Editor\Debugging\DebugThreadContext.cs" Link="Editor\DebugThreadContext.cs" />
+    <!-- the log of a build as spark keeps it (into the build log panel, mirrored by the build window) -->
+    <Compile Include="..\fire.Editor\Debugging\BuildLogFeed.cs" Link="Editor\BuildLogFeed.cs" />
   </ItemGroup>
 
   <ItemGroup>

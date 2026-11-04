@@ -28,6 +28,10 @@ namespace fire.Terminal.Windows
 
         private readonly Func<IFramebufferRenderer>? _rendererFactory;
 
+        /// <summary>Why there is no display when there is no renderer (the host says: e.g. the C library of graphics and windows could not be built, with the compiler's
+        /// output); <see cref="CreateWindow"/> throws it.</summary>
+        public string? NoDisplayReason { get; set; }
+
         /// <summary>The clipboard (text) that `Clipboard` of the windows prelude uses.</summary>
         public IClipboard Clipboard { get; set; }
 
@@ -191,7 +195,9 @@ namespace fire.Terminal.Windows
         public int CreateWindow(int framebufferId, string title = "fire Konsole")
         {
             var fb = _framebuffers.GetFramebuffer(framebufferId);
-            var window = new ConsoleWindow(fb, _rendererFactory?.Invoke());
+            // no renderer: there is no display here at all - the program learns it at `new Window` (never a window that silently counts as closed)
+            if (_rendererFactory == null) throw new NoDisplayException(NoDisplayReason ?? ConsoleWindow.NoDisplayMessage);
+            var window = new ConsoleWindow(fb, _rendererFactory.Invoke());
             
             var handle = _windows.Create(window);
             

@@ -343,6 +343,27 @@ static partial class DebuggerTests
             catch (OperationCanceledException) { stopped = true; }
             Check(stopped && !asyncSession.HasProgram, "DebugSession.CompileAsync: abgebrochen (OperationCanceledException) bleibt kein Programm", $"{stopped} {asyncSession.HasProgram}");
             asyncSession.Reset();
+
+            // spark's build log: every line of a build (its phases, the commands, the compiler's output, the errors) reaches the build log panel as it comes - the build
+            // window only mirrors it, so it can be read and copied after the window is gone; the whole log of the result adds only what had not come yet
+            var panel = new List<string>();
+            var feed = new fire.Editor.BuildLogFeed(panel.Add);
+            var feedMonitor = new fire.Native.BuildMonitor(default, feed.Progress, feed.Line);
+            bool feedCompiled = asyncSession.CompileAsync(new[] { TargetScript }, null, null, null, null, feedMonitor).GetAwaiter().GetResult();
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                using var use = fire.Native.BuildMonitor.Use(feedMonitor);
+                fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.PackageNatives, "Building the natives of packages");
+                fire.Native.BuildMonitor.LogLine("gcc.exe -std=c11 -O2 -shared wrapper.c -o fire_gfx.dll");
+                fire.Native.BuildMonitor.LogLine("wrapper.c:(.text+0x2c93c): undefined reference to `className'");
+            }).Wait();
+            var drained = feed.Drain();
+            var rest = feed.Missing("gcc.exe -std=c11 -O2 -shared wrapper.c -o fire_gfx.dll\nwrapper.c:(.text+0x2c93c): undefined reference to `className'\nBuild failed.\n");
+            Check(feedCompiled && panel.SequenceEqual(drained) && panel.Count >= 4 && panel[0].StartsWith("--- ", StringComparison.Ordinal)
+                    && panel.Contains("--- Building the natives of packages ---") && panel[^1].Contains("undefined reference") && feed.Drain().Count == 0 && rest.SequenceEqual(new[] { "Build failed." }),
+                "spark: das Protokoll eines Builds (Phasen, Befehle, Ausgabe des Compilers) kommt in die Build-Ausgabe, das Build-Fenster spiegelt sie; das Protokoll am Ende fuegt nur Neues an",
+                string.Join(" | ", panel) + " || " + string.Join(" | ", rest));
+            asyncSession.Reset();
         }
         bool compiled = session.Compile(new[] { TargetScript });
         int src = session.FirstUserSourceIndex;

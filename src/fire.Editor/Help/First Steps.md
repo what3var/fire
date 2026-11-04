@@ -446,7 +446,7 @@ Every build spark starts - `F5` when the VM compiles the program, a native build
 | **Hide**, `Escape` | The window goes away, the build goes on. The status bar shows its progress (*Building... 3/9 modules* with a small bar); click it to bring the window back. |
 | **Cancel**, `Ctrl+Break` (also `Ctrl+Pause`, **Run > Cancel Build**, and `Shift+F5` while a build runs) | Stops the build: the compilers (gcc with cc1, as and ld, idf.py with ninja, ...) are ended with everything they started, the compile inside spark stops at its next step, and nothing half-built is kept - neither a half-linked program nor a half library in the cache (also not the library of a package's natives: the next run builds it again). The **Output** panel says *Build cancelled*. |
 
-When the build succeeds the window closes by itself (the log stays in the **Build log**). When it fails, the window stays open with the error under the log; **Close** (or `Escape`) closes it. Only one build runs at a time: while one runs, `F5` and the build commands say so in the status bar. Closing spark during a build cancels it first.
+Every line of the build window's log is written into the **Build log** as it comes (the window only mirrors it), so it can be read and copied after the window has closed; a failed build also says so in the **Output**. When the build succeeds the window closes by itself (the log stays in the **Build log**). When it fails, the window stays open with the error under the log; **Close** (or `Escape`) closes it. Only one build runs at a time: while one runs, `F5` and the build commands say so in the status bar. Closing spark during a build cancels it first.
 
 ## Talking to devices
 

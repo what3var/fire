@@ -23,6 +23,13 @@ namespace fire.Terminal.Windows
     ///   pass of its own loop (see WindowManager.
     ///   TickAll for several windows at once).
     /// </summary>
+    /// <summary>A window was asked for where there is no display at all (no renderer: the C library of graphics and windows could not be had). It reaches the program
+    /// (`new Window` throws) - never swallowed.</summary>
+    public sealed class NoDisplayException : InvalidOperationException
+    {
+        public NoDisplayException(string message) : base(message) { }
+    }
+
     public sealed class ConsoleWindow : IDisposable
     {
         public Framebuffer Framebuffer { get; }
@@ -176,12 +183,14 @@ namespace fire.Terminal.Windows
             _disposed = true;
             if (_realized && !_failed) _renderer.Dispose();   // a window that never opened has nothing of the display to release
         }
+        /// <summary>Why a window without a renderer cannot open.</summary>
+        public const string NoDisplayMessage = "No display: the windows of the desktop are shown by the C library of graphics and windows, which needs a C compiler to be built (see docs/UI_PLATFORM.md).";
+
         /// <summary>No display: opening the window fails (it counts as closed, <see cref="FailureMessage"/> says why).</summary>
         private sealed class NoDisplay : IFramebufferRenderer
         {
             public bool VSync { get; set; } = true;
-            public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) =>
-                throw new InvalidOperationException("No display: the windows of the desktop are shown by the C library of graphics and windows, which needs a C compiler to be built (see docs/UI_PLATFORM.md).");
+            public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) => throw new InvalidOperationException(NoDisplayMessage);
             public WindowPumpResult PumpEvents() => new() { StillOpen = false, Events = Array.Empty<Event.IEvent>() };
             public void Present(Framebuffer framebuffer) { }
             public void Dispose() { }

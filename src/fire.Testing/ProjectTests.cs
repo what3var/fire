@@ -104,7 +104,7 @@ static class ProjectTests
                 error == null && output == "24" && natives.Count >= 3 && natives.All(p => p.Total == 2) && natives[0].Done == 0 && natives[^1].Done == 2
                 && natives.Any(p => p.Text.Contains("PnA") && p.Text.Contains("(1/2)")) && natives.Any(p => p.Text.Contains("PnB") && p.Text.Contains("(2/2)"))
                 && firstNative > 0 && phases.Take(firstNative).All(p => p.Phase == fire.Native.BuildPhase.CompileFire) && lines.Count(l => l.Contains("wrapper.c")) == 2,
-                $"{error}\n{output}\n" + string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
+                $"{error}\n{output}\n" + string.Join(" // ", lines) + "\n" + string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
             phases.Clear();
             var errorAgain = Run(new fire.Native.BuildMonitor(default, p => phases.Add(p)));
             Check("Natives (Build-Fenster): gebaute Bibliotheken sind keine Phase mehr", errorAgain == null && output == "24" && phases.All(p => p.Phase != fire.Native.BuildPhase.PackageNatives),
