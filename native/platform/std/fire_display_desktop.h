@@ -282,6 +282,15 @@ static int fire_display_native(FireDisplayWindow* w, fire_native_window* out) {
     return 0;
 }
 
+/* How a window shows its frames, beyond a presenter: 2 through DirectComposition (Windows), 1 the display's usual way (Window.PresentPath). */
+#define FIRE_DISPLAY_PRESENT_PATH 1
+static int fire_display_presentPath(FireDisplayWindow* w) {
+    switch (w->kind) {
+        FIRE_DD_IF_W32(case FIRE_DD_KIND_WIN32: return fire_dw32_presentPath(&w->u.w32);)
+        default: return 1;
+    }
+}
+
 static void fire_display_restore(FireDisplayWindow* w) {
 #define FIRE_DD_B(m, p) fire_##p##_restore(&w->u.m); break;
     FIRE_DD_SWITCH(w->kind, FIRE_DD_B)

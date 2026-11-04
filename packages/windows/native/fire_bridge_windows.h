@@ -1251,6 +1251,21 @@ static Value fire_win_WinGetBackdrop(Value id) {
     if (threaded) fire_winb_unlock(&s->m);
     return Int(k);
 }
+/* Window.PresentPath: how the window showed its last frame - through a presenter (the GPU: into DirectComposition or a swap chain), or as pixels (DirectComposition
+ * or the display's usual way). */
+static Value fire_win_WinPresentPath(Value id, OwnList* list) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    const char* path = "pixels";
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    if (s->direct) path = s->native.kind == FIRE_NATIVE_DCOMP ? "gpu+directcomposition" : "gpu";
+#ifdef FIRE_DISPLAY_PRESENT_PATH
+    else if (s->opened && fire_display_presentPath(&s->display) == 2) path = "directcomposition";
+#endif
+    if (threaded) fire_winb_unlock(&s->m);
+    return fire_winb_utf8Str(path, list);
+}
 /* Window.Scale: pixels of the screen per logical pixel where the window is (1 before it opened, or when the display does not know). */
 static Value fire_win_WinGetScale(Value id) {
     FireWinState* w = fire_winb_windowOf(id);

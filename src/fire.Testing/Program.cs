@@ -27200,6 +27200,17 @@ else
                                         windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Expected),
                                     ("clip", clipScript.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\\\fire\\\\ein Ordner\\\\datei ä.txt").Replace("/tmp/zwei", "C:\\\\zwei"), "", "win32",
                                         clip3.Select(l => l.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\fire\\ein Ordner\\datei ä.txt").Replace("/tmp/zwei", "C:\\zwei")).ToArray()),
+                                    // DirectComposition (part 4.4) where it is there; Wine's is not: the window is made anew without it and shows its pixels (GDI)
+                                    ("path", """
+                                        #import "windows"
+                                        var fb = new Framebuffer(160, 100)
+                                        var r = new Renderer(fb)
+                                        r.FillRect(0, 0, 160, 100, new SolidBrush(0xFF0000FF))
+                                        var win = new Window(fb, "path")
+                                        win.Tick()
+                                        win.Tick()
+                                        print(win.PresentPath())
+                                        """, "", "win32", new[] { "pixels" }),
                                 };
                                 foreach (var wcase in winCases)
                                 {
@@ -27214,6 +27225,21 @@ else
                                     actual = string.Concat(actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("X connection to ", StringComparison.Ordinal)).Select(l => l + "\n"));
                                     string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
                                     CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                                }
+                                // DirectComposition in C (native/platform/std/fire_display_dcomp.h): the places of the COM methods, the GUIDs and the structures as in the SDK of MinGW
+                                {
+                                    string check = Path.Combine(winDir, "check_dcomp.exe");
+                                    // (the source is in the repository: the first folder above the program that has it)
+                                    string? cpp = null;
+                                    for (var dirInfo = new DirectoryInfo(AppContext.BaseDirectory); dirInfo != null && cpp == null; dirInfo = dirInfo.Parent)
+                                        if (File.Exists(Path.Combine(dirInfo.FullName, "native", "platform", "std", "tools", "check_dcomp.cpp"))) cpp = Path.Combine(dirInfo.FullName, "native", "platform", "std", "tools", "check_dcomp.cpp");
+                                    if (cpp == null) Console.WriteLine("(DirectComposition gegen das SDK: uebersprungen - tools/check_dcomp.cpp fehlt)");
+                                    else
+                                    {
+                                        string built = RunWine(mingw.Replace("-gcc", "-g++"), $"-O1 -static -Wno-unused-function -o \"{check}\" \"{cpp}\"", out int checkBuild);
+                                        string ran = checkBuild == 0 ? RunWine(wine, $"\"{check}\"", out _).Replace("\r", "") : built;
+                                        CheckNat("Fenster: DirectComposition (Windows) - Plaetze der COM-Methoden, GUIDs und Strukturen wie im SDK (MinGW, unter Wine)", ran.Contains("dcomp ok"), ran);
+                                    }
                                 }
                                 // Window.PresentArea under Windows: only the reported area reaches the window (the band of its rows, SetDIBitsToDevice), idle frames overwrite
                                 // nothing - a picture of the X server Wine draws on (ImageMagick's import)

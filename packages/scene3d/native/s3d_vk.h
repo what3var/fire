@@ -42,6 +42,8 @@ typedef uint32_t VkSampleMask;
 #define VK_UUID_SIZE                      16U
 #define VK_MAX_EXTENSION_NAME_SIZE        256U
 #define VK_MAX_MEMORY_HEAPS               16U
+#define VK_LUID_SIZE                      8U
+#define VK_QUEUE_FAMILY_EXTERNAL          (~1U)
 
 #define VK_DEFINE_HANDLE(object) typedef struct object##_T* object;
 #if defined(__LP64__) || defined(_WIN64) || (defined(__x86_64__) && !defined(__ILP32__)) || defined(_M_X64) || defined(__ia64) || defined(_M_IA64) || defined(__aarch64__) || defined(__powerpc64__) || (defined(__riscv) && __riscv_xlen == 64)
@@ -121,11 +123,17 @@ typedef enum VkStructureType {
     VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO = 43,
     VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER = 45,
     VK_STRUCTURE_TYPE_MEMORY_BARRIER = 46,
+    VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO = 1000127001,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 = 1000059001,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES = 1000071004,
+    VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO = 1000072001,
     VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR = 1000001000,
     VK_STRUCTURE_TYPE_PRESENT_INFO_KHR = 1000001001,
     VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR = 1000004000,
     VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR = 1000006000,
     VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR = 1000009000,
+    VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR = 1000073000,
+    VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR = 1000073002,
     VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT = 1000217000,
     VK_STRUCTURE_TYPE_MAX_ENUM = 0x7FFFFFFF,
 } VkStructureType;
@@ -382,6 +390,10 @@ typedef enum VkCommandBufferUsageFlagBits {
     VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT = 0x00000001,
     VK_COMMAND_BUFFER_USAGE_FLAG_BITS_MAX_ENUM = 0x7FFFFFFF,
 } VkCommandBufferUsageFlagBits;
+typedef enum VkExternalMemoryHandleTypeFlagBits {
+    VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT = 0x00000010,
+    VK_EXTERNAL_MEMORY_HANDLE_TYPE_FLAG_BITS_MAX_ENUM = 0x7FFFFFFF,
+} VkExternalMemoryHandleTypeFlagBits;
 typedef enum VkPresentModeKHR {
     VK_PRESENT_MODE_IMMEDIATE_KHR = 0,
     VK_PRESENT_MODE_MAILBOX_KHR = 1,
@@ -447,6 +459,7 @@ typedef VkFlags VkSubpassDescriptionFlags;
 typedef VkFlags VkCommandPoolCreateFlags;
 typedef VkFlags VkCommandBufferUsageFlags;
 typedef VkFlags VkCommandBufferResetFlags;
+typedef VkFlags VkExternalMemoryHandleTypeFlags;
 typedef VkFlags VkCompositeAlphaFlagsKHR;
 typedef VkFlags VkSurfaceTransformFlagsKHR;
 typedef VkFlags VkSwapchainCreateFlagsKHR;
@@ -534,6 +547,10 @@ typedef union VkClearValue VkClearValue;
 typedef struct VkImageBlit VkImageBlit;
 typedef struct VkImageCopy VkImageCopy;
 typedef struct VkRenderPassBeginInfo VkRenderPassBeginInfo;
+typedef struct VkMemoryDedicatedAllocateInfo VkMemoryDedicatedAllocateInfo;
+typedef struct VkPhysicalDeviceProperties2 VkPhysicalDeviceProperties2;
+typedef struct VkPhysicalDeviceIDProperties VkPhysicalDeviceIDProperties;
+typedef struct VkExternalMemoryImageCreateInfo VkExternalMemoryImageCreateInfo;
 typedef struct VkSurfaceCapabilitiesKHR VkSurfaceCapabilitiesKHR;
 typedef struct VkSurfaceFormatKHR VkSurfaceFormatKHR;
 typedef struct VkSwapchainCreateInfoKHR VkSwapchainCreateInfoKHR;
@@ -1307,6 +1324,35 @@ struct VkRenderPassBeginInfo {
     const VkClearValue*    pClearValues;
 };
 
+struct VkMemoryDedicatedAllocateInfo {
+    VkStructureType    sType;
+    const void*        pNext;
+    VkImage            image;
+    VkBuffer           buffer;
+};
+
+struct VkPhysicalDeviceProperties2 {
+    VkStructureType               sType;
+    void*                         pNext;
+    VkPhysicalDeviceProperties    properties;
+};
+
+struct VkPhysicalDeviceIDProperties {
+    VkStructureType    sType;
+    void*              pNext;
+    uint8_t            deviceUUID[VK_UUID_SIZE];
+    uint8_t            driverUUID[VK_UUID_SIZE];
+    uint8_t            deviceLUID[VK_LUID_SIZE];
+    uint32_t           deviceNodeMask;
+    VkBool32           deviceLUIDValid;
+};
+
+struct VkExternalMemoryImageCreateInfo {
+    VkStructureType                    sType;
+    const void*                        pNext;
+    VkExternalMemoryHandleTypeFlags    handleTypes;
+};
+
 struct VkSurfaceCapabilitiesKHR {
     uint32_t                         minImageCount;
     uint32_t                         maxImageCount;
@@ -1438,6 +1484,7 @@ typedef void (VKAPI_PTR *PFN_vkCmdPipelineBarrier)(VkCommandBuffer commandBuffer
 typedef void (VKAPI_PTR *PFN_vkCmdPushConstants)(VkCommandBuffer commandBuffer, VkPipelineLayout layout, VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size, const void* pValues);
 typedef void (VKAPI_PTR *PFN_vkCmdBeginRenderPass)(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo* pRenderPassBegin, VkSubpassContents contents);
 typedef void (VKAPI_PTR *PFN_vkCmdEndRenderPass)(VkCommandBuffer commandBuffer);
+typedef void (VKAPI_PTR *PFN_vkGetPhysicalDeviceProperties2)(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties);
 typedef void (VKAPI_PTR *PFN_vkDestroySurfaceKHR)(VkInstance instance, VkSurfaceKHR surface, const VkAllocationCallbacks* pAllocator);
 typedef VkResult (VKAPI_PTR *PFN_vkGetPhysicalDeviceSurfaceSupportKHR)(VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex, VkSurfaceKHR surface, VkBool32* pSupported);
 typedef VkResult (VKAPI_PTR *PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR* pSurfaceCapabilities);

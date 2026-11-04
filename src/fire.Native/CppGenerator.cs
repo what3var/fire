@@ -274,11 +274,11 @@ namespace fire.Native
             ["ClipboardGetImage"] = (0, true), ["ClipboardSetImage"] = (1, false), ["ClipboardHasImage"] = (0, false),
             ["ClipboardGetFiles"] = (0, true), ["ClipboardSetFiles"] = (1, false), ["ClipboardHasFiles"] = (0, false), ["StartDrag"] = (3, false),
             ["CanStartDrag"] = (1, false), ["SetTextInputRect"] = (5, false), ["SetBackdrop"] = (2, false), ["GetBackdrop"] = (1, false), ["GetScale"] = (1, false),
-            ["PresentArea"] = (5, false),
+            ["PresentArea"] = (5, false), ["PresentPath"] = (1, true),
         };
 
         /// <summary>The natives of `#import "windows"` whose C function takes the list of the scope as its last argument (they hand out what they make).</summary>
-        public static readonly IReadOnlySet<string> WindowsNeedsList = new HashSet<string> { "WinNextEvent", "WinSystemTheme", "WinClipboardGetText", "WinClipboardGetImage", "WinClipboardGetFiles" };
+        public static readonly IReadOnlySet<string> WindowsNeedsList = new HashSet<string> { "WinNextEvent", "WinSystemTheme", "WinClipboardGetText", "WinClipboardGetImage", "WinClipboardGetFiles", "WinPresentPath" };
         public static readonly IReadOnlySet<string> GraphicsNeedsList = new HashSet<string> { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName", "FbToPng", "FbGpuError" };
 
         /// <summary>The program declares actors (classes with IsActor): calls of their methods are messages.</summary>

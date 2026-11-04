@@ -92,15 +92,24 @@ static unsigned fire_gfx_gpuReadbacks(void) { return 0; }
 #define FIRE_GFX_VK_WSI_INSTANCE_FUNCTIONS(X) \
     X(vkDestroySurfaceKHR) X(vkGetPhysicalDeviceSurfaceSupportKHR) X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR) X(vkGetPhysicalDeviceSurfaceFormatsKHR) \
     X(vkGetPhysicalDeviceSurfacePresentModesKHR)
+/* (the LUID of the device, for DirectComposition: Vulkan 1.1, or VK_KHR_get_physical_device_properties2 - loaded with either name) */
+#define FIRE_GFX_VK_INTEROP_FUNCTIONS(X) X(vkGetPhysicalDeviceProperties2)
 #define FIRE_GFX_VK_WSI_DEVICE_FUNCTIONS(X) \
     X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) X(vkAcquireNextImageKHR) X(vkQueuePresentKHR)
 
 /* The window of a presenter (the same declarations as in native/abi/fire_pkg_abi.h, where they are described). */
 #ifndef FIRE_NATIVE_WINDOW_DEFINED
 #define FIRE_NATIVE_WINDOW_DEFINED 1
-enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4 };
+enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4, FIRE_NATIVE_DCOMP = 5 };
 typedef struct fire_native_window { int32_t kind; int32_t width, height; int32_t vsync; void* a; void* b; uint64_t id; } fire_native_window;
 typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
+typedef struct fire_dcomp_bridge {
+    int32_t size;
+    uint32_t luidLow; int32_t luidHigh;
+    int32_t premultiplied;
+    void* (*texture)(struct fire_dcomp_bridge* bridge, int32_t width, int32_t height);
+    int32_t (*present)(struct fire_dcomp_bridge* bridge);
+} fire_dcomp_bridge;
 #endif
 /* The surfaces of the window systems (their declarations are in the platform headers of Vulkan, which need the headers of the window systems: written out here, as in
  * scene3d's s3d_gpu_vk.h). */
@@ -109,6 +118,11 @@ typedef struct FireGfxVkXlibSurfaceInfo { VkStructureType sType; const void* pNe
 typedef struct FireGfxVkWaylandSurfaceInfo { VkStructureType sType; const void* pNext; VkFlags flags; void* display; void* surface; } FireGfxVkWaylandSurfaceInfo;
 typedef struct FireGfxVkMetalSurfaceInfo { VkStructureType sType; const void* pNext; VkFlags flags; const void* pLayer; } FireGfxVkMetalSurfaceInfo;
 typedef VkResult (VKAPI_PTR *PFN_fireGfxCreateSurface)(VkInstance instance, const void* createInfo, const VkAllocationCallbacks* allocator, VkSurfaceKHR* surface);
+/* Windows, DirectComposition (FIRE_NATIVE_DCOMP): the window's picture is a texture of D3D11, imported (VK_KHR_external_memory_win32; vulkan_win32.h's structures,
+ * written out). */
+typedef struct FireGfxVkImportWin32 { VkStructureType sType; const void* pNext; VkExternalMemoryHandleTypeFlagBits handleType; void* handle; const void* name; } FireGfxVkImportWin32;
+typedef struct FireGfxVkWin32Props { VkStructureType sType; void* pNext; uint32_t memoryTypeBits; } FireGfxVkWin32Props;
+typedef VkResult (VKAPI_PTR *PFN_fireGfxWin32HandleProps)(VkDevice device, VkExternalMemoryHandleTypeFlagBits type, void* handle, FireGfxVkWin32Props* props);
 
 /* One lock for the backend: the program's thread draws, the windows' threads present, and both use the one queue. */
 #ifdef _WIN32
@@ -171,7 +185,11 @@ static struct {
     FIRE_GFX_VK_DEVICE_FUNCTIONS(FIRE_GFX_VK_DECLARE)
     FIRE_GFX_VK_WSI_INSTANCE_FUNCTIONS(FIRE_GFX_VK_DECLARE)
     FIRE_GFX_VK_WSI_DEVICE_FUNCTIONS(FIRE_GFX_VK_DECLARE)
+    FIRE_GFX_VK_INTEROP_FUNCTIONS(FIRE_GFX_VK_DECLARE)
 #undef FIRE_GFX_VK_DECLARE
+    int interop;               /* Windows: the device can import textures of D3D11 (DirectComposition gets the frames without a readback) */
+    uint8_t luid[8]; int luidValid;
+    PFN_fireGfxWin32HandleProps getWin32HandleProps;
     unsigned readbacks;        /* how often pictures came back to the CPU (Framebuffer.GpuReadbacks: the tests) */
     int wsi;                   /* the instance has VK_KHR_surface (and a surface of a window system), the device VK_KHR_swapchain: pictures can go into windows */
     PFN_fireGfxCreateSurface createWin32Surface, createXlibSurface, createWaylandSurface, createMetalSurface;
@@ -266,7 +284,7 @@ static int fire_gfx_gpuInstance(void) {
     VkInstanceCreateInfo ci;
     VkResult r;
     VkExtensionProperties* exts;
-    const char* enabled[8];
+    const char* enabled[12];
     uint32_t n = 0, count = 0;
     int surface = 0;
     memset(&app, 0, sizeof app);
@@ -292,6 +310,11 @@ static int fire_gfx_gpuInstance(void) {
                 enabled[n++] = "VK_KHR_surface";
                 for (k = 0; k < 4; k++) if (fire_gfx_gpuHasExtension(exts, count, surfaces[k])) { enabled[n++] = surfaces[k]; surface = 1; }
             }
+#ifdef _WIN32
+            /* (DirectComposition: what the import of D3D11's textures needs of the instance) */
+            if (fire_gfx_gpuHasExtension(exts, count, "VK_KHR_get_physical_device_properties2")) enabled[n++] = "VK_KHR_get_physical_device_properties2";
+            if (fire_gfx_gpuHasExtension(exts, count, "VK_KHR_external_memory_capabilities")) enabled[n++] = "VK_KHR_external_memory_capabilities";
+#endif
         }
         free(exts);
     }
@@ -319,6 +342,11 @@ static int fire_gfx_gpuInstance(void) {
         g_fireGfxVk.createWaylandSurface = (PFN_fireGfxCreateSurface)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, "vkCreateWaylandSurfaceKHR");
         g_fireGfxVk.createMetalSurface = (PFN_fireGfxCreateSurface)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, "vkCreateMetalSurfaceEXT");
     }
+#ifdef _WIN32
+    g_fireGfxVk.vkGetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, "vkGetPhysicalDeviceProperties2KHR");
+    if (g_fireGfxVk.vkGetPhysicalDeviceProperties2 == NULL)
+        g_fireGfxVk.vkGetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)g_fireGfxVk.vkGetInstanceProcAddr(g_fireGfxVk.instance, "vkGetPhysicalDeviceProperties2");
+#endif
     return 1;
 }
 
@@ -381,9 +409,9 @@ static int fire_gfx_gpuDevice(void) {
     VkCommandBufferAllocateInfo ai;
     VkFenceCreateInfo fi;
     VkExtensionProperties* exts;
-    const char* enabled[4];
+    const char* enabled[10];
     uint32_t n = 0, count = 0;
-    int swapchain = 0;
+    int swapchain = 0, interop = 0;
     memset(&qi, 0, sizeof qi);
     qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     qi.queueFamilyIndex = g_fireGfxVk.family;
@@ -399,6 +427,16 @@ static int fire_gfx_gpuDevice(void) {
             /* a portability implementation has to be told that the program knows it is one */
             if (fire_gfx_gpuHasExtension(exts, count, "VK_KHR_portability_subset")) enabled[n++] = "VK_KHR_portability_subset";
             if (g_fireGfxVk.wsi && fire_gfx_gpuHasExtension(exts, count, "VK_KHR_swapchain")) { enabled[n++] = "VK_KHR_swapchain"; swapchain = 1; }
+#ifdef _WIN32
+            /* DirectComposition: textures of D3D11 imported (the window's picture) */
+            if (g_fireGfxVk.vkGetPhysicalDeviceProperties2 != NULL && fire_gfx_gpuHasExtension(exts, count, "VK_KHR_external_memory")
+                && fire_gfx_gpuHasExtension(exts, count, "VK_KHR_external_memory_win32") && fire_gfx_gpuHasExtension(exts, count, "VK_KHR_dedicated_allocation")
+                && fire_gfx_gpuHasExtension(exts, count, "VK_KHR_get_memory_requirements2")) {
+                enabled[n++] = "VK_KHR_external_memory"; enabled[n++] = "VK_KHR_external_memory_win32";
+                enabled[n++] = "VK_KHR_dedicated_allocation"; enabled[n++] = "VK_KHR_get_memory_requirements2";
+                interop = 1;
+            }
+#endif
         }
         free(exts);
     }
@@ -406,6 +444,20 @@ static int fire_gfx_gpuDevice(void) {
     di.enabledExtensionCount = n;
     di.ppEnabledExtensionNames = n > 0 ? enabled : NULL;
     if (!fire_gfx_gpuCheck(g_fireGfxVk.vkCreateDevice(g_fireGfxVk.phys, &di, NULL, &g_fireGfxVk.device), "vkCreateDevice")) return 0;
+    if (interop) {
+        /* the device's LUID (DirectComposition's D3D11 must be on the same adapter) and the import's memory types */
+        VkPhysicalDeviceProperties2 p2;
+        VkPhysicalDeviceIDProperties id;
+        memset(&p2, 0, sizeof p2); memset(&id, 0, sizeof id);
+        p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        id.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+        p2.pNext = &id;
+        g_fireGfxVk.vkGetPhysicalDeviceProperties2(g_fireGfxVk.phys, &p2);
+        memcpy(g_fireGfxVk.luid, id.deviceLUID, sizeof g_fireGfxVk.luid);
+        g_fireGfxVk.luidValid = id.deviceLUIDValid != 0;
+        g_fireGfxVk.getWin32HandleProps = (PFN_fireGfxWin32HandleProps)g_fireGfxVk.vkGetDeviceProcAddr(g_fireGfxVk.device, "vkGetMemoryWin32HandlePropertiesKHR");
+        g_fireGfxVk.interop = g_fireGfxVk.luidValid && g_fireGfxVk.getWin32HandleProps != NULL;
+    }
 #define FIRE_GFX_VK_LOAD_D(name) \
     g_fireGfxVk.name = (PFN_##name)g_fireGfxVk.vkGetDeviceProcAddr(g_fireGfxVk.device, #name); \
     if (g_fireGfxVk.name == NULL) { fire_gfx_gpuFail("The Vulkan driver lacks " #name "."); return 0; }
@@ -1764,9 +1816,14 @@ typedef struct FireGfxGpuTarget {
     VkImage* images; VkSemaphore* rendered; uint32_t imageCount;
     VkSemaphore acquired;
     VkCommandPool pool; VkCommandBuffer cmd; VkFence fence; int fencePending;
+    /* DirectComposition (FIRE_NATIVE_DCOMP): the window's picture, imported */
+    int dcomp;                        /* the window of `win` is one of DirectComposition */
+    void* dcHandle; int dcW, dcH, dcReady;
+    VkImage dcImage; VkDeviceMemory dcMemory;
     struct FireGfxGpuTarget* next;
 } FireGfxGpuTarget;
 
+static int fire_gfx_gpuHolds(const FireGfxGpuTarget* g);
 static unsigned fire_gfx_gpuReadbacks(void) { return g_fireGfxVk.readbacks; }
 
 static FireGfxGpuTarget* fire_gfx_gpuTargetOf(FireGfxFramebuffer* fb, int make) {
@@ -1774,7 +1831,7 @@ static FireGfxGpuTarget* fire_gfx_gpuTargetOf(FireGfxFramebuffer* fb, int make) 
     for (g = g_fireGfxVk.targets; g != NULL; g = g->next) if (g->fb == fb) return g;
     if (!make) return NULL;
     /* (one that lost its framebuffer and its window is used again) */
-    for (g = g_fireGfxVk.targets; g != NULL; g = g->next) if (g->fb == NULL && !g->surface) { g->fb = fb; g->works = 0; g->others = 0; g->noAlpha = 0; g->hasPicture = 0; return g; }
+    for (g = g_fireGfxVk.targets; g != NULL; g = g->next) if (g->fb == NULL && !fire_gfx_gpuHolds(g)) { g->fb = fb; g->works = 0; g->others = 0; g->noAlpha = 0; g->hasPicture = 0; return g; }
     g = (FireGfxGpuTarget*)calloc(1, sizeof(FireGfxGpuTarget));
     if (g == NULL) return NULL;
     g->fb = fb;
@@ -1865,7 +1922,7 @@ static int fire_gfx_gpuPublish(FireGfxFramebuffer* fb, int transparent, void (**
     FireGfxGpuTarget* g;
     int ok;
     *fn = NULL; *ctx = NULL;
-    if (t == NULL || g_fireGfxVk.state != 1 || !g_fireGfxVk.wsi || t->width != fb->width || t->height != fb->height || fb->pixels == NULL) return 1;
+    if (t == NULL || g_fireGfxVk.state != 1 || !(g_fireGfxVk.wsi || g_fireGfxVk.interop) || t->width != fb->width || t->height != fb->height || fb->pixels == NULL) return 1;
     fire_gfx_gpuLock();
     g = fire_gfx_gpuTargetOf(fb, 1);
     fire_gfx_gpuUnlock();
@@ -1893,7 +1950,18 @@ static void fire_gfx_gpuFreeSwapchainImages(FireGfxGpuTarget* g) {
 }
 
 /* Lets go of the window: the swap chain and the surface. */
+static void fire_gfx_gpuFreeImport(FireGfxGpuTarget* g) {
+    fire_gfx_gpuWaitTarget(g);
+    if (g->dcImage) g_fireGfxVk.vkDestroyImage(g_fireGfxVk.device, g->dcImage, NULL);
+    if (g->dcMemory) g_fireGfxVk.vkFreeMemory(g_fireGfxVk.device, g->dcMemory, NULL);
+    g->dcImage = 0; g->dcMemory = 0; g->dcHandle = NULL; g->dcW = g->dcH = 0; g->dcReady = 0;
+}
+
+/* (the target holds a window: a surface, or one of DirectComposition) */
+static int fire_gfx_gpuHolds(const FireGfxGpuTarget* g) { return g->surface != 0 || g->dcomp; }
+
 static void fire_gfx_gpuFreeSurface(FireGfxGpuTarget* g) {
+    if (g->dcomp) { fire_gfx_gpuFreeImport(g); g->dcomp = 0; memset(&g->win, 0, sizeof g->win); if (g->fb == NULL) fire_gfx_gpuFreeTargetPicture(g); }
     if (!g->surface && !g->swapchain) return;
     fire_gfx_gpuWaitTarget(g);
     g_fireGfxVk.vkDeviceWaitIdle(g_fireGfxVk.device);
@@ -2071,6 +2139,121 @@ static void fire_gfx_gpuImageBarrier(VkCommandBuffer cmd, VkImage image, VkImage
 }
 
 /* The last frame into the window (the lock is held). 1: shown (or nothing to show: a minimized window), 0: it cannot. */
+/* A barrier on an image that DirectComposition shares: the queue family `from` gives it to `to` (VK_QUEUE_FAMILY_EXTERNAL: D3D11). */
+static void fire_gfx_gpuShareBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, uint32_t fromFamily, uint32_t toFamily, VkAccessFlags srcAccess, VkAccessFlags dstAccess) {
+    VkImageMemoryBarrier b;
+    memset(&b, 0, sizeof b);
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.srcAccessMask = srcAccess; b.dstAccessMask = dstAccess;
+    b.oldLayout = from; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    b.srcQueueFamilyIndex = fromFamily; b.dstQueueFamilyIndex = toFamily;
+    b.image = image;
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b.subresourceRange.levelCount = 1; b.subresourceRange.layerCount = 1;
+    g_fireGfxVk.vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                     0, 0, NULL, 0, NULL, 1, &b);
+}
+
+/* The D3D11 texture `handle` (a handle of the kind D3D11_TEXTURE_KMT, width x height, R8G8B8A8) as an image of Vulkan. */
+static int fire_gfx_gpuImport(FireGfxGpuTarget* g, void* handle, int width, int height) {
+    VkImageCreateInfo ii;
+    VkExternalMemoryImageCreateInfo ext;
+    VkMemoryRequirements req;
+    VkMemoryAllocateInfo ai;
+    VkMemoryDedicatedAllocateInfo ded;
+    FireGfxVkImportWin32 imp;
+    FireGfxVkWin32Props props;
+    int type = -1, k;
+    fire_gfx_gpuFreeImport(g);
+    memset(&ext, 0, sizeof ext);
+    ext.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+    ext.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
+    memset(&ii, 0, sizeof ii);
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.pNext = &ext;
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.extent.width = (uint32_t)width; ii.extent.height = (uint32_t)height; ii.extent.depth = 1;
+    ii.mipLevels = 1; ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (g_fireGfxVk.vkCreateImage(g_fireGfxVk.device, &ii, NULL, &g->dcImage) != VK_SUCCESS) { g->dcImage = 0; return 0; }
+    g_fireGfxVk.vkGetImageMemoryRequirements(g_fireGfxVk.device, g->dcImage, &req);
+    memset(&props, 0, sizeof props);
+    props.sType = (VkStructureType)1000073002;   /* VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR */
+    if (g_fireGfxVk.getWin32HandleProps(g_fireGfxVk.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT, handle, &props) != VK_SUCCESS) props.memoryTypeBits = req.memoryTypeBits;
+    for (k = 0; k < (int)g_fireGfxVk.memProps.memoryTypeCount && type < 0; k++)
+        if ((req.memoryTypeBits & props.memoryTypeBits & (1u << k)) && (g_fireGfxVk.memProps.memoryTypes[k].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) type = k;
+    for (k = 0; k < (int)g_fireGfxVk.memProps.memoryTypeCount && type < 0; k++)
+        if (req.memoryTypeBits & props.memoryTypeBits & (1u << k)) type = k;
+    if (type < 0) { fire_gfx_gpuFreeImport(g); return 0; }
+    memset(&ded, 0, sizeof ded);
+    ded.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+    ded.image = g->dcImage;
+    memset(&imp, 0, sizeof imp);
+    imp.sType = (VkStructureType)1000073000;   /* VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR */
+    imp.pNext = &ded;
+    imp.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
+    imp.handle = handle;
+    memset(&ai, 0, sizeof ai);
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.pNext = &imp;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = (uint32_t)type;
+    if (g_fireGfxVk.vkAllocateMemory(g_fireGfxVk.device, &ai, NULL, &g->dcMemory) != VK_SUCCESS) { g->dcMemory = 0; fire_gfx_gpuFreeImport(g); return 0; }
+    if (g_fireGfxVk.vkBindImageMemory(g_fireGfxVk.device, g->dcImage, g->dcMemory, 0) != VK_SUCCESS) { fire_gfx_gpuFreeImport(g); return 0; }
+    g->dcHandle = handle; g->dcW = width; g->dcH = height; g->dcReady = 0;
+    return 1;
+}
+
+/* The last frame into a window of DirectComposition (the lock is held): copied into the window's picture (imported), then the bridge presents it. 1: shown. */
+static int fire_gfx_gpuPresentDcompLocked(FireGfxGpuTarget* g, const fire_native_window* w) {
+    fire_dcomp_bridge* b = (fire_dcomp_bridge*)w->a;
+    VkCommandBufferBeginInfo bi;
+    VkSubmitInfo si;
+    VkImageCopy region;
+    void* handle;
+    uint8_t luid[8];
+    if (!g_fireGfxVk.interop || b == NULL || b->size < (int32_t)sizeof *b || b->texture == NULL || b->present == NULL || !g->hasPicture) return 0;
+    memcpy(luid, &b->luidLow, 4); memcpy(luid + 4, &b->luidHigh, 4);
+    if (memcmp(luid, g_fireGfxVk.luid, 8) != 0) return 0;   /* (D3D11 is on another adapter) */
+    if (g->dcomp && !fire_gfx_gpuSameWindow(&g->win, w)) return 0;   /* (one window per presenter) */
+    if (!fire_gfx_gpuTargetCommands(g)) return 0;
+    fire_gfx_gpuWaitTarget(g);
+    handle = b->texture(b, g->pic.width, g->pic.height);
+    if (handle == NULL) return 0;
+    if ((handle != g->dcHandle || g->dcW != g->pic.width || g->dcH != g->pic.height) && !fire_gfx_gpuImport(g, handle, g->pic.width, g->pic.height)) return 0;
+    g->dcomp = 1; g->win = *w;
+    memset(&bi, 0, sizeof bi);
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (g_fireGfxVk.vkResetCommandBuffer(g->cmd, 0) != VK_SUCCESS || g_fireGfxVk.vkBeginCommandBuffer(g->cmd, &bi) != VK_SUCCESS) return 0;
+    /* the picture from D3D11 (the first time: it is new), the frame copied into it, back to D3D11 */
+    if (g->dcReady) fire_gfx_gpuShareBarrier(g->cmd, g->dcImage, VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_EXTERNAL, g_fireGfxVk.family, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    else fire_gfx_gpuShareBarrier(g->cmd, g->dcImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    fire_gfx_gpuImageBarrier(g->cmd, g->pic.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    memset(&region, 0, sizeof region);
+    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; region.srcSubresource.layerCount = 1;
+    region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; region.dstSubresource.layerCount = 1;
+    region.extent.width = (uint32_t)g->pic.width; region.extent.height = (uint32_t)g->pic.height; region.extent.depth = 1;
+    g_fireGfxVk.vkCmdCopyImage(g->cmd, g->pic.image, VK_IMAGE_LAYOUT_GENERAL, g->dcImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    fire_gfx_gpuShareBarrier(g->cmd, g->dcImage, VK_IMAGE_LAYOUT_GENERAL, g_fireGfxVk.family, VK_QUEUE_FAMILY_EXTERNAL, VK_ACCESS_TRANSFER_WRITE_BIT, 0);
+    if (g_fireGfxVk.vkEndCommandBuffer(g->cmd) != VK_SUCCESS) return 0;
+    memset(&si, 0, sizeof si);
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &g->cmd;
+    if (g_fireGfxVk.vkResetFences(g_fireGfxVk.device, 1, &g->fence) != VK_SUCCESS) return 0;
+    if (g_fireGfxVk.vkQueueSubmit(g_fireGfxVk.queue, 1, &si, g->fence) != VK_SUCCESS) return 0;
+    g->fencePending = 1;
+    fire_gfx_gpuWaitTarget(g);   /* (D3D11 copies it next) */
+    g->dcReady = 1;
+    return b->present(b) != 0;
+}
+
 static int fire_gfx_gpuPresentLocked(FireGfxGpuTarget* g, const fire_native_window* w) {
     uint32_t index = 0;
     int made, attempt;
@@ -2080,6 +2263,7 @@ static int fire_gfx_gpuPresentLocked(FireGfxGpuTarget* g, const fire_native_wind
     VkSubmitInfo si;
     VkPresentInfoKHR pi;
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    if (w->kind == FIRE_NATIVE_DCOMP) return fire_gfx_gpuPresentDcompLocked(g, w);
     if (!g->hasPicture) return 0;
     if (g->surface && !fire_gfx_gpuSameWindow(&g->win, w)) return 0;   /* (another window shows the same framebuffer: one window per presenter - that one shows the pixels) */
     if (!fire_gfx_gpuTargetCommands(g)) return 0;
@@ -2138,19 +2322,19 @@ static int32_t fire_gfx_gpuPresent(void* ctx, int32_t op, const fire_native_wind
     (void)pixels; (void)width; (void)height;
     fire_gfx_gpuLock();
     if (op == 0) {
-        if (w == NULL || !g->surface || fire_gfx_gpuSameWindow(&g->win, w)) {
+        if (w == NULL || !fire_gfx_gpuHolds(g) || fire_gfx_gpuSameWindow(&g->win, w)) {
             if (g_fireGfxVk.state == 1) fire_gfx_gpuFreeSurface(g);
             if (g->works == 1) g->works = 0;   /* (the frames are read back again until a window takes them) */
         }
         fire_gfx_gpuUnlock();
         return 1;
     }
-    if (g_fireGfxVk.state == 1 && g_fireGfxVk.wsi && w != NULL) {
+    if (g_fireGfxVk.state == 1 && w != NULL && (w->kind == FIRE_NATIVE_DCOMP ? g_fireGfxVk.interop : g_fireGfxVk.wsi)) {
         int noAlpha = g->noAlpha;
         ok = fire_gfx_gpuPresentLocked(g, w);
         if (ok) g->works = 1;
         else if (g->noAlpha && !noAlpha) { fire_gfx_gpuFreeSurface(g); g->works = 0; }   /* (only the frames that mix go as pixels; this window takes pixels from now on) */
-        else if (!g->surface || fire_gfx_gpuSameWindow(&g->win, w)) { fire_gfx_gpuFreeSurface(g); g->works = -1; }
+        else if (!fire_gfx_gpuHolds(g) || fire_gfx_gpuSameWindow(&g->win, w)) { fire_gfx_gpuFreeSurface(g); g->works = -1; }
         else g->others = 1;
     }
     fire_gfx_gpuUnlock();

@@ -44,9 +44,9 @@ typedef struct fire_val {
  * windows bridge) gives the package the native handles of the window: what Vulkan (or another API) needs to make a surface for it. */
 #ifndef FIRE_NATIVE_WINDOW_DEFINED
 #define FIRE_NATIVE_WINDOW_DEFINED 1
-enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4 };
+enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4, FIRE_NATIVE_DCOMP = 5 };
 typedef struct fire_native_window {
-    int32_t kind;            /* FIRE_NATIVE_*: WIN32 a = HINSTANCE, b = HWND; X11 a = Display*, id = Window; WAYLAND a = wl_display*, b = wl_surface*; METAL b = CAMetalLayer* */
+    int32_t kind;            /* FIRE_NATIVE_*: WIN32 a = HINSTANCE, b = HWND; X11 a = Display*, id = Window; WAYLAND a = wl_display*, b = wl_surface*; METAL b = CAMetalLayer*; DCOMP a = fire_dcomp_bridge*, b = HWND */
     int32_t width, height;   /* the size of the window in pixels */
     int32_t vsync;           /* the window's VSync */
     void* a;
@@ -57,6 +57,18 @@ typedef struct fire_native_window {
  * pixels (width x height, R,G,B,A) laid over it where their alpha is not 0; op 0: let go of the window (it closes, or shows the framebuffer again). 1: shown; 0: it cannot -
  * the host shows the framebuffer itself, and does not ask again until the presenter is attached anew. */
 typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
+/* FIRE_NATIVE_DCOMP (Windows, DirectComposition: docs/UI_PLATFORM.md, part 4.4): the window shows a swap chain of DirectComposition - a package does not draw into the
+ * HWND (b) but into the window's picture, a texture of D3D11 shared with it (a: a fire_dcomp_bridge): `texture` gives the handle of that picture at width x height
+ * (R8G8B8A8; a shared handle of the kind D3D11_TEXTURE_KMT - made anew for another size, NULL: it cannot), the package draws into it and waits until it is done,
+ * then `present` shows it (1: shown). `luid` is the adapter of D3D11 (the package's GPU must be the same); `premultiplied`: the window shows what lies behind it -
+ * the picture is premultiplied by its alpha. */
+typedef struct fire_dcomp_bridge {
+    int32_t size;
+    uint32_t luidLow; int32_t luidHigh;
+    int32_t premultiplied;
+    void* (*texture)(struct fire_dcomp_bridge* bridge, int32_t width, int32_t height);
+    int32_t (*present)(struct fire_dcomp_bridge* bridge);
+} fire_dcomp_bridge;
 #endif
 
 /* What the host decides, for natives that need it (the io package): which paths a script may touch and where the console goes. The host hands this structure to the library with
