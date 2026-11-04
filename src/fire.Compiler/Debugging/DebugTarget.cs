@@ -42,6 +42,14 @@ namespace fire.Debugging
 
         /// <summary>Called once all threads have ended: releases what the run still holds (the VM closes the IO streams the program left open).</summary>
         void ReleaseResources();
+
+        /// <summary>The program loaded a fire plugin with sources of its own: <see cref="SourceFiles"/> has grown (the new indexes follow the program's). May fire on any
+        /// thread, while the thread that loads the plugin waits; the breakpoints given by file (<see cref="SetFileBreakpoints"/>) in the new files apply already.</summary>
+        event Action? SourcesAdded;
+
+        /// <summary>The breakpoints by file (full paths) and line: the target applies those in sources that become known while the program runs (a plugin) - the
+        /// indexed breakpoints of the control members stay the caller's.</summary>
+        void SetFileBreakpoints(IEnumerable<(string File, int Line)> breakpoints);
     }
 
     /// <summary>

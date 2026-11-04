@@ -188,6 +188,8 @@ namespace fire.Editor
 
             FirstUserSourceIndex = target.FirstUserSourceIndex;
             SourceFiles = target.SourceFiles;
+            // (a fire plugin with sources of its own: the list grows - its files then take part in the run, their lines are shown)
+            target.SourcesAdded += () => SourceFiles = target.SourceFiles;
 
             target.Output += (thread, text) =>
                 OutputWritten?.Invoke(thread != null && !thread.IsMain ? $"[{thread.Name}] {text}" : text);

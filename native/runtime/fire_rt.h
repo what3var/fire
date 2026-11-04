@@ -1954,7 +1954,7 @@ FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
  * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
  * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
  * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
-#define FIRE_PLUGIN_FORMAT 4
+#define FIRE_PLUGIN_FORMAT 5
 /* A plugin that calls a native in C of the program (`fire_cn_<function>`) the program does not export: what Load says (the function: %.*s). */
 #define FIRE_PLUGIN_CNATIVE "it calls the native function '%.*s' in C, which this program does not export to plugins (natives in C are the program's: build the program again with the package of the native; of graphics and windows it exports only those its libraries call)."
 typedef struct FirePlugin {
@@ -1998,6 +1998,13 @@ typedef struct FirePlugin {
     uint32_t nexts;
     const char* const* extClasses;
     const FireMembers* const* extTables;
+    /* a debug build (0/NULL otherwise; docs/NATIVE_DEBUG_PROTOCOL.md "sources"): its sources (file, hash) in the order of fire_dbgsrc_<p>, which the runtime fills with
+     * their indexes after the program's (the debugger hears them), and its class k for the debugger (const DbgClass*: the names of its fields) */
+    uint32_t nsources;
+    const char* const* srcFiles;
+    const char* const* srcHashes;
+    int32_t* srcMap;
+    const void* (*dbgClass)(uint32_t k);
 } FirePlugin;
 /* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
 typedef struct FirePluginHost {
@@ -7147,6 +7154,9 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
         g_extCount += p->nexts;
     }
     g_plugins[g_pluginCount++] = p;
+#ifdef FIRE_DEBUG
+    fire_dbgPlugin(p);   /* (its sources get their indexes and the debugger hears of them before its first line runs) */
+#endif
     if (p->init) p->init();
     return firePluginClassNames(p, list);
 }

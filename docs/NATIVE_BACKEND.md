@@ -1199,7 +1199,19 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   offene Welt nicht) - eine Klasse des Programms, die eine Methode einer Library überschreibt, die nur ein Plugin ruft, rief vorher die der Library.
 * Noch nicht: benannte Argumente in Aufrufen des nativen Programms auf Objekten
   eines Plugins (die Verteiler des Programms kennen nur seine Klassen - die Runtime bräuchte die Namen und Vorgaben der Parameter in den Tabellen der Member);
-  Debuggen eines Plugins; msvc.
+  msvc.
+* **Debuggen** (ein Debug-Build des Programms mit `"shared"` und des Plugins, `-m debug` für beide; das Plugin wird dann mit `-O0 -g` übersetzt): die Zeilen des
+  Plugins melden ihre Quelle über `fire_dbgsrc_<p>`, das jetzt nicht mehr konstant ist - `fireRegisterPlugin` ruft `fire_dbgPlugin` (fire_debug.h), das seinen
+  Quellen die nächsten Indizes nach denen des Programms gibt (`FirePlugin.nsources`/`srcFiles`/`srcHashes`/`srcMap`, `FIRE_PLUGIN_FORMAT` 5), dem Debugger das
+  Ereignis `sources` schickt und auf seine Haltepunkte wartet (docs/NATIVE_DEBUG_PROTOCOL.md). Die Tabellen der Funktionen und Scopes braucht die Runtime nicht zu
+  kennen: jeder Rahmen zeigt auf die seiner Funktion (`DbgFrame.fn`); die Namen der Felder seiner Klassen gibt das Plugin über `FirePlugin.dbgClass`. In der **VM**
+  trägt die `.fireplugin`-Datei die Zeilentabellen ihres Codes (`Chunk.KeepLineTable`, in `DebugLocalNames` - die Form eines Chunks bleibt) und ihre eigenen
+  Quellen (`PluginBytecode.Sources`); `LinkPlugin` schreibt die Quellindizes ihrer Zeilen auf die nächsten des Programms um (die Quellen ihrer Libraries auf 0) und
+  meldet sie (`VM.PluginSourcesLinked`); `VmDebugTarget` hängt sie an `SourceFiles` an (`IDebugTarget.SourcesAdded`) und nimmt die Haltepunkte nach Datei in ihnen
+  sofort in den laufenden `RunUntilBreakpoint` auf. spark gibt seine Haltepunkte auch nach Datei (`SetFileBreakpoints`), die Sitzung übernimmt die neuen Quellen.
+  Getestet: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugindebug` (nativ: Haltepunkt im Programm, `sources`, Step Into in die Methode des Plugins, Scopes,
+  `this` mit dem Feld des Plugins, Haltepunkt nach Datei im Plugin, Step Out) und derselbe Plan in der VM (`FIRE_TESTS_ONLY=debugger`, "Plugins in der VM").
+  Nicht geprüft: das Fenster von spark (die Haltepunkte im Editor in einer Datei des Plugins), Windows.
 * **Nur für die VM** (`NativeBuilder.WriteVmPlugin`, ohne native Bibliothek): spark lädt so die Treiber installierter Packages (docs/DEVICES.md, `PackageDriverAgent`).
   Das Prelude eines Imports ist die eigene Quelle des Plugins: `Linker.OwnImports` nennt den Import, seine Natives sind die des Plugins, sein Prelude wird nicht noch
   einmal eingefügt (was das Package verlangt, kommt wie sonst dazu). Die `.fireplugin`-Datei nennt seine Natives mit dem vollen Pfad der Bibliothek des Packages für die

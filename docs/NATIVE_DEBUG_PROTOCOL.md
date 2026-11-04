@@ -106,6 +106,21 @@ Haltepunkten (wie `DebugThreadContext.ForFireThread`).
 **`exited`** - das Programm endet: `{"event": "exited", "code": 0}` (danach schließt es die Verbindung). Auch nach `terminate`, nach einer unbehandelten Ausnahme
 (`code` 1) und nach `leave`/`terminate(n)` des Programms.
 
+**`sources`** - das Programm hat ein fire-Plugin geladen, das als Debug-Build Quellen mitbringt (`Library.Load`, docs/NATIVE_BACKEND.md "Plugins"):
+
+```json
+{"event": "sources", "plugin": "Kit", "sources": [{"index": 4, "file": "/home/me/p/Kit/kit.fire", "hash": "1c2f..."}]}
+```
+
+Die Quellen des Plugins bekommen die **nächsten Indizes** nach denen des Programms (und der Plugins davor); `file` und `hash` wie in `hello`. Ab jetzt melden
+`stopped`, `trace` und Haltepunkte die Zeilen des Plugins mit diesen Indizes. Der Thread, der das Plugin lädt, sendet das Ereignis beim Registrieren (vor den
+statischen Initialisierern des Plugins) und **wartet**, bis der Debugger den nächsten Befehl `breakpoints` geschickt hat (auch eine unveränderte oder leere Liste),
+höchstens 2 s (`FIRE_DEBUG_PLUGIN_WAIT_MS`) - so gelten Haltepunkte in den Dateien des Plugins schon für seinen ersten Aufruf. Der Debugger antwortet deshalb sofort
+mit `breakpoints` (spark: `NativeDebugTarget` nimmt die Haltepunkte nach Datei, `IDebugTarget.SetFileBreakpoints`, die in den neuen Dateien liegen, dazu) und schickt
+davor keinen Befehl, der Werte liest (er bräuchte die GIL, die der wartende Thread hält). Ein Plugin, das kein Debug-Build ist, sendet nichts (seine Zeilen melden
+die Quelle 0). Die Felder eines Objekts einer Klasse des Plugins (`expand`) nennt das Plugin selbst (seine Tabelle `DbgClass`); `set` auf ein Feld eines solchen
+Objekts setzt es direkt (ohne den Setter der Klasse).
+
 ### Befehle
 
 `thread` ist die Nummer eines Threads (`hello.mainThread`, `thread`-Ereignisse). Befehle, die Werte lesen (`trace`, `scopes`, `this`, `expand`, `set`), brauchen

@@ -253,9 +253,9 @@ namespace fire.Debugging
         public string? TargetName { get; }
         public string? Mode { get; }
         public string Engine => "native";
-        public IReadOnlyList<string?> SourceFiles { get; }
+        public IReadOnlyList<string?> SourceFiles { get; private set; }
         /// <summary>SHA-256 (hex) of each source as the compiler got it (null: the prelude, a library).</summary>
-        public IReadOnlyList<string?> SourceHashes { get; }
+        public IReadOnlyList<string?> SourceHashes { get; private set; }
         public int FirstUserSourceIndex { get; }
         public IDebugThread MainThread => Main;
         internal NativeDebugThread Main { get; }
@@ -376,12 +376,86 @@ namespace fire.Debugging
         /// <summary>Sends the breakpoints when they differ from the ones the program has (they apply to all threads).</summary>
         internal void EnsureBreakpoints(ISet<(int SourceIndex, int Line)> breakpoints)
         {
+            HashSet<(int, int)> all;
             lock (_lock)
             {
-                if (_sentBreakpoints != null && _sentBreakpoints.SetEquals(breakpoints)) return;
-                _sentBreakpoints = new HashSet<(int, int)>(breakpoints);
+                _given = new HashSet<(int, int)>(breakpoints);
+                all = new HashSet<(int, int)>(_given);
+                all.UnionWith(_pluginBreakpoints);
+                if (_sentBreakpoints != null && _sentBreakpoints.SetEquals(all)) return;
+                _sentBreakpoints = all;
             }
+            SendBreakpoints(all);
+        }
+
+        private void SendBreakpoints(IEnumerable<(int SourceIndex, int Line)> breakpoints) =>
             Request("breakpoints", ("breakpoints", breakpoints.OrderBy(b => b.SourceIndex).ThenBy(b => b.Line).Select(b => new List<object?> { (long)b.SourceIndex, (long)b.Line }).ToList()));
+
+        // ---- fire plugins: their sources come with the event `sources` (after the program's); the breakpoints by file in them are sent at once ----
+        private HashSet<(int, int)> _given = new();
+        private List<(string File, int Line)> _fileBreakpoints = new();
+        private HashSet<(int, int)> _pluginBreakpoints = new();
+        private int _programSources = -1;
+
+        public event Action? SourcesAdded;
+
+        private static bool SameFile(string? a, string? b)
+        {
+            if (a == null || b == null) return false;
+            try { return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+        }
+
+        private HashSet<(int, int)> ResolvePluginBreakpoints()
+        {
+            var result = new HashSet<(int, int)>();
+            if (_programSources < 0) _programSources = SourceFiles.Count;
+            for (int i = _programSources; i < SourceFiles.Count; i++)
+                foreach (var (file, line) in _fileBreakpoints)
+                    if (SameFile(SourceFiles[i], file)) result.Add((i, line));
+            return result;
+        }
+
+        public void SetFileBreakpoints(IEnumerable<(string File, int Line)> breakpoints)
+        {
+            lock (_lock)
+            {
+                _fileBreakpoints = breakpoints.ToList();
+                _pluginBreakpoints = ResolvePluginBreakpoints();
+            }
+        }
+
+        /// <summary>`sources`: a plugin's sources (docs/NATIVE_DEBUG_PROTOCOL.md) - the lists grow, the breakpoints go to the program again (it waits for them), with those
+        /// by file in the new sources. On the reader thread: the request is sent from another one.</summary>
+        private void OnSources(Dictionary<string, object?> message)
+        {
+            HashSet<(int, int)> all;
+            lock (_lock)
+            {
+                if (_programSources < 0) _programSources = SourceFiles.Count;
+                var files = SourceFiles.ToList();
+                var hashes = SourceHashes.ToList();
+                foreach (var s in message.Arr("sources").OfType<Dictionary<string, object?>>())
+                {
+                    int index = (int)(s.Num("index") ?? -1);
+                    if (index < 0) continue;
+                    while (files.Count <= index) { files.Add(null); hashes.Add(null); }
+                    files[index] = s.Str("file");
+                    hashes[index] = s.Str("hash");
+                }
+                SourceFiles = files;
+                SourceHashes = hashes;
+                _pluginBreakpoints = ResolvePluginBreakpoints();
+                all = new HashSet<(int, int)>(_given);
+                all.UnionWith(_pluginBreakpoints);
+                _sentBreakpoints = all;
+            }
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { SendBreakpoints(all); }
+                catch (Exception ex) when (ex is NativeDebugException or IOException or ObjectDisposedException or InvalidOperationException) { }
+            });
+            SourcesAdded?.Invoke();
         }
 
         private void StartReader()
@@ -441,6 +515,9 @@ namespace fire.Debugging
                 }
                 case "threadExited":
                     ThreadById(message.Num("thread"))?.OnEnded();
+                    break;
+                case "sources":
+                    OnSources(message);
                     break;
                 case "exited":
                     MarkExited((int?)message.Num("code"));
@@ -683,7 +760,7 @@ namespace fire.Debugging
                 {
                     pauseSent = true;
                     try { _target.Request("pause", ("thread", Id)); }
-                    catch (NativeDebugException) { }
+                    catch (Exception ex) when (ex is NativeDebugException or IOException or ObjectDisposedException or InvalidOperationException) { }
                 }
             }
         }

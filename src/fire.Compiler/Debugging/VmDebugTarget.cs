@@ -46,10 +46,77 @@ namespace fire.Debugging
 
         public event Action<IDebugThread>? ThreadStarted;
         public event Action<IDebugThread?, string>? Output;
+        public event Action? SourcesAdded;
+
+        // ---- fire plugins: their sources follow the program's (VM.PluginSourcesLinked); the breakpoints by file in them apply as soon as they are known ----
+        private readonly Action<object, int, IReadOnlyList<string?>, IReadOnlyList<string?>> _onPluginSources;
+        private List<(string File, int Line)> _fileBreakpoints = new();
+        private int _programSources;
+        /// <summary>The breakpoints of <see cref="_fileBreakpoints"/> in the plugins' sources (by index).</summary>
+        private HashSet<(int, int)> _pluginBreakpoints = new();
+        /// <summary>The breakpoints the run of this thread looks at (RunUntilBreakpoint): a plugin loaded by it adds those in its files at once.</summary>
+        [ThreadStatic] private static HashSet<(int SourceIndex, int Line)>? t_running;
 
         private VmDebugTarget()
         {
             _interceptor = InterceptNewFireThread;
+            _onPluginSources = OnPluginSources;
+        }
+
+        private static bool SameFile(string? a, string? b)
+        {
+            if (a == null || b == null) return false;
+            try { return string.Equals(System.IO.Path.GetFullPath(a), System.IO.Path.GetFullPath(b), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or System.IO.PathTooLongException) { return false; }
+        }
+
+        /// <summary>The breakpoints by file in the sources after the program's (those of plugins).</summary>
+        private HashSet<(int, int)> ResolvePluginBreakpoints()
+        {
+            var result = new HashSet<(int, int)>();
+            var files = SourceFiles;
+            for (int i = _programSources; i < files.Count; i++)
+                foreach (var (file, line) in _fileBreakpoints)
+                    if (SameFile(files[i], file)) result.Add((i, line));
+            return result;
+        }
+
+        public void SetFileBreakpoints(IEnumerable<(string File, int Line)> breakpoints)
+        {
+            lock (_lock)
+            {
+                _fileBreakpoints = breakpoints.ToList();
+                _pluginBreakpoints = ResolvePluginBreakpoints();
+            }
+        }
+
+        private void OnPluginSources(object classes, int first, IReadOnlyList<string?> files, IReadOnlyList<string?> hashes)
+        {
+            if (_session == null || !ReferenceEquals(classes, _session.CompiledProgram.Classes)) return;
+            lock (_lock)
+            {
+                var all = SourceFiles.ToList();
+                while (all.Count < first) all.Add(null);
+                for (int k = 0; k < files.Count; k++) { if (first + k < all.Count) all[first + k] = files[k]; else all.Add(files[k]); }
+                SourceFiles = all;
+                _pluginBreakpoints = ResolvePluginBreakpoints();
+            }
+            // (the thread that loads the plugin runs on with the breakpoints in its files)
+            if (t_running != null) t_running.UnionWith(_pluginBreakpoints);
+            SourcesAdded?.Invoke();
+        }
+
+        /// <summary>A run until a breakpoint: the caller's breakpoints and those by file in the plugins' sources (also of a plugin this run loads).</summary>
+        internal bool RunWithPluginBreakpoints(ISet<(int SourceIndex, int Line)> breakpoints, Func<ISet<(int SourceIndex, int Line)>, bool> run)
+        {
+            HashSet<(int, int)> plugin;
+            lock (_lock) plugin = _pluginBreakpoints;
+            var set = new HashSet<(int SourceIndex, int Line)>(breakpoints);
+            set.UnionWith(plugin);
+            var outer = t_running;
+            t_running = set;
+            try { return run(set); }
+            finally { t_running = outer; }
         }
 
         /// <summary>Compiles the program (with the prelude) and makes its main VM; nothing runs yet. Throws the exceptions of the compiler
@@ -75,6 +142,8 @@ namespace fire.Debugging
             _session = session;
             FirstUserSourceIndex = session.FirstUserSourceIndex;
             SourceFiles = session.SourceFiles ?? Array.Empty<string?>();
+            _programSources = SourceFiles.Count;
+            VM.PluginSourcesLinked += _onPluginSources;
             Main = Register(session.VirtualMachine!, "Main", isMain: true);
             // From now on this target takes over every new fire thread - unregistered again in Dispose, otherwise a later run in the same process
             // would still go through this one.
@@ -113,6 +182,7 @@ namespace fire.Debugging
         public void Dispose()
         {
             if (ReferenceEquals(FireRuntime.ThreadBodyInterceptor, _interceptor)) FireRuntime.ThreadBodyInterceptor = null;
+            VM.PluginSourcesLinked -= _onPluginSources;
             ReleaseResources();
         }
 
@@ -223,7 +293,7 @@ namespace fire.Debugging
         public bool StepLine() => Vm.StepLine();
         public bool StepInto() => Vm.StepInto();
         public bool StepOut() => Vm.StepOut();
-        public bool RunUntilBreakpoint(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested) => Vm.RunUntilBreakpoint(breakpoints, isPauseRequested);
+        public bool RunUntilBreakpoint(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested) => _target.RunWithPluginBreakpoints(breakpoints, set => Vm.RunUntilBreakpoint(set, isPauseRequested));
         public bool RunUntilEnd(Func<bool> isPauseRequested) => Vm.RunUntilEnd(isPauseRequested);
 
         // at an unhandled exception the VM keeps the throw site aside (its own position is not meaningful then): that is where the thread stands
