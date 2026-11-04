@@ -20,6 +20,7 @@ namespace fire {
 
 /// A package library has no classes of its own (objects cannot cross the boundary): nothing to run.
 void runDestructors(Obj*) {}
+const char* className(uint32_t) { return "?"; }   // (no classes, no names: a DLL of Windows must have every symbol it uses)
 
 namespace pkgabi {
 

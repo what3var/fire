@@ -5,7 +5,8 @@
 // `Run()` is the start of a program with windows (it runs the manager on this thread until its windows are closed - unless it already runs), and
 // `Tick()` is one cycle of this window alone.
 class Window {
-    int id
+    // (-1 until the window exists: a constructor that throws - no display - leaves nothing for the destructor to close)
+    int id = -1
     // The manager that cycles this window (undefined until it is attached; Show and Run attach it to WindowManager.Default)
     WindowManager Manager
     // Called once per cycle of the manager, after the events and before the frame is shown (a UI.Root draws here)

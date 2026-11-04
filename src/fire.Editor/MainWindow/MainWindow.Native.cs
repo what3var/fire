@@ -199,7 +199,7 @@ namespace fire.Editor
                 UpdateStatus($"Building {input.What} natively for {target.Name} ({modeName})...");
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
                 var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, buildToolchain, output, mode, null, false, input.BaseDirectory, null, input.Plan, job.Monitor));
-                if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+                AppendBuildResultLog(job, result.Log);
                 if (result.Cancelled)
                 {
                     _isBusy = false;
@@ -328,7 +328,7 @@ namespace fire.Editor
                 UpdateStatus($"Building {input.What} for the ESP32 ({modeName})...");
                 var toolchain = fire.Native.ToolchainDef.BuiltIn["esp-idf"];   // (the component; spark runs idf.py itself)
                 var result = await Task.Run(() => NativeBuilder.BuildSafe(input.Sources, config, target, toolchain, Path.Combine(projectDir, "main"), mode, null, false, input.BaseDirectory, null, input.Plan, job.Monitor));
-                if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+                AppendBuildResultLog(job, result.Log);
                 if (result.Cancelled)
                 {
                     _isBusy = false;

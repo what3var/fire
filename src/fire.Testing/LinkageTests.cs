@@ -150,6 +150,119 @@ static class LinkageTests
     private static List<string> ModuleLines(string log, string what) =>
         log.Split('\n').Where(l => l.StartsWith("module ", StringComparison.Ordinal) && l.Contains(what)).Select(l => l.Substring(7, l.IndexOf(": ", StringComparison.Ordinal) - 7)).ToList();
 
+    /// <summary>The library of graphics and windows that the VM builds on Windows (PackageLibrary.EnsureGraphics: wrapper.c with w64devkit's gcc) - built here for Windows with
+    /// MinGW and the flags of that build; it has to compile without errors (a failed build left spark's VM without windows). `FIRE_TESTS_FILTER=vmgraphics`.</summary>
+    private static void VmGraphicsForWindows(string root)
+    {
+        string? mingw = HasProgram("x86_64-w64-mingw32-gcc") ? "x86_64-w64-mingw32-gcc" : null;
+        var graphics = PackageStore.Default.FindImport("graphics");
+        var windows = PackageStore.Default.FindImport("windows");
+        if (mingw == null || graphics == null || windows == null) { Console.WriteLine("(VM-Bibliothek von graphics und windows fuer Windows: uebersprungen - MinGW oder die Pakete fehlen)"); return; }
+        string work = Path.Combine(root, "vmgfx-win");
+        Directory.CreateDirectory(work);
+        NativeRuntimeFiles.WriteTo(work, TargetProfile.Windows.Native.Platform);
+        string c = Path.Combine(work, "wrapper.c");
+        File.WriteAllText(c, PackageLibrary.GenerateGraphicsWrapper(graphics, windows, TargetProfile.Windows));
+        string links = string.Concat(File.ReadLines(c).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()));
+        string dll = Path.Combine(work, "fire_graphics.dll");
+        // (the command line of EnsureGraphics on Windows, NativeBuilder.CompilerCommand)
+        var psi = new ProcessStartInfo(mingw, $"-std=c11 -O2 -shared -static-libgcc -static-libstdc++ \"{c}\" -I\"{work}\" -I\"{Path.Combine(work, "abi")}\" -o \"{dll}\"{links}")
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = work };
+        using var p = Process.Start(psi)!;
+        var err = p.StandardError.ReadToEndAsync();
+        string output = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        string log = output + err.Result;
+        Check("VM: die Bibliothek von graphics und windows fuer Windows (wrapper.c wie EnsureGraphics, MinGW gcc -std=c11 -O2 -shared) baut ohne Fehler",
+            p.ExitCode == 0 && File.Exists(dll), $"{links}\n{(log.Length > 8000 ? log.Substring(0, 8000) : log)}");
+        if (Environment.GetEnvironmentVariable("FIRE_TEST_KEEP_VMGFX") is { Length: > 0 } keep && File.Exists(dll)) File.Copy(dll, keep, true);
+
+        // the same library for this machine, linked with --no-undefined: a symbol that only a program has (the class table: className) is found here too, not first on Windows
+        if (OperatingSystem.IsLinux() && HasProgram("gcc"))
+        {
+            string hostWork = Path.Combine(root, "vmgfx-host");
+            Directory.CreateDirectory(hostWork);
+            NativeRuntimeFiles.WriteTo(hostWork, TargetProfile.Host.Native.Platform);
+            string hc = Path.Combine(hostWork, "wrapper.c");
+            File.WriteAllText(hc, PackageLibrary.GenerateGraphicsWrapper(graphics, windows));
+            string hostLinks = string.Concat(File.ReadLines(hc).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()));
+            var hp = Process.Start(new ProcessStartInfo("gcc", $"-std=c11 -O0 -shared -fPIC -pthread -Wl,--no-undefined \"{hc}\" -I\"{hostWork}\" -I\"{Path.Combine(hostWork, "abi")}\" -o \"{Path.Combine(hostWork, "libfire_gfx.so")}\"{hostLinks} -lm -ldl")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = hostWork })!;
+            var herr = hp.StandardError.ReadToEndAsync();
+            string hout = hp.StandardOutput.ReadToEnd();
+            hp.WaitForExit();
+            string hlog = hout + herr.Result;
+            Check("VM: die Bibliothek von graphics und windows fuer diese Maschine hat kein undefiniertes Symbol (gcc -Wl,--no-undefined)", hp.ExitCode == 0, hlog.Length > 8000 ? hlog.Substring(0, 8000) : hlog);
+            hp.Dispose();
+        }
+
+        // without a display the program hears it: `new Window` throws why (FIRE_VM_GRAPHICS=cs: the C# implementation, which has no windows of the desktop) - never a window
+        // that silently counts as closed while the program runs on
+        string? before = Environment.GetEnvironmentVariable("FIRE_VM_GRAPHICS");
+        Environment.SetEnvironmentVariable("FIRE_VM_GRAPHICS", "cs");
+        try
+        {
+            string said = Vm(new[] { """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                try { var win = new Window(fb, "nothing to show it on")
+                    print("opened " + win.Tick()) }
+                catch (e) { print("caught: " + e.message) }
+                print("end")
+                """ });
+            Check("VM: ein Fenster ohne Anzeige - new Window wirft mit dem Grund (No display ...), nichts bleibt stumm", said.StartsWith("caught: No display", StringComparison.Ordinal) && said.Contains("FIRE_VM_GRAPHICS=cs") && said.EndsWith("end\n", StringComparison.Ordinal), said);
+        }
+        finally { Environment.SetEnvironmentVariable("FIRE_VM_GRAPHICS", before); }
+
+        // the VM of Windows under Wine (FIRE_TEST_WIN_FORGE: a folder with forge.exe for win-x64, e.g. `dotnet build -c Release -r win-x64` of fire.Compiler): with the library
+        // built above a window opens (Tick: True); without it and without a C compiler `new Window` says why
+        string? winForge = Environment.GetEnvironmentVariable("FIRE_TEST_WIN_FORGE");
+        string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
+        string? xvfb = HasProgram("xvfb-run") ? "xvfb-run" : null;
+        if (winForge == null || !File.Exists(Path.Combine(winForge, "forge.exe")) || wine == null || xvfb == null || !File.Exists(dll))
+        {
+            Console.WriteLine("(VM unter Wine mit Fenster: uebersprungen - FIRE_TEST_WIN_FORGE (forge.exe fuer win-x64), Wine oder xvfb-run fehlen)");
+            return;
+        }
+        string prefix = Path.Combine(root, "wineprefix-vm");
+        string RunWine(string arguments)
+        {
+            var info = new ProcessStartInfo(xvfb, $"-a -s \"-screen 0 800x600x24\" \"{wine}\" {arguments}") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = work };
+            info.Environment["WINEPREFIX"] = prefix;
+            info.Environment["WINEDEBUG"] = "-all";
+            info.Environment["LANG"] = "C.UTF-8";
+            using var w = Process.Start(info)!;
+            var werr = w.StandardError.ReadToEndAsync();
+            string wout = w.StandardOutput.ReadToEnd();
+            if (!w.WaitForExit(300000)) { try { w.Kill(true); } catch (Exception) { } return wout + "(timeout)"; }
+            return (wout + werr.Result).Replace("\r", "");
+        }
+        RunWine("wineboot --init");
+        string program = Path.Combine(work, "window.fire");
+        File.WriteAllText(program, """
+            #import "ui"
+            var fb = new Framebuffer(320, 200)
+            try { var win = new Window(fb, "fire vm wine")
+                var ui = new UI.Root(fb, win)
+                ui.Add(new UI.Label("Hallo", 20, 20))
+                print("open " + win.Tick()) }
+            catch (e) { print("caught: " + e.message) }
+            print("end")
+            """);
+        // (where the VM of Windows looks for the library it built: %TEMP%\fire-packages\<package>\win-x64)
+        string built = Path.Combine(prefix, "drive_c", "users", Environment.UserName, "Temp", "fire-packages", "fire_graphics-1_0_0", "win-x64");
+        Directory.CreateDirectory(built);
+        string placed = Path.Combine(built, "fire_gfx.dll");
+        File.Copy(dll, placed, true);
+        File.SetLastWriteTimeUtc(placed, DateTime.UtcNow.AddDays(1));   // (newer than the sources and the compiler: taken as it is)
+        string shown = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" run window.fire");
+        Check("VM unter Wine (forge.exe win-x64): ein ui-Fenster oeffnet (Tick True) mit der Bibliothek von MinGW", shown.Contains("open True\nend"), shown);
+        File.Delete(placed);
+        string missing = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" run window.fire");
+        Check("VM unter Wine ohne C-Compiler: new Window sagt, warum kein Fenster kommt (die Bibliothek kann nicht gebaut werden)",
+            missing.Contains("caught: No display") && missing.Contains("C compiler") && missing.Contains("end"), missing);
+    }
+
     public static void Run()
     {
         Console.WriteLine("=== Linkage \"static\": Bibliotheken im Cache ===");
@@ -165,7 +278,8 @@ static class LinkageTests
             if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
             else if (filter.Contains("library", StringComparison.OrdinalIgnoreCase)) LibraryLoad(root);
             else if (filter.Contains("cancel", StringComparison.OrdinalIgnoreCase)) ProgressAndCancel(root);
-            else { RunIn(root); ProgressAndCancel(root); }
+            else if (filter.Contains("vmgraphics", StringComparison.OrdinalIgnoreCase)) VmGraphicsForWindows(root);
+            else { RunIn(root); ProgressAndCancel(root); VmGraphicsForWindows(root); }
         }
         catch (Exception ex) { Check("ohne Ausnahme", false, ex.ToString()); }
         finally
