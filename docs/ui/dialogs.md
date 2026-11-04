@@ -5,6 +5,8 @@ a file to save, a folder, and a message with buttons - like the common dialogs o
 `filesystem`, so they look and work the same everywhere a window can open (Windows, Linux, macOS, in the VM and in a native program); they are no dialogs of the
 operating system.
 
+![The open file dialog](../images/dialog-open.png)
+
 ```fire
 #import "dialogs"
 
@@ -28,7 +30,7 @@ d.InitialDirectory = IO.Directory.GetHomeDirectory()
 if (d.ShowDialog() == Dialogs.DialogResult.OK) { print(d.FileName) }
 ```
 
-A dialog is **modal**: `ShowDialog()` (and `Show`) open a window of their own on `WindowManager.Default` with `Window.Show(true)` (docs/spec/GRAPHICS_LAYER.md) and return when
+A dialog is **modal**: `ShowDialog()` (and `Show`) open a window of their own on `WindowManager.Default` with `Window.Show(true)` ([windows](windows.md#run-show-and-tick)) and return when
 the user is done; meanwhile the other windows of that manager take no input but go on being shown. It works from a click handler of an interface (`Run()` or `Show()`)
 as well as from a program without any window (the manager then gets its thread). Closing the window with its frame or Escape cancels.
 

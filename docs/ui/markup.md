@@ -4,7 +4,7 @@ The interface of a program can be designed in a markup file instead of being bui
 that defines **one class** - the base class of the code-behind. The code-behind (your script) inherits from it and overrides what it wants to react to, so it never needs to know
 more of the generated code than the names it chose itself.
 
-The elements are the ones of the library `ui` (docs/ui/README.md): the layout containers, the controls, lists, trees, menus, images and shapes.
+The elements are the ones of the library `ui` ([user interfaces](README.md)): the layout containers, the controls, lists, trees, menus, images and shapes.
 
 ```xml
 <!-- Greeter.fxml -->
@@ -122,7 +122,7 @@ The old names `x`, `y`, `halign`, ... are reported with the new one.
 | `Button` | `Text`, `Icon` (a symbol of `UI.Icons` such as `Up`, or path data `M 8 1 L 15 8 L 1 8 Z`), `Image` (an image file, embedded), `IconSize` | `OnClick` |
 | `CheckBox` | `Text`, `IsChecked` | `OnChange` |
 | `TextBox` | `Text`, `MaxLength`, `ReadOnly`, `UndoLimit` | `OnChange`, `OnEnter` |
-| `TextArea` (several lines, docs/ui/README.md) | `Text`, `MaxLength`, `ReadOnly`, `WordWrap`, `AcceptsReturn`, `AcceptsTab`, `TabSize`, `UndoLimit` | `OnChange` |
+| `TextArea` (several lines) | `Text`, `MaxLength`, `ReadOnly`, `WordWrap`, `AcceptsReturn`, `AcceptsTab`, `TabSize`, `UndoLimit` | `OnChange` |
 | `AutoSuggestBox` (`<Suggestion>text</Suggestion>`) | `Text`, `MaxLength`, `MaxSuggestions`, `DisplayMember` | `OnChange`, `OnEnter`, `OnChosen` |
 | `ListBox` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex` | `OnSelect`, `OnActivate` |
 | `ComboBox` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex`, `MaxDropDownItems`, `ItemsSource` | `OnSelect` |
@@ -134,11 +134,15 @@ The old names `x`, `y`, `halign`, ... are reported with the new one.
 | `Image` | `Source` (a path: the file is embedded, see docs/stdlib/resources.md), `Stretch` (`None Fill Uniform UniformToFill`) | |
 | `Rectangle`, `Ellipse` | `Fill` (colour), `Stroke` (pen) | |
 | `Line` | `X1 Y1 X2 Y2`, `Stroke` | |
-| `Path` | `Data` (`"M 0 0 L 40 0 L 20 30 Z"`, see docs/ui/README.md), `Fill`, `Stroke` | |
-| `DrawingCanvas` | `Continuous` | `OnPaint(canvas)`, `OnMouseDown(x, Top, button)`, `OnMouseMove(x, Top)`, `OnMouseUp(x, Top, button)` |
+| `Path` | `Data` (`"M 0 0 L 40 0 L 20 30 Z"`, see [shapes](shapes.md#path-and-geometry)), `Fill`, `Stroke` | |
+| `DrawingCanvas` | `Continuous` | `OnPaint(canvas)`, `OnMouseDown(x, y, button)`, `OnMouseMove(x, y)`, `OnMouseUp(x, y, button)` |
+
+Not yet in markup (set them in the code-behind): `ToolTip`, `Cursor`, `AllowDrop` and the drag & drop events, context menus - see the
+[roadmap](../ROADMAP.md#14-ui-markup-fehlende-eigenschaften). The window's top element does not stretch to the window: give it the window's
+`Width` and `Height` ([filling the window](containers.md#filling-the-window)).
 
 `<Button>OK</Button>` is `<Button Text="OK"/>`, `<Item>Alice</Item>` is `<Item Text="Alice"/>`. A `Stack`/`StackPanel`/`DockPanel`/`Grid`/`WrapPanel` lays out its children itself (their `Left`/`Top` are ignored), in a `Panel` or
-`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `OnMouseDown="Down"` calls `Down(sender, Left, Top, button)`.
+`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `OnMouseDown="Down"` calls `Down(sender, x, y, button)`.
 
 **Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`; colour properties are **brushes** - the generator wraps the value in `new SolidBrush(...)`),
 `Horizontal`/`Vertical`, one of the names of an enum (`Left`), a margin, a pen. A value that does not fit is an error. In braces a value can be
@@ -189,7 +193,7 @@ In `<Resources>` (next to the converters):
 
 `Target` of a style or template is an element of this table (or `Element`: the shared properties). The properties of a setter are the ones of that element; a trigger tests one of them or `Hover`, `Pressed`, `Focused`
 (more conditions with `<Condition Property="..." Value="..."/>`, in a template with `Source="partName"` to test a part). A property that a method sets (`Rows`, `Data`) cannot be set by a style. Event handlers and `{Binding}` are not available
-inside a template (react to the control itself). Everything is explained in docs/ui/README.md (*Aussehen*); the generated script builds `UI.Style`, `UI.Trigger` and `UI.ControlTemplate` objects (`fxStyle_Key`, `fxTemplate_Key` are fields of the class).
+inside a template (react to the control itself). Everything is explained in [styles, templates and binding](styling.md); the generated script builds `UI.Style`, `UI.Trigger` and `UI.ControlTemplate` objects (`fxStyle_Key`, `fxTemplate_Key` are fields of the class).
 
 ## Lists with data: DataTemplate, CollectionView, ItemsSource
 

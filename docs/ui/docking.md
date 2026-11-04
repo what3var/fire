@@ -1,13 +1,17 @@
 # Docking (`#import "ui.docking"`)
 
 The standard library `ui.docking` (package `fire-ui.docking`, project `packages/ui.docking`, fire only, namespace `UI.Docking`) adds what the windows of IDEs and editors
-are made of to the user interface library (docs/ui/README.md):
+are made of to the [user interface library](README.md):
 
 * a **dock manager** that fills the window and arranges **tool windows** at its four edges - in panes with a caption, as tabs on top of each other, with splitters - or lets them
   float above the window; the user drags them by their caption or tab, guides show where they can go;
 * **toolstrips** - bars with buttons, labels, separators, text fields, combo boxes and split buttons - in rows at all four edges, movable by their grip, or floating; what does not fit
   goes into an **overflow menu**;
 * a **status bar**.
+
+Docking is built in code; the markup has no elements for it yet - a markup [view](markup.md#the-generated-class) can be the content of a tool window.
+
+![Tool windows, tool strips and a status bar](../images/ui-docking.png)
 
 ```fire
 #import "ui.docking"
@@ -41,7 +45,7 @@ var output = dock.Add(new UI.Docking.ToolWindow("Output", new UI.TextBox("")), U
 dock.AddTabbed(new UI.Docking.ToolWindow("Errors", new UI.ListBox()), output)
 
 // the centre and the status bar
-dock.SetContent(new UI.TextBox("the document"))
+dock.SetContent(new UI.TextArea("the document"))
 var status = new UI.Docking.StatusBar()
 status.AddLabel("Ready", true)
 status.AddLabel("Ln 1, Col 1")
@@ -109,7 +113,7 @@ float/dock and the close button; with several windows tabs at the bottom. A clic
 | `AddLabel(text, spring = false)` | a `ToolStripLabel`; with `spring` it takes the room that is left (several springs share it) |
 | `AddSeparator()` | a `ToolStripSeparator`: a line, across a horizontal strip, along a vertical one |
 | `AddTextBox(text, width)` | a `ToolStripTextBox` (a `UI.TextBox`) |
-| `AddComboBox(width)` | a `ToolStripComboBox` (a `UI.ComboBox`, see docs/ui/README.md) |
+| `AddComboBox(width)` | a `ToolStripComboBox` (a `UI.ComboBox`, see [controls](controls.md#combobox)) |
 | `AddProgressBar(width)` | a `ToolStripProgressBar`: `value` of `maximum` |
 | `Add(element)` | any other element |
 
