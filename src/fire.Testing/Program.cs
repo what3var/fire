@@ -7832,7 +7832,7 @@ packerTests:
                 // it draws into the canvas of the page; with Playwright (the Chromium of this machine) the page runs headless and says what it printed and drew
                 const string winSource = "#import \"windows\"\n#import \"time\"\nvar fb = new Framebuffer(40, 30)\nvar win = new Window(fb, \"wasm\")\nvar r = new Renderer(fb)\nr.Clear()\nfor (var y = 0; y < 30; y++) { for (var x = 0; x < 40; x++) { r.SetPixel(x, y, 0xFFF08020) } }\nfor (var i = 0; i < 3; i++) { win.Tick(); Sleep(10ms) }\nvar px = fb.ReadBytes()\nprint(\"pixel \" + px[0] + \" \" + px[1] + \" \" + px[2])\nprint(\"done\")\nfor (var i = 0; i < 300; i++) { win.Tick(); Sleep(10ms) }\n";
                 string winHtml = EmBuild(winSource, "win", out string winLog);
-                SfCheck(winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut ohne SDL (die eigene Anzeige: das Canvas der Seite), ohne Warnung" + (winHtml != "" ? "" : "\n" + winLog));
+                SfCheck(winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut ohne SDL (die eigene Anzeige: das Canvas der Seite), ohne Warnung" + (winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:") ? "" : "\n" + winLog));
                 bool playwright = false;
                 try
                 {
