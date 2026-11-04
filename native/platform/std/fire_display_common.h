@@ -36,6 +36,10 @@ static void fire_display_queueFree(FireDisplayQueue* q) {
 
 /* Puts an event into the queue; its `data` (malloc) belongs to the queue then (fire_display_push keeps a copy of its own). */
 static void fire_display_queuePush(FireDisplayQueue* q, const FireDisplayEvent* e) {
+#if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT) || defined(FIRE_DISPLAY_SELFTEST_DROP) || defined(FIRE_DISPLAY_SELFTEST_HOVER)
+    /* (the tests compare the events with those of the SDL displays: what a real window adds of its own - the keyboard, the mouse coming in - is left out) */
+    if (e->type == FIRE_EV_FOCUS_GAINED || e->type == FIRE_EV_FOCUS_LOST || e->type == FIRE_EV_MOUSE_ENTER || e->type == FIRE_EV_MOUSE_LEAVE || e->type == FIRE_EV_SCALE) { free(e->data); return; }
+#endif
     if (e->type == FIRE_EV_CLOSE) q->quit = 1;
     fire_display_push(&q->events, e);
     free(e->data);

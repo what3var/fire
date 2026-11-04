@@ -24,7 +24,7 @@
         "winmm"
       ],
       "macos": [
-        "SDL2"
+        "framework:AudioToolbox"
       ]
     },
     "functions": [

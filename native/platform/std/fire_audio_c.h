@@ -26,9 +26,10 @@
  * The functions that return int give 1 when done and 0 on an error (the status says why). Nothing waits: the bridge asks `queued` and the fire code sleeps in
  * between, so a program can always be aborted.
  *
- * The implementations: fire_audio_linux.h (PulseAudio or ALSA, loaded at run time), fire_audio_win32.h (winmm), fire_audio_sdl.h (SDL2: macOS, the browser, and
- * anywhere with FIRE_AUDIO_SDL), fire_audio_esp32.h (PWM on a GPIO pin), fire_audio_none.h (no sound output: the list of devices is empty and every call fails with
- * "not supported"; the simulated device `sim` of the bridge works everywhere). A board with sound of its own provides its own `fire_audio.h`. */
+ * The implementations: fire_audio_linux.h (PulseAudio or ALSA, loaded at run time), fire_audio_win32.h (winmm), fire_audio_coreaudio.h (Audio Queue Services: macOS),
+ * fire_audio_web.h (Web Audio: the browser), fire_audio_sdl.h (SDL2: anywhere with FIRE_AUDIO_SDL), fire_audio_esp32.h (PWM on a GPIO pin), fire_audio_none.h (no sound
+ * output: the list of devices is empty and every call fails with "not supported"; the simulated device `sim` of the bridge works everywhere). A board with sound of its
+ * own provides its own `fire_audio.h`. */
 #ifndef FIRE_AUDIO_C_H
 #define FIRE_AUDIO_C_H
 

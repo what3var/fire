@@ -1,6 +1,6 @@
 # Eigene Plattformschicht statt SDL, Effekte und ein modernerer Stil
 
-Status: **Entwurf** (Branch `ui-platform`). Dieses Dokument legt fest, wie fire Fenster, Eingaben und Grafik ohne SDL auf allen Zielen
+Status: **Teil 1 umgesetzt** (Branch `ui-platform`, siehe [Stand](#stand-teil-1)); Teile 2-4 sind Entwurf. Dieses Dokument legt fest, wie fire Fenster, Eingaben und Grafik ohne SDL auf allen Zielen
 betreibt, wie Glas und Acryl hineinkommen und in welcher Reihenfolge das gebaut wird.
 
 Inspiration: [Raven](https://github.com/oscar-soirey/Raven) (Apache-2.0) - wir haben uns dort die Aufteilung der Plattformschichten,
@@ -132,3 +132,27 @@ Neu in `packages/graphics/native/` (C, für VM und nativ):
 | 2 | VM über C: `windows`/`graphics` als C-Bibliotheken in der VM, `UiPreview`/`LiveSession`, Tests auf headless; SDL3-CS und SDL-Backends entfernen | SDL ist raus, eine Implementierung |
 | 3 | Helfer und Effekte (Software), Materialien, Schalter, Fenster-Hintergrund, Stil-Überarbeitung von `ui`, Raven in der About-Box | Glas/Acryl, modernerer Stil |
 | 4 | GPU-2D mit Vulkan, Rücklesen nur bei Bedarf | Beschleunigung |
+
+## Stand Teil 1
+
+Umgesetzt - native Programme brauchen kein SDL mehr (SDL bleibt mit `"sdl": 2|3` oder `FIRE_SDL` wählbar):
+
+| Teil | Datei | Geprüft |
+|---|---|---|
+| HAL-Erweiterungen | `fire_display_c.h` (TextEditing, Scale, Enter/Leave, Focus, Backdrop), `fire_display_keys.h`, `fire_display_common.h` | alle Backends |
+| ohne Bildschirm | `fire_display_headless.h` | Testsuite (Fenster-Fälle, UI nativ == VM) |
+| X11 | `fire_display_x11.h` | Xvfb: Fenster-Fälle, Pixel, Tasten/Maus/Resize, Zwischenablage (auch zwischen zwei Programmen, INCR), Drag-out und XDND-Drop zwischen zwei fire-Programmen; gcc, clang, tcc |
+| Wayland | `fire_display_wayland.h` | weston headless: Fenster-Fälle, eigene Titelleiste, keine Lecks (ASan) |
+| Win32 | `fire_display_win32.h` | MinGW + Wine: echtes Fenster (Tasten, Maus, Text), Zwischenablage (Text, Bild, Dateien), Drops |
+| Cocoa | `fire_display_cocoa.h` | nur Syntax (gcc, clang) - **auf einem Mac noch nicht gelaufen** |
+| Web | `fire_display_web.h` | Chromium headless: Pixel, Klick, Tasten, Text, IME-Komposition, Rad, Datei-Drop |
+| Joysticks | `fire_display_joystick.h` (Linux js, XInput, GameController, Gamepad-API) | nur übersetzt (kein Gerät hier) |
+| Audio ohne SDL | `fire_audio_coreaudio.h` (macOS), `fire_audio_web.h` (Browser) | Web: Chromium spielt ab; macOS: nur Syntax |
+
+Offen in Teil 1:
+
+* macOS auf echter Hardware prüfen (Cocoa, AudioQueue, GameController); Ziehen aus dem Fenster gibt es dort noch nicht (0).
+* Wayland: Drag-out (`fire_dragout.h`) hört auf einer Verbindung - mit mehreren Fenstern auf verschiedenen Threads nur für das erste.
+* Win32: während der Nutzer das Fenster zieht oder seine Größe ändert (modale Schleife von Windows), zeichnet das Programm nicht nach.
+* Mit dem Emscripten 3.1.6 von Ubuntu laufen die wasm-Prüfungen der Suite nicht (schon ein Programm ohne Fenster startet nicht) - mit einem aktuellen emsdk prüfen.
+* Die VM benutzt noch SDL3-CS (Teil 2).

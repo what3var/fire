@@ -518,7 +518,20 @@ die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Ar
 **`windows`** (`fire_bridge_windows.h`, C - auch mit TinyCC; `__GRPHWinName` heißt im Programm `fire_win_WinName`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
 Callbacks aus (auf dem aufrufenden Thread mit den echten Globals; eine nicht gefangene Ausnahme beendet nur den Callback und wird gemeldet); `EnableEvents`/`NextEvent` liefern sie als Warteschlange.
 Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.h`, als `FIRE_PLATFORM_DISPLAY_C_HEADER` eingebunden; die Schnittstelle, die Ereignisse und das
-Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`. Mitgeliefert: `std/fire_display_sdl3.h` (SDL3, für `posix` und `windows`, wenn
+Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`.
+
+**Die eigene Anzeige (Standard, ohne SDL).** `std/fire_display_desktop.h` wählt beim ersten Fenster, mit welchem Fenstersystem es spricht: Wayland (`std/fire_display_wayland.h`, wenn
+`WAYLAND_DISPLAY` gesetzt ist und libwayland-client lädt), sonst X11 (`std/fire_display_x11.h`), Win32 (`std/fire_display_win32.h`), Cocoa (`std/fire_display_cocoa.h`, aus C über die
+Objective-C-Runtime), das Canvas der Seite (`std/fire_display_web.h`), oder ohne Bildschirm (`std/fire_display_headless.h`, `FIRE_DISPLAY=headless`; `SDL_VIDEODRIVER=dummy` wird
+ebenso verstanden). `FIRE_DISPLAY=x11|wayland|win32|cocoa|web|headless` fragt nach einer. Gelinkt wird nur, was das Betriebssystem immer hat: Linux lädt libX11/libwayland-client/libxkbcommon
+zur Laufzeit (`-ldl -lpthread`), Windows linkt user32 und gdi32 (imm32, dwmapi, ole32 werden geladen), macOS die Frameworks Cocoa, QuartzCore und GameController; der Browser nichts.
+Gemeinsam: `std/fire_display_keys.h` (die Nummern der Tasten, Modifier, Maustasten, Cursor - die von SDL3, die Programme kennen sie), `std/fire_display_common.h` (die Warteschlange
+eines Fensters, Drops, Kompositionen, die Ereignisse der Tests), `std/fire_display_joystick.h` (Joysticks: `/dev/input/js*`, XInput, GameController, Gamepad-API). Neu gegenüber den
+SDL-Anzeigen: Kompositionen einer Eingabemethode (`FIRE_EV_TEXT_EDITING`, `Window.SetTextInputArea`), `FIRE_EV_SCALE`, Maus herein/hinaus, Fokus, und was hinter dem Fenster liegt
+(`Window.Backdrop`: transparent, Blur, Acryl, Mica - je nach System). Entwurf und Stand: docs/UI_PLATFORM.md.
+
+**SDL (wählbar).** `"sdl": 2|3` des Ziels (0: der Build probiert) oder `FIRE_SDL=2|3|auto` nehmen statt der eigenen Anzeige SDL (das Programm sagt dann `#define FIRE_DISPLAY_SDL 1`).
+Mitgeliefert: `std/fire_display_sdl3.h` (SDL3, für `posix` und `windows`, wenn
 der Build `FIRE_SDL3` definiert; das Programm bittet dann mit der Zeile `// fire-link: SDL3` um `-lSDL3` bzw. `SDL3.lib`), `std/fire_display_sdl.h` (SDL2, für `posix` und `windows` sonst und immer für `wasm`;
 `// fire-link: SDL2`, `-lSDL2`; beide mit dem Systemaussehen aus `std/fire_systheme.h`)
 und `std/fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der

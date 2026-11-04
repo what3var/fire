@@ -251,8 +251,8 @@ namespace fire.Native
         /// macOS its frameworks (`framework:` - the build makes `-framework` of it).</summary>
         private IEnumerable<string> OwnDisplayLibraries()
         {
-            if (_target.Native.Platform == "windows") return new[] { "user32", "gdi32", "imm32", "ole32", "shell32", "uuid" };
-            if (_target.Name == "macos") return new[] { "framework:Cocoa", "framework:QuartzCore", "framework:Carbon" };
+            if (_target.Native.Platform == "windows") return new[] { "user32", "gdi32" };   // (imm32, dwmapi, ole32 are loaded at run time)
+            if (_target.Name == "macos") return new[] { "framework:Cocoa", "framework:QuartzCore", "framework:GameController" };
             return new[] { "dl", "pthread" };
         }
 
@@ -1352,7 +1352,7 @@ namespace fire.Native
                     foreach (string lib in packageNative.LinkLibrariesFor(new[] { _target.Native.Platform, _target.Name })) sb.AppendLine($"// fire-link: {lib}");
             // the display of these platforms: fire's own (native/platform/std/fire_display_desktop.h - what it links is what the operating system always has), or SDL3/SDL2
             // when the target or FIRE_SDL asks for it (fire_display.h of the platform picks it by FIRE_DISPLAY_SDL and FIRE_SDL3): the build links it
-            if (_usesWindows && _target.Native.Platform == "wasm") sb.AppendLine("// fire-link: SDL2");   // (Emscripten's own SDL2: -sUSE_SDL=2)
+            if (_usesWindows && _target.Native.Platform == "wasm") { if (SdlOfTarget() is int) { sb.AppendLine("#define FIRE_DISPLAY_SDL 1"); sb.AppendLine("// fire-link: SDL2"); } }   // (Emscripten's own SDL2: -sUSE_SDL=2; fire's own display: the canvas, nothing to link)
             else if (_usesWindows && _target.Native.Platform is "posix" or "windows")
             {
                 if (SdlOfTarget() is int sdl)
