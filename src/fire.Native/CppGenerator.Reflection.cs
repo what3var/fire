@@ -382,12 +382,11 @@ namespace fire.Native
                     membersName = $"{Px}kRfM{listIndex++}";
                     sb.AppendLine($"static const RfMember {membersName}[] = {{{string.Join(", ", memberRows)}}};");
                 }
-                var interfaces = new List<string>();
-                if (rc.Meta != null)
-                    foreach (var b in rc.Meta.BaseNames)
-                        if (rc.Base == null || !(rc.Base.Name == b || rc.Base.Name.EndsWith("." + b, StringComparison.Ordinal))) interfaces.Add(b);
+                // (as the VM: every interface the class reaches - also over its base classes, of a plugin too - and the ones it names itself)
+                var interfaces = rc.ReflectedInterfaces(declaredOnly: false);
+                var declared = rc.ReflectedInterfaces(declaredOnly: true);
                 string classAttrs = Attributes((IReadOnlyList<AttributeMeta>?)rc.Meta?.Attributes ?? Array.Empty<AttributeMeta>());
-                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}, {classAttrs}, {Strings(stripped)}, {stripped.Count}, NULL}}");
+                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {Strings(declared)}, {declared.Count}, {membersName}, {memberRows.Count}, {classAttrs}, {Strings(stripped)}, {stripped.Count}, NULL}}");
             }
             _rfListIndex = listIndex;
             return classRows;
@@ -568,12 +567,13 @@ FIRE_MAYBE_UNUSED static Value rf_strippedMember(const RfClass* in, const char* 
 FIRE_MAYBE_UNUSED static Value rf_class_info(Value name, OwnList* list) {
     const RfClass* c = name.kind == K_String ? rf_find(name) : NULL;
     if (!c) return rf_isStripped(name) ? rf_strippedClass(name) : Undef();
-    Arr* info = allocArr(5, list);
+    Arr* info = allocArr(6, list);
     Value v0 = strFromUtf8(c->name, list); arrItems(info)[0] = v0; retain(v0);
     if (c->base) { Value v1 = strFromUtf8(c->base, list); arrItems(info)[1] = v1; retain(v1); }
     arrItems(info)[2] = Bool(c->isActor != 0);
     Value v3 = strArrayOf(c->ifaces, c->nIfaces, list); arrItems(info)[3] = v3;
     arrItems(info)[4] = c->attrs ? c->attrs(list) : ArrV(allocArr(0, list));   /* (the attributes before the class) */
+    arrItems(info)[5] = strArrayOf(c->declIfaces, c->nDeclIfaces, list);
     return ArrV(info);
 }
 /* the enum of a value (its full name, undefined for anything else), and a number as a value of the enum of another value */

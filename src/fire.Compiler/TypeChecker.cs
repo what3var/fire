@@ -1604,8 +1604,11 @@ namespace fire.Compiler
             CheckAccess(target, m.Name, use, 0, m.Line, isStatic);
             CheckInterfaceAccessor(target, m.Name, use, m.Line);
             if (MemberLog != null && target.Kind == StaticKind.Class && target.Class != null) MemberLog.Add((_source, m.Line, target.Class, m.Name, false));
-            if (target.Kind == StaticKind.Class && FindMember(target, m.Name) == null && !HasMethodNamed(target, m.Name) && FullyKnown(target))
-                Report(UnknownMemberCode, $"'{target}' has no field, property or method '{m.Name}'", m.Line);
+            if (target.Kind == StaticKind.Class && FindMember(target, m.Name) == null && !HasMethodNamed(target, m.Name))
+            {
+                if (FullyKnown(target)) Report(UnknownMemberCode, $"'{target}' has no field, property or method '{m.Name}'", m.Line);
+                else if (InterfaceFullyKnown(target) && !IsUniversalMember(m.Name)) Report(UnknownMemberCode, InterfaceMissingText(target, m.Name, "property or method"), m.Line);
+            }
             return target.Kind switch
             {
                 StaticKind.Class when FindMember(target, m.Name) is { } member => member,
@@ -1634,7 +1637,17 @@ namespace fire.Compiler
         /// <summary>`obj.Name(...)` that finds no method: none of that name at all (TC008), or none that takes that many arguments (TC002).</summary>
         private void ReportMissingMethod(MemberExpr callee, StaticType target, int argc)
         {
-            if (target.Kind != StaticKind.Class || !FullyKnown(target) || callee.Name is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo") return;
+            if (target.Kind != StaticKind.Class || IsUniversalMember(callee.Name)) return;
+            if (!FullyKnown(target))
+            {
+                // through an interface type: only what the interface (and the ones it extends) declares - other members need a cast (`x!Circle`)
+                if (!InterfaceFullyKnown(target) || FindMember(target, callee.Name) != null) return;
+                var sigs = InterfaceChain(target).SelectMany(i => i.Decl.Methods.Where(s => s.Name == callee.Name)).ToList();
+                if (sigs.Count == 0) Report(UnknownMemberCode, InterfaceMissingText(target, callee.Name, "method"), callee.Line);
+                else if (!sigs.Any(s => Fits(s.Params, argc)))
+                    Report(ArgumentCode, $"'{callee.Name}' of '{target}' takes {string.Join(" or ", sigs.Select(s => ArityText(s.Params)).Distinct())} argument(s), not {argc}", callee.Line);
+                return;
+            }
             if (callee.Name == "resume" && DerivesFrom(target.Class!, "Exception")) return;   // the built-in `e.resume(value)` of every exception (SPEC 7.5)
             if (FindMember(target, callee.Name) != null) return;   // (a field or property: a lambda in it, or something else the runtime decides)
             var named = Chain(target).SelectMany(c => c.Decl.Members.OfType<MethodDecl>()).Where(m => m.Name == callee.Name).ToList();
@@ -1751,6 +1764,18 @@ namespace fire.Compiler
         private bool HasMethodNamed(StaticType receiver, string name) =>
             Chain(receiver).Any(c => c.Decl.Members.OfType<MethodDecl>().Any(m => m.Name == name))
             || InterfaceChain(receiver).Any(i => i.Decl.Methods.Any(m => m.Name == name));
+
+        /// <summary>The members every object has without its class declaring them: the ownership transfer (SPEC 2.2) - `TakeTo`, `TakeLocal`, `TakeUpwards`,
+        /// `TakeGlobal` (also as `try x.TakeTo(...)`).</summary>
+        private static bool IsUniversalMember(string name) => name is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo";
+
+        /// <summary>Whether everything an interface type promises is known here: an interface (not a class) whose closure - the interfaces it extends,
+        /// directly or over others - is declared in full. Through such a type only its members (and the universal ones) can be reached.</summary>
+        private bool InterfaceFullyKnown(StaticType receiver) =>
+            receiver.Class != null && IsInterface(receiver.Class) && InterfaceClosure(receiver.Class).All(_interfaces.ContainsKey);
+
+        private static string InterfaceMissingText(StaticType receiver, string name, string what) =>
+            $"'{receiver}' has no {what} '{name}' (an interface type reaches only what the interface and the ones it extends declare - cast to the class to use others: 'x!ClassName')";
 
         /// <summary>Whether everything a class has is known here: it is a class (not an interface) and all its base classes and interfaces are declared.</summary>
         private bool FullyKnown(StaticType receiver)

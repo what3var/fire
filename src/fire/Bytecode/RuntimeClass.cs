@@ -94,6 +94,22 @@ namespace fire.Bytecode
         /// <summary>The interfaces this class names in `class X : Base, IFoo` (for `value is of IFoo`; inherited ones come via the base-class chain).</summary>
         public List<string> Interfaces { get; set; } = new();
 
+        /// <summary>Reflection (`Type.Interfaces`): every interface an object of this class is of - its own (with the ones they extend) and those of its
+        /// base classes, each once, nearest first, by its full name without the generic marker (`IList`, not IList`1). <paramref name="declaredOnly"/>:
+        /// only the ones the class names itself (`Type.DeclaredInterfaces`, from ClassMeta).</summary>
+        public List<string> ReflectedInterfaces(bool declaredOnly)
+        {
+            var result = new List<string>();
+            if (declaredOnly)
+            {
+                foreach (var i in Meta?.DeclaredInterfaces ?? new List<string>()) { var plain = GenericClassNames.PlainName(i); if (!result.Contains(plain)) result.Add(plain); }
+                return result;
+            }
+            for (var c = this; c != null; c = c.Base)
+                foreach (var i in c.Interfaces) { var plain = GenericClassNames.PlainName(i); if (!result.Contains(plain)) result.Add(plain); }
+            return result;
+        }
+
         /// <summary>The type arguments this class gives its base class (`class IntBox : Box&lt;int&gt;`, `class MyList&lt;U&gt; : List&lt;U&gt;`), as
         /// DeclaredType texts - `$k` for the k-th type parameter of this class; null when the base is not generic (DeclaredType.TypeArgOf).</summary>
         public string[]? BaseTypeArgs { get; set; }

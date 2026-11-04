@@ -371,7 +371,7 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC005` | Method '…' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). |
 | `TC006` | A value in '…' does not fit '…' in '…' / '…' and '…' cannot be combined with '…' (another dimension) (units of another dimension, a unit where none is declared, or none where one is) |
 | `TC007` | A whole number in '…' converted into '…' may lose its fraction (a warning also in strict mode) |
-| `TC008` | '…' has no field, property or method '…' / '…' has no method '…' (a member that a fully known class does not have) |
+| `TC008` | '…' has no field, property or method '…' / '…' has no method '…' (a member that a fully known class does not have - or that an interface type does not declare, itself or over the interfaces it extends: `s.radius` with `IShape s`; a cast `(s!Circle).radius` reaches it; the ownership methods `TakeTo`/`TakeLocal`/`TakeUpwards`/`TakeGlobal` every object has are always allowed) |
 | `TC009` | An assignment as a condition - did you mean '=='? (`if (a = b)`; `if ((a = b))` says the assignment is meant; a warning also in strict mode) |
 | `TC010` | The switch over '…' has no case for … (add the cases or a 'case default') (a `switch` over an enum value; a warning also in strict mode) |
 | `TC011` | '…' has no parameter '…' / The parameter '…' of '…' gets no value (it has no default value) (named arguments, `f(size: 2)`; an error also in lax mode) |

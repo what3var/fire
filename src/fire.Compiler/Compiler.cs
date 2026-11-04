@@ -860,7 +860,12 @@ namespace fire.Compiler
                     bool Known(string name) => name == "Exception" || classes.ContainsKey(name) || interfaceNames.Contains(name);
                     string n = baseRef.TypeArgCount == 0 ? baseRef.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(baseRef, baseRef.TypeArgCount, Known);
                     // (an interface and every interface it extends: the object is of each - `is of`, casts, overloads and the native isof tables read this list)
-                    if (interfaceNames.Contains(n)) { foreach (var i in InterfaceClosure(n, interfaceDecls)) if (!rc.Interfaces.Contains(i)) rc.Interfaces.Add(i); continue; }
+                    if (interfaceNames.Contains(n))
+                    {
+                        foreach (var i in InterfaceClosure(n, interfaceDecls)) if (!rc.Interfaces.Contains(i)) rc.Interfaces.Add(i);
+                        if (rc.Meta != null && !rc.Meta.DeclaredInterfaces.Contains(n)) rc.Meta.DeclaredInterfaces.Add(n);   // (reflection: Type.DeclaredInterfaces)
+                        continue;
+                    }
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
                     if (n == "Exception" && !classes.ContainsKey(n)) continue; // no RuntimeClass available (a program without the prelude) -> Base stays null
                     // (the interfaces may follow the base class: `class Puppy : Dog, IPet` - the loop goes on for them)

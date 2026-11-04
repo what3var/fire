@@ -14403,7 +14403,12 @@ DebuggerTests.Run();
         print(t.Fields().Count + " " + t.Properties().Count + " " + t.Methods().Count + " " + t.Constructors().Count)
         print(t.Has("radius") + " " + t.Has("nope") + " " + t.Find("Diameter").CanWrite + " " + t.Find("Area").IsMethod())
         print(t.IsSubclassOf(Type.Of("Shape")) + " " + Type.Of("Shape").IsSubclassOf(t) + " " + (Type.Named("Gibts") == undefined))
-        """, new[] { "Circle 1 IThing", "5 1 6 1", "True False True True", "True False True" }, debugRelease);
+        interface IBase { Base() }
+        interface IMore : IBase { More() }
+        class Deeper : Thing, IMore { Base() { } More() { } }
+        var d = Type.Of("Deeper")
+        print(",".Join(d.Interfaces) + " | " + ",".Join(d.DeclaredInterfaces))
+        """, new[] { "Circle 1 IThing", "5 1 6 1", "True False True True", "True False True", "IMore,IBase,IThing | IMore" }, debugRelease);
 
     CheckRf("Get/Set/Call/New: Felder, Properties, geerbte Methoden, Konstruktion", shapes + """
         var c = new Circle(5.0)
@@ -19747,6 +19752,26 @@ else
             probe c2.volume changed { print("c2 " + value) }
             c2.volume = 4
             delete c2
+            """),
+        ("Reflection: Type.Interfaces mit geerbten Interfaces (Basisklasse, Interface-Vererbung, Namespace) und DeclaredInterfaces", """
+            #import "reflection"
+            namespace Geo {
+                interface INamed { string Name { get; } }
+                interface IShape : INamed { float Area() }
+                interface IPrintable { string Text() }
+                class Circle : IShape {
+                    string Name { get { return "c" } }
+                    float Area() { return 1.0 }
+                }
+                class Ring : Circle, IPrintable { string Text() { return "r" } }
+            }
+            class Plain { }
+            var t = Type.Of(new Geo.Ring())
+            print(",".Join(t.Interfaces) + " | " + ",".Join(t.DeclaredInterfaces))
+            var c = Type.Of(new Geo.Circle())
+            print(",".Join(c.Interfaces) + " | " + ",".Join(c.DeclaredInterfaces) + " | " + ",".Join(t.Base.Interfaces))
+            var p = Type.Of(new Plain())
+            print(p.Interfaces.length + " " + p.DeclaredInterfaces.length)
             """),
         ("Weglassen: [Keep] auf Klasse und Member - per Name gemacht, gelesen und gerufen wie in der VM (nicht vererbt, Basis bleibt)", """
             #import "reflection"

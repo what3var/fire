@@ -42,6 +42,10 @@ print(new Square(1.0) is of IShape)     // True
 - An interface is a type: parameters, fields, variables and return values can be declared with it, and `is of IShape` tests it. `catch (IShape e)`
   catches an exception whose class implements it.
 - Interfaces can be generic: `interface ICommand<T> { undefined Execute(T context) }`.
+- Through a value of an interface type only what the interface declares (with the interfaces it extends) is reachable: `s.radius` or `s.Grow()`
+  with `IShape s` is `TC008` (a warning in lax mode, an error in strict mode) even when the class of the object has the member, and a call with a
+  number of arguments no declared method takes is `TC002`. A cast reaches the rest: `(s!Circle).radius`. The ownership methods every object has
+  (`TakeTo`, `TakeLocal`, `TakeUpwards`, `TakeGlobal`) are always allowed.
 
 ### Properties in an interface
 
@@ -106,7 +110,9 @@ print(s is of IWriter)           // True
 - Only interfaces can be extended (`interface I : SomeClass` is `E4067`). An interface may not extend itself over any chain (`E4068`); reaching the same
   interface on two ways (a diamond: `IBoth : ILeft, IRight` with `ILeft : IBase` and `IRight : IBase`) is fine.
 - A generic interface can extend a generic one: `interface IList<T> : IEnumerable<T> { ... }` - `foreach` over an `IList<int>` knows its elements are `int`.
-- `Type.Of(x).Interfaces` (reflection) lists the interfaces the class names, not the ones they extend.
+- Through a value of a derived interface the members of its base interfaces are reachable directly (`s.Read()` with `IStream s`).
+- `Type.Of(x).Interfaces` (reflection) lists every interface the class reaches - the ones it names, the ones they extend and those of its base
+  classes; `Type.Of(x).DeclaredInterfaces` only the ones it names itself (see [Probes and reflection](16-probes-and-reflection.md#reflection-import-reflection)).
 
 ## IEnumerable
 

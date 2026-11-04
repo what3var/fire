@@ -696,6 +696,36 @@ static class TypeTests
                 print(sum + n.Count)
                 """, TypeCheckMode.Strict) is var generic && generic == "|9"
                 && Run("interface IList<T> : IEnumerable<T> { }\nclass Nums : IList<int> { IEnumerator<int> GetEnumerator() { return new List<int>().GetEnumerator() } }\nIList<int> n = new Nums()\nforeach (x in n) { bool b = x }") is var elem && elem.StartsWith("TC001|"), generic);
+
+            // through an interface type only what the interface (and the ones it extends) declares is reachable (TC008) - a cast reaches the rest
+            string reach = ifaces + """
+                class Mem : IStream {
+                    int last = 5
+                    int Read() { return this.last }
+                    undefined Write(int v) { this.last = v }
+                    int Size { get { return 1 } }
+                    int Extra() { return 9 }
+                }
+                IStream s = new Mem()
+
+                """;
+            Check("Interface-Typ: nicht deklarierte Mitglieder sind TC008 (lax Warnung, Feld, Methode, Methode als Wert), falsche Stelligkeit TC002", Run(reach + """
+                print(s.last)
+                print(s.Extra())
+                var f = s.Extra
+                print(s.Read(1))
+                """) is var laxReach && laxReach.StartsWith("TC008 TC008 TC008 TC002|5\n9"), laxReach);
+            Check("Interface-Typ: nicht deklarierte Mitglieder sind strikt Fehler (TC008)", Run(reach + "IReader r = s\nprint(r.Size)\nprint(s.Extra())", TypeCheckMode.Strict) == "|ERROR TC008 TC008");
+            Check("Interface-Typ: geerbte Interface-Mitglieder, Property, Besitz-Methoden und Cast strikt ohne Befund", Run(reach + """
+                s.Write(3)
+                IReader r = s
+                print(s.Read() + r.Read() + s.Size + (s!Mem).Extra() + (r!Mem).last)
+                var other = new Mem()
+                try other.TakeTo(s)
+                IStream t = new Mem()
+                t.TakeLocal()
+                try t.TakeTo(s)
+                """, TypeCheckMode.Strict) is var allowed && allowed == "|19", allowed);
         }
 
         // named arguments: each goes to the parameter of its name (its type is checked there); an unknown name and a parameter without value are errors
