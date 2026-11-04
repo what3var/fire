@@ -55,6 +55,9 @@ namespace fire.Compiler
         public string? Linkage { get; init; }
         /// <summary>`--host <program>`: with `--linkage plugin`, the program (linkage "shared") the plugin is built for.</summary>
         public string? Host { get; init; }
+        /// <summary>`--global-jobs safepoints|sleep|sync`: when the main program runs the `fire global` jobs by itself (docs/THREADING_DESIGN.md section 7); goes before the
+        /// project's `globalJobs`, `#globaljobs`/`#nosync` and fire.native.json. Null: those decide.</summary>
+        public fire.Runtime.GlobalJobsMode? GlobalJobs { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
         public string? ProjectName { get; init; }
         /// <summary>Set if the command line is invalid (message for the user).</summary>
@@ -82,9 +85,9 @@ namespace fire.Compiler
         public static string Usage =>
             """
             Usage:
-              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--linkage source|static|shared|plugin] [--host <program>]
-              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>] [--stripping 0-3] [--keep-all]
+              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--linkage source|static|shared|plugin] [--host <program>] [--global-jobs safepoints|sleep|sync]
+              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--global-jobs safepoints|sleep|sync]
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
               fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
@@ -115,6 +118,10 @@ namespace fire.Compiler
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
                     typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).
+            --global-jobs safepoints|sleep|sync  When the main program runs the `fire global` jobs (and lets in the sections of its threads, the host callbacks) by itself:
+                    safepoints (the default: at a loop's jump back, Sleep and the wait functions), sleep (only at Sleep and the wait functions) or sync (only at `sync globals`);
+                    `sync globals` and the end of the program always do. Goes before the project's globalJobs, #globaljobs / #nosync in the source and "globalJobs" in
+                    fire.native.json (docs/THREADING_DESIGN.md section 7). The VM and a native build behave the same.
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
             test    runs the tests: the methods with [Test] (docs/TESTING.md), in the VM or with --engine native as a native program for this machine. Without a file: the solution or the
@@ -151,6 +158,7 @@ namespace fire.Compiler
             VmExecutionMode? mode = null;
             int? floatWidth = null;
             TypeCheckMode? typeChecking = null;
+            fire.Runtime.GlobalJobsMode? globalJobs = null;
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
             bool keep = false, keepAll = false;
@@ -261,6 +269,12 @@ namespace fire.Compiler
                     if (value == null || Unquote(value).ToLowerInvariant() is not ("lax" or "strict")) return Fail(command, "--types must be followed by lax or strict.");
                     typeChecking = Unquote(value).ToLowerInvariant() == "strict" ? TypeCheckMode.Strict : TypeCheckMode.Lax;
                 }
+                else if (TryOption(arg, "--global-jobs", "--global-jobs", out var jobsInline))
+                {
+                    string? value = jobsInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    globalJobs = fire.Runtime.GlobalJobsModes.Parse(value == null ? null : Unquote(value));
+                    if (globalJobs == null) return Fail(command, "--global-jobs must be followed by safepoints, sleep or sync.");
+                }
                 else if (TryOption(arg, "-f", "--float", out var floatInline))
                 {
                     string? value = floatInline ?? (i + 1 < args.Count ? args[++i] : null);
@@ -304,6 +318,7 @@ namespace fire.Compiler
                 Mode = mode,
                 FloatWidth = floatWidth,
                 TypeChecking = typeChecking,
+                GlobalJobs = globalJobs,
                 Defines = defines,
                 Target = target,
                 TargetName = targetName,
@@ -387,6 +402,7 @@ namespace fire.Compiler
                 return ExitUsage;
             }
             Linker.ProcessDefaultTypeChecking = options.TypeChecking;
+            Linker.ProcessGlobalJobs = options.GlobalJobs;
             if (options.Command == CommandKind.Help)
             {
                 stdout.WriteLine(CommandLineParser.Usage);
@@ -503,7 +519,7 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = NativeBuilder.WithRequestedSdl(config.ResolveTarget(options.TargetName), null);   // (only the sources: SDL2 for a window, unless FIRE_SDL or the target say 3)
-                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options), stripping: config.Stripping);
+                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options), stripping: config.Stripping, globalJobs: config.GlobalJobsValue);
                 string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
                 NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives);

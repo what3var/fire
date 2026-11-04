@@ -80,7 +80,7 @@ namespace Circuits {
             return (level - this.VoltsAt(pin)) / this.rout
         }
 
-        float CurrentRaw() {
+        override float CurrentRaw() {
             if (this.ports.Count == 0) { return 0.0 }
             return this.CurrentAt(0)
         }
@@ -89,14 +89,14 @@ namespace Circuits {
         /// before. Override it.</summary>
         undefined Update(float time) { }
 
-        undefined Stamp(Circuits.Solver solver) {
+        override undefined Stamp(Circuits.Solver solver) {
             var ground = this.owner.Top().Ground
             for (int i = 0; i < this.ports.Count; i++) {
                 if (this.driven[i]) { solver.Conductance(this.ports[i], ground, 1.0 / this.rout) }
             }
         }
 
-        undefined StampStep(Circuits.Solver solver) {
+        override undefined StampStep(Circuits.Solver solver) {
             this.Update(solver.time + solver.dt)
             for (int i = 0; i < this.ports.Count; i++) {
                 if (this.driven[i]) {
@@ -132,7 +132,7 @@ namespace Circuits {
             }
         }
 
-        undefined Update(float time) {
+        override undefined Update(float time) {
             var out = Gpio.Sim.Output(this.line)
             if (out >= 0) {
                 this.LetGo()
@@ -148,7 +148,7 @@ namespace Circuits {
             }
         }
 
-        undefined Reset() { this.LetGo() }
+        override undefined Reset() { this.LetGo() }
     }
 
     /// <summary>An analog-to-digital converter on the simulated I2C bus (like a PCF8591 or ADS1115): it measures its inputs In0, In1, ... against ground and puts
@@ -189,7 +189,7 @@ namespace Circuits {
             return Math.Round(x * full)!int
         }
 
-        undefined Update(float time) {
+        override undefined Update(float time) {
             for (int ch = 0; ch < this.ports.Count; ch++) {
                 var code = this.Code(ch)
                 if (code != this.codes[ch]) {
@@ -204,7 +204,7 @@ namespace Circuits {
             }
         }
 
-        undefined Reset() {
+        override undefined Reset() {
             for (int ch = 0; ch < this.codes.Count; ch++) { this.codes[ch] = -1 }
         }
     }
@@ -231,7 +231,7 @@ namespace Circuits {
         int Address { get { return this.address } }
         Port Out(int channel) { return this.ports[channel] }
 
-        undefined Update(float time) {
+        override undefined Update(float time) {
             for (int ch = 0; ch < this.ports.Count; ch++) {
                 var code = I2c.Sim.GetRegister(this.address, ch)
                 this.Drive(ch, this.reference * code / 255.0)
@@ -257,7 +257,7 @@ namespace Circuits {
         /// <summary>The byte on the outputs.</summary>
         int Value { get { return this.value } }
 
-        undefined Update(float time) {
+        override undefined Update(float time) {
             var total = Spi.Sim.TotalSent()
             if (total == this.seen) { return }
             this.seen = total
@@ -267,7 +267,7 @@ namespace Circuits {
             for (int i = 0; i < 8; i++) { this.DriveHigh(i, ((last >> i) & 1) == 1) }
         }
 
-        undefined Reset() { this.seen = -1 }
+        override undefined Reset() { this.seen = -1 }
     }
 
     /// <summary>A shift register with inputs at the simulated SPI device (like a 74HC165): the program reads the levels of D0..D7 (D7 the highest bit) as the
@@ -293,7 +293,7 @@ namespace Circuits {
             }
         }
 
-        undefined Update(float time) {
+        override undefined Update(float time) {
             var v = this.Value
             var t = Spi.Sim.Transfers()
             // every transfer takes the queued answer: queue it again after one, and when the inputs change
@@ -305,7 +305,7 @@ namespace Circuits {
             Spi.Sim.SetReply(data)
         }
 
-        undefined Reset() {
+        override undefined Reset() {
             this.value = -1
             this.transfers = -1
         }

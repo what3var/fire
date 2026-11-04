@@ -19,9 +19,9 @@ namespace UI {
             this.items = new List()
         }
 
-        string StyleKey() { return "RadioButtons" }
+        override string StyleKey() { return "RadioButtons" }
 
-        bool Focusable() { return true }
+        override bool Focusable() { return true }
 
         any Add(any item) {
             UI.M.Own(this, item)
@@ -66,7 +66,7 @@ namespace UI {
         // The width of an option: circle, spacing, text.
         int OptionWidth(Root root, int index) { return 14 + 6 + this.TextWidth(root, this.ItemText(this.items[index])) }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 0
             var oh = this.OptionHeight(root)
@@ -110,7 +110,7 @@ namespace UI {
             return -1
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -139,23 +139,23 @@ namespace UI {
             }
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             var index = this.OptionAt(root, px, py)
             if (index >= 0) { this.Select(index) }
         }
 
-        undefined Hover(Root root, int px, int py) { this.hotIndex = this.OptionAt(root, px, py) }
+        override undefined Hover(Root root, int px, int py) { this.hotIndex = this.OptionAt(root, px, py) }
 
         // The arrow keys change the option - at the first and last the group releases them (the focus moves on)
-        bool WantsKey(int key) {
+        override bool WantsKey(int key) {
             var last = this.items.Count - 1
             if (key == UI.Keys.Down() || key == UI.Keys.Right()) { return this.SelectedIndex < last }
             if (key == UI.Keys.Up() || key == UI.Keys.Left()) { return this.SelectedIndex > 0 }
             return false
         }
 
-        undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, int key, int mod) {
             var step = 0
             if (key == UI.Keys.Down() || key == UI.Keys.Right()) { step = 1 }
             else if (key == UI.Keys.Up() || key == UI.Keys.Left()) { step = -1 }
@@ -169,11 +169,11 @@ namespace UI {
     // The suggestion list of an AutoSuggestBox: a click into the text field does not close it.
     class SuggestList : ListBox {
         // (floating: its shadow follows the corners of the list)
-        int PopupRadius(Root root) { return root.theme.radius }
+        override int PopupRadius(Root root) { return root.theme.radius }
 
         construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) { }
 
-        bool PopupOutside(Root root, int px, int py) {
+        override bool PopupOutside(Root root, int px, int py) {
             root.ClosePopup(this)
             return false
         }
@@ -198,7 +198,7 @@ namespace UI {
             this.popupList = new SuggestList(0, 0, width, 24)
         }
 
-        string StyleKey() { return "AutoSuggestBox" }
+        override string StyleKey() { return "AutoSuggestBox" }
 
         any AddSuggestion(any item) {
             UI.M.Own(this, item)
@@ -265,7 +265,7 @@ namespace UI {
             return root != undefined && root.IsPopup(this.popupList)
         }
 
-        undefined Changed() {
+        override undefined Changed() {
             base.Changed()
             if (!this.suppress) { this.Suggest() }
         }
@@ -283,7 +283,7 @@ namespace UI {
             this.suppress = false
         }
 
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             // a click in the list has chosen
             if (this.popupList.TakeChanged() && this.popupList.SelectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
@@ -291,12 +291,12 @@ namespace UI {
         }
 
         // With the list open, Up/Down select a suggestion
-        bool WantsKey(int key) {
+        override bool WantsKey(int key) {
             if (this.ListOpen() && (key == UI.Keys.Down() || key == UI.Keys.Up())) { return true }
             return base.WantsKey(key)
         }
 
-        undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, int key, int mod) {
             if (this.ListOpen()) {
                 var list = this.popupList
                 if (key == UI.Keys.Down()) {
@@ -325,30 +325,30 @@ namespace UI {
     // The drop-down list of a ComboBox: rows follow the pointer, a click chooses, a click outside only closes it.
     class ComboList : ListBox {
         // (floating: its shadow follows the corners of the list)
-        int PopupRadius(Root root) { return root.theme.radius }
+        override int PopupRadius(Root root) { return root.theme.radius }
 
         ComboBox combo
 
         construct() : base(0, 0, 160, 24) { }
 
-        string StyleKey() { return "ComboList" }
+        override string StyleKey() { return "ComboList" }
 
         // the keys stay with the ComboBox
-        bool Focusable() { return false }
+        override bool Focusable() { return false }
 
-        bool PopupOutside(Root root, int px, int py) {
+        override bool PopupOutside(Root root, int px, int py) {
             var consumed = this.owner != undefined && this.owner.Contains(px, py)
             root.ClosePopup(this)
             return consumed
         }
 
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             base.Hover(root, px, py)
             var index = this.RowAt(root, px, py)
             if (index >= 0) { this.Select(index) }
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.OverBar(px, py)) {
                 base.MouseDown(root, button, px, py)
@@ -381,9 +381,9 @@ namespace UI {
             this.popupList = new ComboList()
         }
 
-        string StyleKey() { return "ComboBox" }
+        override string StyleKey() { return "ComboBox" }
 
-        bool Focusable() { return true }
+        override bool Focusable() { return true }
 
         int Count { get { return this.items.Count } }
 
@@ -515,14 +515,14 @@ namespace UI {
             this.Select(index)
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             for (var i = 0; i < this.items.Count; i = i + 1) { w = UI.M.Max(w, this.TextWidth(root, this.ItemText(this.items[i]))) }
             this.cw = w + 30
             this.ch = this.TextHeight(root) + 10
         }
 
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             if (this.SelectedIndex != this.seenSelected) {
                 // set from outside (e.g. by a binding): treat like a selection
@@ -532,7 +532,7 @@ namespace UI {
             }
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var theme = root.theme
@@ -567,18 +567,18 @@ namespace UI {
             }
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.IsDropDownOpen()) { this.CloseDropDown() } else { this.OpenDropDown() }
         }
 
-        bool WantsKey(int key) {
+        override bool WantsKey(int key) {
             if (key == UI.Keys.Down() || key == UI.Keys.Up()) { return this.IsDropDownOpen() || this.items.Count > 0 }
             return false
         }
 
         // the Alt keys are bits 9 and 10 (256, 512) of mod
-        undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, int key, int mod) {
             var alt = (mod / 256) % 4 != 0
             var open = this.IsDropDownOpen()
             if (open) {
@@ -614,14 +614,14 @@ namespace UI {
     class Separator : Element {
         construct() : base(0, 0, -1, -1) { }
 
-        string StyleKey() { return "Separator" }
+        override string StyleKey() { return "Separator" }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             this.cw = 5
             this.ch = 5
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var pen = this.Pen
             if (pen == undefined) { pen = root.theme.border }
@@ -640,7 +640,7 @@ namespace UI {
             this.ShowBorder = false
         }
 
-        string StyleKey() { return "ToolBar" }
+        override string StyleKey() { return "ToolBar" }
 
         UI.Button AddButton(string text, any onClick = undefined) {
             var button = new Button(text, 0, 0, -1, -1)
@@ -655,7 +655,7 @@ namespace UI {
             return s
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             // a line below the bar
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
@@ -673,9 +673,9 @@ namespace UI {
             this.Source = source
         }
 
-        string StyleKey() { return "Image" }
+        override string StyleKey() { return "Image" }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             if (this.Source == undefined) {
                 this.cw = 0
                 this.ch = 0
@@ -685,7 +685,7 @@ namespace UI {
             this.ch = this.Source.Height()
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.Background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Background) }
             if (this.Source == undefined) { return }

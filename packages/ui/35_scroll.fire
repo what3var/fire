@@ -126,12 +126,12 @@ namespace UI {
             this.hbar.owner = this
         }
 
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             if (this.content != undefined) { this.content.Poll(root) }
         }
 
-        string StyleKey() { return "ScrollViewer" }
+        override string StyleKey() { return "ScrollViewer" }
 
         // The child belongs to the ScrollViewer from now on.
         undefined SetContent(Element element) {
@@ -142,7 +142,7 @@ namespace UI {
             this.Invalidate()
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var c = this.content
             if (c == undefined) {
                 this.cw = 0
@@ -186,7 +186,7 @@ namespace UI {
             return 0
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             var c = this.content
             if (c == undefined) { return }
             this.viewW = UI.M.Max(0, w - this.ShownBar(this.showV))
@@ -201,7 +201,7 @@ namespace UI {
             c.Arrange(root, -this.hbar.offset, -this.vbar.offset, UI.M.Max(c.dw, this.viewW), UI.M.Max(c.dh, this.viewH))
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.content
@@ -217,7 +217,7 @@ namespace UI {
         }
 
         // In the section the child, on the bars the ScrollViewer itself.
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             var c = this.content
@@ -228,18 +228,18 @@ namespace UI {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             if (!this.Visible || !this.Enabled) { return }
             if (this.content != undefined) { this.content.Collect(list) }
         }
 
-        UI.Element FindName(string name) {
+        override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             if (this.content != undefined) { return this.content.FindName(name) }
             return undefined
         }
 
-        bool MouseWheel(Root root, int dx, int dy) {
+        override bool MouseWheel(Root root, int dx, int dy) {
             var step = this.TextHeight(root) * 3
             if (dx != 0 && this.showH) {
                 this.hbar.By(-dx * step)
@@ -256,29 +256,29 @@ namespace UI {
             return false
         }
 
-        bool CanPan() { return this.showV || this.showH }
+        override bool CanPan() { return this.showV || this.showH }
 
-        bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
+        override bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
 
-        bool PanBy(Root root, int dx, int dy) {
+        override bool PanBy(Root root, int dx, int dy) {
             if (!this.showV && !this.showH) { return false }
             if (this.showH) { this.hbar.By(-dx) }
             if (this.showV) { this.vbar.By(-dy) }
             return true
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.showV && px >= this.ax + this.viewW && py < this.ay + this.viewH) { this.vbar.Press(py - this.ay, this.viewH) }
             else if (this.showH && py >= this.ay + this.viewH && px < this.ax + this.viewW) { this.hbar.Press(px - this.ax, this.viewW) }
         }
 
-        undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, int px, int py) {
             if (this.vbar.dragging) { this.vbar.Drag(py - this.ay, this.viewH) }
             if (this.hbar.dragging) { this.hbar.Drag(px - this.ax, this.viewW) }
         }
 
-        undefined MouseUp(Root root, int button, int px, int py) {
+        override undefined MouseUp(Root root, int button, int px, int py) {
             this.vbar.Release()
             this.hbar.Release()
         }

@@ -73,7 +73,7 @@ namespace fire.Runtime
             while (true)
             {
                 if (condition()) return true;
-                PollSignalsAfterOp();
+                PollWhileWaiting();
                 if (_stopExecutionRequested) return false;
 
                 long remaining = deadline - Stopwatch.GetTimestamp();
@@ -85,7 +85,7 @@ namespace fire.Runtime
 
         /// <summary>`Sleep`: puts this thread to sleep for `ticks` (100 ns) - but not deaf. Between the short sleep pieces, what otherwise runs at the safe
         /// points runs (<see cref="PollSignalsAfterOp"/>): `leave`/`terminate` end the sleeping immediately, delivered fire-thread exceptions are handled, and
-        /// in the main program the automatic processing of the queue works (sections, `fire global` jobs, host callbacks; not with `#nosync`).
+        /// in the main program the automatic processing of the queue works (sections, `fire global` jobs, host callbacks; modes safepoints and sleep, not sync / `#nosync`).
         /// An entry in the queue wakes the sleeping earlier.</summary>
         public void SleepTicks(long ticks)
         {
@@ -120,7 +120,7 @@ namespace fire.Runtime
             long deadline = Stopwatch.GetTimestamp() + (long)(ticks * (Stopwatch.Frequency / 10_000_000.0));
             while (true)
             {
-                PollSignalsAfterOp();
+                PollWhileWaiting();
                 if (_stopExecutionRequested) return;
 
                 long remaining = deadline - Stopwatch.GetTimestamp();

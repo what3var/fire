@@ -39,6 +39,16 @@ namespace fire.Compiler
         private TypeCheckMode EffectiveTypeChecking => TypeChecking ?? ProcessDefaultTypeChecking
             ?? (string.Equals(Plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax);
 
+        /// <summary>When the main program processes its queue by itself (`--global-jobs`, docs/THREADING_DESIGN.md section 7): goes before the project, `#globaljobs` and
+        /// fire.native.json. Process-wide, like <see cref="ProcessDefaultTypeChecking"/>.</summary>
+        public static GlobalJobsMode? ProcessGlobalJobs { get; set; }
+
+        /// <summary>`"globalJobs"` of fire.native.json (a native build): used when neither the command line, the project nor `#globaljobs`/`#nosync` say anything.</summary>
+        public GlobalJobsMode? GlobalJobsDefault { get; set; }
+
+        /// <summary>The command line, then the project (`settings.globalJobs`); null: the source decides (`#globaljobs`, then <see cref="GlobalJobsDefault"/>).</summary>
+        private GlobalJobsMode? ForcedGlobalJobs => ProcessGlobalJobs ?? GlobalJobsModes.Parse(Plan?.Settings?.GlobalJobs);
+
         /// <summary>The engine the program is built for, a symbol of `#if` (`vm` or `native`).</summary>
         public string Engine { get; set; } = ConditionalSymbols.DefaultEngine;
 
@@ -259,7 +269,7 @@ namespace fire.Compiler
 
         /// <summary>A statement at the top level that only declares (runs nothing): a class, interface, enum, function, namespace, extension or a directive.</summary>
         private static bool IsDeclaration(Ast.Stmt stmt) =>
-            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
+            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
 
         /// <summary>`forge test` (docs/TESTING.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
         /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
@@ -534,7 +544,7 @@ namespace fire.Compiler
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
-            var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta);
+            var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
             // the classes of a package with `"serializable": false` (docs/JSON.md)
             var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));
             if (notSerializable.Count > 0)

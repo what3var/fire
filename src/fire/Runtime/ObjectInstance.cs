@@ -137,6 +137,10 @@ namespace fire.Runtime
                 _owned[i].MarkGlobalsDomain(ThreadLock);
         }
 
+        /// <summary>`fire handover`: the object leaves the shared area of the globals (it belongs to a fire thread now, which changes it without a
+        /// section). The tree lock stays (harmless). Only this object - ObjectHandover walks the owned ones itself.</summary>
+        internal void LeaveGlobalsDomain() => InGlobalsDomain = false;
+
         /// <summary>Hidden back-link to the original, if THIS
         /// object itself is a `taking` copy (see
         /// docs/THREADING_DESIGN.md section 3) - basis for `sync`/

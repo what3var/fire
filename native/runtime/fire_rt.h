@@ -269,6 +269,7 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
     X(uint64_t, g_throwToken, 0) \
     X(uint8_t, g_isThread, 0)           /* 1 on a fire thread */ \
     X(int32_t, g_jobDepth, 0)           /* a `fire global` job is running on this thread */ \
+    X(int32_t, g_noSyncDepth, 0)        /* something runs for itself (a destructor, a host service, `catch threads`/`catch terminate`): no automatic queue in it */ \
     X(uint32_t, g_attnMask, 7u)         /* the signals this thread looks at (ATTN_ALL|ATTN_MAIN|ATTN_SECT); fire threads clear all but ATTN_ALL */ \
     X(int32_t, g_tick, 4096) \
     X(uint8_t, g_leaving, 0)            /* unwinding because of leave/terminate (or an unhandled exception): no more signals */ \
@@ -332,6 +333,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_throwToken FIRE_TLV(g_throwToken)
 #define g_isThread FIRE_TLV(g_isThread)
 #define g_jobDepth FIRE_TLV(g_jobDepth)
+#define g_noSyncDepth FIRE_TLV(g_noSyncDepth)
 #define g_attnMask FIRE_TLV(g_attnMask)
 #define g_tick FIRE_TLV(g_tick)
 #define g_leaving FIRE_TLV(g_leaving)
@@ -4955,16 +4957,11 @@ FIRE_NORETURN FIRE_COLD FIRE_FN void takingViolation(const char* what) {
     exitNow(1);
 }
 
-/* Is `o` the object `root` or (transitively) owned by it? */
-FIRE_FN bool withinTree(Obj* o, Obj* root) {
-    Owned* x = &o->h;
-    for (;;) {
-        OwnList* l;
-        if (x == &root->h) return true;
-        l = x->owner;
-        if (!l || !l->holder) return false;
-        x = l->holder;
-    }
+/* ... the same reason found before anything is copied (the check of `fire ... taking x`): the ArgumentException, the thread does not start. */
+FIRE_COLD FIRE_FN Value takingRefused(const char* what) {
+    char text[200];
+    snprintf(text, sizeof text, "'taking' rejected: %s", what);
+    return fireError("ArgumentException", text);
 }
 
 /* A growing array of anything (`elem` bytes per item). */
@@ -4979,10 +4976,9 @@ FIRE_FN void* fire_growPush(void* items, uint32_t* count, uint32_t* cap, size_t 
 
 typedef struct DeepCopier {
     OwnList* owner;
-    bool taking;          /* a copy for a fire thread (`taking`): only the own ownership tree of treeRoot, copies are marked */
+    bool taking;          /* a copy for a fire thread (`taking`): everything reachable is copied (whoever owns it), copies are marked; no lambdas/pointers */
     bool noCopy;          /* `copy x` (and the arguments of a job): an instance of a `[NoCopy]` class is an ArgumentException */
     const char* noCopyOp; /* ... its text: NULL for copy, else "taking"/"fire global"/"sync" (noCopyErrorOp) */
-    Obj* treeRoot;
     CopyMap objects;      /* object -> copy (the objects found, which are copied) */
     CopyMap containers;   /* array/buffer -> copy */
     Obj** order;
@@ -5020,23 +5016,17 @@ FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
     copierPushPending(c, start);
     while (c->pendingCount) {
         Value v = c->pending[--c->pendingCount];
-        if (c->taking && v.kind == K_Lambda) takingViolation("lambda values cannot be copied for a thread.");
-        if (c->taking && v.kind == K_Pointer) takingViolation("raw pointers cannot be copied for a thread.");
+        if (c->taking && (v.kind == K_Lambda || v.kind == K_Pointer)) {
+            const char* what = v.kind == K_Lambda ? "lambda values cannot be copied for a thread." : "raw pointers cannot be copied for a thread.";
+            if (c->noCopy) { takingRefused(what); return false; }   /* the check before `taking` (noCopyFree): the ArgumentException */
+            takingViolation(what);
+        }
         if (v.kind == K_Class) {
             Obj* o;
             if (!leafAlive(v)) continue;
             o = asObj(v);
             if (copyMapFind(&c->objects, o)) continue;
             if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyErrorOp(o->cls, start.kind != K_Class || o != asObj(start), c->noCopyOp); return false; }
-            if (c->taking && c->treeRoot && !withinTree(o, c->treeRoot)) {
-#ifdef FIRE_THREADS
-                char text[200];
-                snprintf(text, sizeof text, "a field refers to an instance of '%s', which is not part of its own ownership tree.", className(o->cls));
-                takingViolation(text);
-#else
-                takingViolation("a field refers to an instance that is not part of its own ownership tree.");
-#endif
-            }
             copyMapPut(&c->objects, o, Undef());   /* marks it as found; the copy is made in phase 2 */
             c->order = (Obj**)fire_growPush(c->order, &c->orderCount, &c->orderCap, sizeof(Obj*));
             c->order[c->orderCount++] = o;
@@ -5145,6 +5135,7 @@ FIRE_FN bool noCopyFree(Value v, const char* op) {
     copierInit(&c, NULL);
     c.noCopy = true;
     c.noCopyOp = op;
+    c.taking = strcmp(op, "taking") == 0;   /* (a lambda or a pointer in it cannot be copied for a thread either) */
     ok = copierDiscover(&c, v);
     copierFree(&c);
     return ok;
@@ -5592,7 +5583,7 @@ FIRE_FN void notifyEvent(void) {
 }
 
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
- * wait for it; not looked at with `#nosync`). */
+ * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4 };
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 
@@ -6028,8 +6019,9 @@ FIRE_FN void originFree(Obj* o) {
     }
 }
 
-/* `fire ... taking x`: what the thread gets. An object, array or buffer is copied (isolated, THREADING_DESIGN 3), the copy goes to `travel`; a string or lambda
- * is shared (the thread gets a count of it), other values are plain. */
+/* `fire ... taking x`: what the thread gets. An object, array or buffer is copied with everything reachable from it, whoever owns the parts (isolated,
+ * THREADING_DESIGN 3); a copied object owned by another copied one belongs to its copy, every other copy to `travel` (the root scope of the thread). A string
+ * or lambda is shared (the thread gets a count of it), other values are plain. */
 FIRE_FN Value takeCopy(Value v, OwnList* travel) {
     DeepCopier c;
     Value copy;
@@ -6037,7 +6029,6 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
         case K_Class:
             copierInit(&c, travel);
             c.taking = true;
-            c.treeRoot = asObj(v);
             copy = copierRun(&c, v);
             copierFree(&c);
             originAdd(asObj(copy), asObj(v));
@@ -6060,6 +6051,105 @@ FIRE_FN bool takingNoCopyFree(const Value* vs, uint32_t n) {
     uint32_t i;
     for (i = 0; i < n; i++) if (!noCopyFree(vs[i], "taking")) return false;
     return true;
+}
+
+/* ---- `fire handover x`: x goes to the thread without a copy (the VM: Runtime.ObjectHandover). Everything reachable from x through fields and elements, and
+ * what the objects (and arrays) own, moves as it is: a part whose owner moves too keeps it, every other part belongs to `travel` (the root scope of the thread)
+ * from then on, whoever owned it before; the parts leave the shared domain of the globals. Actors and destroyed values stay shared references. */
+FIRE_FN Value ownedValue(Owned* h) { return h->okind == O_Object ? ObjV((Obj*)h) : h->okind == O_Array ? ArrV((Arr*)h) : BufV((Buf*)h); }
+FIRE_COLD FIRE_FN Value handoverRefused(const char* what) {
+    char text[200];
+    snprintf(text, sizeof text, "'handover' rejected: %s", what);
+    return fireError("ArgumentException", text);
+}
+/* The parts that move (`seen` marks them, `parts` lists them in discovery order); false - the ArgumentException is thrown - for a lambda or a pointer in a field
+ * or an element, and in a fire thread for a part of the main program's globals (the thread does not own it). Nothing is changed. */
+FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* count, uint32_t* cap) {
+    Value* pending = NULL;
+    uint32_t pn = 0, pcap = 0, i;
+    bool ok = true;
+    if (!ownedOf(v)) return true;
+    pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+    pending[pn++] = v;
+    while (pn) {
+        Value x = pending[--pn];
+        Owned* h;
+        Owned* k;
+        if (x.kind == K_Lambda || x.kind == K_Pointer) {
+            handoverRefused(x.kind == K_Lambda ? "lambda values cannot be handed to a thread." : "raw pointers cannot be handed to a thread.");
+            ok = false;
+            break;
+        }
+        h = ownedOf(x);
+        if (!h || copyMapFind(seen, h)) continue;
+        if (h->okind == O_Object && (h->flags & 8)) continue;   /* an actor stays a shared reference */
+        if (g_isThread && (h->flags & F_SHARED)) {
+            handoverRefused("it reaches an object of the main program's global variables, which this thread does not own.");
+            ok = false;
+            break;
+        }
+        copyMapPut(seen, h, Undef());
+        *parts = (Owned**)fire_growPush(*parts, count, cap, sizeof(Owned*));
+        (*parts)[(*count)++] = h;
+        if (h->okind == O_Object) {
+            Obj* o = (Obj*)h;
+            for (i = 0; i < o->nfields; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = objFields(o)[i];
+            }
+            for (k = o->owned.head; k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        } else if (h->okind == O_Array) {
+            Arr* a = (Arr*)h;
+            for (i = 0; i < a->length; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = arrItems(a)[i];
+            }
+            for (k = a->parts ? a->parts->head : NULL; k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        }
+    }
+    free(pending);
+    return ok;
+}
+/* The check before anything is copied or moved (for all `handover` values of a `fire`). */
+FIRE_FN bool handoverFree(const Value* vs, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        CopyMap seen = {0};
+        Owned** parts = NULL;
+        uint32_t count = 0, cap = 0;
+        bool ok = handoverDiscover(vs[i], &seen, &parts, &count, &cap);
+        copyMapFree(&seen);
+        free(parts);
+        if (!ok) return false;
+    }
+    return true;
+}
+/* What the thread gets for `handover x`: x itself, moved (see above); a string or lambda is shared as with `taking`. */
+FIRE_FN Value handOver(Value v, OwnList* travel) {
+    CopyMap seen = {0};
+    Owned** parts = NULL;
+    uint32_t count = 0, cap = 0, i;
+    if (v.kind == K_String || v.kind == K_Lambda) { retain(v); return v; }
+    if (!ownedOf(v)) return v;
+    handoverDiscover(v, &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
+    for (i = 0; i < count; i++) {
+        Owned* h = parts[i];
+        OwnList* l = h->owner;
+        if (!(l && l->holder && copyMapFind(&seen, l->holder))) {
+            if (l) ownUnlink(h);
+            ownLink(travel, h);
+        }
+    }
+    for (i = 0; i < count; i++) parts[i]->flags &= (uint8_t)~F_SHARED;
+    copyMapFree(&seen);
+    free(parts);
+    return v;
 }
 
 /* ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):
@@ -6273,12 +6363,18 @@ FIRE_FN void hostHold(int32_t delta) {
 FIRE_FN void hostServe(void) {
     uint32_t i;
     if (fire_atomic_exchange(&g_hostPending, 0) == 0) return;
+    g_noSyncDepth++;   /* (what a service runs - a window's event handler - runs for itself: its own safe points do not serve the queue) */
     for (i = 0; i < g_hostServiceCount; i++) g_hostServices[i]();
+    g_noSyncDepth--;
 }
 
-/* The main program at a safe point: what the fire threads left for it (their exceptions; sections and jobs unless `#nosync`). */
-extern FIRE_RT_DATA bool g_autoSync;
-FIRE_FN void mainPoll(void) {
+/* When the main program serves its queue by itself (docs/THREADING_DESIGN.md section 7; `SetAutoSync`, the same values as fire.Runtime.GlobalJobsMode):
+ * GJ_SAFEPOINTS (the default) at a loop's jump back and while waiting (`Sleep`, the wait functions), GJ_SLEEP only while waiting, GJ_SYNC never (`#nosync`);
+ * `sync globals` and the end of the program always. A call (function entry) and a native call (`print`) are no safe points for it - as in the VM. */
+enum { GJ_SYNC = 0, GJ_SAFEPOINTS = 1, GJ_SLEEP = 2 };
+extern FIRE_RT_DATA uint8_t g_globalJobs;
+/* The exceptions of the fire threads (and of the jobs) that reached the main program: `catch threads`, or the program ends. */
+FIRE_FN void deliverThreadExceptions(void) {
     while (g_pendingExc.count && !g_unwind.active) {
         Value e = g_pendingExc.items[0];
         Value (*handler)(Value) = NULL;
@@ -6288,31 +6384,49 @@ FIRE_FN void mainPoll(void) {
         for (i = 0; i < g_threadsCatchCount; i++)
             if (g_threadsCatches[i].typeId < 0 || excMatches(e, g_threadsCatches[i].typeId)) { handler = g_threadsCatches[i].fn; break; }
         if (!handler) { reportUnhandled(e); exitNow(1); }
+        g_noSyncDepth++;   /* (a handler runs for itself, as in the VM) */
         handler(e);
+        g_noSyncDepth--;
     }
     if (!g_pendingExc.count) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
-    if (g_autoSync && !g_unwind.active) { drainQueue(); hostServe(); }
+}
+/* The main program at a safe point: what the fire threads left for it - their exceptions, and (as the mode says: `waiting` = Sleep or a wait function, else a loop's
+ * jump back) the sections, jobs and host services. */
+FIRE_FN void mainPoll(bool waiting) {
+    deliverThreadExceptions();
+    if (!(g_globalJobs == GJ_SAFEPOINTS || (waiting && g_globalJobs == GJ_SLEEP))) return;
+    /* (not inside a running job: its own safe points would run the next jobs nested, before it ends - out of order; not in a destructor, a host service, a
+     * `catch threads` handler; the VM does not either) */
+    if (!g_unwind.active && g_jobDepth == 0 && g_noSyncDepth == 0) { drainQueue(); hostServe(); }
 }
 
-FIRE_COLD FIRE_FN bool pollSlow(void) {
+FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
     if (g_leaving) return false;
     if (g_terminate.requested) { startLeave(); return true; }
-    if (g_attnMask & ATTN_MAIN) mainPoll();
+    if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
     return g_unwind.active != 0;
 }
 
-/* A safe point (loop back edge, function entry, after a native call): now and then the GIL is offered to the other threads, and the signals are looked at.
- * True when a leave/an exception is unwinding because of it. */
+/* A safe point for the signals (function entry, after a native function that waits): now and then the GIL is offered to the other threads, and the signals are
+ * looked at - not the queue (ATTN_SECT). True when a leave/an exception is unwinding because of it. */
 FIRE_FN bool pollSignals(void) {
     if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
+    if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask & ~(uint32_t)ATTN_SECT))) return false;
+    return pollSlow(false);
+}
+
+/* A loop's jump back: like pollSignals, and the main program serves its queue there (ATTN_SECT is in its mask only in the mode `safepoints`). */
+FIRE_FN bool pollLoop(void) {
+    if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
     if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask))) return false;
-    return pollSlow();
+    return pollSlow(true);
 }
 
 /* `sync globals`: serves the queue (main program) and gives the other threads a turn; a thread gets 0. */
 FIRE_FN int64_t syncGlobals(void) {
     int64_t handled = 0;
-    if (!g_isThread) { mainPoll(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
+    /* (not mainPoll: its automatic processing would run the queue without counting it - `sync globals` counts what it processes, as in the VM) */
+    if (!g_isThread) { deliverThreadExceptions(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
     gilYield();
     return handled;
 }
@@ -6321,13 +6435,27 @@ FIRE_FN int64_t syncGlobals(void) {
  * threads leave for it (sections, jobs, their exceptions) while it sleeps; whatever that raises ends the sleep. */
 FIRE_FN bool fire_sleepWake(void* ctx) {
     (void)ctx;
-    if (!g_isThread) mainPoll();
+    if (!g_isThread) mainPoll(true);
     return g_unwind.active != 0;
+}
+/* A wait function of a device (or any wait that is not `Sleep`): waits with blockUntil until `pred(ctx)`, and the main program serves meanwhile, like `Sleep`. */
+typedef struct FireWaitServing { bool (*pred)(void*); void* ctx; } FireWaitServing;
+FIRE_FN bool fire_waitServingPred(void* c) {
+    FireWaitServing* w = (FireWaitServing*)c;
+    if (!g_isThread) { mainPoll(true); if (g_unwind.active) return true; }
+    return w->pred(w->ctx);
+}
+FIRE_FN bool blockUntilServing(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs) {
+    FireWaitServing w;
+    w.pred = pred;
+    w.ctx = ctx;
+    return blockUntil(fire_waitServingPred, &w, stopOnTerminate, deadlineMs);
 }
 FIRE_FN void sleepTicks(int64_t ticks) {
     int32_t held;
     int64_t deadline;
-    if (ticks <= 0) { gilYield(); return; }
+    /* (`Sleep(0)` is a safe point too: the main program serves its queue once, as in the VM) */
+    if (ticks <= 0) { if (!g_isThread) fire_sleepWake(NULL); gilYield(); return; }
     /* a thread sleeping inside a method of a shared object gives its section back for the sleep */
     held = sectionYieldBegin();
     deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
@@ -6339,7 +6467,7 @@ FIRE_FN void sleepTicks(int64_t ticks) {
  * globals are destroyed. */
 FIRE_FN bool fire_mainDone(void* ctx) {
     (void)ctx;
-    mainPoll();
+    deliverThreadExceptions();
     drainQueue();
     if (!g_unwind.active) hostServe();
     return g_threadsLive == 0 && g_pendingExc.count == 0 && g_reqs.count == 0 && ((int32_t)fire_atomic_load(&g_hostHolds) <= 0 || g_terminate.requested);
@@ -6350,7 +6478,9 @@ FIRE_FN void mainFinish(void) {
     g_leaving = 0;
     if (g_terminate.requested && g_terminateFn) {
         g_leaving = 1;   /* no more signals while the handler runs */
+        g_noSyncDepth++;
         g_terminateFn(g_terminate.value);
+        g_noSyncDepth--;
         clearUnwind();
         g_leaving = 0;
     }
@@ -6449,7 +6579,7 @@ fire_atomic32 g_hostPending;
 fire_atomic32 g_hostHolds;
 HostService* g_hostServices = NULL;
 uint32_t g_hostServiceCount = 0, g_hostServiceCap = 0;
-bool g_autoSync = true;
+uint8_t g_globalJobs = GJ_SAFEPOINTS;
 #endif
 #endif  /* FIRE_RT_IMPLEMENTATION */
 
@@ -6483,7 +6613,8 @@ const char* className(uint32_t cls) {
 
 void runDestructors(Obj* o) {
     const FireClassDesc* d = classDescOf(o->cls);
-    if (d && d->destroy) d->destroy(o);
+    /* (a destructor runs in the middle of something: the main program does not serve its queue in it, as in the VM) */
+    if (d && d->destroy) { g_noSyncDepth++; d->destroy(o); g_noSyncDepth--; }
 }
 
 int32_t excMessageIndex(uint32_t cls) {

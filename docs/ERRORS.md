@@ -88,7 +88,7 @@ configuration of the native build, a toolchain that is missing).
 | `E3010` | Expected 'var' or a type declaration after 'readonly' |
 | `E3011` | 'byte' already has a fixed width of 8 bits - no additional '[...]' may follow |
 | `E3012` | For variables, fields and parameters an array is written with the brackets after the name ('int values[]'); 'int[]' as a type only exists as the return type of a method or property |
-| `E3013` | Unknown preprocessor directive '#…' (known: '#extern "libName"', '#noshadow', '#nosync', '#timeout value') |
+| `E3013` | Unknown preprocessor directive '#…' (known: '#extern "libName"', '#noshadow', '#nosync', '#globaljobs safepoints\|sleep\|sync', '#timeout value') |
 | `E3014` | Multiple 'case default' in one switch are not allowed |
 | `E3015` | 'with' does not exist for 'fire global' |
 | `E3016` | 'with' was already used in this 'fire' |
@@ -235,6 +235,7 @@ configuration of the native build, a toolchain that is missing).
 | `E3157` | Expected the text of the warning (a string) after 'warn <id>:' |
 | `E3158` | The id of a warning ('warn <id>: "text"') is a whole number from 0 to 99999 |
 | `E3159` | The target of '{*}' must not contain a call, '++', '--' or an assignment (write the assignment out) |
+| `E3160` | '#globaljobs' expects safepoints, sleep or sync |
 
 ### E4xxx - Resolver: names, types, declarations
 

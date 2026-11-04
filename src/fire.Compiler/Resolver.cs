@@ -1199,7 +1199,7 @@ namespace fire.Compiler
                 case TypeCheckDirective:
                     break; // read by the type checker
 
-                case NoSyncDirective:
+                case GlobalJobsDirective:
                     break; // takes effect only at runtime (see Compiler.Compile: SetAutoSync)
 
                 case TimeoutDirective td:
@@ -2169,7 +2169,12 @@ namespace fire.Compiler
         {
             _sawFire = true;
             foreach (var capture in fs.TakingCaptures)
+            {
                 ResolveExpr(capture.Source);
+                // `handover` in a fire thread: only a variable of the thread itself - a global variable of the main program is not its own to give away
+                if (capture.Handover && _fireScope != null && FindScopeOf(capture.VarName) == _fireScope && _fireScope.Slots[capture.VarName] < _fireSharedSlots)
+                    throw new ResolverException($"'handover' needs a variable of this thread: '{capture.VarName}' is a global variable of the main program", fs.Line);
+            }
             if (fs.WithSource != null)
                 ResolveExpr(fs.WithSource);
 
@@ -2207,6 +2212,10 @@ namespace fire.Compiler
                 // the slots of the globals that are declared later belong to the main program: keep them free in the body (placeholders)
                 for (; nextCaptureSlot < finalCount; nextCaptureSlot++) _current.Slots["\u0001global:" + nextCaptureSlot] = nextCaptureSlot;
             }
+            var savedFireScope = _fireScope;
+            int savedFireSharedSlots = _fireSharedSlots;
+            _fireScope = _current;
+            _fireSharedSlots = nextCaptureSlot;
             var capturesSeen = new HashSet<string>();
             foreach (var capture in fs.TakingCaptures)
             {
@@ -2244,7 +2253,22 @@ namespace fire.Compiler
             _tryDepth = savedTryDepth;
             _functionDepth = savedFunctionDepth;
             _inConstructor = savedInConstructor;
+            _fireScope = savedFireScope;
+            _fireSharedSlots = savedFireSharedSlots;
             _current = saved;
+        }
+
+        // The isolated global scope of the fire body being resolved (null outside of one) and how many of its slots are the main program's
+        // globals - a `handover` inside it must not name one of them (see ResolveFireStmt).
+        private ResolverScope? _fireScope;
+        private int _fireSharedSlots;
+
+        /// <summary>The scope of the current chain that declares `name` (null: none).</summary>
+        private ResolverScope? FindScopeOf(string name)
+        {
+            for (var s = _current; s != null; s = s.Parent)
+                if (s.Slots.ContainsKey(name)) return s;
+            return null;
         }
 
         /// <summary>Common body resolution for `catch threads(...)`/`catch

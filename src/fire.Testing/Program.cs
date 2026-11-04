@@ -2917,7 +2917,7 @@ catch (Exception ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Multithreading: 'taking' lehnt baumfremde Referenzen ab ===");
+Console.WriteLine("=== Multithreading: 'taking' kopiert auch baumfremde Referenzen (alles Erreichbare) ===");
 
 try
 {
@@ -2932,15 +2932,12 @@ try
     root.Fields["escapesTree"] = Value.MakeClassRef(independent);
 
     var childScope3 = new Scope(null, isGlobal: true);
-    try
-    {
-        ObjectCopier.Take(root, childScope3);
-        Console.WriteLine("FEHLER: hätte eine TakingViolationException werfen müssen.");
-    }
-    catch (TakingViolationException ex)
-    {
-        Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
-    }
+    var taken = ObjectCopier.Take(root, childScope3);
+    var escaped = (ObjectInstance)taken.Fields["escapesTree"].AsObjectRef();
+    bool copiedApart = !ReferenceEquals(escaped, independent) && escaped.IsTakingCopy && ReferenceEquals(escaped.Owner, childScope3);
+    Console.WriteLine(copiedApart
+        ? "Baumfremde Referenz kopiert, die Kopie gehoert dem Thread-Scope."
+        : "FEHLER: die baumfremde Referenz haette kopiert werden muessen (Besitzer: Thread-Scope).");
 }
 catch (Exception ex)
 {
@@ -5517,8 +5514,8 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         class Upper : IO.Stream {
             any inner
             construct(inner) { this.inner = inner }
-            bool CanWrite { get { return true } }
-            int Write(buffer, offset, count) {
+            override bool CanWrite { get { return true } }
+            override int Write(buffer, offset, count) {
                 var chunk = new byte[count]
                 for (var i = 0; i < count; i++) {
                     var c = buffer[offset + i]
@@ -6695,7 +6692,10 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(words.length)
         """, new[] { "2", "7", "6", "2", "destroyed: Access to a destroyed array.", "after delete: Access to a destroyed array.", "len: Access to a destroyed array.", "9", "matrix gone", "5", "free r2", "end", "free kept", "last", "done", "5", "3", "8", "3" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
-    CheckPerf("Ownership in Property-Accessoren (SPEC 2.2): Feld von this, Property, Return gewinnt, Ausnahme, Setter, normale Methode unveraendert", """
+    // Ownership in property accessors (SPEC 2.2). Release also reads the destroyed objects (DestroyedException); #performance checks nothing there
+    // (SPEC 2.5: undefined, natively a read of freed memory) - its run leaves those reads out, the order of the destructors shows the same ownership.
+    // (Not Debug: it adds warnings for the fields that outlive their object.)
+    const string accessorOwnership = """
         class Item {
             string n
             construct(string n) { this.n = n }
@@ -6767,7 +6767,14 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         h.Method()
         try { print(h.cache.n) } catch (DestroyedException e) { print("method destroyed") }
         print("end")
-        """, new[] { "field: 1 True True inner", "ret: False True", "retfield: False retfield", "prop: 2 True prop", "peer: 3 True peer", "auto: 4 True auto", "destroy nested", "nested: 5", "nested destroyed", "caught boom True throws", "array: 3 42", "make: True made 7", "forward: True fwd 8", "finally: False", "fin: False fin", "outside: False", "destroy outside", "outside destroyed", "destroy method", "method destroyed", "end", "destroy peer", "destroy auto", "destroy fwd 8", "destroy field", "destroy inner", "destroy prop", "destroy throws", "destroy made 7", "destroy ret", "destroy retfield", "destroy fin" }, new[] { VmExecutionMode.Release, VmExecutionMode.Performance });
+        """;
+    string[] accessorExpected = new[] { "field: 1 True True inner", "ret: False True", "retfield: False retfield", "prop: 2 True prop", "peer: 3 True peer", "auto: 4 True auto", "destroy nested", "nested: 5", "nested destroyed", "caught boom True throws", "array: 3 42", "make: True made 7", "forward: True fwd 8", "finally: False", "fin: False fin", "outside: False", "destroy outside", "outside destroyed", "destroy method", "method destroyed", "end", "destroy peer", "destroy auto", "destroy fwd 8", "destroy field", "destroy inner", "destroy prop", "destroy throws", "destroy made 7", "destroy ret", "destroy retfield", "destroy fin" };
+    string[] accessorDeadReads = { "try { print(h.node.child.n) } catch (DestroyedException e) { print(\"nested destroyed\") }", "try { print(h.slot.n) } catch (DestroyedException e) { print(\"outside destroyed\") }", "try { print(h.cache.n) } catch (DestroyedException e) { print(\"method destroyed\") }" };
+    CheckPerf("Ownership in Property-Accessoren (SPEC 2.2): Feld von this, Property, Return gewinnt, Ausnahme, Setter, normale Methode unveraendert",
+        accessorOwnership, accessorExpected, new[] { VmExecutionMode.Release });
+    CheckPerf("Ownership in Property-Accessoren (SPEC 2.2): dasselbe ohne Zugriffe auf zerstoerte Objekte (#performance prueft sie nicht)",
+        accessorDeadReads.Aggregate(accessorOwnership, (text, read) => text.Replace(read, "")),
+        accessorExpected.Where(l => !l.EndsWith(" destroyed")).ToArray(), new[] { VmExecutionMode.Performance });
 
     CheckPerf("Objekte: Ownership und Destruktor pro Schleifendurchlauf", """
         class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
@@ -10398,7 +10405,7 @@ uiDrawScript = """
         class CountingArea : UI.TextArea {
             int drawn = 0
             construct(string text, int x, int y, int w, int h) : base(text, x, y, w, h) { }
-            undefined DrawRow(UI.Root root, int row, int left, int y, int selStart, int selEnd, Brush color) {
+            override undefined DrawRow(UI.Root root, int row, int left, int y, int selStart, int selEnd, Brush color) {
                 this.drawn = this.drawn + 1
                 base.DrawRow(root, row, left, y, selStart, selEnd, color)
             }
@@ -10555,7 +10562,7 @@ uiDrawScript = """
         class Counter : UI.Element {
             int painted = 0
             construct(int x, int y) : base(x, y, 40, 40) { }
-            undefined Draw(UI.Root root, int ax, int ay) {
+            override undefined Draw(UI.Root root, int ax, int ay) {
                 if (!this.NeedsDraw(root, ax, ay)) { return }
                 this.painted = this.painted + 1
             }
@@ -13054,12 +13061,24 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
         print("nie")
         """, new[] { "~G" });
 
-    CheckCb("Host-Thread-Callback wird dem Hauptprogramm eingereiht und automatisch an einem sicheren Punkt ausgefuehrt (echte Globals)", cbHead + """
+    CheckCb("Host-Thread-Callback wird dem Hauptprogramm eingereiht und automatisch an einem sicheren Punkt ausgefuehrt (echte Globals; Ruecksprung einer Schleife, nicht nach der nativen Funktion)", cbHead + """
         var counter = 0
         __Keep(func () => { counter = counter + 1; print("cb " + counter) })
         __RunKeptOnOtherThread()
+        print("nach dem Aufruf " + counter)
+        for (var i = 0; i < 1; i++) { }
         print("counter " + counter)
-        """, new[] { "cb 1", "counter 1" });
+        """, new[] { "nach dem Aufruf 0", "cb 1", "counter 1" });
+
+    CheckCb("#globaljobs sleep: der Host-Thread-Callback wartet nicht an der Schleife (erst Sleep oder sync globals)", "#globaljobs sleep\n" + cbHead + """
+        var counter = 0
+        __Keep(func () => { counter = counter + 1; print("cb " + counter) })
+        __RunKeptOnOtherThread()
+        for (var i = 0; i < 3; i++) { }
+        print("nach der Schleife " + counter)
+        var n = sync globals
+        print("counter " + counter + " " + n)
+        """, new[] { "nach der Schleife 0", "cb 1", "counter 1 1" });
 
     CheckCb("Mit #nosync wartet der Host-Thread-Callback auf `sync globals`", "#nosync\n" + cbHead + """
         var counter = 0
@@ -13073,6 +13092,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
     CheckCb("Host-Thread-Callback: eine unbehandelte Exception geht als Text an den Host, das Hauptprogramm laeuft weiter", cbHead + """
         __Keep(func () => { throw new Exception("kaputt") })
         __RunKeptOnOtherThread()
+        for (var i = 0; i < 1; i++) { }
         print("weiter")
         """, new[] { "CB: Unhandled exception of type 'Exception': kaputt", "weiter" });
 
@@ -19132,6 +19152,338 @@ else
             print("check: " + h.Check)
             print("end")
             """),
+        ("Threads: taking kopiert alles Erreichbare (Array-Literal im Feld, fremde Objekte, Arrays, Puffer) - Besitzer der Kopien ist der Thread; Lambda im Feld: ArgumentException", """
+            #nosync
+            class Item { int v
+                construct(int v) { this.v = v } }
+            class P { Item items[]; Item other; Item own
+                construct() { this.own = new Item(7) } }
+            class L { any f }
+            var done = 0
+            var p = new P()
+            p.items = [new Item(1), new Item(2)]
+            var shared = new Item(10)
+            p.other = shared
+            var arr = [1, 2, 3]
+            var objs = [new Item(4), shared]
+            var nested = [[5, 6], [7]]
+            var l = new L()
+            l.f = func() => 1
+            try { fire taking l { print("never") } } catch (ArgumentException e) { print("lambda: " + e.message) }
+            try { fire taking p taking l { print("never") } } catch (ArgumentException e) { print("lambda 2: " + e.message) }
+            fire taking p taking arr taking objs taking nested {
+                print("sum " + (p.items[0].v + p.items[1].v + p.other.v + p.own.v))
+                print("own " + (p.own is from p) + " " + (p.items[0] is from p))
+                p.items[0].v = 100
+                p.other.v = 11
+                arr[0] = 99
+                objs[0].v = 77
+                nested[0][1] = 60
+                print("in thread " + arr[0] + " " + objs[0].v + " " + nested[0][1])
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print(p.items[0].v + " " + shared.v + " " + arr[0] + " " + objs[0].v + " " + nested[0][1])
+            done = 0
+            fire taking p {
+                p.other.v = 12
+                p.items[1].v = 20
+                sync p
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("after sync " + shared.v + " " + p.items[1].v)
+            print("end")
+            """),
+        ("Threads: sync globals zaehlt die fire-global-Auftraege des Hauptprogramms (ohne #nosync), in ihrer Reihenfolge", """
+            var x = 0
+            fire global { x = x + 5 }
+            fire global { x = x * 2 }
+            var n = sync globals
+            print(n + " " + x)
+            print(sync globals)
+            fire global taking n { x = x + n }
+            print(sync globals)
+            print(x)
+            """),
+        ("Threads: #nosync - fire-global-Auftraege laufen erst bei sync globals, nacheinander (keiner in einem anderen)", """
+            #nosync
+            var x = 0
+            fire global { print("job1"); x = x + 5 }
+            print("between")
+            fire global { print("job2"); x = x * 2 }
+            print("before sync")
+            var n = sync globals
+            print(n + " " + x)
+            print(sync globals)
+            """),
+        ("Threads: #globaljobs safepoints (Standard) - Auftraege beim Ruecksprung einer Schleife und bei Sleep(0), nicht bei Aufruf/print; in Property, Operator, Lambda einer Bibliotheksfunktion ja, im Destruktor nein", """
+            #globaljobs safepoints
+            #import "time"
+            #import "linq"
+            class P {
+                int v
+                construct(int v) { this.v = v }
+                int Count {
+                    get {
+                        var s = 0
+                        for (var i = 0; i < 2; i++) { print("get " + i); s = s + 1 }
+                        return s
+                    }
+                }
+                P operator+(P o) {
+                    for (var i = 0; i < 2; i++) { print("op " + i) }
+                    return new P(this.v + o.v)
+                }
+                destruct() { for (var i = 0; i < 2; i++) { print("destruct " + this.v + " " + i) } }
+                static undefined Call() { print("call") }
+            }
+            fire global { print("job1") }
+            print("after post")
+            for (var i = 0; i < 2; i++) { print("loop " + i) }
+            fire global { print("job2") }
+            P.Call()
+            print("before sleep")
+            Sleep(0)
+            print("after sleep")
+            var p = new P(1)
+            fire global { print("job3") }
+            print("count " + p.Count)
+            fire global { print("job4") }
+            var q = p + new P(2)
+            print("sum " + q.v)
+            fire global { print("job5") }
+            if (true) {
+                var t = new P(5)
+                print("block " + t.v)
+            }
+            print("after block")
+            var nums = new List<int>()
+            nums.Add(3)
+            nums.Add(1)
+            print("small " + nums.Where((int n) => { for (var i = 0; i < 1; i++) { print("where " + n) }; return n < 2 }).Count())
+            print("synced " + (sync globals))
+            fire global { print("job6") }
+            print("end")
+            """),
+        ("Threads: #globaljobs sleep - Auftraege nur bei Sleep (und sync globals, Programmende), nicht beim Ruecksprung", """
+            #globaljobs sleep
+            #import "time"
+            #import "linq"
+            class P {
+                int v
+                construct(int v) { this.v = v }
+                int Count {
+                    get {
+                        var s = 0
+                        for (var i = 0; i < 2; i++) { print("get " + i); s = s + 1 }
+                        return s
+                    }
+                }
+                P operator+(P o) {
+                    for (var i = 0; i < 2; i++) { print("op " + i) }
+                    return new P(this.v + o.v)
+                }
+                destruct() { for (var i = 0; i < 2; i++) { print("destruct " + this.v + " " + i) } }
+                static undefined Call() { print("call") }
+            }
+            fire global { print("job1") }
+            print("after post")
+            for (var i = 0; i < 2; i++) { print("loop " + i) }
+            fire global { print("job2") }
+            P.Call()
+            print("before sleep")
+            Sleep(0)
+            print("after sleep")
+            var p = new P(1)
+            fire global { print("job3") }
+            print("count " + p.Count)
+            fire global { print("job4") }
+            var q = p + new P(2)
+            print("sum " + q.v)
+            fire global { print("job5") }
+            if (true) {
+                var t = new P(5)
+                print("block " + t.v)
+            }
+            print("after block")
+            var nums = new List<int>()
+            nums.Add(3)
+            nums.Add(1)
+            print("small " + nums.Where((int n) => { for (var i = 0; i < 1; i++) { print("where " + n) }; return n < 2 }).Count())
+            print("synced " + (sync globals))
+            fire global { print("job6") }
+            print("end")
+            """),
+        ("Threads: #globaljobs sync - Auftraege nur bei sync globals (und am Programmende)", """
+            #globaljobs sync
+            #import "time"
+            #import "linq"
+            class P {
+                int v
+                construct(int v) { this.v = v }
+                int Count {
+                    get {
+                        var s = 0
+                        for (var i = 0; i < 2; i++) { print("get " + i); s = s + 1 }
+                        return s
+                    }
+                }
+                P operator+(P o) {
+                    for (var i = 0; i < 2; i++) { print("op " + i) }
+                    return new P(this.v + o.v)
+                }
+                destruct() { for (var i = 0; i < 2; i++) { print("destruct " + this.v + " " + i) } }
+                static undefined Call() { print("call") }
+            }
+            fire global { print("job1") }
+            print("after post")
+            for (var i = 0; i < 2; i++) { print("loop " + i) }
+            fire global { print("job2") }
+            P.Call()
+            print("before sleep")
+            Sleep(0)
+            print("after sleep")
+            var p = new P(1)
+            fire global { print("job3") }
+            print("count " + p.Count)
+            fire global { print("job4") }
+            var q = p + new P(2)
+            print("sum " + q.v)
+            fire global { print("job5") }
+            if (true) {
+                var t = new P(5)
+                print("block " + t.v)
+            }
+            print("after block")
+            var nums = new List<int>()
+            nums.Add(3)
+            nums.Add(1)
+            print("small " + nums.Where((int n) => { for (var i = 0; i < 1; i++) { print("where " + n) }; return n < 2 }).Count())
+            print("synced " + (sync globals))
+            fire global { print("job6") }
+            print("end")
+            """),
+        ("Threads: #globaljobs sleep - Auftrag und Sektion eines Threads: eine Schleife ohne Sleep laesst sie liegen, Sleep arbeitet sie ab", """
+            #globaljobs sleep
+            #import "time"
+            var n = 0
+            fire { fire global { n = n + 1 } }
+            var spins = 0
+            for (var i = 0; i < 100000; i++) { spins = spins + 1 }
+            print("after loop " + n)
+            while (n == 0) { Sleep(1ms) }
+            print("after sleep " + n)
+            print("synced " + (sync globals))
+            fire { sync global { n = n + 10 } }
+            while (n < 11) { Sleep(1ms) }
+            print("section " + n)
+            """),
+        ("Threads: #globaljobs sync - Auftrag und Sektion eines Threads: Sleep laesst sie liegen, erst sync globals", """
+            #globaljobs sync
+            #import "time"
+            var n = 0
+            fire { fire global { n = n + 1 } }
+            Sleep(50ms)
+            for (var i = 0; i < 1000; i++) { }
+            print("after sleep " + n)
+            var got = 0
+            while (got == 0) { got = sync globals; Sleep(1ms) }
+            print("synced " + got + " n " + n)
+            fire { sync global { n = n + 10 } }
+            Sleep(50ms)
+            print("before section " + n)
+            while (n < 11) { sync globals }
+            print("section " + n)
+            """),
+        ("Threads: #globaljobs safepoints - eine leere Schleife arbeitet Auftrag und Sektion eines Threads ab; Auftraege am Programmende in ihrer Reihenfolge", """
+            var n = 0
+            fire { fire global { n = n + 1 } }
+            while (n == 0) { }
+            print("after loop " + n)
+            print("synced " + (sync globals))
+            fire { sync global { n = n + 10 } }
+            while (n < 11) { }
+            print("section " + n)
+            fire {
+                fire global { print("job a") }
+                fire global { print("job b") }
+            }
+            """),
+        ("Threads: fire handover - [NoCopy]-Objekt samt allem Erreichbaren geht ohne Kopie an den Thread, die Variable wird undefined, der Thread zerstoert es; mit taking gemischt", """
+            #nosync
+            #import "time"
+            var released = 0
+            [NoCopy]
+            class Res { int id
+                construct(int i) { this.id = i }
+                destruct() { print("release " + this.id)
+                    sync global { released = released + 1 } } }
+            class Item { int v
+                construct(int v) { this.v = v } }
+            class Conn { Res res; Item items[]; Item other
+                construct(int i) { this.res = new Res(i) } }
+            class L { any f }
+            class Worker { int n
+                undefined Run(int k) { print("run " + k + " " + this.n) }
+                undefined Start(Res r) { fire Run(r.id) handover r } }
+            var step = 0
+            var keep = new Item(30)
+            var c = new Conn(1)
+            c.items = [new Item(2)]
+            var other = new Item(3)
+            c.other = other
+            var r = new Res(5)
+            var p = new Item(9)
+            var l = new L()
+            l.f = func() => 1
+            try { fire handover l { print("never") } } catch (ArgumentException e) { print("lambda: " + e.message) }
+            print("l kept: " + (l != undefined))
+            try { fire taking r { print("never") } } catch (ArgumentException e) { print("taking: " + e.message) }
+            fire taking p handover c handover r {
+                sync global { step = 1 }
+                print("thread: " + c.res.id + " " + c.items[0].v + " " + c.other.v + " " + r.id + " " + p.v)
+                print("owned: " + (c.res is from c) + " " + (r is from c))
+                c.items[0].v = 20
+                p.v = 10
+            }
+            print("after fire: " + (c == undefined) + " " + (r == undefined) + " " + (p != undefined))
+            while (released < 2) { sync globals }
+            print("p stays: " + p.v)
+            try { print(c.res.id) } catch (Exception e) { print("use after handover: " + e.message) }
+            var arr = [new Res(6), new Res(7)]
+            var n = 4
+            fire handover arr handover n {
+                while (step < 3) { Sleep(1ms) }
+                print("arr " + arr[0].id + arr[1].id + " n " + n)
+                var own = new Res(8)
+                var g = keep
+                try { fire handover g { print("never g") } } catch (ArgumentException e) { print("thread: " + e.message) }
+                fire handover own {
+                    while (step < 4) { Sleep(1ms) }
+                    print("inner " + own.id)
+                }
+                print("own after: " + (own == undefined))
+                sync global { step = 4 }
+                while (released < 3) { Sleep(1ms) }
+            }
+            print("arr after: " + (arr == undefined) + " n after: " + (n == undefined))
+            step = 3
+            while (released < 5) { sync globals }
+            var w = new Worker()
+            w.n = 11
+            w.Start(new Res(12))
+            while (released < 6) { sync globals }
+            print("end")
+            """),
+        ("Abbruch: eine Thread-Exception, die erst am Programmende ankommt, beendet das Programm (VM wie nativ, nicht verschluckt)", """
+            class Item { int v }
+            fire {
+                var it = new Item()
+                print(it.v + 1)
+            }
+            print("main done")
+            """),
         ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """
             class Base {
                 private int secret
@@ -22134,20 +22486,20 @@ else
             /// a lamp: only Stamp (the circuit stops calling it after the first step)
             class Lamp : Circuits.TwoTerminal {
                 construct() : base("lamp") { }
-                undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / 50) }
-                float CurrentRaw() { return this.VoltageRaw() / 50 }
+                override undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / 50) }
+                override float CurrentRaw() { return this.VoltageRaw() / 50 }
             }
             /// a current source written in fire: StampStep every step
             class Pump : Circuits.TwoTerminal {
                 float amps
                 int steps = 0
                 construct(float amps) : base("pump") { this.amps = amps }
-                undefined StampStep(Circuits.Solver solver) {
+                override undefined StampStep(Circuits.Solver solver) {
                     solver.CurrentInto(this.A, -this.amps)
                     solver.CurrentInto(this.B, this.amps)
                 }
-                undefined Commit(Circuits.Solver solver) { this.steps = this.steps + 1 }
-                float CurrentRaw() { return this.amps }
+                override undefined Commit(Circuits.Solver solver) { this.steps = this.steps + 1 }
+                override float CurrentRaw() { return this.amps }
             }
             var c = new Circuits.Circuit()
             var b = c.Add(new Circuits.VoltageSource(10V))
@@ -23982,6 +24334,9 @@ else
                     v.WriteString("by ip")
                     var k = v.Read(buf, 0, 64)
                     print("by ip " + IO.Utf8.GetString(buf, 0, k))
+                    Net.IConnection iv = v
+                    iv.SetReadTimeout(3000)
+                    print("tls iconnection " + (v is of Net.IConnection) + " " + iv.GetRemoteHost() + " " + (iv.GetRemotePort() == port) + " " + (iv.GetLocalPort() == v.LocalPort) + " " + v.LocalHost + " " + iv.GetReadTimeout())
                     v.Close()
                     """),
                 ("Https: Client und Server ueber TLS (https://-URL, Zertifikat des Tests, Zertifikatsfehler)", tlsHead + """
@@ -24557,6 +24912,10 @@ else
             var n = s.Read(buf, 0, 16)
             print("got " + n + " " + IO.Utf8.GetString(buf, 0, n))
             print("remote " + s.RemoteHost + " " + (s.RemotePort == c.LocalPort) + " " + (c.RemotePort == l.Port))
+            Net.IConnection ic = s
+            ic.SetReadTimeout(700)
+            ic.SetWriteTimeout(2s)
+            print("iconnection " + (s is of Net.IConnection) + " " + ic.GetRemoteHost() + " " + (ic.GetRemotePort() == c.LocalPort) + " " + (ic.GetLocalPort() == l.Port) + " " + ic.GetLocalHost() + " " + ic.GetReadTimeout() + " " + s.ReadTimeout + " " + ic.GetWriteTimeout())
             s.WriteString("pong!")
             c.ReadTimeout = 500
             var m = c.Read(buf, 0, 16)

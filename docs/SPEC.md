@@ -2,7 +2,7 @@
 
 Reference document for the interpreter. Extended as the implementation grows.
 
-Multithreading (`fire`/`taking`/`with`/`sync`/`leave`/`terminate`/
+Multithreading (`fire`/`taking`/`handover`/`with`/`sync`/`leave`/`terminate`/
 `catch threads`/`catch terminate`/actors) is deliberately NOT part of this
 document – see `THREADING_DESIGN.md` for it (fully implemented,
 architecture AND language syntax).
@@ -289,8 +289,8 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
   an instance of it as the operand of `flat`/`copy`, or reached by `copy` through a field or an array element, is an `ArgumentException`
   ("'NativeHandle' cannot be copied ([NoCopy]) - ...") before anything is copied - also for a class derived from it, as an argument
   (`f(copy h)`), assigned to a field and for the arguments of `fire global` (deep copies). `flat` of an object or array that only *refers* to one is fine
-  (the reference is shared, nothing is duplicated). The copies of the threads (no form of them moves an object): `fire taking x` / `fire M(args)`
-  (a copy of the tree, an array included) refuses one reached from any of its values at the `fire` - nothing is copied, the thread does not start
+  (the reference is shared, nothing is duplicated). The copies of the threads (no form of them moves an object - `fire handover x` does, without a copy, THREADING_DESIGN.md section 1): `fire taking x` / `fire M(args)`
+  (a copy of everything reachable, an array included) refuses one reached from any of its values at the `fire` - nothing is copied, the thread does not start
   ("... - 'taking' would copy an instance of it, which exists only once." / "... - 'taking' reaches an instance of it (a field or an element of the copied
   value), which exists only once."); `fire global { } taking x` refuses an object argument that reaches one before the job is queued (`'fire global'`; an
   array argument is handed over as it is, not copied); `sync`/`try sync` refuses before anything is written back when case A (a new object, copied into
@@ -304,7 +304,7 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
   array with the same elements, `copy` also copies the elements; a **buffer** (`byte[]`) is copied byte by byte in both cases.
 - `flat` can leave shared references between original and copy whose owner is the original: if the original is
   destroyed (together with what it owns), the shallow copy points to destroyed objects. Whoever needs a self-contained structure uses `copy`.
-- Unlike `taking` (a copy for a thread, rejects every reference out of the ownership tree, `sync` writes back), this is an
+- Unlike `taking` (a copy for a thread of everything reachable, refuses lambdas and pointers in it, `sync` writes back), this is an
   ordinary copy without a link back to the original.
 
 ## 3. Units
@@ -1354,7 +1354,7 @@ by whether a `{` follows directly after `try` (block) or not (expression).
   callback (a `try`/`catch` around the triggering call does not see it): it goes to `onUnhandled` as text, the program keeps running. As with destructors and properties, during a
   nested callback `leave`/`terminate` of other threads is not checked (only afterwards).
 - **On a thread without a running VM** (a host thread, e.g. a serial event) access to the globals would be a data race: the callback is therefore **queued** to the main program
-  (`VM.PostCallback`, via `RunCallback(..., owner)`) and executed there - automatically at a safe point or at `sync globals`, with `#nosync` only then - with the real globals. If the
+  (`VM.PostCallback`, via `RunCallback(..., owner)`) and executed there - automatically at a safe point or at `sync globals`, as `#globaljobs` says (with `sync`/`#nosync` only then) - with the real globals. If the
   main program is not (or no longer) running, the isolated copy applies as described below (`FireRuntime.CallCallback`).
 
 The rest of this section describes this isolated case.
@@ -2372,8 +2372,8 @@ Sleep(500ms)                                      // or Sleep(duration), Sleep(2
   `Parse(text)` (throws `TimeException`), `TryParse(text)` (undefined), `DaysInMonth`, `IsLeapYear`, `FromUnixSeconds`/`ToUnixSeconds`. **`Kind`** is `"local"` (`Now`, `Today`, constructors, `Parse`) or `"utc"` (`UtcNow`, `FromUnixSeconds`); `ToUtc()`/`ToLocal()` convert. Comparisons and
   differences require the same kind. Time zones beyond local/UTC do not exist.
 - **`Sleep(time)`** puts the thread to sleep. `time` is a `TimeSpan`, a value with a time unit (`500ms`, `2s`, `1.5min`) or a number (milliseconds). Sleeping is **not deaf**: in short slices, whatever otherwise runs at the safe points runs - `leave`/`terminate` end
-  it immediately, delivered fire-thread exceptions are handled, and in the main program the **automatic processing of the queue** works (sections of the fire threads, `fire global` jobs, host callbacks, see THREADING_DESIGN.md section 7; with `#nosync` only at `sync globals`).
-  A new entry in the queue wakes the sleep up earlier. A callback or destructor (nested execution) sleeps without these tasks.
+  it immediately, delivered fire-thread exceptions are handled, and in the main program the **automatic processing of the queue** works (sections of the fire threads, `fire global` jobs, host callbacks, see THREADING_DESIGN.md section 7; in the modes `safepoints` and `sleep` of `#globaljobs`, with `sync`/`#nosync` only at `sync globals`).
+  `Sleep(0)` is such a point too. A new entry in the queue wakes the sleep up earlier. In a destructor, a job, a host callback or a `catch threads`/`catch terminate` handler the sleep does not process the queue.
 
 **`ToString()` on output and concatenation.** If an object has a parameterless method `ToString()`, it is used by `print(object)`, `"text" + object`, `object + "text"` (if the class has an `operator+`, that applies, `DateTime`/`TimeSpan` handle a string there themselves) and `$"{object}"`. An
 exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` the old representation (`<object ...>`) remains.
@@ -2450,6 +2450,24 @@ sequence arrived, `false` after the wait time has expired, if the device is (or 
 
 **`#timeout value`** (top-level directive like `#nosync`, applies to the whole program): sets the default wait time of the wait functions. `value` is a time value (`10s`, `500ms`, `2min`) or a number in milliseconds; the expression is evaluated right at the start
 of the program (so it may not use variables) and also applies in the fire threads. A new program starts with 30 seconds again.
+
+**`#globaljobs safepoints|sleep|sync`** (top-level directive, applies to the whole program; `#nosync` is the old name of `#globaljobs sync`): when the main program processes
+its queue by itself - the `fire global` jobs, the sections of its fire threads (a write to a global, `sync global { }`, a method of a shared object) and the host callbacks
+(THREADING_DESIGN.md section 7). The VM and a native build process it at exactly the same points:
+
+| Mode | The queue is processed at |
+|---|---|
+| `safepoints` (default) | the **jump back of a loop** (`while`, `do`, `for`, `foreach`: after each pass), **`Sleep`** (also `Sleep(0)`) and the **wait functions** (`WaitFor`, `WaitForString`, `WaitUntil`, while they wait), `sync globals`, the end of the program |
+| `sleep` | `Sleep` and the wait functions, `sync globals`, the end of the program |
+| `sync` | only `sync globals` and the end of the program |
+
+No safe point for the queue: a call (of a function, method, constructor, lambda), a return, a native function (`print`, `Window.Tick`, a device read), a single statement.
+`leave`/`terminate` of other threads and the exceptions of fire threads (`catch threads`) still act at a call too. Inside a **destructor**, a running **job** or **host
+callback** (each runs for itself: the next one never starts inside it) and a `catch threads`/`catch terminate` handler the queue is not processed automatically; inside a
+property, an operator, a lambda called by a library function (`Where`, `Sort`) or an actor's message it is (their loops and `Sleep` are safe points as usual). `sync globals`
+always processes everything that is queued and returns how many entries that were. The mode applies to whoever posted the entry (the main program itself, a fire thread, a host
+thread). Several directives: the last one counts. Precedence (as for `#floatwidth`): `--global-jobs` on the command line, then the project's `globalJobs`, then `#globaljobs`/
+`#nosync` in the source, then `"globalJobs"` in fire.native.json (a native build), then `safepoints`. An unknown mode is `E3160`.
 
 **Shared devices.** If a script runs in the editor, its serial devices are those of the editor's common manager (`DeviceManager.IsShared()`): devices and open connections survive the run, several scripts one after the other work with
 the same devices. A script can destroy neither the manager nor a shared device (there is no function for it; `DeviceManager.Dispose()` has no effect on a shared manager, only the owner tears it down via `Shutdown()`).
@@ -2528,7 +2546,7 @@ program through `Simulation` of the package `devices` (every access to a simulat
 
 ### 8.20 Network (`#import "net"`)
 
-The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream`), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
+The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream` and a `Net.IConnection`, the interface of network connections that `Tls.Stream` implements too), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
 `io` and `time`. Every call that waits takes a time limit; waiting polls the natives and sleeps 1 to 10 ms between the attempts, so `terminate` and the other threads work while a program waits for the network. Errors are `Net.NetException` (with a `code`) and subclasses;
 the host can restrict the network with a `NetPolicy` (a refused access is a `Net.PermissionException`). A platform without a network throws `NetException` (code 9).
 

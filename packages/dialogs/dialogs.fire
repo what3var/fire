@@ -511,7 +511,7 @@ namespace Dialogs {
             this.defaultTitle = "Open"
         }
 
-        bool Confirm(string path) {
+        override bool Confirm(string path) {
             if (this.CheckFileExists && !IO.File.Exists(path)) {
                 this.status.Text = "The file '" + IO.Path.GetFileName(path) + "' does not exist."
                 return false
@@ -541,7 +541,7 @@ namespace Dialogs {
             this.defaultTitle = "Save As"
         }
 
-        bool Confirm(string path) {
+        override bool Confirm(string path) {
             if (this.CheckPathExists && !IO.Directory.Exists(IO.Path.GetDirectoryName(path))) {
                 this.status.Text = "The folder '" + IO.Path.GetDirectoryName(path) + "' does not exist."
                 return false
@@ -578,7 +578,7 @@ namespace Dialogs {
             this.defaultTitle = "Select Folder"
         }
 
-        Dialogs.DialogResult ShowDialog() {
+        override Dialogs.DialogResult ShowDialog() {
             if (this.Title == "" && this.Description != "") { this.Title = this.Description }
             if (this.InitialDirectory == "" && this.SelectedPath != "") { this.InitialDirectory = this.SelectedPath }
             var result = base.ShowDialog()
@@ -587,7 +587,7 @@ namespace Dialogs {
         }
 
         // The name box names a folder in the open one; empty: the open folder.
-        bool Confirm(string path) {
+        override bool Confirm(string path) {
             if (!IO.Directory.Exists(path)) {
                 this.status.Text = "The folder '" + path + "' does not exist."
                 return false

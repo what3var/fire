@@ -409,13 +409,13 @@ namespace Http {
 
     // Reads from a stream with a buffer of its own: lines, exact numbers of bytes, the rest.
     class Reader {
-        IO.Stream source
+        IO.IStream source
         byte chunk[]
         int pos
         int len
         bool eof
 
-        construct(IO.Stream source) {
+        construct(IO.IStream source) {
             this.source = source
             this.chunk = new byte[4096]
             this.pos = 0
@@ -570,7 +570,7 @@ namespace Http {
         }
 
         // Writes the start line, the header fields, the empty line and the body.
-        static undefined Write(IO.Stream stream, string startLine, Headers headers, any body) {
+        static undefined Write(IO.IStream stream, string startLine, Headers headers, any body) {
             var head = IO.Utf8.GetBytes(startLine + "\r\n" + headers.ToString() + "\r\n")
             stream.Write(head, 0, head.length)
             if (body != undefined && body.length > 0) { stream.Write(body, 0, body.length) }
@@ -579,7 +579,7 @@ namespace Http {
 
     // Opens the connection to a URL (the scheme decides: http is a TCP connection, https a TLS connection over it).
     class Transport {
-        static any Open(Url url, int timeout, Tls.Options tls = undefined) {
+        static Net.IConnection Open(Url url, int timeout, Tls.Options tls = undefined) {
             if (url.scheme == "http") {
                 var tcp = new Net.TcpClient(url.host, url.port, timeout)
                 tcp.NoDelay = true
@@ -680,10 +680,10 @@ namespace Http {
             else if (method == "POST" || method == "PUT") { h.Set("Content-Length", "0") }
             var stream = Http.Transport.Open(url, this.timeout, this.tls)
             try {
-                stream.ReadTimeout = this.timeout
-                stream.WriteTimeout = this.timeout
-                Http.Wire.Write(stream, method + " " + url.path + " HTTP/1.1", h, bytes)
-                var reader = new Http.Reader(stream)
+                stream.SetReadTimeout(this.timeout)
+                stream.SetWriteTimeout(this.timeout)
+                Http.Wire.Write(stream!IO.IStream, method + " " + url.path + " HTTP/1.1", h, bytes)
+                var reader = new Http.Reader(stream!IO.IStream)
                 var line = reader.ReadLine(8192)
                 while (line != undefined && line.Length == 0) { line = reader.ReadLine(8192) }
                 if (line == undefined) { throw new Http.HttpException("The server closed the connection without an answer.", 2) }
@@ -779,11 +779,12 @@ namespace Http {
 
         // Waits up to `timeout` for a connection and answers it; true if one was served, false when the time ran out.
         bool ServeOne(any timeout = undefined) {
-            var connection = this.listener.TryAccept(timeout)
-            if (connection == undefined) { return false }
+            var tcp = this.listener.TryAccept(timeout)
+            if (tcp == undefined) { return false }
+            Net.IConnection connection = tcp
             if (this.tlsServer != undefined) {
                 try {
-                    connection = this.tlsServer.Accept(connection, this.readTimeout)
+                    connection = this.tlsServer.Accept(tcp, this.readTimeout)
                 } catch (Net.NetException e) {
                     return true   // a client that did not complete the handshake: nothing to answer
                 }
@@ -797,10 +798,11 @@ namespace Http {
             while (!this.stopped) { this.ServeOne(250) }
         }
 
-        undefined Handle(IO.Stream connection) {
+        // Answers one request on a connection (a Net.TcpClient, a Tls.Stream) and closes it.
+        undefined Handle(Net.IConnection connection) {
             try {
-                connection.ReadTimeout = this.readTimeout
-                connection.WriteTimeout = this.readTimeout
+                connection.SetReadTimeout(this.readTimeout)
+                connection.SetWriteTimeout(this.readTimeout)
                 var response = undefined
                 var head = false
                 try {
@@ -815,7 +817,7 @@ namespace Http {
                 } catch (Net.TimeoutException e) {
                     response = Http.Response.Error(408)
                 }
-                this.Send(connection, response, head)
+                this.Send(connection!IO.IStream, response, head)
             } catch (Net.NetException e) {
                 // the client went away
             }
@@ -823,8 +825,8 @@ namespace Http {
         }
 
         // The request, or undefined if the client closed without sending one.
-        Http.Request ReadRequest(IO.Stream connection) {
-            var reader = new Http.Reader(connection)
+        Http.Request ReadRequest(Net.IConnection connection) {
+            var reader = new Http.Reader(connection!IO.IStream)
             var line = reader.ReadLine(8192)
             while (line != undefined && line.Length == 0) { line = reader.ReadLine(8192) }
             if (line == undefined) { return undefined }
@@ -832,7 +834,7 @@ namespace Http {
             if (parts.length != 3 || !parts[2].StartsWith("HTTP/")) { throw new Http.HttpException("A bad request line: '" + line + "'.", 2) }
             var request = new Http.Request(parts[0], parts[1])
             request.version = parts[2]
-            request.remoteHost = connection.RemoteHost
+            request.remoteHost = connection.GetRemoteHost()
             Http.Wire.ReadHeaders(reader, request.headers)
             request.body = Http.Wire.ReadBody(reader, request.headers, false, this.maxBodyBytes)
             return request
@@ -861,7 +863,7 @@ namespace Http {
             return result
         }
 
-        undefined Send(IO.Stream connection, Http.Response response, bool head) {
+        undefined Send(IO.IStream connection, Http.Response response, bool head) {
             var h = new Http.Headers()
             for (var i = 0; i < response.headers.Count; i++) { h.Add(response.headers.names[i], response.headers.values[i]) }
             h.Set("Content-Length", "" + response.body.length)

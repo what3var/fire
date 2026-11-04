@@ -122,7 +122,7 @@ namespace fire.Bytecode
                               //   (see VM.ThrowUnitMismatch) - does NOT consume (like CheckLambdaSignature), the caller pops if
                               //   needed (see Compiler.EmitLambdaParamChecks/CompileAssign/VarDeclStmt compilation)
 
-        Fire, // u16 functionProtoIdx, u16 globalSlotCount, u8 takingCount, u8 hasWith : spawns a real thread (see Runtime.FireRuntime) with a read-only globals snapshot, takingCount popped taking values and optionally a with value
+        Fire, // u16 functionProtoIdx, u16 globalSlotCount, u8 takingCount, u8 hasWith, u8 handoverCount : spawns a real thread (see Runtime.FireRuntime) with takingCount popped values (the last handoverCount of them are `handover`: moved, not copied) and optionally a with value
         Sync, // u8 flags (bit0=isTry, bit1=isFlat) : pop target; calls SyncEngine.Sync/SyncFlat; push true/false/undefined
         Leave, // calls VM.RequestLeave() on this VM instance (handling happens at the next check point)
         Terminate, // pop value; calls VM.RequestTerminate(value) (static, global)
@@ -146,7 +146,7 @@ namespace fire.Bytecode
         SectionEnter,   //                : `sync global { ` - a fire thread registers and waits until the main program grants the section
                         //                  (no effect in the main program); counterpart SectionExit sits in the `finally` of the block
         SectionExit,    //                : ends the section
-        SetAutoSync,    // u8 on        : `#nosync` (on = 0) turns off the automatic processing of the queue at safe points (emitted at program start)
+        SetAutoSync,    // u8 mode      : when the main program processes its queue by itself (GlobalJobsMode: 0 sync = `#nosync`, 1 safepoints, 2 sleep; emitted at program start)
         PostGlobal,     // u8 argCount   : `fire global { ... }`: pop lambda, pop argCount arguments; enqueues the lambda (object arguments as a copy)
                         //                  as a job for the main program that runs at its next `sync globals`; the caller does not wait
         EnterFinallyNormal, //            : pushes the completion "normal" (undefined, 0) - the normal entry into a finally block precedes it

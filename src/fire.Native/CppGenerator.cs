@@ -3580,7 +3580,7 @@ namespace fire.Native
             if (_usesThreads && sb != null && ins.A.Length > 0 && ins.A[0] <= ins.Addr
                 && ins.Op is OpCode.Jump or OpCode.JumpIfFalse or OpCode.JumpIfFalsePeek or OpCode.JumpIfTruePeek
                     or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq)
-                E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
+                E($"if (FIRE_UNLIKELY(pollLoop())) goto {ExitLabel(f, st, locals)};");   // (and the main program's queue: docs/THREADING_DESIGN.md section 7)
 
             switch (ins.Op)
             {
@@ -4214,9 +4214,10 @@ namespace fire.Native
                     return new StepResult(false, null);
                 case OpCode.SetTimeout:
                 case OpCode.SetAutoSync:
-                    // `#timeout` sets the wait time of the waiting functions of the devices; `#nosync` only matters for programs with threads
+                    // `#timeout` sets the wait time of the waiting functions of the devices; `#globaljobs`/`#nosync` only matter for programs with threads
+                    // (`sleep`, `sync`: a loop's jump back no longer looks at the queue - ATTN_SECT leaves the main program's mask)
                     if (ins.Op == OpCode.SetTimeout) { Need(1); E($"setDefaultTimeout({S(d - 1)});"); NeedTimeObj(); d--; }
-                    else if (_usesThreads && ins.A[0] == 0) E("g_autoSync = false; g_attnMask &= ~ATTN_SECT;");
+                    else if (_usesThreads && ins.A[0] != (int)fire.Runtime.GlobalJobsMode.Safepoints) E($"g_globalJobs = {ins.A[0]}; g_attnMask &= ~ATTN_SECT;");
                     return Next();
 
                 // ---------------------------------------------------------------------------------------------------
@@ -5091,6 +5092,8 @@ namespace fire.Native
                     UseThreads();
                     int takingCount = ins.A[2];
                     bool hasWith = ins.A[3] != 0;
+                    int handoverCount = ins.A[4];   // the last ones of the taking values: `handover` (moved, not copied)
+                    int copyCount = takingCount - handoverCount;
                     int argc = takingCount + (hasWith ? 1 : 0);
                     Need(argc);
                     var body = GetFunc(chunk.Functions[ins.A[0]], FuncKind.FireBody);
@@ -5098,10 +5101,17 @@ namespace fire.Native
                     int first = d - argc;
                     var sbf = new StringBuilder();
                     // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - checked for all of them before the first is copied (the thread does not start)
+                    // (`handover`: no copy, but a lambda/pointer in it, or in a thread a part of the main program's globals, is refused the same way)
                     if (takingCount > 0)
-                        sbf.Append($"{{ Value tv[{takingCount}] = {{{string.Join(", ", Enumerable.Range(first, takingCount).Select(S))}}}; if (takingNoCopyFree(tv, {takingCount})) ");
+                    {
+                        sbf.Append($"{{ Value tv[{takingCount}] = {{{string.Join(", ", Enumerable.Range(first, takingCount).Select(S))}}}; if (");
+                        if (copyCount > 0) sbf.Append($"takingNoCopyFree(tv, {copyCount})");
+                        if (copyCount > 0 && handoverCount > 0) sbf.Append(" && ");
+                        if (handoverCount > 0) sbf.Append($"handoverFree(tv + {copyCount}, {handoverCount})");
+                        sbf.Append(") ");
+                    }
                     sbf.Append("{ OwnList* travel = newTravel(); Value av[" + Math.Max(1, argc) + "] = {}; ");
-                    for (int i = 0; i < takingCount; i++) sbf.Append($"av[{i}] = takeCopy({S(first + i)}, travel); ");
+                    for (int i = 0; i < takingCount; i++) sbf.Append(i < copyCount ? $"av[{i}] = takeCopy({S(first + i)}, travel); " : $"av[{i}] = handOver({S(first + i)}, travel); ");
                     if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
                     sbf.Append($"ensureDomain(); fireThread({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");

@@ -649,15 +649,35 @@ namespace fire.Runtime
         private int SyncGlobalsNow() => DrainInbound() + (_ownerBroker?.Drain() ?? 0);
 
         // ---- Callbacks from host threads (e.g. a serial event): they do NOT run on the foreign thread, but are queued here
-        // and executed by the main program - at `sync globals` or (without `#nosync`) automatically at a safe point. This way they see the real
+        // and executed by the main program - at `sync globals` or automatically at a safe point (as `#globaljobs` says). This way they see the real
         // globals, and there is no concurrent access to them.
 
         private readonly record struct InboundCallback(LambdaValue? Lambda, Value[] Args, Action<string>? OnUnhandled, Action? HostAction = null);
         private readonly System.Collections.Concurrent.ConcurrentQueue<InboundCallback> _inbound = new();
         private volatile bool _acceptingCallbacks;
 
-        /// <summary>Should the main program process the queue itself at safe points? Default yes; `#nosync` switches it off.</summary>
-        private bool _autoSync = true;
+        /// <summary>When the main program processes the queue by itself (`#globaljobs`, `#nosync`, `--global-jobs`; docs/THREADING_DESIGN.md section 7). The safe points
+        /// are the same as in a native build: a loop's jump back (only `Safepoints`), `Sleep` and the wait functions (`Safepoints`, `Sleep`); `sync globals` and the end
+        /// of the program always. Not a call, not a native call (`print`, `Window.Tick`).</summary>
+        private GlobalJobsMode _globalJobs = GlobalJobsMode.Safepoints;
+
+        /// <summary>Running something during which the queue is NOT processed automatically: a destructor, a `fire global` job or a host callback (one runs for
+        /// itself), `catch threads`/`catch terminate`. Everything else nested (a property, an operator, a callback of a library
+        /// function, an actor's message) has the safe points as usual - as in a native build.</summary>
+        private int _noAutoSyncDepth;
+
+        /// <summary>Counts every entry put into a main program's queue (process-wide, a hint only): a loop's jump back compares it with
+        /// <see cref="_seenQueued"/> - one comparison - and processes the queue only when something came. Separate from the signals, so that a
+        /// call (a safe point for `leave`/`terminate` only) does not use up the notice that the next loop needs.</summary>
+        private static int s_queued;
+        private int _seenQueued;
+
+        /// <summary>Something was put into a main program's queue (a job, a section, a host callback).</summary>
+        internal static void RaiseQueued()
+        {
+            System.Threading.Interlocked.Increment(ref s_queued);
+            RaiseSignal();
+        }
 
         /// <summary>Accepts a callback from ANY thread (thread-safe) and queues it for this VM. false if the VM is not (any longer)
         /// running - then the caller has to choose another way.</summary>
@@ -665,7 +685,7 @@ namespace fire.Runtime
         {
             if (!_acceptingCallbacks) return false;
             _inbound.Enqueue(new InboundCallback(lambda, args, onUnhandled));
-            RaiseSignal();
+            RaiseQueued();
             FireRuntime.WakeWaitingOwner();
             return true;
         }
@@ -694,6 +714,7 @@ namespace fire.Runtime
                     if (_stopExecutionRequested) break;
                     continue;
                 }
+                _noAutoSyncDepth++;   // (a callback runs for itself: its own safe points do not run the next one)
                 try
                 {
                     var error = CallLambdaInline(callback.Lambda!, callback.Args);
@@ -703,16 +724,20 @@ namespace fire.Runtime
                 {
                     callback.OnUnhandled?.Invoke(ex.Message);
                 }
+                finally { _noAutoSyncDepth--; }
                 if (_stopExecutionRequested) break;
             }
             return handled;
         }
 
-        /// <summary>Automatic processing at a safe point (not in nested execution, not with `#nosync`): first host callbacks, then
-        /// the sections and jobs of the fire threads. true if the program was ended in the process (`leave`/`terminate` in a job).</summary>
-        private bool AutoSyncNow()
+        /// <summary>Automatic processing at a safe point - a loop's jump back (`waiting` false) or while waiting (`Sleep`, the wait functions; true) - if the mode
+        /// asks for it there and nothing that runs for itself is running (<see cref="_noAutoSyncDepth"/>): first host callbacks, then the sections and jobs of the
+        /// fire threads. true if the program was ended in the process (`leave`/`terminate` in a job).</summary>
+        private bool AutoSyncAt(bool waiting)
         {
-            if (!_autoSync || _nestedDepth > 0) return false;
+            if (_globalJobs == GlobalJobsMode.Sync || (_globalJobs == GlobalJobsMode.Sleep && !waiting)) return false;
+            if (_noAutoSyncDepth > 0 || _stopExecutionRequested) return false;
+            _seenQueued = System.Threading.Volatile.Read(ref s_queued);
             if (!_inbound.IsEmpty) DrainInbound();
             if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
             return _stopExecutionRequested;
@@ -722,7 +747,10 @@ namespace fire.Runtime
         /// fire thread: it goes to the main program (`catch threads`), otherwise it aborts.</summary>
         internal void RunGlobalsJob(LambdaValue lambda, Value[] args)
         {
-            var error = CallLambdaInline(lambda, args);
+            ObjectInstance? error;
+            _noAutoSyncDepth++;   // (a job runs for itself: at its safe points the next job does not start)
+            try { error = CallLambdaInline(lambda, args); }
+            finally { _noAutoSyncDepth--; }
             if (error != null)
             {
                 _pendingThreadExceptions.Enqueue(error);
@@ -831,7 +859,20 @@ namespace fire.Runtime
             if (_seenEpoch == System.Threading.Volatile.Read(ref s_signalEpoch) || _nestedDepth > 0) return;
             _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
             if (CheckShutdownSignals()) StopExecution();
-            else AutoSyncNow(); // Host callbacks and fire threads that wait for the main program (see `#nosync`)
+            // (the queue is not processed here: a native call is not a safe point for it - see _globalJobs)
+        }
+
+        /// <summary>A loop's jump back: processes the queue if something came since the last time and the mode is `safepoints` (one comparison otherwise).
+        /// true if the VM was ended by it.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private bool PollQueueAtLoop() =>
+            _globalJobs == GlobalJobsMode.Safepoints && _seenQueued != System.Threading.Volatile.Read(ref s_queued) && AutoSyncAt(false);
+
+        /// <summary>While waiting (`Sleep`, the wait functions): the signals, then the queue (modes `safepoints` and `sleep`).</summary>
+        private void PollWhileWaiting()
+        {
+            PollSignalsAfterOp();
+            if (!_stopExecutionRequested && _seenQueued != System.Threading.Volatile.Read(ref s_queued)) AutoSyncAt(true);
         }
 
         private bool PollSignalsSlow()
@@ -850,9 +891,9 @@ namespace fire.Runtime
                 return true;
             }
             _ip++;
-            // Host callbacks and fire threads that wait for the main program (see `#nosync`): at the place the caller is about to
-            // continue, the processing runs nested and returns unchanged to here.
-            return AutoSyncNow();
+            // (the queue - host callbacks, the fire threads that wait for the main program - is processed only at a loop's jump back and while
+            // waiting, see PollQueueAtLoop/PollWhileWaiting: a call is no safe point for it)
+            return false;
         }
 
         /// <summary>The `leave`/`terminate` call of the VM itself: it goes into the halt IMMEDIATELY, regardless of whether the signal
@@ -977,6 +1018,11 @@ namespace fire.Runtime
             _shutdownReleasePending = false;
             if (!DestroyGlobalsAtEnd) return;
             if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
+            // An exception a thread did not catch, delivered after the main program's last safe point, is not dropped: `catch threads`, or the
+            // program ends with it (like at a safe point - the global scope then stays, as after any unhandled exception; native: the same at its end).
+            if (IsMainThreadVm && !afterShutdown)
+                while (_pendingThreadExceptions.TryDequeue(out var lateException))
+                    if (HandleDeliveredThreadException(lateException)) return;
             ReleaseGlobalScopeAfterStop(afterShutdown);
         }
 
@@ -1103,7 +1149,9 @@ namespace fire.Runtime
             _currentChunk = handlerProto.Chunk;
             _ip = 0;
 
-            RunNestedUntil(targetDepth);
+            _noAutoSyncDepth++;
+            try { RunNestedUntil(targetDepth); }
+            finally { _noAutoSyncDepth--; }
             PopNestedResult(); // Return value of the handler proto unused, like RunFinallyNested/RunDestructor.
             return false;
         }
@@ -1147,7 +1195,9 @@ namespace fire.Runtime
             _currentChunk = proto.Chunk;
             _ip = 0;
 
-            RunNestedUntil(targetDepth);
+            _noAutoSyncDepth++;
+            try { RunNestedUntil(targetDepth); }
+            finally { _noAutoSyncDepth--; }
             PopNestedResult();
         }
 
@@ -1263,11 +1313,7 @@ namespace fire.Runtime
         /// through `leave`/`terminate`/unhandled exception. false = ended.</summary>
         private bool AfterStep()
         {
-            // Only if a signal has arrived since the last safe point (every queueing triggers one, see RaiseSignal):
-            // querying the queues on EVERY instruction was the biggest item of the single-step loop.
-            if (_autoSync && _seenEpoch != System.Threading.Volatile.Read(ref s_signalEpoch) && _nestedDepth == 0 && !_stopExecutionRequested
-                && (!_inbound.IsEmpty || (_ownerBroker != null && _ownerBroker.HasPending)))
-                AutoSyncNow();
+            // (the queue is processed by the instructions themselves - a loop's jump back, Sleep - as when the program runs: not after every step)
 
             // Since UnhandledException (see there) an unhandled script exception is no longer thrown, but only SET -
             // Run() notices that via CheckShutdownSignals (deliberately NOT called here, see field documentation), so during step-by-step debugging
@@ -1632,7 +1678,9 @@ namespace fire.Runtime
                 _currentChunk = rc.Destructor.Chunk;
                 _ip = 0;
 
-                RunNestedUntil(targetDepth);
+                _noAutoSyncDepth++;   // (a destructor runs in the middle of an instruction: no jobs in it)
+                try { RunNestedUntil(targetDepth); }
+                finally { _noAutoSyncDepth--; }
 
                 // The final RETURN of the destructor body pushes its (here
                 // meaningless) return value onto the value stack - unlike with
@@ -1885,7 +1933,7 @@ namespace fire.Runtime
                     // A back jump (loop) is a safe point for shutdown signals (see PollSignals); `_ip` here still
                     // points to the operand, PollSignalsSlow calculates with the instruction boundary before it.
                     int target = _code[_ip] | (_code[_ip + 1] << 8);
-                    if (target <= _ip && PollSignals()) return;
+                    if (target <= _ip && (PollSignals() || PollQueueAtLoop())) return;
                     _ip = target;
                     return;
                 }
@@ -4768,6 +4816,7 @@ namespace fire.Runtime
                     int globalSlotCount = ReadU16();
                     int takingCount = ReadByte();
                     bool hasWith = ReadByte() != 0;
+                    int handoverCount = ReadByte();   // the last ones of the taking values are `handover` (moved, not copied)
                     // Order reversed to compiling (stack!): with
                     // was pushed LAST, so lies on top, is popped FIRST;
                     // afterwards the taking values in REVERSED
@@ -4777,9 +4826,12 @@ namespace fire.Runtime
                     Value? withValue = hasWith ? Pop() : null;
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
-                    // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element) is the ArgumentException
-                    // here in the spawning thread, before anything is copied and before the thread starts (the copies are made in the new thread).
-                    foreach (var tv in takingValues) ObjectCopier.RequireNoCopyFree(tv, "taking");
+                    // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element), and a lambda or a pointer
+                    // in a field or an element, is the ArgumentException here in the spawning thread, before anything is copied and before the thread starts.
+                    // The copies (of everything reachable) are made afterwards, also here, by FireRuntime.FireVmTaking.
+                    for (int i = 0; i < takingCount - handoverCount; i++) ObjectCopier.RequireNoCopyFree(takingValues[i], "taking");
+                    // `handover` (no copy, a `[NoCopy]` instance is fine): what cannot go to another thread is refused the same way, before anything moves
+                    for (int i = takingCount - handoverCount; i < takingCount; i++) ObjectHandover.RequireMovable(takingValues[i], fromFireThread: IsFireThreadVm);
 
                     // The globals of the main program are NOT copied: the thread reads them directly (under the lock) and changes them only in
                     // a section that the main program grants at `sync globals` (see Runtime.GlobalsBroker). At the first `fire`
@@ -4795,7 +4847,7 @@ namespace fire.Runtime
                     // VmExecutionMode documentation).
                     FireRuntime.FireVmTaking(
                         fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
-                        executionMode: ExecutionMode);
+                        executionMode: ExecutionMode, handoverCount: handoverCount);
                     break;
                 }
 
@@ -4804,7 +4856,7 @@ namespace fire.Runtime
                     break;
 
                 case OpCode.SetAutoSync:
-                    _autoSync = ReadByte() != 0;
+                    _globalJobs = (GlobalJobsMode)ReadByte();
                     break;
 
                 case OpCode.SetTimeout:

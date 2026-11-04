@@ -124,9 +124,9 @@ namespace UI {
             this.back = new SolidBrush(UI.Color.Rgb(24, 24, 28))
         }
 
-        string StyleKey() { return "CircuitView" }
-        bool Focusable() { return true }
-        bool WantsKey(int key) { return true }
+        override string StyleKey() { return "CircuitView" }
+        override bool Focusable() { return true }
+        override bool WantsKey(int key) { return true }
 
         /// <summary>The schematic that is shown.</summary>
         Circuits.Schematic Schematic { get { return this.circuit.Schematic } }
@@ -777,7 +777,7 @@ namespace UI {
 
         // ---- simulation ----
 
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             var c = this.circuit
             // the view always simulates in real time, at the pace of the circuit (Circuit.Speed); a pause is not made up afterwards
@@ -956,7 +956,7 @@ namespace UI {
 
         // ---- drawing ----
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
             // drawn in pixels of the framebuffer (see dev)
@@ -1252,15 +1252,15 @@ namespace UI {
             if (size <= 0) { size = 14 }
             return Math.Round(size * this.dev)!int
         }
-        int TextWidth(Root root, string text) {
+        override int TextWidth(Root root, string text) {
             if (!this.device) { return base.TextWidth(root, text) }
             return root.renderer.TextWidth(text, root.FontFor(this.FontName(root)), this.DeviceFontPixels(root))
         }
-        int TextHeight(Root root) {
+        override int TextHeight(Root root) {
             if (!this.device) { return base.TextHeight(root) }
             return root.renderer.TextHeight(root.FontFor(this.FontName(root)), this.DeviceFontPixels(root))
         }
-        undefined DrawString(Root root, int x, int y, string text, Brush brush) {
+        override undefined DrawString(Root root, int x, int y, string text, Brush brush) {
             if (!this.device) {
                 base.DrawString(root, x, y, text, brush)
                 return
@@ -3212,7 +3212,7 @@ namespace UI {
             return false
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             root.SetFocus(this)
             this.downPX = px
             this.downPY = py
@@ -3275,7 +3275,7 @@ namespace UI {
             this.mode = 2
         }
 
-        undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, int px, int py) {
             var lx = px - this.ax + 0.0
             var ly = py - this.ay + 0.0
             var ux = this.ToUnitX(lx)
@@ -3338,7 +3338,7 @@ namespace UI {
         }
 
         // the pointer: a cross while placing or over a pin (a wire starts there), a hand over a switch, arrows over what can be moved
-        UI.Cursor CursorAt(Root root, int px, int py) {
+        override UI.Cursor CursorAt(Root root, int px, int py) {
             if (this.cursor >= 0) { return this.cursor }
             if (this.placeType != "") { return UI.Cursor.Cross }
             // pressed: moving (1), placing or drawing a wire (3, 4), stretching (6), the rectangle (2), panning (5), a switch held (7)
@@ -3356,7 +3356,7 @@ namespace UI {
             return UI.Cursor.Arrow
         }
 
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             var ux = this.ToUnitX(px - this.ax + 0.0)
             var uy = this.ToUnitY(py - this.ay + 0.0)
             var hit = this.ElementAt(ux, uy)
@@ -3381,7 +3381,7 @@ namespace UI {
             return text
         }
 
-        undefined MouseUp(Root root, int button, int px, int py) {
+        override undefined MouseUp(Root root, int button, int px, int py) {
             var mode = this.mode
             this.mode = 0
             var s = this.Schematic
@@ -3505,7 +3505,7 @@ namespace UI {
             return prefix + n
         }
 
-        bool MouseWheel(Root root, int dx, int dy) {
+        override bool MouseWheel(Root root, int dx, int dy) {
             if (dy == 0) { return false }
             // zoom around the pointer
             var lx = root.mouseX - this.ax + 0.0
@@ -3524,7 +3524,7 @@ namespace UI {
             return true
         }
 
-        undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, int key, int mod) {
             var ctrl = (mod / 64) % 4 != 0
             var shift = mod % 4 != 0
             if (key == UI.Keys.Escape()) {
@@ -3767,7 +3767,7 @@ namespace UI {
             this.action = action
         }
 
-        undefined Activate() {
+        override undefined Activate() {
             if (this.Checkable) { this.IsChecked = !this.IsChecked }
             this.view.MenuAction(this.action)
         }

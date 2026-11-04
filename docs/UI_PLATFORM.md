@@ -211,5 +211,4 @@ Noch offen:
 Noch offen:
 
 * macOS präsentiert noch das ganze Bild (ungetestet ohne Mac); das Web ist nur gebaut, nicht im Browser geprüft (das Emscripten im Container ist zu alt). Blur-Cache auch für eigene Programme.
-* `override`: der Typprüfer findet eine Basisklasse ohne Namespace innerhalb eines Namespace nicht (`TypeChecker.NameOf`) - die Pakete mit Namespace sind deshalb noch nicht markiert.
 
