@@ -63,6 +63,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "native") goto nati
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") goto packerTests;
 // FIRE_TESTS_ONLY=callbacks: only the host callbacks in the VM (nested on the VM thread, queued from a host thread, the isolated copy after the end)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") goto callbackTests;
+// FIRE_TESTS_ONLY=graphics: only the graphics from fire in the VM (colour modes, images, FromFile and the host's IoPolicy, drawing functions)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "graphics") goto graphicsTests;
 // FIRE_TESTS_FILTER=text: of the checks that are listed as cases (the native cases, the native device and window cases, the UI checks) only those whose name contains
 // the text (several texts separated by '|'; case does not matter) - together with FIRE_TESTS_ONLY a run of a minute instead of half an hour.
 static bool TestSelected(string name)
@@ -8889,6 +8891,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 // ---------------------------------------------------------------------------
 // Graphics from fire: colour modes, loading images, drawing functions (Console/Framebuffer of the graphics prelude)
 // ---------------------------------------------------------------------------
+graphicsTests:
 {
     Console.WriteLine();
     Console.WriteLine("=== Grafik aus fire: Farbmodi, Bilder, Zeichenfunktionen ===");
@@ -9249,6 +9252,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     Console.WriteLine(gfFailures == 0 ? "Alle Grafik-aus-fire-Pruefungen bestanden." : $"FEHLER: {gfFailures} Grafik-aus-fire-Pruefung(en) fehlgeschlagen.");
 }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "graphics") return;
 
 // ---------------------------------------------------------------------------
 // Network (#import "net"): the host's policy (NetPolicy) for connections, listeners, datagrams and names

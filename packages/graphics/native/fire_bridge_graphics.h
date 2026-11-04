@@ -403,11 +403,21 @@ static Value fire_gfx_FbLoadFile(Value path, Value mode) {
     full = fire_fs_fullPath(raw);
     free(raw);
     if (full == NULL) fire_gfxb_outOfMemory();
-#ifdef FIRE_IO_POLICY
+#if defined(FIRE_LIBRARY) || defined(FIRE_IO_POLICY)
     {
         char reason[256];
+        int allowed;
         reason[0] = 0;
-        if (!FIRE_IO_POLICY(full, 1, reason, sizeof reason)) {
+#ifdef FIRE_LIBRARY
+        /* the library for the VM: the host decides what a program may read (its IoPolicy), as for IO.File */
+        {
+            const fire_host* host = libraryHost();
+            allowed = !host || !host->io_allow || host->io_allow(full, 1, reason, (int32_t)sizeof reason);
+        }
+#else
+        allowed = FIRE_IO_POLICY(full, 1, reason, sizeof reason);
+#endif
+        if (!allowed) {
             char text[1024];
             if (reason[0]) snprintf(text, sizeof text, "%s", reason);
             else snprintf(text, sizeof text, "Access to '%s' is not allowed.", full);
