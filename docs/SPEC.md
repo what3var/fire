@@ -2546,7 +2546,7 @@ program through `Simulation` of the package `devices` (every access to a simulat
 
 ### 8.20 Network (`#import "net"`)
 
-The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream`), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
+The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream` and a `Net.IConnection`, the interface of network connections that `Tls.Stream` implements too), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
 `io` and `time`. Every call that waits takes a time limit; waiting polls the natives and sleeps 1 to 10 ms between the attempts, so `terminate` and the other threads work while a program waits for the network. Errors are `Net.NetException` (with a `code`) and subclasses;
 the host can restrict the network with a `NetPolicy` (a refused access is a `Net.PermissionException`). A platform without a network throws `NetException` (code 9).
 

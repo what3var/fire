@@ -44,6 +44,7 @@ Everything is in `namespace Net`. The package needs `io` and `time` (they come w
 | class | |
 |---|---|
 | `Net.TcpClient(host, port, timeout = 10000)` | connects; an `IO.Stream` (`Read`, `Write`, `ReadByte`, `ReadBytes`, `CopyTo`, ...), plus `WriteString(text)` (UTF-8), `ReadTimeout`/`WriteTimeout` (settable), `RemoteHost`, `RemotePort`, `LocalHost`, `LocalPort`, `Available`, `WaitReadable(timeout = 0)`, `NoDelay`, `KeepAlive`, `Shutdown(0 receive \| 1 send \| 2 both)`, `Close()`. `Read` returns 0 when the other side has closed its end. |
+| `Net.IConnection` (interface) | what a network connection can do, implemented by `Net.TcpClient` and `Tls.Stream`: `Read(buffer, offset, count)`, `Write(buffer, offset, count)`, `Flush()`, `Close()`, `GetReadTimeout()`/`SetReadTimeout(timeout)`, `GetWriteTimeout()`/`SetWriteTimeout(timeout)`, `GetRemoteHost()`, `GetRemotePort()`, `GetLocalHost()`, `GetLocalPort()`. An interface has methods only, so the properties of the classes appear as Get/Set methods (the classes have both: `c.ReadTimeout = 5s` and `c.SetReadTimeout(5s)` are the same). Code that works with any connection (like `Http.Server`) takes a `Net.IConnection`; what implements it is an `IO.Stream`, so `connection!IO.IStream` hands it on to code that only reads and writes. |
 | `Net.TcpListener(host, port, backlog = 16)` | host `""` listens on every interface, port 0 takes a free port: `Port`, `Host`; `Accept(timeout = undefined)` returns a `TcpClient` (`Net.TimeoutException` when the limit runs out), `TryAccept(timeout)` returns undefined instead, `Pending(timeout = 0)`, `Close()` |
 | `Net.UdpSocket(host = "", port = 0)` | `SendTo(buffer, offset, count, host, port)`, `SendTo(buffer, host, port)`, `SendString(text, host, port)`, `ReceiveFrom(buffer, offset, count, timeout = undefined)` returns the size of the datagram (a longer one is cut), the sender is `FromHost`/`FromPort`; `Port`, `Available` (size of the next datagram), `WaitReadable(timeout = 0)`, `Broadcast`, `Close()` |
 | `Net.Dns` | `Resolve(name)` returns a list of the addresses as text (IPv4 and IPv6; a literal address gives itself), `First(name)` |
@@ -56,7 +57,7 @@ unrestricted unless the target defines `FIRE_NET_POLICY` (a C function `int(cons
 
 ## HTTP (`#import "http"`, the package `fire-http`)
 
-Written in fire on top of `net` (any `IO.Stream` works as the connection, so TLS plugs in later). Everything is in `namespace Http`; the package needs `net` (and with it `io`, `time`).
+Written in fire on top of `net`: a connection is a `Net.IConnection` (a `Net.TcpClient`, or a `Tls.Stream` for https). Everything is in `namespace Http`; the package needs `net` (and with it `io`, `time`).
 
 ```
 var client = new Http.Client()
@@ -74,7 +75,7 @@ server.Run()                                                       // or ServeOn
 | `Http.Client` | `Get(url)`, `Head`, `Delete`, `Post(url, body, contentType = undefined)`, `Put`, `Request(method, url, body, headers)`; a body is a text (UTF-8) or a byte buffer; `headers` an `Http.Headers` or undefined. Settings: `timeout` (ms, connect and every read; 30000), `followRedirects` (true), `maxRedirects` (5), `maxBodyBytes` (16 MiB), `userAgent`, `headers` (sent with every request). Redirects 301/302/303 become a GET without body, 307/308 keep method and body. Sends `Connection: close`. Understands `Content-Length`, chunked bodies and bodies that end with the connection. |
 | `Http.Response` | `status`, `reason`, `headers`, `body` (bytes), `url` (the final URL), `Ok` (2xx), `Length`, `Text()` (UTF-8), `Header(name)`; for routes: `FromText(text, status = 200, contentType)`, `FromHtml`, `FromJson`, `Error(status, message)`, `Redirect(location, status = 302)` and `new Http.Response(status, body)` |
 | `Http.Request` (server side) | `method`, `target`, `path` (percent decoded), `version`, `headers`, `body`, `remoteHost`, `Query(name, fallback)` (percent decoded, `+` is a space), `Text()`, `Header(name)` |
-| `Http.Server(host, port)` | `Route(method, path, lambda)` (method `"*"` = any; a path ending in `*` matches the prefix; HEAD uses the route of GET and sends no body), `Fallback(lambda)` (default 404), `OnError(lambda)` (a route's lambda threw: the client gets a 500), `ServeOne(timeout = undefined)` (true if a connection was served), `Run()` (until `Stop()`), `Port`, `Close()`; `readTimeout` (10 s) and `maxBodyBytes` (1 MiB) |
+| `Http.Server(host, port)` | `Route(method, path, lambda)` (method `"*"` = any; a path ending in `*` matches the prefix; HEAD uses the route of GET and sends no body), `Fallback(lambda)` (default 404), `OnError(lambda)` (a route's lambda threw: the client gets a 500), `ServeOne(timeout = undefined)` (true if a connection was served), `Run()` (until `Stop()`), `Handle(connection)` (answers one request on a `Net.IConnection` you accepted yourself and closes it), `Port`, `Close()`; `readTimeout` (10 s) and `maxBodyBytes` (1 MiB) |
 | `Http.Headers` | `Get(name)` (not case sensitive), `Set`, `Add`, `Has`, `Remove`, `Count`; `Set`/`Add` return the headers |
 | `Http.Url` | `Parse(text)` (http and https, IPv6 in brackets), `scheme`, `host`, `port`, `path`, `Resolve(location)` |
 | `Http.Uri` | `Encode(text)`, `Decode(text, plus = false)` (UTF-8 percent encoding) |
@@ -104,7 +105,7 @@ var secure = server.Accept(listener.Accept())              // handshake as the s
 
 | class | |
 |---|---|
-| `Tls.Stream` | an `IO.Stream` like `Net.TcpClient`: `Read` (0 when the other side has ended the connection), `Write`, `WriteString`, `ReadTimeout`/`WriteTimeout`, `WaitReadable`, `Info`, `RemoteHost`, `RemotePort`, `Connection` (the TCP connection - do not use it), `Close()` (close_notify, then the connection is closed). `Tls.Stream.Connect(host, port, options = undefined, timeout = 10000)`; `new Tls.Stream(tcp, serverName, options, timeout)` wraps a connection you made (it belongs to the stream from then on) |
+| `Tls.Stream` | an `IO.Stream` like `Net.TcpClient`: `Read` (0 when the other side has ended the connection), `Write`, `WriteString`, `ReadTimeout`/`WriteTimeout`, `WaitReadable`, `Info`, `RemoteHost`, `RemotePort`, `LocalHost`, `LocalPort` (a `Net.IConnection`), `Connection` (the TCP connection - do not use it), `Close()` (close_notify, then the connection is closed). `Tls.Stream.Connect(host, port, options = undefined, timeout = 10000)`; `new Tls.Stream(tcp, serverName, options, timeout)` wraps a connection you made (it belongs to the stream from then on) |
 | `Tls.Options` | `verify` (true), `caFile`, `caPem` (PEM text; both empty: the system's certificates), `certPem` + `keyPem` (a client certificate) |
 | `Tls.Server(certPem, keyPem)` | `Accept(tcp, timeout = 10000)` returns the `Tls.Stream`, `Close()` (close the streams first) |
 | `Tls.Support.Available()` | false on a build or platform without TLS |
