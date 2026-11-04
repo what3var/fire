@@ -26,6 +26,64 @@ namespace fire.Debugging
             return null;
         }
 
+        /// <summary>The baud rates a board's console usually has (the first is the default).</summary>
+        public static readonly IReadOnlyList<int> CommonBauds = new[] { 115200, 9600, 19200, 38400, 57600, 74880, 230400, 460800, 921600, 1500000, 2000000 };
+
+        /// <summary>The serial ports of this machine for a choice: the USB-serial ones a board can be on first (<see cref="SerialFramedTransport.CandidatePorts"/>), then the
+        /// others the system names (System.IO.Ports), each once.</summary>
+        public static IReadOnlyList<string> SerialPorts()
+        {
+            var ports = new List<string>(SerialFramedTransport.CandidatePorts());
+            try
+            {
+                foreach (var name in System.IO.Ports.SerialPort.GetPortNames().OrderBy(n => n, StringComparer.Ordinal))
+                    if (!ports.Contains(name, StringComparer.OrdinalIgnoreCase)) ports.Add(name);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or InvalidOperationException) { }
+            return ports;
+        }
+
+        /// <summary>The entry of a port choice that means "find the port by itself" (<see cref="ResolvePort"/>).</summary>
+        public const string AutoPort = "auto";
+
+        /// <summary>What a port field of spark says: null for auto (empty, "auto ...", an inherited value in parentheses), else the port as typed.</summary>
+        public static string? PortChoice(string? text)
+        {
+            string t = (text ?? "").Trim();
+            return t.Length == 0 || t.StartsWith(AutoPort, StringComparison.OrdinalIgnoreCase) || t.StartsWith("(", StringComparison.Ordinal) ? null : t;
+        }
+
+        /// <summary>What a baud field of spark says: (true, null) for the default (empty), (true, n) for a rate, (false, null) for text that is no rate.</summary>
+        public static (bool Ok, int? Baud) BaudChoice(string? text)
+        {
+            string t = (text ?? "").Trim();
+            if (t.Length == 0 || t.StartsWith("(", StringComparison.Ordinal) || t.Contains("default", StringComparison.OrdinalIgnoreCase)) return (true, null);
+            return int.TryParse(t, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int n) && n > 0 ? (true, n) : (false, null);
+        }
+
+        /// <summary>Whether <paramref name="folder"/> is an ESP-IDF folder (its export script and tools/idf.py) - for spark's settings: "idf.py found" or why not.
+        /// Empty: IDF_PATH is looked at instead.</summary>
+        public static (bool Ok, string Message) CheckIdf(string? folder)
+        {
+            string? env = Environment.GetEnvironmentVariable("IDF_PATH");
+            bool fromEnv = string.IsNullOrWhiteSpace(folder);
+            string? dir = fromEnv ? env : folder!.Trim();
+            if (string.IsNullOrWhiteSpace(dir)) return (false, "Not set, and the environment variable IDF_PATH is not set either: idf.py not found.");
+            string where = fromEnv ? $"IDF_PATH ({dir})" : dir;
+            if (!Directory.Exists(dir)) return (false, $"{where}: the folder does not exist - idf.py not found.");
+            string export = OperatingSystem.IsWindows() ? "export.bat" : "export.sh";
+            if (!File.Exists(Path.Combine(dir, export))) return (false, $"{where}: there is no {export} - not an ESP-IDF folder, idf.py not found.");
+            if (!File.Exists(Path.Combine(dir, "tools", "idf.py"))) return (false, $"{where}: there is no tools/idf.py - idf.py not found.");
+            string version = "";
+            try
+            {
+                string versionFile = Path.Combine(dir, "version.txt");
+                if (File.Exists(versionFile)) version = " (" + File.ReadAllText(versionFile).Trim() + ")";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            return (true, $"idf.py found{version}" + (fromEnv ? $" - from IDF_PATH: {dir}" : ""));
+        }
+
         public const string MissingIdfMessage = "Running on an ESP32 needs ESP-IDF (https://docs.espressif.com/projects/esp-idf): set the environment variable IDF_PATH to its folder "
             + "(the one with export.sh / export.bat) and start spark again - or choose a target of this machine.";
 

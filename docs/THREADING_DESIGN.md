@@ -38,8 +38,20 @@ fire MethodA() taking player handover conn
   `NativeHandle`). Wie bei `taking` geht alles mit, was von `X` aus über Felder und Elemente erreichbar ist (und was die Objekte besitzen): ein Teil,
   dessen Besitzer mitgeht, behält ihn, jeder andere (auch `X`) gehört danach dem Wurzel-Scope des neuen Threads, egal wem er vorher gehörte
   (wie bei `take`); die Teile verlassen den geteilten Bereich der Globals. Die Variable des Senders ist danach `undefined` (ein Zugriff auf ein
-  Feld ist der übliche Fehler); andere Verweise des Senders auf diese Objekte zeigen auf Objekte eines anderen Threads und dürfen nicht mehr benutzt
-  werden (das wird nicht geprüft). Am Ende des Threads werden sie zerstört, ihre Destruktoren laufen im Thread. Wiederholbar und mit `taking`
+  Feld ist der übliche Fehler). **Jeder andere Verweis** auf die verschobenen Teile, der vor dem `fire` bestand (eine andere Variable, ein Feld, ein
+  Element - beim Sender oder sonstwo, in jedem Thread, auch ein Global des Hauptprogramms, das der Thread liest), ist danach tot wie der auf ein
+  zerstörtes Objekt: jede Benutzung ist die `DestroyedException` "Access to an object that was handed over to a thread ('fire handover')." (`an array`/
+  `a buffer`; ist das Objekt im Thread schon zerstört: "Access to a destroyed object.") - statt eines Datenrennens. Benutzung heißt dasselbe wie bei
+  einem zerstörten Objekt (Feld/Element lesen oder schreiben, `Length`, Methodenaufruf, `is of`/`!` einer Klasse, `throw`, `take`, `foreach`; `copy`/`flat` die `ArgumentException` wie bei einem zerstörten);
+  `==`/`!=` (vergleicht das Objekt: der tote Verweis ist gleich dem des Threads), `== undefined` und `is of class` antworten. Umsetzung ohne
+  zusätzliche Prüfung im heißen Pfad: die Teile bekommen beim `fire` eine **neue Identität** - in der VM eine neue Instanz an ihrer Stelle (gleiche
+  Felder, Besitzer, Besitz; die Verweise unter den Teilen und die Werte des Threads zeigen auf sie, die alte ist tot, `HandedOverTo` zeigt auf die neue;
+  `Runtime.ObjectHandover.MoveAll`), nativ die nächste Generation ihres Handle-Slots (`handOverAll`; `g_slots.born` unterscheidet "übergeben" von
+  "zerstört" für den Text). Die Prüfungen, die ein zerstörtes Objekt schon finden, finden so auch diese Verweise. Mit `#performance` wird nichts geprüft.
+  Kosten (Callgrind, ein Programm, das 3 Mio. Objekte anlegt, vergleicht, liest und zerstört): ohne Threads +0,4 % Instruktionen (ein Speichern pro
+  freigegebenem Slot), mit Threads +1,7 % (der Text der `DestroyedException` braucht den ganzen Wert); die VM hat keine neue Prüfung. Ein Original mit
+  `taking`-Kopien gilt für deren `sync` danach als weg (`undefined`). Was der Thread später selbst teilt (in `sync global { }` einem Global zuweist), ist
+  ein neuer Verweis und funktioniert wie jedes Objekt, das ein Thread teilt. Am Ende des Threads werden sie zerstört, ihre Destruktoren laufen im Thread. Wiederholbar und mit `taking`
   mischbar wie `taking` (`fire handover a handover b taking c`), auch in der Aufrufform. Abgelehnt wird vor jedem Kopieren und Verschieben (eine
   `ArgumentException` am `fire`, der Thread startet nicht): ein Lambda oder Pointer in einem Feld/Element ("'handover' rejected: lambda values
   cannot be handed to a thread."), und in einem Fire-Thread ein Teil der Globals des Hauptprogramms; eine Variable des Hauptprogramms im Thread
@@ -403,7 +415,11 @@ keinen Snapshot und keine Kopie mehr:
   an den Programmanfang (0 = sync, 1 = safepoints, 2 = sleep; nur wenn nicht `safepoints`).
 - **Host-Callbacks.** Ein Callback von einem fremden Thread (z.B. ein Seriell-Ereignis) läuft nicht mehr auf einer isolierten Kopie, sondern wird dem
   Hauptprogramm eingereiht (`VM.PostCallback`) und dort mit den echten Globals ausgeführt - automatisch (wie `#globaljobs` sagt) oder bei `sync globals`. Eine
-  unbehandelte Exception darin geht als Text an den Host. Läuft das Hauptprogramm nicht (mehr), gilt weiter die isolierte Kopie. Callbacks, die beim
+  unbehandelte Exception darin geht als Text an den Host. Läuft das Hauptprogramm nicht (mehr), gilt weiter die isolierte Kopie (VM, `FireRuntime.CallCallback`: Objekte kopiert, Arrays
+  geteilt); sie folgt den `[NoCopy]`-Regeln wie jede Kopie: erreicht ein Global (ein Feld, ein Element) eine `[NoCopy]`-Instanz, wird vor jedem Kopieren
+  abgelehnt - der Callback läuft nicht, der Host bekommt die `ArgumentException` als Text einer unbehandelten Exception ("'Res' cannot be copied
+  ([NoCopy]) - 'host callback' would copy an instance of it, which exists only once."); ebenso ein Lambda/Pointer in einem Feld. Nativ gibt es diesen Weg
+  nicht: ein Host-Dienst (`hostRequest`) läuft nur im Hauptprogramm, nach seinem Ende keiner mehr - kopiert wird also nie. Callbacks, die beim
   Programmende noch eingereiht sind, verfallen.
 
 ## 8. Offene Implementierungspunkte (bewusst hier vermerkt, nicht vergessen)

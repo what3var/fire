@@ -52,18 +52,109 @@ namespace fire.Values
 
         /// <summary>Was this array reached by a fire thread via the globals (see GlobalsBroker)? Then it belongs to the shared
         /// area: element accesses run under the tree lock, and a fire thread changes elements only inside a section.</summary>
-        public bool IsShared { get => _shared; set { _shared = value; Special = value || IsDestroyed; } }
+        public bool IsShared { get => _shared; set { _shared = value; Special = value || IsDestroyed || ElemType != 0; } }
         private bool _shared;
 
         /// <summary>Shared or destroyed: the VM's fast paths (element access) then take the slow path, which respects both.</summary>
         public bool Special { get; private set; }
         public int Length => Items.Length;
 
+        /// <summary>`fire handover` (see ObjectInstance.HandedOverTo): the array that took this one's place; this one is dead (destroyed) from then on.</summary>
+        public ScriptArray? HandedOverTo { get; private set; }
+
+        private ScriptArray(Value[] items) { Items = items; }
+
+        /// <summary>The new array for a handover: the same elements, owner, owned objects and parts (not registered anywhere yet).</summary>
+        internal ScriptArray Relocate() => new(Items) { LeafOwner = LeafOwner, Parts = Parts, _ownedObjects = _ownedObjects, _hash = GetHashCode() };
+
+        // `==` compares the array, not the instance (see ObjectInstance.Equals).
+        private int _hash;
+        public override int GetHashCode()
+        {
+            if (_hash == 0) _hash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this) | 1;
+            return _hash;
+        }
+        public override bool Equals(object? obj) =>
+            ReferenceEquals(this, obj)
+            || (obj is ScriptArray other && (HandedOverTo != null || other.HandedOverTo != null) && ReferenceEquals(Latest(this), Latest(other)));
+        private static ScriptArray Latest(ScriptArray a)
+        {
+            while (a.HandedOverTo != null) a = a.HandedOverTo;
+            return a;
+        }
+
+        internal void ReplaceOwned(fire.Runtime.ObjectInstance old, fire.Runtime.ObjectInstance fresh) => _ownedObjects.Replace(old, fresh);
+        internal void ReplaceLeaf(fire.Runtime.IOwnedLeaf old, fire.Runtime.IOwnedLeaf fresh) { int i = Parts?.IndexOf(old) ?? -1; if (i >= 0) Parts![i] = fresh; }
+
+        internal void RetireAfterHandover(ScriptArray fresh)
+        {
+            HandedOverTo = fresh;
+            _ownedObjects = default;
+            Parts = null;
+            LeafOwner = null;
+            IsDestroyed = true;
+            _shared = false;
+            Special = true;
+        }
+
+        /// <summary>See ObjectInstance.LivesInAnotherThread.</summary>
+        public bool LivesInAnotherThread
+        {
+            get
+            {
+                var current = HandedOverTo;
+                while (current?.HandedOverTo != null) current = current.HandedOverTo;
+                return current != null && !current.IsDestroyed;
+            }
+        }
+
         public ScriptArray(int length)
         {
             Items = new Value[length];
             for (int i = 0; i < length; i++)
                 Items[i] = Value.MakeUndefined();
+        }
+
+        /// <summary>The element type of a typed array (<see cref="ArrayElem"/>; 0: untyped, any value). A typed array (`int a[]`, `int[8] a[]`, `float a[]`,
+        /// `bool a[]`, `char a[]`) holds only values of that type and `undefined`: an int is cut to the width, a float rounded, an int becomes a float in a
+        /// float array; anything else is an ArgumentException, a number with another unit a UnitMismatchException (SPEC 8.4.2). The native backend
+        /// stores such an array packed (one C number per element instead of a Value).</summary>
+        public byte ElemType { get; private set; }
+
+        /// <summary>The unit demand of the elements of a typed array (`int:cm a[]`: "cm"; null: the elements have no unit).</summary>
+        public string? ElemUnit { get; private set; }
+
+        /// <summary>Makes this (new) array a typed one: its elements are converted; the first that does not fit is reported (`error`, `message`, the element
+        /// in `offending`) and the array stays untyped.</summary>
+        public bool MakeTyped(byte elemType, string? elemUnit, out ArrayElem.Error error, out string? message, out Value offending)
+        {
+            var converted = new Value[Items.Length];
+            for (int i = 0; i < Items.Length; i++)
+            {
+                offending = Items[i];
+                if (!ArrayElem.TryConvert(elemType, elemUnit, Items[i], out converted[i], out error, out message)) return false;
+            }
+            System.Array.Copy(converted, Items, Items.Length);
+            ElemType = elemType;
+            ElemUnit = elemUnit;
+            Special = _shared || IsDestroyed || elemType != 0;
+            offending = default;
+            error = ArrayElem.Error.None;
+            message = null;
+            return true;
+        }
+
+        /// <summary>`array[index] = value` for a typed array: the value converted to the element type (<see cref="ArrayElem.TryConvert"/>), or the reason
+        /// why it does not fit. An untyped array takes the value as it is.</summary>
+        public bool TryConvertElement(Value value, out Value stored, out ArrayElem.Error error, out string? message) =>
+            ArrayElem.TryConvert(ElemType, ElemUnit, value, out stored, out error, out message);
+
+        /// <summary>Copies the element type of another array (a copy of a typed array is typed).</summary>
+        public void CopyTypeOf(ScriptArray other)
+        {
+            ElemType = other.ElemType;
+            ElemUnit = other.ElemUnit;
+            Special = _shared || IsDestroyed || ElemType != 0;
         }
 
         /// <summary>Returns `false` for an invalid index (`value` then

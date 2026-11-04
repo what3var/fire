@@ -71,6 +71,8 @@ These problems were found by the examples and fixed right away:
 - `break 2`/`continue 2` run every `finally` on their way (VM and native); combined units at a return type (`float:km/h Speed()`); `float[16]` (IEEE
   half precision) and `float[8]` (FP8 E4M3) round on every assignment (VM and native); a cast `x!Dog` that can never succeed is `TC013`; an interface
   named after the base class (`class Puppy : Dog, IPet`) counts for `is of` and `!`.
+- Interfaces can declare properties (`int Limit { get; set; }`, `string Name { get; }`) and extend other interfaces (`interface IStream : IReader, IWriter`);
+  `catch` takes an interface type - VM and native, see [Interfaces and generics](09-interfaces-and-generics.md).
 - Names of combined units keep the symbols of the operands (`5kg * 2m / 1s / 1s` is `10kg*m/s^2`, not `10g*m/s^2(×1000)`; `2km / 1h` is `2km/h`),
   parts with different prefixes that cancel give their factor to another prefix (`"1m/mm*s"` is `1ms^-1`); powers written as digits (`1m3`,
   `float:m/s2`, `"5 m3".ToFloat()`) and scientific notation (`1e3`); arrays with a unit convert their elements (`float:km/h speeds[]`, `TC006`);

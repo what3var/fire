@@ -182,8 +182,16 @@ Die VM benutzt für `graphics` und `windows` die C-Implementierung (Standard; `F
   an die VM, die sie benutzt): ein Fenster der Live-Ansicht hält kein Programm daneben auf, und nach dem Ende eines Programms hält nichts mehr.
 * **SDL3-CS ist entfernt** (`fire.Terminal.Sdl`, `SdlFramebufferRenderer`, `SdlClipboard`): die Fenster des Desktops zeigt in der VM nur noch die C-Bibliothek. Die
   C#-Implementierung (`fire.Terminal`, `fire.Terminal.Windows`) bleibt als Rückfall, wo die Bibliothek nicht gebaut werden kann (kein C-Compiler) oder
-  `FIRE_VM_GRAPHICS=cs` sie wählt: Grafik geht, Fenster nur mit einem Renderer des Hosts (die Tests, der Editor über `HostRenderer`); sonst meldet das Fenster,
-  dass es keine Anzeige gibt.
+  `FIRE_VM_GRAPHICS=cs` sie wählt: Grafik geht, Fenster nur mit einem Renderer des Hosts (die Tests, der Editor über `HostRenderer`); sonst wirft `new Window`
+  eine Ausnahme mit dem Grund (`No display: ...`, bei einem gescheiterten Bau der Bibliothek mit der Ausgabe des Compilers) - nie ein Fenster, das stumm als
+  geschlossen gilt. Der Bau der Bibliothek steht mit jeder Zeile im Build-Protokoll (spark: Build log). Kann die Anzeige der C-Bibliothek ein Fenster nicht
+  öffnen (kein Display, das System verweigert es), gilt es weiter als geschlossen (`Tick` ist `false`), aber die Fehlerausgabe sagt es (`error: the window '...'
+  could not be opened ...`; in der VM die des Hosts - in spark das Output-Fenster).
+* **Eine Windows-DLL braucht jedes Symbol:** die Bibliothek der VM ist unter Linux ein `.so`, das undefinierte Symbole erst beim Aufruf bemerkt; unter Windows
+  bricht der Link ab. Darum hat der Wrapper eines Pakets in C/C++ (`fire_pkg_wrapper.h`/`.hpp`) auch `className` (ohne Klassen: `"?"`) - das fehlte und ließ
+  den Bau mit w64devkit scheitern, worauf die VM ohne Fenster lief. Test: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=vmgraphics` baut die Bibliothek für
+  Windows mit MinGW (und für Linux mit `-Wl,--no-undefined`); mit `FIRE_TEST_WIN_FORGE` (ein Ordner mit `forge.exe` für win-x64) läuft die VM von Windows unter
+  Wine und öffnet ein ui-Fenster.
 
 Noch offen:
 

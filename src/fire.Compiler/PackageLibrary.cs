@@ -52,7 +52,8 @@ namespace fire.Compiler
         }
 
         private static DateTime NewestSource(InstalledImport import) =>
-            import.Import.Native!.SourcesFor(HostPlatformKeys).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s))).DefaultIfEmpty(DateTime.MinValue).Max();
+            import.Import.Native!.SourcesFor(HostPlatformKeys).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s)))
+                .Concat(import.Package.DescriptionFile is { } d && File.Exists(d) ? new[] { File.GetLastWriteTimeUtc(d) } : Array.Empty<DateTime>()).DefaultIfEmpty(DateTime.MinValue).Max();
 
         /// <summary>The library of an import on this machine if there is one (prebuilt, or built earlier and not older than the sources); otherwise null.</summary>
         public static string? Locate(InstalledImport import)
@@ -68,14 +69,35 @@ namespace fire.Compiler
             return null;
         }
 
-        /// <summary>The library of an import: located, or built now with a C++ compiler of this machine. A failure is a <see cref="PackageException"/> with what the compiler said.</summary>
-        public static string Ensure(InstalledImport import, Action<string>? log = null)
+        /// <summary>The imports of <paramref name="imports"/> whose library has to be built now (not prebuilt, not built earlier, no recent failure): the count of the phase
+        /// <see cref="BuildPhase.PackageNatives"/> when a program needs several (pass the result to <see cref="Ensure"/>).</summary>
+        public static BuildCount CountBuilds(IEnumerable<InstalledImport> imports) =>
+            new(imports.Count(i => i.Import.Native != null && Locate(i) == null && RecentFailure(i) == null && i.Import.Native.SupportsAny(HostPlatformKeys)));
+
+        /// <summary>How many libraries of packages one program builds (the steps of the phase <see cref="BuildPhase.PackageNatives"/>) and how many have begun.</summary>
+        public sealed class BuildCount(int total)
+        {
+            public int Total { get; } = total;
+            public int Started { get; private set; }
+            internal int Next() => Math.Min(++Started, Math.Max(Total, 1));
+        }
+
+        /// <summary>The library of an import: located, or built now with a C++ compiler of this machine. A failure is a <see cref="PackageException"/> with what the compiler said.
+        /// A build that runs under a <see cref="BuildMonitor"/> is its phase <see cref="BuildPhase.PackageNatives"/> ("Building natives of package X", step n of
+        /// <paramref name="count"/>); cancelled, the compiler ends with its process tree, <see cref="OperationCanceledException"/> comes out and no library is left behind
+        /// (it is built in a folder of its own and moved into the cache in one step).</summary>
+        public static string Ensure(InstalledImport import, Action<string>? log = null, BuildCount? count = null)
         {
             if (import.Import.Native == null) throw new PackageException($"The import '{import.Name}' has no natives.");
             if (Locate(import) is { } done) return done;
             if (RecentFailure(import) is { } earlier) throw new PackageException(earlier);
             if (!import.Import.Native.SupportsAny(HostPlatformKeys))
                 throw new PackageException($"The package '{import.Package.Name}' (import '{import.Name}') has native code for {string.Join(", ", import.Import.Native.Platforms)}, not for this machine ({string.Join(", ", HostPlatformKeys)}).");
+            int step = count?.Next() ?? 1, steps = Math.Max(count?.Total ?? 1, step);
+            // (a project with natives stands for a package "project:<name>", see ProjectNativeOverlay)
+            string owner = import.Package.Name.StartsWith("project:", StringComparison.Ordinal) ? "project " + import.Package.Name.Substring(8) : "package " + import.Package.Name;
+            string phaseText = $"Building natives of {owner}" + (import.Name != import.Package.Name && "project " + import.Name != owner ? $" (import {import.Name})" : "") + (steps > 1 ? $" ({step}/{steps})" : "");
+            BuildMonitor.Step(BuildPhase.PackageNatives, phaseText, step - 1, steps);
             log?.Invoke($"Building the native part of the package '{import.Package.Name}' (import '{import.Name}') for {Rid}...");
 
             var config = new NativeConfig();
@@ -104,7 +126,8 @@ namespace fire.Compiler
                 }
                 string outFile = Path.Combine(work, FileNameFor(import));
                 var (exe, args) = NativeBuilder.CompilerCommand(toolchain, target, cpp, work, outFile, sharedLibrary: true, extraIncludeDirs: new[] { Path.Combine(work, "abi") }, language: isC ? "c" : "c++");
-                var (ok, text) = NativeBuilder.Run(exe, args, work);
+                var (ok, text) = NativeBuilder.Run(exe, args, work);   // (cancelled: OperationCanceledException - nothing is remembered as a failure, the folder goes)
+                BuildMonitor.Checkpoint();
                 if (!ok || !File.Exists(outFile))
                 {
                     string message = $"Building the native part of the package '{import.Package.Name}' failed:\n{exe} {args}\n{text}";
@@ -117,8 +140,17 @@ namespace fire.Compiler
                     {
                         Directory.CreateDirectory(dir);
                         string dest = Path.Combine(dir, FileNameFor(import));
-                        File.Copy(outFile, dest, overwrite: true);
+                        // (copied next to it first and then renamed: a library in the cache is always whole - Locate takes any file there)
+                        string partial = dest + "." + Guid.NewGuid().ToString("N") + ".partial";
+                        try
+                        {
+                            File.Copy(outFile, partial, overwrite: true);
+                            BuildMonitor.Checkpoint();
+                            File.Move(partial, dest, overwrite: true);
+                        }
+                        finally { try { if (File.Exists(partial)) File.Delete(partial); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
                         try { File.Delete(FailureFile(import, dir)); } catch (IOException) { }
+                        BuildMonitor.Current?.Report(new BuildProgress(BuildPhase.PackageNatives, phaseText, step, steps));
                         return dest;
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* not writable: the next place */ }
@@ -269,9 +301,11 @@ namespace fire.Compiler
         /// <summary>The C of the library of `graphics` and `windows` for the VM: the runtime in library mode, the sources of both imports (the bridges, the display of the platform
         /// - fire's own, without SDL), the entry points of the ABI around every `__GRPH...` native the native backend knows (CppGenerator's tables: the same names, arguments and
         /// lists), and the host's own functions (the pixels of a framebuffer, a presenter for scene3d, the windows without a screen for the editor).</summary>
-        public static string GenerateGraphicsWrapper(InstalledImport graphics, InstalledImport windows)
+        /// <param name="target">The machine the library is for (default: this one; the tests generate the one of Windows to build it with MinGW).</param>
+        public static string GenerateGraphicsWrapper(InstalledImport graphics, InstalledImport windows, TargetProfile? target = null)
         {
-            var target = TargetProfile.Host;
+            target ??= TargetProfile.Host;
+            var platformKeys = new[] { target.Native.Platform, target.Name };
             var sb = new StringBuilder();
             sb.AppendLine("/* Generated by fire.Compiler: the C ABI (native/abi/fire_pkg_abi.h) around the natives of graphics and windows, for the virtual machine. */");
             foreach (string lib in CppGenerator.DisplayLibraries(target)) sb.AppendLine($"// fire-link: {lib}");
@@ -285,7 +319,7 @@ namespace fire.Compiler
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   /* the library has a runtime of its own (its state lives here) */");
             sb.AppendLine("#include \"fire_rt.h\"");
             foreach (var import in new[] { graphics, windows })
-                foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
+                foreach (var (name, text) in import.ReadNativeSources(platformKeys))
                 {
                     sb.AppendLine($"/* ---- {import.Name}: {name} */");
                     sb.AppendLine(text);

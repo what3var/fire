@@ -19,6 +19,8 @@
 
 /* A package library has no classes of its own (objects cannot cross the boundary): nothing to run. */
 void runDestructors(Obj* o) { (void)o; }
+/* ... nor their names (an exception of the program that a callback threw: the VM reports it; a DLL of Windows must have every symbol it uses). */
+const char* className(uint32_t cls) { (void)cls; return "?"; }
 /* ... and so no TimeSpan either (the prelude hands the bridge its ticks). */
 bool timeObjTicks(Value v, int64_t* ticks) { (void)v; (void)ticks; return false; }
 
@@ -240,7 +242,7 @@ static int fire_pkgCallEntry(const FirePkgFn* entries, int count, int index, con
 }
 
 /* fire_pkg_service: what the library asked the VM for (hostRequest), on the VM's thread - its services run like a call (the lock, a jump target for an error). */
-static void fire_pkgService(void) {
+FIRE_MAYBE_UNUSED static void fire_pkgService(void) {   /* (only the library of graphics and windows exports it: fire_pkg_service) */
     jmp_buf jump;
     jmp_buf* outerJump;
     fire_pkgLock();

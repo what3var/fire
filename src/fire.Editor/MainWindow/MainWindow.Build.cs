@@ -162,9 +162,14 @@ namespace fire.Editor
             string savePath;
             try { config = LoadNativeConfig(out savePath); }
             catch (fire.Native.NativeConfigException ex) { await Dialogs.Message(owner ?? this, ex.Message, "Toolchain Settings"); return false; }
-            var dialog = new NativeBuildDialog(config, savePath);
+            var dialog = new NativeBuildDialog(config, savePath, _settings.IdfPath);
             if (toolchainPage) dialog.SelectToolchainTab();
             if (await dialog.ShowDialog<bool?>(owner ?? this) != true) return false;
+            if (dialog.IdfPath != _settings.IdfPath)
+            {
+                _settings.IdfPath = dialog.IdfPath;   // (spark-settings.json `idfPath`: the ESP-IDF folder for every project)
+                _settings.Save();
+            }
             try
             {
                 var chosen = dialog.Result.ResolveToolchain(dialog.Result.ResolveTarget());
@@ -365,7 +370,7 @@ namespace fire.Editor
                 return;
             }
             // what the tools said (the C++ compiler with its stdout and stderr), then the errors and warnings of the fire compiler
-            if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+            AppendBuildResultLog(job, result.Log);
             if (result.Cancelled)
             {
                 EndBuildJob(job, BuildOutcome.Cancelled);

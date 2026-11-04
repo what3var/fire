@@ -6,6 +6,13 @@ using fire.Values;
 
 namespace fire.Runtime
 {
+    /// <summary>A host callback that cannot run on its isolated copy of the globals (FireRuntime.CallCallback): the copy is refused before anything is copied
+    /// (a `[NoCopy]` instance, a lambda or a pointer in a field). The message is the text the host gets, like that of an unhandled exception of the callback.</summary>
+    public sealed class CallbackRefusedException : Exception
+    {
+        public CallbackRefusedException(string message) : base(message) { }
+    }
+
     /// <summary>Handle to a running/finished fire thread. Since `fire`
     /// has no return values (docs/THREADING_DESIGN.md section 1),
     /// this handle is of no use in the language itself later (no
@@ -200,7 +207,7 @@ namespace fire.Runtime
         /// reachable from it (Runtime.ObjectCopier.TakeValue - the copying itself activates thread sharing on the original), otherwise directly (Value
         /// is an immutable struct). The copies are made HERE, on the spawning thread, before the new thread starts (a snapshot at the `fire`, as in the
         /// native runtime); their owner is the root scope of the new thread. The last `handoverCount` of them are `fire handover x`: not copied, the
-        /// value itself (with everything reachable from it) moves to the root scope of the new thread (Runtime.ObjectHandover.MoveTo).
+        /// value itself (with everything reachable from it) moves to the root scope of the new thread (Runtime.ObjectHandover.MoveAll: the sender's other references die).
         ///
         /// `withValue` (an actor reference), by contrast, is ALWAYS passed on DIRECTLY, WITHOUT a copy, as the last slot - an actor manages its own
         /// thread safety via its mailbox (see Runtime.ActorMailbox), not via the taking/sync ownership model.</summary>
@@ -220,8 +227,14 @@ namespace fire.Runtime
             var scope = new Scope(null, isGlobal: true);
             for (int i = 0; i < sharedGlobalCount; i++) scope.DefineSlot(Value.MakeUndefined());
             int copied = takingValues.Count - handoverCount;
-            for (int i = 0; i < takingValues.Count; i++)
-                scope.DefineSlot(i < copied ? ObjectCopier.TakeValue(takingValues[i], scope) : ObjectHandover.MoveTo(takingValues[i], scope));
+            var copies = new Value[copied];
+            for (int i = 0; i < copied; i++) copies[i] = ObjectCopier.TakeValue(takingValues[i], scope);
+            // (all `handover` values of the `fire` together: one may reach another; in performance mode nothing is checked, the parts keep their identity)
+            var handed = new Value[handoverCount];
+            for (int i = 0; i < handoverCount; i++) handed[i] = takingValues[copied + i];
+            var moved = ObjectHandover.MoveAll(handed, scope, retire: executionMode != VmExecutionMode.Performance);
+            foreach (var v in copies) scope.DefineSlot(v);
+            foreach (var v in moved) scope.DefineSlot(v);
             if (withValue is Value wv)
                 scope.DefineSlot(wv);
             return Fire(() =>
@@ -266,10 +279,32 @@ namespace fire.Runtime
             Action<Exception>? onUnhandled = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug)
         {
-            var scope = new Scope(null, isGlobal: true);
-            foreach (var v in globalSnapshot) DefineSnapshotSlot(scope, v);
+            // `[NoCopy]` (SPEC 5.12): the isolated copy copies every object of the globals (an array is shared as it is, like the arguments of
+            // `fire global`) - an instance of such a class reachable from one is refused before anything is copied: the callback does not run, the host
+            // gets the ArgumentException as text (like an unhandled exception of the callback). A lambda or a pointer in a field cannot be copied either.
+            try
+            {
+                foreach (var v in globalSnapshot)
+                    if (v.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(v, "host callback");
+            }
+            catch (InvalidOperationException ex)
+            {
+                onUnhandled?.Invoke(new CallbackRefusedException("Unhandled exception of type 'ArgumentException': " + ex.Message));
+                return Value.MakeUndefined();
+            }
 
-            var vm = new VM(callback.Proto.Chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+            var scope = new Scope(null, isGlobal: true);
+            VM vm;
+            try
+            {
+                foreach (var v in globalSnapshot) DefineSnapshotSlot(scope, v);
+                vm = new VM(callback.Proto.Chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+            }
+            catch (TakingViolationException ex)
+            {
+                onUnhandled?.Invoke(new CallbackRefusedException("Unhandled exception of type 'ArgumentException': " + ex.Message));
+                return Value.MakeUndefined();
+            }
             try
             {
                 return vm.CallLambdaEntry(callback, args);

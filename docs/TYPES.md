@@ -58,8 +58,10 @@ not have (`e.Message` on an `Exception`) is `TC008`, a call with a number of arg
 message of the `AccessDeniedException`): on a receiver whose class is known (also `this`, a member without `this.`, `ClassName.Static`, `new`, `base.M()` and the
 call of the base constructor), when every class the object can be denies it (a derived class that declares the name again with another access leaves it to the
 run time); `any` and reflection are checked at run time. A method, property or operator that replaces an inherited one without `override` is `TC014`;
-`override` on one that replaces nothing (nothing of that name and parameters in the base classes) is `TC015` (an error in lax mode too; SPEC 5.1). A member of an interface is public (a class implements it with a public method, `E4063`), so a call
-through a value of an interface type has nothing to report.
+`override` on one that replaces nothing (nothing of that name and parameters in the base classes) is `TC015` (an error in lax mode too; SPEC 5.1). A member of an interface is public (a class implements it with a public method or property, `E4063`), so a call
+through a value of an interface type has nothing to report. A property of an interface has its declared type and unit through a value of the interface; writing
+one the interface declares without `set` (or reading one without `get`) is `TC016` (an error in lax mode too). An interface that extends others (`interface
+IConnection : IO.IStream`) is assignable to each of them without a cast, and its members include theirs (SPEC 8.5).
 
 Known gaps: `SelectMany` and the selector projections (`SelectMember`, ...) are `Query` of `any`.
 

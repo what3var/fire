@@ -52,6 +52,10 @@ namespace fire.Editor
         private readonly TextBox txtDefines = LinesField("NAME or NAME=VALUE");
         private readonly TextBox txtTargetArgs = LinesField("-pthread", 50);
         private readonly TextBox txtTargetLibs = LinesField(null, 50);
+        // the board of the target (ESP32: its serial port and the baud rate of its console - `port`/`baud` of the target), refilled for every target
+        private readonly ContentControl boardHost = new();
+        private string? _targetPort;
+        private int? _targetBaud;
         // toolchain
         private static readonly string[] Kinds = { "gcc", "clang", "msvc", "custom", "files" };
         private readonly ComboBox cmbToolchain = Combo();
@@ -70,8 +74,12 @@ namespace fire.Editor
 
         public NativeConfig Result => _config;
 
-        public NativeBuildDialog(NativeConfig config, string saveTo)
+        /// <summary>The ESP-IDF folder of spark (spark-settings.json `idfPath`; null: IDF_PATH) as the dialog leaves it - the caller saves it.</summary>
+        public string? IdfPath { get; private set; }
+
+        public NativeBuildDialog(NativeConfig config, string saveTo, string? idfPath = null)
         {
+            IdfPath = idfPath;
             _config = NativeConfig.Parse(config.ToJson());   // a copy
             _config.Path = config.Path ?? saveTo;
 
@@ -84,6 +92,9 @@ namespace fire.Editor
             _nav.Add("build", NavIcons.Cube, "Build", BuildPage());
             _nav.Add("target", NavIcons.Target, "Target", TargetPage());
             _nav.Add("toolchain", NavIcons.Wrench, "Toolchain", ToolchainPage());
+            _nav.AddSeparator();
+            _nav.AddScope("spark");
+            _nav.Add("esp32", NavIcons.Chip, "ESP32 Board", Esp32Page());
 
             var save = DialogButton("Save", accent: true);
             save.IsDefault = true;
@@ -155,11 +166,22 @@ namespace fire.Editor
                     Row("Starts as", segEntryKind),
                     Row("", Hint("Process: int main and an exit code. Function: the board calls it from a task.")),
                     Row("", chkExternC)),
+                Group("Board", boardHost,
+                    Hint("Run and Debug on an ESP32 flash the board on this serial port and talk to its console there (\"port\" and \"baud\" of the target; a project can set its own "
+                        + "in Project Properties > Native & Toolchain). auto: the only USB serial port of this machine, else the one esptool uses.")),
                 Group("Compiler input",
                     Columns(Block("Includes before the platform package", txtIncludes), Block("Definitions", txtDefines)),
                     Columns(Block("Compiler arguments", txtTargetArgs), Block("Libraries to link", txtTargetLibs)),
                     Hint("One entry per line. The arguments and libraries are the ones this platform always needs, whatever the toolchain.")));
         }
+
+        private Control Esp32Page() => Page("ESP32 Board", "What spark needs to build, flash and debug a program on an ESP32 (the target esp32).",
+            Group("ESP-IDF",
+                Row("ESP-IDF folder", BoardFields.IdfFolder(IdfPath, v => IdfPath = v, () => this)),
+                Hint("The folder of ESP-IDF (with export.sh / export.bat and tools/idf.py): F5 runs idf.py build flash with it. Kept in spark's settings (spark-settings.json), "
+                    + "for every project; empty: the environment variable IDF_PATH.")),
+            Group("Serial port",
+                Hint("The serial port and the baud rate belong to the target (Target > Board) or to a project (Project Properties > Native & Toolchain).")));
 
         private Control ToolchainPage()
         {
@@ -234,6 +256,17 @@ namespace fire.Editor
             txtTargetArgs.Text = string.Join("\r\n", t.Native.CompileArgs);
             txtTargetLibs.Text = string.Join("\r\n", t.Native.LinkLibs);
             txtTargetHint.Text = TargetHint(t);
+            _targetPort = t.Native.Port;
+            _targetBaud = t.Native.Baud;
+            boardHost.Content = new StackPanel
+            {
+                Spacing = 8,
+                Children =
+                {
+                    Row("Serial port", BoardFields.Port(_targetPort, null, v => _targetPort = v)),
+                    Row("Baud rate", BoardFields.Baud(_targetBaud, null, v => _targetBaud = v)),
+                },
+            };
             _loading = false;
             _targetSnapshot = TargetFromFields(t).ToJsonText();
         }
@@ -262,6 +295,10 @@ namespace fire.Editor
                 CompileArgs = Lines(txtTargetArgs.Text),
                 LinkLibs = Lines(txtTargetLibs.Text),
                 Toolchain = current.Native.Toolchain,
+                Sdl = current.Native.Sdl,
+                LineDirectives = current.Native.LineDirectives ? null : false,
+                Port = _targetPort,
+                Baud = _targetBaud,
             };
             if (int.TryParse((txtStack.Text ?? "").Trim(), out int stack) && stack > 0) def.StackBytes = stack;
             return def;

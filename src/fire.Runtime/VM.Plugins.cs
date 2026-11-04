@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using fire.Ast;
 using fire.Bytecode;
+using fire.Standard;
 using fire.Values;
 
 namespace fire.Runtime
@@ -29,6 +30,8 @@ namespace fire.Runtime
         private static long s_nextPluginHandle = -1000;
         /// <summary>The plugins linked into a set of classes (a program): by their name.</summary>
         private static readonly ConditionalWeakTable<object, Dictionary<string, PluginBytecode>> LinkedPlugins = new();
+        /// <summary>The interfaces of the modules of a program (a set of classes) as it was built, by module.</summary>
+        private static readonly ConditionalWeakTable<object, Dictionary<string, string>> HostInterfaces = new();
 
         /// <summary>The bytecode of a fire plugin that `path` names (the `.fireplugin` file, or a native library with one next to it); null: none.</summary>
         private static string? PluginFileFor(string path)
@@ -91,7 +94,9 @@ namespace fire.Runtime
                 foreach (var dep in plugin.Deps)
                 {
                     if (!modules.TryGetValue(dep[0], out var module)) return $"it needs the module '{dep[0]}', which this program does not have.";
-                    string has = ModuleInterface.Text(host, module.Classes, module.Sources);
+                    // (as the program was built: what plugins added to its classes - `class extends` - is not part of the interface; computed before the first one did)
+                    var built = HostInterfaces.GetOrCreateValue(_classes);
+                    if (!built.TryGetValue(dep[0], out var has)) built[dep[0]] = has = ModuleInterface.Text(host, module.Classes, module.Sources);
                     if (has != dep[1]) return $"it was built against another interface of the module '{dep[0]}' ({Short(dep[1])}, the program has {Short(has)}) - build it again against the libraries of this program.";
                 }
             foreach (var name in plugin.Classes)
@@ -126,8 +131,43 @@ namespace fire.Runtime
                 foreach (var ctor in rc.AllConstructors) Visit(ctor);
                 Visit(rc.Destructor);
             }
+            // its `class extends` of classes of the program, of libraries and of base types: the methods its own sources add (no fields - the build refuses them)
+            var extensions = new List<(RuntimeClass Target, RuntimeClass Copy, List<(string Name, FunctionProto Proto)> Added)>();
+            foreach (var group in plugin.Extensions.Where(e => e.Length == 3).GroupBy(e => e[0]).OrderBy(g => g.Key, StringComparer.Ordinal))
+            {
+                if (plugin.Classes.Contains(group.Key) || !program.Program.Classes.TryGetValue(group.Key, out var rc)) continue;   // (`$int`: never in Classes)
+                var added = new List<(string, FunctionProto)>();
+                foreach (var e in group)
+                    if (rc.Methods.TryGetValue(e[1], out var overloads) && overloads.FirstOrDefault(p => p.ParamCount.ToString(System.Globalization.CultureInfo.InvariantCulture) == e[2]) is { } proto)
+                        added.Add((e[1], proto));
+                if (added.Count == 0) continue;
+                classes.TryGetValue(rc.Name, out var target);
+                foreach (var (name, proto) in added)
+                    if (target != null && target.Methods.TryGetValue(name, out var has) && has.Any(h => h.ParamCount == proto.ParamCount))
+                        return $"it adds the method '{name}' ({proto.ParamCount} arguments) to '{(BaseTypeExtensions.TryGetTypeName(rc.Name, out var bt) ? bt : rc.Name)}', which has it already (another plugin added it, or the class of the program has it).";
+                // (a base type the program does not extend at all: the plugin's collecting class itself - all of its methods)
+                foreach (var (_, proto) in target == null ? rc.Methods.SelectMany(m => m.Value.Select(p => (m.Key, p))).ToList() : added) Visit(proto);
+                extensions.Add((target!, rc, added));
+            }
             if (problem != null) return problem;
+            LinkPluginSources(plugin, host);
             foreach (var rc in own) classes[rc.Name] = rc;
+            foreach (var (target, copy, added) in extensions)
+            {
+                if (target == null)
+                {
+                    classes[copy.Name] = copy;
+                    foreach (var kind in Enum.GetValues<ValueKind>())
+                        if (BaseTypeExtensions.ClassNameFor(kind) == copy.Name) _baseTypeClasses[(int)kind] = copy;
+                    continue;
+                }
+                foreach (var (name, proto) in added)
+                {
+                    if (!target.Methods.TryGetValue(name, out var list)) target.Methods[name] = list = new List<FunctionProto>();
+                    list.Add(proto);
+                }
+            }
+            if (extensions.Count > 0) foreach (var rc in classes.Values) rc.ForgetFoundMethods();
             linked[plugin.Name] = plugin;
             // its units: a unit of the VM carries its dimensions by name (and its conversion functions by the name of its hidden class, linked above) - only what a text
             // may name (`"5in".ToFloat()`) needs the program to know them
@@ -143,6 +183,29 @@ namespace fire.Runtime
                     rc.StaticFieldValues[field] = value;
                 }
             return null;
+        }
+
+        /// <summary>A plugin's sources got the next source indexes of the program (its lines are told apart from the program's): the classes of the program, the first new
+        /// index, the files and the hashes of the plugin's sources. The debugger (VmDebugTarget) grows its list of sources; raised on the thread that loads the plugin.</summary>
+        public static event Action<object, int, IReadOnlyList<string?>, IReadOnlyList<string?>>? PluginSourcesLinked;
+
+        /// <summary>The sources the plugins added to a program (a set of classes), after the program's own.</summary>
+        private static readonly ConditionalWeakTable<object, StrongBox<int>> PluginSourceCounts = new();
+
+        /// <summary>The line tables of a plugin's code: its own sources become the next indexes after the program's (and the plugins' before), the sources of its
+        /// libraries 0 (their code is the program's); a program that does not know its sources (a packed one) keeps the plugin's numbers.</summary>
+        private void LinkPluginSources(PluginBytecode plugin, LinkedProgram? host)
+        {
+            var program = plugin.Program!;
+            var own = plugin.Sources.Where(s => s.Length == 3 && int.TryParse(s[0], out _)).ToList();
+            if (host?.SourceFiles is not { } hostFiles || own.Count == 0) return;
+            var added = PluginSourceCounts.GetOrCreateValue(_classes);
+            int first = hostFiles.Count + added.Value;
+            added.Value += own.Count;
+            var map = new Dictionary<int, int>();
+            for (int k = 0; k < own.Count; k++) map[int.Parse(own[k][0]!, System.Globalization.CultureInfo.InvariantCulture)] = first + k;
+            foreach (var chunk in PluginBytecode.Chunks(program.Program)) chunk.RemapSources(s => map.TryGetValue(s, out var to) ? to : 0);
+            PluginSourcesLinked?.Invoke(_classes, first, own.Select(s => s[1]).ToList(), own.Select(s => s[2]).ToList());
         }
 
         private static string Short(string abi) => abi.Length > 14 ? abi.Substring(0, 14) : abi;

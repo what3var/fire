@@ -581,8 +581,8 @@ namespace fire.Compiler
                         if (!libs.Contains(flag)) libs.Add(flag);
                     }
             // a debug build (mode debug, `#define FIRE_DEBUG 1` at the top of the program): no optimization, debug information, not stripped - for the debugger of spark
-            // and for gdb/lldb (docs/NATIVE_BACKEND.md "Debug-Builds")
-            bool debugBuild = !sharedLibrary && File.Exists(linkSource) && File.ReadLines(linkSource).Take(60).Any(l => l.StartsWith("#define FIRE_DEBUG 1", StringComparison.Ordinal));
+            // and for gdb/lldb (docs/NATIVE_BACKEND.md "Debug-Builds") (a debug plugin too: its lines are debugged in the program)
+            bool debugBuild = (!sharedLibrary || Path.GetFileName(linkSource) == "fire_plugin.c") && File.Exists(linkSource) && File.ReadLines(linkSource).Take(60).Any(l => l.StartsWith("#define FIRE_DEBUG 1", StringComparison.Ordinal));
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
             var libDirs = new List<string>();
             // SDL: where its headers and import library are (Toolchain\SDL3, SDL3_DIR, the prefix of the compiler, the system; the same for SDL2), see SdlSetup

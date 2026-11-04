@@ -91,7 +91,7 @@ try {
 
 | Class | Members |
 |---|---|
-| `Type` | `Type.Of(obj or name)`, `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)` |
+| `Type` | `Type.Of(obj or name)`, `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `DeclaredInterfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)` |
 | `Member` | `Name`, `Kind` (`field`, `property`, `method`, `constructor`), `TypeName`, `Access`, `IsStatic`, `IsReadonly`, `CanRead`, `CanWrite`, `Unit`, `DeclaredIn`, `ParamNames`, `ParamTypes`, `ParamCount()`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)`, `Get(obj)`, `Set(obj, v)`, `Call(obj, args)`, `Probe(obj, kind, handler)` |
 | `Attribute` | `Name`, `Args`, `ArgTexts`, `ArgCount()` - an attribute of a class, method, field or property (see [Classes](08-classes.md#attributes)) |
 | `Reflect` | `Get`, `Set`, `Call`, `New`, `Has`, `Probe`, `ProbeAll`, `Silence`, `SilenceAll`, `SilenceHandle` |
@@ -99,6 +99,9 @@ try {
 - Reflection follows the same rules as normal code: `private`/`protected` apply to the calling code, `readonly` fields cannot be set, units are checked.
 - Errors are `ReflectionException`s.
 - Static members are described but cannot be used through `Reflect`.
+- `Type.Interfaces` holds every interface an object of the class is of (as `is of` sees it): the ones the class names, the ones those extend and those
+  of its base classes - each once, by its full name (`Geo.IShape`), the nearest first. `Type.DeclaredInterfaces` holds only the ones the class names
+  itself (`class Ring : Circle, IPrintable`: `IPrintable`). Both are the same in the VM and in native builds (also for classes of modules and plugins).
 - `Member.Attributes` holds the attributes of a method, field or property, `Type.Attributes` those before the class, in the order of the source. `Args` are the values of the arguments that are
   constants - numbers (also negative ones), strings, `true`/`false`, arrays of constants and ranges of `int` constants (`1..3` gives `[1, 2, 3]`); any other
   argument (`new List<int>()`, a variable, a call) is `undefined` there. `ArgTexts` always has the source text of every argument.

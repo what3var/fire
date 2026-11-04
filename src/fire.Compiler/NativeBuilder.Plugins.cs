@@ -22,24 +22,37 @@ namespace fire.Compiler
             var result = new List<(string, string)>();
             if (program.PackageNatives is not { Count: > 0 } names || program.PackageNativeLibraries is not { } files) return result;
             var copied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var key in program.NativeImports.Where(PackageImports.IsPackageKey).OrderBy(k => k, StringComparer.Ordinal))
-                if (fire.Package.Manager.PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { IsC: false } native && native.Functions.Any(f => !f.Host))
+            var imports = PackageImports.LibraryImports(program.NativeImports).Where(i => i.Import.Native is { IsC: false }).ToList();
+            var count = PackageLibrary.CountBuilds(imports);
+            foreach (var import in imports)
+            {
+                try
                 {
-                    try
-                    {
-                        string built = PackageLibrary.Ensure(import, m => log.AppendLine(m));
-                        string file = PackageLibrary.FileNameFor(import);
-                        File.Copy(built, Path.Combine(directory, file), true);
-                        copied.Add(file);
-                    }
-                    catch (Exception ex) when (ex is fire.Package.Manager.PackageException or IOException or UnauthorizedAccessException)
-                    {
-                        log.AppendLine($"note: the natives in C++ of '{import.Name}' are not built for the VM ({ex.Message})");
-                    }
+                    string built = PackageLibrary.Ensure(import, m => log.AppendLine(m), count);
+                    string file = PackageLibrary.FileNameFor(import);
+                    File.Copy(built, Path.Combine(directory, file), true);
+                    copied.Add(file);
                 }
+                catch (Exception ex) when (ex is fire.Package.Manager.PackageException or IOException or UnauthorizedAccessException)
+                {
+                    log.AppendLine($"note: the natives in C++ of '{import.Name}' are not built for the VM ({ex.Message})");
+                }
+            }
             for (int i = 0; i < names.Count && i < files.Count; i++)
                 if (copied.Contains(files[i])) result.Add((names[i], files[i]));
             return result;
+        }
+
+        /// <summary>A fire plugin for the VM only (no native library): the classes of `sources` compiled for the VM (`ownImports`: imports of packages whose prelude these sources
+        /// are - their natives are the plugin's), as <see cref="PluginBytecode"/> at `path`. `packageNatives` picks the natives the VM binds when it links the plugin (name,
+        /// library file - relative to the plugin's folder, or a full path). Compile errors are thrown.</summary>
+        public static LinkedProgram WriteVmPlugin(string path, string name, IReadOnlyList<string> sources, IReadOnlyList<string?>? sourcePaths, VmExecutionMode mode,
+            IReadOnlyCollection<string>? ownImports = null, Func<LinkedProgram, IEnumerable<(string Native, string Library)>>? packageNatives = null)
+        {
+            var linked = new Linker { ClassMeta = true, Engine = "vm", SourcePaths = sourcePaths, OwnImports = ownImports }.CompileAndLink(sources, null, null, mode);
+            var deps = (ModuleInterface.Modules(linked) ?? new()).OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => (m.Key, ModuleInterface.Text(linked, m.Value.Classes, m.Value.Sources)));
+            PluginBytecode.Write(path, name, linked, deps, packageNatives?.Invoke(linked));
+            return linked;
         }
 
         /// <summary>`--linkage plugin` (ROADMAP 9 phase D b, docs/NATIVE_BACKEND.md "Plugins"): the classes of the program's own sources as a fire plugin - a shared library

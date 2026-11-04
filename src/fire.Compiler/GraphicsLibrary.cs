@@ -32,8 +32,14 @@ namespace fire.Compiler
             var graphics = PackageStore.Default.FindImport("graphics");
             var windows = PackageStore.Default.FindImport("windows");
             if (graphics == null || windows == null) { _failure = "the standard packages graphics and windows are not installed"; return null; }
-            try { _path = PackageLibrary.EnsureGraphics(graphics, windows, log ?? (m => (fire.Native.ToolchainProvider.Log ?? Console.Error.WriteLine)(m))); _failure = null; }
-            catch (PackageException ex) { _failure = ex.Message; _path = null; }
+            var say = log ?? (m => (fire.Native.ToolchainProvider.Log ?? Console.Error.WriteLine)(m));
+            try { _path = PackageLibrary.EnsureGraphics(graphics, windows, say); _failure = null; }
+            catch (PackageException ex)
+            {
+                // (into the log - spark's build log: the program's windows cannot open without this library; a build monitor has had the compiler's output line by line already)
+                _failure = ex.Message; _path = null;
+                say("error: " + (fire.Native.BuildMonitor.Current != null ? ex.Message.Split('\n')[0].TrimEnd() : ex.Message));
+            }
             return _path;
         }
 
@@ -42,12 +48,15 @@ namespace fire.Compiler
 
         private static int _warned;
 
-        /// <summary>The VM takes the C# implementation because the library cannot be had: said once per process (on the error output), with the reason - a failed
+        /// <summary>The VM takes the C# implementation because the library cannot be had: said to the host's log (ToolchainProvider.Log), else once per process on the error output, with the reason - a failed
         /// build must not hide behind it (the C# windows have no display).</summary>
         public static void WarnFallback()
         {
+            string text = "(graphics and windows run in their C# implementation - without windows of the desktop: the C library cannot be had: " + (_failure ?? "unknown") + ")";
+            // (the host's log every time - spark's build log, forge's error output; without one the console, once per process)
+            if (fire.Native.ToolchainProvider.Log is { } log) { log(text); return; }
             if (Interlocked.Exchange(ref _warned, 1) != 0) return;
-            Console.Error.WriteLine("(graphics and windows run in their C# implementation - without windows of the desktop: the C library cannot be had: " + (_failure ?? "unknown") + ")");
+            Console.Error.WriteLine(text);
         }
 
         [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "setenv")] private static extern int SetEnvC(string name, string value, int overwrite);

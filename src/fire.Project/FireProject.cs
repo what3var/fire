@@ -35,12 +35,13 @@ namespace fire.Projects
     {
         public static readonly string[] DefaultSources = { "native/**/*.{h,hpp,hh,c,cc,cpp,cxx}" };
 
-        /// <summary>Files and patterns relative to the project file, in this order; not set: everything in `native/` - the headers first.</summary>
-        public List<string>? Sources { get; set; }
+        /// <summary>Files and patterns relative to the project file, in this order; not set: everything in `native/` - the headers first. An entry can have a build order
+        /// (`{ "file": "native/x.h", "order": -10 }`, for a pattern: each of its files), see <see cref="fire.Package.Manager.NativeSourceList"/>.</summary>
+        public fire.Package.Manager.NativeSourceList? Sources { get; set; }
         /// <summary>`c` or `c++` (the default), see PackageNative.Language.</summary>
         public string? Language { get; set; }
         /// <summary>More files for one platform or target (the key as in a package).</summary>
-        public Dictionary<string, List<string>>? PlatformSources { get; set; }
+        public Dictionary<string, fire.Package.Manager.NativeSourceList>? PlatformSources { get; set; }
         public List<string>? Platforms { get; set; }
         public Dictionary<string, List<string>>? LinkLibraries { get; set; }
         public List<fire.Package.Manager.PackageNativeFunction>? Functions { get; set; }

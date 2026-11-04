@@ -121,6 +121,8 @@ static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, 
     if (pixels == NULL) return;   /* (a frame only for the presenter, which could not show it: the next one comes with its pixels) */
 #ifdef FIRE_DISPLAY_PRESENT_AREA
     if (area != NULL && fn == NULL) { fire_display_presentArea(&s->display, pixels, width, height, area[0], area[1], area[2], area[3]); return; }
+#else
+    (void)area;   /* (a display without partial present - SDL - shows the whole frame) */
 #endif
     fire_display_present(&s->display, pixels, width, height);
 }
@@ -426,10 +428,24 @@ static void fire_winb_applyRequests(FireWinShared* s) {
     s->scale = fire_display_scale(&s->display);
 #endif
 }
+/* A window that cannot be opened is never silent: it counts as closed, and the error output says so - in the VM the host's (spark: the Output panel). */
+static void fire_winb_reportOpenFailure(const FireWinShared* s) {
+    char text[600];
+    int n = snprintf(text, sizeof text, "error: the window '%.300s' (%dx%d) could not be opened - there is no display to show it on, or the system refused it; it counts as closed.\n",
+                     s->title != NULL ? s->title : "", s->width, s->height);
+    if (n < 0) return;
+    if (n >= (int)sizeof text) n = (int)sizeof text - 1;
+#if defined(FIRE_LIBRARY) && !defined(__cplusplus)
+    if (g_libraryHost != NULL && g_libraryHost->std_write != NULL && g_libraryHost->std_write(2, (const uint8_t*)text, n) >= 0) return;
+#endif
+    fputs(text, stderr);
+    fflush(stderr);
+}
+
 static int fire_winb_ensureOpen(FireWinShared* s, int vsync) {
     if (s->opened) return !s->failed;
     s->opened = 1;
-    if (!fire_display_open(&s->display, s->title, s->width, s->height, vsync)) s->failed = 1;
+    if (!fire_display_open(&s->display, s->title, s->width, s->height, vsync)) { s->failed = 1; fire_winb_reportOpenFailure(s); }
     else fire_winb_applyRequests(s);
     return !s->failed;
 }

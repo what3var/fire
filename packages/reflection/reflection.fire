@@ -96,7 +96,8 @@ class Type {
     string Name
     class Base
     bool IsActor
-    class Interfaces
+    class Interfaces            // every interface the class reaches (also over base classes and interfaces that extend others), by full name
+    class DeclaredInterfaces    // only the ones the class names itself (`class X : Base, IFoo`)
     class All
     class Attributes
 
@@ -107,6 +108,7 @@ class Type {
         if (info[1] != undefined) { this.Base = new Type(info[1]) }
         this.IsActor = info[2]
         this.Interfaces = flat info[3]
+        this.DeclaredInterfaces = flat info[5]
         this.Attributes = new List()   // (the attributes before the class)
         var rawAttributes = info[4]
         for (var k = 0; k < rawAttributes.length; k = k + 1) { var attribute = new Attribute(rawAttributes[k]); attribute.TakeTo(this); this.Attributes.Add(attribute) }

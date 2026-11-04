@@ -51,7 +51,7 @@ namespace fire.Values
         {
             Kind = kind;
             Width = width;
-            _bits = bits;
+            _bits = kind == ValueKind.Int && Ints32 ? (int)bits : bits;
             _ref = reference;
             _enum = enumId;
         }
@@ -63,6 +63,13 @@ namespace fire.Values
         // Set by the host before a program runs (RuntimeSession/Session.Build) from LinkedProgram.FloatWidth.
         // ---------------------------------------------------------------
         public static bool SingleFloats;
+
+        // ---------------------------------------------------------------
+        // Program-wide int width (SPEC 8.2.1): with `#intwidth 32` every int is a 32-bit two's complement number. The memory stays a
+        // long - every int that is made is cut to 32 bits (the operation itself runs in 64 bits, as natively: an int32 operand, the
+        // result stored into an int32). Set by the host before a program runs from LinkedProgram.IntWidth.
+        // ---------------------------------------------------------------
+        public static bool Ints32;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static double Fl(double v) => SingleFloats ? (double)(float)v : v;

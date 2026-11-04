@@ -15,6 +15,8 @@ namespace fire.Projects
         public string? Mode { get; set; }
         /// <summary>32 or 64: the precision of `float` (the tag `#floatwidth`).</summary>
         public int? FloatWidth { get; set; }
+        /// <summary>32 or 64: the width of `int` (the tag `#intwidth`; default 64).</summary>
+        public int? IntWidth { get; set; }
         public string? Name { get; set; }
         public string? Codename { get; set; }
         public string? Description { get; set; }
@@ -56,7 +58,7 @@ namespace fire.Projects
         public int? Baud { get; set; }
 
         [JsonIgnore]
-        public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
+        public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && IntWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
             && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Stripping == null && Output == null && TypeChecking == null && GlobalJobs == null && Arguments == null && Port == null && Baud == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
@@ -75,6 +77,7 @@ namespace fire.Projects
             r.Subsystem = high?.Subsystem ?? low?.Subsystem;
             r.Mode = high?.Mode ?? low?.Mode;
             r.FloatWidth = high?.FloatWidth ?? low?.FloatWidth;
+            r.IntWidth = high?.IntWidth ?? low?.IntWidth;
             r.Name = high?.Name ?? low?.Name;
             r.Codename = high?.Codename ?? low?.Codename;
             r.Description = high?.Description ?? low?.Description;
@@ -138,6 +141,7 @@ namespace fire.Projects
             if (Subsystem != null && !Subsystems.Contains(Subsystem)) problems.Add($"settings.subsystem '{Subsystem}' is not one of: {string.Join(", ", Subsystems)}.");
             if (Mode != null && !Modes.Contains(Mode)) problems.Add($"settings.mode '{Mode}' is not one of: {string.Join(", ", Modes)}.");
             if (FloatWidth != null && FloatWidth != 32 && FloatWidth != 64) problems.Add("settings.floatWidth must be 32 or 64.");
+            if (IntWidth != null && IntWidth != 32 && IntWidth != 64) problems.Add("settings.intWidth must be 32 or 64.");
             if (TypeChecking != null && !TypeCheckings.Contains(TypeChecking)) problems.Add("settings.typeChecking must be lax or strict.");
             if (GlobalJobs != null && !GlobalJobsModes.Contains(GlobalJobs.ToLowerInvariant())) problems.Add($"settings.globalJobs '{GlobalJobs}' is not one of: {string.Join(", ", GlobalJobsModes)}.");
             if (Engine != null && !Engines.Contains(Engine)) problems.Add($"settings.engine '{Engine}' is not one of: {string.Join(", ", Engines)}.");

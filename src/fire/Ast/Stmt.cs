@@ -314,7 +314,7 @@ namespace fire.Ast
         IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);   // (Attributes: `[Name ...]` before the class, read by reflection)
 
     // ---------------------------------------------------------------
-    // Interfaces (SPEC 8.5): pure method signatures, no fields/bodies.
+    // Interfaces (SPEC 8.5): method and property signatures, no fields/bodies.
     // Since a method call is always a dynamic name lookup (no
     // static type system), interfaces need NO runtime
     // representation of their own - they are a pure resolver check ("does
@@ -323,9 +323,21 @@ namespace fire.Ast
     public sealed record InterfaceMethodSig(
         int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params);
 
+    /// <summary>`int ReadTimeout { get; set; }` / `string Host { get; }` in an interface: a property a class implements with a public property of the same name
+    /// (an auto-property or one with get/set) that has at least the accessors named here (a read-only one may be implemented by a read-write one).
+    /// Type may carry a unit (`int Delay : ms { get; }`).</summary>
+    public sealed record InterfacePropertySig(int Line, TypeRef? Type, string Name, bool HasGet, bool HasSet);
+
+    /// <summary>BaseRefs: the interfaces this one extends (`interface IConnection : IO.IStream, IOther`) - a class implementing it implements them too and is
+    /// of every one of them (the compiler puts the whole closure into RuntimeClass.Interfaces).</summary>
     public sealed record InterfaceDecl(
         int Source, int Line, string Name, IReadOnlyList<InterfaceMethodSig> Methods,
-        IReadOnlyList<TypeParam>? TypeParams = null) : Stmt(Source, Line);
+        IReadOnlyList<TypeParam>? TypeParams = null,
+        IReadOnlyList<TypeRef>? BaseRefs = null,
+        IReadOnlyList<InterfacePropertySig>? Properties = null) : Stmt(Source, Line)
+    {
+        public IReadOnlyList<InterfacePropertySig> PropertySigs => Properties ?? System.Array.Empty<InterfacePropertySig>();
+    }
 
     // ---------------------------------------------------------------
     // Native Anbindung / unsafe (SPEC "APIs & Bitbreiten & Pointer")

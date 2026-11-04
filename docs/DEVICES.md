@@ -83,6 +83,16 @@ cannot be made (a class that is not there, a constructor that throws) is left ou
 package, **Reload Package Drivers** (the button with the circular arrow in the device panel, or its context menu) loads them again. The standard libraries `gpio`,
 `i2c`, `spi` and `usb` list their drivers.
 
+The drivers of a package come to the agent as a **fire plugin** (docs/language/18-native-code.md "fire plugins"): the prelude of the import is compiled once, for
+the VM, as a plugin of its own (`NativeBuilder.WriteVmPlugin`; its natives - C or C++ - are those of the package's library for the VM, named in the plugin by their
+path) and kept in the user-wide cache (`<cache>/driver-plugins/<key>/`, `ember cache clean` empties it). The key covers the build of fire, the package and its version,
+its prelude, the preludes it imports (and theirs) and the path of its library - a changed package is a new plugin. The agent imports the modules the plugin was built
+against (`devices`, `time`, ...), loads it with `Library.Load` and makes each driver with `Reflect.New` (a class the manifest names without its namespace is found by
+its last part). A plugin that does not load (another interface of a module, a native the agent cannot have) is reported (`note: ...` on the agent's messages): the
+agent starts again and imports that package the old way (`#import`), as it does when the plugin cannot be built. `FIRE_DRIVER_PLUGINS=0` (or `UsePlugins = false`)
+always takes the old way. Tested without a window: `FIRE_TESTS_ONLY=drivers` (the plugin of `usb` in the cache, the agent with plugins and with `#import` -
+the same drivers and devices, `usb:sim` with connect/send/echo, a driver that is not there -, all drivers of the standard packages, a cached plugin that no longer fits).
+
 The agent is a program of its own: a device it holds open is busy for a program that runs at the same time (disconnect it in the device manager first).
 
 ## The terminal

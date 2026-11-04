@@ -59,21 +59,134 @@ namespace fire.Compiler
         }
 
         /// <summary>The program of the agent for these drivers.</summary>
-        public static string BuildScript(IEnumerable<PackageDriver> drivers)
+        public static string BuildScript(IEnumerable<PackageDriver> drivers) => BuildScript(drivers, null);
+
+        /// <summary>The program of the agent: the imports with a plugin (`plugins`, by import) are loaded with `Library.Load` and their drivers made with `Reflect.New`
+        /// (the modules the plugin was built against are imported - they must be there for it to load); the others are imported (`new Class()`).</summary>
+        public static string BuildScript(IEnumerable<PackageDriver> drivers, IReadOnlyDictionary<string, DriverPlugin>? plugins)
         {
             var list = drivers.ToList();
+            bool Plugged(PackageDriver d) => plugins != null && plugins.ContainsKey(d.Import);
+            var imports = new List<string> { "devices" };
+            foreach (var d in list)
+                if (!Plugged(d)) imports.Add(d.Import);
+                else { imports.Add("reflection"); imports.AddRange(plugins![d.Import].Imports); }
             var sb = new StringBuilder();
-            sb.AppendLine("#import \"devices\"");
-            foreach (var import in list.Select(d => d.Import).Distinct(StringComparer.OrdinalIgnoreCase)) sb.AppendLine($"#import \"{import}\"");
+            foreach (var import in imports.Distinct(StringComparer.OrdinalIgnoreCase)) sb.AppendLine($"#import \"{import}\"");
             sb.AppendLine("extern string __HostCommand()");
             sb.AppendLine(AgentClass);
+            // the plugins first: one that does not load is reported (`P`, the host starts the agent again with the import instead) and its drivers are not made
+            var flags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in list)
+            {
+                if (!Plugged(d) || flags.ContainsKey(d.Import)) continue;
+                string flag = flags[d.Import] = "pluginLoaded" + flags.Count;
+                string path = plugins![d.Import].Path.Replace('\\', '/').Replace("\"", "\\\"");
+                sb.AppendLine($"var {flag} = true");
+                sb.AppendLine($"try {{ Library.Load(\"{path}\") }} catch (Exception e) {{ {flag} = false; print(\"P\\t{d.Import}\\t\" + DriverAgent.Clean(e.message)) }}");
+            }
             foreach (var d in list)
             {
                 // a driver that cannot be made is reported and left out; the others go on
-                sb.AppendLine("try { DeviceManager.AddDriver(new " + d.Class + "()) } catch (Exception e) { print(\"E\\t" + d.Class + "\\t\" + e.message) }");
+                if (Plugged(d))
+                    sb.AppendLine($"if ({flags[d.Import]}) {{ try {{ DeviceManager.AddDriver(Reflect.New(\"{plugins![d.Import].ClassOf(d.Class)}\", [])) }} catch (Exception e) {{ print(\"E\\t{d.Class}\\t\" + e.message) }} }}");
+                else
+                    sb.AppendLine("try { DeviceManager.AddDriver(new " + d.Class + "()) } catch (Exception e) { print(\"E\\t" + d.Class + "\\t\" + e.message) }");
             }
             sb.AppendLine("DriverAgent.Run()");
             return sb.ToString();
+        }
+
+        // ---- the drivers of a package as a plugin: its prelude compiled once (bytecode for the VM, cached), loaded by the agent instead of compiling the package again ----
+
+        /// <summary>Whether the agent loads the drivers of packages as plugins (FIRE_DRIVER_PLUGINS=0: always through `#import`).</summary>
+        public bool UsePlugins { get; set; } = Environment.GetEnvironmentVariable("FIRE_DRIVER_PLUGINS") != "0";
+
+        /// <summary>The imports whose drivers the running agent loaded as plugins.</summary>
+        public IReadOnlyList<string> PluginImports { get; private set; } = Array.Empty<string>();
+
+        /// <summary>The plugin of an import: its bytecode file, the imports the agent needs for it (the modules it was built against) and its classes.</summary>
+        public sealed record DriverPlugin(string Import, string Path, List<string> Imports, List<string> Classes)
+        {
+            /// <summary>The full name of a driver class (the manifest may name it without its namespace); the name itself when the plugin has no such class.</summary>
+            public string ClassOf(string name) =>
+                Classes.FirstOrDefault(c => c == name) ?? Classes.FirstOrDefault(c => c.EndsWith("." + name, StringComparison.Ordinal)) ?? name;
+            public bool Has(string name) => Classes.Contains(ClassOf(name));
+        }
+
+        /// <summary>The folder of the cached driver plugins (below the user-wide cache of native libraries, `ember cache clean` empties it too).</summary>
+        public static string PluginCache => System.IO.Path.Combine(fire.Package.Manager.NativeLibraryCache.Root, "driver-plugins");
+
+        /// <summary>The plugin of the import `importName` (built now if the cache has none for this fire, package, prelude and the preludes it imports); null: the
+        /// import has no prelude. Compile errors and a library of natives that cannot be built are thrown.</summary>
+        public static DriverPlugin? EnsurePlugin(string importName, fire.Runtime.VmExecutionMode mode = fire.Runtime.VmExecutionMode.Release, Action<string>? log = null)
+        {
+            var import = PackageStore.Default.FindImport(importName);
+            if (import?.ReadPrelude() is not { } prelude) return null;
+            // its natives (C or C++) for the VM: the library of the package, named in the plugin by its full path (the VM binds them when it links the plugin)
+            string? library = import.Import.Native is { } native && native.Functions.Any(f => !f.Host) ? PackageLibrary.Ensure(import, log) : null;
+            string key = PluginKey(import, prelude, library, mode);
+            string dir = System.IO.Path.Combine(PluginCache, key);
+            string file = System.IO.Path.Combine(dir, new string(import.Name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()) + ".fireplugin");
+            if (!System.IO.File.Exists(file))
+            {
+                System.IO.Directory.CreateDirectory(dir);
+                string partial = file + "." + Environment.ProcessId + ".partial";
+                try
+                {
+                    NativeBuilder.WriteVmPlugin(partial, "driver-" + import.Name, new[] { prelude }, new string?[] { import.FullPath(import.Import.Prelude!) }, mode, new[] { import.Key },
+                        linked => PackageNatives(linked, import, library));
+                    System.IO.File.Move(partial, file, true);
+                }
+                finally { try { System.IO.File.Delete(partial); } catch (System.IO.IOException) { } }
+            }
+            var plugin = fire.Runtime.PluginBytecode.Read(file) ?? throw new InvalidOperationException($"The cached plugin '{file}' cannot be read.");
+            var imports = plugin.Deps.Select(d => d[0]).Where(m => m != "core")
+                .Select(m => m.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal) ? PackageStore.Default.FindKey(m)?.Name ?? m.Substring(PackageStore.KeyPrefix.Length) : m).ToList();
+            return new DriverPlugin(import.Name, file, imports, plugin.Classes);
+        }
+
+        /// <summary>The natives of the import itself (the other imports are the agent's): by name, with the full path of its library.</summary>
+        private static IEnumerable<(string, string)> PackageNatives(fire.Runtime.LinkedProgram linked, InstalledImport import, string? library)
+        {
+            if (linked.PackageNatives is not { } names || linked.PackageNativeLibraries is not { } files) yield break;
+            string own = PackageLibrary.FileNameFor(import);
+            var mine = new HashSet<string>(import.Import.Native?.Functions.Select(f => f.Name) ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
+            for (int i = 0; i < names.Count && i < files.Count; i++)
+                if (mine.Contains(names[i]))
+                {
+                    if (files[i] == fire.Runtime.PackageNativeBinding.HostLibrary) yield return (names[i], files[i]);
+                    else if (files[i] == own && library != null) yield return (names[i], library);
+                }
+        }
+
+        /// <summary>The key of a cached plugin: the build of fire, the format of plugins, the package, its prelude and those of the imports it reaches, its library, the mode.</summary>
+        private static string PluginKey(InstalledImport import, string prelude, string? library, fire.Runtime.VmExecutionMode mode)
+        {
+            var sb = new StringBuilder();
+            sb.Append("driver-plugin 1\n").Append(fire.Runtime.ModuleInterface.Format).Append('\n').Append(mode).Append('\n');
+            foreach (var type in new[] { typeof(PackageDriverAgent), typeof(fire.Runtime.VM), typeof(fire.Values.Value), typeof(fire.Standard.Prelude) })
+                sb.Append(type.Assembly.ManifestModule.ModuleVersionId).Append('\n');
+            sb.Append(fire.Standard.Prelude.Source).Append('\n');
+            sb.Append(import.Package.Name).Append('@').Append(import.Package.Version).Append(' ').Append(import.Key).Append(' ').Append(library).Append('\n').Append(prelude).Append('\n');
+            // the preludes it imports (and theirs): another interface of one of them is another plugin
+            var seen = new HashSet<string>(StringComparer.Ordinal) { import.Key };
+            var queue = new Queue<string>(ImportedPreludes.FindImportNames(prelude).Concat(import.Import.Requires));
+            while (queue.Count > 0)
+            {
+                string name = queue.Dequeue();
+                string key;
+                try { key = ImportedPreludes.ParseImportName(name); } catch (Exception) { sb.Append("missing ").Append(name).Append('\n'); continue; }
+                foreach (var with in ImportedPreludes.WithDependencies(key))
+                {
+                    if (!seen.Add(with)) continue;
+                    var text = ImportedPreludes.TrySourceFor(with.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal) ? PackageStore.Default.FindKey(with)?.Name ?? with : with);
+                    sb.Append(with).Append('\n').Append(text).Append('\n');
+                    if (text != null) foreach (var more in ImportedPreludes.FindImportNames(text)) queue.Enqueue(more);
+                }
+            }
+            var hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
+            return Convert.ToHexString(hash, 0, 12).ToLowerInvariant();
         }
 
         // The loop of the agent: commands of the host, then the connected devices are read.
@@ -222,20 +335,68 @@ namespace fire.Compiler
         {
             Drivers = (drivers ?? FindDrivers()).ToList();
             if (Drivers.Count == 0) return false;
+            // the imports as plugins (compiled once, cached): one that cannot be had (no prelude, a compile error, no library for its natives) goes through `#import`
+            var plugins = new Dictionary<string, DriverPlugin>(StringComparer.OrdinalIgnoreCase);
+            if (UsePlugins)
+                foreach (var import in Drivers.Select(d => d.Import).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    try { if (EnsurePlugin(import) is { } plugin) plugins[import] = plugin; }
+                    catch (Exception ex) { Message?.Invoke($"note: the drivers of '{import}' are compiled with the agent ({CompileErrors.Describe(ex)})"); }
+                }
+            // a driver its plugin does not have: reported like one that does not compile
+            var known = new List<PackageDriver>();
+            foreach (var d in Drivers)
+                if (plugins.TryGetValue(d.Import, out var p) && !p.Has(d.Class))
+                    lock (_lock) _startErrors.Add($"The driver {d.Class} of {d.Package} could not be made: the import '{d.Import}' has no class '{d.Class}'.");
+                else known.Add(d);
+            Drivers = known;
+            if (Drivers.Count == 0) { lock (_lock) _ended = "no driver compiles"; return false; }
+            int before;
+            lock (_lock) before = _startErrors.Count;
+            bool ok = StartSession(plugins, timeoutMs, out var failed);
+            if (failed.Count > 0)
+            {
+                // a plugin that did not load (another interface of a module than the agent's, a native it cannot have): its import goes the old way, the agent starts anew
+                foreach (var (import, why) in failed) { Message?.Invoke($"note: the plugin of '{import}' did not load ({why}); its drivers are compiled with the agent"); plugins.Remove(import); }
+                StopSession();
+                lock (_lock) { _startErrors.RemoveRange(before, _startErrors.Count - before); _ended = null; _replies.Clear(); }
+                ok = StartSession(plugins, timeoutMs, out _);
+            }
+            PluginImports = ok ? plugins.Keys.Where(i => Drivers.Any(d => string.Equals(d.Import, i, StringComparison.OrdinalIgnoreCase))).OrderBy(i => i, StringComparer.Ordinal).ToList() : Array.Empty<string>();
+            return ok;
+        }
+
+        private readonly List<(string Import, string Why)> _pluginFailures = new();
+
+        private void StopSession()
+        {
+            var session = _session;
+            if (session == null) return;
+            try { if (session.IsRunning) Request("quit"); } catch (InvalidOperationException) { }
+            _session = null;
+            session.Stop();
+        }
+
+        private bool StartSession(Dictionary<string, DriverPlugin> plugins, int timeoutMs, out List<(string Import, string Why)> failedPlugins)
+        {
+            failedPlugins = new();
+            lock (_lock) _pluginFailures.Clear();
             var ready = new ManualResetEventSlim();
             var session = new LiveSession();
             session.Message += line =>
             {
+                if (_session != session) return;
                 if (line == "ready") { ready.Set(); return; }
                 OnLine(line);
             };
             session.Ended += error =>
             {
+                if (_session != session) return;
                 lock (_lock) { _ended = error ?? "the driver agent ended"; Monitor.PulseAll(_lock); }
                 ready.Set();
             };
             _session = session;
-            try { session.Start(BuildScript(Drivers)); }
+            try { session.Start(BuildScript(Drivers, plugins)); }
             catch (Exception)
             {
                 // a driver that does not compile (a class that is not there) must not take the others with it: each is tried alone, the bad ones are left out
@@ -246,14 +407,14 @@ namespace fire.Compiler
                     {
                         var externs = new fire.Bytecode.ExternRegistry();
                         externs.Register("__HostCommand", _ => fire.Values.Value.MakeUndefined());
-                        RuntimeSession.Build(new[] { BuildScript(new[] { d }) }, fire.Runtime.VmExecutionMode.Release, _ => fire.Values.Value.MakeUndefined(), externs: externs);
+                        RuntimeSession.Build(new[] { BuildScript(new[] { d }, plugins) }, fire.Runtime.VmExecutionMode.Release, _ => fire.Values.Value.MakeUndefined(), externs: externs);
                         good.Add(d);
                     }
                     catch (Exception ex) { lock (_lock) _startErrors.Add($"The driver {d.Class} of {d.Package} could not be made: {CompileErrors.Describe(ex)}"); }
                 }
                 Drivers = good;
                 if (good.Count == 0) { lock (_lock) _ended = "no driver compiles"; return false; }
-                try { session.Start(BuildScript(good)); }
+                try { session.Start(BuildScript(good, plugins)); }
                 catch (Exception ex)
                 {
                     lock (_lock) _ended = CompileErrors.Describe(ex);
@@ -261,6 +422,7 @@ namespace fire.Compiler
                 }
             }
             ready.Wait(timeoutMs);
+            lock (_lock) failedPlugins.AddRange(_pluginFailures);
             return EndedWith == null && ready.IsSet;
         }
 
@@ -277,6 +439,12 @@ namespace fire.Compiler
             {
                 var f = line.Split('\t');
                 if (f.Length >= 4) Traffic?.Invoke(f[1], f[2] == "1", Decode(f[3]));
+                return;
+            }
+            if (line.StartsWith("P\t", StringComparison.Ordinal))
+            {
+                var f = line.Split('\t', 3);
+                lock (_lock) _pluginFailures.Add((f[1], f.Length > 2 ? f[2] : ""));
                 return;
             }
             if (line.StartsWith("E\t", StringComparison.Ordinal))
@@ -353,14 +521,7 @@ namespace fire.Compiler
         }
 
         /// <summary>Ends the agent (it disconnects nothing on its own: the drivers' devices close with the program).</summary>
-        public void Dispose()
-        {
-            var session = _session;
-            if (session == null) return;
-            try { if (session.IsRunning) Request("quit"); } catch (InvalidOperationException) { }
-            session.Stop();
-            _session = null;
-        }
+        public void Dispose() => StopSession();
 
         // ---- the proxies in the device manager of the host ----
 

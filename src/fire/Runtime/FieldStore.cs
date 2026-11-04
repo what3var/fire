@@ -104,6 +104,14 @@ namespace fire.Runtime
             return _extra != null && _extra.ContainsKey(name);
         }
 
+        /// <summary>Replaces every field value by `map(value)` (`fire handover`: references to the moved parts point to the instances that took their place).</summary>
+        internal void Rewrite(System.Func<Value, Value> map)
+        {
+            for (int i = 0; i < _known.Length; i++) _known[i] = map(_known[i]);
+            if (_extra != null)
+                foreach (var key in new List<string>(_extra.Keys)) _extra[key] = map(_extra[key]);
+        }
+
         public IEnumerator<KeyValuePair<string, Value>> GetEnumerator()
         {
             if (_rtClass != null)

@@ -31,7 +31,47 @@ namespace fire.Editor
             _workspace.Changed += () => Dispatcher.UIThread.Post(OnWorkspaceChanged);
             _solutionPanel.FileOpenRequested += path => OpenFile(path);
             _solutionPanel.CommandRequested += (command, node) => _ = OnSolutionCommand(command, node);
+            _solutionPanel.SelectionChanged += OnExplorerSelection;
             mnuCloseWorkspace.IsEnabled = false;
+        }
+
+        // -----------------------------------------------------------
+        // The properties of the file selected in the explorer (tool window "Properties")
+        // -----------------------------------------------------------
+
+        private FilePropertiesHost? _fileProperties;
+        private FilePropertiesHost FileProperties => _fileProperties ??= new FilePropertiesHost { SaveProject = p => _workspace.SaveProject(p), Focus = () => _solutionPanel.Focus() };
+        // the document the property window last followed; while it stays active, a file selected in the explorer is shown instead of it
+        private OpenDocument? _propertiesDocument;
+        private bool _showFileProperties;
+
+        /// <summary>The property window follows the active document (one with properties) - or the file selected in the explorer, until another document becomes active.</summary>
+        private void AttachProperties(OpenDocument? doc)
+        {
+            var host = doc?.View as IPropertyHost;
+            if (!ReferenceEquals(doc, _propertiesDocument))
+            {
+                _propertiesDocument = doc;
+                _showFileProperties = host == null && FileProperties.HasFile;
+            }
+            _propertiesPanel.Attach(_showFileProperties ? FileProperties : host);
+        }
+
+        private void OnExplorerSelection(ExplorerNode? node)
+        {
+            if (node is not { Kind: ExplorerKind.File or ExplorerKind.Content, Path: { } path }) return;   // (a folder, a project: the window keeps what it shows)
+            FileProperties.Show(new FilePropertiesContext(path, node.Project));
+            _showFileProperties = true;
+            _propertiesPanel.Attach(FileProperties);
+        }
+
+        /// <summary>After the workspace changed: the file's project is found again (a reloaded workspace has new ones) and its rows are read again.</summary>
+        private void RefreshFileProperties()
+        {
+            if (_fileProperties?.Properties == null || _fileProperties.Context is not { } file) return;
+            var project = file.Project == null ? null : _workspace.AllProjects.FirstOrDefault(p => ProjectFiles.PathComparer.Equals(p.FilePath, file.Project.FilePath));
+            if (!ReferenceEquals(project, file.Project)) _fileProperties.Show(new FilePropertiesContext(file.Path, project));
+            else _fileProperties.Refresh();
         }
 
         // -----------------------------------------------------------
@@ -165,6 +205,7 @@ namespace fire.Editor
             foreach (var doc in _documents) { doc.Script?.InvalidateConditionalSymbols(); doc.Script?.Revalidate(); }
             ScheduleTestDiscovery();
             RefreshTodo();
+            RefreshFileProperties();
         }
 
         /// <summary>The explorer and the status bar follow the workspace and the active document.</summary>

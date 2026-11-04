@@ -23,10 +23,9 @@ namespace fire.Editor
             public readonly CancellationTokenSource Cancellation = new();
             public BuildMonitor Monitor = null!;
             public readonly Stopwatch Watch = Stopwatch.StartNew();
-            /// <summary>The lines of the log that the window has not shown yet (from any thread).</summary>
-            public readonly ConcurrentQueue<string> Pending = new();
-            /// <summary>Every line (the window gets them all when it appears late).</summary>
-            public readonly List<string> Lines = new();
+            /// <summary>The log of the build: every line goes into the build log panel as it comes (and stays there); the window mirrors it.</summary>
+            public BuildLogFeed Feed = null!;
+            public IReadOnlyList<string> Lines => Feed.Lines;
             public volatile object? Progress;   // (a boxed BuildProgress: written by the build's threads)
             public BuildProgressWindow? Window;
             public DispatcherTimer? Timer;
@@ -57,7 +56,8 @@ namespace fire.Editor
         private BuildJob BeginBuildJob(string what)
         {
             var job = new BuildJob(what);
-            job.Monitor = new BuildMonitor(job.Token, p => job.Progress = p, line => job.Pending.Enqueue(line));
+            job.Feed = new BuildLogFeed(line => _buildLog.AppendLine(line));
+            job.Monitor = new BuildMonitor(job.Token, p => { job.Progress = p; job.Feed.Progress(p); }, job.Feed.Line);
             job.Timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
             job.Timer.Tick += (_, _) => RefreshBuildJob(job);
             job.Timer.Start();
@@ -69,9 +69,7 @@ namespace fire.Editor
         private void RefreshBuildJob(BuildJob job)
         {
             if (job.Ended) return;
-            var lines = new List<string>();
-            while (job.Pending.TryDequeue(out var line)) lines.Add(line);
-            job.Lines.AddRange(lines);
+            var lines = job.Feed.Drain();
             if (job.Window == null && !job.Hidden && job.Watch.Elapsed >= BuildWindowDelay) ShowBuildWindow(job);
             else if (job.Window != null && lines.Count > 0) job.Window.AppendLog(lines);
             job.Window?.ShowProgress(job.Last, job.Watch.Elapsed, job.Cancelling);
@@ -127,7 +125,7 @@ namespace fire.Editor
             BuildStatusButton.IsVisible = show;
             if (!show) return;
             var p = job!.Last;
-            string count = p is { Indeterminate: false } q ? $" {q.Done}/{q.Total}" + (q.Phase == BuildPhase.CompileC && q.Text.Contains("module", StringComparison.Ordinal) ? " modules" : "") : "";
+            string count = p is { Indeterminate: false } q ? $" {q.Done}/{q.Total}" + (q.Phase == BuildPhase.CompileC && q.Text.Contains("module", StringComparison.Ordinal) ? " modules" : q.Phase == BuildPhase.PackageNatives ? " packages" : "") : "";
             BuildStatusText.Text = job.Cancelling ? "Cancelling the build..." : $"Building...{count}";
             BuildStatusBar.IsIndeterminate = p is not { Indeterminate: false } || job.Cancelling;
             if (p is { Indeterminate: false } r)
@@ -158,9 +156,7 @@ namespace fire.Editor
         {
             if (job.Ended) return;
             job.Timer?.Stop();
-            var lines = new List<string>();
-            while (job.Pending.TryDequeue(out var line)) lines.Add(line);
-            job.Lines.AddRange(lines);
+            var lines = job.Feed.Drain();
             job.Ended = true;
             if (_buildJob == job) _buildJob = null;
             UpdateBuildStatusBar(null);
@@ -172,6 +168,12 @@ namespace fire.Editor
                 _buildLog.AppendLine("========== Build cancelled ==========");
                 UpdateStatus($"Build cancelled: {job.What}.");
             }
+            if (outcome == BuildOutcome.Failed && !string.IsNullOrWhiteSpace(error))
+            {
+                // (a failure is also said in the Output - the build log has the whole story)
+                _output.Append($"Build failed: {job.What}: {error.TrimEnd()}{Environment.NewLine}");
+                if (!_buildLog.Text.Contains(error.Trim(), StringComparison.Ordinal)) _buildLog.AppendLine("error: " + error.TrimEnd());
+            }
             if (window == null) return;
             if (outcome == BuildOutcome.Failed && window.IsVisible)
             {
@@ -182,6 +184,14 @@ namespace fire.Editor
             }
             window.CloseForGood();
             job.Window = null;
+        }
+
+        /// <summary>The whole log of a build's result (written when it is done) into the build log - only the lines that have not come in while it ran.</summary>
+        private void AppendBuildResultLog(BuildJob job, string? log)
+        {
+            if (string.IsNullOrWhiteSpace(log)) return;
+            job.Feed.Drain();
+            foreach (string line in job.Feed.Missing(log)) _buildLog.AppendLine(line);
         }
 
         /// <summary>Is the build window of a failed build showing its error (then no second message box is needed)?</summary>

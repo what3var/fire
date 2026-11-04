@@ -99,6 +99,8 @@ The C++ is written once and works in both engines: a **native build** (`--engine
 the **virtual machine** loads a shared library that the compiler builds from the same sources for the machine (a generated wrapper exports the C ABI of `native/abi/fire_pkg_abi.h`; the first run
 of a script that imports the package takes a few seconds for that and needs a C++ compiler on the machine, unless the package brings a prebuilt library, `native.libraries`).
 Per-system code goes into `native.platformSources` (or behind `FIRE_TARGET_*`/`FIRE_HAL_*`), `platforms` limits where the C++ may be used.
+The sources are built in one file in the order of the lists; an entry can give an explicit build order, `{ "file": "native/x.h", "order": -10 }` (smaller first, without one 0), and a source
+that `#include`s a source of the same import that comes after it is reported with file and line when the package is packed or built (docs/PACKAGE_NATIVES.md, "Build order").
 How to write a native, what crosses to the VM, prebuilt libraries and packed programs: **docs/PACKAGE_NATIVES.md**.
 
 ## The standard libraries (`packages/`, `Source/`)

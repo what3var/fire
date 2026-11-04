@@ -142,6 +142,7 @@ namespace fire.Runtime
                         if (_arrayCopies.TryGetValue(array, out var existing)) return Value.MakeArray(existing);
                         var arrayCopy = new ScriptArray(array.Length);
                         LeafOwnership.Adopt(arrayCopy, _owner);
+                        arrayCopy.CopyTypeOf(array);   // (a copy of a typed array is typed)
                         _arrayCopies[array] = arrayCopy;   // (before filling: an array may contain itself)
                         for (int i = 0; i < array.Length; i++) arrayCopy.Items[i] = Map(array.Items[i]);
                         return Value.MakeArray(arrayCopy);

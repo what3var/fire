@@ -50,6 +50,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { Dockin
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "debugger") { DebuggerTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "drivers") { int driverFailures = DriverAgentTests.Run(); Console.WriteLine(driverFailures == 0 ? "Alle Treiber-Pruefungen bestanden." : $"FEHLER: {driverFailures} Treiber-Pruefung(en) fehlgeschlagen."); return; }
 // (filled by sections that FIRE_TESTS_ONLY may skip: the native device cases by the device checks of the VM, the UI drawing by the UI checks)
 var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
 string uiDrawScript = "";
@@ -60,6 +61,10 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") goto uiTests;
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "native") goto nativeTests;
 // FIRE_TESTS_ONLY=packer: only the packer (single file, payload, loader) and the native targets checked there (wasm with Emscripten and the browser)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") goto packerTests;
+// FIRE_TESTS_ONLY=callbacks: only the host callbacks in the VM (nested on the VM thread, queued from a host thread, the isolated copy after the end)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") goto callbackTests;
+// FIRE_TESTS_ONLY=graphics: only the graphics from fire in the VM (colour modes, images, FromFile and the host's IoPolicy, drawing functions)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "graphics") goto graphicsTests;
 // FIRE_TESTS_FILTER=text: of the checks that are listed as cases (the native cases, the native device and window cases, the UI checks) only those whose name contains
 // the text (several texts separated by '|'; case does not matter) - together with FIRE_TESTS_ONLY a run of a minute instead of half an hour.
 static bool TestSelected(string name)
@@ -5334,6 +5339,7 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("Aufruf ohne this.", "class A { B mk() { return new B() }\n M() { mk().| } }\nclass B { Z() {} }", "Z", "M", exact: true);
     CheckCompletion("generische Klasse", "class Box<T> where T is of A {\n T item\n Get() { return this.item }\n}\nclass A { Run() {} }\nvar b = new Box<A>()\nb.|", "Get,item", "Run", exact: true);
     CheckCompletion("Interface-Mitglieder", "interface I { Foo() }\nclass A : I { Bar() {} }\nI a\na.|", "Foo", "Bar", exact: true);
+    CheckCompletion("Interface-Mitglieder: Properties und geerbte Interfaces", "interface IBase { Foo() }\ninterface IOther { int Size { get; } }\ninterface I : IBase, IOther { int Limit { get; set; }\n float Delay : ms { get; } }\nclass A : I { Bar() {} }\nI a\na.|", "Foo,Size,Limit,Delay", "Bar,get,set,ms", exact: true);
     CheckCompletion("Prelude-Klasse", "var l = new List()\nl.|", "Add,GetEnumerator", "Speak");
     CheckCompletion("Erweiterung per #import", "#import \"graphics\"\nvar fb = new Framebuffer(1, 2)\nfb.|", "Width,Height,ReadByte");
     CheckCompletion("#import io: IO. zeigt Streams und Enums", "#import \"io\"\nIO.|", "MemoryStream,Stream,IStream,SeekOrigin,IOException,TextReader", "FileStream,FileMode,Directory");
@@ -7800,7 +7806,7 @@ packerTests:
                     node.WaitForExit();
                     var vmLines = new List<string>();
                     RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
-                    Value.SingleFloats = false;
+                    Value.SingleFloats = false; Value.Ints32 = false;
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
                     // linkage "static" (ROADMAP 9): the modules as static libraries of Emscripten (emar), in a cache of their own; the same output
                     string? cacheBefore = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
@@ -7826,7 +7832,7 @@ packerTests:
                 // it draws into the canvas of the page; with Playwright (the Chromium of this machine) the page runs headless and says what it printed and drew
                 const string winSource = "#import \"windows\"\n#import \"time\"\nvar fb = new Framebuffer(40, 30)\nvar win = new Window(fb, \"wasm\")\nvar r = new Renderer(fb)\nr.Clear()\nfor (var y = 0; y < 30; y++) { for (var x = 0; x < 40; x++) { r.SetPixel(x, y, 0xFFF08020) } }\nfor (var i = 0; i < 3; i++) { win.Tick(); Sleep(10ms) }\nvar px = fb.ReadBytes()\nprint(\"pixel \" + px[0] + \" \" + px[1] + \" \" + px[2])\nprint(\"done\")\nfor (var i = 0; i < 300; i++) { win.Tick(); Sleep(10ms) }\n";
                 string winHtml = EmBuild(winSource, "win", out string winLog);
-                SfCheck(winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut ohne SDL (die eigene Anzeige: das Canvas der Seite), ohne Warnung" + (winHtml != "" ? "" : "\n" + winLog));
+                SfCheck(winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut ohne SDL (die eigene Anzeige: das Canvas der Seite), ohne Warnung" + (winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:") ? "" : "\n" + winLog));
                 bool playwright = false;
                 try
                 {
@@ -8885,6 +8891,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 // ---------------------------------------------------------------------------
 // Graphics from fire: colour modes, loading images, drawing functions (Console/Framebuffer of the graphics prelude)
 // ---------------------------------------------------------------------------
+graphicsTests:
 {
     Console.WriteLine();
     Console.WriteLine("=== Grafik aus fire: Farbmodi, Bilder, Zeichenfunktionen ===");
@@ -9245,6 +9252,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     Console.WriteLine(gfFailures == 0 ? "Alle Grafik-aus-fire-Pruefungen bestanden." : $"FEHLER: {gfFailures} Grafik-aus-fire-Pruefung(en) fehlgeschlagen.");
 }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "graphics") return;
 
 // ---------------------------------------------------------------------------
 // Network (#import "net"): the host's policy (NetPolicy) for connections, listeners, datagrams and names
@@ -13026,7 +13034,9 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
 
 // ---------------------------------------------------------------------------
 // Native callbacks (window events) run nested on the VM of the thread: real globals, no copying
+// (FIRE_TESTS_ONLY=callbacks: only this section)
 // ---------------------------------------------------------------------------
+callbackTests:
 {
     Console.WriteLine();
     Console.WriteLine("=== Callbacks auf dem VM-Thread ===");
@@ -13065,6 +13075,10 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
             t.Join();
             return Value.MakeUndefined();
         });
+        // after the end of the program (the globals stay, as for a host that still holds them): the remembered lambda from another thread - the VM
+        // does not run any more, the callback gets the isolated copy of the globals
+        bool runAfterEnd = false;
+        natives.Register("__RunKeptAfterEnd", args => { runAfterEnd = true; vm!.DestroyGlobalsAtEnd = false; return Value.MakeUndefined(); });
 
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -13072,6 +13086,13 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
         VM.ResetTerminateForTests();
         vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
         vm.Run();
+        if (runAfterEnd)
+        {
+            var t = new Thread(() => FireRuntime.RunCallback(kept[0], Array.Empty<Value>(), natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm));
+            t.Start();
+            t.Join();
+            lines.Add("main afterwards: " + string.Join(" ", vm.SnapshotGlobals().Where(v => v.Kind == ValueKind.Int).Select(v => v.ToString())));
+        }
         VM.ResetTerminateForTests();
         if (vm.UnhandledException != null)
             lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
@@ -13233,7 +13254,48 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
         print("weiter")
         """, new[] { "CB: Unhandled exception of type 'Exception': kaputt", "weiter" });
 
+    CheckCb("Host-Thread-Callback nach dem Programmende: laeuft auf der isolierten Kopie der Globals (das Hauptprogramm behaelt seine Werte)", cbHead + """
+        class Item { int v }
+        var counter = 41
+        var item = new Item()
+        item.v = 1
+        __Keep(func () => { counter = counter + 1; item.v = 5; print("cb " + counter + " " + item.v) })
+        __RunKeptAfterEnd()
+        """, new[] { "cb 42 5", "main afterwards: 41" });
+
+    CheckCb("Host-Thread-Callback nach dem Programmende: ein [NoCopy]-Objekt in den Globals - die Kopie wird vorher abgelehnt, der Callback laeuft nicht (ArgumentException als Text)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        class Holder { Res res }
+        var counter = 1
+        var holder = new Holder()
+        holder.res = new Res()
+        __Keep(func () => { counter = counter + 1; print("never") })
+        __RunKeptAfterEnd()
+        """, new[] { "CB: Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' reaches an instance of it (a field or an element of the copied value), which exists only once.", "main afterwards: 1" });
+
+    CheckCb("Host-Thread-Callback nach dem Programmende: ein [NoCopy]-Objekt direkt in einem Global, eines in einem Array (geteilt, nicht kopiert)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        var list = [new Res()]
+        var res = new Res()
+        __Keep(func () => { print("never") })
+        __RunKeptAfterEnd()
+        """, new[] { "CB: Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' would copy an instance of it, which exists only once.", "main afterwards: " });
+
+    CheckCb("Host-Thread-Callback, waehrend das Hauptprogramm laeuft: ein [NoCopy]-Global ist kein Problem (echte Globals, keine Kopie)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        var res = new Res()
+        res.id = 7
+        __Keep(func () => { res.id = res.id + 1; print("cb " + res.id) })
+        __RunKeptOnOtherThread()
+        for (var i = 0; i < 1; i++) { }
+        print("res " + res.id)
+        """, new[] { "cb 8", "res 8" });
+
     Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
+    if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") return;
 }
 
 // ---------------------------------------------------------------------------
@@ -13959,49 +14021,8 @@ devNativeCases.Clear();
     }
 
     // Treiber aus Paketen: Manifest-Feld drivers (Projekt -> Paket), der Treiber-Agent bringt usb:sim in einen DeviceManager, Senden und Echo kommen an
-    {
-        var proj = fire.Projects.FireProject.Parse("{\"name\": \"x\", \"type\": \"library\", \"drivers\": [\"A.MyDriver\"]}");
-        var again = fire.Projects.FireProject.Parse(proj.ToJson());
-        var manifest = fire.Package.Manager.PackageManifest.Parse("{\"name\": \"p\", \"version\": \"1.0.0\", \"imports\": [{\"name\": \"p\", \"drivers\": [\"PDriver\"]}]}");
-        bool ok = again.Drivers is { Count: 1 } && again.Drivers[0] == "A.MyDriver" && manifest.Imports[0].Drivers is { Count: 1 }
-            && !fire.Projects.FireProject.Parse("{\"name\": \"y\"}").ToJson().Contains("drivers");
-        if (!ok) devFailures++;
-        Console.WriteLine(ok ? "OK: Treiber im Paket: 'drivers' im Projekt und im Manifest (leer wird nicht geschrieben)" : "FEHLER: drivers im Projekt/Manifest");
-
-        var found = fire.Compiler.PackageDriverAgent.FindDrivers();
-        ok = found.Any(d => d.Class == "UsbDriver" && d.Import == "usb") && found.Any(d => d.Class == "GpioDriver");
-        if (!ok) devFailures++;
-        Console.WriteLine(ok ? "OK: Treiber im Paket: die installierten Standardpakete melden ihre Treiber (usb, gpio, i2c, spi)" : "FEHLER: FindDrivers: " + string.Join(", ", found));
-
-        using var agent = new fire.Compiler.PackageDriverAgent();
-        ok = agent.Start(new[] { new fire.Compiler.PackageDriver("fire-usb", "usb", "UsbDriver"), new fire.Compiler.PackageDriver("x", "usb", "GibtEsNicht") });
-        var manager = new fire.Device.Manager.DeviceManager.DeviceManager();
-        var captured = new List<fire.Device.Manager.DeviceManager.PacketRecord>();
-        string detail = agent.EndedWith ?? "";
-        if (ok)
-        {
-            agent.Attach(manager);
-            manager.PacketCaptured += p => { lock (captured) captured.Add(p); };
-            manager.RefreshDevices(true);
-            var slot = manager.GetSlotByIdentifier("usb:sim");
-            ok = slot != null && slot.Device.Description == "simulated USB device (echo)" && !slot.Device.IsConnected && agent.StartErrors.Count == 1 && agent.StartErrors[0].Contains("GibtEsNicht");
-            if (ok)
-            {
-                slot!.Device.Connect();
-                ok = slot.Device.IsConnected && slot.Device.Write(System.Text.Encoding.ASCII.GetBytes("ping"));
-                for (int i = 0; i < 300 && ok; i++) { lock (captured) if (captured.Count >= 2) break; Thread.Sleep(10); }
-                lock (captured)
-                    ok = ok && captured.Count == 2 && captured[0].Direction == fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice
-                        && captured[1].Direction == fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost && captured.All(c => System.Text.Encoding.ASCII.GetString(c.Data) == "ping");
-                slot.Device.Disconnect();
-                ok = ok && !slot.Device.IsConnected;
-            }
-            detail = string.Join(" | ", manager.GetSlots().Select(s => s.Identifier)) + " / " + string.Join(";", agent.StartErrors) + " / " + captured.Count;
-        }
-        if (!ok) devFailures++;
-        Console.WriteLine(ok ? "OK: Treiber im Paket: der Treiber-Agent bringt usb:sim in den DeviceManager (Beschreibung, Verbinden, Senden, Echo, Trennen); ein Treiber, den es nicht gibt, wird gemeldet" : "FEHLER: Treiber-Agent: " + detail);
-        manager.Shutdown();
-    }
+    // (als Plugins und mit #import; DriverAgentTests.cs, allein: FIRE_TESTS_ONLY=drivers)
+    devFailures += DriverAgentTests.Run();
 
     Console.WriteLine(devFailures == 0 ? "Alle Geraete-Pruefungen bestanden." : $"FEHLER: {devFailures} Geraete-Pruefung(en) fehlgeschlagen.");
 }
@@ -14621,7 +14642,12 @@ DebuggerTests.Run();
         print(t.Fields().Count + " " + t.Properties().Count + " " + t.Methods().Count + " " + t.Constructors().Count)
         print(t.Has("radius") + " " + t.Has("nope") + " " + t.Find("Diameter").CanWrite + " " + t.Find("Area").IsMethod())
         print(t.IsSubclassOf(Type.Of("Shape")) + " " + Type.Of("Shape").IsSubclassOf(t) + " " + (Type.Named("Gibts") == undefined))
-        """, new[] { "Circle 1 IThing", "5 1 6 1", "True False True True", "True False True" }, debugRelease);
+        interface IBase { Base() }
+        interface IMore : IBase { More() }
+        class Deeper : Thing, IMore { Base() { } More() { } }
+        var d = Type.Of("Deeper")
+        print(",".Join(d.Interfaces) + " | " + ",".Join(d.DeclaredInterfaces))
+        """, new[] { "Circle 1 IThing", "5 1 6 1", "True False True True", "True False True", "IMore,IBase,IThing | IMore" }, debugRelease);
 
     CheckRf("Get/Set/Call/New: Felder, Properties, geerbte Methoden, Konstruktion", shapes + """
         var c = new Circle(5.0)
@@ -19613,6 +19639,94 @@ else
             while (released < 6) { sync globals }
             print("end")
             """),
+        ("Threads: fire handover - die anderen Verweise des Senders auf die uebergebenen Objekte (auch Erreichbares, Arrays, im Thread) sind eine DestroyedException 'handed over to a thread'; == vergleicht das Objekt", """
+            #nosync
+            #import "time"
+            var step = 0
+            var released = 0
+            [NoCopy]
+            class Res { int id
+                construct(int i) { this.id = i }
+                int Twice() { return this.id * 2 }
+                destruct() { print("release " + this.id)
+                    sync global { released = released + 1 } } }
+            class Item { int v
+                construct(int v) { this.v = v } }
+            class Conn { Res res; Item items[]; Item other
+                construct(int i) { this.res = new Res(i) } }
+            var c = new Conn(1)
+            var keepRes = c.res
+            var other = new Item(3)
+            c.other = other
+            c.items = [new Item(2)]
+            var keepItems = c.items
+            var keepC = c
+            var b = new Conn(6)
+            b.other = c.other
+            var a = new Res(5)
+            var back = new Item(0)
+            fire handover c handover b {
+                print("thread: " + c.res.id + " " + c.items[0].v + " " + c.other.v + " " + b.res.id + " " + b.other.v)
+                print("thread same: " + (b.other == c.other) + " " + (c.res is from c) + " " + c.res.Twice())
+                c.other.v = 30
+                sync global { back = c.other; step = 1 }
+                while (step < 2) { Sleep(1ms) }
+            }
+            while (step < 1) { sync globals }
+            print("undefined: " + (c == undefined) + " " + (b == undefined))
+            try { print(keepRes.id) } catch (DestroyedException e) { print("field: " + e.message) }
+            try { keepRes.id = 3 } catch (DestroyedException e) { print("set: " + e.message) }
+            try { print(keepRes.Twice()) } catch (DestroyedException e) { print("call: " + e.message) }
+            try { print(other.v) } catch (DestroyedException e) { print("reached: " + e.message) }
+            try { print(keepItems[0].v) } catch (DestroyedException e) { print("element: " + e.message) }
+            try { keepItems[0] = undefined } catch (DestroyedException e) { print("element set: " + e.message) }
+            try { print(keepItems.Length) } catch (DestroyedException e) { print("length: " + e.message) }
+            try { print(keepC is of Conn) } catch (DestroyedException e) { print("is of: " + e.message) }
+            print("is of class: " + (keepC is of class) + ", compare: " + (keepRes == keepRes) + " " + (keepRes == undefined) + " " + (keepC != undefined))
+            print("a stays: " + a.id + ", the same object: " + (other == back) + " " + (back == other) + " " + (back != other) + ", the thread's reference works: " + back.v)
+            step = 2
+            while (released < 2) { sync globals }
+            try { print(keepRes.id) } catch (DestroyedException e) { print("after the thread: " + e.message) }
+            fire {
+                var own = new Res(8)
+                var alias = own
+                fire handover own {
+                    while (step < 3) { Sleep(1ms) }
+                    print("inner " + own.id)
+                }
+                try { print(alias.id) } catch (DestroyedException e) { print("in a thread: " + e.message) }
+                sync global { step = 3 }
+            }
+            while (released < 3) { sync globals }
+            print("end")
+            """),
+        ("Threads: fire handover - ein toter Verweis von vorher bei copy/flat (ArgumentException), throw, take, foreach, x!Klasse", """
+            #nosync
+            #import "time"
+
+            class Item { int v; Item next }
+            var step = 0
+            var it = new Item()
+            it.v = 4
+            var keep = it
+            var ex = new Exception("x")
+            var keepEx = ex
+            var arr = [1, 2]
+            var keepArr = arr
+            fire handover it handover ex handover arr {
+                sync global { step = 1 }
+                while (step < 2) { Sleep(1ms) }
+            }
+            while (step < 1) { sync globals }
+            try { var c = copy keep } catch (DestroyedException e) { print("copy: " + e.message) } catch (Exception e) { print("copy other: " + e.message) }
+            try { var f = flat keep } catch (DestroyedException e) { print("flat: " + e.message) } catch (Exception e) { print("flat other: " + e.message) }
+            try { throw keepEx } catch (DestroyedException e) { print("throw: " + e.message) } catch (Exception e) { print("throw other: " + e.message) }
+            try { var tk = take keep } catch (DestroyedException e) { print("take: " + e.message) } catch (Exception e) { print("take other: " + e.message) }
+            try { foreach (var x in keepArr) { print(x) } } catch (DestroyedException e) { print("foreach: " + e.message) }
+            try { print(keep!Item) } catch (DestroyedException e) { print("cast: " + e.message) }
+            step = 2
+            print("end")
+            """),
         ("Abbruch: eine Thread-Exception, die erst am Programmende ankommt, beendet das Programm (VM wie nativ, nicht verschluckt)", """
             class Item { int v }
             fire {
@@ -19760,6 +19874,110 @@ else
             delete gone
             try { print(Report.Describe(gone)) } catch (Exception e) { print("destroyed: " + e.message) }
             """),
+        ("Interface-Properties: get/set ueber das Interface (Auto-Property, eigene Accessoren, geerbt), Einheiten, Fehler im Getter", """
+            interface IGauge {
+                int Limit { get; set; }
+                string Label { get; }
+                float Delay : ms { get; set; }
+            }
+            class Base { string Label { get { return "base" } } }
+            class Gauge : Base, IGauge {
+                int Limit { get; set; }
+                float d : ms
+                float Delay : ms { get { return this.d } set { this.d = value } }
+            }
+            class Strict : IGauge {
+                int Limit { get { throw new ArgumentException("no limit") } set { } }
+                string Label { get; set; } = "strict"
+                float Delay : ms { get; set; }
+            }
+            class Use {
+                static string Show(IGauge g) {
+                    g.Limit = g.Limit + 2
+                    g.Delay = 1.5s
+                    return g.Label + " " + g.Limit + " " + g.Delay
+                }
+            }
+            var a = new Gauge()
+            a.Limit = 5
+            print(Use.Show(a))
+            print(a.d)
+            IGauge s = new Strict()
+            try { print(Use.Show(s)) } catch (ArgumentException e) { print("caught: " + e.message) }
+            s.Delay = 20ms
+            print(s.Delay + " " + s.Label)
+            IGauge none = undefined
+            try { print(none.Limit) } catch (Exception e) { print("undefined") }
+            var gone = new Gauge()
+            IGauge g2 = gone
+            delete gone
+            try { print(g2.Label) } catch (Exception e) { print("destroyed") }
+            """),
+        ("Interface-Vererbung: is of, Cast, Parameter eines Basis-Interfaces, Raute, catch, Overload, where, geerbte Methode ueber das abgeleitete Interface", """
+            interface IReader { int Read() }
+            interface IWriter { undefined Write(int v) }
+            interface IStream : IReader, IWriter { int Size { get; } }
+            interface IBase { string Id() }
+            interface ILeft : IBase { int L() }
+            interface IRight : IBase { int R() }
+            interface IBoth : ILeft, IRight { }
+            class Mem : IStream {
+                int last
+                int Read() { return this.last }
+                undefined Write(int v) { this.last = v }
+                int Size { get { return 1 } }
+            }
+            class Other { private int Read() { return 99 } int Peek() { return this.Read() } }
+            class Both : IBoth {
+                string Id() { return "both" }
+                int L() { return 1 }
+                int R() { return 2 }
+            }
+            class Oops : Exception, IRight {
+                construct(string m) : base(m) { }
+                string Id() { return "oops" }
+                int R() { return 7 }
+            }
+            class Holder<T> where T is of IReader {
+                T item
+                construct(T item) { this.item = item }
+                int Get() { return this.item.Read() + 10 }
+            }
+            class Use {
+                static int First<T>(T x) where T is of IReader { return x.Read() + 20 }
+                static int Pull(IReader r) { return r.Read() }
+                static undefined Push(IWriter w, int v) { w.Write(v) }
+                static int Twice(IStream s) { s.Write(s.Read() + 1); return s.Read() + s.Size }
+                static string Kind(IBase b) { return "base " + b.Id() }
+                static string Kind(string s) { return "string" }
+                static string Side(ILeft l) { return "left" }
+                static string Side(int n) { return "int" }
+            }
+            IStream s = new Mem()
+            Use.Push(s, 4)
+            print(Use.Pull(s) + " " + Use.Twice(s))
+            IReader r = s
+            print((r is of IStream) + " " + (r is of IWriter) + " " + (s is of IBase) + " " + r!IStream.Size)
+            any o = new Other()
+            print((o is of IReader) + " " + new Other().Peek())
+            try { print(o!IReader) } catch (Exception e) { print("cast failed") }
+            IBoth b = new Both()
+            ILeft l = b
+            IRight rt = b
+            IBase x = l
+            print(x.Id() + " " + l.L() + rt.R() + " " + (b is of IBase) + " " + (rt is of ILeft) + " " + Use.Kind(b) + " " + Use.Side(b))
+            try { throw new Oops("bad") } catch (IBase e) { print("caught " + e.Id() + " " + (e is of IRight)) }
+            var hm = new Mem()
+            hm.Write(1)
+            var holder = new Holder<Mem>(hm)
+            IStream hs = hm
+            var viaInterface = new Holder<IStream>(hs)
+            print(holder.Get() + " " + viaInterface.Get() + " " + Use.First(hs))
+            var all = new List<IBase>()
+            all.Add(b)
+            all.Add(new Oops("x"))
+            foreach (item in all) { print(item.Id()) }
+            """),
         ("Reflection: Type, Member, Get/Set/Call/New/Has, Selektoren, Zugriffsregeln; probe/silence", """
             #import "reflection"
             class Circle {
@@ -19861,6 +20079,26 @@ else
             probe c2.volume changed { print("c2 " + value) }
             c2.volume = 4
             delete c2
+            """),
+        ("Reflection: Type.Interfaces mit geerbten Interfaces (Basisklasse, Interface-Vererbung, Namespace) und DeclaredInterfaces", """
+            #import "reflection"
+            namespace Geo {
+                interface INamed { string Name { get; } }
+                interface IShape : INamed { float Area() }
+                interface IPrintable { string Text() }
+                class Circle : IShape {
+                    string Name { get { return "c" } }
+                    float Area() { return 1.0 }
+                }
+                class Ring : Circle, IPrintable { string Text() { return "r" } }
+            }
+            class Plain { }
+            var t = Type.Of(new Geo.Ring())
+            print(",".Join(t.Interfaces) + " | " + ",".Join(t.DeclaredInterfaces))
+            var c = Type.Of(new Geo.Circle())
+            print(",".Join(c.Interfaces) + " | " + ",".Join(c.DeclaredInterfaces) + " | " + ",".Join(t.Base.Interfaces))
+            var p = Type.Of(new Plain())
+            print(p.Interfaces.length + " " + p.DeclaredInterfaces.length)
             """),
         ("Weglassen: [Keep] auf Klasse und Member - per Name gemacht, gelesen und gerufen wie in der VM (nicht vererbt, Basis bleibt)", """
             #import "reflection"
@@ -22046,6 +22284,136 @@ else
               print(pf == pf + 0)
             }
             print("end")
+            """),
+        ("#intwidth 32: Ueberlauf, Division, Schieben, Konstanten, typisierte Arrays, Felder, Schleifen, Einheiten", """
+            #intwidth 32
+            var a = 2147483647
+            a = a + 1
+            print(a)
+            print(65536 * 65536)
+            var m = -2147483647 - 1
+            print(m / -1)
+            print(m % -1)
+            print(1 << 31)
+            print(1 << 32)
+            print(3000000000)
+            var big = 100000
+            print(big * big)
+            int u[3]
+            u[0] = 2147483647
+            u[0]++
+            print(u[0])
+            class P { int x }
+            var p = new P()
+            p.x = 70000 * 70000
+            print(p.x)
+            var s = 0
+            for (var i = 0; i < 100000; i++) { s += i * i }
+            print(s)
+            print(5cm + 3mm)
+            print(0.5 + 1)
+            """),
+        ("Typisierte Arrays: Breiten, undefined und der Merker (-128, NaN, 0xFF, 0xFFFF), strikte Typen, Einheiten, ++, Zuweisung liefert den gespeicherten Wert", """
+            int[8] a[] = new int[4]
+            a[0] = 300
+            a[1] = -129
+            print(a[0] + " " + a[1] + " " + a[2])
+            var d = a
+            d[2] = 1000
+            print(d[2])
+            a[3] = 127
+            a[3]++
+            print(a[3])
+            print(a[0] = 500)
+            try { a[0] = "x" } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = 2.5 } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = 5cm } catch (UnitMismatchException e) { print("U: " + e.message) }
+            a[0] = undefined
+            print(a[0])
+            a[0] = -128
+            print(a[0] + " " + a[1])
+            a[0] = undefined
+            a[2] = -128
+            a[2] = 5
+            print(a[0] + " " + a[2] + " " + a.length)
+            int big[3]
+            big[0] = -9223372036854775807 - 1
+            print(big[0] + " " + big[1])
+            char c[2]
+            c[0] = 'x'
+            print(c[0] + " " + c[1])
+            byte by[3]
+            by[0] = 300
+            by[1] = 255
+            print(by[0] + " " + by[1] + " " + by[2])
+            float[32] f[] = [1, 2.1, undefined]
+            print(f[0] + " " + f[1] + " " + f[2])
+            float[16] h[2]
+            h[0] = 0.1
+            print(h[0])
+            float n[2]
+            n[0] = 0.0 / 0.0
+            print(n[0] + " " + n[1])
+            bool b[3]
+            b[0] = true
+            try { b[1] = 1 } catch (ArgumentException e) { print("A: " + e.message) }
+            print(b[0] + " " + b[1])
+            float:cm w[] = [1cm, 2m]
+            print(w[1])
+            try { w[0] = 3s } catch (UnitMismatchException e) { print("U: " + e.message) }
+            try { int bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+            int[16] wide[] = [1, 2, 70000]
+            print(wide[2])
+            try { int[8] q[] = wide } catch (ArgumentException e) { print("A: " + e.message) }
+            """),
+        ("Typisierte Arrays: mehrdimensional, Felder (int x[4] legt das Array mit dem Objekt an), copy, ref auf Elemente, foreach, Json, Threads (taking)", """
+            #import "json"
+            class U { static Set(ref int x, int v) { x = v } }
+            class Sensor {
+                int[16] samples[]
+                float:cm sizes[]
+                construct() { this.samples = new int[4]; this.sizes = new float[2]; this.samples[0] = 70000 }
+            }
+            int m[2][3]
+            m[1][2] = 7
+            try { m[1][0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+            int[8] m8[2][2]
+            m8[0][1] = 200
+            print(m[1][2] + " " + m8[0][1])
+            var s = new Sensor()
+            s.samples[1] = 40000
+            s.sizes[0] = 2m
+            print(s.samples[0] + " " + s.samples[1] + " " + s.sizes[0])
+            s.samples = new int[2]
+            s.samples[0] = 70000
+            var t = copy s
+            t.samples[1] = 70000
+            print(s.samples[0] + " " + t.samples[1])
+            int[8] a[4]
+            U.Set(a[1], 1000)
+            print(a[1])
+            a[0] = -128
+            a[2] = 5
+            var sum = 0
+            foreach (x in a) { if (x != undefined) { sum += x } }
+            print(sum)
+            print(Json.Serialize(a))
+            class Holder {
+                int[8] x[4]
+                int y[]
+                float m[2][3]
+                static int s[3]
+            }
+            var h1 = new Holder()
+            print(h1.x.length + " " + h1.x[0] + " " + h1.y + " " + h1.m[1].length + " " + Holder.s.length)
+            h1.x[0] = 300
+            var h2 = new Holder()
+            h2.x[0] = 1
+            print(h1.x[0] + " " + h2.x[0])
+            delete h1
+            print(h2.m[0][2])
+            int g[3]
+            fire taking g { g[0] = 300; print("thread " + g[0]) }
             """),
         ("Zeiger (unsafe): Arithmetik ueber Array- und Puffer-Elemente (ref), Vergleich, Zeiger auf Zeiger", """
             class F {
@@ -24472,8 +24840,9 @@ else
                     var k = v.Read(buf, 0, 64)
                     print("by ip " + IO.Utf8.GetString(buf, 0, k))
                     Net.IConnection iv = v
-                    iv.SetReadTimeout(3000)
-                    print("tls iconnection " + (v is of Net.IConnection) + " " + iv.GetRemoteHost() + " " + (iv.GetRemotePort() == port) + " " + (iv.GetLocalPort() == v.LocalPort) + " " + v.LocalHost + " " + iv.GetReadTimeout())
+                    iv.ReadTimeout = 3000
+                    IO.IStream sv = iv
+                    print("tls iconnection " + (v is of Net.IConnection) + " " + iv.RemoteHost + " " + (iv.RemotePort == port) + " " + (iv.LocalPort == v.LocalPort) + " " + v.LocalHost + " " + iv.ReadTimeout + " " + (sv is of Net.IConnection))
                     v.Close()
                     """),
                 ("Https: Client und Server ueber TLS (https://-URL, Zertifikat des Tests, Zertifikatsfehler)", tlsHead + """
@@ -25050,9 +25419,10 @@ else
             print("got " + n + " " + IO.Utf8.GetString(buf, 0, n))
             print("remote " + s.RemoteHost + " " + (s.RemotePort == c.LocalPort) + " " + (c.RemotePort == l.Port))
             Net.IConnection ic = s
-            ic.SetReadTimeout(700)
-            ic.SetWriteTimeout(2s)
-            print("iconnection " + (s is of Net.IConnection) + " " + ic.GetRemoteHost() + " " + (ic.GetRemotePort() == c.LocalPort) + " " + (ic.GetLocalPort() == l.Port) + " " + ic.GetLocalHost() + " " + ic.GetReadTimeout() + " " + s.ReadTimeout + " " + ic.GetWriteTimeout())
+            ic.ReadTimeout = 700
+            ic.WriteTimeout = 2s
+            IO.IStream plain = ic
+            print("iconnection " + (s is of Net.IConnection) + " " + ic.RemoteHost + " " + (ic.RemotePort == c.LocalPort) + " " + (ic.LocalPort == l.Port) + " " + ic.LocalHost + " " + ic.ReadTimeout + " " + s.ReadTimeout + " " + ic.WriteTimeout + " " + (plain is of IO.IStream))
             s.WriteString("pong!")
             c.ReadTimeout = 500
             var m = c.Read(buf, 0, 16)
@@ -25649,7 +26019,7 @@ else
         var vmResults = new string[natCases.Length];
         int vmAt = 0;
         using (TestProgress.Heartbeat("VM (Faelle nativ == VM)", () => Volatile.Read(ref vmAt), natCases.Length, () => natCases[Math.Min(Volatile.Read(ref vmAt), natCases.Length - 1)].Name))
-            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Volatile.Write(ref vmAt, i + 1); }
+            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Value.Ints32 = false; Volatile.Write(ref vmAt, i + 1); }
         Value.SingleFloats = false;
         // what the native program of a case did: its output, stderr and exit code (Output null: it did not build - Stderr says why)
         var natRan = new (string? Output, string Stderr, int Exit)[natCases.Length];
@@ -25974,7 +26344,7 @@ else
 
         // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
         string out64 = vmOutput("print(0.1 + 0.2)\nprint(1.0 / 3)"), out32 = vmOutput("#floatwidth 32\nprint(0.1 + 0.2)\nprint(1.0 / 3)");
-        Value.SingleFloats = false;
+        Value.SingleFloats = false; Value.Ints32 = false;
         CheckNat("#floatwidth: 64 Bit ist der Standard", out64 == "0.30000000000000004\n0.3333333333333333\n", out64);
         CheckNat("#floatwidth 32: float rechnet und druckt mit 32 Bit", out32 == "0.3\n0.33333334\n", out32);
         var overridden = new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, floatWidthOverride: 32);
@@ -25986,6 +26356,73 @@ else
         CheckNat("Befehlszeile: -f 32 / -f 16", cli32.Error == null && cli32.FloatWidth == 32 && cliBad.Error != null && CommandLineParser.Parse(new[] { "run", "a.script" }).FloatWidth == null);
         var narrowed = new Linker().CompileAndLink(new[] { "var x = 0.1\nprint(x)" }, null, null, null, floatWidthOverride: 32);
         CheckNat("Konstanten werden auf 32 Bit gerundet", narrowed.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Float && c.AsFloat() == (double)0.1f));
+
+        // #intwidth (SPEC 8.2.1): int is 64 bits everywhere unless the program asks for 32
+        {
+            string int64 = vmOutput("print(2147483647 + 1)"), int32 = vmOutput("#intwidth 32\nprint(2147483647 + 1)\nprint(65536 * 65536)\nprint(3000000000)");
+            Value.SingleFloats = false; Value.Ints32 = false;
+            CheckNat("#intwidth: 64 Bit ist der Standard, auch auf dem esp32", int64 == "2147483648\n" && new Linker().CompileAndLink(new[] { "print(1)" }).IntWidth == 64
+                && new Linker().CompileAndLink(new[] { "print(1)" }, null, null, null, null, TargetProfile.Esp32).IntWidth == 64, int64);
+            CheckNat("#intwidth 32: int rechnet mit 32 Bit (Ergebnis abgeschnitten, Konstanten auch)", int32 == "-2147483648\n0\n-1294967296\n", int32);
+            try { new Linker().CompileAndLink(new[] { "#intwidth 16\nprint(1)" }); CheckNat("#intwidth 16 wird abgelehnt", false); }
+            catch (Exception ex) { CheckNat("#intwidth 16 wird abgelehnt", ex.Message.Contains("32 or 64"), ex.Message); }
+            var cliInt = CommandLineParser.Parse(new[] { "run", "a.script", "-i", "32" });
+            CheckNat("Befehlszeile: -i 32 / -i 16", cliInt.Error == null && cliInt.IntWidth == 32 && CommandLineParser.Parse(new[] { "run", "a.script", "-i", "16" }).Error != null
+                && CommandLineParser.Parse(new[] { "run", "a.script" }).IntWidth == null);
+            var intLinked = new Linker().CompileAndLink(new[] { "#intwidth 32\nvar x = 3000000000\nprint(x)" });
+            CheckNat("#intwidth 32: Konstanten werden auf 32 Bit abgeschnitten, das C bekommt FIRE_INT32", intLinked.IntWidth == 32
+                && intLinked.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Int && c.AsInt() == -1294967296)
+                && fire.Native.CppGenerator.Generate(intLinked, TargetProfile.Host).Contains("#define FIRE_INT32 1"));
+            Value.SingleFloats = false; Value.Ints32 = false;
+
+            // a value of 8 bytes (FIRE_COMPACT: int32, float32, 32-bit pointers): the same program as a 32-bit build, when the compiler can make one
+            string probe = Path.Combine(workDir, "m32probe.c");
+            File.WriteAllText(probe, "int main(void) { return sizeof(void*) == 4 ? 0 : 1; }\n");
+            RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 \"{probe}\" -o \"{probe}.bin\"", workDir, out int probeExit);
+            if (probeExit != 0 || RunProc($"{probe}.bin", "", workDir, out int probeRun) is var _ && probeRun != 0)
+                Console.WriteLine("SKIP: 8-Byte-Value - der C-Compiler baut keine 32-Bit-Programme (gcc-multilib)");
+            else
+            {
+                const string compactSource = """
+                    #intwidth 32
+                    #floatwidth 32
+                    var a = 2147483647
+                    a = a + 1
+                    print(a)
+                    var m = -2147483647 - 1
+                    print(m / -1)
+                    print(1 << 31)
+                    int[8] t[] = [300, 2]
+                    print(t[0])
+                    class P { int x; float y; string s }
+                    var p = new P()
+                    p.x = 70000 * 70000
+                    p.y = 1.1
+                    p.s = "s" + p.x
+                    print(p.x + " " + p.y + " " + p.s)
+                    var sum = 0
+                    for (var i = 0; i < 100000; i++) { sum += i * i }
+                    print(sum)
+                    print(5cm + 3mm)
+                    var arr = [1, "x", 2.5]
+                    print(arr[1] + arr.length)
+                    class U { static Inc(ref int x) { x++ } }
+                    int box = 1
+                    U.Inc(box)
+                    print(box)
+                    """;
+                string expectedCompact = vmOutput(compactSource);
+                Value.SingleFloats = false; Value.Ints32 = false;
+                string compactC = Path.Combine(workDir, "compact.c");
+                File.WriteAllText(compactC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { compactSource }), TargetProfile.Host)
+                    + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
+                Value.SingleFloats = false; Value.Ints32 = false;
+                string compactBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{compactC}\" -I\"{workDir}\" -o \"{compactC}.bin\" -lm", workDir, out int compactExit);
+                string compactOut = compactExit == 0 ? RunProc($"{compactC}.bin", "", workDir, out _) : compactBuild;
+                CheckNat("8-Byte-Value (#intwidth 32, #floatwidth 32, 32-Bit-Zeiger): dasselbe wie die VM", compactExit == 0 && !compactBuild.Contains("warning") && compactOut.Replace("\r", "") == expectedCompact,
+                    $"  erwartet (VM):\n{expectedCompact}\n  erhalten (32 Bit):\n{compactOut}");
+            }
+        }
 
         // Zielprofil
         var esp = TargetProfile.Esp32;
@@ -27802,7 +28239,7 @@ else
                     foreach (var (key, value) in new[] { ("posix", 1), ("windows", 2), ("freertos", 3) })
                     {
                         File.WriteAllText(Path.Combine(d, key + ".hpp"), $"namespace fire {{ inline Value pk_which_{key}() {{ return Int({value}); }} }}\n");
-                        native.PlatformSources[key] = new List<string> { Path.Combine(d, key + ".hpp") };
+                        native.PlatformSources[key] = new fire.Package.Manager.NativeSourceList { Path.Combine(d, key + ".hpp") };
                     }
                     File.WriteAllText(Path.Combine(d, "common.hpp"), "namespace fire {\n#if defined(FIRE_HAL_WINDOWS)\ninline Value pk_which() { return pk_which_windows(); }\n#elif defined(FIRE_HAL_FREERTOS)\ninline Value pk_which() { return pk_which_freertos(); }\n#else\ninline Value pk_which() { return pk_which_posix(); }\n#endif\n}\n");
                     native.Sources.Clear();

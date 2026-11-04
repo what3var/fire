@@ -207,7 +207,7 @@ static class Scene3DTests
         var lines = new List<string>();
         var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
         session.Run();
-        Value.SingleFloats = false;
+        Value.SingleFloats = false; Value.Ints32 = false;
         return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
     }
 

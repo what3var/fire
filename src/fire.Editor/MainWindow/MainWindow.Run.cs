@@ -80,6 +80,9 @@ namespace fire.Editor
         private HashSet<(int SourceIndex, int Line)> BreakpointLocations()
         {
             var result = new HashSet<(int, int)>();
+            // (by file too: a plugin the program loads later has sources of its own - the debug target applies these in them, see IDebugTarget.SetFileBreakpoints)
+            _session.Target?.SetFileBreakpoints(_documents.Where(d => d.Script is { Breakpoints.Count: > 0 } && FullPathOf(d) != null)
+                .SelectMany(d => d.Script!.Breakpoints.Select(line => (FullPathOf(d)!, line))).ToList());
             foreach (var doc in _documents)
             {
                 if (doc.Script is not { } script || script.Breakpoints.Count == 0) continue;

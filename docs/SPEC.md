@@ -227,6 +227,13 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   (there is no destructor), the inner arrays it owns (2.1) are destroyed with it.
 - **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
   nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** is treated the same way (2.3): dead objects throw `DestroyedException` (a shallow copy, 2.4, may point to one).
+- **References from before a `fire handover`** (THREADING_DESIGN.md section 1) are dead the same way: the handed-over value and everything reachable from it
+  belong to the thread, and every other reference to them that existed before - in the sender or anywhere else, in any thread - throws the
+  `DestroyedException` "Access to an object that was handed over to a thread ('fire handover')." (`an array`, `a buffer`; "Access to a destroyed object."
+  once the thread has destroyed it) wherever a destroyed one throws: a field or element read or written, `Length`, a method call, `is of`/`!` a class,
+  `throw`, `take`, `foreach` (`copy`/`flat`: the `ArgumentException` of a destroyed object). `==`/`!=`, `== undefined` and `is of class` are no use: they answer, and `==` compares the object (a dead reference
+  equals the thread's). Only the thread's variable and the references among the moved values work. VM and native the same (the moved values get a new
+  identity: a new instance in the VM, the next generation of the handle slot natively - no check is added anywhere else); not checked in `#performance`.
 - **Debug warning for references that outlive their object**: in Debug mode the VM notes when a field or an array element is given an object that belongs to a scope (a local, an
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
@@ -815,7 +822,11 @@ prelude: combined) program, otherwise it is an error –
 an extension cannot create a new class. Several `class extends
 Name` blocks for the same name are all merged. This allows
 e.g. your own additional methods for `List` from the standard library without having to
-touch its source code yourself.
+touch its source code yourself. The name may be qualified (`class extends Api.Device`). In a
+fire plugin (`--linkage plugin`) an extension of a class it does not declare (of a library, a
+base type) may contain only methods and properties with bodies - a field, an auto-property, a
+constructor, a destructor or an operator is a build error, because the program that loads the
+plugin makes the objects of that class.
 
 ### 5.5.1 Extending base types (`class extends string`)
 
@@ -1116,7 +1127,7 @@ stripping level 0-3, docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSeria
 derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md); `[NoCopy]` (before a class) -
 an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
 `ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
-`taking`, the arguments of `fire global`, what `sync` copies back - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+`taking`, the arguments of `fire global`, what `sync` copies back, the isolated copy of the globals for a host callback after the end of the program - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
 and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
 editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
@@ -1406,7 +1417,12 @@ The actual novelty lies on the C# side:
   **never** the real, shared global scope of the main program, exactly
   as required. An unhandled script exception in the callback body
   does NOT propagate out into the native caller, but only goes
-  to an optional `onUnhandled` callback.
+  to an optional `onUnhandled` callback. The copy follows the `[NoCopy]` rules (5.12) like every other copy: when an object of the snapshot (a
+  field, an element of it) reaches an instance of a `[NoCopy]` class, it is refused before anything is copied - the callback does not run, and
+  `onUnhandled` gets "Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' would copy an instance
+  of it, which exists only once." (`reaches an instance of it ...` for a field or an element); a lambda or a pointer in a field is refused the same
+  way. An array of the snapshot is shared, not copied (so a `[NoCopy]` instance in it is fine). A native program has no such copy: a host service
+  runs only in the main program, never after its end.
 
 This matches the existing lambda semantics exactly (SPEC 4.2,
 `Runtime.LambdaValue`): a lambda anyway ALWAYS sees only its own
@@ -1610,6 +1626,23 @@ The build can override the directive: `fire.Compiler run|build|native ... -f 32|
 hosts that call `RuntimeSession.Build` / `Linker.CompileAndLink`). Any other value is an error. The precision is process-wide while a
 program runs (`Value.SingleFloats`); explicit widths (`float[16]`, `float[64]`) keep their meaning.
 
+#### 8.2.2 Program-wide int width (`#intwidth`)
+
+```
+#intwidth 32        // every `int` without an explicit bit width is a 32-bit int (default: 64)
+```
+
+Without a directive `int` has 64 bits - on every target, the small ones included. `#intwidth 32` makes it a 32-bit two's
+complement number for the whole program: every operation computes as before and its result is cut to 32 bits
+(`2147483647 + 1` is `-2147483648`, `65536 * 65536` is 0, `1 << 32` is 0, `-2147483648 / -1` is `-2147483648`), and so is
+every int constant (`3000000000` is `-1294967296`). The VM cuts every int it makes (`Value.Ints32`, process-wide while a program
+runs), the native backend stores an int in an `int32_t` (`FIRE_INT32`) - the same results in every engine. Explicit widths
+(`int[8]`, `int[64]`) keep their meaning. Overrides: `-i 32|64` on the command line (wins), the project setting `intWidth`, a
+target's `intWidth` in `fire.native.json`; `#if int32` sees the width the command line or the target gives (the directive is read
+later than the symbols). Natively, `#intwidth 32` together with `#floatwidth 32` on a target with 32-bit pointers (a
+microcontroller) makes every value 8 bytes instead of 16 (`FIRE_COMPACT`): fields, array elements, variables and stack slots take
+half the memory - such a program can have up to 65535 objects, arrays and buffers alive at once and up to 65535 different units.
+
 ### 8.3 Pointers & `unsafe`
 
 ```
@@ -1656,6 +1689,10 @@ int fixedArr[10]          // array of fixed size
 int matrix[][]            // multidimensional (array of arrays)
 var a = new int[10]       // array allocation
 ```
+
+A declaration with a size (`int fixedArr[10]`, `int m[3][4]`) makes the array right away - a local or global variable
+where it is declared, a field with its object (a static field at program start); the elements are `undefined`. Without
+a size (`int arr[]`) the variable or field is `undefined` until an array is assigned.
 
 The array brackets stand **after the identifier**, not after the type
 (deliberately different from C#, where `int[] arr` is usual) – this avoids a collision
@@ -1718,6 +1755,44 @@ an array return type on `extern` (the native interface knows no script arrays). 
 is not enforced at run time, the resolver only checks that the type name exists; the editor uses it for
 type inference (`k.Dogs()[0].` suggests the members of `Dog`, `k.Numbers().` suggests `Length`).
 
+### 8.4.2 Typed arrays
+
+```
+int a[] = new int[1000]      // only ints (and undefined)
+int[8] samples[256]          // only ints, cut to 8 bits like an int[8] variable
+float[32] coeffs[] = [1, 2.5] // floats, rounded to 32 bits; the int 1 becomes 1.0
+bool flags[8]
+char text[16]
+byte raw[64]                 // 0..255
+float:cm sizes[] = [1cm, 2m] // the elements are converted into cm
+```
+
+An array stored in a variable or a field declared with the element type `int`, `int[8|16|32|64]`, `float`,
+`float[8|16|32|64]`, `bool`, `char` or `byte` becomes a **typed array**: the array itself knows its element type, so
+every write through any reference to it (`var d = a; d[0] = 300`, `ref a[i]`, `a[i]++`) keeps it:
+
+* an `int` element is cut to the width (two's complement, `byte`: 0..255), a `float` element is rounded to it, an
+  `int` becomes a `float` in a float array;
+* `undefined` fits every element type (it is what a new array holds);
+* any other value is a catchable `ArgumentException` (`An element of an array of int[8] must be an int (or undefined),
+  not String.`), a number with another unit a `UnitMismatchException` (without a declared unit the elements have no
+  unit) - the type checker reports both as TC001/TC006 already;
+* the assignment yields the stored value (`print(a[0] = 300)` prints 44 for an `int[8]` array).
+
+It becomes typed where it is stored: the declaration's initializer, the automatic allocation (`int a[10]`), a later
+assignment to the variable or field. Its elements are converted then; one that does not fit is the exception. An array
+that is typed already stays as it is if the types agree, an array of another element type is an `ArgumentException`.
+Parameters do not type what they receive. A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
+Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, strings, classes and pointers
+declare no element type - such an array takes any value, as before.
+
+The native backend stores a typed array **packed**: one C number per element (`int8_t` ... `int64_t`, `float`,
+`double`, a byte for `bool`, two bytes for `char`) instead of a 16-byte value - an `int[8] a[100000]` needs 100 KB
+instead of 1.6 MB. `undefined` is kept as a rarely used value of the type (`INT8_MIN` ..., a NaN with a fixed payload,
+`0xFF` for `byte`, `0xFFFF` for `char`): only when that value is stored as a real number is a bit set in a mask of
+the array, which is allocated then - so a read looks at the mask only when it finds that value. When a native function
+of a package asks for the elements as values, the array is unpacked once (its type stays).
+
 ### 8.5 `IEnumerable`/`IEnumerator` & `interface`
 
 **Implemented.** Since `IEnumerable`/`IEnumerator` must be implementable by several otherwise
@@ -1746,9 +1821,24 @@ class List : IEnumerable {
   but can additionally implement **several** interfaces
   (`class Foo : Bar, IEnumerable, IComparable`) – the inheritance model remains
   single, only interfaces can be implemented multiple times.
-- An `interface` only declares method signatures (no fields, no
-  constructor), similar to `extern`, just for class-internal contracts instead of
+- An `interface` only declares method and property signatures (no fields, no
+  constructor, no code), similar to `extern`, just for class-internal contracts instead of
   native functions.
+- **Properties in interfaces:** `int Limit { get; set; }`, `string Host { get; }` (or `{ set; }`), with a unit like in a class (`float Delay : ms { get; }`) - the
+  accessors without bodies, the type is required (`E3162`; a body is `E3161`). A class implements it with a **property** of that name (an auto-property or one
+  with its own `get`/`set`, also inherited from the base class) that has at least the accessors of the interface: a read-only member may be implemented by a
+  read-write property. A field of the same name does not count (`E4065`), nor do methods `get_Limit()`/`set_Limit(v)`; a missing property or accessor is
+  `E4064`, a non-public one `E4063`, a different value type or unit (`string` for `int`, `int : s` for `int : ms`) `E4066` (class types and `any` are not
+  compared). Through a value of the interface type the property has the declared type and unit (`l.Limit = "x"` is `TC001`), and writing a property the
+  interface declares without `set` is `TC016` (also in lax mode - even if the class of the object has a setter). At run time nothing is special: `x.Limit`
+  calls `get_Limit` of the object's class, as for any property (VM and native alike).
+- **Interface inheritance:** `interface IConnection : IO.IStream, IOther { ... }` - an interface extends one or more interfaces (only interfaces: a class there
+  is `E4067`; a cycle `IA : IB`, `IB : IA` is `E4068`; reaching the same interface on two ways - a diamond - is fine). A class that implements `IConnection`
+  must implement every member of it and of the interfaces it extends (`E4010`/`E4064`), and **is of** each of them: `x is of IO.IStream`, the cast
+  `x!IO.IStream`, a `catch (IO.IStream e)`, overload resolution and `where T is of IO.IStream` all see them. A value of type `IConnection` goes to an
+  `IO.IStream` variable or parameter without a cast, and its members include the inherited ones. (The compiler puts the whole closure into the interface list
+  of the class; reflection's `Type.Interfaces` stays the list the class names.)
+- `catch (IName e)` with an interface catches an exception whose class implements it.
 - The methods of an interface are **public**: the method that implements one (found by name and number of parameters, the nearest in the base-class chain) must be
   public - `private`/`protected` is the compile error `E4063`, also in a derived class of an implementing class (it would hide the public one). A public method
   inherited from the base class counts; other methods of the name (another number of parameters) may be private. A call through a value of an interface type is

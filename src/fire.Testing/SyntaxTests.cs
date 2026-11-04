@@ -20,7 +20,7 @@ static class SyntaxTests
         {
             var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
             session.Run();
-            Value.SingleFloats = false;
+            Value.SingleFloats = false; Value.Ints32 = false;
         }
         catch (Exception ex)
         {
@@ -434,6 +434,37 @@ static class SyntaxTests
         string cDefault = fire.Compiler.NativeBuilder.GenerateLinked(new[] { threadsBody }, TargetProfile.Host).C;
         Check("fire.native.json: \"globalJobs\" gilt fuer ein Programm ohne Direktive; die Direktive geht vor; ohne alles nichts (safepoints)",
             cConfig.Contains("g_globalJobs = 2;") && cDirective.Contains("g_globalJobs = 0;") && !cDirective.Contains("g_globalJobs = 2;") && !cDefault.Contains("g_globalJobs ="));
+
+        // properties and base interfaces in an interface (SPEC 8.5)
+        Check("Interface: Properties in jeder Schreibweise (get/set in jeder Reihenfolge, ein Accessor pro Zeile, Einheit, Array, generisch), Basis-Interfaces mit Namespace und Typargumenten", Output("""
+            namespace Shapes {
+                interface INamed { string Name { get; } }
+                interface ISized<T> { T Size { set; get; } }
+                interface IShape : INamed, Shapes.ISized<int> {
+                    float Width : mm {
+                        get;
+                        set;
+                    }
+                    int[] Corners { get; }
+                    float Area()
+                }
+                class Box : Shapes.IShape {
+                    string Name { get { return "box" } }
+                    int Size { get; set; }
+                    float Width : mm { get; set; }
+                    int[] Corners { get { return [1, 2, 3, 4] } }
+                    float Area() { return 2.0 }
+                }
+            }
+            Shapes.IShape s = new Shapes.Box()
+            s.Width = 3cm
+            s.Width += 1mm
+            s.Size = 2
+            s.Size *= 4
+            print(s.Name + " " + s.Width + " " + s.Size + " " + s.Corners.length + " " + s.Area())
+            """) is var props && props == "box 31mm 8 4 2", props);
+        Check("Interface: doppeltes get ist E3020, ein Name ohne Accessoren E3023, ein unbekanntes Wort E3022", Output("interface I { int X { get; get; } }").StartsWith("ERROR E3020")
+            && Output("interface I { int X { } }").StartsWith("ERROR E3023") && Output("interface I { int X { init; } }") is var unknownAccessor && unknownAccessor.StartsWith("ERROR E3022"), Output("interface I { int X { } }"));
 
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }

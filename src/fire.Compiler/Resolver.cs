@@ -494,21 +494,81 @@ namespace fire.Compiler
                 }
             }
 
+            // `interface IConnection : IO.IStream, IOther`: every name is a known interface (not a class), and no interface extends itself (over any chain)
+            foreach (var id in _interfaces.Values)
+            {
+                foreach (var baseRef in id.BaseRefs ?? Array.Empty<TypeRef>())
+                {
+                    try { CheckAmbiguous(baseRef, id.Line, n => _classes.ContainsKey(n) || _interfaces.ContainsKey(n), NamespaceOf(id.Name)); }
+                    catch (ResolverException ambiguous) { AddError(ambiguous); continue; }
+                    string n = ResolveBaseRef(baseRef);
+                    if (!_interfaces.ContainsKey(n))
+                        AddError(new ResolverException(
+                            $"'{baseRef.BaseName}' of interface '{id.Name}' is not a known interface (an interface can only extend interfaces)", id.Line));
+                }
+                if (InterfaceCycle(id) is { } cycle)
+                    AddError(new ResolverException($"Interface '{id.Name}' extends itself ({string.Join(" -> ", cycle)})", id.Line));
+            }
+
             foreach (var cd in _classes.Values)
             {
+                // (the interfaces it names and every interface they extend - each once)
+                var done = new HashSet<string>();
                 foreach (var baseRef in cd.BaseRefs ?? Array.Empty<TypeRef>())
                 {
                     string n = ResolveBaseRef(baseRef);
-                    if (_interfaces.TryGetValue(n, out var iface))
-                        Guard(() => ValidateImplementsInterface(cd, iface));
+                    if (!_interfaces.ContainsKey(n)) continue;
+                    foreach (var iface in InterfaceClosure(n))
+                        if (done.Add(iface.Name)) Guard(() => ValidateImplementsInterface(cd, iface));
                 }
                 // an interface of a base class: a method the class declares again must stay public (the class is of the interface too)
                 var seen = new HashSet<ClassDecl> { cd };
                 for (var b = GetBaseClassDecl(cd); b != null && seen.Add(b); b = GetBaseClassDecl(b))
                     foreach (var baseRef in b.BaseRefs ?? Array.Empty<TypeRef>())
-                        if (_interfaces.TryGetValue(ResolveBaseRef(baseRef), out var inherited))
-                            Guard(() => ValidateImplementsInterface(cd, inherited, onlyOwn: true));
+                        if (_interfaces.ContainsKey(ResolveBaseRef(baseRef)))
+                            foreach (var inherited in InterfaceClosure(ResolveBaseRef(baseRef)))
+                                if (done.Add(inherited.Name)) Guard(() => ValidateImplementsInterface(cd, inherited, onlyOwn: true));
             }
+        }
+
+        /// <summary>The interface `name` and every interface it extends, directly or over others (each once, the interface itself first; unknown names and
+        /// cycles are left out - they are reported on their own).</summary>
+        private List<InterfaceDecl> InterfaceClosure(string name)
+        {
+            var result = new List<InterfaceDecl>();
+            var seen = new HashSet<string>();
+            var pending = new Stack<string>();
+            pending.Push(name);
+            while (pending.Count > 0)
+            {
+                string n = pending.Pop();
+                if (!seen.Add(n) || !_interfaces.TryGetValue(n, out var id)) continue;
+                result.Add(id);
+                var bases = id.BaseRefs ?? Array.Empty<TypeRef>();
+                for (int i = bases.Count - 1; i >= 0; i--) pending.Push(ResolveBaseRef(bases[i]));
+            }
+            return result;
+        }
+
+        /// <summary>The chain over which `id` extends itself (`IA -> IB -> IA`), null when it does not.</summary>
+        private List<string>? InterfaceCycle(InterfaceDecl id)
+        {
+            var path = new List<string> { id.Name };
+            var visited = new HashSet<string>();
+            bool Walk(string name)
+            {
+                if (!_interfaces.TryGetValue(name, out var decl)) return false;
+                foreach (var baseRef in decl.BaseRefs ?? Array.Empty<TypeRef>())
+                {
+                    string n = ResolveBaseRef(baseRef);
+                    path.Add(n);
+                    if (n == id.Name) return true;
+                    if (visited.Add(n) && Walk(n)) return true;
+                    path.RemoveAt(path.Count - 1);
+                }
+                return false;
+            }
+            return Walk(id.Name) ? path : null;
         }
 
         /// <summary>The class name for error messages: for a generic
@@ -622,6 +682,78 @@ namespace fire.Compiler
                 if (ImplementingMethod(cd, m.Name, m.Params.Count) is { Access: not AccessModifier.Public } hidden)
                     throw NotPublic(cd, iface, hidden);
             }
+            foreach (var p in iface.PropertySigs)
+            {
+                var own = ImplementingProperty(cd, p.Name);
+                if (onlyOwn)
+                {
+                    if (own is { Access: not AccessModifier.Public } && cd.Members.Contains(own)) throw PropertyNotPublic(cd, iface, own);
+                    continue;
+                }
+                string wanted = p.HasGet && p.HasSet ? "get; set;" : p.HasGet ? "get;" : "set;";
+                if (own == null)
+                {
+                    // a field of that name is no property: the interface promises get_/set_, which a field does not have (see SPEC 8.5)
+                    if (FieldInClassChain(cd, p.Name))
+                        throw new ResolverException(
+                            $"'{p.Name}' of class '{cd.Name}' is a field - interface '{iface.Name}' wants a property '{p.Name}' with '{wanted}'", cd.Line);
+                    throw new ResolverException(
+                        $"Class '{cd.Name}' does not implement interface '{iface.Name}' completely (missing property '{p.Name}' with '{wanted}')", cd.Line);
+                }
+                bool canGet = PropertyAccessorInChain(cd, p.Name, getter: true), canSet = PropertyAccessorInChain(cd, p.Name, getter: false);
+                if (p.HasGet && !canGet || p.HasSet && !canSet)
+                    throw new ResolverException(
+                        $"Class '{cd.Name}' does not implement interface '{iface.Name}' completely (missing property '{p.Name}' with '{wanted}')", own.Line);
+                if (own.Access != AccessModifier.Public) throw PropertyNotPublic(cd, iface, own);
+                if (PropertyTypeConflict(p.Type, own.Type) is { } conflict)
+                    throw new ResolverException(
+                        $"Property '{p.Name}' of class '{cd.Name}' is {conflict.Have}, interface '{iface.Name}' declares it as {conflict.Want}", own.Line);
+            }
+        }
+
+        private static ResolverException PropertyNotPublic(ClassDecl cd, InterfaceDecl iface, PropertyDecl pd) =>
+            new($"Property '{pd.Name}' of class '{cd.Name}' implements interface '{iface.Name}' and must be public, not " +
+                $"{(pd.Access == AccessModifier.Private ? "private" : "protected")} (a member of an interface is public)", pd.Line);
+
+        /// <summary>The property `name` an object of `cd` has: the nearest class of the chain that declares one (not a static one).</summary>
+        private PropertyDecl? ImplementingProperty(ClassDecl cd, string name)
+        {
+            var seen = new HashSet<ClassDecl>();
+            for (var c = cd; c != null && seen.Add(c); c = GetBaseClassDecl(c))
+                if (c.Members.OfType<PropertyDecl>().FirstOrDefault(pd => pd.Name == name && !pd.IsStatic) is { } found) return found;
+            return null;
+        }
+
+        /// <summary>Whether some class of the chain gives the property `name` a getter (a setter) - an override may declare only one of them.</summary>
+        private bool PropertyAccessorInChain(ClassDecl cd, string name, bool getter)
+        {
+            var seen = new HashSet<ClassDecl>();
+            for (var c = cd; c != null && seen.Add(c); c = GetBaseClassDecl(c))
+                if (c.Members.OfType<PropertyDecl>().Any(pd => pd.Name == name && !pd.IsStatic && (getter ? pd.Getter : pd.Setter) != null)) return true;
+            return false;
+        }
+
+        private bool FieldInClassChain(ClassDecl cd, string name)
+        {
+            var seen = new HashSet<ClassDecl>();
+            for (var c = cd; c != null && seen.Add(c); c = GetBaseClassDecl(c))
+                if (c.Members.OfType<FieldDecl>().Any(fd => fd.Name == name && !fd.IsStatic)) return true;
+            return false;
+        }
+
+        private static readonly HashSet<string> ValueTypeNames = new() { "int", "float", "string", "bool", "char", "byte" };
+
+        /// <summary>The type of an implementing property against the one of the interface: only what is surely different is a conflict - two different value
+        /// types (`string` for an `int`), or two units of a different text (`int : s` for `int : ms`; a unit against none). Class types, `any`, type
+        /// parameters and untyped ones pass (the type checker looks at the values).</summary>
+        private static (string Have, string Want)? PropertyTypeConflict(TypeRef? want, TypeRef? have)
+        {
+            if (want == null || have == null || want.IsInferred || have.IsInferred) return null;
+            string Text(TypeRef t) => "'" + t.BaseName + (t.ArrayRank > 0 ? string.Concat(Enumerable.Repeat("[]", t.ArrayRank)) : "") + (t.Unit != null ? " : " + t.Unit : "") + "'";
+            bool valueTypes = ValueTypeNames.Contains(want.BaseName) && ValueTypeNames.Contains(have.BaseName);
+            if (valueTypes && (want.BaseName != have.BaseName || want.ArrayRank != have.ArrayRank)) return (Text(have), Text(want));
+            if (valueTypes && want.BaseName is "int" or "float" && (want.Unit ?? "") != (have.Unit ?? "")) return (Text(have), Text(want));
+            return null;
         }
 
         private static ResolverException NotPublic(ClassDecl cd, InterfaceDecl iface, MethodDecl md) =>
@@ -892,6 +1024,8 @@ namespace fire.Compiler
         private bool TypeNameSatisfiesIsOf(string argName, string targetName)
         {
             if (argName == targetName) return true;
+            // (an interface satisfies the interfaces it extends)
+            if (!_classes.ContainsKey(argName) && _interfaces.ContainsKey(argName)) return InterfaceClosure(argName).Any(i => i.Name == targetName);
             if (!_classes.TryGetValue(argName, out var cd)) return false;
             foreach (var baseRef in cd.BaseRefs ?? Array.Empty<TypeRef>())
                 if (TypeNameSatisfiesIsOf(ResolveBaseRef(baseRef), targetName))
@@ -1141,7 +1275,7 @@ namespace fire.Compiler
                 // identifier" - a pure follow-up error of the one
                 // real error.
                 if (stmt is VarDeclStmt vd && !_current.Slots.ContainsKey(vd.Name))
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0);
             }
         }
 
@@ -1234,7 +1368,7 @@ namespace fire.Compiler
                         throw new ResolverException(
                             $"'{vd.Name}[{sizeLit.Value.AsInt()}]' expects {sizeLit.Value.AsInt()} elements, " +
                             $"but the array literal initializer has {arrLit.Elements.Count}", vd.Line);
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0);
                     if (KnownClassOf(vd.Type, vd.Initializer, vd.ArrayRanks.Count > 0) is { } declaredClass) _current.KnownClasses[vd.Name] = declaredClass;
                     break;
 
@@ -1470,7 +1604,8 @@ namespace fire.Compiler
             {
                 // An unknown exception type does not prevent the resolution
                 // of the catch body (and the other blocks).
-                if (c.TypeRef != null && !IsKnownClassName(ResolveTypeRef(c.TypeRef)))
+                // (a class, or an interface: `catch (IRetryable e)` takes an exception whose class implements it)
+                if (c.TypeRef != null && !IsKnownClassName(ResolveTypeRef(c.TypeRef)) && !_interfaces.ContainsKey(ResolveBaseRef(c.TypeRef)))
                     AddError(new ResolverException($"Unknown exception type '{c.TypeRef.BaseName}'", c.Line));
 
                 PushScope();

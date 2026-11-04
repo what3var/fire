@@ -66,16 +66,13 @@ namespace fire.Runtime
         {
             var rc = Vm().ReflectFindClass(name);
             if (rc == null) return Value.MakeUndefined();
-            var interfaces = new List<string>();
-            if (rc.Meta != null)
-                foreach (var b in rc.Meta.BaseNames)
-                    if (rc.Base == null || !(rc.Base.Name == b || rc.Base.Name.EndsWith("." + b, StringComparison.Ordinal))) interfaces.Add(b);
-            var info = new ScriptArray(5);
+            var info = new ScriptArray(6);
             info.Items[0] = Str(rc.Name);
             info.Items[1] = rc.Base != null ? Str(rc.Base.Name) : Value.MakeUndefined();
             info.Items[2] = Value.MakeBool(rc.IsActor);
-            info.Items[3] = StringArray(interfaces);
+            info.Items[3] = StringArray(rc.ReflectedInterfaces(declaredOnly: false));   // (every interface the class reaches: Type.Interfaces)
             info.Items[4] = Attributes((IReadOnlyList<AttributeMeta>?)rc.Meta?.Attributes ?? Array.Empty<AttributeMeta>());   // (the attributes before the class)
+            info.Items[5] = StringArray(rc.ReflectedInterfaces(declaredOnly: true));    // (the ones the class names itself: Type.DeclaredInterfaces)
             return Value.MakeArray(info);
         }
 

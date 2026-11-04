@@ -139,6 +139,16 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Generation, jeder Zugriff vergleicht (`leafAlive`: eine Ladung und ein Vergleich) und meldet sonst die fangbare `DestroyedException`, bevor freigegebener
   Speicher berührt wird. Mit `#performance` definiert der Generator `FIRE_UNCHECKED`: keine Tabelle, keine Prüfung (undefiniert, wie in der VM-Doku).
   **Objekte** haben dasselbe Handle (siehe oben).
+* **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
+  `char`, `byte`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
+  und die Daten - eine C-Zahl pro Element statt eines `Value`. `undefined` ist ein Merker (ein selten benutzter Wert des Typs: `INT8_MIN`, ein NaN mit
+  festem Payload, `0xFF`, `0xFFFF`, bei `bool` die 2); nur wenn er als echte Zahl gespeichert wird, setzt das ein Bit in `real` (dann angelegt). Gelesen wird
+  die Maske also nur, wenn der Merker gefunden wird (`arrPackedGet`). `OpCode.TypeArray` wird `typeArray(...)` (wandelt die Elemente um und packt);
+  steht es direkt hinter `NewArray`, entsteht das Array gleich gepackt in einem Block (`newTypedArray`). `arraySet` wandelt um (Abschneiden, Runden,
+  Einheit, sonst die Ausnahme) und liefert den gespeicherten Wert, der auch das Ergebnis der Zuweisung ist. Wer die `Value`s braucht (`arrItems`: die
+  Natives der Packages, JSON, `ref a[i]`), entpackt das Array einmal (`arrUnpack`); der Typ bleibt und wird weiter durchgesetzt (auch beim Schreiben
+  über einen Zeiger, dafür kennen Zeiger in Arrays ihr Array über die Slot-Tabelle, `FIRE_ELEMPTRS`). `copy`, `taking` und `sync` kopieren die Zahlen
+  (`arrCopyTyped`).
 * **Strings und Lambdas werden gezählt** (sie werden frei weitergegeben: `var t = s`, in Feldern und Arrays gespeichert, zurückgegeben):
   * **Speicherorte halten einen Zähler**: Variablen, Parameter, Felder, Array-Elemente und statische Felder (`retain` beim Speichern, `release` beim
     Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts.
@@ -156,6 +166,18 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 
 Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung nur für Basic Latin, Latin-1, Griechisch und Kyrillisch
 (`char.IsDigit` nur ASCII-Ziffern). Zahlenformate: `X`, `D`, `B`, `F`, `E` wie in der VM (jedes andere ist dort ein Laufzeitfehler, nativ ein Fehler beim Erzeugen).
+
+### Breite von `int` und Größe eines Werts (`#intwidth 32`, SPEC 8.2.2)
+
+* `FIRE_INT32` (der Generator schreibt es bei `#intwidth 32`): `Value::i` ist ein `int32_t` (`FireInt`). Die Operationen bleiben, wie sie
+  sind - sie rechnen mit den auf 64 Bit erweiterten Operanden, und das Ergebnis wird beim Speichern in den `int32_t` abgeschnitten. Genau so
+  schneidet die VM jeden Int ab, den sie erzeugt (`Value.Ints32`); auch die Sonderfälle (`INT_MIN / -1`, Schieben um 32 und mehr) geben in
+  beiden dasselbe.
+* `FIRE_COMPACT` (von selbst, wenn `FIRE_INT32`, `FIRE_FLOAT32` und 32-Bit-Zeiger zusammenkommen; `FIRE_WIDE_VALUE` schaltet es ab): der
+  Kopf eines Werts sind 32 Bit als Bitfelder - `kind` 4, `reserved` 12 (Enum, Generation des Handles; die Generationen laufen dann modulo
+  4096, `FIRE_GEN_MASK`), `unit` 16 (Einheit, Slot des Handles, Versatz eines Zeigers auf eine Variable: `FIRE_UNIT_OFFSET` liest ihn mit
+  Vorzeichen) - dazu 32 Bit Nutzlast: 8 statt 16 Byte. Mehr als 65535 Einheiten oder gleichzeitig lebende Objekte/Arrays/Puffer beenden
+  das Programm mit einer Meldung. Geprüft wird es auf dem Rechner als 32-Bit-Build (`gcc -m32`, gcc-multilib).
 
 ### Regeln für die Runtime (gelernt)
 
@@ -402,6 +424,10 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   inline). Er entsteht nur, wo er etwas spart: der Name ist irgendwo eingeschränkt, oder eine Klasse außerhalb des Interfaces hat die Methode auch. Messung
   (gcc -O2, 2·10⁸ Aufrufe `s.F(acc)` über `IShape s`, eine fremde Klasse mit `private int F(int)`): 0,65 s → 0,40 s, so schnell wie ohne die fremde Klasse; wird die
   Methode auch anderswo gerufen (nicht mehr inline), ändert sich nichts messbar (~1,1 s vorher wie nachher).
+  Eine Property eines Interfaces (`int Limit { get; set; }`) über einen Wert des Interface-Typs geht an die Feldhelfer `gf_`/`sf_` des Namens, wie jede Property
+  eines Objekts unbekannter Klasse (die Klasse des Objekts entscheidet, ihr Getter/Setter ist öffentlich). Ein Interface, das andere erweitert (`interface
+  IConnection : IO.IStream`), braucht nichts Eigenes: der Compiler schreibt in die Interface-Liste jeder Klasse (`RuntimeClass.Interfaces`) auch die geerbten
+  Interfaces, daraus entstehen die `isof_`-Prüfungen, die Klassen eines `icall_`-Verteilers und die Interface-Listen der Klassenbeschreibungen für Module und Plugins.
 
 * **Eingebaute Umwandlungen**: `string.ToBytes/ToUnicode`, `char.ToByte/ToUnicode`, `byte.ToChar`, `buffer.ToString/ToUnicode/ToUnicodeChar/ToLittleEndian/ToBigEndian` und `buffer.littleEndian`
   (SPEC 8.10; ein Puffer trägt seine Byte-Reihenfolge, die der Maschine wird zur Laufzeit festgestellt) stehen im Dispatcher der Methode, wenn keine Klasse sie selbst deklariert.
@@ -636,7 +662,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
 ```
 
 Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines` (`NAME` oder `NAME=WERT`), `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`,
-`supportsThreads`, `floatWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+`supportsThreads`, `floatWidth`, `intWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
 **ESP32:** `build -t esp32 -o <projekt>/main` schreibt den Komponenten `main` eines ESP-IDF-Projekts (dazu eine `CMakeLists.txt` mit `include($ENV{IDF_PATH}/tools/cmake/project.cmake)`,
 dann `idf.py build`). `app_main` startet das Programm auf einem eigenen Task, weil der Main-Task von ESP-IDF nur 3,5 KB Stack hat: `FIRE_MAIN_STACK_BYTES` (Standard 16384, als `defines`
 des Ziels). Geprüft mit ESP-IDF 5.5 im Emulator (`qemu-system-xtensa`, Testfall "ESP32 (ESP-IDF, QEMU)", läuft, wenn `IDF_PATH` gesetzt ist).
@@ -784,7 +810,9 @@ Die Schnittstelle dafür ist **`BuildMonitor`** (`src/fire.Native/BuildMonitor.c
   (`new BuildMonitor(token, progress, log)`); innen ist er `BuildMonitor.Current` (ein `AsyncLocal`, das in die parallelen Schritte mitgeht), so dass der
   Prozessstarter (`NativeBuilder.Run`), der Linker und die Generatoren keinen weiteren Parameter brauchen. `DebugSession.CompileAsync` (spark) übersetzt so für die VM.
 * **Fortschritt** (`IProgress<BuildProgress>`): `BuildProgress(Phase, Text, Done, Total)` mit `BuildPhase` `CompileFire` (der Linker meldet seine vier Schritte:
-  Parsen, Namen, Typen, Bytecode), `GenerateC`, `CompileC` (linkage `static`/`shared`: `BeginCount` meldet 0/N, jede fertige Library eins mehr - N sind die Module,
+  Parsen, Namen, Typen, Bytecode), `PackageNatives` (die Natives von Packages und Bibliotheksprojekten für die VM, `PackageLibrary.Ensure`: *Building natives of
+  package X*, bei mehreren je Paket gezählt - `PackageLibrary.CountBuilds` zählt die, die nicht gebaut sind, `n-1/N` beim Beginn, `n/N` am Ende; beim Start eines
+  Programms in der VM, beim Packen und beim Bytecode eines Plugins), `GenerateC`, `CompileC` (linkage `static`/`shared`: `BeginCount` meldet 0/N, jede fertige Library eins mehr - N sind die Module,
   die nicht im Cache sind; linkage `source`: das C des Programms), `Link`, `Flash` (`Esp32Launch.BuildAndFlash(..., cancel, progress)`: die Schritte von ninja `[n/m]`
   und von esptool `(n %)` - hier gibt es nur die Ausgabe des Werkzeugs) und `Pack`. `Total` 0 heißt: ohne Zahl. Die Meldungen kommen in der Reihenfolge der Phasen
   (fällt ein Bau auf linkage `source` zurück, beginnt er neu bei `CompileFire`).
@@ -794,11 +822,15 @@ Die Schnittstelle dafür ist **`BuildMonitor`** (`src/fire.Native/BuildMonitor.c
   halten an ihrem nächsten Punkt (`BuildMonitor.Step`/`Checkpoint`) mit `OperationCanceledException`. `BuildSafe` gibt dann ein Ergebnis mit `Cancelled` zurück
   und löscht das Programm, wenn dieser Bau es schon zu schreiben begonnen hatte. Im Cache bleibt keine halbe Library: eine Library entsteht in einer temporären Datei,
   die ein abgebrochener oder fehlgeschlagener Bau löscht, und die Schnittstelle wird erst nach ihr geschrieben (siehe "Cache und Schnittstelle").
+  Ebenso die Library der Natives eines Packages: sie entsteht in einem eigenen Ordner (`fire-pkgbuild-*`, danach gelöscht) und kommt über eine `.partial`-Datei mit einem
+  Umbenennen in den Cache; ein Abbruch merkt sich keinen Fehlschlag (`.failed`), der nächste Lauf baut sie neu.
 
 Getestet ohne Fenster (`FIRE_TESTS_ONLY=linkage`, `FIRE_TESTS_FILTER=cancel`): ein Bau mit linkage `static` und leerem Cache wird abgebrochen, während gcc die Module
 übersetzt - gcc/cc1 laufen binnen Sekunden nicht mehr, kein temporäres File und keine Library ohne Schnittstelle im Cache, kein Programm; der nächste Bau in denselben
 Cache gelingt, seine Phasen kommen in Reihenfolge, `CompileC` zählt 0..N, das Log hat die Befehle. `FIRE_TESTS_ONLY=projects`: die Phasen von Pack, ein abgebrochenes
-Pack hinterlässt kein `.fpk`. **Nicht geprüft**: das Fenster selbst und die Statusleiste (spark ist hier nicht zu klicken), das Abbrechen von `idf.py` auf einem
+Pack hinterlässt kein `.fpk`; ein Programm in der VM mit zwei Bibliotheken mit Natives in C: abgebrochen, während gcc die erste übersetzt - gcc läuft danach nicht mehr,
+`OperationCanceledException`, keine Library (auch kein `.partial`/`.failed`); der nächste Lauf meldet `PackageNatives` nach `CompileFire` mit 1/2 und 2/2 und hat die zwei
+Befehle im Log, ein dritter keine solche Phase mehr. **Nicht geprüft**: das Fenster selbst und die Statusleiste (spark ist hier nicht zu klicken), das Abbrechen von `idf.py` auf einem
 echten ESP-IDF und Windows.
 
 #### Ziel `esp32`: Run und Debug auf dem Board (ROADMAP 8.6)
@@ -812,6 +844,12 @@ startet das Board neu (RTS, wie `idf.py monitor`):
 * **Port**: `"port"` in den Einstellungen des Projekts (`settings.port`) oder im Ziel von `fire.native.json` (`"targets": {"esp32": {"port": "/dev/ttyUSB0"}}`),
   sonst `ESPPORT`, sonst die einzige USB-Seriell-Schnittstelle des Rechners (Linux `/dev/ttyUSB*`, `/dev/ttyACM*`; macOS `/dev/cu.usbserial*`, ...; Windows die
   COM-Ports), sonst die, die esptool beim Flashen nimmt und nennt (`Serial port ...`). **Baud**: `"baud"` (Standard 115200).
+* **In spark einstellen**: *Project Properties > Native & Toolchain > Board (ESP32)* (`settings.port`/`settings.baud`) und *Tools > Toolchain Settings > Target > Board*
+  (`port`/`baud` des Ziels in `fire.native.json`): der Port aus einer Liste der seriellen Schnittstellen des Rechners (`Esp32Launch.SerialPorts`: die USB-Seriellen von
+  `CandidatePorts` zuerst, dann die übrigen von System.IO.Ports; *Refresh* sucht neu) oder getippt, *auto*/leer schreibt keinen Schlüssel; die Baudrate aus den üblichen
+  (`Esp32Launch.CommonBauds`, 115200 zuerst) oder getippt (keine Zahl: markiert, nicht übernommen). Der Ordner von ESP-IDF unter *Tools > Toolchain Settings > ESP32 Board*
+  (`idfPath` in `spark-settings.json`, leer: `IDF_PATH`) mit Ordnerauswahl und der Prüfung `Esp32Launch.CheckIdf` (*idf.py found* - `export.sh`/`export.bat` und
+  `tools/idf.py` sind da - oder warum nicht); die Projekteigenschaften zeigen diese Prüfung mit an.
 * **Run** (Release/Performance): die Konsole des Boards im Output-Panel (Rahmen eines Debug-Builds werden ausgefiltert); unter dem Output-Panel ist eine
   **Eingabezeile**, deren Zeilen das Board als Standardeingabe bekommt. *Stop* schließt die Schnittstelle.
 * **Debug**: ein Debug-Build (`FIRE_DEBUG_TRANSPORT_UART`, Hauptstack der Task 32 KB statt 16 KB) sagt beim Start `hello` über die Konsolen-UART und wartet 3 s auf
@@ -825,8 +863,10 @@ mitten in einer Konsolenzeile, Threads mit ihren eigenen Globals, Eingabe, ein z
 **QEMU** (`qemu-system-xtensa` von ESP-IDF, `-serial tcp:...,server=on,wait=on`: die Konsolen-UART ist ein Socket; Fälle "Native-Debugger: ESP32 (QEMU, UART)",
 mit `IDF_PATH`, Projekt in `~/.cache/fire-tests/esp32-dbg`): das Boot-Log vor dem `hello`, ein Plan aus Haltepunkt, Step Over/Into/Out, Scopes, `this`,
 Globals, unbehandelter Ausnahme mit `resume` gegen die VM, die Eingabe über die UART; dasselbe Programm ohne Debugger läuft nach 3 s allein, liest seine
-Eingabe von der UART und endet an seiner Ausnahme. **Nicht geprüft**: ein echtes Board (USB-Seriell-Chip, RTS-Reset, Port-Erkennung, `idf.py flash`) und
-die Klicks in spark.
+Eingabe von der UART und endet an seiner Ausnahme. Ohne Fenster (`FIRE_TESTS_ONLY=projects`, "Board: ..."): `port`/`baud` des Projekts und eines Ziels und `idfPath`
+bleiben beim Speichern und Laden (auto schreibt keinen Schlüssel), `CheckIdf` (kein Ordner, nur `export.sh`, mit `tools/idf.py`), die Liste der Ports und die Auswahl
+von Port und Baud. **Nicht geprüft**: ein echtes Board (USB-Seriell-Chip, RTS-Reset, Port-Erkennung, `idf.py flash`) und die Klicks in spark (auch die neuen Felder:
+die Dialoge sind hier nicht zu bedienen).
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
@@ -1165,9 +1205,39 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   ausgeführt. Code, der Variablen der obersten Ebene seiner Datei oder `extern`/versuchbare Natives benutzt, lädt nicht (mit einer Meldung). Eine Einheit der VM
   trägt ihre Dimensionen und die versteckte Klasse ihrer Umrechnung beim Namen - nur die Einheiten, die ein Text nennen darf, kommen zu denen des Programms
   (`Unit.AddCustomUnits`; ein gepacktes Programm kennt seine Liste nicht und nimmt sie nicht auf).
-* Noch nicht: `class extends` einer Klasse des Programms oder einer Library in einem Plugin; benannte Argumente in Aufrufen des nativen Programms auf Objekten
+* **`class extends` im Plugin** (einer Klasse einer Library - `class extends Api.Device`, der Name darf qualifiziert sein -, von `List`, eines Basistyps
+  `string`/`int`/...): ein Plugin fügt **Methoden** (auch statische) und **Properties mit Rümpfen** hinzu; ein Feld (auch eine Auto-Property), ein Konstruktor,
+  Destruktor oder Operator ist ein Fehler beim Bau (`PluginExtensionProblem`: „'class extends Api.Device' in a plugin (line 4): the field 'age' cannot be added
+  ...“) - die Objekte dieser Klassen legt das Programm an, ohne Platz dafür. Nativ schreibt das Plugin für jede solche Klasse eine Tabelle der Member (wie sonst
+  ein Modul, das eine Klasse eines anderen erweitert) und nennt sie in `FirePlugin.extClasses`/`extTables` (`FIRE_PLUGIN_FORMAT` 4); beim Registrieren kommen sie
+  in `g_extTables` (kopiert und angehängt), und `fireFindMethod` sucht nach den Tabellen des Deskriptors in denen, deren Klasse in der Kette des Objekts steht
+  (`isa`) - so finden die Verteiler des Plugins (über `miss_`), `any`-Aufrufe und Reflect.Call des Programms die Methoden auf jedem Objekt, auch einer Unterklasse
+  im Programm. Basiswerte (`"x".Shout()` über `any`) fragt `fireFindValueMethod` nach `$string`, `$int`, ...; ist das Plugin das einzige, das einen Basistyp
+  erweitert, ist `$int` eine Klasse des Plugins - sie wird nicht genannt und nicht gegen das Programm geprüft, ihre Tabelle ist eine Erweiterung wie die anderen.
+  Fügt ein zweites Plugin dieselbe Methode (Name und Zahl der Argumente) hinzu, lädt es nicht („... it adds the method 'Tag' (0 arguments) to 'Api.Device', which
+  has it already ...“). Die VM hängt die Methoden an die Klassen des Programms (die `.fireplugin`-Datei nennt sie: `PluginBytecode.Extensions`), vergisst die
+  gefundenen Methoden aller Klassen (`RuntimeClass.ForgetFoundMethods`) und vergleicht die Schnittstellen der Module weiter mit denen, die das Programm vor dem
+  ersten Plugin hatte. Dabei behoben: ein Programm, das Plugins laden kann, nennt in den Tabellen seiner Klassen **jede** Methode (`TableWants` kannte die
+  offene Welt nicht) - eine Klasse des Programms, die eine Methode einer Library überschreibt, die nur ein Plugin ruft, rief vorher die der Library.
+* Noch nicht: benannte Argumente in Aufrufen des nativen Programms auf Objekten
   eines Plugins (die Verteiler des Programms kennen nur seine Klassen - die Runtime bräuchte die Namen und Vorgaben der Parameter in den Tabellen der Member);
-  Debuggen eines Plugins; msvc.
+  msvc.
+* **Debuggen** (ein Debug-Build des Programms mit `"shared"` und des Plugins, `-m debug` für beide; das Plugin wird dann mit `-O0 -g` übersetzt): die Zeilen des
+  Plugins melden ihre Quelle über `fire_dbgsrc_<p>`, das jetzt nicht mehr konstant ist - `fireRegisterPlugin` ruft `fire_dbgPlugin` (fire_debug.h), das seinen
+  Quellen die nächsten Indizes nach denen des Programms gibt (`FirePlugin.nsources`/`srcFiles`/`srcHashes`/`srcMap`, `FIRE_PLUGIN_FORMAT` 5), dem Debugger das
+  Ereignis `sources` schickt und auf seine Haltepunkte wartet (docs/NATIVE_DEBUG_PROTOCOL.md). Die Tabellen der Funktionen und Scopes braucht die Runtime nicht zu
+  kennen: jeder Rahmen zeigt auf die seiner Funktion (`DbgFrame.fn`); die Namen der Felder seiner Klassen gibt das Plugin über `FirePlugin.dbgClass`. In der **VM**
+  trägt die `.fireplugin`-Datei die Zeilentabellen ihres Codes (`Chunk.KeepLineTable`, in `DebugLocalNames` - die Form eines Chunks bleibt) und ihre eigenen
+  Quellen (`PluginBytecode.Sources`); `LinkPlugin` schreibt die Quellindizes ihrer Zeilen auf die nächsten des Programms um (die Quellen ihrer Libraries auf 0) und
+  meldet sie (`VM.PluginSourcesLinked`); `VmDebugTarget` hängt sie an `SourceFiles` an (`IDebugTarget.SourcesAdded`) und nimmt die Haltepunkte nach Datei in ihnen
+  sofort in den laufenden `RunUntilBreakpoint` auf. spark gibt seine Haltepunkte auch nach Datei (`SetFileBreakpoints`), die Sitzung übernimmt die neuen Quellen.
+  Getestet: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugindebug` (nativ: Haltepunkt im Programm, `sources`, Step Into in die Methode des Plugins, Scopes,
+  `this` mit dem Feld des Plugins, Haltepunkt nach Datei im Plugin, Step Out) und derselbe Plan in der VM (`FIRE_TESTS_ONLY=debugger`, "Plugins in der VM").
+  Nicht geprüft: das Fenster von spark (die Haltepunkte im Editor in einer Datei des Plugins), Windows.
+* **Nur für die VM** (`NativeBuilder.WriteVmPlugin`, ohne native Bibliothek): spark lädt so die Treiber installierter Packages (docs/DEVICES.md, `PackageDriverAgent`).
+  Das Prelude eines Imports ist die eigene Quelle des Plugins: `Linker.OwnImports` nennt den Import, seine Natives sind die des Plugins, sein Prelude wird nicht noch
+  einmal eingefügt (was das Package verlangt, kommt wie sonst dazu). Die `.fireplugin`-Datei nennt seine Natives mit dem vollen Pfad der Bibliothek des Packages für die
+  VM (`PackageNatives`/`PackageLibraries`; ein Pfad statt eines Dateinamens geht, `Path.Combine` mit dem Ordner des Plugins lässt ihn stehen).
 * Getestet (`FIRE_TESTS_ONLY=linkage`, nur die Plugins mit `FIRE_TESTS_FILTER=plugin`): ein Projekt mit der Library `Api`, dem Programm (shared) und dem Plugin `Kit`
   - Interface, Basisklasse mit überschriebenen Methoden, Reflect.New/Get/Set/Call, Type.Of (auch `Fields()`/`Find` der Felder von Kit, das `reflection` nicht
   importiert), Ausnahmen beider Richtungen, Enum, statische Felder - nativ, in der VM und
@@ -1176,7 +1246,9 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   Programms hinein und zurück (`ft`, `apples`), Texte mit seinen Einheiten, ein Name aus einer hinzugefügten und einer Dimension des Programms; dazu Natives in C++ im Ordner `native/` des Projekts
   (`std::string`, eigener Zustand, eine Ausnahme aus C++). JSON (ein Programm mit `#import "json"`, Kit und Meter dafür gebaut): Serialize/Deserialize eines
   Objekts von Kit (eine Liste, ein Feld mit einem Objekt des Plugins), `Json.Deserialize<Api.Device>` mit `"$type"` einer Klasse von Kit, Felder mit Einheiten von
-  Meter - nativ, VM, Windows. Natives in C (`CApi` mit `"language": "c"`): das Plugin ruft eines, das weder das Programm noch `CApi` ruft; eines, das das Programm
+  Meter - nativ, VM, Windows. `class extends` in Kit (Api.Device: Methode, Property, statische Methode; `string`, `int` - nur von Kit erweitert -, `List`) auf
+  Objekten des Programms (eine Unterklasse, die `Speed` überschreibt) und des Plugins, über `any` und Reflect.Call; ein Feld - der Fehler beim Bau; ein zweites
+  Plugin `Kit2` mit derselben Methode - die Meldung (nativ, VM, Windows). Natives in C (`CApi` mit `"language": "c"`): das Plugin ruft eines, das weder das Programm noch `CApi` ruft; eines, das das Programm
   nicht hat - die lesbare Meldung (Linux, Windows; die VM ruft es).
 
 ### Debuggen

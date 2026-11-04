@@ -142,10 +142,11 @@ namespace fire.Package.Manager
         public string? Language { get; set; }
         [System.Text.Json.Serialization.JsonIgnore]
         public bool IsC => Language == "c";
-        public List<string> Sources { get; set; } = new();
+        /// <summary>The source files; an entry can have a build order (see <see cref="NativeSourceList"/>).</summary>
+        public NativeSourceList Sources { get; set; } = new();
         /// <summary>More source files for one platform or target: the key is the platform package (`posix`, `windows`, `freertos`, `esp32`, ...) or the name of the target
         /// (`linux`, `macos`, `esp32`, ...); they come before <see cref="Sources"/> in builds for it, so that the common code can use what they declare. The same code can use `FIRE_TARGET_&lt;NAME&gt;` and `FIRE_HAL_&lt;PLATFORM&gt;`.</summary>
-        public Dictionary<string, List<string>> PlatformSources { get; set; } = new();
+        public Dictionary<string, NativeSourceList> PlatformSources { get; set; } = new();
         /// <summary>The platforms of the target (`posix`, `windows`, `freertos`, ...) the source is written for; empty: all (and the keys of <see cref="PlatformSources"/>).</summary>
         public List<string> Platforms { get; set; } = new();
         /// <summary>Prebuilt shared libraries for the virtual machine, by runtime identifier (`win-x64`, `linux-x64`, `linux-arm64`, `osx-arm64`, ...): they export the C ABI of
@@ -164,16 +165,17 @@ namespace fire.Package.Manager
 
     public static class PackageNativeExtensions
     {
-        /// <summary>The source files for a build for a target: first those of every key that names the target (not case sensitive) - the layer under the common code - then
-        /// <see cref="PackageNative.Sources"/>, which can use what the platform files declare.</summary>
+        /// <summary>The source files for a build for a target, in build order: first those of every key that names the target (not case sensitive) - the layer under the common code - then
+        /// <see cref="PackageNative.Sources"/>, which can use what the platform files declare; all of them then sorted by their build order (`order`, stable: without one 0).</summary>
         public static IReadOnlyList<string> SourcesFor(this PackageNative native, IEnumerable<string> platformKeys)
         {
-            var result = new List<string>();
+            var result = new List<(string File, int Order)>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var key in platformKeys)
                 foreach (var (k, files) in native.PlatformSources)
-                    if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var f in files) if (!result.Contains(f)) result.Add(f);
-            foreach (var f in native.Sources) if (!result.Contains(f)) result.Add(f);
-            return result;
+                    if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var f in files) if (seen.Add(f)) result.Add((f, files.OrderOf(f) ?? 0));
+            foreach (var f in native.Sources) if (seen.Add(f)) result.Add((f, native.Sources.OrderOf(f) ?? 0));
+            return NativeSourceOrder.Sort(result);
         }
 
         /// <summary>The system libraries to link in a build for a target (see <see cref="PackageNative.LinkLibraries"/>).</summary>

@@ -26,11 +26,17 @@ namespace fire.Compiler
         /// <summary>Builds (if needed) the libraries of the natives of the imports of packages that a program uses and returns their paths. A failure to build is a <see cref="PackageException"/>.</summary>
         public static List<string> EnsureLibraries(IEnumerable<string> nativeImports, Action<string>? log = null)
         {
-            var files = new List<string>();
+            var imports = LibraryImports(nativeImports).ToList();
+            var count = PackageLibrary.CountBuilds(imports);
+            return imports.Select(import => PackageLibrary.Ensure(import, log, count)).ToList();
+        }
+
+        /// <summary>The imports of packages among <paramref name="nativeImports"/> that have natives in a library (not only host natives), in a fixed order.</summary>
+        internal static IEnumerable<InstalledImport> LibraryImports(IEnumerable<string> nativeImports)
+        {
             foreach (var key in nativeImports.Where(IsPackageKey).OrderBy(k => k, StringComparer.Ordinal))
                 if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { } native && native.Functions.Any(f => !f.Host))
-                    files.Add(PackageLibrary.Ensure(import, log));
-            return files;
+                    yield return import;
         }
 
         /// <summary>Registers the natives of the imports of packages (names only: the calls need them while compiling).</summary>
@@ -47,13 +53,15 @@ namespace fire.Compiler
         {
             if (program.PackageNatives == null) return;
             // build what is missing now (a failure shows when a native is called, not before)
+            // (with a BuildMonitor: the phase PackageNatives, counted per package; cancelled, OperationCanceledException comes out and no half library stays)
             var located = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var key in program.NativeImports.Where(IsPackageKey))
-                if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { } native && native.Functions.Any(f => !f.Host))
-                {
-                    try { located[PackageLibrary.FileNameFor(import)] = PackageLibrary.Ensure(import, log ?? (m => (fire.Native.ToolchainProvider.Log ?? Console.Error.WriteLine)(m))); }
-                    catch (PackageException ex) { FailedLibraries[PackageLibrary.FileNameFor(import)] = ex.Message; }
-                }
+            var imports = LibraryImports(program.NativeImports).ToList();
+            var count = PackageLibrary.CountBuilds(imports);
+            foreach (var import in imports)
+            {
+                try { located[PackageLibrary.FileNameFor(import)] = PackageLibrary.Ensure(import, log ?? (m => (fire.Native.ToolchainProvider.Log ?? Console.Error.WriteLine)(m)), count); }
+                catch (PackageException ex) { FailedLibraries[PackageLibrary.FileNameFor(import)] = ex.Message; }
+            }
             PackageNativeBinding.Register(natives, program.PackageNatives, program.PackageNativeLibraries,
                 file => located.TryGetValue(file, out var path) ? path : FailedLibraries.TryGetValue(file, out var reason) ? throw new DllNotFoundException(reason) : null);
         }

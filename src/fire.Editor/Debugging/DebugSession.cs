@@ -128,7 +128,7 @@ namespace fire.Editor
                 return true;
             }
             catch (Exception ex) when (ex is ParseException or LexException or ResolverException or TypeCheckException
-                or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException)
+                or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException or fire.Package.Manager.PackageException)
             {
                 // All collected errors (the resolver/compiler do not stop at the
                 // first, see CompileErrors), not only the first.
@@ -164,7 +164,7 @@ namespace fire.Editor
                     return ((IDebugTarget?)built, (IReadOnlyList<Diagnostic>)warnings.Items.ToList(), (string?)null);
                 }
                 catch (Exception ex) when (ex is ParseException or LexException or ResolverException or TypeCheckException
-                    or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException)
+                    or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException or fire.Package.Manager.PackageException)
                 {
                     return (null, CompileDiagnostics.Of(ex).Concat(warnings.Items).ToList(), CompileErrors.Describe(ex));
                 }
@@ -188,6 +188,8 @@ namespace fire.Editor
 
             FirstUserSourceIndex = target.FirstUserSourceIndex;
             SourceFiles = target.SourceFiles;
+            // (a fire plugin with sources of its own: the list grows - its files then take part in the run, their lines are shown)
+            target.SourcesAdded += () => SourceFiles = target.SourceFiles;
 
             target.Output += (thread, text) =>
                 OutputWritten?.Invoke(thread != null && !thread.IsMain ? $"[{thread.Name}] {text}" : text);

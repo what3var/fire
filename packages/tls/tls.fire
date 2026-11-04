@@ -134,16 +134,6 @@ namespace Tls {
         string LocalHost { get { return this.tcp.LocalHost } }
         int LocalPort { get { return this.tcp.LocalPort } }
 
-        // Net.IConnection
-        any GetReadTimeout() { return this.ReadTimeout }
-        undefined SetReadTimeout(any timeout) { this.ReadTimeout = timeout }
-        any GetWriteTimeout() { return this.WriteTimeout }
-        undefined SetWriteTimeout(any timeout) { this.WriteTimeout = timeout }
-        string GetRemoteHost() { return this.RemoteHost }
-        int GetRemotePort() { return this.RemotePort }
-        string GetLocalHost() { return this.LocalHost }
-        int GetLocalPort() { return this.LocalPort }
-
         // "TLSv1.3 TLS_AES_256_GCM_SHA384": the protocol and the cipher that were agreed on.
         string Info {
             get {

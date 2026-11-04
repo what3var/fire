@@ -57,5 +57,9 @@ namespace fire.Bytecode
 
         /// <summary>The attributes before the class (`[Name ...]`), in the order of the source.</summary>
         public List<AttributeMeta> Attributes { get; set; } = new();
+
+        /// <summary>The interfaces `class X : A, IFoo` names itself, resolved to their full names (`Type.DeclaredInterfaces`; `Type.Interfaces` is every
+        /// interface the class reaches - RuntimeClass.Interfaces along the base-class chain).</summary>
+        public List<string> DeclaredInterfaces { get; set; } = new();
     }
 }

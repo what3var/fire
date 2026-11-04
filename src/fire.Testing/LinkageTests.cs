@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using fire.Compiler;
+using fire.Debugging;
 using fire.Native;
 using fire.Package.Manager;
 using fire.Projects;
@@ -35,7 +36,7 @@ static class LinkageTests
         var output = new StringBuilder();
         var session = RuntimeSession.Build(sources, null, args => { output.AppendLine(args.Length > 0 ? args[0].ToString() : ""); return Value.MakeUndefined(); }, plan: plan);
         session.Run();
-        Value.SingleFloats = false;
+        Value.SingleFloats = false; Value.Ints32 = false;
         return output.ToString().Replace("\r\n", "\n");
     }
 
@@ -150,6 +151,119 @@ static class LinkageTests
     private static List<string> ModuleLines(string log, string what) =>
         log.Split('\n').Where(l => l.StartsWith("module ", StringComparison.Ordinal) && l.Contains(what)).Select(l => l.Substring(7, l.IndexOf(": ", StringComparison.Ordinal) - 7)).ToList();
 
+    /// <summary>The library of graphics and windows that the VM builds on Windows (PackageLibrary.EnsureGraphics: wrapper.c with w64devkit's gcc) - built here for Windows with
+    /// MinGW and the flags of that build; it has to compile without errors (a failed build left spark's VM without windows). `FIRE_TESTS_FILTER=vmgraphics`.</summary>
+    private static void VmGraphicsForWindows(string root)
+    {
+        string? mingw = HasProgram("x86_64-w64-mingw32-gcc") ? "x86_64-w64-mingw32-gcc" : null;
+        var graphics = PackageStore.Default.FindImport("graphics");
+        var windows = PackageStore.Default.FindImport("windows");
+        if (mingw == null || graphics == null || windows == null) { Console.WriteLine("(VM-Bibliothek von graphics und windows fuer Windows: uebersprungen - MinGW oder die Pakete fehlen)"); return; }
+        string work = Path.Combine(root, "vmgfx-win");
+        Directory.CreateDirectory(work);
+        NativeRuntimeFiles.WriteTo(work, TargetProfile.Windows.Native.Platform);
+        string c = Path.Combine(work, "wrapper.c");
+        File.WriteAllText(c, PackageLibrary.GenerateGraphicsWrapper(graphics, windows, TargetProfile.Windows));
+        string links = string.Concat(File.ReadLines(c).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()));
+        string dll = Path.Combine(work, "fire_graphics.dll");
+        // (the command line of EnsureGraphics on Windows, NativeBuilder.CompilerCommand)
+        var psi = new ProcessStartInfo(mingw, $"-std=c11 -O2 -shared -static-libgcc -static-libstdc++ \"{c}\" -I\"{work}\" -I\"{Path.Combine(work, "abi")}\" -o \"{dll}\"{links}")
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = work };
+        using var p = Process.Start(psi)!;
+        var err = p.StandardError.ReadToEndAsync();
+        string output = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        string log = output + err.Result;
+        Check("VM: die Bibliothek von graphics und windows fuer Windows (wrapper.c wie EnsureGraphics, MinGW gcc -std=c11 -O2 -shared) baut ohne Fehler",
+            p.ExitCode == 0 && File.Exists(dll), $"{links}\n{(log.Length > 8000 ? log.Substring(0, 8000) : log)}");
+        if (Environment.GetEnvironmentVariable("FIRE_TEST_KEEP_VMGFX") is { Length: > 0 } keep && File.Exists(dll)) File.Copy(dll, keep, true);
+
+        // the same library for this machine, linked with --no-undefined: a symbol that only a program has (the class table: className) is found here too, not first on Windows
+        if (OperatingSystem.IsLinux() && HasProgram("gcc"))
+        {
+            string hostWork = Path.Combine(root, "vmgfx-host");
+            Directory.CreateDirectory(hostWork);
+            NativeRuntimeFiles.WriteTo(hostWork, TargetProfile.Host.Native.Platform);
+            string hc = Path.Combine(hostWork, "wrapper.c");
+            File.WriteAllText(hc, PackageLibrary.GenerateGraphicsWrapper(graphics, windows));
+            string hostLinks = string.Concat(File.ReadLines(hc).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()));
+            var hp = Process.Start(new ProcessStartInfo("gcc", $"-std=c11 -O0 -shared -fPIC -pthread -Wl,--no-undefined \"{hc}\" -I\"{hostWork}\" -I\"{Path.Combine(hostWork, "abi")}\" -o \"{Path.Combine(hostWork, "libfire_gfx.so")}\"{hostLinks} -lm -ldl")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = hostWork })!;
+            var herr = hp.StandardError.ReadToEndAsync();
+            string hout = hp.StandardOutput.ReadToEnd();
+            hp.WaitForExit();
+            string hlog = hout + herr.Result;
+            Check("VM: die Bibliothek von graphics und windows fuer diese Maschine hat kein undefiniertes Symbol (gcc -Wl,--no-undefined)", hp.ExitCode == 0, hlog.Length > 8000 ? hlog.Substring(0, 8000) : hlog);
+            hp.Dispose();
+        }
+
+        // without a display the program hears it: `new Window` throws why (FIRE_VM_GRAPHICS=cs: the C# implementation, which has no windows of the desktop) - never a window
+        // that silently counts as closed while the program runs on
+        string? before = Environment.GetEnvironmentVariable("FIRE_VM_GRAPHICS");
+        Environment.SetEnvironmentVariable("FIRE_VM_GRAPHICS", "cs");
+        try
+        {
+            string said = Vm(new[] { """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                try { var win = new Window(fb, "nothing to show it on")
+                    print("opened " + win.Tick()) }
+                catch (e) { print("caught: " + e.message) }
+                print("end")
+                """ });
+            Check("VM: ein Fenster ohne Anzeige - new Window wirft mit dem Grund (No display ...), nichts bleibt stumm", said.StartsWith("caught: No display", StringComparison.Ordinal) && said.Contains("FIRE_VM_GRAPHICS=cs") && said.EndsWith("end\n", StringComparison.Ordinal), said);
+        }
+        finally { Environment.SetEnvironmentVariable("FIRE_VM_GRAPHICS", before); }
+
+        // the VM of Windows under Wine (FIRE_TEST_WIN_FORGE: a folder with forge.exe for win-x64, e.g. `dotnet build -c Release -r win-x64` of fire.Compiler): with the library
+        // built above a window opens (Tick: True); without it and without a C compiler `new Window` says why
+        string? winForge = Environment.GetEnvironmentVariable("FIRE_TEST_WIN_FORGE");
+        string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists);
+        string? xvfb = HasProgram("xvfb-run") ? "xvfb-run" : null;
+        if (winForge == null || !File.Exists(Path.Combine(winForge, "forge.exe")) || wine == null || xvfb == null || !File.Exists(dll))
+        {
+            Console.WriteLine("(VM unter Wine mit Fenster: uebersprungen - FIRE_TEST_WIN_FORGE (forge.exe fuer win-x64), Wine oder xvfb-run fehlen)");
+            return;
+        }
+        string prefix = Path.Combine(root, "wineprefix-vm");
+        string RunWine(string arguments)
+        {
+            var info = new ProcessStartInfo(xvfb, $"-a -s \"-screen 0 800x600x24\" \"{wine}\" {arguments}") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = work };
+            info.Environment["WINEPREFIX"] = prefix;
+            info.Environment["WINEDEBUG"] = "-all";
+            info.Environment["LANG"] = "C.UTF-8";
+            using var w = Process.Start(info)!;
+            var werr = w.StandardError.ReadToEndAsync();
+            string wout = w.StandardOutput.ReadToEnd();
+            if (!w.WaitForExit(300000)) { try { w.Kill(true); } catch (Exception) { } return wout + "(timeout)"; }
+            return (wout + werr.Result).Replace("\r", "");
+        }
+        RunWine("wineboot --init");
+        string program = Path.Combine(work, "window.fire");
+        File.WriteAllText(program, """
+            #import "ui"
+            var fb = new Framebuffer(320, 200)
+            try { var win = new Window(fb, "fire vm wine")
+                var ui = new UI.Root(fb, win)
+                ui.Add(new UI.Label("Hallo", 20, 20))
+                print("open " + win.Tick()) }
+            catch (e) { print("caught: " + e.message) }
+            print("end")
+            """);
+        // (where the VM of Windows looks for the library it built: %TEMP%\fire-packages\<package>\win-x64)
+        string built = Path.Combine(prefix, "drive_c", "users", Environment.UserName, "Temp", "fire-packages", "fire_graphics-1_0_0", "win-x64");
+        Directory.CreateDirectory(built);
+        string placed = Path.Combine(built, "fire_gfx.dll");
+        File.Copy(dll, placed, true);
+        File.SetLastWriteTimeUtc(placed, DateTime.UtcNow.AddDays(1));   // (newer than the sources and the compiler: taken as it is)
+        string shown = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" run window.fire");
+        Check("VM unter Wine (forge.exe win-x64): ein ui-Fenster oeffnet (Tick True) mit der Bibliothek von MinGW", shown.Contains("open True\nend"), shown);
+        File.Delete(placed);
+        string missing = RunWine($"\"{Path.Combine(winForge, "forge.exe")}\" run window.fire");
+        Check("VM unter Wine ohne C-Compiler: new Window sagt, warum kein Fenster kommt (die Bibliothek kann nicht gebaut werden)",
+            missing.Contains("caught: No display") && missing.Contains("C compiler") && missing.Contains("end"), missing);
+    }
+
     public static void Run()
     {
         Console.WriteLine("=== Linkage \"static\": Bibliotheken im Cache ===");
@@ -162,10 +276,12 @@ static class LinkageTests
             // (FIRE_TESTS_FILTER=plugin: only the fire plugins; =library: only Library.Load/Get)
             string filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") ?? "";
             // (=cancel: only the progress and the cancelling of a build, spark's build window)
-            if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
+            if (filter.Contains("plugindebug", StringComparison.OrdinalIgnoreCase)) PluginDebug(root);   // (only debugging a plugin)
+            else if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
             else if (filter.Contains("library", StringComparison.OrdinalIgnoreCase)) LibraryLoad(root);
             else if (filter.Contains("cancel", StringComparison.OrdinalIgnoreCase)) ProgressAndCancel(root);
-            else { RunIn(root); ProgressAndCancel(root); }
+            else if (filter.Contains("vmgraphics", StringComparison.OrdinalIgnoreCase)) VmGraphicsForWindows(root);
+            else { RunIn(root); ProgressAndCancel(root); VmGraphicsForWindows(root); }
         }
         catch (Exception ex) { Check("ohne Ausnahme", false, ex.ToString()); }
         finally
@@ -478,6 +594,9 @@ static class LinkageTests
                 string Name()
                 int Run(int x)
             }
+            // (a property in an interface, an interface that extends another: implemented by a class of the plugin, used by the program)
+            interface INamed { string Title { get; } }
+            interface ITuned : Api.INamed { int Level { get; set; } }
             class Device {
                 string id
                 construct(string id) { this.id = id }
@@ -493,7 +612,20 @@ static class LinkageTests
 
     private const string PluginKit = """
         #import "Api"
+        // (class extends of a class of a library and of base types: methods, a property with a body, a static method - the objects are the program's)
+        class extends Api.Device {
+            string Tag() { return "tag " + this.id + " " + this.Speed() }
+            string Label { get { return "L" + this.id } }
+            static string Kind() { return "devices" }
+        }
+        class extends string { string Shout() { return this.ToUpper() + "!" } }
+        class extends int { bool Big() { return this > 100 } }
+        class extends List { int Twice() { return this.Count * 2 } }
         namespace Kit {
+            class Probe {
+                construct() { }
+                string Look(Api.Device d) { var l = new List<int>(); l.Add(1); return d.Tag() + " " + "hi".Shout() + " " + l.Twice() + " " + d.Label + " " + Api.Device.Kind() + " " + 500.Big() }
+            }
             enum Mode { Slow, Fast }
             class MyDriver : Api.IDriver {
                 static int made = 0
@@ -515,6 +647,10 @@ static class LinkageTests
             class KitError : Exception {
                 construct(string m) : base(m) { }
             }
+            class Tuner : Api.ITuned {
+                string Title { get { return "tuner" } }
+                int Level { get; set; }
+            }
             class Settings {
                 string title = "kit"
                 int level = 3
@@ -532,6 +668,10 @@ static class LinkageTests
         unit Foot: ft { coerce m => 0.3048 }
         class Mine : Api.Device {
             construct() : base("mine") { }
+        }
+        class Quick : Api.Device {
+            construct() : base("quick") { }
+            override int Speed() { return 3 }
         }
         any lib = undefined
         try { lib = Library.Load(Environment.Get("FIRE_TEST_PLUGIN")) } catch (LibraryException e) { print("load: " + e.message); terminate(3) }
@@ -560,6 +700,18 @@ static class LinkageTests
         var kitFields = ""
         foreach (var kf in Type.Of(kitSettings).Fields()) { kitFields = kitFields + " " + kf.Name + ":" + kf.TypeName }
         print(Reflect.Get(kitSettings, "level") + " " + Reflect.Get(kitSettings, "title") + kitFields + " " + Type.Of(kitSettings).Find("Show").Kind)
+        Api.ITuned tuned = Reflect.New("Kit.Tuner", [])
+        tuned.Level = 4
+        tuned.Level = tuned.Level + 1
+        Api.INamed named = tuned
+        print(named.Title + " " + tuned.Level + " " + (named is of Api.ITuned) + " " + (tuned is of Api.INamed))
+        // (what Kit's class extends adds to Api.Device, string, int, List: on objects of the program - a subclass that overrides Speed - and of the plugin)
+        any probe = Reflect.New("Kit.Probe", [])
+        print(probe.Look(new Quick()) + " | " + probe.Look(dev))
+        any qd = new Quick()
+        any sx = "abc"
+        any nx = 7
+        print(qd.Tag() + " " + Reflect.Call(new Api.Device("r"), "Tag", []) + " " + qd.Label + " " + sx.Shout() + " " + nx.Big())
         any up = Environment.Get("FIRE_TEST_UNITS")
         if (up != undefined) {
             Library.Load(up)
@@ -572,6 +724,8 @@ static class LinkageTests
             print(Reflect.Call(g, "Native", [21]))
             print(c + " " + (c * 4apples) + " " + (c * 1m / 1s) + " " + (4apples * 1s) + " " + "3mm".ToFloat() + " " + "2ft".ToFloat() + " " + (1.0ft + 1.0m) + " " + (m * c))
         }
+        any dupPlugin = Environment.Get("FIRE_TEST_DUP")
+        if (dupPlugin != undefined) { try { Library.Load(dupPlugin) } catch (LibraryException e) { print("dup: " + e.message) } }
         """;
 
     /// <summary>JSON of the plugins' objects (a program with `#import "json"`): Kit.Settings (a list, a field with an object of the plugin), a subclass of a class of
@@ -657,9 +811,10 @@ static class LinkageTests
     private const string PluginJsonExpected = "{\"$type\":\"Kit.Settings\",\"title\":\"kit\",\"level\":3,\"marks\":[1,2],\"dev\":{\"$type\":\"Kit.FastDevice\",\"id\":\"j0\"}}\n"
         + "kit 3 2 2 fast j0 9 Kit.Settings\nfast j1 9\n{\"$type\":\"Meter.Reading\",\"level\":3.0,\"span\":2.5,\"heat\":20.0,\"loose\":{\"$value\":4.0,\"$unit\":\"bn\"}}\n3pears 2.5km 20C 293.15K 4bn\n";
 
-    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Settings True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
-        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 4\nnope: Unknown class 'Kit.Nope'.\n"
-        + "7 kit title:string level:int marks:List<int> dev:Api.Device method\n";
+    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Probe Kit.Settings Kit.Tuner True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
+        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 6\nnope: Unknown class 'Kit.Nope'.\n"
+        + "7 kit title:string level:int marks:List<int> dev:Api.Device method\ntuner 5 True True\n"
+        + "tag quick 3 HI! 2 Lquick devices True | tag x1 9 HI! 2 Lx1 devices True\ntag quick 3 tag r 1 Lquick ABC! False\n";
 
     /// <summary>fire plugins (ROADMAP 9 phase D b): a project with a library `Api` (an interface, a class, an exception), a program with linkage "shared" that loads the
     /// plugin `Kit` (built with `--linkage plugin --host`) and uses its classes through the interface, the base class, reflection and catch; the errors when the plugin does
@@ -671,12 +826,14 @@ static class LinkageTests
         Write(s, "Api/Api.fireproj", """{ "name": "Api", "type": "library" }""");
         Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
         Write(s, "Kit/kit.script", PluginKit);
+        Write(s, "Kit2/Kit2.fireproj", """{ "name": "Kit2", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
+        Write(s, "Kit2/kit2.script", "#import \"Api\"\nclass extends Api.Device { string Tag() { return \"other\" } }\nnamespace Kit2 { class Other { construct() { } } }\n");
         Write(s, "Meter/Meter.fireproj", """{ "name": "Meter", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" }, "native": { } }""");
         Write(s, "Meter/native/meter.hpp", PluginMeterCpp);
         Write(s, "Meter/meter.script", PluginMeter);
         Write(s, "Host/Host.fireproj", """{ "name": "Host", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "shared" } }""");
         Write(s, "Host/main.script", PluginHost);
-        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Meter/Meter.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Kit2/Kit2.fireproj", "Meter/Meter.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
         BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
         Built BuildPlugin(string output, string? host, ToolchainDef? toolchain = null, TargetProfile? target = null, string project = "Kit")
         {
@@ -738,6 +895,30 @@ static class LinkageTests
                     Check("Plugin: die VM prueft die Schnittstelle genauso", vmMismatch.Contains("The plugin 'Kit' cannot be loaded: it was built against another interface of the module 'Api'"), vmMismatch);
                 }
                 finally { File.WriteAllText(apiSource, apiBefore); }
+
+                // class extends in a plugin: a field cannot be added to a class of a library (its objects are made by the program) - the build says so
+                string kitSource = Path.Combine(s, "Kit", "kit.script");
+                string kitBefore = File.ReadAllText(kitSource);
+                try
+                {
+                    File.WriteAllText(kitSource, kitBefore.Replace("    static string Kind()", "    int age = 3\n    static string Kind()"));
+                    var withField = BuildPlugin(Path.Combine(root, "plug-field", "kit"), host.Exe);
+                    Check("Plugin: class extends einer Klasse einer Library mit einem Feld - der Bau sagt, dass ein Plugin nur Methoden und Properties hinzufuegt",
+                        !withField.Ok && withField.Log.Contains("'class extends Api.Device' in a plugin") && withField.Log.Contains("the field 'age' cannot be added"), withField.Log);
+                }
+                finally { File.WriteAllText(kitSource, kitBefore); }
+                // a second plugin that adds the same method to Api.Device: readable error (natively and in the VM)
+                var kit2 = BuildPlugin(Path.Combine(root, "plug-kit2", "kit2"), host.Exe, project: "Kit2");
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.so"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_DUP", Path.Combine(root, "plug-kit2", "kit2.so"));
+                string dupNative = host.Ok && kit2.Ok ? Exec(host.Exe) : "";
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_DUP", Path.Combine(root, "plug-kit2", "kit2.fireplugin"));
+                string dupVm = Vm(hostPlan.SourceTexts, hostPlan);
+                Environment.SetEnvironmentVariable("FIRE_TEST_DUP", null);
+                const string dupText = "dup: The plugin 'Kit2' cannot be loaded: it adds the method 'Tag' (0 arguments) to 'Api.Device', which has it already";
+                Check("Plugin: zwei Plugins fuegen Api.Device dieselbe Methode hinzu - eine lesbare LibraryException (nativ)", dupNative.Contains(dupText), $"{dupNative}\n{kit2.Log}");
+                Check("Plugin: zwei Plugins fuegen dieselbe Methode hinzu - die VM wie nativ", dupVm.Contains(dupText), dupVm);
 
                 // a program with linkage "static" cannot load plugins
                 Directory.CreateDirectory(Path.Combine(root, "plug-static"));
@@ -801,9 +982,49 @@ static class LinkageTests
                 }
                 else Console.WriteLine("(Plugin unter Windows: uebersprungen - MinGW/Wine fehlt)");
                 PluginNativesC(root);
+                PluginDebug(root);
             }
         }
         finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null); Environment.SetEnvironmentVariable("FIRE_TEST_JSON", null); }
+    }
+
+    /// <summary>Debugging a native plugin (docs/NATIVE_DEBUG_PROTOCOL.md "sources"): a debug build of a program with linkage "shared" loads the debug build of the plugin
+    /// Kit; the event `sources` gives its file the next index, NativeDebugTarget sends the breakpoints by file in it (the program waits for them), Step Into goes into
+    /// its method, scopes and `this` (the field names from the plugin's own table), Step Out - the plan of the VM (DebuggerTests.PluginPlan).</summary>
+    private static void PluginDebug(string root)
+    {
+        string s = Path.Combine(root, "plugdbg");
+        string kitFile = Write(s, "Kit/kit.fire", DebuggerTests.PluginKitText);
+        Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "settings": { "linkage": "plugin" } }""");
+        Write(s, "Host/Host.fireproj", """{ "name": "Host", "settings": { "linkage": "shared" } }""");
+        Write(s, "Host/main.fire", "#import \"reflection\"\nvar lib = Library.Load(Environment.Get(\"FIRE_TEST_PLUGIN\"))\nany w = Reflect.New(\"Kit.Worker\", [])\nvar r = w.Work(5)\nprint(\"result \" + r)\n");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Kit/Kit.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
+        BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
+        var hostPlan = Plan("Host");
+        Directory.CreateDirectory(Path.Combine(root, "plugdbg-out"));
+        var host = Build(hostPlan.SourceTexts, "shared", Path.Combine(root, "plugdbg-out", "host"), plan: hostPlan, mode: VmExecutionMode.Debug);
+        var kitPlan = Plan("Kit");
+        var config = new NativeConfig { Linkage = "plugin", Host = host.Exe };
+        var kit = NativeBuilder.BuildSafe(kitPlan.SourceTexts, config, TargetProfile.Host, config.ResolveToolchain(TargetProfile.Host, "gcc"), Path.Combine(root, "plugdbg-out", "kit"), VmExecutionMode.Debug, plan: kitPlan);
+        if (!host.Ok || !kit.Ok) { Check("Plugin-Debug: Debug-Build von Programm und Plugin", false, host.Log + "\n" + kit.Log); return; }
+        Check("Plugin-Debug: das Plugin ist ein Debug-Build (-O0 -g)", kit.Log.Contains("-O0 -g"), kit.Log);
+        try
+        {
+            using var listener = NativeDebugListener.Start();
+            var psi = new ProcessStartInfo(host.Exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = root };
+            psi.Environment[NativeDebugListener.EnvironmentVariable] = listener.EnvironmentValue;
+            psi.Environment["FIRE_TEST_PLUGIN"] = Path.Combine(root, "plugdbg-out", "kit.so");
+            using var process = Process.Start(psi)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            using var target = listener.Accept(TimeSpan.FromSeconds(30), () => process.HasExited ? "the program ended: " + stderr.Result : null);
+            int user = Enumerable.Range(0, target.SourceFiles.Count).First(i => target.SourceFiles[i] is { } f && Path.GetFileName(f) == "main.fire");
+            DebuggerTests.PluginPlan(target, kitFile, user, null, (ok, title, detail) => Check("Plugin-Debug (nativ): " + title, ok, detail));
+            target.MainThread.RunUntilEnd(() => false);
+            if (!process.WaitForExit(30000)) { try { process.Kill(true); } catch (Exception) { } }
+            Check("Plugin-Debug (nativ): das Programm endet mit dem Ergebnis", stdout.Result.Contains("result 16"), stdout.Result + stderr.Result);
+        }
+        catch (Exception ex) { Check("Plugin-Debug (nativ): ohne Ausnahme", false, ex.ToString()); }
     }
 
     /// <summary>A plugin that calls natives in C of a library (they live in the program, `fire_cn_<function>`): one that neither the program nor the library calls

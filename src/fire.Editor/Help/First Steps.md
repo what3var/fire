@@ -28,6 +28,7 @@ Every file you open gets its own tab. Scripts (`.fire`) open in the code editor,
 | **Error list** | The errors and warnings of the last build, each with a code (`E4022`, `W204`; see `docs/ERRORS.md`) - they stay until the next build replaces them. The two buttons on top show or hide the errors and the warnings; double-click a row to jump to the line. Before the first build it shows what is found while you type. |
 | **Threads, Scope, Stack** | Appear in use while you debug: all running threads, the variables of the selected frame, and the call stack. |
 | **Devices** | Serial and simulated devices you can talk to from scripts. |
+| **Properties** | The properties of what is selected: a part of a schematic, an element of a UI markup file - or a file selected in the Solution Explorer (its project, its kind; for a C/C++ file of a project whether it is part of the native build, its platforms and its *Build order*, written to the project file at once). |
 
 All panels can be dragged to any side of the window, stacked as tabs, floated as separate windows or auto-hidden. **View → Reset Layout** brings the original arrangement back.
 
@@ -424,16 +425,28 @@ The yellow line is where the program is paused. While paused, the **Threads**, *
 
 The **engine** box next to the mode box (also **Run > Engine**) chooses what runs the program: the *VM* inside spark, or *Native* - spark builds the program for the target of the build tool strip and runs it. In *Debug* mode a native program is built without optimisation (`-O0 -g`) and debugged just like the VM (breakpoints, stepping, threads, the Scope panel; there is no operand stack, so the **Stack** panel is hidden); in *Release* and *Performance* it simply runs and its output appears in the **Output** panel. A project keeps its engine in its settings.
 
+### Running on an ESP32
+
+With the target `esp32` (build tool strip), `F5`, `F10` and `F11` turn the program into an ESP-IDF project, build and flash it with `idf.py build flash` and then talk to the board over its serial port: *Release* shows its console in the **Output** panel (the line below it is the board's input), *Debug* debugs it like a program on this machine. Three settings decide where and how:
+
+| Setting | Where | What it is |
+| --- | --- | --- |
+| **ESP-IDF folder** | **Tools > Toolchain Settings > ESP32 Board** (with `...` to choose the folder) | The folder with `export.sh` / `export.bat` and `tools/idf.py`; the line below it says *idf.py found* or why not. Kept for every project; empty: the environment variable `IDF_PATH`. |
+| **Serial port** | **Project > Properties > Native & Toolchain > Board (ESP32)**, or for a target **Tools > Toolchain Settings > Target > Board** | A list of the serial ports of this machine (USB serial ports first; **Refresh** after plugging in the board), or type one (`COM7`, `/dev/ttyUSB1`). *auto* (the default): the port of the target, else `ESPPORT`, else the only USB serial port, else the one esptool uses when flashing. |
+| **Baud rate** | the same two places | The speed of the board's console: a list of the usual rates or a number; empty: 115200. |
+
+The project's values go before those of the target. They are kept as `"port"` and `"baud"` in the project's settings or in the target of `fire.native.json`, the ESP-IDF folder as `idfPath` in `spark-settings.json`.
+
 ## Builds that take a while
 
-Every build spark starts - `F5` when the VM compiles the program, a native build or a native run and debug session, Run on an ESP32 (build and flash), **Build**, packing a library - shows a **build window** when it takes longer than half a second (a quick compile shows nothing). It has the phase the build is in with a progress bar - *compile fire* (parsing, names, types, bytecode), *generate C*, *compile C* (with linkage `static` or `shared` the library modules that are not in the cache yet are compiled side by side, and the bar counts them: *3/9*), *link*, and for an ESP32 the steps of ESP-IDF and the flashing - and below it the log: every compiler command and what it said, as it runs. A phase without a count shows a moving bar.
+Every build spark starts - `F5` when the VM compiles the program, a native build or a native run and debug session, Run on an ESP32 (build and flash), **Build**, packing a library - shows a **build window** when it takes longer than half a second (a quick compile shows nothing). It has the phase the build is in with a progress bar - *compile fire* (parsing, names, types, bytecode), *natives of packages* (a program in the VM that uses a package or library with natives in C or C++: their shared library is built once, *Building natives of package X*, counted per package when there are several: *1/2*), *generate C*, *compile C* (with linkage `static` or `shared` the library modules that are not in the cache yet are compiled side by side, and the bar counts them: *3/9*), *link*, and for an ESP32 the steps of ESP-IDF and the flashing - and below it the log: every compiler command and what it said, as it runs. A phase without a count shows a moving bar.
 
 | Button / key | What it does |
 | --- | --- |
 | **Hide**, `Escape` | The window goes away, the build goes on. The status bar shows its progress (*Building... 3/9 modules* with a small bar); click it to bring the window back. |
-| **Cancel**, `Ctrl+Break` (also `Ctrl+Pause`, **Run > Cancel Build**, and `Shift+F5` while a build runs) | Stops the build: the compilers (gcc with cc1, as and ld, idf.py with ninja, ...) are ended with everything they started, the compile inside spark stops at its next step, and nothing half-built is kept - neither a half-linked program nor a half library in the cache. The **Output** panel says *Build cancelled*. |
+| **Cancel**, `Ctrl+Break` (also `Ctrl+Pause`, **Run > Cancel Build**, and `Shift+F5` while a build runs) | Stops the build: the compilers (gcc with cc1, as and ld, idf.py with ninja, ...) are ended with everything they started, the compile inside spark stops at its next step, and nothing half-built is kept - neither a half-linked program nor a half library in the cache (also not the library of a package's natives: the next run builds it again). The **Output** panel says *Build cancelled*. |
 
-When the build succeeds the window closes by itself (the log stays in the **Build log**). When it fails, the window stays open with the error under the log; **Close** (or `Escape`) closes it. Only one build runs at a time: while one runs, `F5` and the build commands say so in the status bar. Closing spark during a build cancels it first.
+Every line of the build window's log is written into the **Build log** as it comes (the window only mirrors it), so it can be read and copied after the window has closed; a failed build also says so in the **Output**. When the build succeeds the window closes by itself (the log stays in the **Build log**). When it fails, the window stays open with the error under the log; **Close** (or `Escape`) closes it. Only one build runs at a time: while one runs, `F5` and the build commands say so in the status bar. Closing spark during a build cancels it first.
 
 ## Talking to devices
 

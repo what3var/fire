@@ -35,7 +35,7 @@ static class TypeTests
         {
             errors = "ERROR " + string.Join(" ", CompileDiagnostics.Of(ex).Select(d => verbose ? $"{d.Code} {d.File}:{d.Line} {d.Message}\n" : d.Code));
         }
-        finally { Linker.ProcessDefaultTypeChecking = null; Value.SingleFloats = false; }
+        finally { Linker.ProcessDefaultTypeChecking = null; Value.SingleFloats = false; Value.Ints32 = false; }
         return string.Join(" ", warnings.Items.Select(d => verbose ? $"{d.Code} {d.File}:{d.Line} {d.Message}\n" : d.Code)) + "|" + errors + string.Join("\n", lines);
     }
 
@@ -119,9 +119,10 @@ static class TypeTests
         Check("Rueckgabetypen: undefined fuer 'nichts', ein Wert- und undefined-Rueckgabe passt zu jedem Typ, ein falscher Typ ist TC003", Run("class A { undefined P() { return }\n    int Q(bool b) { if (b) { return 1 } return undefined }\n    int R() { return \"x\" }\n}\nprint(1)") == "TC003|1"
             && Run("class A { undefined P() { return }\n    int Q(bool b) { if (b) { return 1 } return }\n}\nvar a = new A()\nprint(a.Q(false))", TypeCheckMode.Strict) == "|undefined");
         Check("typisierte Operatoren: `bool operator==(any o)`", Run("class A { int v\n    construct(int v) { this.v = v }\n    bool operator==(any o) { return this.v == o.v }\n    A operator+(A o) { return new A(this.v + o.v) }\n}\nvar a = new A(1)\nvar b = new A(1)\nprint(a == b)\nprint((a + b).v)", TypeCheckMode.Strict) == "|True\n2");
+        // (an `int a[]` is a typed array: the string is TC001 and at run time an ArgumentException, SPEC 8.4.2)
         Check("Arrays: Elemente, Literale, new, length, foreach haben den Typ der Elemente", Run("""
             int a[] = [1, 2, 3]
-            a[0] = "x"
+            try { a[0] = "x" } catch (ArgumentException e) { print("A") }
             int whole = a
             var b = new float[3]
             bool flag = b[0]
@@ -129,7 +130,7 @@ static class TypeTests
             int n = a.length + "abc".Length
             float f[] = [1, 2.5]
             print(n)
-            """) == "TC001 TC001 TC001 TC001|6");
+            """) == "TC001 TC001 TC001 TC001|A\n6");
         Check("Lambdas: falsche Anzahl Argumente oder Parameter wird schon beim Uebersetzen gemeldet", Run("int lambda<int, int> add = (x, y) => x + y\nlambda<int> three = (x, y) => x\nadd(1)", TypeCheckMode.Strict) == "|ERROR TC001 TC002");
         Check("Strings und Indexer: s[i] ist ein char, operator[] liefert seinen Rueckgabetyp", Run("""
             class Box { int v
@@ -562,6 +563,175 @@ static class TypeTests
                 """) is var inherited && inherited == "|1\n17", inherited);
         }
 
+        // properties in interfaces (SPEC 8.5): `int Limit { get; set; }` / `{ get; }` - implemented by a public property (auto or with get/set) of the class
+        {
+            string iface = "interface ILimit { int Limit { get; set; }\n string Name { get; }\n float Delay : ms { get; } }\n";
+            Check("Interface-Property: Auto-Property, get/set und Basisklasse implementieren, Zugriff ueber das Interface mit Typ und Einheit", Run(iface + """
+                class Base { string Name { get { return "base" } } }
+                class Lim : Base, ILimit {
+                    int Limit { get; set; }
+                    float Delay : ms { get { return 2s } }
+                }
+                ILimit l = new Lim()
+                l.Limit = 4
+                l.Limit = l.Limit + 1
+                int n = l.Limit
+                float : ms d = l.Delay
+                print(n + " " + l.Name + " " + d)
+                """) is var props && props == "|5 base 2000ms", props);
+            Check("Interface-Property: ein read-only Mitglied darf read-write implementiert sein", Run(iface + """
+                class Lim : ILimit { int Limit { get; set; }
+                 string Name { get; set; }
+                 float Delay : ms { get; set; } }
+                var x = new Lim()
+                x.Name = "n"
+                ILimit l = x
+                print(l.Name)
+                """) is var rw && rw == "|n", rw);
+            Check("Interface-Property: fehlt sie, ist es E4064", Run(iface + "class Lim : ILimit { int Limit { get; set; }\n float Delay : ms { get; } }\nprint(1)") is var missing && missing == "|ERROR E4064", missing);
+            Check("Interface-Property: fehlt der Setter, ist es E4064", Run(iface + "class Lim : ILimit { int Limit { get; }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var noSet && noSet == "|ERROR E4064", noSet);
+            Check("Interface-Property: ein Feld gleichen Namens zaehlt nicht (E4065)", Run(iface + "class Lim : ILimit { int Limit\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var field && field == "|ERROR E4065", field);
+            Check("Interface-Property: get_/set_-Methoden zaehlen nicht (E4064)", Run(iface + "class Lim : ILimit { int get_Limit() { return 1 }\n undefined set_Limit(int v) { }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var methods && methods == "|ERROR E4064", methods);
+            Check("Interface-Property: private oder protected ist E4063", Run(iface + "class Lim : ILimit { private int Limit { get; set; }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var hidden && hidden == "|ERROR E4063"
+                && CompileText(iface + "class Lim : ILimit { int Limit { get; set; }\n protected string Name { get; }\n float Delay : ms { get; } }").Contains("Property 'Name' of class 'Lim' implements interface 'ILimit' and must be public, not protected"), hidden);
+            Check("Interface-Property: ein anderer Werttyp oder eine andere Einheit ist E4066", Run(iface + "class Lim : ILimit { string Limit { get; set; }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var otherType && otherType == "|ERROR E4066"
+                && Run(iface + "class Lim : ILimit { int Limit { get; set; }\n string Name { get; }\n float Delay : s { get; } }\nprint(1)") == "|ERROR E4066", otherType);
+            Check("Interface-Property: Zuweisung an eine get-only Property ueber das Interface ist TC016 (auch lax ein Fehler)", Run(iface + """
+                class Lim : ILimit { int Limit { get; set; }
+                 string Name { get; set; }
+                 float Delay : ms { get; } }
+                ILimit l = new Lim()
+                l.Name = "x"
+                """) is var readOnly && readOnly == "|ERROR TC016", readOnly);
+            Check("Interface-Property: Typ und Einheit gelten beim Typpruefer (TC001, TC006)", Run(iface + """
+                class Lim : ILimit { int Limit { get; set; }
+                 string Name { get; }
+                 float Delay : ms { get; } }
+                ILimit l = new Lim()
+                l.Limit = "x"
+                float : kg w = l.Delay
+                """) is var typed && typed.StartsWith("TC001 TC006|"), typed);
+            Check("Interface-Property: ein Rumpf im Interface ist E3161, ohne Typ E3162", Run("interface I { int X { get { return 1 } } }\nprint(1)") == "|ERROR E3161"
+                && Run("interface I { X { get; } }\nprint(1)") is var untyped && untyped == "|ERROR E3162", Run("interface I { X { get; } }\nprint(1)"));
+        }
+
+        // interface inheritance (SPEC 8.5): `interface IConnection : IStream, IOther` - a class implements all of it and is of every base interface
+        {
+            string ifaces = """
+                interface IReader { int Read() }
+                interface IWriter { undefined Write(int v) }
+                interface IStream : IReader, IWriter { int Size { get; } }
+
+                """;
+            Check("Interface-Vererbung: zuweisbar an das Basis-Interface und als Parameter, is of, Cast, Overload", Run(ifaces + """
+                class Mem : IStream {
+                    int last
+                    int Read() { return this.last }
+                    undefined Write(int v) { this.last = v }
+                    int Size { get { return 1 } }
+                }
+                class Use {
+                    static int Pull(IReader r) { return r.Read() }
+                    static string Pick(IWriter w) { return "writer" }
+                    static string Pick(string s) { return "string" }
+                }
+                IStream s = new Mem()
+                s.Write(7)
+                IReader r = s
+                IWriter w = s
+                print(Use.Pull(s) + " " + r.Read() + " " + Use.Pick(s) + " " + s.Size)
+                print((s is of IReader) + " " + (new Mem() is of IWriter) + " " + (r!IStream).Size)
+                """) is var basic && basic == "|7 7 writer 1\nTrue True 1", basic);
+            Check("Interface-Vererbung: strikt ohne Befund", Run(ifaces + """
+                class Mem : IStream { int Read() { return 1 }
+                 undefined Write(int v) { }
+                 int Size { get { return 1 } } }
+                IStream s = new Mem()
+                IReader r = s
+                print(r.Read())
+                """, TypeCheckMode.Strict) is var strict && strict == "|1", strict);
+            Check("Interface-Vererbung: where T is of IReader nimmt eine Klasse eines abgeleiteten Interfaces und das Interface selbst (kein E4013)", Run(ifaces + """
+                class Mem : IStream { int Read() { return 1 }
+                 undefined Write(int v) { }
+                 int Size { get { return 1 } } }
+                class Holder<T> where T is of IReader { T item }
+                var a = new Holder<Mem>()
+                var b = new Holder<IStream>()
+                print(2)
+                """) is var where && where == "|2"
+                && Run(ifaces + "class Holder<T> where T is of IStream { T item }\nvar a = new Holder<IReader>()") == "|ERROR E4013", where);
+            Check("Interface-Vererbung: ein geerbtes Mitglied fehlt (E4010)", Run(ifaces + "class Mem : IStream { int Read() { return 1 }\n int Size { get { return 1 } } }\nprint(1)") is var missing && missing == "|ERROR E4010", missing);
+            Check("Interface-Vererbung: ein geerbtes Mitglied privat (E4063)", Run(ifaces + "class Mem : IStream { int Read() { return 1 }\n private undefined Write(int v) { }\n int Size { get { return 1 } } }\nprint(1)") is var priv && priv == "|ERROR E4063", priv);
+            Check("Interface-Vererbung: ein Zyklus ist E4068, eine Klasse als Basis E4067", Run("interface IA : IB { }\ninterface IB : IC { }\ninterface IC : IA { }\nprint(1)") is var cycle && cycle.StartsWith("|ERROR E4068")
+                && Run("class K { }\ninterface IA : K { }\nprint(1)") == "|ERROR E4067"
+                && CompileText("interface IA : IB { }\ninterface IB : IA { }").Contains("Interface 'IA' extends itself (IA -> IB -> IA)"), cycle);
+            Check("Interface-Vererbung: Raute (zwei Wege zum selben Interface)", Run("""
+                interface IBase { int Id() }
+                interface ILeft : IBase { int L() }
+                interface IRight : IBase { int R() }
+                interface IBoth : ILeft, IRight { }
+                class Both : IBoth { int Id() { return 1 }
+                 int L() { return 2 }
+                 int R() { return 3 } }
+                IBoth b = new Both()
+                ILeft l = b
+                IBase x = l
+                IRight r = b
+                print(x.Id() + l.L() + r.R() + b.Id())
+                print(b is of IBase)
+                """, TypeCheckMode.Strict) is var diamond && diamond == "|7\nTrue", diamond);
+            Check("Interface-Vererbung: ein unverwandtes Interface ist nicht zuweisbar (TC001)", Run(ifaces + """
+                class Mem : IStream { int Read() { return 1 }
+                 undefined Write(int v) { }
+                 int Size { get { return 1 } } }
+                interface IOther { }
+                IReader r = new Mem()
+                IOther o = r
+                """) is var unrelated && unrelated.StartsWith("TC001|"), unrelated);
+            Check("Interface-Vererbung: generisch (IList<T> : IEnumerable<T>) - foreach kennt den Elementtyp", Run("""
+                interface IList<T> : IEnumerable<T> { int Count { get; } }
+                class Nums : IList<int> {
+                    int Count { get { return 2 } }
+                    IEnumerator<int> GetEnumerator() { var l = new List<int>(); l.Add(3); l.Add(4); return l.GetEnumerator() }
+                }
+                IList<int> n = new Nums()
+                int sum = 0
+                foreach (x in n) { sum = sum + x }
+                print(sum + n.Count)
+                """, TypeCheckMode.Strict) is var generic && generic == "|9"
+                && Run("interface IList<T> : IEnumerable<T> { }\nclass Nums : IList<int> { IEnumerator<int> GetEnumerator() { return new List<int>().GetEnumerator() } }\nIList<int> n = new Nums()\nforeach (x in n) { bool b = x }") is var elem && elem.StartsWith("TC001|"), generic);
+
+            // through an interface type only what the interface (and the ones it extends) declares is reachable (TC008) - a cast reaches the rest
+            string reach = ifaces + """
+                class Mem : IStream {
+                    int last = 5
+                    int Read() { return this.last }
+                    undefined Write(int v) { this.last = v }
+                    int Size { get { return 1 } }
+                    int Extra() { return 9 }
+                }
+                IStream s = new Mem()
+
+                """;
+            Check("Interface-Typ: nicht deklarierte Mitglieder sind TC008 (lax Warnung, Feld, Methode, Methode als Wert), falsche Stelligkeit TC002", Run(reach + """
+                print(s.last)
+                print(s.Extra())
+                var f = s.Extra
+                print(s.Read(1))
+                """) is var laxReach && laxReach.StartsWith("TC008 TC008 TC008 TC002|5\n9"), laxReach);
+            Check("Interface-Typ: nicht deklarierte Mitglieder sind strikt Fehler (TC008)", Run(reach + "IReader r = s\nprint(r.Size)\nprint(s.Extra())", TypeCheckMode.Strict) == "|ERROR TC008 TC008");
+            Check("Interface-Typ: geerbte Interface-Mitglieder, Property, Besitz-Methoden und Cast strikt ohne Befund", Run(reach + """
+                s.Write(3)
+                IReader r = s
+                print(s.Read() + r.Read() + s.Size + (s!Mem).Extra() + (r!Mem).last)
+                var other = new Mem()
+                try other.TakeTo(s)
+                IStream t = new Mem()
+                t.TakeLocal()
+                try t.TakeTo(s)
+                """, TypeCheckMode.Strict) is var allowed && allowed == "|19", allowed);
+        }
+
         // named arguments: each goes to the parameter of its name (its type is checked there); an unknown name and a parameter without value are errors
         {
             string decl = "class C { static int F(int a, string b = \"x\", int c = 3) { return a + c }\n construct(int size, bool open = false) { } }\n";
@@ -729,7 +899,7 @@ static class TypeTests
                     int line = text.Substring(0, m.Index).Count(c => c == '\n') + 1;
                     Console.WriteLine($"{Path.GetFileName(file)}:{line}: {codes[0].Code} {codes[0].Message}");
                 }
-                finally { Value.SingleFloats = false; }
+                finally { Value.SingleFloats = false; Value.Ints32 = false; }
             }
         }
         Console.WriteLine($"{total} Ausschnitte, {bad} mit Feld-/Property-/var-Fehler");

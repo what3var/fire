@@ -235,6 +235,10 @@ namespace fire.Runtime
         }
         public void RemoveOwned(ObjectInstance obj) { _owned.Remove(obj); if (!_args.IsEmpty) _args.Remove(obj); }
 
+        /// <summary>`fire handover`: `fresh` takes the place of `old` (an object or a leaf this scope owns), in the same position.</summary>
+        internal void ReplaceOwned(ObjectInstance old, ObjectInstance fresh) { _owned.Replace(old, fresh); if (!_args.IsEmpty) _args.Replace(old, fresh); }
+        internal void ReplaceLeaf(IOwnedLeaf old, IOwnedLeaf fresh) { int i = _leaves?.IndexOf(old) ?? -1; if (i >= 0) _leaves![i] = fresh; }
+
         /// <summary>An argument of the call that this scope owns (see <c>_args</c>).</summary>
         public void AddArgument(ObjectInstance obj)
         {
