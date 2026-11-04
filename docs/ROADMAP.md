@@ -381,9 +381,16 @@ Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2
   **VGA** (Mode 13h: 320x200 mit 256, Mode 12h: 640x480 mit 16, Bitebenen) und **VESA** (Framebuffer mit 8/15/16/24/32 Bit).
 * Das Render-Target wandelt beim Present in das Layout der Hardware (die verschränkten Bänke der CGA, die Bitebenen der EGA/VGA über Plane-Masken, die Palette in die
   Register der Karte) - nur die geänderten Bereiche.
-* Der **Framebuffer** bekommt dazu gepackte Formate mit 1, 2 und 4 Bit pro Pixel (Palette mit 2, 4 und 16 Einträgen). Das Format wird einmal pro Zeichenaufruf gewählt
-  (eine Funktion pro Format für Spans und Blits), nicht pro Pixel: RGBA und die 8-Bit-Palette behalten ihre heutigen schnellen Wege. Wer auf eine CGA/EGA zeichnet,
-  kann ebenso in 8 Bit zeichnen - das Render-Target bildet dann auf die Farben der Karte ab.
+* Ein eigener **`PackedFramebuffer`** für 1, 2 und 4 Bit pro Pixel (Palette mit 2, 4 und 16 Einträgen) - der `Framebuffer` (RGBA, 8-Bit-Palette) bleibt
+  unverändert:
+  * gruppiert 8, 4 oder 2 Pixel in ein Byte, das linke Pixel in den oberen Bits (wie CGA, die Ebenen der EGA und Hercules: das Present ist eine Kopie);
+  * Spans, Füllen und Blits arbeiten in ganzen Maschinenwörtern (16 bzw. 32 Bit: das Doppelte bzw. Vierfache an Pixeln pro Schritt, die Farbe als wiederholtes
+    Muster, Masken nur an den Rändern); Blits mit Versatz tauschen die Bytes (x86 ist Little Endian) oder gehen in Bytes;
+  * Zeilen auf die Wortbreite des Ziels gerundet;
+  * bei 4 Bit wahlweise *chunky* (2 Pixel pro Byte) oder *planar* (4 Ebenen mit je 1 Bit: das Layout der EGA/VGA-16, jede Ebene bleibt unter 64 KB - der
+    Standard für `dos16`);
+  * dieselbe Zeichen-API wie der `Framebuffer` über eine gemeinsame Schnittstelle; ein Blit zwischen beiden bildet die Farben über die Palette ab.
+  Wer auf eine CGA/EGA zeichnet, kann ebenso einen 8-Bit-`Framebuffer` nehmen - das Render-Target bildet dann auf die Farben der Karte ab.
 
 **Hardware-Packages** (für `dos16`, `dos32`, `bios-x86`, teils `efi-x64`):
 
