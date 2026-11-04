@@ -55,7 +55,7 @@ namespace UI {
             this.grabsKeys = true
         }
 
-        string StyleKey() { return "MenuPopup" }
+        override string StyleKey() { return "MenuPopup" }
 
         int RowHeight(Root root) { return this.TextHeight(root) + 8 }
 
@@ -64,7 +64,7 @@ namespace UI {
             return this.RowHeight(root)
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 4
             for (var i = 0; i < this.entries.Count; i = i + 1) {
@@ -97,7 +97,7 @@ namespace UI {
             return y
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -181,7 +181,7 @@ namespace UI {
             item.Activate()
         }
 
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             var index = this.RowAt(root, py)
             if (index < 0 || this.entries[index].separator) { return }
             this.hot = index
@@ -189,19 +189,19 @@ namespace UI {
         }
 
         // A click outside of all menus closes everything; the menus of a submenu are closed by the root one after the other anyway.
-        bool PopupOutside(Root root, int px, int py) {
+        override bool PopupOutside(Root root, int px, int py) {
             var consumed = this.owner != undefined && this.owner.Contains(px, py)
             root.ClosePopup(this)
             return consumed
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             var index = this.RowAt(root, py)
             if (index >= 0) { this.Choose(root, index) }
         }
 
-        undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, int key, int mod) {
             // the keys go to the topmost menu
             if (key == UI.Keys.Escape()) {
                 if (this.parentMenu != undefined) {
@@ -262,7 +262,7 @@ namespace UI {
             this.menus = new List()
         }
 
-        string StyleKey() { return "MenuBar" }
+        override string StyleKey() { return "MenuBar" }
 
         // Appends a menu of the top level (a MenuItem with submenu rows); it belongs to the bar.
         any Add(any item) {
@@ -273,7 +273,7 @@ namespace UI {
 
         int HeaderWidth(Root root, any item) { return this.TextWidth(root, item.Header) + 16 }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             for (var i = 0; i < this.menus.Count; i = i + 1) { w = w + this.HeaderWidth(root, this.menus[i]) }
             this.cw = w
@@ -298,7 +298,7 @@ namespace UI {
         }
 
         // A menu that has closed is no longer open.
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             if (this.open != undefined && !root.IsPopup(this.open)) {
                 this.open = undefined
@@ -306,7 +306,7 @@ namespace UI {
             }
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var back = this.Background
@@ -345,14 +345,14 @@ namespace UI {
             this.open = root.ShowMenu(item.items, this.HeaderLeft(root, index), this.ay + this.actualHeight, this)
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             var index = this.IndexAt(root, px)
             if (index >= 0) { this.Open(root, index) }
         }
 
         // With a menu open, the pointer over another title opens its menu.
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             this.hotIndex = this.IndexAt(root, px)
             if (this.open == undefined) { return }
             var index = this.hotIndex

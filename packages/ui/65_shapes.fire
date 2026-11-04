@@ -227,16 +227,16 @@ namespace UI {
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
 
-        string StyleKey() { return "Shape" }
+        override string StyleKey() { return "Shape" }
     }
 
     // A rectangle of the size of the element.
     class Rectangle : Shape {
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
 
-        string StyleKey() { return "Rectangle" }
+        override string StyleKey() { return "Rectangle" }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.Fill != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Fill) }
             if (this.Stroke != undefined) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, this.Stroke) }
@@ -247,9 +247,9 @@ namespace UI {
     class Ellipse : Shape {
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
 
-        string StyleKey() { return "Ellipse" }
+        override string StyleKey() { return "Ellipse" }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var rx = this.actualWidth / 2
             var ry = this.actualHeight / 2
@@ -275,14 +275,14 @@ namespace UI {
             this.Y2 = y2
         }
 
-        string StyleKey() { return "Line" }
+        override string StyleKey() { return "Line" }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             this.cw = UI.M.Max(this.X1, this.X2) + 1
             this.ch = UI.M.Max(this.Y1, this.Y2) + 1
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.Stroke != undefined) { root.renderer.DrawLine(ax + this.X1, ay + this.Y1, ax + this.X2, ay + this.Y2, this.Stroke) }
         }
@@ -311,14 +311,14 @@ namespace UI {
             this.data = data
         }
 
-        string StyleKey() { return "Path" }
+        override string StyleKey() { return "Path" }
 
         // Sets the Geometry from path data (see Geometry.Parse).
         undefined SetData(string text) {
             this.data = UI.Geometry.Parse(text)
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             if (this.data == undefined) {
                 this.cw = 0
                 this.ch = 0
@@ -328,7 +328,7 @@ namespace UI {
             this.ch = this.data.Height() + 1
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.data == undefined) { return }
             for (var i = 0; i < this.data.figures.Count; i = i + 1) {
@@ -364,16 +364,16 @@ namespace UI {
 
         construct(int x = 0, int y = 0, int width = 200, int height = 150) : base(x, y, width, height) { }
 
-        string StyleKey() { return "DrawingCanvas" }
+        override string StyleKey() { return "DrawingCanvas" }
 
         // At the next cycle onPaint runs again and the surface is shown anew (also after drawing with `renderer` from outside).
-        undefined Invalidate() {
+        override undefined Invalidate() {
             this.dirty = true
             base.Invalidate()
         }
 
         // onPaint runs here (not while painting): what it changes on the elements then reports itself like any other change.
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             if (this.Continuous) { this.dirty = true }
             // the element has a different size than the surface: it is created anew and repainted
@@ -416,7 +416,7 @@ namespace UI {
             this.dirty = true
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             if (this.external && this.framebuffer != undefined) {
                 this.cw = this.framebuffer.Width()
                 this.ch = this.framebuffer.Height()
@@ -426,7 +426,7 @@ namespace UI {
             this.ch = 0
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.framebuffer == undefined) { return }
             root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
@@ -434,22 +434,22 @@ namespace UI {
             root.PopClip()
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             var callback = this.OnMouseDown
             if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
         }
 
-        undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, int px, int py) {
             var callback = this.OnMouseMove
             if (callback != undefined) { callback(px - this.ax, py - this.ay) }
         }
 
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             var callback = this.OnMouseMove
             if (callback != undefined) { callback(px - this.ax, py - this.ay) }
         }
 
-        undefined MouseUp(Root root, int button, int px, int py) {
+        override undefined MouseUp(Root root, int button, int px, int py) {
             var callback = this.OnMouseUp
             if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
         }
