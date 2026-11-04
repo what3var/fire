@@ -2500,8 +2500,8 @@ namespace fire.Compiler
             return name;
         }
 
-        /// <summary>`interface Name { [ReturnType] Method(params) ... }` - pure
-        /// method signatures, no fields/constructor/bodies.</summary>
+        /// <summary>`interface Name { [ReturnType] Method(params) ... Type Prop { get; set; } }` - method and property signatures, no
+        /// fields/constructor/bodies.</summary>
         private Stmt ParseInterfaceDecl()
         {
             int line = Peek().Line;
@@ -2513,6 +2513,7 @@ namespace fire.Compiler
             Expect(TokenType.LBrace, "Expected '{' after the interface head");
 
             var methods = new List<InterfaceMethodSig>();
+            var properties = new List<InterfacePropertySig>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
                 int mLine = Peek().Line;
@@ -2520,13 +2521,52 @@ namespace fire.Compiler
                 if (NextLooksLikeTypeThenName())
                     returnType = ParseTypeRef(allowArray: true);
                 string methodName = Expect(TokenType.Identifier, "Expected a method name").Lexeme;
+                // `int Delay : ms { get; }`: a property with a unit (as in a class, see ParseMember)
+                if (returnType != null && Check(TokenType.Colon) && PeekAt(1).Type == TokenType.Identifier
+                    && (PeekAt(1 + CombinedUnitLengthAt(1)).Type == TokenType.LBrace
+                        || PeekAt(1).Lexeme == "any" && PeekAt(2).Type == TokenType.Identifier && PeekAt(2 + CombinedUnitLengthAt(2)).Type == TokenType.LBrace))
+                {
+                    Advance(); // ':'
+                    returnType = returnType with { Unit = ParseUnitName() };
+                }
+                if (Check(TokenType.LBrace))
+                {
+                    properties.Add(ParseInterfacePropertyBody(mLine, returnType, methodName));
+                    continue;
+                }
                 var parms = ParseParamList(allowRef: true);
                 ExpectStatementTerminator();
                 methods.Add(new InterfaceMethodSig(mLine, returnType, methodName, parms));
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the interface");
 
-            return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods, typeParams);
+            return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods, typeParams, properties.Count > 0 ? properties : null);
+        }
+
+        /// <summary>`{ get; set; }`, `{ get; }` or `{ set; }` of a property in an interface - accessors without bodies (an interface has no code).</summary>
+        private InterfacePropertySig ParseInterfacePropertyBody(int line, TypeRef? type, string name)
+        {
+            Expect(TokenType.LBrace, "Expected '{' after the property name");
+            bool hasGet = false, hasSet = false;
+            while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+            {
+                var accessor = Peek();
+                if (accessor.Type != TokenType.Identifier || accessor.Lexeme is not ("get" or "set"))
+                    throw Error("Expected 'get' or 'set' in the property body", accessor);
+                Advance();
+                if (accessor.Lexeme == "get" ? hasGet : hasSet)
+                    throw Error($"'{accessor.Lexeme}' is already defined for property '{name}'", accessor);
+                if (Check(TokenType.LBrace))
+                    throw Error($"A property of an interface has no body: write '{accessor.Lexeme};' (the class that implements it has the code)", Peek());
+                if (accessor.Lexeme == "get") hasGet = true; else hasSet = true;
+                ExpectStatementTerminator();
+            }
+            Expect(TokenType.RBrace, "Expected '}' at the end of the property");
+            if (!hasGet && !hasSet)
+                throw Error($"Property '{name}' needs at least 'get' or 'set'", Peek());
+            if (type == null)
+                throw Error($"Property '{name}' of an interface needs a type (use 'any' if every type is allowed)", Peek());
+            return new InterfacePropertySig(line, type, name, hasGet, hasSet);
         }
 
         /// <summary>`enum Name { A, B = 5, C }` - see Ast.EnumDecl documentation for the

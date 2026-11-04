@@ -622,6 +622,78 @@ namespace fire.Compiler
                 if (ImplementingMethod(cd, m.Name, m.Params.Count) is { Access: not AccessModifier.Public } hidden)
                     throw NotPublic(cd, iface, hidden);
             }
+            foreach (var p in iface.PropertySigs)
+            {
+                var own = ImplementingProperty(cd, p.Name);
+                if (onlyOwn)
+                {
+                    if (own is { Access: not AccessModifier.Public } && cd.Members.Contains(own)) throw PropertyNotPublic(cd, iface, own);
+                    continue;
+                }
+                string wanted = p.HasGet && p.HasSet ? "get; set;" : p.HasGet ? "get;" : "set;";
+                if (own == null)
+                {
+                    // a field of that name is no property: the interface promises get_/set_, which a field does not have (see SPEC 8.5)
+                    if (FieldInClassChain(cd, p.Name))
+                        throw new ResolverException(
+                            $"'{p.Name}' of class '{cd.Name}' is a field - interface '{iface.Name}' wants a property '{p.Name}' with '{wanted}'", cd.Line);
+                    throw new ResolverException(
+                        $"Class '{cd.Name}' does not implement interface '{iface.Name}' completely (missing property '{p.Name}' with '{wanted}')", cd.Line);
+                }
+                bool canGet = PropertyAccessorInChain(cd, p.Name, getter: true), canSet = PropertyAccessorInChain(cd, p.Name, getter: false);
+                if (p.HasGet && !canGet || p.HasSet && !canSet)
+                    throw new ResolverException(
+                        $"Class '{cd.Name}' does not implement interface '{iface.Name}' completely (missing property '{p.Name}' with '{wanted}')", own.Line);
+                if (own.Access != AccessModifier.Public) throw PropertyNotPublic(cd, iface, own);
+                if (PropertyTypeConflict(p.Type, own.Type) is { } conflict)
+                    throw new ResolverException(
+                        $"Property '{p.Name}' of class '{cd.Name}' is {conflict.Have}, interface '{iface.Name}' declares it as {conflict.Want}", own.Line);
+            }
+        }
+
+        private static ResolverException PropertyNotPublic(ClassDecl cd, InterfaceDecl iface, PropertyDecl pd) =>
+            new($"Property '{pd.Name}' of class '{cd.Name}' implements interface '{iface.Name}' and must be public, not " +
+                $"{(pd.Access == AccessModifier.Private ? "private" : "protected")} (a member of an interface is public)", pd.Line);
+
+        /// <summary>The property `name` an object of `cd` has: the nearest class of the chain that declares one (not a static one).</summary>
+        private PropertyDecl? ImplementingProperty(ClassDecl cd, string name)
+        {
+            var seen = new HashSet<ClassDecl>();
+            for (var c = cd; c != null && seen.Add(c); c = GetBaseClassDecl(c))
+                if (c.Members.OfType<PropertyDecl>().FirstOrDefault(pd => pd.Name == name && !pd.IsStatic) is { } found) return found;
+            return null;
+        }
+
+        /// <summary>Whether some class of the chain gives the property `name` a getter (a setter) - an override may declare only one of them.</summary>
+        private bool PropertyAccessorInChain(ClassDecl cd, string name, bool getter)
+        {
+            var seen = new HashSet<ClassDecl>();
+            for (var c = cd; c != null && seen.Add(c); c = GetBaseClassDecl(c))
+                if (c.Members.OfType<PropertyDecl>().Any(pd => pd.Name == name && !pd.IsStatic && (getter ? pd.Getter : pd.Setter) != null)) return true;
+            return false;
+        }
+
+        private bool FieldInClassChain(ClassDecl cd, string name)
+        {
+            var seen = new HashSet<ClassDecl>();
+            for (var c = cd; c != null && seen.Add(c); c = GetBaseClassDecl(c))
+                if (c.Members.OfType<FieldDecl>().Any(fd => fd.Name == name && !fd.IsStatic)) return true;
+            return false;
+        }
+
+        private static readonly HashSet<string> ValueTypeNames = new() { "int", "float", "string", "bool", "char", "byte" };
+
+        /// <summary>The type of an implementing property against the one of the interface: only what is surely different is a conflict - two different value
+        /// types (`string` for an `int`), or two units of a different text (`int : s` for `int : ms`; a unit against none). Class types, `any`, type
+        /// parameters and untyped ones pass (the type checker looks at the values).</summary>
+        private static (string Have, string Want)? PropertyTypeConflict(TypeRef? want, TypeRef? have)
+        {
+            if (want == null || have == null || want.IsInferred || have.IsInferred) return null;
+            string Text(TypeRef t) => "'" + t.BaseName + (t.ArrayRank > 0 ? string.Concat(Enumerable.Repeat("[]", t.ArrayRank)) : "") + (t.Unit != null ? " : " + t.Unit : "") + "'";
+            bool valueTypes = ValueTypeNames.Contains(want.BaseName) && ValueTypeNames.Contains(have.BaseName);
+            if (valueTypes && (want.BaseName != have.BaseName || want.ArrayRank != have.ArrayRank)) return (Text(have), Text(want));
+            if (valueTypes && want.BaseName is "int" or "float" && (want.Unit ?? "") != (have.Unit ?? "")) return (Text(have), Text(want));
+            return null;
         }
 
         private static ResolverException NotPublic(ClassDecl cd, InterfaceDecl iface, MethodDecl md) =>

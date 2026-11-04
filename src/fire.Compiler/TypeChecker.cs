@@ -99,6 +99,9 @@ namespace fire.Compiler
         public const string MissingOverrideCode = "TC014";
         /// <summary>`override` on a member that replaces nothing (a mistyped name or other parameters) - an error in lax mode too.</summary>
         public const string NothingToOverrideCode = "TC015";
+        /// <summary>Through a value of an interface type: writing a property the interface declares without `set` (or reading one without `get`) - the interface
+        /// does not promise it (an error in lax mode too).</summary>
+        public const string InterfaceAccessorCode = "TC016";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -311,6 +314,24 @@ namespace fire.Compiler
         }
 
         private static string PlainName(string name) => GenericClassNames.PlainName(name);
+
+        private bool IsInterface(string name) => _interfaces.ContainsKey(name) && !_classes.ContainsKey(name);
+
+        /// <summary>An interface-typed receiver: the interface with what its type parameters stand for. Empty for anything else.</summary>
+        private IEnumerable<(InterfaceDecl Decl, Dictionary<string, StaticType>? Map, IReadOnlyList<StaticType>? Args)> InterfaceChain(StaticType receiver)
+        {
+            if (receiver.Class == null || !IsInterface(receiver.Class)) yield break;
+            var seen = new HashSet<string>();
+            var pending = new Queue<(string Name, IReadOnlyList<StaticType>? Args)>();
+            pending.Enqueue((receiver.Class, receiver.Args));
+            while (pending.Count > 0)
+            {
+                var (name, args) = pending.Dequeue();
+                if (!seen.Add(name) || !_interfaces.TryGetValue(name, out var decl)) continue;
+                var map = MapFor(decl.TypeParams, args);
+                yield return (decl, map, args);
+            }
+        }
 
         /// <summary>`x!Dog` (a cast to a class or an interface): reported (TC013) when no object can be both the static type of `x` and the target - two classes
         /// of which neither derives from the other (a class has one base class, so they have no common subclass), or a class and an interface that neither
@@ -608,6 +629,9 @@ namespace fire.Compiler
         /// parameters replaced by the instance's type arguments); null when there is none.</summary>
         private StaticType? FindMember(StaticType receiver, string name)
         {
+            // a property of an interface: its declared type and unit
+            foreach (var (iface, imap, _) in InterfaceChain(receiver))
+                if (iface.PropertySigs.FirstOrDefault(p => p.Name == name) is { } sig) return DeclaredOrDynamic(sig.Type, 0, imap);
             foreach (var (decl, map) in Chain(receiver))
                 foreach (var member in decl.Members)
                 {
@@ -624,12 +648,14 @@ namespace fire.Compiler
         private MethodDecl? FindMethod(StaticType receiver, string name, int argc, out Dictionary<string, StaticType>? map)
         {
             map = null;
-            if (receiver.Class != null && _interfaces.TryGetValue(receiver.Class, out var iface))
+            if (receiver.Class != null && _interfaces.ContainsKey(receiver.Class))
             {
-                var sigs = iface.Methods.Where(m => m.Name == name && Fits(m.Params, argc)).ToList();
+                // (the interface and the interfaces it extends)
+                var sigs = InterfaceChain(receiver).SelectMany(i => i.Decl.Methods.Where(m => m.Name == name && Fits(m.Params, argc)).Select(m => (Sig: m, i.Map))).ToList();
                 if (sigs.Count != 1) return null;
-                map = MapFor(iface.TypeParams, receiver.Args);
-                return new MethodDecl(0, sigs[0].Line, sigs[0].ReturnType, sigs[0].Name, sigs[0].Params, new Stmt.BlockStmt(0, sigs[0].Line, Array.Empty<Stmt>()));
+                map = sigs[0].Map;
+                var sig = sigs[0].Sig;
+                return new MethodDecl(0, sig.Line, sig.ReturnType, sig.Name, sig.Params, new Stmt.BlockStmt(0, sig.Line, Array.Empty<Stmt>()));
             }
             foreach (var (decl, classMap) in Chain(receiver))
             {
@@ -650,11 +676,11 @@ namespace fire.Compiler
         private List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> FindMethods(StaticType receiver, string name, int argc)
         {
             var found = new List<(MethodDecl, Dictionary<string, StaticType>?)>();
-            if (receiver.Class != null && _interfaces.TryGetValue(receiver.Class, out var iface))
+            if (receiver.Class != null && _interfaces.ContainsKey(receiver.Class))
             {
-                var map = MapFor(iface.TypeParams, receiver.Args);
-                foreach (var sig in iface.Methods.Where(m => m.Name == name && Fits(m.Params, argc)))
-                    found.Add((new MethodDecl(0, sig.Line, sig.ReturnType, sig.Name, sig.Params, new Stmt.BlockStmt(0, sig.Line, Array.Empty<Stmt>())), map));
+                foreach (var (iface, map, _) in InterfaceChain(receiver))
+                    foreach (var sig in iface.Methods.Where(m => m.Name == name && Fits(m.Params, argc)))
+                        found.Add((new MethodDecl(0, sig.Line, sig.ReturnType, sig.Name, sig.Params, new Stmt.BlockStmt(0, sig.Line, Array.Empty<Stmt>())), map));
                 return found;
             }
             var seen = new List<MethodDecl>();
@@ -1539,6 +1565,7 @@ namespace fire.Compiler
             bool isStatic = false;
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); isStatic = true; }
             CheckAccess(target, m.Name, use, 0, m.Line, isStatic);
+            CheckInterfaceAccessor(target, m.Name, use, m.Line);
             if (MemberLog != null && target.Kind == StaticKind.Class && target.Class != null) MemberLog.Add((_source, m.Line, target.Class, m.Name, false));
             if (target.Kind == StaticKind.Class && FindMember(target, m.Name) == null && !HasMethodNamed(target, m.Name) && FullyKnown(target))
                 Report(UnknownMemberCode, $"'{target}' has no field, property or method '{m.Name}'", m.Line);
@@ -1549,6 +1576,22 @@ namespace fire.Compiler
                 StaticKind.String when m.Name == "Length" => StaticType.Int,
                 _ => StaticType.Dynamic,
             };
+        }
+
+        /// <summary>`conn.RemoteHost = "x"` with `Net.IConnection conn`: the interface declares the property `{ get; }` only (TC016) - whatever class the object
+        /// is, the interface does not promise a setter.</summary>
+        private void CheckInterfaceAccessor(StaticType receiver, string name, MemberUse use, int line)
+        {
+            if (use == MemberUse.Call) return;
+            foreach (var (iface, _, _) in InterfaceChain(receiver))
+                if (iface.PropertySigs.FirstOrDefault(p => p.Name == name) is { } sig)
+                {
+                    if (use == MemberUse.Write && !sig.HasSet)
+                        ReportError(InterfaceAccessorCode, $"The property '{name}' of interface '{PlainName(iface.Name)}' has no 'set' - it cannot be assigned through '{receiver}'", line);
+                    else if (use == MemberUse.Read && !sig.HasGet)
+                        ReportError(InterfaceAccessorCode, $"The property '{name}' of interface '{PlainName(iface.Name)}' has no 'get' - it cannot be read through '{receiver}'", line);
+                    return;
+                }
         }
 
         /// <summary>`obj.Name(...)` that finds no method: none of that name at all (TC008), or none that takes that many arguments (TC002).</summary>
@@ -1670,7 +1713,7 @@ namespace fire.Compiler
 
         private bool HasMethodNamed(StaticType receiver, string name) =>
             Chain(receiver).Any(c => c.Decl.Members.OfType<MethodDecl>().Any(m => m.Name == name))
-            || receiver.Class != null && _interfaces.TryGetValue(receiver.Class, out var iface) && iface.Methods.Any(m => m.Name == name);
+            || InterfaceChain(receiver).Any(i => i.Decl.Methods.Any(m => m.Name == name));
 
         /// <summary>Whether everything a class has is known here: it is a class (not an interface) and all its base classes and interfaces are declared.</summary>
         private bool FullyKnown(StaticType receiver)

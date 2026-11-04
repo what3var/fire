@@ -19541,6 +19541,45 @@ else
             delete gone
             try { print(Report.Describe(gone)) } catch (Exception e) { print("destroyed: " + e.message) }
             """),
+        ("Interface-Properties: get/set ueber das Interface (Auto-Property, eigene Accessoren, geerbt), Einheiten, Fehler im Getter", """
+            interface IGauge {
+                int Limit { get; set; }
+                string Label { get; }
+                float Delay : ms { get; set; }
+            }
+            class Base { string Label { get { return "base" } } }
+            class Gauge : Base, IGauge {
+                int Limit { get; set; }
+                float d : ms
+                float Delay : ms { get { return this.d } set { this.d = value } }
+            }
+            class Strict : IGauge {
+                int Limit { get { throw new ArgumentException("no limit") } set { } }
+                string Label { get; set; } = "strict"
+                float Delay : ms { get; set; }
+            }
+            class Use {
+                static string Show(IGauge g) {
+                    g.Limit = g.Limit + 2
+                    g.Delay = 1.5s
+                    return g.Label + " " + g.Limit + " " + g.Delay
+                }
+            }
+            var a = new Gauge()
+            a.Limit = 5
+            print(Use.Show(a))
+            print(a.d)
+            IGauge s = new Strict()
+            try { print(Use.Show(s)) } catch (ArgumentException e) { print("caught: " + e.message) }
+            s.Delay = 20ms
+            print(s.Delay + " " + s.Label)
+            IGauge none = undefined
+            try { print(none.Limit) } catch (Exception e) { print("undefined") }
+            var gone = new Gauge()
+            IGauge g2 = gone
+            delete gone
+            try { print(g2.Label) } catch (Exception e) { print("destroyed") }
+            """),
         ("Reflection: Type, Member, Get/Set/Call/New/Has, Selektoren, Zugriffsregeln; probe/silence", """
             #import "reflection"
             class Circle {

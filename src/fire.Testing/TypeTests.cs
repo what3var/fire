@@ -559,6 +559,58 @@ static class TypeTests
                 """) is var inherited && inherited == "|1\n17", inherited);
         }
 
+        // properties in interfaces (SPEC 8.5): `int Limit { get; set; }` / `{ get; }` - implemented by a public property (auto or with get/set) of the class
+        {
+            string iface = "interface ILimit { int Limit { get; set; }\n string Name { get; }\n float Delay : ms { get; } }\n";
+            Check("Interface-Property: Auto-Property, get/set und Basisklasse implementieren, Zugriff ueber das Interface mit Typ und Einheit", Run(iface + """
+                class Base { string Name { get { return "base" } } }
+                class Lim : Base, ILimit {
+                    int Limit { get; set; }
+                    float Delay : ms { get { return 2s } }
+                }
+                ILimit l = new Lim()
+                l.Limit = 4
+                l.Limit = l.Limit + 1
+                int n = l.Limit
+                float : ms d = l.Delay
+                print(n + " " + l.Name + " " + d)
+                """) is var props && props == "|5 base 2000ms", props);
+            Check("Interface-Property: ein read-only Mitglied darf read-write implementiert sein", Run(iface + """
+                class Lim : ILimit { int Limit { get; set; }
+                 string Name { get; set; }
+                 float Delay : ms { get; set; } }
+                var x = new Lim()
+                x.Name = "n"
+                ILimit l = x
+                print(l.Name)
+                """) is var rw && rw == "|n", rw);
+            Check("Interface-Property: fehlt sie, ist es E4064", Run(iface + "class Lim : ILimit { int Limit { get; set; }\n float Delay : ms { get; } }\nprint(1)") is var missing && missing == "|ERROR E4064", missing);
+            Check("Interface-Property: fehlt der Setter, ist es E4064", Run(iface + "class Lim : ILimit { int Limit { get; }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var noSet && noSet == "|ERROR E4064", noSet);
+            Check("Interface-Property: ein Feld gleichen Namens zaehlt nicht (E4065)", Run(iface + "class Lim : ILimit { int Limit\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var field && field == "|ERROR E4065", field);
+            Check("Interface-Property: get_/set_-Methoden zaehlen nicht (E4064)", Run(iface + "class Lim : ILimit { int get_Limit() { return 1 }\n undefined set_Limit(int v) { }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var methods && methods == "|ERROR E4064", methods);
+            Check("Interface-Property: private oder protected ist E4063", Run(iface + "class Lim : ILimit { private int Limit { get; set; }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var hidden && hidden == "|ERROR E4063"
+                && CompileText(iface + "class Lim : ILimit { int Limit { get; set; }\n protected string Name { get; }\n float Delay : ms { get; } }").Contains("Property 'Name' of class 'Lim' implements interface 'ILimit' and must be public, not protected"), hidden);
+            Check("Interface-Property: ein anderer Werttyp oder eine andere Einheit ist E4066", Run(iface + "class Lim : ILimit { string Limit { get; set; }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var otherType && otherType == "|ERROR E4066"
+                && Run(iface + "class Lim : ILimit { int Limit { get; set; }\n string Name { get; }\n float Delay : s { get; } }\nprint(1)") == "|ERROR E4066", otherType);
+            Check("Interface-Property: Zuweisung an eine get-only Property ueber das Interface ist TC016 (auch lax ein Fehler)", Run(iface + """
+                class Lim : ILimit { int Limit { get; set; }
+                 string Name { get; set; }
+                 float Delay : ms { get; } }
+                ILimit l = new Lim()
+                l.Name = "x"
+                """) is var readOnly && readOnly == "|ERROR TC016", readOnly);
+            Check("Interface-Property: Typ und Einheit gelten beim Typpruefer (TC001, TC006)", Run(iface + """
+                class Lim : ILimit { int Limit { get; set; }
+                 string Name { get; }
+                 float Delay : ms { get; } }
+                ILimit l = new Lim()
+                l.Limit = "x"
+                float : kg w = l.Delay
+                """) is var typed && typed.StartsWith("TC001 TC006|"), typed);
+            Check("Interface-Property: ein Rumpf im Interface ist E3161, ohne Typ E3162", Run("interface I { int X { get { return 1 } } }\nprint(1)") == "|ERROR E3161"
+                && Run("interface I { X { get; } }\nprint(1)") is var untyped && untyped == "|ERROR E3162", Run("interface I { X { get; } }\nprint(1)"));
+        }
+
         // named arguments: each goes to the parameter of its name (its type is checked there); an unknown name and a parameter without value are errors
         {
             string decl = "class C { static int F(int a, string b = \"x\", int c = 3) { return a + c }\n construct(int size, bool open = false) { } }\n";

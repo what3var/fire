@@ -926,6 +926,17 @@ namespace fire.Editor
                 return bodyClose >= 0 ? bodyClose + 1 : Math.Min(afterParams, bodyEnd);
             }
 
+            // `float Delay : ms { get; }` / `int w : mm = 3`: the unit of a property or field (a unit name, also a combined one like m/s) - skipped, so that it
+            // is not taken for a member of its own
+            if (afterName < bodyEnd && _tokens[afterName].Type == TokenType.Colon)
+            {
+                int unitEnd = afterName + 1;
+                while (unitEnd < bodyEnd && !_tokens[unitEnd].NewlineBefore
+                       && _tokens[unitEnd].Type is not (TokenType.LBrace or TokenType.Assign or TokenType.Semicolon or TokenType.RBrace))
+                    unitEnd++;
+                afterName = unitEnd;
+            }
+
             if (afterName < bodyEnd && _tokens[afterName].Type == TokenType.LBrace)
             {
                 AddMember(info, new MemberInfo(name, MemberKind.Property, 0, DeclLineOf(_tokens[nameIdx]))
