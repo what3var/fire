@@ -59,7 +59,7 @@ namespace Tls {
     }
 
     // An encrypted connection over a Net.TcpClient. Read returns 0 when the other side has ended the connection.
-    class Stream : IO.Stream {
+    class Stream : IO.Stream, Net.IConnection {
         int handle
         bool closed
         Net.TcpClient tcp
@@ -108,8 +108,8 @@ namespace Tls {
 
         destruct() { try { this.Close() } catch (Net.NetException e) { } }
 
-        bool CanRead { get { return !this.closed } }
-        bool CanWrite { get { return !this.closed } }
+        override bool CanRead { get { return !this.closed } }
+        override bool CanWrite { get { return !this.closed } }
         bool IsClosed { get { return this.closed } }
 
         undefined Check() {
@@ -131,6 +131,18 @@ namespace Tls {
 
         string RemoteHost { get { return this.tcp.RemoteHost } }
         int RemotePort { get { return this.tcp.RemotePort } }
+        string LocalHost { get { return this.tcp.LocalHost } }
+        int LocalPort { get { return this.tcp.LocalPort } }
+
+        // Net.IConnection
+        any GetReadTimeout() { return this.ReadTimeout }
+        undefined SetReadTimeout(any timeout) { this.ReadTimeout = timeout }
+        any GetWriteTimeout() { return this.WriteTimeout }
+        undefined SetWriteTimeout(any timeout) { this.WriteTimeout = timeout }
+        string GetRemoteHost() { return this.RemoteHost }
+        int GetRemotePort() { return this.RemotePort }
+        string GetLocalHost() { return this.LocalHost }
+        int GetLocalPort() { return this.LocalPort }
 
         // "TLSv1.3 TLS_AES_256_GCM_SHA384": the protocol and the cipher that were agreed on.
         string Info {
@@ -150,7 +162,7 @@ namespace Tls {
         }
 
         // Up to `count` bytes (at least one unless the other side has ended the connection: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-        int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], int offset, int count) {
             this.Check()
             var deadline = Net.Clock.Deadline(this.readLimit)
             var tries = 0
@@ -165,7 +177,7 @@ namespace Tls {
         }
 
         // All `count` bytes.
-        int Write(byte buffer[], int offset, int count) {
+        override int Write(byte buffer[], int offset, int count) {
             this.Check()
             var done = 0
             while (done < count) {
@@ -191,10 +203,10 @@ namespace Tls {
             this.Write(bytes, 0, bytes.length)
         }
 
-        undefined Flush() { }
+        override undefined Flush() { }
 
         // Ends the TLS session (close_notify) and closes the TCP connection.
-        undefined Close() {
+        override undefined Close() {
             if (this.closed) { return }
             this.closed = true
             if (this.handle >= 0) { __TlsClose(this.handle) }

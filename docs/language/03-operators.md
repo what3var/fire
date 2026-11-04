@@ -146,7 +146,7 @@ print(!(1 > 2))
 
 | Test | True when |
 |---|---|
-| `value is of Type` | the value has the type `Type`: a base type, the class or one of its base classes, an interface the class implements |
+| `value is of Type` | the value has the type `Type`: a base type, the class or one of its base classes, an interface the class implements (a destroyed object: a `DestroyedException`, except for `is of class` and the base types) |
 | `value is in unit` | the value carries a unit of the same dimension as `unit` (`5mm is in m`) |
 | `object is from owner` | the object's owner is exactly `owner` (see [Ownership](13-ownership.md)) |
 | `object is under owner` | `owner` is anywhere in the chain of owners above the object |

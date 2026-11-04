@@ -314,7 +314,7 @@ namespace Gpio {
         }
 
         /// <summary>The levels of all lines (bit n = line n). Throws NotSupportedException if the port cannot be read as a whole.</summary>
-        any Read() {
+        override any Read() {
             var value = 0
             try {
                 for (int line = 0; line < this.width; line++) {
@@ -330,7 +330,7 @@ namespace Gpio {
         }
 
         /// <summary>Sets all lines (bit n = line n) as outputs. Throws NotSupportedException if the port cannot be written as a whole.</summary>
-        bool Write(any data) {
+        override bool Write(any data) {
             int value = data
             try {
                 for (int line = 0; line < this.width; line++) {
@@ -346,7 +346,7 @@ namespace Gpio {
         }
 
         /// <summary>Gives all lines back.</summary>
-        undefined Disconnect() {
+        override undefined Disconnect() {
             for (int i = 0; i < this.width; i++) {
                 var pin = this.pins[i]
                 if (pin != undefined) { pin.Close() }
@@ -366,7 +366,7 @@ class GpioDriver : Driver {
         this.width = width
     }
 
-    undefined Refresh(bool fastScan = true) {
+    override undefined Refresh(bool fastScan = true) {
         var chips = Gpio.Board.Chips()
         var letter = 0
         foreach (chip in chips) {

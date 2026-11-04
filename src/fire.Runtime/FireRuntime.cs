@@ -103,19 +103,8 @@ namespace fire.Runtime
             }
         }
 
-        // Host holds: something of the host keeps the program alive after its last statement - the open windows that a window manager's thread
-        // shows (fire's WindowManager.Start). The main program then waits at its end, serving what is posted to it, until they are gone.
-        private static int _hostHolds;
-
-        /// <summary>Adds (or, negative, removes) holds on the program end.</summary>
-        public static void AddHostHold(int delta)
-        {
-            Interlocked.Add(ref _hostHolds, delta);
-            WakeWaitingOwner();
-        }
-
-        /// <summary>The holds on the program end (see <see cref="AddHostHold"/>).</summary>
-        public static int HostHolds => Volatile.Read(ref _hostHolds);
+        // Host holds (the open windows that a window manager's thread shows) belong to the program they keep alive: VM.AddHostHold of its main VM -
+        // a program in the editor's live view does not hold up another one, and nothing outlives the program it was taken for.
 
         /// <summary>Wakes a main program that is waiting in <see cref="WaitForAllFireThreads"/> (a thread has put something into the queue).</summary>
         internal static void WakeWaitingOwner()
@@ -142,7 +131,13 @@ namespace fire.Runtime
                 }
                 catch (Exception ex)
                 {
+                    // An error of the runtime itself (not a script exception - those go to `catch threads`): never silently - the program
+                    // ends with the reason, as a native program does (`fire runtime error: ...`, exit code 1); otherwise the main program could wait
+                    // forever for a thread that is gone.
                     handle!.SetError(ex);
+                    Console.Out.Flush();
+                    Console.Error.WriteLine("fire runtime error: " + ex.Message);
+                    VM.RequestTerminate(Value.MakeInt(1));
                 }
                 finally
                 {
@@ -201,9 +196,11 @@ namespace fire.Runtime
         /// directly and changes them in sections (see VM.AttachToGlobals). The thread's private global scope holds only placeholders for that, so that the
         /// slots of the captures behind them lie at the places that Resolving.Resolver.ResolveFireStmt/Compiler.CompileFireStmt assigned.
         ///
-        /// `takingValues`: bound directly following the placeholders. An object (ValueKind.Class) is bound as an isolated deep copy
-        /// (Runtime.ObjectCopier.Take - the copying itself activates thread sharing on the original), otherwise directly (Value is an immutable
-        /// struct).
+        /// `takingValues`: bound directly following the placeholders. An object, an array or a buffer is bound as an isolated deep copy of everything
+        /// reachable from it (Runtime.ObjectCopier.TakeValue - the copying itself activates thread sharing on the original), otherwise directly (Value
+        /// is an immutable struct). The copies are made HERE, on the spawning thread, before the new thread starts (a snapshot at the `fire`, as in the
+        /// native runtime); their owner is the root scope of the new thread. The last `handoverCount` of them are `fire handover x`: not copied, the
+        /// value itself (with everything reachable from it) moves to the root scope of the new thread (Runtime.ObjectHandover.MoveTo).
         ///
         /// `withValue` (an actor reference), by contrast, is ALWAYS passed on DIRECTLY, WITHOUT a copy, as the last slot - an actor manages its own
         /// thread safety via its mailbox (see Runtime.ActorMailbox), not via the taking/sync ownership model.</summary>
@@ -215,17 +212,20 @@ namespace fire.Runtime
             int sharedGlobalCount,
             IReadOnlyList<Value> takingValues,
             Value? withValue = null,
-            VmExecutionMode executionMode = VmExecutionMode.Debug)
+            VmExecutionMode executionMode = VmExecutionMode.Debug,
+            int handoverCount = 0)
         {
+            // The slots 0..sharedGlobalCount-1 are the real globals of the main program (the VM reads/writes them via the broker,
+            // see GlobalsBroker/VM.AttachToGlobals) - here only placeholders, so that taking/with lie at the slots assigned by the compiler.
+            var scope = new Scope(null, isGlobal: true);
+            for (int i = 0; i < sharedGlobalCount; i++) scope.DefineSlot(Value.MakeUndefined());
+            int copied = takingValues.Count - handoverCount;
+            for (int i = 0; i < takingValues.Count; i++)
+                scope.DefineSlot(i < copied ? ObjectCopier.TakeValue(takingValues[i], scope) : ObjectHandover.MoveTo(takingValues[i], scope));
+            if (withValue is Value wv)
+                scope.DefineSlot(wv);
             return Fire(() =>
             {
-                // The slots 0..sharedGlobalCount-1 are the real globals of the main program (the VM reads/writes them via the broker,
-                // see GlobalsBroker/VM.AttachToGlobals) - here only placeholders, so that taking/with lie at the slots assigned by the compiler.
-                var scope = new Scope(null, isGlobal: true);
-                for (int i = 0; i < sharedGlobalCount; i++) scope.DefineSlot(Value.MakeUndefined());
-                foreach (var tv in takingValues) DefineSnapshotSlot(scope, tv);
-                if (withValue is Value wv)
-                    scope.DefineSlot(wv);
                 var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
                 if (broker != null) vm.AttachToGlobals(broker, sharedGlobalCount);
                 try { RunVm(vm); }
@@ -288,7 +288,7 @@ namespace fire.Runtime
         ///   reading and writing, without a copy. There is no concurrent execution, so nothing to isolate.
         /// - On a thread without a running VM (a host thread, e.g. a serial event) access to the globals would be a data race:
         ///   there it is queued to the owner VM (`owner`, the main program) and executed by it at a safe point
-        ///   (`sync globals` or - without `#nosync` - automatically, see <see cref="VM.PostCallback"/>). If the main program is no longer running
+        ///   (`sync globals` or - as `#globaljobs` says - automatically, see <see cref="VM.PostCallback"/>). If the main program is no longer running
         ///   or there is no owner, it runs like <see cref="CallCallback"/> on an isolated copy (`snapshotGlobals` supplies it).
         ///
         /// An unhandled exception in the callback never goes to the caller, but as text to `onUnhandled`.</summary>

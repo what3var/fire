@@ -221,6 +221,7 @@ namespace fire.Editor
             _debugger = new DebuggerPanels(_threadsPanel, _scopePanel, _stackPanel);
             _debugger.AttachSession(_session);
             _debugger.ThreadSelected += OnThreadSelected;
+            _debugger.StatusMessage += UpdateStatus;
 
             // The shared DeviceManager of the editor: all scripts use it together (see EditorDeviceService).
             _session.DeviceManager = _devices.Manager;
@@ -282,6 +283,7 @@ namespace fire.Editor
             RefreshCircuitUi();
             _nativeTargetChoice = _settings.NativeTarget;
             RefreshTargetCombo();
+            RefreshEngineCombo();
 
             // Files passed on the command line; without any the editor starts empty (new files come from the welcome window or File > New).
             foreach (var arg in (Environment.GetCommandLineArgs()).Skip(1))
@@ -507,6 +509,18 @@ namespace fire.Editor
                 _ = ConfirmAllThenClose();
                 return;
             }
+            // a build that runs is cancelled first (its compilers end, nothing half-built is kept); the window closes when it has stopped
+            if (_buildJob is { } running)
+            {
+                e.Cancel = true;
+                _closeAfterBuild = true;
+                CancelBuild(running);
+                return;
+            }
+            // a native program of a run ends with spark; the layout is saved with the stack panel as the user left it (not hidden for the native engine)
+            StopNativeRun();
+            if (_session.Target is fire.Debugging.NativeDebugTarget) _session.Reset();
+            if (_stackHiddenForNative) ApplyEngineToPanels(false);
             SaveLayout();
             SaveToolStrips();
             _strips.CloseFloatingWindows();
@@ -621,11 +635,11 @@ namespace fire.Editor
             // A step still pending of the PREVIOUSLY active thread would leave _isBusy set forever (its ThreadPaused event fires later with a ctx that is no longer the active one) -
             // so always reset it when the thread changes, otherwise the step buttons stay locked.
             _isBusy = false;
-            ShowDebugLocation(chosen.IsFinished ? null : chosen.Vm.CurrentLocation);
+            ShowDebugLocation(chosen.IsFinished ? null : chosen.Thread.CurrentLocation);
             _debugger.Refresh(BreakpointDescriptions());
             UpdateStatus(chosen.IsFinished
                 ? $"{chosen.Name}: finished."
-                : $"{chosen.Name}: paused at line {chosen.Vm.CurrentLine}.");
+                : $"{chosen.Name}: paused at line {chosen.Thread.CurrentLocation.Line}.");
         }
 
         // -----------------------------------------------------------
@@ -844,6 +858,7 @@ namespace fire.Editor
             UpdateSaveCommands();
             RefreshProjectUi();
             RefreshTargetCombo();
+            RefreshEngineCombo();
             _debugger.Refresh(BreakpointDescriptions());
             if (!ReferenceEquals(doc, _testsActiveDocument)) { _testsActiveDocument = doc; ScheduleTestDiscovery(activeDocumentChanged: true); }
             RefreshTodo();
@@ -1017,6 +1032,13 @@ namespace fire.Editor
             bool shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
             bool alt = (e.KeyModifiers & KeyModifiers.Alt) != 0;
 
+            // Ctrl+Break: cancels the build that runs (Shift+F5 does too, see Stop_Click)
+            if (BuildProgressWindow.IsCancelGesture(e) && _buildJob != null)
+            {
+                CancelBuild();
+                e.Handled = true;
+                return;
+            }
             switch (e.Key)
             {
                 case Key.Left when alt && ActiveDocument is { Markdown.IsReadOnly: true } mdDoc:

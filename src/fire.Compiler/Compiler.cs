@@ -285,7 +285,11 @@ namespace fire.Compiler
         /// `_topLevelSourceIndex` (see there). Passed to Chunk.MarkLine,
         /// so that a debugger (see editor sub-project) knows, with several
         /// source files, in which file a given line lies.</summary>
-        private int CurrentSourceIndex => _enclosingClass?.Decl.Source ?? _topLevelSourceIndex;
+        private int CurrentSourceIndex => s_memberSource ?? _enclosingClass?.Decl.Source ?? _topLevelSourceIndex;
+
+        /// <summary>The source of the member of a class being compiled - for a member of `class extends X` that of the extension, not of X (its lines lie in the
+        /// file of the extension; the native backend gives the member to the module of that file, ROADMAP 9). Null outside a member.</summary>
+        [ThreadStatic] private static int? s_memberSource;
 
         /// <summary>All known (fully qualified) class names - basis
         /// for ResolveTypeRef (SPEC "Namespaces"). Not readonly: the
@@ -389,6 +393,9 @@ namespace fire.Compiler
         /// <summary>Does the program use the reflection library (`#import "reflection"`)? Then the compiler writes the declared types along as
         /// <see cref="ClassMeta"/> and marks the classes of the library.</summary>
         private bool Reflection => _natives.Has(fire.Standard.ReflectionPrelude.MembersNative);
+
+        /// <summary>Write the <see cref="ClassMeta"/> even without the reflection library (a plugin: the program that loads it reflects on its classes).</summary>
+        private bool _classMeta;
 
         /// <summary>For compiling a lambda/method/constructor body
         /// into a chunk of its own (FunctionProto): shares the resolver
@@ -509,20 +516,24 @@ namespace fire.Compiler
                 : ne.ClassRef.BaseName;
 
         public static CompiledProgram Compile(
-            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives)
+            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives, bool classMeta = false,
+            GlobalJobsMode? globalJobsForced = null, GlobalJobsMode? globalJobsDefault = null)
         {
             s_unitChecks = resolveResult.UnitChecks;
             s_methodTypeArgs = resolveResult.MethodTypeArgs;
             s_localGuards = resolveResult.LocalGuards;
             s_overloadHints = resolveResult.OverloadHints;
-            var compiler = new Compiler(resolveResult, natives);
+            var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
             var classes = compiler.CompileClasses(program);
 
-            // `#nosync` (no matter where in the top-level code it stands): right at the start, before any code runs
-            if (program.Any(s => s is NoSyncDirective))
+            // When the main program processes its queue by itself (docs/THREADING_DESIGN.md section 7): the command line and the project (`globalJobsForced`) go before
+            // `#globaljobs`/`#nosync` (the last one in the top-level code, no matter where it stands), that before fire.native.json (`globalJobsDefault`); right at the
+            // start, before any code runs. The default (safepoints) needs no instruction.
+            var globalJobs = globalJobsForced ?? program.OfType<GlobalJobsDirective>().LastOrDefault()?.Mode ?? globalJobsDefault ?? GlobalJobsMode.Safepoints;
+            if (globalJobs != GlobalJobsMode.Safepoints)
             {
                 compiler._chunk.EmitOp(OpCode.SetAutoSync);
-                compiler._chunk.EmitByte(0);
+                compiler._chunk.EmitByte((byte)globalJobs);
             }
 
             // `#timeout value`: likewise right at the start (the value is an expression without reference to variables, e.g. `10s`)
@@ -755,6 +766,26 @@ namespace fire.Compiler
             return meta;
         }
 
+        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/NATIVE_BACKEND.md) , `[NotSerializable]` before the class (docs/JSON.md) and `[NoCopy]` (SPEC 5.12).</summary>
+        private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
+        {
+            static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;
+            rc.Keep = Has(cd.Attributes, "Keep");
+            if (Has(cd.Attributes, "NotSerializable")) rc.NotSerializable = true;
+            rc.NoCopy = Has(cd.Attributes, "NoCopy");
+            foreach (var member in cd.Members)
+            {
+                (string? name, IReadOnlyList<AttributeDecl>? attributes) = member switch
+                {
+                    FieldDecl f => (f.Name, f.Attributes),
+                    PropertyDecl p => (p.Name, p.Attributes),
+                    MethodDecl m => (m.Name, m.Attributes),
+                    _ => ((string?)null, (IReadOnlyList<AttributeDecl>?)null),
+                };
+                if (name != null && Has(attributes, "Keep")) (rc.KeptMembers ??= new()).Add(name);
+            }
+        }
+
         private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program)
         {
             // the run-time types of the enums first: the attributes of the classes may name a flag enum
@@ -764,7 +795,8 @@ namespace fire.Compiler
                 if (stmt is ClassDecl cd)
                 {
                     classes[cd.Name] = new RuntimeClass(cd.Name, cd);
-                    if (Reflection)
+                    MarkKeepAndSerializable(classes[cd.Name], cd);
+                    if (Reflection || _classMeta)
                     {
                         classes[cd.Name].Meta = BuildClassMeta(cd);
                         classes[cd.Name].IsReflectionHelper = fire.Standard.ReflectionPrelude.HelperClasses.Contains(cd.Name);
@@ -901,6 +933,8 @@ namespace fire.Compiler
                 // Every member is a restart point of its own (see
                 // CompileStmt) - an error in one field/method does
                 // not prevent the compilation of the other members.
+                var outerMember = s_memberSource;
+                s_memberSource = member.Source;
                 try
                 {
                     switch (member)
@@ -963,7 +997,7 @@ namespace fire.Compiler
                             // no mixed static/non-static accessors).
                             if (pd.Getter != null)
                             {
-                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand);
+                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand, accessor: 1);
                                 // `int Count { get { return this.count } }`: the VM reads the field directly (FunctionProto.FieldGetterOf)
                                 if (!pd.IsStatic && pd.Type?.UnitDemand == null && pd.Getter.Statements is [ReturnStmt { Value: MemberExpr { Target: ThisExpr, Name: var backing } }])
                                     getterProto.FieldGetterOf = backing;
@@ -972,7 +1006,7 @@ namespace fire.Compiler
                             if (pd.Setter != null)
                             {
                                 var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
-                                rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access, pd.IsStatic));
+                                rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access, pd.IsStatic, accessor: 2));
                             }
                             break;
                     }
@@ -981,6 +1015,7 @@ namespace fire.Compiler
                 {
                     _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, member.Line)).At(rc.Decl.Source));
                 }
+                finally { s_memberSource = outerMember; }
             }
 
             // No declaration of its own -> exactly ONE synthesised 0-arg public
@@ -997,6 +1032,8 @@ namespace fire.Compiler
             {
                 foreach (var ctor in ctorDecls)
                 {
+                    var outerMember = s_memberSource;
+                    s_memberSource = ctor.Source;
                     try
                     {
                         rc.AddConstructor(CompileConstructorProto(rc, ctor, ctor.Access));
@@ -1005,6 +1042,7 @@ namespace fire.Compiler
                     {
                         _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, ctor.Line)).At(rc.Decl.Source));
                     }
+                    finally { s_memberSource = outerMember; }
                 }
             }
         }
@@ -1021,7 +1059,7 @@ namespace fire.Compiler
             for (int i = 0; i < parms.Count; i++)
             {
                 if (parms[i].DefaultValue == null) continue;
-                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
                 defaults[i] = new FunctionProto(inner._chunk, 0, AccessModifier.Private);
@@ -1044,7 +1082,7 @@ namespace fire.Compiler
 
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false, int line = 0)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
@@ -1243,6 +1281,7 @@ namespace fire.Compiler
         private void CompileFireStmt(FireStmt fs)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            inner._topLevelSourceIndex = CurrentSourceIndex; // its lines belong to the source it stands in (a debugger stops at a breakpoint in it)
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -1281,6 +1320,7 @@ namespace fire.Compiler
             _chunk.EmitU16(_globalSlotCount);
             _chunk.EmitByte((byte)fs.TakingCaptures.Count);
             _chunk.EmitByte(hasWith ? (byte)1 : (byte)0);
+            _chunk.EmitByte((byte)fs.TakingCaptures.Count(c => c.Handover));   // (the parser put them last)
         }
 
         /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`
@@ -1293,6 +1333,7 @@ namespace fire.Compiler
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            inner._topLevelSourceIndex = CurrentSourceIndex; // its lines belong to the source it stands in (a debugger stops at a breakpoint in it)
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -1315,6 +1356,7 @@ namespace fire.Compiler
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            inner._topLevelSourceIndex = CurrentSourceIndex; // its lines belong to the source it stands in (a debugger stops at a breakpoint in it)
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -1329,9 +1371,10 @@ namespace fire.Compiler
         }
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false, string? returnUnit = null,
-            IReadOnlyList<TypeParam>? typeParams = null)
+            IReadOnlyList<TypeParam>? typeParams = null, int accessor = 0)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
+            inner._accessor = isStatic ? 0 : accessor;
             inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
@@ -1395,7 +1438,7 @@ namespace fire.Compiler
         /// uniformly through the same mechanism.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor, AccessModifier access)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
             inner._chunk.OwnerClass = rc;
             // the base call and the field initialisers belong to the line of `construct` (of the class, when it declares none): a debugger shows that, not line 0
             int headerLine = ctor?.Line ?? rc.Decl?.Line ?? 0;
@@ -1513,8 +1556,8 @@ namespace fire.Compiler
                 case TypeCheckDirective:
                     break;
 
-                case NoSyncDirective:
-                    break; // see Compile: `SetAutoSync 0` already stands at the program start
+                case GlobalJobsDirective:
+                    break; // see Compile: `SetAutoSync mode` already stands at the program start
 
                 case TimeoutDirective:
                     break; // see Compile: `SetTimeout` already stands at the program start
@@ -2274,6 +2317,9 @@ namespace fire.Compiler
         /// <summary>The unit a method with a unit at its return type (`float:m Len()`) or the getter of a property with a unit (`float X : m { get ... }`)
         /// converts its return values into, otherwise null.</summary>
         private string? _returnUnit;
+        /// <summary>The body of a property accessor of an object (SPEC 2.2 "Ownership in property accessors"): 1 a getter, 2 a setter, 0 anything else - its
+        /// assignments to members take SetFieldAccessor.</summary>
+        private int _accessor;
 
         private void CompileExpr(Expr expr)
         {
@@ -2615,8 +2661,9 @@ namespace fire.Compiler
 
         private void CompileLambda(LambdaExpr lambda)
         {
-            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
             inner._chunk.OwnerClass = _enclosingClass;
+            inner._topLevelSourceIndex = CurrentSourceIndex; // a lambda at the top level: its lines belong to the source it stands in
             // in generic code the lambda takes the type parameters it uses along (it has no `this` and no call of its own to take them from)
             inner._methodTypeParams = _methodTypeParams;
             if (_methodTypeParams is { Count: > 0 } || _enclosingClass?.Decl?.TypeParams is { Count: > 0 } || _lambdaTypeRefs != null)
@@ -3152,6 +3199,12 @@ namespace fire.Compiler
                 else
                 {
                     CompileExpr(a.Value);
+                    if (_accessor != 0)
+                    {
+                        EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
+                        EmitSetFieldAccessor(me.Name);
+                        return;
+                    }
                 }
 
                 EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
@@ -3256,10 +3309,20 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.LoadThis); // [value, obj]
                     _chunk.EmitOp(OpCode.Swap);     // [obj, value]
                     EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
+                    if (_accessor != 0) { EmitSetFieldAccessor(id.Name); break; }
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
             }
+        }
+
+        /// <summary>A member assignment in a property accessor (SPEC 2.2 "Ownership in property accessors"): what belongs to the accessor call goes to `this`
+        /// (a field of it) or to the setter (a property).</summary>
+        private void EmitSetFieldAccessor(string name)
+        {
+            _chunk.EmitOp(OpCode.SetFieldAccessor);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(name)));
+            _chunk.EmitByte((byte)(_accessor == 1 ? 1 : 0));
         }
 
         /// <summary>`name = take x` (SPEC 2.2): x belongs to whoever holds `name` - the scope of the variable, or the object for a field.</summary>

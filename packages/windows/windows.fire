@@ -98,6 +98,30 @@ class Window {
         }
     }
 
+    // Where the text cursor of the program is (pixels of the framebuffer): an input method (IME - Japanese, Chinese, Korean, dead keys) opens its window
+    // of candidates there. A text field that has the keyboard says it whenever its cursor moves; the composition comes as EventType.TextEditing.
+    undefined SetTextInputArea(int x, int y, int width, int height) { __GRPHWinSetTextInputRect(this.id, x, y, width, height) }
+
+    // What the desktop shows behind the window (Backdrop.None: the window is opaque; Transparent: its pixels are mixed with what lies behind it by their alpha;
+    // Blur, Acrylic, Mica: the desktop also blurs it). A desktop that cannot do what is asked gives the next thing it can (Mica -> Acrylic -> Blur ->
+    // Transparent -> None): reading the property says what it gives (with a manager's thread after its next cycle).
+    Backdrop Backdrop {
+        get { return __GRPHWinGetBackdrop(this.id)!Backdrop }
+        set { __GRPHWinSetBackdrop(this.id, value!int) }
+    }
+
+    // How the window showed its last frame (docs/UI_PLATFORM.md, part 4.4): "gpu+directcomposition" (Windows: the frame from the GPU into DirectComposition's
+    // swap chain), "gpu" (into a swap chain of Vulkan; or a package's presenter, scene3d DirectDrawing), "directcomposition" (Windows: the pixels into
+    // DirectComposition), "pixels" (the pixels, the display's usual way). With a manager's thread: after its next cycle.
+    string PresentPath() { return __GRPHWinPresentPath(this.id) }
+
+    // Only the area (x, y, width, height; pixels of the framebuffer) changed for the next frame: the display may hand over only that to the window system (X11,
+    // Windows) - a program that knows what it drew saves the rest. Several before a frame add up; without it the whole frame goes. UI.Root says it by itself.
+    undefined PresentArea(int x, int y, int width, int height) { __GRPHWinPresentArea(this.id, x, y, width, height) }
+
+    // Pixels of the screen per logical pixel where the window is (2 on a "Retina" or 200 % screen); EventType.ScaleChanged reports a change.
+    float Scale { get { return __GRPHWinGetScale(this.id) } }
+
     bool VSync {
         get { return __GRPHWinGetVSync(this.id) }
         set { __GRPHWinSetVSync(this.id, value) }
@@ -139,7 +163,9 @@ class Window {
     // distinguishes several fingers; pressure 0 to 1). Joystick: JoystickAxis [type, joystick, axis, position] (-1 to 1), JoystickButtonDown/JoystickButtonUp [type, joystick, button],
     // JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre), JoystickAdded/JoystickRemoved [type, joystick] (plugged in/unplugged).
     // Dropped from another program (the file manager, a browser): DropFiles [type, paths (string[]), x, y], DropText [type, text, x, y]; while it is dragged over
-    // the window DragHover [type, x, y], and DragLeave [type] when it leaves without being dropped (SDL3; a build with SDL2 sends neither).
+    // the window DragHover [type, x, y], and DragLeave [type] when it leaves without being dropped (a build with SDL2 sends neither).
+    // An input method composing text: TextEditing [type, text, cursor, marked] (text "" when the composition ended; the finished text comes as TextInput).
+    // ScaleChanged [type, scale]; MouseEnter, MouseLeave, FocusGained, FocusLost [type].
     // Processing thus happens in the main program - with the real global variables, not the isolated copy of a
     // Callbacks.
     bool EnableEvents() { return __GRPHWinEnableEvents(this.id) }
@@ -180,6 +206,14 @@ class Window {
     {
         return __GRPHWinRegisterEvent(this.id, EventType.KeyUp!, fn);
     }
+
+    // An input method composes text: (the composition so far, where its cursor is, how many characters after it are marked); "" when it ended.
+    bool RegisterTextEditing(lambda<string,int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TextEditing!, fn); }
+    bool RegisterScaleChanged(lambda<float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.ScaleChanged!, fn); }
+    bool RegisterMouseEnter(lambda fn) { return __GRPHWinRegisterEvent(this.id, EventType.MouseEnter!, fn); }
+    bool RegisterMouseLeave(lambda fn) { return __GRPHWinRegisterEvent(this.id, EventType.MouseLeave!, fn); }
+    bool RegisterFocusGained(lambda fn) { return __GRPHWinRegisterEvent(this.id, EventType.FocusGained!, fn); }
+    bool RegisterFocusLost(lambda fn) { return __GRPHWinRegisterEvent(this.id, EventType.FocusLost!, fn); }
 
     bool RegisterResize(lambda<int,int> fn)
     {
@@ -256,6 +290,9 @@ class SystemTheme {
     string font = ""
     // the height of its letters in logical pixels (0 = not known)
     int fontSize = 0
+    // false: the user switched transparency effects off (Windows "Transparency effects", macOS "Reduce transparency", the browser's prefers-reduced-transparency) - the
+    // UI then draws no glass and no translucent surfaces; a board without a desktop has none either
+    bool transparency = true
     static SystemTheme cached
 
     construct() { }
@@ -270,6 +307,7 @@ class SystemTheme {
         t.dark = info[2]
         t.accent = info[3]
         t.fontSize = info[5]
+        if (info.length > 6) { t.transparency = info[6] }
         string candidates = info[4]
         if (candidates != "") {
             var names = candidates.Split(";")
@@ -450,6 +488,8 @@ enum EventType
     CloseRequest = 2,
     TextInput = 3,
     Resize = 4,
+    TextEditing = 5,
+    ScaleChanged = 6,
     TouchDown = 16,
     TouchMove = 17,
     TouchUp = 18,
@@ -458,8 +498,10 @@ enum EventType
     MouseMoveRelative = 10,
     MouseUp = 11,
     MouseScroll = 12,
-    //MouseEnter = 13,
-    //MouseLeave = 14,
+    MouseEnter = 13,
+    MouseLeave = 14,
+    FocusGained = 20,
+    FocusLost = 21,
     KeyDown = 24,
     KeyUp = 25,
     JoystickAxis = 32,
@@ -472,6 +514,16 @@ enum EventType
     DropText = 41,
     DragHover = 42,
     DragLeave = 43
+}
+
+// What the desktop shows behind a window (Window.Backdrop).
+enum Backdrop
+{
+    None = 0,
+    Transparent = 1,
+    Blur = 2,
+    Acrylic = 3,
+    Mica = 4
 }
 
 // The clipboard of the desktop (text, pictures, files): what the user copies in other programs, and what the program puts there for them. It holds one

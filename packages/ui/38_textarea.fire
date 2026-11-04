@@ -89,9 +89,9 @@ namespace UI {
             this.history = new UI.TextHistory(this.Text)
         }
 
-        bool Focusable() { return true }
+        override bool Focusable() { return true }
 
-        string StyleKey() { return "TextArea" }
+        override string StyleKey() { return "TextArea" }
 
         bool TakeChanged() {
             var was = this.changed
@@ -685,17 +685,17 @@ namespace UI {
         // ---- layout and drawing ----
 
         // Without a fixed size: a few lines.
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             this.cw = 160
             this.ch = 4 * this.TextHeight(root) + 2 * this.padding + 2
         }
 
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             this.EnsureIndex()
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             this.EnsureIndex()
             this.lineH = UI.M.Max(1, this.TextHeight(root))
             this.mono = this.FontName(root) == ""
@@ -772,7 +772,7 @@ namespace UI {
             else if (x + 2 + 2 * pad > this.hbar.offset + this.viewW) { this.hbar.Set(x + 2 + 2 * pad - this.viewW) }
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             this.Clamp()
             var theme = root.theme
@@ -876,7 +876,7 @@ namespace UI {
 
         // A click puts the caret there, dragging selects; a double click selects the word under the pointer (letters, digits and _; on spaces or punctuation
         // the run of them), a triple click the line (with its line break). Dragging after a double/triple click selects whole words/lines.
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.OverVBar(px, py)) {
                 this.vbar.Press(py - (this.ay + 1), this.viewH)
@@ -936,7 +936,7 @@ namespace UI {
             return at >= s && at < s + this.SelectionLength && at < this.Text.Length
         }
 
-        undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, int px, int py) {
             if (this.vbar.dragging) {
                 this.vbar.Drag(py - (this.ay + 1), this.viewH)
                 return
@@ -978,7 +978,7 @@ namespace UI {
             }
         }
 
-        undefined MouseUp(Root root, int button, int px, int py) {
+        override undefined MouseUp(Root root, int button, int px, int py) {
             this.selecting = false
             this.vbar.Release()
             this.hbar.Release()
@@ -988,18 +988,18 @@ namespace UI {
             }
         }
 
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             this.vbar.SetHover(this.OverVBar(px, py))
             this.hbar.SetHover(this.OverHBar(px, py))
         }
 
         // an I-beam over the text, the arrow over the bars
-        UI.Cursor CursorAt(Root root, int px, int py) {
+        override UI.Cursor CursorAt(Root root, int px, int py) {
             if (this.OverVBar(px, py) || this.OverHBar(px, py)) { return UI.Cursor.Arrow }
             return this.cursor
         }
 
-        bool MouseWheel(Root root, int dx, int dy) {
+        override bool MouseWheel(Root root, int dx, int dy) {
             var step = 3 * this.lineH
             if (dx != 0 && this.showH) {
                 this.hbar.By(-dx * step)
@@ -1016,9 +1016,9 @@ namespace UI {
             return false
         }
 
-        bool CanPan() { return this.showV || this.showH }
-        bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
-        bool PanBy(Root root, int dx, int dy) {
+        override bool CanPan() { return this.showV || this.showH }
+        override bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
+        override bool PanBy(Root root, int dx, int dy) {
             if (!this.showV && !this.showH) { return false }
             if (this.showH) { this.hbar.By(-dx) }
             if (this.showV) { this.vbar.By(-dy) }
@@ -1026,21 +1026,21 @@ namespace UI {
         }
 
         // the held button selects: no drag starts from the elements around it
-        bool KeepsMouseDrag() { return true }
+        override bool KeepsMouseDrag() { return true }
 
         // ---- the keyboard ----
 
         // Tab is typed into the area only with AcceptsTab (and not ReadOnly); otherwise it moves the focus.
-        bool TakesTab() { return this.AcceptsTab && !this.ReadOnly }
+        override bool TakesTab() { return this.AcceptsTab && !this.ReadOnly }
 
         // The area keeps all arrows and the keys that move in the text; Tab only with AcceptsTab.
-        bool WantsKey(int key) {
+        override bool WantsKey(int key) {
             if (key == UI.Keys.Tab()) { return this.TakesTab() }
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Up() || key == UI.Keys.Down() || key == UI.Keys.Home() || key == UI.Keys.End() ||
                 key == UI.Keys.PageUp() || key == UI.Keys.PageDown()
         }
 
-        undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, int key, int mod) {
             this.EnsureIndex()
             this.Clamp()
             var length = this.Text.Length
@@ -1103,7 +1103,7 @@ namespace UI {
         }
 
         // Typed text replaces the selection; what does not fit as a whole (MaxLength) is not taken (pasting cuts instead).
-        undefined TextInput(Root root, string value) {
+        override undefined TextInput(Root root, string value) {
             if (this.ReadOnly) { return }
             value = UI.TextArea.Normalize(value)
             if (this.MaxLength > 0 && this.Text.Length - this.SelectionLength + value.Length > this.MaxLength) { return }
@@ -1113,7 +1113,7 @@ namespace UI {
 
         // ---- dragging the selection (as in the TextBox): to another field a copy, within the area moved (with Ctrl copied), out of the window into another
         // program, which may move it (then it is deleted here). OnDragStart of the program decides first. ----
-        UI.DragData DragStart(Root root, int px, int py) {
+        override UI.DragData DragStart(Root root, int px, int py) {
             if (this.OnDragStart != undefined) { return base.DragStart(root, px, py) }
             if (!this.pressInSelection || !this.HasSelection()) { return undefined }
             this.pressInSelection = false
@@ -1122,7 +1122,7 @@ namespace UI {
             this.dragFrom = this.SelectionStart
             return new UI.DragData(this.SelectedText)
         }
-        undefined DragDone(Root root, UI.DragData data, UI.DropEffect effect) {
+        override undefined DragDone(Root root, UI.DragData data, UI.DropEffect effect) {
             var own = this.dragOwn
             var moved = this.dragMovedHere
             this.dragOwn = false
@@ -1139,11 +1139,11 @@ namespace UI {
             this.Invalidate()
             base.DragDone(root, data, effect)
         }
-        bool DragSnapshot() { return false }
+        override bool DragSnapshot() { return false }
 
         // ---- a drop target for text and files (the paths, one per line); OnDragOver/OnDrop of the program decide first. While something is dragged over the
         // area, a second caret shows where it would go. ----
-        UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
+        override UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
             if (this.OnDragOver != undefined) { return base.DragOver(root, data, px, py) }
             var effect = this.DropEffectAt(root, data, px, py)
             var at = -1
@@ -1170,14 +1170,14 @@ namespace UI {
             if (data.HasText || data.HasFiles || data.Pending) { return UI.DropEffect.Copy }
             return UI.DropEffect.None
         }
-        undefined DragLeave(Root root) {
+        override undefined DragLeave(Root root) {
             if (this.dropPos >= 0) {
                 this.dropPos = -1
                 this.Invalidate()
             }
             base.DragLeave(root)
         }
-        UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
+        override UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
             this.dropPos = -1
             this.Invalidate()
             if (this.OnDrop != undefined) { return base.Drop(root, data, px, py) }

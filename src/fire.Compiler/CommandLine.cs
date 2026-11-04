@@ -46,6 +46,18 @@ namespace fire.Compiler
         public IReadOnlyList<string>? ProgramArguments { get; init; }
         /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
         public bool KeepSources { get; init; }
+        /// <summary>`--keep-all`: a native build keeps every class and member, also what the program does not reach (`--stripping 0`).</summary>
+        public bool KeepAll { get; init; }
+        /// <summary>`--stripping 0-3|none|protected|methods|all`: how much a native build leaves out (`"stripping"` in fire.native.json, the project's setting; docs/NATIVE_BACKEND.md).</summary>
+        public fire.Native.StrippingLevel? Stripping { get; init; }
+        /// <summary>`--linkage source|static|shared|plugin`: how a native build links the libraries (`"linkage"` in fire.native.json, the project's setting; ROADMAP 9);
+        /// `plugin` builds the program's classes as a fire plugin.</summary>
+        public string? Linkage { get; init; }
+        /// <summary>`--host <program>`: with `--linkage plugin`, the program (linkage "shared") the plugin is built for.</summary>
+        public string? Host { get; init; }
+        /// <summary>`--global-jobs safepoints|sleep|sync`: when the main program runs the `fire global` jobs by itself (docs/THREADING_DESIGN.md section 7); goes before the
+        /// project's `globalJobs`, `#globaljobs`/`#nosync` and fire.native.json. Null: those decide.</summary>
+        public fire.Runtime.GlobalJobsMode? GlobalJobs { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
         public string? ProjectName { get; init; }
         /// <summary>Set if the command line is invalid (message for the user).</summary>
@@ -73,9 +85,9 @@ namespace fire.Compiler
         public static string Usage =>
             """
             Usage:
-              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-- <arguments of the program>...]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
-              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
+              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--linkage source|static|shared|plugin] [--host <program>] [--global-jobs safepoints|sleep|sync]
+              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--global-jobs safepoints|sleep|sync]
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
               fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
@@ -94,9 +106,22 @@ namespace fire.Compiler
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
+            --stripping 0-3  How much a native build leaves out of what the program does not reach (docs/NATIVE_BACKEND.md; "stripping" in fire.native.json or the project):
+                    0 none (everything stays, as in the VM), 1 protected (every class and public member stays), 2 methods (every class with its constructors, fields
+                    and properties stays, a method only when it is used), 3 all (the default: only what the program reaches). Names work as well (--stripping methods).
+                    Names given as literals to reflection (Reflect.New("Dog")) always stay; a debug build always keeps everything.
+            --keep-all  The same as --stripping 0.
+            --linkage source|static|shared  How a native build links the libraries and packages: source (the default) puts everything into one C file; static builds each
+                    library once as a static library in the user-wide cache (ember cache clean) and links it; shared (Linux, macOS, Windows with MinGW) builds them as shared libraries (DLLs) put next to the program ("linkage" in fire.native.json or the project);
+                    plugin builds the classes of the program as a fire plugin (<output>.so/.dll and <output>.fireplugin for the VM) that a program with linkage shared loads with Library.Load.
+            --host <program>  With --linkage plugin: the program (built with linkage shared) the plugin is for - its switches and libraries (<program>.firehost next to it).
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
                     typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).
+            --global-jobs safepoints|sleep|sync  When the main program runs the `fire global` jobs (and lets in the sections of its threads, the host callbacks) by itself:
+                    safepoints (the default: at a loop's jump back, Sleep and the wait functions), sleep (only at Sleep and the wait functions) or sync (only at `sync globals`);
+                    `sync globals` and the end of the program always do. Goes before the project's globalJobs, #globaljobs / #nosync in the source and "globalJobs" in
+                    fire.native.json (docs/THREADING_DESIGN.md section 7). The VM and a native build behave the same.
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
             test    runs the tests: the methods with [Test] (docs/TESTING.md), in the VM or with --engine native as a native program for this machine. Without a file: the solution or the
@@ -133,9 +158,13 @@ namespace fire.Compiler
             VmExecutionMode? mode = null;
             int? floatWidth = null;
             TypeCheckMode? typeChecking = null;
+            fire.Runtime.GlobalJobsMode? globalJobs = null;
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
-            bool keep = false;
+            bool keep = false, keepAll = false;
+            fire.Native.StrippingLevel? stripping = null;
+            string? linkage = null;
+            string? host = null;
             string? output = null;
             var defines = new List<string>();
             List<string>? programArguments = null;
@@ -203,6 +232,32 @@ namespace fire.Compiler
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "-p must be followed by the name of a project.");
                     projectName = Unquote(value);
                 }
+                else if (string.Equals(arg, "--linkage", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--linkage is only available with build, native and test.");
+                    string? value = i + 1 < args.Count ? args[++i].ToLowerInvariant() : null;
+                    if (value is not ("source" or "static" or "shared" or "plugin")) return Fail(command, "--linkage must be followed by source, static, shared or plugin.");
+                    linkage = value;
+                }
+                else if (string.Equals(arg, "--host", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command is not CommandKind.Build) return Fail(command, "--host is only available with build (--linkage plugin).");
+                    string? value = i + 1 < args.Count ? args[++i] : null;
+                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--host must be followed by the program the plugin is built for.");
+                    host = Unquote(value);
+                }
+                else if (string.Equals(arg, "--stripping", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--stripping is only available with build, native and test.");
+                    string? value = i + 1 < args.Count ? args[++i] : null;
+                    stripping = fire.Native.Strippings.Parse(value);
+                    if (stripping == null) return Fail(command, "--stripping must be followed by 0, 1, 2 or 3 (none, protected, methods, all).");
+                }
+                else if (string.Equals(arg, "--keep-all", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--keep-all is only available with build, native and test.");
+                    keepAll = true;
+                }
                 else if (string.Equals(arg, "--keep", StringComparison.OrdinalIgnoreCase))
                 {
                     if (command != CommandKind.Build) return Fail(command, "--keep is only available with build.");
@@ -213,6 +268,12 @@ namespace fire.Compiler
                     string? value = typesInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (value == null || Unquote(value).ToLowerInvariant() is not ("lax" or "strict")) return Fail(command, "--types must be followed by lax or strict.");
                     typeChecking = Unquote(value).ToLowerInvariant() == "strict" ? TypeCheckMode.Strict : TypeCheckMode.Lax;
+                }
+                else if (TryOption(arg, "--global-jobs", "--global-jobs", out var jobsInline))
+                {
+                    string? value = jobsInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    globalJobs = fire.Runtime.GlobalJobsModes.Parse(value == null ? null : Unquote(value));
+                    if (globalJobs == null) return Fail(command, "--global-jobs must be followed by safepoints, sleep or sync.");
                 }
                 else if (TryOption(arg, "-f", "--float", out var floatInline))
                 {
@@ -257,6 +318,7 @@ namespace fire.Compiler
                 Mode = mode,
                 FloatWidth = floatWidth,
                 TypeChecking = typeChecking,
+                GlobalJobs = globalJobs,
                 Defines = defines,
                 Target = target,
                 TargetName = targetName,
@@ -266,6 +328,10 @@ namespace fire.Compiler
                 ConfigFile = configFile,
                 ProgramArguments = programArguments,
                 KeepSources = keep,
+                KeepAll = keepAll,
+                Stripping = stripping,
+                Linkage = linkage,
+                Host = host,
                 ProjectName = projectName,
                 OutputGiven = output != null,
                 OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
@@ -336,6 +402,7 @@ namespace fire.Compiler
                 return ExitUsage;
             }
             Linker.ProcessDefaultTypeChecking = options.TypeChecking;
+            Linker.ProcessGlobalJobs = options.GlobalJobs;
             if (options.Command == CommandKind.Help)
             {
                 stdout.WriteLine(CommandLineParser.Usage);
@@ -412,9 +479,19 @@ namespace fire.Compiler
             if (options.ConfigFile != null)
             {
                 if (!File.Exists(options.ConfigFile)) throw new fire.Native.NativeConfigException($"Configuration not found: {options.ConfigFile}");
-                return fire.Native.NativeConfig.Load(options.ConfigFile);
+                return KeepAll(fire.Native.NativeConfig.Load(options.ConfigFile), options);
             }
-            return fire.Native.NativeConfig.FindFor(options.Files[0]);
+            return KeepAll(fire.Native.NativeConfig.FindFor(options.Files[0]), options);
+        }
+
+        /// <summary>`--keep-all` and `--stripping` go before the `"stripping"` of the configuration (and of the project, see NativeBuilder.StrippingOf).</summary>
+        private static fire.Native.NativeConfig KeepAll(fire.Native.NativeConfig config, CommandLineOptions options)
+        {
+            if (options.KeepAll) { config.Stripping = fire.Native.StrippingLevel.None; config.StrippingFromCommandLine = true; }
+            else if (options.Stripping is { } level) { config.Stripping = level; config.StrippingFromCommandLine = true; }
+            if (options.Linkage != null) config.Linkage = options.Linkage;
+            if (options.Host != null) config.Host = options.Host;
+            return config;
         }
 
         /// <summary>`build` with the native engine: translate for the target and let the toolchain build the program (or write the files of a project).</summary>
@@ -442,7 +519,7 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = NativeBuilder.WithRequestedSdl(config.ResolveTarget(options.TargetName), null);   // (only the sources: SDL2 for a window, unless FIRE_SDL or the target say 3)
-                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options));
+                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options), stripping: config.Stripping, globalJobs: config.GlobalJobsValue);
                 string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
                 NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives);
@@ -494,7 +571,7 @@ namespace fire.Compiler
             string engine = options.Engine ?? "vm";
             if (engine == "native")
             {
-                try { config = options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(files[0]); }
+                try { config = KeepAll(options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(files[0]), options); }
                 catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
             }
 
@@ -637,7 +714,7 @@ namespace fire.Compiler
                     stdout.WriteLine($"{package} (package, import \"{plan.Project.Project.ImportName}\")");
                     return ExitOk;
                 }
-                fire.Native.NativeConfig config = options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(plan.Project.FilePath);
+                fire.Native.NativeConfig config = KeepAll(options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(plan.Project.FilePath), options);
                 string? engine = ChooseEngine(options.Engine, plan.Settings.Engine ?? config.Engine, options.TargetName ?? plan.Settings.Target, config, stderr);
                 if (engine == null) return ExitUsage;
                 string? output = options.OutputGiven ? options.OutputFile : plan.Settings.Output;
@@ -645,6 +722,7 @@ namespace fire.Compiler
                 {
                     var target = config.ResolveTarget(options.TargetName ?? plan.Settings.Target);
                     var toolchain = config.ResolveToolchain(target, options.ToolchainName ?? plan.Settings.Toolchain);
+                    if (options.Linkage == null && plan.Settings.Linkage != null) config.Linkage = plan.Settings.Linkage;   // (the command line, then the project, then fire.native.json)
                     // without -o and `output`: <project>/bin/<target>-<mode>/<name> (the mode the program gets: -m, the project, the tags of its files)
                     string out2 = output ?? (toolchain.EffectiveKind == "files"
                         ? fire.Projects.ProjectOutput.Folder(plan.Project.Directory, target.Name, EffectiveModeName(options, plan, target))

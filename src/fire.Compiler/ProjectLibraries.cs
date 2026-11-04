@@ -20,7 +20,7 @@ namespace fire.Compiler
                     more = true;
                     var files = new List<(ProcessedSource, string)>();
                     foreach (var file in library.Sources)
-                        files.Add((preprocess(file) with { Name = library.Name + "/" + file.FileName }, file.Path));
+                        files.Add((preprocess(file) with { Name = library.Name + "/" + file.FileName, Module = library.ImportName }, file.Path));
                     processed[library.ImportName] = files;
                 }
             }

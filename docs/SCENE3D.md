@@ -235,7 +235,7 @@ X11, Wayland, or a `CAMetalLayer` on macOS), and `Render` does not wait for the 
 * **Is it faster?** It saves reading the picture back (on a GPU of its own a wait for the GPU and a copy over the bus), the copy into the framebuffer and the copy into the window's
   texture, and the CPU and the GPU work at the same time; it costs the copy of the overlay to the GPU (skipped when nothing is drawn into the framebuffer). The sample
   **Scene3D Benchmark** (Help > Samples) measures the three ways on a machine: software, hardware with the picture read back, and DirectDrawing.
-* **In the VM** the host shows the windows (src/fire.Terminal.Sdl): the package library gets them through `fire_host.win_attach` (native/abi/fire_pkg_abi.h, `fire_present_fn`); in a
+* **In the VM** the windows are those of the C library of graphics and windows (docs/UI_PLATFORM.md): the package library gets them through `fire_host.win_attach` (native/abi/fire_pkg_abi.h, `fire_present_fn`); in a
   native build the windows bridge does the same through the graphics bridge (`fire_gfx_attachPresenter`; the display layer gives the native handles: `fire_display_native`, with SDL2
   and with SDL3).
 

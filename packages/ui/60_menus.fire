@@ -55,7 +55,9 @@ namespace UI {
             this.grabsKeys = true
         }
 
-        string StyleKey() { return "MenuPopup" }
+        override string StyleKey() { return "MenuPopup" }
+
+        override int PopupRadius(Root root) { return root.theme.popupRadius }
 
         int RowHeight(Root root) { return this.TextHeight(root) + 8 }
 
@@ -64,7 +66,7 @@ namespace UI {
             return this.RowHeight(root)
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 4
             for (var i = 0; i < this.entries.Count; i = i + 1) {
@@ -97,16 +99,14 @@ namespace UI {
             return y
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
             var back = this.Background
             if (back == undefined) { back = theme.menuBack }
-            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
-            var border = this.Pen
-            if (border == undefined) { border = theme.border }
-            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+            if (this.Pen != undefined) { root.Box(ax, ay, this.actualWidth, this.actualHeight, back, this.Pen, theme.popupRadius) }
+            else { root.PopupSurface(this, ax, ay, this.actualWidth, this.actualHeight, back) }
             var y = ay + 2
             for (var i = 0; i < this.entries.Count; i = i + 1) {
                 var item = this.entries[i]
@@ -120,7 +120,7 @@ namespace UI {
                 if (this.Foreground != undefined) { text = this.Foreground }
                 if (!item.Enabled) { text = theme.textDisabled }
                 if (i == this.hot && item.Enabled) {
-                    r.FillRect(ax + 2, y, this.actualWidth - 4, h, theme.selection)
+                    root.Box(ax + 3, y, this.actualWidth - 6, h, theme.selection, undefined, UI.M.Min(theme.radius, 4))
                     text = theme.selectionText
                 }
                 if (item.IsChecked) {
@@ -181,7 +181,7 @@ namespace UI {
             item.Activate()
         }
 
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             var index = this.RowAt(root, py)
             if (index < 0 || this.entries[index].separator) { return }
             this.hot = index
@@ -189,19 +189,19 @@ namespace UI {
         }
 
         // A click outside of all menus closes everything; the menus of a submenu are closed by the root one after the other anyway.
-        bool PopupOutside(Root root, int px, int py) {
+        override bool PopupOutside(Root root, int px, int py) {
             var consumed = this.owner != undefined && this.owner.Contains(px, py)
             root.ClosePopup(this)
             return consumed
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             var index = this.RowAt(root, py)
             if (index >= 0) { this.Choose(root, index) }
         }
 
-        undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, int key, int mod) {
             // the keys go to the topmost menu
             if (key == UI.Keys.Escape()) {
                 if (this.parentMenu != undefined) {
@@ -262,7 +262,7 @@ namespace UI {
             this.menus = new List()
         }
 
-        string StyleKey() { return "MenuBar" }
+        override string StyleKey() { return "MenuBar" }
 
         // Appends a menu of the top level (a MenuItem with submenu rows); it belongs to the bar.
         any Add(any item) {
@@ -273,7 +273,7 @@ namespace UI {
 
         int HeaderWidth(Root root, any item) { return this.TextWidth(root, item.Header) + 16 }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             for (var i = 0; i < this.menus.Count; i = i + 1) { w = w + this.HeaderWidth(root, this.menus[i]) }
             this.cw = w
@@ -298,7 +298,7 @@ namespace UI {
         }
 
         // A menu that has closed is no longer open.
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             if (this.open != undefined && !root.IsPopup(this.open)) {
                 this.open = undefined
@@ -306,7 +306,7 @@ namespace UI {
             }
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var back = this.Background
@@ -319,10 +319,10 @@ namespace UI {
                 var text = theme.text
                 if (this.Foreground != undefined) { text = this.Foreground }
                 if (i == this.openIndex) {
-                    root.renderer.FillRect(x, ay, w, this.actualHeight, theme.selection)
+                    root.Box(x + 1, ay + 2, w - 2, this.actualHeight - 4, theme.selection, undefined, UI.M.Min(theme.radius, 4))
                     text = theme.selectionText
                 } else if (i == this.hotIndex) {
-                    root.renderer.FillRect(x, ay, w, this.actualHeight, theme.faceHover)
+                    root.Box(x + 1, ay + 2, w - 2, this.actualHeight - 4, theme.faceHover, undefined, UI.M.Min(theme.radius, 4))
                 }
                 if (!item.Enabled) { text = theme.textDisabled }
                 this.DrawString(root, x + 8, ay + (this.actualHeight - this.TextHeight(root)) / 2, item.Header, text)
@@ -345,18 +345,47 @@ namespace UI {
             this.open = root.ShowMenu(item.items, this.HeaderLeft(root, index), this.ay + this.actualHeight, this)
         }
 
-        undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             var index = this.IndexAt(root, px)
             if (index >= 0) { this.Open(root, index) }
         }
 
         // With a menu open, the pointer over another title opens its menu.
-        undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, int px, int py) {
             this.hotIndex = this.IndexAt(root, px)
             if (this.open == undefined) { return }
             var index = this.hotIndex
             if (index >= 0 && index != this.openIndex) { this.Open(root, index) }
         }
     }
+
+    // The little window of Element.ToolTip (Root shows it): the text on the background of menus, with the corners of the theme and a fine shadow. It takes no
+    // input - the pointer under it still points at the element.
+    class ToolTipPopup : Element {
+        string Text
+
+        construct(string text) : base(0, 0, -1, -1) {
+            this.Text = text
+        }
+
+        override string StyleKey() { return "ToolTip" }
+
+        override int PopupRadius(Root root) { return root.theme.radius }
+
+        override undefined MeasureCore(Root root, int aw, int ah) {
+            this.cw = this.TextWidth(root, this.Text) + 16
+            this.ch = this.TextHeight(root) + 8
+        }
+
+        override UI.Element HitTest(int px, int py) { return undefined }
+
+        override undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            root.Box(ax, ay, this.actualWidth, this.actualHeight, theme.menuBack, theme.border)
+            this.DrawString(root, ax + 8, ay + 4, this.Text, theme.text)
+        }
+    }
 }
+

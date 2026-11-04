@@ -4,6 +4,7 @@
   "type": "library",
   "import": "ui",
   "standard": true,
+  "serializable": false,
   "settings": {
     "version": "1.0.0",
     "author": "fire",

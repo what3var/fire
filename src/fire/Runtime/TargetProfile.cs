@@ -159,12 +159,23 @@ namespace fire.Runtime
         /// <summary>The platform package implements fire threads.</summary>
         public bool SupportsThreads { get; init; } = true;
 
-        /// <summary>The SDL a window on the desktop (`#import "windows"` on posix and windows) is built with: 2 or 3; null: the build decides - SDL3 when the toolchain
-        /// can compile and link it (a probe that is remembered), else SDL2 (an environment variable FIRE_SDL=2|3 decides first, see docs/NATIVE_BACKEND.md).</summary>
+        /// <summary>The SDL a window on the desktop (`#import "windows"` on posix and windows) is built with: 2 or 3; 0: the build decides - SDL3 when the toolchain
+        /// can compile and link it (a probe that is remembered), else SDL2; null (the default): no SDL - fire's own display (docs/UI_PLATFORM.md), unless the environment
+        /// variable FIRE_SDL=2|3|auto asks for SDL.</summary>
         public int? Sdl { get; init; }
+
+        /// <summary>`#line` directives in the generated C (fire file and line of every instruction): gdb/lldb, the messages of the C compiler and crash reports name
+        /// fire lines. `"lineDirectives": false` in the target of fire.native.json switches them off (the C file is then read as C).</summary>
+        public bool LineDirectives { get; init; } = true;
 
         /// <summary>The name of the toolchain that builds for this target (a key of the configuration's `toolchains`, or `files`: only write the sources);
         /// null: the toolchain of the machine.</summary>
         public string? Toolchain { get; init; }
+
+        /// <summary>A board: the serial port it is on (spark flashes it and talks to its console there); null: found by itself (see Esp32Launch.ResolvePort).</summary>
+        public string? Port { get; init; }
+
+        /// <summary>A board: the baud rate of its console (null: 115200).</summary>
+        public int? Baud { get; init; }
     }
 }

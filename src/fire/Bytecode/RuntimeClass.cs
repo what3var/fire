@@ -101,6 +101,48 @@ namespace fire.Bytecode
         /// <summary>Class of the reflection library (`Reflect`, `Type`, `Member`, `Selector`): for the access check the caller BEFORE it counts.</summary>
         public bool IsReflectionHelper { get; set; }
 
+        /// <summary>`[Keep]` before the class (SPEC 5.12): a native build keeps the class with all its members even when the program does not reach it
+        /// (not inherited by derived classes). The VM keeps everything anyway.</summary>
+        public bool Keep { get; set; }
+
+        /// <summary>The members of THIS class that are marked `[Keep]` (fields, properties, methods by name); null: none.</summary>
+        public List<string>? KeptMembers { get; set; }
+
+        /// <summary>The class itself is excluded from JSON (`[NotSerializable]` before it, or `"serializable": false` in the package that declares it, docs/JSON.md);
+        /// a derived class is excluded as well (see <see cref="IsNotSerializable"/>).</summary>
+        public bool NotSerializable { get; set; }
+
+        /// <summary>Is the class or one of its base classes excluded from JSON?</summary>
+        public bool IsNotSerializable()
+        {
+            for (var c = this; c != null; c = c.Base)
+                if (c.NotSerializable) return true;
+            return false;
+        }
+
+        /// <summary>`[NoCopy]` before the class (SPEC 5.12): an instance stands for something that exists once (a NativeHandle) - `flat`/`copy` never duplicate
+        /// it (an ArgumentException); inherited by derived classes (see <see cref="IsNoCopy"/>).</summary>
+        public bool NoCopy { get; set; }
+
+        /// <summary>Is the class or one of its base classes `[NoCopy]`?</summary>
+        public bool IsNoCopy()
+        {
+            for (var c = this; c != null; c = c.Base)
+                if (c.NoCopy) return true;
+            return false;
+        }
+
+        /// <summary>The ArgumentException text of a `[NoCopy]` class that `flat`/`copy` would duplicate (VM and native the same). `op`: the copy of a thread
+        /// - `taking`, `fire global` (its arguments) or `sync` (what it writes back into the original) - instead of `flat`/`copy` (null); `sync` always
+        /// reaches it through a field or an element.</summary>
+        public static string NoCopyMessage(string className, bool nested, string? op = null) => op == null
+            ? (nested
+                ? $"'{className}' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead."
+                : $"'{className}' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.")
+            : (nested || op == "sync"
+                ? $"'{className}' cannot be copied ([NoCopy]) - '{op}' reaches an instance of it (a field or an element of the copied value), which exists only once."
+                : $"'{className}' cannot be copied ([NoCopy]) - '{op}' would copy an instance of it, which exists only once.");
+
         public List<(string Name, FunctionProto Init)> Fields { get; }
 
         /// <summary>Access modifier of each field declared in THIS class

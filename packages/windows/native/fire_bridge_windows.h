@@ -20,7 +20,8 @@ typedef struct FireWinCallback { int type; Value lam; } FireWinCallback;
 /* A window manager's thread needs the fire threads (the GIL, host services; the generator switches them on when the program can start one), not the
  * browser. Where windows may only live on the main thread (macOS; FIRE_WINDOW_COOPERATIVE elsewhere, for tests) the thread only gives the beat: it asks the
  * program for a cycle about 60 times a second, and the program opens, pumps and shows the windows itself (FIRE_WINDOW_COOP). */
-#if defined(FIRE_THREADS) && !defined(__EMSCRIPTEN__)
+#if (defined(FIRE_THREADS) || defined(FIRE_LIBRARY)) && !defined(__EMSCRIPTEN__)
+/* (in the library for the VM the threads are those of the platform; the program's cycles and the holds on its end are the VM's: fire_rt.h's host services) */
 #define FIRE_WINDOW_THREADS 1
 #if defined(__APPLE__) || defined(FIRE_WINDOW_COOPERATIVE)
 #define FIRE_WINDOW_COOP 1
@@ -53,17 +54,24 @@ typedef struct FireWinShared {
     int vsyncReq, touchReq;       /* settings for the thread */
     int sizeReqW, sizeReqH;       /* a new size of the window for the thread (0: none) */
     int cursorReq;                /* a new cursor for the thread (-1: none) */
+    int textRect[4], textRectReq; /* where the program's text cursor is (Window.SetTextInputArea), for the thread (textRectReq: new) */
+    int backdropReq;              /* what the desktop should show behind the window (FIRE_BACKDROP_*; -1: nothing new) */
+    int backdrop;                 /* what it shows (the answer of the display) */
+    double scale;                 /* pixels of the screen per logical pixel (the display's answer, 0: not known yet) */
     int dragReq, dragDone, dragResult;   /* Window.StartDrag for the thread: what is dragged (UTF-8; the paths one per line), and its answer */
     char* dragText;
     char* dragFiles;
     int release;                  /* the window is gone: the thread closes it and frees this */
+    int frontArea[4], frontPart;  /* what changed in the published frames since the thread showed one (x, y, w, h; frontPart 0: all of it) */
     fire_present_fn frontFn;      /* the presenter of the framebuffer when the frame was published (scene3d DirectDrawing), or NULL */
     void* frontCtx;
     /* the thread's own */
     uint32_t* shown;
     int shownW, shownH;
+    int shownArea[4], shownPart;
     fire_present_fn shownFn;
     void* shownCtx;
+    int refresh;                  /* cycles since a presenter showed the frame last (it is shown again now and then, not every cycle) */
     /* who shows the window (on the thread that owns it): the display, or a presenter (direct: the display gave the window to presentFn) */
     int direct;
     fire_present_fn presentFn;
@@ -82,11 +90,15 @@ static FireWinShared* fire_winb_sharedNew(const char* title, int width, int heig
     s->width = width; s->height = height;
     s->vsyncReq = -1; s->touchReq = -1;
     s->cursorReq = -1;
+    s->backdropReq = -1;
     return s;
 }
 /* Shows a frame in the window (on the thread that owns it): through the presenter of the framebuffer (`fn`; it draws into the window itself and lays the frame over its picture),
  * or - without one, or when it cannot - as the display shows framebuffers. */
-static void fire_winb_show(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height) {
+static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height, const int* area);
+static void fire_winb_show(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height) { fire_winb_showArea(s, fn, ctx, pixels, width, height, NULL); }
+/* (`area`: only it changed since the last frame - x, y, w, h; NULL: all of it) */
+static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height, const int* area) {
     if (s->direct && (fn != s->presentFn || ctx != s->presentCtx)) {
         /* the presenter is gone (or another one came): it lets go of the window, and the display takes it back */
         s->presentFn(s->presentCtx, 0, &s->native, NULL, 0, 0);
@@ -94,7 +106,10 @@ static void fire_winb_show(FireWinShared* s, fire_present_fn fn, void* ctx, cons
         fire_display_restore(&s->display);
     }
     if (fn != NULL && !(fn == s->failedFn && ctx == s->failedCtx)) {
+        fire_native_window before = s->native;
         if (fire_display_native(&s->display, &s->native)) {
+            /* (the display made its OS window anew - another visual for a transparent backdrop: the presenter lets go of the old one first) */
+            if (s->direct && (before.kind != s->native.kind || before.a != s->native.a || before.b != s->native.b || before.id != s->native.id)) fn(ctx, 0, &before, NULL, 0, 0);
             s->direct = 1; s->presentFn = fn; s->presentCtx = ctx;
             if (fn(ctx, 1, &s->native, pixels, width, height)) return;
             fn(ctx, 0, &s->native, NULL, 0, 0);
@@ -103,7 +118,18 @@ static void fire_winb_show(FireWinShared* s, fire_present_fn fn, void* ctx, cons
         }
         s->failedFn = fn; s->failedCtx = ctx;
     }
+    if (pixels == NULL) return;   /* (a frame only for the presenter, which could not show it: the next one comes with its pixels) */
+#ifdef FIRE_DISPLAY_PRESENT_AREA
+    if (area != NULL && fn == NULL) { fire_display_presentArea(&s->display, pixels, width, height, area[0], area[1], area[2], area[3]); return; }
+#endif
     fire_display_present(&s->display, pixels, width, height);
+}
+
+/* The union of two areas (x, y, w, h) into `a`. */
+static void fire_winb_unionArea(int* a, const int* b) {
+    int x0 = a[0] < b[0] ? a[0] : b[0], y0 = a[1] < b[1] ? a[1] : b[1];
+    int x1 = a[0] + a[2] > b[0] + b[2] ? a[0] + a[2] : b[0] + b[2], y1 = a[1] + a[3] > b[1] + b[3] ? a[1] + a[3] : b[1] + b[3];
+    a[0] = x0; a[1] = y0; a[2] = x1 - x0; a[3] = y1 - y0;
 }
 
 /* Frees it (and closes the OS window). */
@@ -136,6 +162,7 @@ typedef struct FireWinState {
     int blocked;               /* a modal window of its manager is open: its input is dropped (Window.Show(true)) */
     int autoClose;             /* a close request (the frame's button) closes the window (Window.AutoClose) */
     int closeRequested;
+    int area[4], areaSet;      /* Window.PresentArea: only this changed for the next frame (areaSet 0: all of it) */
 } FireWinState;
 
 static void fire_winb_stateDelete(FireWinState* w) {
@@ -291,6 +318,8 @@ static uint32_t fire_winb_callbackParams(int type) {
         case FIRE_EV_DROP_FILES: case FIRE_EV_DROP_TEXT: return 3;
         case FIRE_EV_DRAG_HOVER: return 2;
         case FIRE_EV_DRAG_LEAVE: return 0;
+        case FIRE_EV_TEXT_EDITING: return 3;
+        case FIRE_EV_SCALE: return 1;
         default: return 0;
     }
 }
@@ -339,6 +368,8 @@ static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
             case FIRE_EV_DROP_FILES: a[0] = fire_winb_paths(e->data, &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
             case FIRE_EV_DROP_TEXT: a[0] = fire_winb_utf8Str(e->data ? e->data : "", &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
             case FIRE_EV_DRAG_HOVER: a[0] = Float(e->x); a[1] = Float(e->y); n = 2; break;
+            case FIRE_EV_TEXT_EDITING: a[0] = fire_winb_utf8Str(e->data ? e->data : "", &scratch); a[1] = Int(e->cursor); a[2] = Int(e->selection); n = 3; break;
+            case FIRE_EV_SCALE: a[0] = Float(e->value); n = 1; break;
             default: break;
         }
         fire_winb_runCallback(mine[i].lam, n, a);
@@ -380,10 +411,26 @@ static void fire_winb_dropBlocked(FireWinState* w, FireDisplayEvents* events) {
 }
 
 /* Opens the OS window on the calling thread (once); 0 when it cannot be opened (no display). */
+/* What the program asked for of the window that only the display can do (on the thread that owns the window, under s->m when it is threaded): where the text cursor is,
+ * what lies behind the window; and what the display says about its scale. */
+static void fire_winb_applyRequests(FireWinShared* s) {
+#ifdef FIRE_DISPLAY_TEXT_INPUT_RECT
+    if (s->textRectReq) { fire_display_setTextInputRect(&s->display, s->textRect[0], s->textRect[1], s->textRect[2], s->textRect[3]); s->textRectReq = 0; }
+#endif
+#ifdef FIRE_DISPLAY_BACKDROP
+    if (s->backdropReq >= 0) { s->backdrop = fire_display_setBackdrop(&s->display, s->backdropReq); s->backdropReq = -1; }
+#else
+    s->backdropReq = -1;
+#endif
+#ifdef FIRE_DISPLAY_SCALE
+    s->scale = fire_display_scale(&s->display);
+#endif
+}
 static int fire_winb_ensureOpen(FireWinShared* s, int vsync) {
     if (s->opened) return !s->failed;
     s->opened = 1;
     if (!fire_display_open(&s->display, s->title, s->width, s->height, vsync)) s->failed = 1;
+    else fire_winb_applyRequests(s);
     return !s->failed;
 }
 
@@ -474,7 +521,7 @@ static void fire_winb_pumpThread(void* arg) {
         fire_winb_unlock(&m->m);
         for (k = 0; k < listCount; k++) {
             FireWinShared* s = list[k];
-            int w, h, open;
+            int w, h, open, fresh;
             size_t e;
             fire_winb_lock(&s->m);
             if (s->release) {
@@ -491,6 +538,7 @@ static void fire_winb_pumpThread(void* arg) {
             if (s->touchReq >= 0) { fire_display_setTouchMouse(&s->display, s->touchReq != 0); s->touchReq = -1; }
             if (s->sizeReqW > 0) { fire_display_setSize(&s->display, s->sizeReqW, s->sizeReqH); s->sizeReqW = s->sizeReqH = 0; }
             if (s->cursorReq >= 0) { fire_display_setCursor(&s->display, s->cursorReq); s->cursorReq = -1; }
+            fire_winb_applyRequests(s);
             if (s->dragReq) {
                 /* Window.StartDrag: the drag runs here, on the thread of the OS window, until the user lets go (the program waits for the answer) */
                 char* text = s->dragText;
@@ -511,15 +559,22 @@ static void fire_winb_pumpThread(void* arg) {
             open = fire_display_pump(&s->display, &events, w, h);
             for (e = 0; e < events.count; e++) if (s->inbox.count < FIRE_WIN_MAX_QUEUED_EVENTS) fire_display_push(&s->inbox, &events.items[e]);
             if (!open) s->closed = 1;
+            fresh = s->frontNew;
             if (s->frontNew) {
                 uint32_t* t = s->shown;
                 s->shown = s->front; s->front = t;
                 s->shownW = s->frontW; s->shownH = s->frontH; s->frontNew = 0;
+                memcpy(s->shownArea, s->frontArea, sizeof s->shownArea); s->shownPart = s->frontPart; s->frontPart = 0;
                 s->shownFn = s->frontFn; s->shownCtx = s->frontCtx;
             }
             fire_winb_unlock(&s->m);
             /* (the program publishes into `front` meanwhile; what is shown is the thread's own copy) */
-            if (s->shown != NULL) fire_winb_show(s, s->shownFn, s->shownCtx, s->shown, s->shownW, s->shownH);
+            /* (a presenter keeps the last frame in the window: it gets a new one, and the old one now and then - not every cycle) */
+            if ((s->shown != NULL && s->shownFn == NULL) || (s->shownFn != NULL && (fresh || ++s->refresh >= 30))) {
+                s->refresh = 0;
+                fire_winb_showArea(s, s->shownFn, s->shownCtx, s->shown, s->shownW, s->shownH, s->shownPart ? s->shownArea : NULL);
+                s->shownPart = 1; s->shownArea[0] = s->shownArea[1] = s->shownArea[2] = s->shownArea[3] = 0;   /* (shown again unchanged: nothing to hand over) */
+            }
         }
         fire_mutex_lock(&m->cycleM);
         m->cycles++;
@@ -767,6 +822,7 @@ static Value fire_win_WinPump(Value id) {
         if (w->mgr && fire_winb_started(w->mgr)) fire_atomic_store(&w->mgr->pending, 0);   /* (a cooperative manager: the same) */
         if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
         open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);
+        fire_winb_applyRequests(w->sh);
     }
     fire_winb_dropBlocked(w, &events);
     fire_winb_deliver(id, w, &events);
@@ -785,26 +841,49 @@ static uint32_t* fire_winb_resolve(const FireGfxFramebuffer* fb) {
     return pixels;
 }
 
+/* The frame of the framebuffer for its windows: the presenter - a package's (scene3d DirectDrawing) or, for an accelerated framebuffer, the GPU's (part 4.4: the picture
+ * goes into the window from the GPU) - and the pixels: NULL when the GPU's presenter shows the frames and none are needed (nothing is read back). A window that shows
+ * what lies behind it gets its frames premultiplied into a swap chain that mixes; while a new backdrop is still asked for, the frame goes as pixels. */
+static uint32_t* fire_winb_frame(FireWinState* w, fire_present_fn* fn, void** ctx) {
+    *fn = (fire_present_fn)w->fb->presentFn; *ctx = w->fb->presentCtx;
+    if (*fn == NULL && w->sh->backdropReq < 0) {
+        void (*gpuFn)(void) = NULL;
+        void* gpuCtx = NULL;
+        int needs = fire_gfx_gpuPublish(w->fb, w->sh->backdrop != FIRE_BACKDROP_NONE, &gpuFn, &gpuCtx);
+        *fn = (fire_present_fn)gpuFn; *ctx = gpuCtx;
+        if (!needs) return NULL;
+    }
+    return fire_winb_resolve(w->fb);
+}
+
 /* The second half of a cycle: shows the framebuffer - here, or (a started manager) hands a copy to the manager's thread. */
 static Value fire_win_WinPresent(Value id) {
     FireWinState* w = fire_winb_windowOf(id);
     uint32_t* pixels;
+    fire_present_fn fn;
+    void* ctx;
     if (fire_winb_threaded(w)) {
         uint32_t* old;
-        pixels = fire_winb_resolve(w->fb);
+        pixels = fire_winb_frame(w, &fn, &ctx);
         fire_winb_lock(&w->sh->m);
         old = w->sh->front;
         w->sh->front = pixels;
+        /* what changed: a frame of another size, or one without an area, is all of it */
+        if (!w->areaSet || w->sh->frontW != w->fb->width || w->sh->frontH != w->fb->height || (w->sh->frontNew && !w->sh->frontPart)) w->sh->frontPart = 0;
+        else if (w->sh->frontNew) fire_winb_unionArea(w->sh->frontArea, w->area);
+        else { memcpy(w->sh->frontArea, w->area, sizeof w->area); w->sh->frontPart = 1; }
+        w->areaSet = 0;
         w->sh->frontW = w->fb->width; w->sh->frontH = w->fb->height;
-        w->sh->frontFn = (fire_present_fn)w->fb->presentFn; w->sh->frontCtx = w->fb->presentCtx;
+        w->sh->frontFn = fn; w->sh->frontCtx = ctx;
         w->sh->frontNew = 1;
         fire_winb_unlock(&w->sh->m);
         free(old);
         return Undef();
     }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Undef();
-    pixels = fire_winb_resolve(w->fb);
-    fire_winb_show(w->sh, (fire_present_fn)w->fb->presentFn, w->fb->presentCtx, pixels, w->fb->width, w->fb->height);
+    pixels = fire_winb_frame(w, &fn, &ctx);
+    fire_winb_showArea(w->sh, fn, ctx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
+    w->areaSet = 0;
     free(pixels);
     return Undef();
 }
@@ -817,15 +896,19 @@ static Value fire_win_WinTick(Value id) {
     int64_t i;
     size_t k;
     uint32_t* pixels;
+    fire_present_fn fn;
+    void* ctx;
     if (fire_winb_threaded(w)) { Value o = fire_win_WinPump(id); if (g_fireWinList[(size_t)(int32_t)id.i]) fire_win_WinPresent(id); return o; }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
     open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);
+    fire_winb_applyRequests(w->sh);
     if (w->autoResize)
         for (k = 0; k < events.count; k++)
             if (events.items[k].type == FIRE_EV_RESIZE && fire_gfx_validSize(events.items[k].width, events.items[k].height)) fire_gfx_fbResize(w->fb, events.items[k].width, events.items[k].height);
     fire_winb_dropBlocked(w, &events);
-    pixels = fire_winb_resolve(w->fb);
-    fire_winb_show(w->sh, (fire_present_fn)w->fb->presentFn, w->fb->presentCtx, pixels, w->fb->width, w->fb->height);
+    pixels = fire_winb_frame(w, &fn, &ctx);
+    fire_winb_showArea(w->sh, fn, ctx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
+    w->areaSet = 0;
     free(pixels);
     fire_winb_enqueue(w, &events);
     i = (int32_t)id.i;
@@ -866,6 +949,8 @@ static Value fire_win_WinNextEvent(Value id, OwnList* list) {
         case FIRE_EV_DROP_FILES: items[n++] = fire_winb_paths(e.data, list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
         case FIRE_EV_DROP_TEXT: items[n++] = fire_winb_utf8Str(e.data ? e.data : "", list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
         case FIRE_EV_DRAG_HOVER: items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
+        case FIRE_EV_TEXT_EDITING: items[n++] = fire_winb_utf8Str(e.data ? e.data : "", list); items[n++] = Int(e.cursor); items[n++] = Int(e.selection); break;
+        case FIRE_EV_SCALE: items[n++] = Float(e.value); break;
         default: break;
     }
     free(e.data);
@@ -1119,16 +1204,90 @@ static Value fire_win_WinSetCursor(Value id, Value cursor) {
     } else if (s->opened) fire_display_setCursor(&s->display, c);
     return Undef();
 }
+/* Window.SetTextInputArea: where the text cursor of the program is (framebuffer pixels) - an input method opens its window there. */
+static Value fire_win_WinSetTextInputRect(Value id, Value x, Value y, Value width, Value height) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    s->textRect[0] = (int)x.i; s->textRect[1] = (int)y.i; s->textRect[2] = (int)width.i; s->textRect[3] = (int)height.i;
+    s->textRectReq = 1;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.Backdrop = kind: what the desktop shows behind the window (FIRE_BACKDROP_*). The answer (what it gives) comes with the next cycle of a managed window. */
+static Value fire_win_WinSetBackdrop(Value id, Value kind) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    int k = (int)kind.i;
+    if (k < FIRE_BACKDROP_NONE) k = FIRE_BACKDROP_NONE;
+    if (k > FIRE_BACKDROP_MICA) k = FIRE_BACKDROP_MICA;
+    if (threaded) fire_winb_lock(&s->m);
+    s->backdropReq = k;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.PresentArea: only (x, y, w, h) of the framebuffer changed for the next frame - the display may hand over only that. Several before a frame add up. */
+static Value fire_win_WinPresentArea(Value id, Value x, Value y, Value width, Value height) {
+    FireWinState* w = fire_winb_windowOf(id);
+    int a[4];
+    a[0] = (int)x.i; a[1] = (int)y.i; a[2] = (int)width.i; a[3] = (int)height.i;
+    if (a[2] < 0) a[2] = 0;
+    if (a[3] < 0) a[3] = 0;
+    if (w->areaSet) fire_winb_unionArea(w->area, a);
+    else { memcpy(w->area, a, sizeof a); w->areaSet = 1; }
+    return Undef();
+}
+/* Window.Backdrop: what the desktop shows behind the window now. */
+static Value fire_win_WinGetBackdrop(Value id) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int k, threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    k = s->backdrop;
+    if (threaded) fire_winb_unlock(&s->m);
+    return Int(k);
+}
+/* Window.PresentPath: how the window showed its last frame - through a presenter (the GPU: into DirectComposition or a swap chain), or as pixels (DirectComposition
+ * or the display's usual way). */
+static Value fire_win_WinPresentPath(Value id, OwnList* list) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    const char* path = "pixels";
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    if (s->direct) path = s->native.kind == FIRE_NATIVE_DCOMP ? "gpu+directcomposition" : "gpu";
+#ifdef FIRE_DISPLAY_PRESENT_PATH
+    else if (s->opened && fire_display_presentPath(&s->display) == 2) path = "directcomposition";
+#endif
+    if (threaded) fire_winb_unlock(&s->m);
+    return fire_winb_utf8Str(path, list);
+}
+/* Window.Scale: pixels of the screen per logical pixel where the window is (1 before it opened, or when the display does not know). */
+static Value fire_win_WinGetScale(Value id) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    double v;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    v = s->scale;
+    if (threaded) fire_winb_unlock(&s->m);
+    return Float((Real)(v > 0 ? v : 1.0));
+}
 /* SystemTheme.Current(): [embedded, scale, dark, accent 0xRRGGBB, font candidates "a;b;c", font size in logical pixels] (see fire_systheme.h). */
 static Value fire_win_WinSystemTheme(OwnList* list) {
     FireSystemTheme t;
     Arr* a;
-    Value items[6];
+    Value items[7];
     int k;
     fire_display_systemTheme(&t);
-    a = allocArr(6, list);
+    a = allocArr(7, list);
     items[0] = Bool(t.embedded != 0); items[1] = Float((Real)t.scale); items[2] = Bool(t.dark != 0); items[3] = Int(t.accent); items[4] = fire_winb_utf8Str(t.fonts, list); items[5] = Int(t.fontSize);
-    for (k = 0; k < 6; k++) { arrItems(a)[k] = items[k]; retain(items[k]); }
+    items[6] = Bool(t.transparency != 0);
+    for (k = 0; k < 7; k++) { arrItems(a)[k] = items[k]; retain(items[k]); }
     return ArrV(a);
 }
 /* The program runs the cycle the manager's thread asked for: the next one may be asked for (also when that cycle does nothing, see RunModal). */

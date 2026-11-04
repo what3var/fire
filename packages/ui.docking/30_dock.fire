@@ -32,7 +32,7 @@ namespace UI.Docking {
             if (content != undefined) { this.SetContent(content) }
         }
 
-        string StyleKey() { return "ToolWindow" }
+        override string StyleKey() { return "ToolWindow" }
 
         // The element the window shows; it belongs to the window (the previous one is destroyed).
         undefined SetContent(UI.Element content) {
@@ -114,23 +114,23 @@ namespace UI.Docking {
             if (pane != undefined) { pane.Select(pane.windows.IndexOf(this)) }
         }
 
-        undefined Poll(UI.Root root) {
+        override undefined Poll(UI.Root root) {
             base.Poll(root)
             if (this.content != undefined) { this.content.Poll(root) }
         }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             if (this.content == undefined) { return }
             this.content.Measure(root, aw, ah)
             this.cw = this.content.dw
             this.ch = this.content.dh
         }
 
-        undefined ArrangeCore(UI.Root root, int w, int h) {
+        override undefined ArrangeCore(UI.Root root, int w, int h) {
             if (this.content != undefined) { this.content.Arrange(root, 0, 0, w, h) }
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
@@ -146,7 +146,7 @@ namespace UI.Docking {
             }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             if (this.content != undefined) {
                 var hit = this.content.HitTest(px, py)
@@ -155,11 +155,11 @@ namespace UI.Docking {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             if (this.content != undefined) { this.content.Collect(list) }
         }
 
-        UI.Element FindName(string name) {
+        override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             if (this.content != undefined) { return this.content.FindName(name) }
             return undefined
@@ -189,7 +189,7 @@ namespace UI.Docking {
             this.windows = new List()
         }
 
-        string StyleKey() { return "DockPane" }
+        override string StyleKey() { return "DockPane" }
 
         UI.Docking.ToolWindow ActiveWindow() {
             if (this.windows.Count == 0) { return undefined }
@@ -294,7 +294,7 @@ namespace UI.Docking {
             return 0
         }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             var extra = this.CaptionHeight(root) + this.TabHeight(root) + 2
             var win = this.ActiveWindow()
             if (win == undefined) {
@@ -311,7 +311,7 @@ namespace UI.Docking {
             this.ch = win.dh + extra
         }
 
-        undefined ArrangeCore(UI.Root root, int w, int h) {
+        override undefined ArrangeCore(UI.Root root, int w, int h) {
             var win = this.ActiveWindow()
             if (win == undefined) { return }
             var caption = this.CaptionHeight(root)
@@ -327,7 +327,7 @@ namespace UI.Docking {
             return false
         }
 
-        undefined Poll(UI.Root root) {
+        override undefined Poll(UI.Root root) {
             base.Poll(root)
             for (var i = 0; i < this.windows.Count; i = i + 1) { this.windows[i].Poll(root) }
             var inside = this.FocusIn(root)
@@ -341,8 +341,8 @@ namespace UI.Docking {
             var size = this.ButtonSize(root)
             var y = this.ay + 3
             var r = root.renderer
-            if (this.pressedPart == part && this.hotPart == part) { r.FillRect(x, y, size, size, root.theme.facePressed) }
-            else if (this.hotPart == part) { r.FillRect(x, y, size, size, root.theme.faceHover) }
+            if (this.pressedPart == part && this.hotPart == part) { root.Box(x, y, size, size, root.theme.facePressed, undefined, UI.M.Min(root.theme.radius, 4)) }
+            else if (this.hotPart == part) { root.Box(x, y, size, size, root.theme.faceHover, undefined, UI.M.Min(root.theme.radius, 4)) }
             var cx = x + size / 2
             var cy = y + size / 2
             if (part == 3) {
@@ -361,7 +361,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
             var theme = root.theme
@@ -424,7 +424,7 @@ namespace UI.Docking {
             if (win != undefined && win.Visible) { win.Draw(root, ax + win.rx, ay + win.ry) }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var win = this.ActiveWindow()
             if (win != undefined) {
@@ -434,12 +434,12 @@ namespace UI.Docking {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             var win = this.ActiveWindow()
             if (win != undefined) { win.Collect(list) }
         }
 
-        UI.Element FindName(string name) {
+        override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             for (var i = 0; i < this.windows.Count; i = i + 1) {
                 var found = this.windows[i].FindName(name)
@@ -457,7 +457,7 @@ namespace UI.Docking {
             if (list.Count > 0) { root.SetFocus(list[0]) }
         }
 
-        undefined Hover(UI.Root root, int px, int py) {
+        override undefined Hover(UI.Root root, int px, int py) {
             var part = this.PartAt(root, px, py)
             if (part != 3 && part != 4) { part = 0 }
             if (part != this.hotPart) {
@@ -466,7 +466,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseDown(UI.Root root, int button, int px, int py) {
+        override undefined MouseDown(UI.Root root, int button, int px, int py) {
             if (button != 1 || this.manager == undefined) { return }
             var part = this.PartAt(root, px, py)
             if (part == 3 || part == 4) {
@@ -500,7 +500,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseMove(UI.Root root, int px, int py) {
+        override undefined MouseMove(UI.Root root, int px, int py) {
             if (this.dragging && this.manager != undefined) { this.manager.DragMove(root, px, py) }
             else if (this.pressedPart == 3 || this.pressedPart == 4) {
                 var part = this.PartAt(root, px, py)
@@ -512,7 +512,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseUp(UI.Root root, int button, int px, int py) {
+        override undefined MouseUp(UI.Root root, int button, int px, int py) {
             var pressed = this.pressedPart
             this.pressedPart = 0
             if (this.dragging) {
@@ -555,7 +555,7 @@ namespace UI.Docking {
 
         construct() : base(0, 0, 240, 180) { }
 
-        string StyleKey() { return "FloatWindow" }
+        override string StyleKey() { return "FloatWindow" }
 
         bool HoldsStrip() { return this.body != undefined && this.body is of UI.Docking.ToolStrip }
 
@@ -566,7 +566,7 @@ namespace UI.Docking {
 
         int CloseLeft(UI.Root root) { return this.ax + this.actualWidth - 1 - this.TitleHeight(root) }
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             if (this.body == undefined) { return }
             if (this.HoldsStrip()) {
                 any strip = this.body
@@ -580,7 +580,7 @@ namespace UI.Docking {
             this.ch = 100
         }
 
-        undefined ArrangeCore(UI.Root root, int w, int h) {
+        override undefined ArrangeCore(UI.Root root, int w, int h) {
             if (this.body == undefined) { return }
             if (this.HoldsStrip()) {
                 var title = this.TitleHeight(root)
@@ -592,14 +592,14 @@ namespace UI.Docking {
             this.body.Arrange(root, b, b, w - 2 * b, h - 2 * b)
         }
 
-        undefined Poll(UI.Root root) {
+        override undefined Poll(UI.Root root) {
             base.Poll(root)
             if (this.body == undefined) { return }
             this.body.Poll(root)
             if (this.HoldsStrip() && this.Visible != this.body.Visible) { this.Visible = this.body.Visible }
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
             var theme = root.theme
@@ -625,7 +625,7 @@ namespace UI.Docking {
             if (b != undefined && b.Visible) { b.Draw(root, ax + b.rx, ay + b.ry) }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             if (this.body != undefined) {
                 var hit = this.body.HitTest(px, py)
@@ -634,11 +634,11 @@ namespace UI.Docking {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             if (this.Visible && this.body != undefined) { this.body.Collect(list) }
         }
 
-        UI.Element FindName(string name) {
+        override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             if (this.body != undefined) { return this.body.FindName(name) }
             return undefined
@@ -646,7 +646,7 @@ namespace UI.Docking {
 
         // The edges of a pane frame under the screen position (see resizing).
         // the edges of a floating window resize it
-        UI.Cursor CursorAt(UI.Root root, int px, int py) {
+        override UI.Cursor CursorAt(UI.Root root, int px, int py) {
             var edges = this.resizing
             if (edges == 0) { edges = this.EdgesAt(px, py) }
             var left = edges % 2 == 1
@@ -677,7 +677,7 @@ namespace UI.Docking {
             return px >= this.CloseLeft(root) && py < this.ay + 1 + title
         }
 
-        undefined Hover(UI.Root root, int px, int py) {
+        override undefined Hover(UI.Root root, int px, int py) {
             var hot = this.OverClose(root, px, py)
             if (hot != this.closeHot) {
                 this.closeHot = hot
@@ -685,7 +685,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseDown(UI.Root root, int button, int px, int py) {
+        override undefined MouseDown(UI.Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.manager != undefined) { this.manager.BringToFront(this) }
             if (this.HoldsStrip()) {
@@ -711,7 +711,7 @@ namespace UI.Docking {
             this.startH = this.Height
         }
 
-        undefined MouseMove(UI.Root root, int px, int py) {
+        override undefined MouseMove(UI.Root root, int px, int py) {
             if (this.dragging && this.manager != undefined) {
                 this.manager.DragMove(root, px, py)
                 return
@@ -736,7 +736,7 @@ namespace UI.Docking {
             root.Invalidate()
         }
 
-        undefined MouseUp(UI.Root root, int button, int px, int py) {
+        override undefined MouseUp(UI.Root root, int button, int px, int py) {
             if (this.dragging) {
                 this.dragging = false
                 if (this.manager != undefined) { this.manager.DragEnd(root, px, py) }
@@ -846,7 +846,7 @@ namespace UI.Docking {
             this.rightStrips.parent = this
         }
 
-        string StyleKey() { return "DockManager" }
+        override string StyleKey() { return "DockManager" }
 
         // Something has moved: everything is arranged and painted anew.
         undefined Changed() {
@@ -1253,7 +1253,7 @@ namespace UI.Docking {
 
         // ---- layout ----
 
-        undefined MeasureCore(UI.Root root, int aw, int ah) {
+        override undefined MeasureCore(UI.Root root, int aw, int ah) {
             var w = aw
             var h = ah
             // without a size of its own and from the container: the whole window
@@ -1271,7 +1271,7 @@ namespace UI.Docking {
             this.sideRects[i + 3] = h
         }
 
-        undefined ArrangeCore(UI.Root root, int w, int h) {
+        override undefined ArrangeCore(UI.Root root, int w, int h) {
             var bottom = h
             var sb = this.statusBar
             if (sb != undefined && sb.Visible) {
@@ -1402,7 +1402,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined Poll(UI.Root root) {
+        override undefined Poll(UI.Root root) {
             base.Poll(root)
             if (this.content != undefined) { this.content.Poll(root) }
             this.topStrips.Poll(root)
@@ -1417,7 +1417,7 @@ namespace UI.Docking {
             for (var i = 0; i < this.floats.Count; i = i + 1) { this.floats[i].Poll(root) }
         }
 
-        undefined Draw(UI.Root root, int ax, int ay) {
+        override undefined Draw(UI.Root root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, root.theme.back) }
@@ -1446,7 +1446,7 @@ namespace UI.Docking {
             if (e.Visible) { e.Draw(root, this.ax + e.rx, this.ay + e.ry) }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.floats.Count - 1
             while (i >= 0) {
@@ -1474,7 +1474,7 @@ namespace UI.Docking {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             if (!this.Visible || !this.Enabled) { return }
             this.topStrips.Collect(list)
             this.leftStrips.Collect(list)
@@ -1489,7 +1489,7 @@ namespace UI.Docking {
             for (var i = 0; i < this.floats.Count; i = i + 1) { this.floats[i].Collect(list) }
         }
 
-        UI.Element FindName(string name) {
+        override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             UI.Element found = undefined
             if (this.content != undefined) { found = this.content.FindName(name) }
@@ -1505,7 +1505,7 @@ namespace UI.Docking {
 
         // The splitter at the position relative to the manager: sets dragKind (3 edge, 4 between panes), dragSide and dragIndex; false if there is none.
         // over a splitter (or while one is dragged): the arrows of its direction
-        UI.Cursor CursorAt(UI.Root root, int px, int py) {
+        override UI.Cursor CursorAt(UI.Root root, int px, int py) {
             var kind = this.dragKind
             var side = this.dragSide
             var index = this.dragIndex
@@ -1571,7 +1571,7 @@ namespace UI.Docking {
             return false
         }
 
-        undefined MouseDown(UI.Root root, int button, int px, int py) {
+        override undefined MouseDown(UI.Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (!this.SplitterAt(px - this.ax, py - this.ay)) { return }
             this.pressX = px
@@ -1595,7 +1595,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseMove(UI.Root root, int px, int py) {
+        override undefined MouseMove(UI.Root root, int px, int py) {
             var dx = px - this.pressX
             var dy = py - this.pressY
             if (this.dragKind == 3) {
@@ -1620,7 +1620,7 @@ namespace UI.Docking {
             }
         }
 
-        undefined MouseUp(UI.Root root, int button, int px, int py) {
+        override undefined MouseUp(UI.Root root, int button, int px, int py) {
             if (this.dragKind == 3 || this.dragKind == 4) { this.ResetDrag() }
         }
 
@@ -1955,8 +1955,7 @@ namespace UI.Docking {
                 back = theme.accent
                 mark = theme.selectionText
             }
-            r.FillRect(x, y, g, g, back)
-            r.DrawRect(x, y, g, g, theme.borderFocus)
+            root.Box(x, y, g, g, back, theme.borderFocus, UI.M.Min(theme.radius, 4))
             var cx = x + g / 2
             var cy = y + g / 2
             if (arrow == UI.Dock.Left) { r.FillTriangle(cx + 4, cy - 6, cx + 4, cy + 6, cx - 5, cy, mark) }
@@ -1976,9 +1975,8 @@ namespace UI.Docking {
                 var shade = new SolidBrush(rgb + 1342177280)
                 var blending = r.AlphaBlending
                 r.AlphaBlending = true
-                r.FillRect(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, shade)
+                root.Box(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, shade, new Pen(color, 2))
                 r.AlphaBlending = blending
-                r.DrawRect(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, new Pen(color, 2))
             }
             foreach (side in UI.Dock.Values()) { this.DrawGuide(root, side!int, side!int) }
             var p = this.compassPane

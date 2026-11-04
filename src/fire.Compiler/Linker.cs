@@ -39,6 +39,16 @@ namespace fire.Compiler
         private TypeCheckMode EffectiveTypeChecking => TypeChecking ?? ProcessDefaultTypeChecking
             ?? (string.Equals(Plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax);
 
+        /// <summary>When the main program processes its queue by itself (`--global-jobs`, docs/THREADING_DESIGN.md section 7): goes before the project, `#globaljobs` and
+        /// fire.native.json. Process-wide, like <see cref="ProcessDefaultTypeChecking"/>.</summary>
+        public static GlobalJobsMode? ProcessGlobalJobs { get; set; }
+
+        /// <summary>`"globalJobs"` of fire.native.json (a native build): used when neither the command line, the project nor `#globaljobs`/`#nosync` say anything.</summary>
+        public GlobalJobsMode? GlobalJobsDefault { get; set; }
+
+        /// <summary>The command line, then the project (`settings.globalJobs`); null: the source decides (`#globaljobs`, then <see cref="GlobalJobsDefault"/>).</summary>
+        private GlobalJobsMode? ForcedGlobalJobs => ProcessGlobalJobs ?? GlobalJobsModes.Parse(Plan?.Settings?.GlobalJobs);
+
         /// <summary>The engine the program is built for, a symbol of `#if` (`vm` or `native`).</summary>
         public string Engine { get; set; } = ConditionalSymbols.DefaultEngine;
 
@@ -52,6 +62,10 @@ namespace fire.Compiler
         /// <summary>The files the `sources` come from, in the same order (null entries: no file): relative paths of `#include`/`#extern` in a source are taken from its own folder, and an error
         /// says which file it is in. With a <see cref="Plan"/> these are the files of the project.</summary>
         public IReadOnlyList<string?>? SourcePaths { get; set; }
+
+        /// <summary>Write the reflection metadata of the classes (ClassMeta) even when the program does not import `reflection`: a plugin (`--linkage plugin`),
+        /// whose classes the program that loads it reaches by reflection (Reflect.Get/Set, `Type.Of(x).Members`).</summary>
+        public bool ClassMeta { get; set; }
 
         /// <summary>The symbols of `#if`: the ones asked for and those of the project's settings.</summary>
         private IReadOnlyList<string>? EffectiveDefines()
@@ -221,6 +235,16 @@ namespace fire.Compiler
             return files;
         }
 
+        /// <summary>The SHA-256 (hex, lower case) of the text of each source of the program as the compiler got it, by source index (see LinkedProgram.SourceHashes): the sources
+        /// of the program have one, the prelude and the libraries none.</summary>
+        private static IReadOnlyList<string?> SourceHashesOf(int total, IReadOnlyList<string> sources)
+        {
+            var hashes = new string?[total];
+            for (int i = 0; i < sources.Count && total - sources.Count + i >= 0; i++)
+                hashes[total - sources.Count + i] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sources[i]))).ToLowerInvariant();
+            return hashes;
+        }
+
         /// <summary>A package that the project references has to be installed (`ember install`); the version is a minimum.</summary>
         private void CheckPackageReferences()
         {
@@ -245,7 +269,7 @@ namespace fire.Compiler
 
         /// <summary>A statement at the top level that only declares (runs nothing): a class, interface, enum, function, namespace, extension or a directive.</summary>
         private static bool IsDeclaration(Ast.Stmt stmt) =>
-            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
+            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
 
         /// <summary>`forge test` (docs/TESTING.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
         /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
@@ -265,6 +289,37 @@ namespace fire.Compiler
                 if (errors.Count >= 20) break;
             }
             if (errors.Count > 0) throw new LibraryEntryPointException(string.Join(Environment.NewLine, errors));
+        }
+
+        /// <summary>The modules each module of the program needs (ROADMAP 9): the imports its sources name (with what they bring along) and, for a library of the project,
+        /// the libraries it references. `core` (the prelude) is needed by all and not listed.</summary>
+        private IReadOnlyDictionary<string, IReadOnlyList<string>> ModuleDependencies(IReadOnlyList<ProcessedSource> processed)
+        {
+            var deps = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            var modules = processed.Skip(1).Select(p => p.Module).Where(m => m != null).Select(m => m!).Distinct().ToList();
+            foreach (var module in modules)
+            {
+                var needs = new List<string>();
+                void Need(string key) { if (key != module && !needs.Contains(key)) needs.Add(key); }
+                if (Plan != null && Plan.Libraries.TryGetValue(module, out var library))
+                {
+                    foreach (var other in library.Requires) if (Plan.Libraries.TryGetValue(other, out var lib)) Need(lib.ImportName);
+                    foreach (var file in library.Sources)
+                        foreach (var name in ImportedPreludes.FindImportNames(file.Text))
+                        {
+                            if (Plan.Libraries.TryGetValue(name, out var lib)) { Need(lib.ImportName); continue; }
+                            try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) Need(key); }
+                            catch (Exception) { }
+                        }
+                }
+                else
+                {
+                    try { foreach (var key in ImportedPreludes.WithDependencies(module)) Need(key); }
+                    catch (Exception) { }
+                }
+                deps[module] = needs.Where(modules.Contains).ToList();
+            }
+            return deps;
         }
 
         /// <param name="floatWidthOverride">32 or 64: precision of `float` for this build (command line); overrides `#floatwidth` and the target.</param>
@@ -453,6 +508,7 @@ namespace fire.Compiler
             // every type reference in the AST carries its own namespace context
             // directly on itself (see Ast.TypeRef.Namespaces), set by the
             // parser when parsing each individual ProcessedSource.
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, $"Compiling fire: parsing {processedSources.Count} sources", 0, 4);
             var program = Parser.ParseMultiple(processedSources);
             int driverSources = 0;
             if (TestDriver != null)
@@ -465,6 +521,7 @@ namespace fire.Compiler
                 driverSources = 1;
             }
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: resolving names", 1, 4);
             var resolveResult = Resolver.Resolve(program, natives.Names);
             string? memberLogFile = Environment.GetEnvironmentVariable("FIRE_MEMBER_LOG");
             if (memberLogFile != null)
@@ -484,8 +541,15 @@ namespace fire.Compiler
                 TypeChecker.MemberLog = null;
                 lock (typeof(Linker)) File.AppendAllText(memberLogFile, lines.ToString());
             }
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
-            var compiled = Compiler.Compile(program, resolveResult, natives);
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
+            var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
+            // the classes of a package with `"serializable": false` (docs/JSON.md)
+            var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));
+            if (notSerializable.Count > 0)
+                foreach (var rc in compiled.Classes.Values)
+                    if (rc.Decl != null && notSerializable.Contains(rc.Decl.Source)) rc.NotSerializable = true;
             compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)
             compiled.CustomUnits = fire.Values.Unit.CustomUnits.ToList();   // (read by Parser.ParseMultiple)
 
@@ -501,7 +565,17 @@ namespace fire.Compiler
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
             List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList() };
+            // graphics and windows in C (the default of the VM): a packed program binds their natives to the library of both, which travels with it
+            List<string>? graphicsNatives = null;
+            if (!string.IsNullOrEmpty(outname) && Engine != "native" && nativeImports.Contains(NativeImports.Graphics) && GraphicsLibrary.Wanted(false) && GraphicsLibrary.Locate() is { } gfxLibrary)
+            {
+                graphicsNatives = natives.Names.Where(n => n.StartsWith("__GRPH", StringComparison.Ordinal)).OrderBy(natives.IndexOf).ToList();
+                (packageLibraryFiles ??= new List<string>()).Add(gfxLibrary);
+            }
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
+                SourceHashes = SourceHashesOf(processedSources.Count - driverSources, sources).Concat(new string?[driverSources]).ToList(),
+                SourceModules = processedSources.Select((p, i) => i == 0 ? "core" : p.Module).ToList(), ModuleDeps = ModuleDependencies(processedSources),
+                SourceTextHashes = processedSources.Select(p => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(p.Source))).ToLowerInvariant()).ToList() };
 
             if (!string.IsNullOrEmpty(outname))
             {

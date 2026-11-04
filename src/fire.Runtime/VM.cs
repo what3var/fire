@@ -299,6 +299,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("A unit with conversion functions can only be converted while the program runs."))
                     .CallUnitConverter(className, method, value);
             fire.Standard.JsonMethods.Host = () => _currentThreadVm;
+            fire.Standard.LibraryMethods.Implementation = args =>
+                (_currentThreadVm ?? throw new InvalidOperationException("Native libraries can only be loaded while the program runs.")).LibraryCall(args);
         }
 
         /// <summary>Calls a conversion function of a unit (`coerce to`/`coerce from`) nested on this VM, like a getter or setter: in the middle of the
@@ -647,15 +649,35 @@ namespace fire.Runtime
         private int SyncGlobalsNow() => DrainInbound() + (_ownerBroker?.Drain() ?? 0);
 
         // ---- Callbacks from host threads (e.g. a serial event): they do NOT run on the foreign thread, but are queued here
-        // and executed by the main program - at `sync globals` or (without `#nosync`) automatically at a safe point. This way they see the real
+        // and executed by the main program - at `sync globals` or automatically at a safe point (as `#globaljobs` says). This way they see the real
         // globals, and there is no concurrent access to them.
 
-        private readonly record struct InboundCallback(LambdaValue Lambda, Value[] Args, Action<string>? OnUnhandled);
+        private readonly record struct InboundCallback(LambdaValue? Lambda, Value[] Args, Action<string>? OnUnhandled, Action? HostAction = null);
         private readonly System.Collections.Concurrent.ConcurrentQueue<InboundCallback> _inbound = new();
         private volatile bool _acceptingCallbacks;
 
-        /// <summary>Should the main program process the queue itself at safe points? Default yes; `#nosync` switches it off.</summary>
-        private bool _autoSync = true;
+        /// <summary>When the main program processes the queue by itself (`#globaljobs`, `#nosync`, `--global-jobs`; docs/THREADING_DESIGN.md section 7). The safe points
+        /// are the same as in a native build: a loop's jump back (only `Safepoints`), `Sleep` and the wait functions (`Safepoints`, `Sleep`); `sync globals` and the end
+        /// of the program always. Not a call, not a native call (`print`, `Window.Tick`).</summary>
+        private GlobalJobsMode _globalJobs = GlobalJobsMode.Safepoints;
+
+        /// <summary>Running something during which the queue is NOT processed automatically: a destructor, a `fire global` job or a host callback (one runs for
+        /// itself), `catch threads`/`catch terminate`. Everything else nested (a property, an operator, a callback of a library
+        /// function, an actor's message) has the safe points as usual - as in a native build.</summary>
+        private int _noAutoSyncDepth;
+
+        /// <summary>Counts every entry put into a main program's queue (process-wide, a hint only): a loop's jump back compares it with
+        /// <see cref="_seenQueued"/> - one comparison - and processes the queue only when something came. Separate from the signals, so that a
+        /// call (a safe point for `leave`/`terminate` only) does not use up the notice that the next loop needs.</summary>
+        private static int s_queued;
+        private int _seenQueued;
+
+        /// <summary>Something was put into a main program's queue (a job, a section, a host callback).</summary>
+        internal static void RaiseQueued()
+        {
+            System.Threading.Interlocked.Increment(ref s_queued);
+            RaiseSignal();
+        }
 
         /// <summary>Accepts a callback from ANY thread (thread-safe) and queues it for this VM. false if the VM is not (any longer)
         /// running - then the caller has to choose another way.</summary>
@@ -663,6 +685,17 @@ namespace fire.Runtime
         {
             if (!_acceptingCallbacks) return false;
             _inbound.Enqueue(new InboundCallback(lambda, args, onUnhandled));
+            RaiseQueued();
+            FireRuntime.WakeWaitingOwner();
+            return true;
+        }
+
+        /// <summary>Accepts an action of the host from ANY thread (a library's services: fire_host.request_service) and runs it at this VM's next safe point, on its thread.
+        /// false if the VM is not (any longer) running.</summary>
+        public bool PostHostAction(Action action)
+        {
+            if (!_acceptingCallbacks) return false;
+            _inbound.Enqueue(new InboundCallback(null, Array.Empty<Value>(), null, action));
             RaiseSignal();
             FireRuntime.WakeWaitingOwner();
             return true;
@@ -674,25 +707,37 @@ namespace fire.Runtime
             while (_inbound.TryDequeue(out var callback))
             {
                 handled++;
+                if (callback.HostAction != null)
+                {
+                    try { callback.HostAction(); }
+                    catch (Exception ex) { Console.Error.WriteLine("(host: " + ex.Message + ")"); }
+                    if (_stopExecutionRequested) break;
+                    continue;
+                }
+                _noAutoSyncDepth++;   // (a callback runs for itself: its own safe points do not run the next one)
                 try
                 {
-                    var error = CallLambdaInline(callback.Lambda, callback.Args);
+                    var error = CallLambdaInline(callback.Lambda!, callback.Args);
                     if (error != null) callback.OnUnhandled?.Invoke(new UncaughtScriptException(error).Message);
                 }
                 catch (Exception ex)
                 {
                     callback.OnUnhandled?.Invoke(ex.Message);
                 }
+                finally { _noAutoSyncDepth--; }
                 if (_stopExecutionRequested) break;
             }
             return handled;
         }
 
-        /// <summary>Automatic processing at a safe point (not in nested execution, not with `#nosync`): first host callbacks, then
-        /// the sections and jobs of the fire threads. true if the program was ended in the process (`leave`/`terminate` in a job).</summary>
-        private bool AutoSyncNow()
+        /// <summary>Automatic processing at a safe point - a loop's jump back (`waiting` false) or while waiting (`Sleep`, the wait functions; true) - if the mode
+        /// asks for it there and nothing that runs for itself is running (<see cref="_noAutoSyncDepth"/>): first host callbacks, then the sections and jobs of the
+        /// fire threads. true if the program was ended in the process (`leave`/`terminate` in a job).</summary>
+        private bool AutoSyncAt(bool waiting)
         {
-            if (!_autoSync || _nestedDepth > 0) return false;
+            if (_globalJobs == GlobalJobsMode.Sync || (_globalJobs == GlobalJobsMode.Sleep && !waiting)) return false;
+            if (_noAutoSyncDepth > 0 || _stopExecutionRequested) return false;
+            _seenQueued = System.Threading.Volatile.Read(ref s_queued);
             if (!_inbound.IsEmpty) DrainInbound();
             if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
             return _stopExecutionRequested;
@@ -702,7 +747,10 @@ namespace fire.Runtime
         /// fire thread: it goes to the main program (`catch threads`), otherwise it aborts.</summary>
         internal void RunGlobalsJob(LambdaValue lambda, Value[] args)
         {
-            var error = CallLambdaInline(lambda, args);
+            ObjectInstance? error;
+            _noAutoSyncDepth++;   // (a job runs for itself: at its safe points the next job does not start)
+            try { error = CallLambdaInline(lambda, args); }
+            finally { _noAutoSyncDepth--; }
             if (error != null)
             {
                 _pendingThreadExceptions.Enqueue(error);
@@ -811,7 +859,20 @@ namespace fire.Runtime
             if (_seenEpoch == System.Threading.Volatile.Read(ref s_signalEpoch) || _nestedDepth > 0) return;
             _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
             if (CheckShutdownSignals()) StopExecution();
-            else AutoSyncNow(); // Host callbacks and fire threads that wait for the main program (see `#nosync`)
+            // (the queue is not processed here: a native call is not a safe point for it - see _globalJobs)
+        }
+
+        /// <summary>A loop's jump back: processes the queue if something came since the last time and the mode is `safepoints` (one comparison otherwise).
+        /// true if the VM was ended by it.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private bool PollQueueAtLoop() =>
+            _globalJobs == GlobalJobsMode.Safepoints && _seenQueued != System.Threading.Volatile.Read(ref s_queued) && AutoSyncAt(false);
+
+        /// <summary>While waiting (`Sleep`, the wait functions): the signals, then the queue (modes `safepoints` and `sleep`).</summary>
+        private void PollWhileWaiting()
+        {
+            PollSignalsAfterOp();
+            if (!_stopExecutionRequested && _seenQueued != System.Threading.Volatile.Read(ref s_queued)) AutoSyncAt(true);
         }
 
         private bool PollSignalsSlow()
@@ -830,9 +891,9 @@ namespace fire.Runtime
                 return true;
             }
             _ip++;
-            // Host callbacks and fire threads that wait for the main program (see `#nosync`): at the place the caller is about to
-            // continue, the processing runs nested and returns unchanged to here.
-            return AutoSyncNow();
+            // (the queue - host callbacks, the fire threads that wait for the main program - is processed only at a loop's jump back and while
+            // waiting, see PollQueueAtLoop/PollWhileWaiting: a call is no safe point for it)
+            return false;
         }
 
         /// <summary>The `leave`/`terminate` call of the VM itself: it goes into the halt IMMEDIATELY, regardless of whether the signal
@@ -908,7 +969,7 @@ namespace fire.Runtime
                     // afterwards the halt chunk is there again and the next read lands here again.
                     if (FinishDeferredShutdown()) continue;
                     // Windows that a window manager's thread shows keep the program alive: it serves them until they are closed.
-                    if (!_stopExecutionRequested && !IsFireThreadVm && FireRuntime.HostHolds > 0) { WaitForHostHolds(); if (FinishDeferredShutdown()) continue; }
+                    if (!_stopExecutionRequested && !IsFireThreadVm && HostHolds > 0) { WaitForHostHolds(); if (FinishDeferredShutdown()) continue; }
                     // Normal end or orderly leave/terminate (not the halt chunk of an unhandled exception).
                     if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
                     return;
@@ -917,12 +978,27 @@ namespace fire.Runtime
             }
         }
 
+        // Holds of the host on the end of THIS program (see AddHostHold).
+        private int _hostHolds;
+
+        /// <summary>Adds (or, negative, removes) holds on the end of this program: something of the host keeps it alive after its last statement - the open windows
+        /// that a window manager's thread shows. The program then waits at its end, serving what is posted to it, until they are gone. Only this program's main
+        /// VM waits for them; once it has ended they no longer matter.</summary>
+        public void AddHostHold(int delta)
+        {
+            Interlocked.Add(ref _hostHolds, delta);
+            FireRuntime.WakeWaitingOwner();
+        }
+
+        /// <summary>The holds on the end of this program (see <see cref="AddHostHold"/>).</summary>
+        public int HostHolds => Volatile.Read(ref _hostHolds);
+
         /// <summary>The program has run its last statement, but the host still holds it (open windows of a window manager's thread, see
-        /// FireRuntime.AddHostHold): it waits and runs what is posted to it (the managers' cycles, callbacks, jobs of fire threads) until the holds are
+        /// <see cref="AddHostHold"/>): it waits and runs what is posted to it (the managers' cycles, callbacks, jobs of fire threads) until the holds are
         /// gone or the program is ended (`leave`/`terminate` in a callback).</summary>
         private void WaitForHostHolds()
         {
-            while (FireRuntime.HostHolds > 0 && !_stopExecutionRequested)
+            while (HostHolds > 0 && !_stopExecutionRequested)
             {
                 if (!_inbound.IsEmpty) DrainInbound();
                 if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
@@ -942,6 +1018,11 @@ namespace fire.Runtime
             _shutdownReleasePending = false;
             if (!DestroyGlobalsAtEnd) return;
             if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
+            // An exception a thread did not catch, delivered after the main program's last safe point, is not dropped: `catch threads`, or the
+            // program ends with it (like at a safe point - the global scope then stays, as after any unhandled exception; native: the same at its end).
+            if (IsMainThreadVm && !afterShutdown)
+                while (_pendingThreadExceptions.TryDequeue(out var lateException))
+                    if (HandleDeliveredThreadException(lateException)) return;
             ReleaseGlobalScopeAfterStop(afterShutdown);
         }
 
@@ -1068,7 +1149,9 @@ namespace fire.Runtime
             _currentChunk = handlerProto.Chunk;
             _ip = 0;
 
-            RunNestedUntil(targetDepth);
+            _noAutoSyncDepth++;
+            try { RunNestedUntil(targetDepth); }
+            finally { _noAutoSyncDepth--; }
             PopNestedResult(); // Return value of the handler proto unused, like RunFinallyNested/RunDestructor.
             return false;
         }
@@ -1112,7 +1195,9 @@ namespace fire.Runtime
             _currentChunk = proto.Chunk;
             _ip = 0;
 
-            RunNestedUntil(targetDepth);
+            _noAutoSyncDepth++;
+            try { RunNestedUntil(targetDepth); }
+            finally { _noAutoSyncDepth--; }
             PopNestedResult();
         }
 
@@ -1216,7 +1301,7 @@ namespace fire.Runtime
         /// debugger may have stopped them). Returns false (ended).</summary>
         private bool FinishAtHalt()
         {
-            if (!_stopExecutionRequested && !IsFireThreadVm && FireRuntime.HostHolds > 0) WaitForHostHolds();
+            if (!_stopExecutionRequested && !IsFireThreadVm && HostHolds > 0) WaitForHostHolds();
             if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
             _shutdownReleasePending = false;
             IsHalted = true;
@@ -1228,11 +1313,7 @@ namespace fire.Runtime
         /// through `leave`/`terminate`/unhandled exception. false = ended.</summary>
         private bool AfterStep()
         {
-            // Only if a signal has arrived since the last safe point (every queueing triggers one, see RaiseSignal):
-            // querying the queues on EVERY instruction was the biggest item of the single-step loop.
-            if (_autoSync && _seenEpoch != System.Threading.Volatile.Read(ref s_signalEpoch) && _nestedDepth == 0 && !_stopExecutionRequested
-                && (!_inbound.IsEmpty || (_ownerBroker != null && _ownerBroker.HasPending)))
-                AutoSyncNow();
+            // (the queue is processed by the instructions themselves - a loop's jump back, Sleep - as when the program runs: not after every step)
 
             // Since UnhandledException (see there) an unhandled script exception is no longer thrown, but only SET -
             // Run() notices that via CheckShutdownSignals (deliberately NOT called here, see field documentation), so during step-by-step debugging
@@ -1418,7 +1499,11 @@ namespace fire.Runtime
         /// which variables belong to the CURRENTLY ACTIVE (innermost) block and
         /// which are "passed through" from an enclosing level).
         /// Depth 0 = the currently innermost scope (`_currentScope` itself).</summary>
-        public sealed record ScopeLevel(int Depth, bool IsFunctionTopLevel, IReadOnlyList<(string Name, Value Value)> Variables);
+        public sealed record ScopeLevel(int Depth, bool IsFunctionTopLevel, IReadOnlyList<(string Name, Value Value)> Variables)
+        {
+            /// <summary>The scope itself (its slots are the variables in order) - for the debugger's `set`.</summary>
+            public Scope? Scope { get; init; }
+        }
 
         /// <summary>The complete scope chain of the current function/method/
         /// lambda, from the currently active (innermost) block up to
@@ -1467,7 +1552,7 @@ namespace fire.Runtime
                         ?? (isFunctionTopLevel && _currentChunk.DebugLocalNames.TryGetValue((0, slot), out var n) ? n : $"(local {slot})");
                     vars.Add((name, scope.GetSlot(slot)));
                 }
-                result.Add(new ScopeLevel(depth, isFunctionTopLevel, vars));
+                result.Add(new ScopeLevel(depth, isFunctionTopLevel, vars) { Scope = scope });
                 scope = scope.Parent;
                 depth++;
             }
@@ -1483,6 +1568,37 @@ namespace fire.Runtime
         {
             for (int slot = 0; slot < _globalScope.SlotCount; slot++)
                 yield return (_globalScope.DebugNameOf(slot) ?? $"(global {slot})", _globalScope.GetSlot(slot));
+        }
+
+        /// <summary>The global scope (its slots are <see cref="DebugGlobals"/> in order) - for the debugger's `set`.</summary>
+        public Scope DebugGlobalScope => _globalScope;
+
+        /// <summary>The debugger's `set` of a member of an object while this VM is paused - runs on the VM's own thread. Like the assignment
+        /// `obj.name = value` in the program: probes on the member fire, a property runs its setter, the unit and type rules of the field apply.
+        /// false with a message if that assignment threw (the exception then goes its way like one of the program: to a handler, or the VM
+        /// stops at it as unhandled).</summary>
+        public bool DebugAssignMember(ObjectInstance obj, string name, Value value, out string? error)
+        {
+            error = null;
+            if (!_steppingStarted) BeginStepping();
+            int sp = _sp;
+            Push(Value.MakeClassRef(obj));
+            Push(value);
+            bool ok;
+            try { ok = SetFieldSlow(name, -1); }
+            catch (Exception ex) when (ex is ScriptErrorException or InvalidOperationException)
+            {
+                _sp = sp;
+                error = ex.Message;
+                return false;
+            }
+            if (!ok)
+            {
+                error = UnhandledException != null ? new UncaughtScriptException(UnhandledException).Message : "The assignment threw an exception.";
+                return false;
+            }
+            _sp = sp;
+            return true;
         }
 
         /// <summary>Executes instructions until the call stack has fallen below
@@ -1562,7 +1678,9 @@ namespace fire.Runtime
                 _currentChunk = rc.Destructor.Chunk;
                 _ip = 0;
 
-                RunNestedUntil(targetDepth);
+                _noAutoSyncDepth++;   // (a destructor runs in the middle of an instruction: no jobs in it)
+                try { RunNestedUntil(targetDepth); }
+                finally { _noAutoSyncDepth--; }
 
                 // The final RETURN of the destructor body pushes its (here
                 // meaningless) return value onto the value stack - unlike with
@@ -1815,7 +1933,7 @@ namespace fire.Runtime
                     // A back jump (loop) is a safe point for shutdown signals (see PollSignals); `_ip` here still
                     // points to the operand, PollSignalsSlow calculates with the instruction boundary before it.
                     int target = _code[_ip] | (_code[_ip + 1] << 8);
-                    if (target <= _ip && PollSignals()) return;
+                    if (target <= _ip && (PollSignals() || PollQueueAtLoop())) return;
                     _ip = target;
                     return;
                 }
@@ -2376,6 +2494,7 @@ namespace fire.Runtime
         private void DoReturn(Value retVal)
         {
         {
+            if (_accessorAdopted is { Count: > 0 }) PullBackAdopted(retVal);
             if (_handlers.Count > 0)
             {
                 int handlerFloor = _callbackBoundaries.Count > 0 ? _callbackBoundaries.Peek().HandlerFloor : 0;
@@ -2672,9 +2791,89 @@ namespace fire.Runtime
 
         private void OpSetField()
         {
+            int site = _ip - 1;
+            SetFieldAt(site, ReadU16());
+        }
+
+        /// <summary>`obj.name = value` in a property accessor (OpCode.SetFieldAccessor, SPEC 2.2 "Ownership in property accessors"): a value that belongs to
+        /// the running accessor call goes to the setter like `take x` when `name` is a property of `obj`; when it is a field of `this`, `this` takes it over after
+        /// the store (a getter remembers that: a `return` of the value gives it to the caller after all, see PullBackAdopted).</summary>
+        private void OpSetFieldAccessor()
         {
             int site = _ip - 1;
             int fieldNameIdx = ReadU16();
+            bool getter = (ReadByte() & 1) != 0;
+            var value = _stack[_sp - 1];
+            if (value.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer) || !IsCurrentCallOwner(OwnerOfLive(value)))
+            {
+                SetFieldAt(site, fieldNameIdx);
+                return;
+            }
+            string name = _constants[fieldNameIdx].AsString();
+            var target = _stack[_sp - 2].Kind == ValueKind.Class ? _stack[_sp - 2].AsObjectRef() as ObjectInstance : null;
+            if (target != null && !IsDeadObject(target) && !target.HasFieldLocked(name) && ResolveClass(target.ClassName).FindMethod("set_" + name, 1) != null)
+            {
+                // a property: the setter call owns the value (the setter's own field rule may keep it)
+                _takeSetterArg = true;
+                try { SetFieldSlow(name, -1); }
+                finally { _takeSetterArg = false; }
+                return;
+            }
+            if (!SetFieldSlow(name, -1)) return;
+            if (target == null || !ReferenceEquals(target, _currentThis) || !IsCurrentCallOwner(OwnerOfLive(value))) return;
+            OwnershipWalk.TakeValue(value, target, this);
+            if (getter) (_accessorAdopted ??= new List<(Value, int)>()).Add((value, _frames.Count));
+        }
+
+        /// <summary>The owner of a live object, array or buffer (null for anything else and for what is destroyed).</summary>
+        private static IOwner? OwnerOfLive(Value v) => v.Kind switch
+        {
+            ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o ? o.Owner : null,
+            ValueKind.Array => v.AsArray() is { IsDestroyed: false } a ? a.LeafOwner : null,
+            ValueKind.Buffer => v.AsBuffer() is { IsDestroyed: false } b ? b.LeafOwner : null,
+            _ => null,
+        };
+
+        // SetFieldAccessor: the next setter call that SetFieldSlowCore makes takes its argument like `take x`
+        private bool _takeSetterArg;
+        // ... the values a getter's `this` took over (the getter's frame depth): its `return` of one of them gives it to the caller (SPEC 2.2)
+        private List<(Value Value, int Depth)>? _accessorAdopted;
+
+        /// <summary>`return v` of a getter: a value its `this` took over in this call (the field rule of SetFieldAccessor) belongs to the call again, so that it
+        /// goes to the caller like any returned local (the return rule wins). Forgets what this call and the calls it made remembered.</summary>
+        private void PullBackAdopted(Value retVal)
+        {
+            var list = _accessorAdopted!;
+            int depth = _frames.Count;
+            for (int i = list.Count - 1; i >= 0 && list[i].Depth >= depth; i--)
+            {
+                if (list[i].Depth != depth || !SameReference(list[i].Value, retVal) || _currentThis is not ObjectInstance self) continue;
+                if (ReferenceEquals(OwnerOfLive(retVal), self)) OwnershipWalk.TakeValue(retVal, _currentScope, this);
+                break;
+            }
+            ForgetAdopted(depth);
+        }
+
+        /// <summary>Forgets what the calls from frame depth <paramref name="depth"/> on remembered (they end).</summary>
+        private void ForgetAdopted(int depth)
+        {
+            var list = _accessorAdopted!;
+            int keep = list.Count;
+            while (keep > 0 && list[keep - 1].Depth >= depth) keep--;
+            if (keep < list.Count) list.RemoveRange(keep, list.Count - keep);
+        }
+
+        private static bool SameReference(Value a, Value b) => a.Kind == b.Kind && a.Kind switch
+        {
+            ValueKind.Class => ReferenceEquals(a.AsObjectRef(), b.AsObjectRef()),
+            ValueKind.Array => ReferenceEquals(a.AsArray(), b.AsArray()),
+            ValueKind.Buffer => ReferenceEquals(a.AsBuffer(), b.AsBuffer()),
+            _ => false,
+        };
+
+        private void SetFieldAt(int site, int fieldNameIdx)
+        {
+        {
 
             // Schnellpfad (Inline-Cache, siehe OpGetField): Objekt derselben Klasse wie zuvor.
             if (_stack[_sp - 2] is { Kind: ValueKind.Class } cachedTarget
@@ -2794,7 +2993,9 @@ namespace fire.Runtime
             var rcSet = ResolveClass(obj.ClassName);
             if (rcSet.FindMethod("set_" + fieldName, 1) != null)
             {
-                var result = CallMethodNested(obj, "set_" + fieldName, new[] { value });
+                bool takeArg = _takeSetterArg;
+                _takeSetterArg = false;
+                var result = CallMethodNested(obj, "set_" + fieldName, new[] { value }, takeFirst: takeArg);
                 // Return value of the setter itself unused - an
                 // assignment always evaluates to the ASSIGNED value,
                 // not to what the setter returns. null ==
@@ -3913,6 +4114,7 @@ namespace fire.Runtime
                 {
                     string typeName = _constants[ReadU16()].AsString();
                     var v = Peek();
+                    if (ReadsDeadClass(v, typeName, out var deadCast)) { ThrowDestroyedObject(deadCast); break; }
                     if (v.Kind != ValueKind.Undefined && !IsOfType(v, typeName))
                     {
                         string have = v.Kind == ValueKind.Class ? ((ObjectInstance)v.AsObjectRef()).ClassName : v.Kind.ToString();
@@ -4150,6 +4352,10 @@ namespace fire.Runtime
 
                 case OpCode.SetField:
                     OpSetField();
+                    break;
+
+                case OpCode.SetFieldAccessor:
+                    OpSetFieldAccessor();
                     break;
 
                 case OpCode.LoadThis:
@@ -4485,6 +4691,7 @@ namespace fire.Runtime
                 {
                     string typeName = _constants[ReadU16()].AsString();
                     var v = Pop();
+                    if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); break; }
                     Push(Value.MakeBool(IsOfType(v, typeName)));
                     break;
                 }
@@ -4609,6 +4816,7 @@ namespace fire.Runtime
                     int globalSlotCount = ReadU16();
                     int takingCount = ReadByte();
                     bool hasWith = ReadByte() != 0;
+                    int handoverCount = ReadByte();   // the last ones of the taking values are `handover` (moved, not copied)
                     // Order reversed to compiling (stack!): with
                     // was pushed LAST, so lies on top, is popped FIRST;
                     // afterwards the taking values in REVERSED
@@ -4618,6 +4826,12 @@ namespace fire.Runtime
                     Value? withValue = hasWith ? Pop() : null;
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
+                    // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element), and a lambda or a pointer
+                    // in a field or an element, is the ArgumentException here in the spawning thread, before anything is copied and before the thread starts.
+                    // The copies (of everything reachable) are made afterwards, also here, by FireRuntime.FireVmTaking.
+                    for (int i = 0; i < takingCount - handoverCount; i++) ObjectCopier.RequireNoCopyFree(takingValues[i], "taking");
+                    // `handover` (no copy, a `[NoCopy]` instance is fine): what cannot go to another thread is refused the same way, before anything moves
+                    for (int i = takingCount - handoverCount; i < takingCount; i++) ObjectHandover.RequireMovable(takingValues[i], fromFireThread: IsFireThreadVm);
 
                     // The globals of the main program are NOT copied: the thread reads them directly (under the lock) and changes them only in
                     // a section that the main program grants at `sync globals` (see Runtime.GlobalsBroker). At the first `fire`
@@ -4633,7 +4847,7 @@ namespace fire.Runtime
                     // VmExecutionMode documentation).
                     FireRuntime.FireVmTaking(
                         fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
-                        executionMode: ExecutionMode);
+                        executionMode: ExecutionMode, handoverCount: handoverCount);
                     break;
                 }
 
@@ -4642,7 +4856,7 @@ namespace fire.Runtime
                     break;
 
                 case OpCode.SetAutoSync:
-                    _autoSync = ReadByte() != 0;
+                    _globalJobs = (GlobalJobsMode)ReadByte();
                     break;
 
                 case OpCode.SetTimeout:
@@ -4671,6 +4885,9 @@ namespace fire.Runtime
 
                     // The arguments belong to the job, not to this thread: objects are deeply copied, their owner is a holder scope that
                     // the main program releases after the run.
+                    // `[NoCopy]` (SPEC 5.12): checked for all of them first - nothing is copied or queued when one is refused (the ArgumentException).
+                    foreach (var ja in jobArgs)
+                        if (ja.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(ja, "fire global");
                     var holder = new Scope(null);
                     for (int i = 0; i < jobArgs.Length; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
@@ -5088,6 +5305,8 @@ namespace fire.Runtime
         private void ThrowException(Value exceptionValue)
         {
             var excInstance = RequireObjectInstance(exceptionValue, "throw");
+            // (a destroyed object cannot be thrown: what is thrown is the DestroyedException - natively its class is not known any more)
+            if (IsDeadObject(excInstance)) { ThrowDestroyedObject(excInstance); return; }
             if (CaptureErrorTrace) RecordThrowTrace();
 
             if (PauseOnUnhandled && _nestedDepth == 0 && _callbackBoundaries.Count == 0 && !WouldBeCaught(excInstance))
@@ -5308,6 +5527,15 @@ namespace fire.Runtime
             return false;
         }
 
+        /// <summary>`x is of Dog` / `x!Dog` on a destroyed object: the test needs its class, which a destroyed object does not have any more (natively its memory
+        /// is freed) - a DestroyedException. The kind tests (`is of class`, `is of int`, ...) only look at the value and stay answerable.</summary>
+        private bool ReadsDeadClass(Value v, string typeName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ObjectInstance? dead)
+        {
+            dead = v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)
+                && typeName is not ("bool" or "int" or "float" or "char" or "string" or "undefined" or "class") ? obj : null;
+            return dead != null;
+        }
+
         /// <summary>`value is of Type` (SPEC 6): for base-type names a simple
         /// kind comparison, for class names recursively over the base-class chain
         /// (InstanceMatchesClassName).</summary>
@@ -5339,6 +5567,7 @@ namespace fire.Runtime
         /// that recognises a frame boundary without having to carry it along separately.</summary>
         private void UnwindTo(int targetFrameDepth, Scope targetScope)
         {
+            if (_accessorAdopted is { Count: > 0 }) ForgetAdopted(targetFrameDepth + 1);
             while (_frames.Count > targetFrameDepth || !ReferenceEquals(_currentScope, targetScope))
             {
                 bool atFrameBase = ReferenceEquals(_currentScope.Parent, _globalScope);
@@ -5534,7 +5763,7 @@ namespace fire.Runtime
             return Pop();
         }
 
-        private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args)
+        private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args, bool takeFirst = false)
         {
             _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var rc = ResolveClass(obj.ClassName);
@@ -5566,6 +5795,7 @@ namespace fire.Runtime
 
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
+            if (takeFirst) TakeArgument(scope.SlotRef(0), scope);   // (SetFieldAccessor: a property assignment in an accessor passes the value on like `take`)
 
             _currentThis = obj;
             _currentScope = scope;

@@ -134,6 +134,44 @@ print(t.Find("text").Flags(Access.Read))     // Write
 print(t.Find("text").Flags("Access"))       // 2
 ```
 
+### Reflection in native builds
+
+A native build (`forge build --engine native`) leaves out what the program does not reach. How much is the **stripping level** (`"stripping"` in `fire.native.json` or
+in the settings of a project, `--stripping` on the command line; a number or a name):
+
+| level | what stays |
+|---|---|
+| `0` `none` | everything, as in the VM (`--keep-all`; a debug build always) |
+| `1` `protected` | every class and every public member; a private or protected member only when the program uses it |
+| `2` `methods` | every class with its constructors, fields and properties (getters and setters); a method only when the program uses it |
+| `3` `all` (the default) | only what the program reaches: also a class the program never makes or uses is left out |
+
+At every level two things stay:
+
+- what is marked `[Keep]` (see [Classes](08-classes.md#attributes)), and
+- the names the program gives **as literals** to reflection: `Reflect.New("Dog", [])`, `Type.Named("Dog")`, `Type.Of("Dog")` keep the class `Dog` like `[Keep]`,
+  `Reflect.Call(obj, "Bark", [])`, `Reflect.Get(obj, "legs")`, `type.Find("Bark")` keep the members of that name (of the classes whose objects exist). Every text in the
+  function that calls reflection counts (also `var n = "Bark"` a line before), a text made at run time or read from a file does not.
+
+Reflection that works on an object (`Reflect.Get/Set/Has`, probes, `Type.Of(obj)`) finds every field and property of that object's class at every level;
+`Type.Of(obj).Methods()` lists the methods that are there. Looking up what was left out is an error that says so - natively only, the VM keeps everything:
+
+```
+Class 'Ghost' was left out of the build (stripping 3). Add [Keep] to 'Ghost' or use stripping <= 2.
+Member 'Dog.Wag' was left out of the build (stripping 2). Add [Keep] to 'Dog.Wag' or use stripping <= 1.
+```
+
+(a `ReflectionException`; for a private member the advice is stripping 0). `Type.Names()` lists the classes that are there, `Reflect.Has(obj, name)` is false for a
+method that was left out. The JSON `"$type"` is data of the run as well: at level 3 it can only name the classes reading can make (docs/JSON.md).
+
+```fire
+#import "reflection"
+[Keep]
+class Plugin { construct() { } }          // made only by a name that comes at run time
+var p = Reflect.New(Environment.Args[0], [])  // works natively because of [Keep]
+var q = Reflect.New("Plugin", [])           // a literal: works without [Keep] as well
+```
+
 ### Selectors
 
 A parameter of a selector type takes a lambda that **selects a member** (`c => c.radius`); inside the method the parameter is a `Selector` that

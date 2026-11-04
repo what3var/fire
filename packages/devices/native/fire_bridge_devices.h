@@ -597,7 +597,7 @@ static bool fire_devb_waitUntil(bool (*pred)(void*), void* ctx, int64_t ticks) {
     {
         /* (a thread waiting inside a method of a shared object does not hold the main program meanwhile) */
         int32_t held = sectionYieldBegin();
-        bool done = blockUntil(pred, ctx, true, deadline == 0 ? 1 : deadline);
+        bool done = blockUntilServing(pred, ctx, true, deadline == 0 ? 1 : deadline);   /* (the main program serves its queue meanwhile, like Sleep) */
         sectionYieldEnd(held);
         return done;
     }

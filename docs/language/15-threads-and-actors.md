@@ -21,7 +21,9 @@ print("main goes on")
 
 ## Copies: `taking` and `sync`
 
-A thread cannot simply use the objects of the main program. `taking x` gives the thread its own **deep copy** of `x` (with everything `x` owns).
+A thread cannot simply use the objects of the main program. `taking x` gives the thread its own **deep copy** of `x`: everything reachable from `x`
+through fields and elements (objects, arrays, buffers) is copied, whoever owns it - an object `x` only refers to, an array literal in a field and the
+objects in it. The copies belong to the thread (a copied object that belonged to another copied one belongs to that one's copy).
 Changes in the thread are invisible outside - until the thread writes the copy back with `sync x` (the last writer wins):
 
 ```fire
@@ -45,9 +47,43 @@ print("main: " + counter.value)             // main: 15
 | `try sync x` | does not wait: `False` if the original is busy |
 | `sync flat x` / `try sync flat x` | writes back only the direct fields (array: the elements) |
 
-- `taking` can be repeated: `fire taking a taking b { ... }`. Numbers and strings can be taken too (`taking i`).
-- A copy must not point to objects outside its own ownership tree; `taking` refuses such an object with an error instead of sharing memory.
+- `taking` can be repeated: `fire taking a taking b { ... }`. Numbers and strings can be taken too (`taking i`). An array is copied as well (`taking arr`).
+- The copy is made at the `fire`, before the thread starts. A lambda or a pointer in a field or an element cannot be copied: the `fire` throws an
+  `ArgumentException` ("'taking' rejected: lambda values cannot be copied for a thread.") and the thread does not start.
+- `taking` always copies - nothing is moved to the thread. An instance of a **`[NoCopy]`** class (a resource like `NativeHandle`) cannot be copied: when `x`
+  (or a field or an element of it) is one, the `fire` throws an `ArgumentException` and the thread does not start. The same goes for an object that
+  `fire global` would copy for its job (it is not queued) and for `sync`, when it would copy one back into the original (nothing is written back);
+  `sync flat` keeping an object that is on both sides is fine. The table in [Ownership](13-ownership.md#copying-flat-and-copy) lists every form.
 - `sync` returning `undefined` is a good moment for the thread to `leave`.
+
+## Handing over: `handover`
+
+Some objects must not be copied - a connection, a `NativeHandle`, anything marked `[NoCopy]`. `fire handover x` gives `x` itself to the thread,
+without a copy: from then on the thread owns it (its destructor runs in the thread, when the thread ends), and the sender's variable is `undefined`:
+
+```fire
+#import "time"
+[NoCopy]
+class Connection {
+    int id
+    construct(int id) { this.id = id }
+    destruct() { print("closed " + this.id) }
+}
+var conn = new Connection(7)
+fire handover conn {
+    print("thread uses " + conn.id)
+}                                           // closed 7 - at the end of the thread
+print(conn == undefined)                    // True - main no longer has it
+Sleep(100ms)
+```
+
+- Everything reachable from `x` through fields and elements (and what the objects own) goes along, as it is - like `taking`, but moved instead of
+  copied. A part whose owner goes along keeps it; every other part belongs to the thread now, whoever owned it before.
+- Other references the sender still has to these objects point into another thread: do not use them (this is not checked).
+- `handover` can be repeated and mixed with `taking`: `fire taking a handover b handover c { ... }`, also `fire Method(args) handover h`.
+- A lambda or a pointer in a field or an element cannot go to another thread, and a thread cannot hand over what belongs to the main program's
+  global variables: the `fire` throws an `ArgumentException` and nothing moves. A global variable of the main program named in a thread is a compile
+  error. Actors and destroyed objects stay shared references. `fire global` has no `handover` (a job gets copies).
 
 ## Global variables
 
@@ -66,9 +102,28 @@ Sleep(300ms)
 print(total)                                // 3
 ```
 
-The main program lets waiting threads in at safe points (after `Sleep`, a window event, ...). With `#nosync` at the top of the program it does so only
-at an explicit `sync globals` (and at the end of the program). `fire global { ... }` does not start a thread: it queues a job that the main program
-runs at its next `sync globals`.
+`fire global { ... }` does not start a thread: it queues a **job** that the main program runs with the real globals. When the main program lets the
+waiting threads in and runs the jobs is a build setting, `#globaljobs` (the same in the VM and in a native build):
+
+| `#globaljobs` | the main program processes its queue at |
+|---|---|
+| `safepoints` (default) | the jump back of every loop, `Sleep` (also `Sleep(0)`) and the wait functions, `sync globals`, the end of the program |
+| `sleep` | `Sleep` and the wait functions, `sync globals`, the end of the program |
+| `sync` | only `sync globals` and the end of the program (`#nosync` means the same) |
+
+```fire
+#globaljobs sleep
+#import "time"
+fire global { print("job") }
+for (var i = 0; i < 2; i++) { print("loop " + i) }   // loop 0, loop 1 - a loop is no safe point in this mode
+Sleep(1ms)                                           // job
+print(sync globals)                                  // 0: nothing left
+```
+
+- A call and a native function (`print`) are never such a point; with `safepoints` the job above would run after `loop 0`.
+- `sync globals` runs everything that is queued and returns how many entries that were.
+- Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
+- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive (docs/PROJECTS.md).
 
 ## Actors
 

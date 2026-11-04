@@ -35,6 +35,8 @@ namespace UI {
         bool Pressed = false
         bool Focused = false
         Element parent
+        // A short text that appears under the pointer when it rests on the element (Root.toolTipDelay); "" none. A child without one shows its parent's.
+        string ToolTip = ""
         // Appearance: undefined = the control takes the colours of the theme (states like hover then change them themselves)
         Brush Background
         Brush Foreground
@@ -285,6 +287,9 @@ namespace UI {
 
         // Can the element receive keyboard focus (Tab, click)?
         bool Focusable() { return false }
+
+        // The corners of the element when it floats (a menu, a popup): its shadow follows them (Root.PopupShadow). 0: square.
+        int PopupRadius(Root root) { return 0 }
 
         // The content (without margin): sets cw/ch. aw/ah: at most this much space (-1: unbounded). An element without content wants nothing.
         undefined MeasureCore(Root root, int aw, int ah) {
@@ -550,13 +555,13 @@ namespace UI {
             this.Invalidate()
         }
 
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             for (var i = 0; i < this.children.Count; i = i + 1) { this.children[i].Poll(root) }
         }
 
         // Canvas arrangement: every child wants to be as big as it is; the size of the panel is that of the children, as far as it has no fixed one.
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 0
             for (var i = 0; i < this.children.Count; i = i + 1) {
@@ -570,14 +575,14 @@ namespace UI {
             this.ch = h
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 child.Arrange(root, child.Left, child.Top, child.dw, child.dh)
             }
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
                 if (this.Filled) {
@@ -601,7 +606,7 @@ namespace UI {
             }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             var i = this.children.Count - 1
@@ -613,16 +618,16 @@ namespace UI {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             if (!this.Visible || !this.Enabled) { return }
             for (var i = 0; i < this.children.Count; i = i + 1) {
                 this.children[i].Collect(list)
             }
         }
 
-        string StyleKey() { return "Panel" }
+        override string StyleKey() { return "Panel" }
 
-        UI.Element FindName(string name) {
+        override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             for (var i = 0; i < this.children.Count; i = i + 1) {
                 var found = this.children[i].FindName(name)
@@ -634,7 +639,7 @@ namespace UI {
 
     // Like Panel, but transparent and without a frame: children at fixed positions (x/y).
     class Canvas : Panel {
-        string StyleKey() { return "Canvas" }
+        override string StyleKey() { return "Canvas" }
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
             this.Filled = false
@@ -645,7 +650,7 @@ namespace UI {
     // desired size in the running direction, the whole space across it (halign/valign act there). `spacing` is the distance between the children, `padding` the
     // inner margin.
     class StackPanel : Panel {
-        string StyleKey() { return "StackPanel" }
+        override string StyleKey() { return "StackPanel" }
 
         bool Horizontal
         int Spacing
@@ -658,7 +663,7 @@ namespace UI {
             this.Filled = false
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var pad2 = this.Padding * 2
             var iw = aw
             var ih = ah
@@ -690,7 +695,7 @@ namespace UI {
             }
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             var pos = this.Padding
             var iw = w - this.Padding * 2
             var ih = h - this.Padding * 2
@@ -718,7 +723,7 @@ namespace UI {
     // The children lie at the edges (`Dock`: Left, Top, Right, Bottom) in the order in which they were added; what is left over fills the
     // last child (lastChildFill).
     class DockPanel : Panel {
-        string StyleKey() { return "DockPanel" }
+        override string StyleKey() { return "DockPanel" }
 
         bool LastChildFill = true
 
@@ -732,7 +737,7 @@ namespace UI {
             this.Add(child)
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             // From the inside out: what lies left/right takes width, what lies top/bottom takes height; the rest remains for the other children.
             var usedW = 0
             var usedH = 0
@@ -771,7 +776,7 @@ namespace UI {
             return last
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             var left = 0
             var top = 0
             var right = w
@@ -803,7 +808,7 @@ namespace UI {
     // Lines up the children and starts a new row (column, if vertical) when the space is not enough. itemWidth/itemHeight (>= 0) give every child
     // this size.
     class WrapPanel : Panel {
-        string StyleKey() { return "WrapPanel" }
+        override string StyleKey() { return "WrapPanel" }
 
         bool Vertical = false
         int ItemWidth = -1
@@ -813,7 +818,7 @@ namespace UI {
             this.Filled = false
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var lineLen = 0
             var lineThick = 0
             var total = 0
@@ -854,7 +859,7 @@ namespace UI {
             }
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             var limit = w
             if (this.Vertical) { limit = h }
             var lineLen = 0
@@ -942,7 +947,7 @@ namespace UI {
     // Rows and columns: `grid.SetColumns("100, auto, *, 2*")`, `grid.SetRows("auto, *")`; a child sits in the cell (gridRow, gridColumn) and can occupy several via
     // gridRowSpan/gridColumnSpan. Without any specification there is one row and one column with `*`.
     class Grid : Panel {
-        string StyleKey() { return "Grid" }
+        override string StyleKey() { return "Grid" }
 
         List rows
         List columns
@@ -1026,7 +1031,7 @@ namespace UI {
             }
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var rows = this.Tracks(this.rows)
             var cols = this.Tracks(this.columns)
             this.ResolveAxis(root, rows, cols, ah, false)
@@ -1145,7 +1150,7 @@ namespace UI {
             return total
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             var rows = this.Tracks(this.rows)
             var cols = this.Tracks(this.columns)
             // with the final size: redistribute the stars
@@ -1198,12 +1203,12 @@ namespace UI {
             this.Invalidate()
         }
 
-        undefined Poll(Root root) {
+        override undefined Poll(Root root) {
             base.Poll(root)
             if (this.child != undefined) { this.child.Poll(root) }
         }
 
-        undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, int aw, int ah) {
             var inset = this.Thickness * 2
             var padW = this.Padding.left + this.Padding.right + inset
             var padH = this.Padding.top + this.Padding.bottom + inset
@@ -1222,7 +1227,7 @@ namespace UI {
             this.ch = h + padH
         }
 
-        undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, int w, int h) {
             if (this.child == undefined) { return }
             var l = this.Padding.left + this.Thickness
             var t = this.Padding.top + this.Thickness
@@ -1231,7 +1236,7 @@ namespace UI {
             this.child.Arrange(root, l, t, iw, ih)
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
                 if (this.Background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Background) }
@@ -1244,7 +1249,7 @@ namespace UI {
             if (this.child != undefined && this.child.Visible) { this.child.Draw(root, ax + this.child.rx, ay + this.child.ry) }
         }
 
-        UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(int px, int py) {
             if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             if (this.child != undefined) {
@@ -1254,14 +1259,14 @@ namespace UI {
             return this
         }
 
-        undefined Collect(List list) {
+        override undefined Collect(List list) {
             if (!this.Visible || !this.Enabled) { return }
             if (this.child != undefined) { this.child.Collect(list) }
         }
 
-        string StyleKey() { return "Border" }
+        override string StyleKey() { return "Border" }
 
-        UI.Element FindName(string name) {
+        override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             if (this.child != undefined) { return this.child.FindName(name) }
             return undefined

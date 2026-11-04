@@ -59,7 +59,7 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 #endif
 }
 
-#ifdef FIRE_THREADS
+#if defined(FIRE_THREADS) || defined(FIRE_LIBRARY)   /* (a library for the VM: a package with a thread of its own) */
 typedef struct { SRWLOCK l; } fire_mutex;
 typedef struct { CONDITION_VARIABLE c; } fire_cond;
 typedef struct fire_thread { HANDLE h; } fire_thread;
@@ -214,5 +214,23 @@ static inline void fire_plat_envEach(void (*fn)(const char* name, size_t nameLen
     }
     FreeEnvironmentStringsW(block);
 }
+
+/* `Library.Load` / `Get` (docs/language/18-native-code.md): a DLL loaded at run time (a path, or a name the system finds) and a function of it; NULL when it cannot. */
+static inline void* fire_plat_dlopen(const char* path) {
+    wchar_t* wide = fire_plat_toWide(path);
+    HMODULE h;
+    if (wide == NULL) return NULL;
+    h = LoadLibraryW(wide);
+    free(wide);
+    return (void*)h;
+}
+static inline void* fire_plat_dlsym(void* library, const char* name) {
+    FARPROC p = library ? GetProcAddress((HMODULE)library, name) : NULL;
+    void* r;
+    memcpy(&r, &p, sizeof r);
+    return r;
+}
+/* why the last fire_plat_dlopen failed: not known (a plugin's DLL finds what it needs of the program when it is registered, fire_link) */
+static inline const char* fire_plat_dlerror(void) { return NULL; }
 
 #endif

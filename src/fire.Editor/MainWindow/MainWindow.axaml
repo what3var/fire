@@ -253,6 +253,7 @@
 					<MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+F5"/>
 					<MenuItem Header="Build Stan_dalone..." Click="Build_Click"/>
 					<MenuItem Header="Build _Native..." Click="BuildNative_Click"/>
+					<MenuItem Header="Cancel Bui_ld" Click="CancelBuild_Click" InputGesture="Ctrl+Pause"/>
 					<Separator/>
 					<MenuItem Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
 					<MenuItem Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
@@ -265,6 +266,9 @@
 					<MenuItem Header="Debug" ToggleType="CheckBox" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
 					<MenuItem Header="Release" ToggleType="CheckBox" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
 					<MenuItem Header="Performance" ToggleType="CheckBox" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
+					<Separator/>
+					<MenuItem Header="Engine: _VM" ToggleType="CheckBox" x:Name="mnuEngineVm" Click="mnuEngineVm_Click"/>
+					<MenuItem Header="Engine: _Native (build and run the program)" ToggleType="CheckBox" x:Name="mnuEngineNative" Click="mnuEngineNative_Click"/>
 					<MenuItem Header="Program _Arguments..." Click="ProgramArguments_Click"/>
 					<Separator/>
 					<MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
@@ -380,6 +384,11 @@
 							<ComboBoxItem Content="Release" Tag="Release"/>
 							<ComboBoxItem Content="Performance" Tag="Performance"/>
 						</ComboBox>
+						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbEngine" Width="90" SelectionChanged="cmbEngine_SelectionChanged" MinHeight="26" Padding="8,2" Margin="4,0,0,0"
+								  ToolTip.Tip="Engine: the virtual machine in spark, or a native build of the program (Debug: built with -O0 -g and debugged over the debug protocol). Saved in the project's settings">
+							<ComboBoxItem Content="VM" Tag="vm"/>
+							<ComboBoxItem Content="Native" Tag="native"/>
+						</ComboBox>
 						<local:ToolStripButton Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended" IconSource="/Assets/icons/Material-Play.png"/>
 						<local:ToolStripButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)" IconSource="/Assets/icons/Material-Restart.png"/>
 						<local:ToolStripButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
@@ -439,6 +448,14 @@
 				<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}" MinHeight="24"/>
 				<DockPanel Margin="10,3">
 					<TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
+					<!-- a build that runs while its window is hidden: its progress; a click brings the window back -->
+					<Button x:Name="BuildStatusButton" DockPanel.Dock="Right" IsVisible="False" Click="BuildStatus_Click" Margin="16,-3,0,-3" Padding="6,0"
+					        Background="Transparent" BorderThickness="0" VerticalAlignment="Center">
+						<StackPanel Orientation="Horizontal" Spacing="8">
+							<TextBlock x:Name="BuildStatusText" Text="Building..." VerticalAlignment="Center"/>
+							<ProgressBar x:Name="BuildStatusBar" Width="80" Height="6" MinHeight="6" MinWidth="80" IsIndeterminate="True" VerticalAlignment="Center"/>
+						</StackPanel>
+					</Button>
 					<TextBlock x:Name="GitText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="The git branch (↑ commits to push, ↓ commits to pull) and the number of changed files"/>
 					<TextBlock x:Name="ContextText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="What Start and Build act on: the project of the active document, or the single file"/>
 					<TextBlock x:Name="StatusText" Text="Ready." TextTrimming="CharacterEllipsis"/>

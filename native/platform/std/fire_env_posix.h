@@ -82,4 +82,18 @@ static inline void fire_plat_envEach(void (*fn)(const char* name, size_t nameLen
     }
 }
 
+/* `Library.Load` / `Get` (docs/language/18-native-code.md): a native library loaded at run time (a path, or a name the system finds) and a function of it;
+ * NULL when it cannot. Without a dynamic loader (the boards, the browser) always NULL. */
+#if (defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)) && !defined(__EMSCRIPTEN__) && !defined(ESP_PLATFORM)
+#include <dlfcn.h>
+static inline void* fire_plat_dlopen(const char* path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
+static inline void* fire_plat_dlsym(void* library, const char* name) { return library ? dlsym(library, name) : NULL; }
+/* why the last fire_plat_dlopen failed (NULL: not known) */
+static inline const char* fire_plat_dlerror(void) { return dlerror(); }
+#else
+static inline void* fire_plat_dlopen(const char* path) { (void)path; return NULL; }
+static inline void* fire_plat_dlsym(void* library, const char* name) { (void)library; (void)name; return NULL; }
+static inline const char* fire_plat_dlerror(void) { return NULL; }
+#endif
+
 #endif

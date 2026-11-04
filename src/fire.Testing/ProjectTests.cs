@@ -179,6 +179,18 @@ static class ProjectTests
         Check("Lauf: Projekt mit zwei Dateien und zwei Bibliotheken; Einstellungen des Projekts vor den Tags im Quelltext", ran == "Hello, projects!\n42\n0.3\nPRJ\n", ran);
         var tagsOnly = BuildPlan.Create(ws, ws.FindByName("Tool")!);
         Check("Lauf: ein Projekt ohne Einstellungen folgt den Tags", RunPlan(tagsOnly) == "tool\n");
+        // settings.globalJobs (docs/THREADING_DESIGN.md section 7): goes before `#globaljobs` in the source; --global-jobs goes before it
+        Write(s, "Jobs/Jobs.fireproj", """{ "name": "Jobs", "settings": { "globalJobs": "sync" } }""");
+        Write(s, "Jobs/main.script", "#globaljobs safepoints\nfire global { print(\"job\") }\nfor (var i = 0; i < 2; i++) { print(\"loop \" + i) }\nprint(\"n \" + (sync globals))\n");
+        var jobsWs = Workspace.Open(Path.Combine(s, "Jobs", "Jobs.fireproj"));
+        string jobsRan = RunPlan(BuildPlan.Create(jobsWs, jobsWs.Projects[0]));
+        Check("Einstellungen: globalJobs des Projekts geht vor #globaljobs im Quelltext", jobsRan == "loop 0\nloop 1\njob\nn 1\n", jobsRan);
+        Linker.ProcessGlobalJobs = GlobalJobsMode.Safepoints;
+        try { jobsRan = RunPlan(BuildPlan.Create(jobsWs, jobsWs.Projects[0])); }
+        finally { Linker.ProcessGlobalJobs = null; }
+        Check("Einstellungen: --global-jobs geht vor globalJobs des Projekts", jobsRan == "loop 0\njob\nloop 1\nn 0\n", jobsRan);
+        Check("Einstellungen: globalJobs - ungueltig gemeldet, die Mappe erbt das Projekt", new ProjectSettings { GlobalJobs = "often" }.Validate().Count == 1 && new ProjectSettings { GlobalJobs = "Sleep" }.Validate().Count == 0
+            && ProjectSettings.Merge(new ProjectSettings(), new ProjectSettings { GlobalJobs = "sleep" }).GlobalJobs == "sleep" && !new ProjectSettings { GlobalJobs = "sleep" }.IsEmpty);
         var info = Linker.ExtractAssemblyInfo(new[] { "#debug\n#name \"FromTag\"\n#author \"tag\"\n" }, null, new ProjectSettings { Name = "FromProject", Mode = "performance" });
         Check("Einstellungen: im Dialog gilt, was das Projekt festlegt, sonst das Tag", info.ProductName == "FromProject" && info.ExecutionMode == VmExecutionMode.Performance && info.CompanyName == "tag");
         var noTagLib = BuildPlan.Create(ws, ws.FindByName("Util")!);
@@ -255,6 +267,25 @@ static class ProjectTests
         var coreManifest = fire.Package.Manager.Fpk.ReadManifest(corePack);
         Check("Pack: Version und Autor kommen aus den Einstellungen des Projekts (vor denen der Mappe)", Path.GetFileName(corePack) == "Core-2.1.0.fpk" && coreManifest.Version == "2.1.0" && coreManifest.Author == "core team", corePack + " " + coreManifest.Author);
         Check("Pack: ein Programm kann nicht gepackt werden", Throws(() => ProjectBuilder.PackLibrary(plan, outDir)));
+        {
+            // spark's build window: the phases of packing arrive in order (compile fire in its steps, then pack); a cancelled packing stops and leaves no package behind
+            var phases = new List<fire.Native.BuildProgress>();
+            var lines = new List<string>();
+            string watchedDir = Path.Combine(root, "packed-watched");
+            string watched = ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), watchedDir, new fire.Native.BuildMonitor(default, p => phases.Add(p), l => lines.Add(l)));
+            var compileSteps = phases.Where(x => x.Phase == fire.Native.BuildPhase.CompileFire).Select(x => x.Done).ToList();
+            Check("Pack: der Fortschritt kommt in Reihenfolge (fire uebersetzen in Schritten, dann packen) und das Protokoll nennt das Paket",
+                File.Exists(watched) && phases.Count >= 5 && phases[0].Phase == fire.Native.BuildPhase.CompileFire && phases[^1].Phase == fire.Native.BuildPhase.Pack
+                && phases.Zip(phases.Skip(1)).All(z => z.First.Phase <= z.Second.Phase) && compileSteps[0] == 0 && compileSteps.Contains(3) && compileSteps.Zip(compileSteps.Skip(1)).All(z => z.First <= z.Second)
+                && lines.Any(l => l.Contains(watched)), string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
+            string cancelledDir = Path.Combine(root, "packed-cancelled");
+            using var cancel = new CancellationTokenSource();
+            cancel.Cancel();
+            bool stopped = false;
+            try { ProjectBuilder.PackLibrary(BuildPlan.Create(ws, ws.FindByName("Util")!), cancelledDir, new fire.Native.BuildMonitor(cancel.Token)); }
+            catch (OperationCanceledException) { stopped = true; }
+            Check("Pack: abgebrochen wird nicht gepackt (OperationCanceledException, kein .fpk)", stopped && (!Directory.Exists(cancelledDir) || !Directory.EnumerateFiles(cancelledDir, "*.fpk", SearchOption.AllDirectories).Any()));
+        }
         Check("Pack: eine Bibliothek mit Anweisungen oben wird nicht gepackt", Throws(() => ProjectBuilder.PackLibrary(BuildPlan.Create(bad, bad.Projects[0]), outDir)));
         Write(s, "Inc/Inc.fireproj", """{ "name": "Inc", "type": "library", "files": ["inc.script"] }""");
         Write(s, "Inc/inc.script", "#include \"part.script\"\nclass Whole { static int Two() { return Part.One() + 1 } }\n");

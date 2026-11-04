@@ -24,7 +24,8 @@ Leitlinien:
 | 4 | [Debugging nativer Builds](#8-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
-| 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein leeres `ui`-Programm: ~7,4 MB C) |
+| 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
+| 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -176,27 +177,76 @@ Ursprünglicher Plan:
 
 Ein Debug-Agent im nativen Debug-Build, damit spark native Programme genauso debuggt wie die VM - auf jedem Ziel, ohne gdb/lldb.
 
-1. **`#line`** im erzeugten C (alle Modi): gdb/lldb und Absturzberichte zeigen fire-Zeilen.
-2. **`IDebugTarget`** in spark: die ~20 Mitglieder der VM, die `DebugSession`, `DebugThreadContext` und die Panels benutzen (`StepLine`, `StepInto`,
-   `StepOut`, `RunUntilBreakpoint`, `CurrentLocation`, `CurrentTrace`, `DebugScopeChain`, `DebugGlobals`, `DebugThisValue`, `PauseOnUnhandled`, ...)
-   hinter ein Interface; `VmDebugTarget` zuerst, ohne Änderung des Verhaltens.
-3. **Generator** (nur Modus `debug`): beim Wechsel der Zeile `if (FIRE_UNLIKELY(g_dbgArmed)) fire_dbg_line(&frame, src, line, scope);`,
+Stand: **Generator, Runtime und Agent umgesetzt** (Punkte 1, 3, 4, 5 für TCP, stdio und die UART des ESP32, 6, 7; docs/NATIVE_BACKEND.md "Zeilen des Programms im C" und "Debug-Builds",
+Protokoll: [NATIVE_DEBUG_PROTOCOL.md](NATIVE_DEBUG_PROTOCOL.md)); getestet gegen die VM (`NativeDebugTests.cs`). spark-Seite (2, 8) ebenfalls umgesetzt (`IDebugTarget`, `NativeDebugTarget`, Engine-Box, natives Run/Debug; Tests `FIRE_TESTS_ONLY=debugger`).
+**ESP32 umgesetzt** (8.6): Transport UART gerahmt (CRC-16), 3 s Wartezeit, Standardeingabe durch den Agenten, spark baut/flasht über `idf.py` und debuggt bzw. zeigt die Konsole
+über die serielle Schnittstelle (docs/NATIVE_BACKEND.md "Ziel `esp32`: Run und Debug auf dem Board"); getestet unter QEMU, nicht auf einem echten Board. Offen:
+WLAN (TCP auf dem Board), andere Chips (USB-Serial-JTAG der C3/S3) als eigene Ziele, wasm; die serielle Schnittstelle im Einstellungsdialog von spark (heute `port`/`baud` im JSON). Nicht getestet: `set` eines Felds mit Probes (die gibt es nur mit Reflection; geprüft ist der Setter mit der Prüfung
+der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Windows).
+
+1. ~~**`#line`** im erzeugten C (alle Modi)~~: gdb/lldb und Absturzberichte zeigen fire-Zeilen (`"lineDirectives": false` schaltet es ab).
+2. ~~**`IDebugTarget`** in spark~~ (umgesetzt): die ~20 Mitglieder der VM, die `DebugSession`, `DebugThreadContext` und die Panels benutzten, stehen hinter
+   `IDebugTarget`/`IDebugThread` mit dem Wertemodell `DebugValue` (Name, Text, Art, Id, Kinder auf Anfrage) in `fire.Debugging`
+   (`src/fire.Compiler/Debugging`); `VmDebugTarget` reicht die VM ohne Änderung des Verhaltens durch, dazu `set` (Local, Global, Element, Feld
+   über Setter und Probes). Die Panels kennen keine `Value`/`ObjectInstance` mehr; Scope-Ansicht: Kontextmenü *Set Value...*.
+   Tests: `FIRE_TESTS_ONLY=debugger`.
+3. ~~**Generator**~~ (nur Modus `debug`): beim Wechsel der Zeile `if (FIRE_UNLIKELY(g_dbgArmed)) fire_dbg_line(&frame, src, line, scope);`,
    ein Debug-Frame pro Funktion auf einem Schatten-Stack (Funktion, Zeile, `this`, Adressen der Locals), statische Tabellen Scope -> Namen/Eltern-Scope,
    eine Tabelle der Globals, Reflection-Tabellen immer.
-4. **Agent** in `fire_rt.h`: ein eigener Thread außerhalb der GIL; Befehle `pause`, `continue` (Haltepunkte als Bitmap je Quelldatei), `step line/into/out`,
+4. ~~**Agent**~~ in der Runtime (`fire_debug.h`, von `fire_rt.h` eingebunden): ein eigener Thread außerhalb der GIL; Befehle `pause`, `continue` (Haltepunkte als Bitmap je Quelldatei), `step line/into/out`,
    `scopes`, `globals`, `this`, `expand` (Objekt/Array/Liste), `trace`, `threads`, `set` (Wert setzen), `resume` (nach unbehandelter Ausnahme).
    Semantik wie die VM: ein Haltepunkt zählt beim **Betreten** der Zeile.
-5. **Transport**: Desktop TCP auf localhost oder eine Pipe, die spark beim Start übergibt (`FIRE_DEBUG=...`); ESP32 über UART/USB-CDC (mit der
-   Programmausgabe gemischt, Rahmen mit Kennung) oder TCP über WLAN; wasm später über `postMessage`. Protokoll: eine JSON-Nachricht pro Zeile.
-6. **Threads**: Anhalten aller Threads über die GIL; ein angehaltener Thread wartet ohne GIL (wie `Sleep`), damit `ContinueThread` einzelne Threads laufen lässt.
-7. **Unbehandelte Ausnahmen**: anhalten vor dem Abrollen, wenn kein Handler da ist; `resume` wie `TryResumeUnhandled` der VM.
-8. `NativeDebugTarget` in spark; *Run > Debug* mit der Engine `native` (und dem Ziel aus dem Projekt).
+5. **Transport** (umgesetzt bis auf WLAN und wasm): Desktop TCP auf localhost (`FIRE_DEBUG=tcp:...`) oder gerahmt über stdio (`FIRE_DEBUG=stdio`, für Tests und
+   FreeRTOS); ESP32 über die Konsolen-UART (mit der Programmausgabe gemischt: Rahmen `\x1EFD:json*crc16`, die anderen Zeilen sind Konsole bzw. Standardeingabe,
+   3 s Wartezeit beim Start); später TCP über WLAN, wasm über `postMessage`. Protokoll: eine JSON-Nachricht pro Zeile.
+6. ~~**Threads**~~: Anhalten aller Threads über die GIL; ein angehaltener Thread wartet ohne GIL (wie `Sleep`), damit `ContinueThread` einzelne Threads laufen lässt.
+7. ~~**Unbehandelte Ausnahmen**~~: anhalten vor dem Abrollen, wenn kein Handler da ist; `resume` wie `TryResumeUnhandled` der VM.
+8. ~~`NativeDebugTarget` in spark; *Run > Debug* mit der Engine `native` (und dem Ziel aus dem Projekt)~~ (umgesetzt, spark-Seite): `NativeDebugTarget`/`NativeDebugThread`
+   sprechen das Protokoll (docs/NATIVE_DEBUG_PROTOCOL.md); spark lauscht, übergibt `FIRE_DEBUG`, nimmt eine Verbindung mit dem Token an. Engine-Box *VM/Native* neben der
+   Modus-Box (gespeichert in `settings.engine`), natives *Run* (Release/Performance: Ausgabe ins Output-Panel) und *Debug* (Build mit `-O0 -g` nach `bin/<ziel>-dbg`),
+   Stack-Panel bei nativ ausgeblendet (docs/NATIVE_BACKEND.md "Ausführen und Debuggen aus spark"). Getestet gegen einen Schein-Agenten; Ende-zu-Ende-Test gegen einen
+   echten Debug-Build, sobald die Runtime den Agenten hat. ESP32 (8.6): Ziel `esp32` + Run/Debug baut das ESP-IDF-Projekt in `bin/esp32-<modus>`, `idf.py build flash`,
+   öffnet die serielle Schnittstelle (`port`/`baud` aus Projekt oder Ziel, sonst erkannt) - Debug über `SerialFramedTransport`, Run mit der Konsole im Output-Panel
+   und einer Eingabezeile darunter. Ein fire-Thread zeigt in der Scope-Ansicht seine eigenen Variablen der obersten Ebene (`globals` mit `thread`). Offen: die
+   Oberfläche ist nicht von Hand durchgeklickt, kein echtes Board.
+9. ~~**Build-Fenster**~~ (umgesetzt): jeder Bau aus spark (F5 mit der VM, nativ, ESP32, Build, Pack) zeigt nach 0,5 s ein Fenster mit Phase, Fortschritt (die Library-Module
+   von linkage `static`/`shared` gezählt, sonst unbestimmt) und Log, *Hide* (Fortschritt in der Statusleiste) und *Cancel* (Prozessbaum der Compiler beendet, nichts
+   Halbes bleibt) - `BuildMonitor` (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"). Offen: das Fenster ist nicht von Hand durchgeklickt; `idf.py` abbrechen nur
+   ohne echtes ESP-IDF geprüft; die Natives eines Packages, die für die VM gebaut werden, melden keine eigene Phase (nur ihre Befehle im Log).
 
 Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 
 ## 9. Binäre Libraries und dynamisches Laden
 
 Zwei Teile: **getrennte Übersetzung** (Code teilen, schneller bauen) und **dynamisches Laden** (Plugins, Treiber, Natives in einer VM in fire).
+
+Stand: **Phasen A0, A, B, B2 und C umgesetzt** (C ohne Windows) (docs/NATIVE_BACKEND.md "Klassen-Deskriptoren" und "Getrennte Übersetzung: `linkage`"): Klassen-Deskriptoren statt
+`switch` in den Hooks der Runtime (A0); Module mit eigener Registrierung der Zahlen über Tabellen des Programms, in einer Datei hinter `FIRE_MODULES=1` (A);
+`"linkage": "static"` (Projekt, `fire.native.json`, `--linkage`) mit Schnittstellendatei (Formatversion + ABI-Hash), Cache des Benutzers nach Inhalts-Hash,
+`ember cache clean`, Varianten je Menge von Schaltern, öffentliche Schnittstelle einer Library als Wurzel (§11), Debug-Tabellen je Modul (ein Haltepunkt in einer
+statischen Library hält); Desktop (gcc, clang, TinyCC, MinGW), wasm (Emscripten, `emar`) und ESP32 (die Module als eigene Übersetzungseinheiten der Komponente) (B);
+jedes Modul bedient seine eigenen Klassen (Verteiler, Feld-Helfer, `is of`, Operatoren, Typargumente), fremde über Tabellen der Member in den
+Klassen-Deskriptoren (der Rückfall der Runtime, auch die Basis für Plugins), private Member einer Library nur, wenn sie erreicht werden, Reflection-Zeilen und
+Reflect.New je Modul, Natives in C, die für sich stehen, und die JSON-Engine in der Bibliothek ihres Moduls, Sections + `--gc-sections` (B2: der zweite Bau mit
+`static` ist schneller als `source`, siehe Messwerte).
+`"linkage": "shared"` (C, Linux und macOS mit gcc/clang): die Libraries als Shared Libraries neben dem Programm, das den Zustand der Runtime exportiert; jede
+nennt ihre Schnittstelle, das Programm prüft sie beim Start (eine lesbare Meldung statt eines Absturzes). Windows (MinGW, unter Wine getestet): die Runtime eine DLL
+für sich, die thread-lokalen Variablen hinter `fire_tl()`, was eine DLL vom Programm braucht über Zeiger, die ihre `fire_link_*`-Funktion beim Start füllt.
+Plugins (Phase D b, docs/NATIVE_BACKEND.md "Plugins"): `--linkage plugin` baut die Klassen eines Programms als Modul für sich (`.so`/`.dll` und `.fireplugin` für die
+VM), ein Programm mit `"shared"` lädt es mit `Library.Load` (Prüfung nur über Hashes: die Schnittstellen der Module, die Konfiguration der Runtime), die Runtime
+registriert seine Klassen (Deskriptoren, Typen von `catch` und Enums nach Namen, Reflection, statische Initialisierer) und seine Einheiten (nach Dimensionen, Faktor
+und Symbol, neue Dimensionen auf freien Plätzen); Natives in C++ des Plugins in seiner Bibliothek (eine eigene Kopie; für die VM eine Bibliothek mit der C-ABI neben
+dem Bytecode), Natives in C von Packages über die `fire_cn_` des Programms (es legt sie für alle an; fehlt eines, eine lesbare Meldung); JSON der Objekte der
+Plugins (ihre Zeilen `JsonClassInfo`, die Runtime fragt sie nach Id und Namen); das Programm ist dann eine offene Welt;
+Linux, Windows (MinGW, unter Wine) und die VM (sie lädt den Bytecode, Entscheidung 9.8).
+Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), in Plugins
+`class extends` fremder Klassen, benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
+Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
+deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
+Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
+die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur
+für Erreichtes), LTO als Option, ungenutzte Libraries-Teile mit `--gc-sections` (schon an) vollständig wegfallen lassen; Schalter wie Reflection und Probes gelten noch für alle Module (eine Variante je Menge); LTO; ein fertiges `.a`
+aus dem Cache für ESP-IDF; ein Programm, das eine Klasse einer Library neu deklariert, wird mit `source` gebaut.
 
 Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heute, Standard; `"static"`; `"shared"`):
 
@@ -212,11 +262,24 @@ Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heut
 
 Dynamisches Laden:
 
-* `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
-  das nur feste Namen kennt).
-* fire-Module als Plugins: eine mit `"shared"` gebaute Library lädt zur Laufzeit, registriert ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie
-  (spark lädt so die Treiber installierter Packages).
-* Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.
+* **umgesetzt** (Phase D a; docs/language/18-native-code.md): `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
+  das nur feste Namen kennt). `Get(..., release: "free")`: die Freigabefunktion der Bibliothek - ein zurückgegebener Zeiger wird ein `NativeHandle`, das dem Besitz folgt
+  (`delete` oder das Ende des Besitzers gibt ihn einmal frei), ein zurückgegebener String wird kopiert und gleich freigegeben. `NativeHandle` ist `[NoCopy]` (SPEC 5.12,
+  vererbt): `flat`/`copy` verdoppeln es nie (eine `ArgumentException`, auch als Feld oder Element einer tiefen Kopie). Ebenso die Kopien der Threads
+  (VM und nativ gleich, vor jedem Kopieren): `fire taking x`/`fire M(args)` (der Thread startet nicht), die Objekt-Argumente von `fire global` (nativ wurde
+  der Auftrag vorher trotzdem eingereiht), `sync`/`sync flat` (Fall A, beim vollen `sync` auch Fall C; nichts wird zurückgeschrieben). Kein `taking` verschiebt
+  ein Objekt; **umgesetzt**: `fire handover x` übergibt es ohne Kopie (alles Erreichbare, die Variable wird `undefined`, VM und nativ gleich, THREADING_DESIGN.md
+  Abschnitt 1). `taking` kopiert alles Erreichbare, egal wem es gehört (auch ein Array-Literal in einem Feld; ein Array auch in der VM), beim `fire` im
+  startenden Thread; Lambdas/Pointer darin sind eine `ArgumentException`. **Umgesetzt:** wann `fire global`-Aufträge (und Sektionen, Host-Callbacks)
+  automatisch laufen, ist eine Build-Einstellung (`#globaljobs safepoints|sleep|sync`, `#nosync` = `sync`, Projekt `globalJobs`, fire.native.json, `--global-jobs`)
+  mit EINER Liste sicherer Punkte für VM und nativ (Rücksprung einer Schleife, `Sleep`/Wartefunktionen, `sync globals`, Programmende; THREADING_DESIGN.md
+  Abschnitt 7) - der Rückgabewert von `sync globals` ist in beiden gleich. Offen: andere Verweise des Senders auf übergebene Objekte werden nicht erkannt;
+  die isolierte Kopie der Globals für einen
+  Host-Callback, wenn das Hauptprogramm nicht mehr läuft, prüft `[NoCopy]` nicht (VM). `is of`/`!`/`throw` eines zerstörten Objekts
+  sind in VM und nativ eine `DestroyedException` (nativ las `isof_*` vorher den freigegebenen Speicher).
+* **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert
+  ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie; Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.
+  Offen: spark lädt so die Treiber installierter Packages.
 
 ## 10. Clipboard, Drag & Drop
 
@@ -248,19 +311,82 @@ Ursprünglicher Plan:
 
 ## 11. Ungenutzten Code weglassen
 
-Anlass: Der Generator übersetzt heute alles, was importiert ist - ein minimales Programm mit `#import "ui"` ergibt rund 207.000 Zeilen bzw. 7,4 MB C, und
-`gcc -O2` braucht dafür über eine Minute (TinyCC ist schnell, das Programm wird aber trotzdem groß). Ziel: nur übersetzen, was das Programm erreichen kann -
-ungenutzte Methoden, Funktionen, Felder-Initialisierer und **ganze Klassen** fallen weg.
+**Umgesetzt (Phasen A-C, Stand und Messung: docs/NATIVE_BACKEND.md "Größe des Programms").** Anlass war, dass ein minimales Programm mit `#import "ui"` (ein Fenster, ein `UI.Root`,
+ein `UI.Label`) 7,85 MB C ergab und `gcc -O2` dafür über zwei Minuten brauchte. Die Ursache: `ui` benutzt die Reflection (Stile, Trigger, Bindungen setzen Properties per Name), und ein
+einziger Aufruf eines `__refl_*` erzeugte **jede** Klasse des Programms mit allen Konstruktoren und Methoden. Jetzt:
 
-* **Erreichbarkeit** vom Einstieg (`Main`, Tests, statische Initialisierer der erreichten Klassen) über Aufrufe, `new`, Basisklassen, Interfaces und Lambdas.
-  Virtuelle Aufrufe: eine Überschreibung bleibt, wenn die Methode der Basis erreicht **und** die Klasse instanziiert wird (Rapid Type Analysis).
-* **Dynamische Zugriffe** halten Code fest: `Reflect.New`/`Reflect.*`, JSON (`Json.Read<T>`), Markup des `ui` (Elemente nach Namen), Treiber und Plugins
-  (Abschnitt 9), Debugger (Abschnitt 8, Ausdrücke im Haltepunkt). Dafür ein Attribut zum Behalten (z. B. `[Keep]`) und ein Schalter, der alles behält
-  (Debug-Builds, Live-Sitzungen).
-* **Natives**: nur die Natives erreichter Methoden einbinden; die C-Bridges der Packages so schneiden, dass ungenutzte Teile (z. B. Zwischenablage,
-  Drag & Drop) gar nicht erst mitkompiliert werden.
-* Tabellen (Klassen-IDs, Methoden-Verteiler, Ausnahmen, Reflection, internierte Namen) nur für das, was bleibt.
-* Mit Abschnitt 9 abstimmen: Eine Library, die als `"static"`/`"shared"` vorgebaut wird, behält ihre öffentliche Schnittstelle vollständig; das Weglassen
-  wirkt dort nur auf Internes bzw. beim Linken des Programms (`"source"`).
-* Optional auch für die VM (kleinere Images, schnellerer Start).
-* Prüfen: die Testsuite mit und ohne Weglassen gleich; Messung von Codegröße und Bauzeit (`ui`, `graphics`, `scene3d`) vorher/nachher.
+* **Reflection nach Stufen** (A): Mitglieder per Name halten die Felder und Property-Zugriffe der gemachten Klassen fest, `Reflect.Call` deren Instanzmethoden, `Reflect.New` die Konstruktoren
+  der Klassen in den Tabellen; die Tabellen beschreiben die erreichten Klassen (gemacht, benutzt, Basisklassen, `[Keep]`).
+* **JSON** (B): Schreiben zieht nichts nach, Lesen die deklarierten Typen mit Unterklassen und Feldtypen, ein Slot ohne Klasse alle. `[NotSerializable]` (vererbt) und `"serializable": false`
+  im Package (`ui`) schließen Klassen aus: Schreiben oder Lesen einer solchen ist eine `ArgumentException`, in VM und nativ gleich.
+* **Tabellen** (C): gleiche Zweige der Feldhelfer einmal, `fp_` nur bei genommener Adresse, Reflection- und Proben-Tabellen ohne die geerbten Mitglieder jeder Klasse, Namenslisten einmal.
+* **`[Keep]`** vor Klassen und Mitgliedern (nicht vererbt; SPEC 5.12 erlaubt Attribute jetzt auch vor Klassen ausdrücklich).
+* **Stufen des Weglassens** (`"stripping"` in `fire.native.json` und in den Einstellungen des Projekts, `--stripping` auf der Befehlszeile; Zahl oder Name; ersetzt `"trim"`,
+  das als Alias bleibt: `"all"` = 0, `"reflection"` = 1, `"reached"` = 3, `--keep-all` = 0): **0** `none` (alles, wie die VM; ein Debug-Build immer), **1** `protected` (jede Klasse
+  und jeder öffentliche Member; ein privater oder geschützter nur, wenn erreicht - die Regel einer vorgebauten Library), **2** `methods` (jede Klasse mit Konstruktoren, Feldern und
+  Properties; eine Methode nur, wenn benutzt - mit ihrer Beschreibung in den Reflection-Tabellen), **3** `all` (der Standard: nur das Erreichte). In jeder Stufe bleiben
+  **Namen, die das Programm als Literal an die Reflection gibt** (`Reflect.New("Dog")`, `Reflect.Call(o, "Bark")`, `Type.Named("X")`, `Reflect.Get(o, "f")` - jeder Text der
+  Funktion, die die Reflection ruft), und ein Zugriff auf etwas Weggelassenes ist ein klarer Fehler: „Class 'X' was left out of the build (stripping 3). Add [Keep] to 'X' or use
+  stripping <= 2.“ (ebenso für Member). Proben funktionieren in den Stufen 2 und 3 (sie halten die Felder und Properties der gemachten Klassen). Mit `"static"`/`"shared"`
+  behält eine Library in jeder Stufe außer 0 ihre Schnittstelle (Stufe 1); das Programm lässt weg wie mit `"source"`.
+* Statische Initialisierer aller Klassen laufen weiter (Semantik unverändert).
+
+Ergebnis: das minimale `ui`-Programm hat jetzt 2,29 MB C statt 7,85 MB (-71 %), `gcc -O2` braucht 49 s statt 140 s (-65 %); Messung für `graphics`, `scene3d`, JSON und Reflection in NATIVE_BACKEND.md.
+
+**VM und nativ:** Die VM behält alles. Im Standard (Stufe 3) unterscheiden sich nur Suchen mit einem Namen, der erst zur Laufzeit entsteht, nach einer Klasse, die das Programm
+nie erreicht, oder einer Methode, die es nie benutzt (`Reflect.New(name)`, `Type.Named(name)`, `Reflect.Call(o, name)`; `Type.Names()` und `Type.Of(o).Methods()` listen, was da
+ist; JSON-`"$type"` außerhalb der deklarierten Typen): nativ der klare Fehler, in der VM gefunden. `[Keep]` oder eine kleinere Stufe machen beides gleich; getestet in allen
+vier Stufen gegen die VM ("Weglassen (stripping)" in der nativen Gruppe, mit `static` in `FIRE_TESTS_ONLY=linkage`).
+
+**Offen:**
+
+* **D - Rapid Type Analysis für den Verteiler** (eine Methode nur, wenn eine Aufrufstelle mit passendem statischen Typ sie erreicht): gemessen, nicht gebaut - im `ui`-Programm kennen 81 %
+  der Aufrufstellen über den Verteiler die Klasse schon, der Filter spart höchstens 4 % des Funktionscodes.
+* **E - Natives der Bridges in `#if`-Abschnitten** (`graphics`, `windows`, Zwischenablage, Drag & Drop, Bilder, Slicer): nicht gebaut; gcc verwirft nicht benutzte `static`-Funktionen schon,
+  der Gewinn läge bei TinyCC und der Größe der Datei.
+* **F - Weglassen in der VM** (kleinere Images, schnellerer Start, dann auch dieselben Klassen per Name wie nativ): offen.
+* ~~Mit Abschnitt 9 abstimmen~~: eine Library, die als `"static"`/`"shared"` vorgebaut wird, behält ihre Schnittstelle (öffentliche und geschützte Member, Stufe 1) - umgesetzt
+  mit B2 und den Stufen. Offen: eine Erreichbarkeit über die Modulgrenzen, damit auch eine vorgebaute Library weglässt, was das Programm nicht braucht (Abschnitt 9).
+* Die Stufen 1 und 2 sind für ein `ui`-Programm fast so groß wie 0: jeder öffentliche Member bzw. jeder Konstruktor jeder Klasse des Packages zieht seinen Code nach.
+* Die Erkennung der Literale ist grob (jeder Text der Funktion, die die Reflection ruft); ein Name, der über eine Variable einer anderen Funktion oder aus einer Datei
+  kommt, braucht `[Keep]` oder eine kleinere Stufe.
+* Was bleibt, ist beim `ui`-Programm echter Code (`UI.Root`: Ereignisse, Fokus, Popups, Ziehen und Ablegen); kleiner würde es nur durch weniger Code im Package oder ein `ui`, dessen
+  Teile (Drag & Drop, Popups) erst beim Benutzen erreicht werden.
+
+## 12. Bau-Reihenfolge der Quellen von Paket-Natives
+
+**Problem.** Die Quellen der Natives eines Pakets (`native.sources` im `.fireproj`, davor `native.platformSources`) werden für die VM-Bibliothek und den nativen Build
+**in eine Datei** gelegt, genau in der Reihenfolge der Liste (`PackageStore.ReadNativeSources`). Ein `#include "x.h"` auf eine andere Quelle desselben Pakets wird dabei
+entfernt (`StripLocalIncludes`: "in this file already") - er wirkt also nicht. Was ein Header benutzt, muss in der Liste **vor** ihm stehen; sonst fehlen Typen und
+Funktionen, obwohl der Header sie selbst einbindet. Gemerkt wird das erst beim Bauen, und in der VM fiel die Grafik dann still auf C# zurück (inzwischen meldet sie es,
+`GraphicsLibrary.WarnFallback`).
+
+**Wie es aufgetreten ist (Teil 4, GPU-Backend von `graphics`).** `fire_gfx_gpu.h` bindet `fire_gfx_vk.h` (der erzeugte Ausschnitt der Vulkan-Header) und
+`fire_gfx_shaders.h` (die SPIR-V-Shader) ein. In `packages/graphics/graphics.fireproj` stand `fire_gfx_gpu.h` zuerst in der Liste; der Bau scheiterte mit
+`unknown type name 'VkBuffer'`. Getauscht: die beiden Header, die es braucht, stehen jetzt davor -
+
+```
+"native/fire_gfx_fx.h",
+"native/fire_gfx_vk.h",        (vorher nach fire_gfx_gpu.h)
+"native/fire_gfx_shaders.h",   (vorher nach fire_gfx_gpu.h)
+"native/fire_gfx_gpu.h",
+"native/fire_bridge_graphics.h"
+```
+
+Innerhalb einer Datei gilt ohnehin C: definiert vor benutzt (der GPU-Helfer `fire_gfxb_gpuShape` steht in `fire_bridge_graphics.h` vor den Natives, die ihn rufen).
+
+**Was es braucht (zum Vereinheitlichen).**
+* Eine **feste Bau-Reihenfolge**, die das Paket ausdrücklich angibt statt sie aus der Lage in der Liste zu folgern - z. B. ein Index je Quelle
+  (`{ "file": "native/fire_gfx_vk.h", "order": 10 }`) oder Gruppen (`"headers"` vor `"sources"`), gleich für `sources` und `platformSources`.
+* Alternativ (oder zusätzlich) die lokalen `#include`s **auflösen** statt sie zu streichen: eine Quelle wird an der Stelle ihres ersten `#include` eingesetzt (einmal je
+  Datei); dann ergibt sich die Reihenfolge aus den Abhängigkeiten selbst, und eine falsche Liste ist kein Fehler mehr.
+* Eine **Prüfung beim Packen** (`ember pack`, Paket-Tests): jede Quelle, die eine andere des Pakets einbindet, steht nach ihr - mit einer Meldung, die Datei und Zeile nennt.
+* Dieselben Regeln für alle Wege, die Quellen einsammeln: die VM-Bibliotheken (`PackageLibrary`, auch `EnsureGraphics`), der native Build (`CppGenerator`) und Plugins.
+
+**Zweiter Fall: dieselben Deklarationen in zwei Paketen.** `graphics` (GPU-Backend) und `scene3d` brauchen beide einen Ausschnitt der Vulkan-Header. Im nativen Build liegen die
+Quellen beider Pakete in einer Datei - zwei verschiedene Ausschnitte derselben Enums kollidierten (`redeclaration of 'enum VkResult'`). Gelöst ist es vorerst so: **ein**
+Generator (`packages/graphics/native/tools/make_gfx_vk.py`; der von scene3d ruft ihn nur auf) liest beide Backends und schreibt dieselbe Datei als
+`graphics/native/fire_gfx_vk.h` und `scene3d/native/s3d_vk.h`, unter einem gemeinsamen Include-Guard (`FIRE_VK_DECLS_H`); beide Backends binden sie nur ein, wenn der Guard
+noch nicht gesetzt ist. In der VM baut jedes Paket seine Bibliothek allein und hat seine vollständige Kopie. Sauberer wäre, wenn ein Paket Header eines Pakets, von dem es
+abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört zur festen Bau-Reihenfolge oben: die Quellen der Abhängigkeiten zuerst, jede einmal.
+

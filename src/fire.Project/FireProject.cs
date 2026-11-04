@@ -94,6 +94,8 @@ namespace fire.Projects
         public List<string>? Drivers { get; set; }
         /// <summary>The folder of the notes (docs/NOTES.md), relative to the project file; null: `notes/`.</summary>
         public string? Notes { get; set; }
+        /// <summary>A library whose classes cannot be written to or read from JSON (`"serializable": false`, docs/JSON.md), e.g. the elements of `ui`; null: they can.</summary>
+        public bool? Serializable { get; set; }
 
         /// <summary>Where the project was read from (null: not saved yet); not part of the file.</summary>
         [JsonIgnore] public string? FilePath { get; set; }
@@ -136,7 +138,7 @@ namespace fire.Projects
             var copy = new FireProject
             {
                 Format = Format, Name = Name, Type = Type, Import = Import, Entry = Entry,
-                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard, Drivers = Drivers, Notes = Notes,
+                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard, Drivers = Drivers, Notes = Notes, Serializable = Serializable,
             };
             return JsonSerializer.Serialize(new SaveShape(copy), Options);
         }
@@ -164,6 +166,7 @@ namespace fire.Projects
                 Standard = p.Standard ? true : null;
                 Drivers = p.Drivers is { Count: > 0 } ? p.Drivers : null;
                 Notes = string.IsNullOrWhiteSpace(p.Notes) ? null : p.Notes;
+                Serializable = p.Serializable == false ? false : null;
             }
             public int Format { get; }
             public string Name { get; }
@@ -178,6 +181,7 @@ namespace fire.Projects
             public bool? Standard { get; }
             public List<string>? Drivers { get; }
             public string? Notes { get; }
+            public bool? Serializable { get; }
         }
 
         /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`.</summary>

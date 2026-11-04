@@ -19,6 +19,7 @@ namespace fire.Lexing
         Interface,
         Readonly, Enum,
         Static, // 'static' on fields/methods/properties (see Parser.ParseClassMember)
+        Override, // 'override' on a method, property or operator that replaces an inherited one (see Parser.ParseClassMemberAfterAttributes, TypeChecker.CheckOverrides)
         Public, Private, Protected, // Access modifiers for class members (see Parser.ParseAccessModifier)
         Namespace, // 'namespace Name { ... }' (siehe Parser.ParseNamespaceDecl/FlattenNamespaces)
         With,
@@ -27,6 +28,7 @@ namespace fire.Lexing
         Continue,
         Where,
         Fire, Taking,
+        Handover, // 'fire handover x' - x goes to the new thread without a copy (see Ast.FireTakingCapture.Handover)
         Operator, // 'operator' - operator overloading (see Parser.ParseOperatorMember)
         Sync, Flat,
         Copy, // 'copy expression' - deep copy (see Ast.UnaryOp.DeepCopy); 'flat expression' is the flat one (UnaryOp.FlatCopy)

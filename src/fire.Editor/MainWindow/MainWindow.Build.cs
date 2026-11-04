@@ -287,6 +287,7 @@ namespace fire.Editor
         /// <summary>Translates the active script to C++ for the configured target and builds it with the configured toolchain (or writes the files of a project).</summary>
         private async void BuildNative_Click(object? sender, RoutedEventArgs e)
         {
+            if (BuildRunning()) return;
             var project = ContextProject();
             BuildPlan? plan = null;
             ScriptEditorControl? script = null;
@@ -349,18 +350,37 @@ namespace fire.Editor
             RevealTool("buildlog");
             string? defaultFile = plan != null ? null : ActiveDocument?.DisplayName;
             string? defaultPath = plan != null ? null : FullPathOf(ActiveDocument);
-            var result = await Task.Run(() =>
-                fire.Compiler.NativeBuilder.BuildSafe(sources, config, target, toolchain, output, mode, null, false, baseDirectory, null, plan));
+            if (BuildRunning()) return;   // (one may have started while the folder or file was asked for)
+            var job = BeginBuildJob(what);
+            NativeBuildResult result;
+            try
+            {
+                result = await Task.Run(() =>
+                    fire.Compiler.NativeBuilder.BuildSafe(sources, config, target, toolchain, output, mode, null, false, baseDirectory, null, plan, job.Monitor));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                EndBuildJob(job, BuildOutcome.Failed, ex.Message);
+                UpdateStatus("The native build failed: " + ex.Message);
+                return;
+            }
             // what the tools said (the C++ compiler with its stdout and stderr), then the errors and warnings of the fire compiler
             if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+            if (result.Cancelled)
+            {
+                EndBuildJob(job, BuildOutcome.Cancelled);
+                return;
+            }
             FinishBuild("Build", result.Ok, result.Diagnostics ?? Array.Empty<Diagnostic>(), defaultFile, defaultPath);
             if (result.Ok)
             {
+                EndBuildJob(job, BuildOutcome.Succeeded);
                 UpdateStatus($"Built {result.Output} (native, {target.Name}).");
                 return;
             }
+            EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
             UpdateStatus("The native build failed.");
-            await Dialogs.Message(this, result.Log, "Build Native");
+            if (!FailureShown(job)) await Dialogs.Message(this, result.Log, "Build Native");
         }
 
         /// <summary>The name of the mode of the run (`debug`, `release`, `performance`).</summary>
@@ -368,6 +388,7 @@ namespace fire.Editor
 
         private async void Build_Click(object? sender, RoutedEventArgs e)
         {
+            if (BuildRunning()) return;
             var project = ContextProject();
             // a library is not a program: building it means packing it as a package
             if (project?.Project.Type == OutputType.Library) { await PackLibrary(project); return; }
@@ -390,7 +411,7 @@ namespace fire.Editor
             output ??= await PickSavePath("Build standalone", "program" + (windows ? ".exe" : ""), windows ? "exe" : "");
             if (output == null) return;
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-            CompileAndPrepare(output);
+            await CompileAndPrepareAsync(output);
         }
     }
 }

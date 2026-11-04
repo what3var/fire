@@ -17,22 +17,25 @@ namespace fire.Windows.Bridge
         public int Accent = 0x0078D7;
         public string Fonts = "";
         public int FontSize;
+        /// <summary>Does the desktop allow transparency effects? (The C library asks the system; here it stays on.)</summary>
+        public bool Transparency = true;
 
         private static SystemThemeProbe? s_cached;
 
         /// <summary>The theme of the desktop (asked once per process: the commands it runs take a moment).</summary>
         public static SystemThemeProbe Current() => s_cached ??= Query();
 
-        /// <summary>[embedded, scale, dark, accent, font candidates, font size] - the array of `__GRPHWinSystemTheme`.</summary>
+        /// <summary>[embedded, scale, dark, accent, font candidates, font size, transparency] - the array of `__GRPHWinSystemTheme`.</summary>
         public Value ToValue()
         {
-            var array = new ScriptArray(6);
+            var array = new ScriptArray(7);
             array.Items[0] = Value.MakeBool(Embedded);
             array.Items[1] = Value.MakeFloat(Scale);
             array.Items[2] = Value.MakeBool(Dark);
             array.Items[3] = Value.MakeInt(Accent);
             array.Items[4] = Value.MakeString(Fonts);
             array.Items[5] = Value.MakeInt(FontSize);
+            array.Items[6] = Value.MakeBool(Transparency);
             return Value.MakeArray(array);
         }
 

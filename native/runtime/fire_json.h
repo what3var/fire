@@ -11,18 +11,21 @@ FIRE_BEGIN
  * an untyped one) and the unit it is declared with (0: none). */
 typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; } JsonFieldInfo;
 /* A class: its name (as the program knows it, `Box`1` for a generic one whose plain name is taken), the plain name, its fields, `flags` (1 actor, 2 has
- * OnDeserialized(), 4 the List of the prelude, 8 JsonObject) and the number of its type parameters. */
+ * OnDeserialized(), 4 the List of the prelude, 8 JsonObject, 16 not serializable: `[NotSerializable]` or `"serializable": false` in its package) and the number of its
+ * type parameters. */
 typedef struct JsonClassInfo { const char* name; const char* plain; uint32_t nfields; const JsonFieldInfo* fields; uint32_t njson; uint8_t flags; uint8_t ntparams; } JsonClassInfo;
 /* The slots of the classes JSON fills itself (-1: not in the program). */
 typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; } JsonSpecial;
 
 /* Generated (the program): the class with this id (null: none), the id of a class name (-1: none), the text of a type argument (null: not known), the type
  * argument of a text (null: none), the special slots. */
-const JsonClassInfo* jsonClassAt(uint32_t cls);
-int32_t jsonClassNamed(const char* name);
-const char* jsonTArgText(const TArg* t);
-const TArg* jsonTArgFor(const char* text);
-const JsonSpecial* jsonSpecial(void);
+FIRE_HOST_EXTERN const JsonClassInfo* jsonClassAt(uint32_t cls);
+FIRE_HOST_EXTERN int32_t jsonClassNamed(const char* name);
+/* A class of the program that is not serializable and not in the tables (the native build left it out): its name, null for any other name. */
+FIRE_HOST_EXTERN const char* jsonExcludedNamed(const char* name);
+FIRE_HOST_EXTERN const char* jsonTArgText(const TArg* t);
+FIRE_HOST_EXTERN const TArg* jsonTArgFor(const char* text);
+FIRE_HOST_EXTERN const JsonSpecial* jsonSpecial(void);
 
 /* The engine (below, in the program): `__JsonCall(id, ...)` - 1 Serialize(value, flags), 2 Deserialize(text[, typeName]) -> [value, objects with
  * OnDeserialized], 3 Parse(text). `callType` is the type argument of the generic method that calls it (`Json.Deserialize<Person>`), null when there is none. */
@@ -34,7 +37,10 @@ Value fire_jsonCall(int argc, Value op, Value a1, Value a2, const char* callType
  * from the arena of the call and is freed at its end. ==== */
 #ifdef FIRE_JSON_IMPLEMENTATION
 
-enum { JSON_FLAG_ACTOR = 1, JSON_FLAG_HOOK = 2, JSON_FLAG_LIST = 4, JSON_FLAG_OBJECT = 8 };
+enum { JSON_FLAG_ACTOR = 1, JSON_FLAG_HOOK = 2, JSON_FLAG_LIST = 4, JSON_FLAG_OBJECT = 8, JSON_FLAG_EXCLUDED = 16 };
+
+/* What a class that is not serializable says (the same text as the VM, JsonMethods.NotSerializableReason). */
+#define JSON_NOT_SERIALIZABLE "it is not serializable ([NotSerializable] on it or a base class, or \"serializable\": false in its package)."
 
 typedef struct JsCtx {
     bool failed;
@@ -506,6 +512,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
     int id;
     if (!c) { jsAscii(J, &w->out, "null"); return; }
     if ((c->flags & JSON_FLAG_ACTOR) || (o->h.flags & 8)) { jsFail(J, jsCat3(J, "An actor ('", c->name, "') cannot be written to JSON."), "JsonException"); return; }
+    if (c->flags & JSON_FLAG_EXCLUDED) { jsFail(J, jsCat3(J, "The class '", c->name, "' cannot be written to JSON: " JSON_NOT_SERIALIZABLE), "ArgumentException"); return; }
     id = jsIdOf(w, o);
     shared = id != 0;
     if (shared && !(isRoot || jsCanDefine(w, o, container, containerKind))) { jsRef(w, id); return; }
@@ -1039,6 +1046,19 @@ static int32_t jsClassFor(JsCtx* J, const char* name, JsStrs* args) {
     }
     return jsonClassNamed(plainName);
 }
+/* The same lookup for the classes that are not serializable and not in the tables (jsonExcludedNamed): the name of the class, or null. */
+static const char* jsExcludedFor(JsCtx* J, const char* name) {
+    JsStrs args = {NULL, 0, 0};
+    const char* plainName = jsSplitGeneric(J, name, &args);
+    if (args.n > 0) {
+        char count[24];
+        const char* generic;
+        snprintf(count, sizeof count, "`%llu", (unsigned long long)args.n);
+        generic = jsonExcludedNamed(jsCat(J, plainName, count));
+        if (generic) return generic;
+    }
+    return jsonExcludedNamed(plainName);
+}
 static bool jsSameIgnoreCase(const char* a, const char* b) {
     size_t i, n = strlen(a);
     if (n != strlen(b)) return false;
@@ -1059,9 +1079,14 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
     Value obj;
     Obj* o2;
     size_t m;
-    if (cls < 0) return jsReadFail(r, jsCat5(J, path, ": unknown class '", type, "'.", ""));
+    if (cls < 0) {
+        const char* excluded = jsExcludedFor(J, type);
+        if (excluded) { jsFail(J, jsCat5(J, path, ": the class '", excluded, "' cannot be read from JSON: ", JSON_NOT_SERIALIZABLE), "ArgumentException"); return Undef(); }
+        return jsReadFail(r, jsCat5(J, path, ": unknown class '", type, "'.", ""));
+    }
     c = jsonClassAt((uint32_t)cls);
     if (c->flags & JSON_FLAG_ACTOR) return jsReadFail(r, jsCat5(J, path, ": an actor ('", c->name, "') cannot be read from JSON.", ""));
+    if (c->flags & JSON_FLAG_EXCLUDED) { jsFail(J, jsCat5(J, path, ": the class '", c->name, "' cannot be read from JSON: ", JSON_NOT_SERIALIZABLE), "ArgumentException"); return Undef(); }
     obj = newObject((uint32_t)cls, c->nfields, owner);
     o2 = objAt(obj);
     if (args.n > 0) o2->targs = jsTypeArgsFor(J, args.p, args.n);

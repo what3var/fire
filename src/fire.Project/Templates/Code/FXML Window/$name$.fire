@@ -6,7 +6,7 @@
 
 class $class$ : $class$Base {
     // OnClick="Ok" in the markup
-    undefined Ok(any sender) {
+    override undefined Ok(any sender) {
         print("OK")
     }
 }

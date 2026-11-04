@@ -504,14 +504,18 @@ namespace fire.Compiler
         };
 
         /// <summary>The prelude declares the base class `Exception` (SPEC 7.1). Programs written before that declare their own - it replaces the one of the
-        /// prelude instead of being a second definition. Two declarations in the program itself remain an error (the resolver reports it).</summary>
+        /// prelude instead of being a second definition. Two declarations in the program itself remain an error (the resolver reports it). The same for the classes
+        /// of the prelude with names a program may well use itself (`Library`, `LibraryException`: a program with its own `class Library` has no `Library.Load`).</summary>
         private static List<Stmt> LetOwnExceptionReplacePrelude(List<Stmt> program, IReadOnlyList<ProcessedSource> sources)
         {
             // (the prelude is the first source; it is recognised by its own classes)
             if (sources.Count < 2 || !program.Any(s => s is ClassDecl { Name: "IndexOutOfBoundsException", Source: 0 })) return program;
-            if (!program.Any(s => s is ClassDecl { Name: "Exception", Source: > 0 })) return program;
-            return program.Where(s => s is not ClassDecl { Name: "Exception", Source: 0 }).ToList();
+            var own = ReplaceablePreludeClasses.Where(n => program.Any(s => s is ClassDecl { Source: > 0 } cd && cd.Name == n)).ToHashSet(StringComparer.Ordinal);
+            if (own.Count == 0) return program;
+            return program.Where(s => s is not ClassDecl { Source: 0 } cd || !own.Contains(cd.Name)).ToList();
         }
+
+        private static readonly string[] ReplaceablePreludeClasses = { "Exception", "Library", "LibraryException" };
 
         /// <summary>Gives every GENERIC class next to which a
         /// NON-generic class with the same (fully qualified) name
@@ -1700,7 +1704,18 @@ namespace fire.Compiler
             {
                 Advance();
                 ExpectStatementTerminator();
-                return new NoSyncDirective(_sourceIndex, line);
+                return new GlobalJobsDirective(_sourceIndex, line, fire.Runtime.GlobalJobsMode.Sync);   // (the old name of `#globaljobs sync`)
+            }
+
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "globaljobs")
+            {
+                Advance();
+                // (`sync` is a keyword token: the word is taken by its text)
+                if (fire.Runtime.GlobalJobsModes.Parse(Peek().Lexeme) is not { } mode)
+                    throw Error("'#globaljobs' expects safepoints, sleep or sync", Peek());
+                Advance();
+                ExpectStatementTerminator();
+                return new GlobalJobsDirective(_sourceIndex, line, mode);
             }
 
             if (Check(TokenType.Identifier) && Peek().Lexeme == "timeout")
@@ -1715,7 +1730,7 @@ namespace fire.Compiler
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - a
             // '#using' line is already recognised there and removed from the text,
             // the parser never sees it any more. No case for it needed here any more.
-            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout value', '#lax', '#strict')", Peek());
+            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#lax', '#strict')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()
@@ -1936,12 +1951,23 @@ namespace fire.Compiler
                 return ParseFireCallForm(line);
 
             // `fire global { ... }`: job for the main program instead of a new thread (docs/THREADING_DESIGN.md section 7)
-            if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking))
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking || PeekAt(1).Type == TokenType.Handover))
                 return ParseFireGlobal(line);
 
             var (takingCaptures, withVarName, withSource) = ParseFireTakingWithClauses();
             var body = ParseBlock();
-            return new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body);
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body));
+        }
+
+        /// <summary>`fire handover x`: after the `fire` the sender's variable is `undefined` (it no longer owns the value) - desugared into
+        /// `{ fire ...; x = undefined }`, so that the resolver, the type checker and both back ends treat the reset like any assignment.</summary>
+        private Stmt WithHandoverReset(FireStmt fire)
+        {
+            if (!fire.TakingCaptures.Any(c => c.Handover)) return fire;
+            var statements = new List<Stmt> { fire };
+            foreach (var c in fire.TakingCaptures.Where(c => c.Handover))
+                statements.Add(new ExprStmt(_sourceIndex, fire.Line, new AssignExpr(fire.Line, new IdentifierExpr(fire.Line, c.VarName), new LiteralExpr(fire.Line, Value.MakeUndefined()))));
+            return new Stmt.BlockStmt(_sourceIndex, fire.Line, statements);
         }
 
         /// <summary>`sync global { ... }` (docs/THREADING_DESIGN.md section 7): a block that runs with exclusive access to the globals.
@@ -1967,6 +1993,8 @@ namespace fire.Compiler
             var (captures, withVarName, _) = ParseFireTakingWithClauses();
             if (withVarName != null)
                 throw Error("'with' does not exist for 'fire global'", Peek());
+            if (captures.Any(c => c.Handover))
+                throw Error("'handover' does not exist for 'fire global' (a job gets copies: use 'taking')", Peek());
             var body = ParseBlock();
             var parameters = captures.Select(c => new LambdaParam(c.VarName, null, new List<Expr?>(), null)).ToList();
             var lambda = new LambdaExpr(line, parameters, null, body, AutoCapture: false);
@@ -1982,9 +2010,15 @@ namespace fire.Compiler
             string? withVarName = null;
             Expr? withSource = null;
 
-            while (Check(TokenType.Taking) || Check(TokenType.With))
+            while (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.With))
             {
-                if (Check(TokenType.Taking))
+                if (Check(TokenType.Handover))
+                {
+                    Advance();
+                    var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'handover'");
+                    takingCaptures.Add(new FireTakingCapture(nameTok.Lexeme, new IdentifierExpr(nameTok.Line, nameTok.Lexeme), Handover: true));
+                }
+                else if (Check(TokenType.Taking))
                 {
                     Advance();
                     var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'taking'");
@@ -2005,6 +2039,8 @@ namespace fire.Compiler
                 }
             }
 
+            // the handovers after all copies (see Ast.FireTakingCapture.Handover: the slot order is the compiler's, the sources are plain variables)
+            takingCaptures = takingCaptures.Where(c => !c.Handover).Concat(takingCaptures.Where(c => c.Handover)).ToList();
             return (takingCaptures, withVarName, withSource);
         }
 
@@ -2048,7 +2084,7 @@ namespace fire.Compiler
             var callExpr = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, thisCaptureName), methodName), argRefs);
             var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
 
-            return new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body);
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body));
         }
 
         /// <summary>`terminate()` / `terminate(value)` - see Ast.TerminateStmt
@@ -2839,19 +2875,30 @@ namespace fire.Compiler
 
         private List<Stmt> ParseClassMemberAfterAttributes(int line)
         {
+            if (Check(TokenType.Override) && PeekAt(1).Type is TokenType.Public or TokenType.Private or TokenType.Protected)
+                throw Error($"The access modifier comes first: '{PeekAt(1).Lexeme} override ...'", Peek());
             var access = ParseOptionalAccessModifier();
+            // `override` (after the access modifier): the member replaces one of a base class - a method, a property or an operator (TypeChecker.CheckOverrides)
+            Token? overrideToken = Check(TokenType.Override) ? Advance() : null;
+            bool isOverride = overrideToken != null;
 
             if (Check(TokenType.Construct))
+            {
+                if (isOverride) throw Error("A constructor is not inherited - it cannot be 'override'", overrideToken!.Value);
                 return new List<Stmt> { ParseConstructor(access) };
+            }
             if (Check(TokenType.Destruct))
+            {
+                if (isOverride) throw Error("A destructor does not replace the one of the base class (both run) - it cannot be 'override'", overrideToken!.Value);
                 return new List<Stmt> { ParseDestructor() };
+            }
             if (Check(TokenType.Operator))
-                return new List<Stmt> { ParseOperatorMember(line, null) };
+                return new List<Stmt> { WithOverride(ParseOperatorMember(line, null), isOverride) };
             // `bool operator==(...)`: an operator with a declared return type
             if (TypeThenOperatorAhead())
             {
                 var operatorType = ParseTypeRef(allowArray: true);
-                return new List<Stmt> { ParseOperatorMember(line, operatorType) };
+                return new List<Stmt> { WithOverride(ParseOperatorMember(line, operatorType), isOverride) };
             }
 
             // 'static' on fields/methods/properties (SPEC "Static
@@ -2862,7 +2909,11 @@ namespace fire.Compiler
             // notation ('public static readonly'), no other
             // orders specially supported (simplicity).
             bool isStatic = Match(TokenType.Static);
+            if (isOverride && isStatic) throw Error("A static member belongs to its class and is not inherited - it cannot be 'override'", overrideToken!.Value);
+            if (!isOverride && Check(TokenType.Override))
+                throw Error("'static' and 'override' do not go together: a static member belongs to its class and is not inherited", Peek());
             bool isReadonly = Match(TokenType.Readonly);
+            if (isOverride && isReadonly) throw Error("A field cannot be 'override' - only methods, properties and operators replace inherited ones", overrideToken!.Value);
 
             // SPEC "Unit declarations": `var` is valid as with local
             // variables/parameters - `var` alone (type + possibly unit
@@ -2899,7 +2950,7 @@ namespace fire.Compiler
                 var methodTypeParams = ParseWhereClauses(methodTypeParamNames, line);
                 var body = ParseBlock();
                 return new List<Stmt> { new MethodDecl(_sourceIndex, line, type, name, parms, body,
-                    methodTypeParamNames.Count > 0 ? methodTypeParams : null, access, isStatic) };
+                    methodTypeParamNames.Count > 0 ? methodTypeParams : null, access, isStatic, IsOverride: isOverride) };
             }
 
             if (methodTypeParamNames.Count > 0)
@@ -2920,8 +2971,11 @@ namespace fire.Compiler
                     throw Error(
                         "'readonly' is not valid for properties - a property without 'set' is already read-only",
                         Peek());
-                return ParsePropertyBody(line, type, name, access, isStatic);
+                var property = ParsePropertyBody(line, type, name, access, isStatic);
+                if (isOverride) property = property.Select(m => m is PropertyDecl pd ? pd with { IsOverride = true } : m).ToList();
+                return property;
             }
+            if (isOverride) throw Error("A field cannot be 'override' - only methods, properties and operators replace inherited ones", overrideToken!.Value);
 
             if (type is { ArrayRank: > 0 })
                 throw Error(
@@ -2964,6 +3018,8 @@ namespace fire.Compiler
         /// object with a matching method - an overload only for the
         /// RIGHT operand (like C#'s `operator+` with swapped operand
         /// types, or Python's `__radd__`) is deliberately NOT supported.</summary>
+        private static Stmt WithOverride(Stmt member, bool isOverride) => isOverride && member is MethodDecl m ? m with { IsOverride = true } : member;
+
         private Stmt ParseOperatorMember(int line, TypeRef? returnType)
         {
             Expect(TokenType.Operator, "Expected 'operator'");

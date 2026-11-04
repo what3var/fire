@@ -89,7 +89,13 @@ namespace fire.Runtime
 
             // IMPORTANT: native functions are jumped to via their INDEX - the order of registration must
             // exactly match that when translating (see ImportedPreludes.Insert): graphics, reflection, time, devices, io.
-            if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
+            if (linkedProgram.GraphicsNatives is { } graphicsNatives)
+            {
+                // graphics and windows in C: their library is in the payload (docs/UI_PLATFORM.md, part 2)
+                PackageNativeBinding.Register(natives, graphicsNatives, graphicsNatives.Select(_ => GraphicsLibraryFile).ToList(), null);
+                PackageHost.GraphicsInC = true;
+            }
+            else if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
             {
                 // the manager travels as object: every method that names the type loads fire.Terminal when JIT-compiling (see class documentation)
                 object fbManager = RegisterGraphics(natives);
@@ -103,8 +109,12 @@ namespace fire.Runtime
             // File system/stdio policy: the packed runtime uses the default (everything allowed, real console) -
             // hosts with their own policy (editor) build their session via fire.Compiler.RuntimeSession.
             // what the natives of packages (the io package) ask of the host: the real console, everything allowed - the packed runtime has no other host
-            if (linkedProgram.PackageNatives is { Count: > 0 })
-                session.IoResources = PackageHost.Begin(null, null, linkedProgram.NativeImports.Contains("pkg:devices"));
+            if (linkedProgram.PackageNatives is { Count: > 0 } || linkedProgram.GraphicsNatives != null)
+            {
+                var libraries = (linkedProgram.PackageNativeLibraries ?? new List<string>()).Concat(linkedProgram.GraphicsNatives != null ? new[] { GraphicsLibraryFile } : Array.Empty<string>())
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                session.IoResources = PackageHost.Begin(null, null, linkedProgram.NativeImports.Contains("pkg:devices"), libraries: libraries);
+            }
 
             // the natives of imports of packages (C++ in shared libraries, the libraries of a packed program come from its payload): same names, same order
             PackageNativeBinding.Register(natives, linkedProgram.PackageNatives, linkedProgram.PackageNativeLibraries, null);
@@ -112,6 +122,7 @@ namespace fire.Runtime
             var globalScope = new Scope(null, isGlobal: true);
 
             fire.Values.Unit.UseCustomUnits(linkedProgram.Program.CustomUnits);   // the units the program declares (`unit Inch: in { ... }`)
+            VM.RegisterProgram(linkedProgram);   // (the interfaces of its modules: what a fire plugin is checked against)
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: executionMode);
 
@@ -119,6 +130,8 @@ namespace fire.Runtime
 
             return session;
         }
+
+        private static string GraphicsLibraryFile => (OperatingSystem.IsWindows() ? "" : "lib") + "fire_gfx" + (OperatingSystem.IsWindows() ? ".dll" : OperatingSystem.IsMacOS() ? ".dylib" : ".so");
 
         // Each of these methods is the ONLY place that mentions its bridge types (see class documentation).
 
@@ -137,7 +150,7 @@ namespace fire.Runtime
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RegisterWindows(Session session, NativeRegistry natives, object framebuffers)
         {
-            var windowManager = new fire.Terminal.Windows.WindowManager((fire.Terminal.FramebufferManager)framebuffers, (l, v) => session.CallLambda(l, v), null, FireRuntime.AddHostHold);
+            var windowManager = new fire.Terminal.Windows.WindowManager((fire.Terminal.FramebufferManager)framebuffers, (l, v) => session.CallLambda(l, v), null, d => session.VirtualMachine?.AddHostHold(d));
             fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
             session.StopWindows = windowManager.StopManagers;
         }

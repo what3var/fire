@@ -28,10 +28,22 @@ fire taking player { ... }
 fire MethodA() taking player
 fire with actorA { ... }
 fire MethodA() with actorA taking player
+fire handover conn { ... }
+fire MethodA() taking player handover conn
 ```
 
 - `taking X` (siehe Abschnitt 3): übergibt dem Kind-Thread eine isolierte
   Arbeitskopie von `X`.
+- `handover X`: übergibt `X` **ohne Kopie** - für das, was nicht verdoppelt werden darf oder kann (eine `[NoCopy]`-Ressource wie ein
+  `NativeHandle`). Wie bei `taking` geht alles mit, was von `X` aus über Felder und Elemente erreichbar ist (und was die Objekte besitzen): ein Teil,
+  dessen Besitzer mitgeht, behält ihn, jeder andere (auch `X`) gehört danach dem Wurzel-Scope des neuen Threads, egal wem er vorher gehörte
+  (wie bei `take`); die Teile verlassen den geteilten Bereich der Globals. Die Variable des Senders ist danach `undefined` (ein Zugriff auf ein
+  Feld ist der übliche Fehler); andere Verweise des Senders auf diese Objekte zeigen auf Objekte eines anderen Threads und dürfen nicht mehr benutzt
+  werden (das wird nicht geprüft). Am Ende des Threads werden sie zerstört, ihre Destruktoren laufen im Thread. Wiederholbar und mit `taking`
+  mischbar wie `taking` (`fire handover a handover b taking c`), auch in der Aufrufform. Abgelehnt wird vor jedem Kopieren und Verschieben (eine
+  `ArgumentException` am `fire`, der Thread startet nicht): ein Lambda oder Pointer in einem Feld/Element ("'handover' rejected: lambda values
+  cannot be handed to a thread."), und in einem Fire-Thread ein Teil der Globals des Hauptprogramms; eine Variable des Hauptprogramms im Thread
+  ist schon beim Übersetzen ein Fehler. Actors und zerstörte Objekte bleiben geteilte Verweise. Nicht bei `fire global`.
 - `with actorA` (siehe Abschnitt 2): bindet eine Actor-Referenz (Handle,
   keine Kopie) in den Fire-Block ein.
 - Beide Bindungen sind unabhängig voneinander kombinierbar.
@@ -86,16 +98,15 @@ Stattdessen:
 fire taking player { player.health -= 10 }
 ```
 
-- `taking X` erzeugt eine **vollständige, isolierte Tiefenkopie** von X's
-  gesamtem **eigenem** Ownership-Baum. Main-Thread-Objekt und Kind-Thread-
-  Kopie sind danach vollständig getrennt, kein Shared Memory.
-- **Harte Regel**: Enthält der kopierte Baum irgendwo eine Referenz auf
-  etwas, das **nicht** zum Ownership-Baum von X gehört (eine Referenz auf
-  ein unabhängig besessenes Objekt, oder ein roher Pointer via
-  `unsafe`/`&`, der aus dem kopierten Baum hinauszeigt), **schlägt
-  `taking` mit einem klaren Fehler fehl**. Kein stilles Kopieren des
-  Referenzwerts (das wäre ein verstecktes Shared-Memory-Loch), kein
-  stilles Nullen (stiller Datenverlust).
+- `taking X` erzeugt eine **vollständige, isolierte Tiefenkopie** von **allem, was von X aus erreichbar ist** (Felder, Array-Elemente:
+  Objekte, Arrays, Puffer) - egal, wem die Teile im Original gehören (ein Objekt, auf das X nur verweist, ein Array-Literal in einem Feld
+  samt seiner Objekte). Jeder Teil wird einmal kopiert (geteilte Teile und Zyklen bleiben es in der Kopie). Eine Kopie, deren Original einem
+  ebenfalls kopierten Objekt gehörte, gehört dessen Kopie; alle anderen Kopien (auch die Wurzel) gehören dem Wurzel-Scope des neuen Threads.
+  Main-Thread-Objekt und Kind-Thread-Kopie sind danach vollständig getrennt, kein Shared Memory. Kopiert wird beim `fire` im startenden
+  Thread (VM und nativ gleich), bevor der neue Thread läuft.
+- **Nicht kopierbar** sind Lambdas und rohe Pointer (`unsafe`/`&`) in einem Feld oder Element, und eine Instanz einer `[NoCopy]`-Klasse:
+  das `fire` wirft vorher eine `ArgumentException` ("'taking' rejected: lambda values cannot be copied for a thread." bzw. der
+  `[NoCopy]`-Text), nichts wird kopiert, der Thread startet nicht.
 - Jede `taking`-Kopie trägt eine **versteckte Rückverknüpfung** zu ihrem
   Original - notwendig, damit `sync`/`sync flat` (Abschnitt 4) überhaupt
   wissen, wohin zurückgeschrieben werden soll.
@@ -349,7 +360,9 @@ keinen Snapshot und keine Kopie mehr:
   `WaitForString`, die Netz-Wartefunktionen, die über `Sleep` pollen), gibt er seine Sektion für die Dauer des Wartens frei und nimmt sie danach
   wieder (sonst würde ein Thread, der in einer Methode pollt - z.B. `TryAccept` -, das Hauptprogramm aushungern, das Sektionen nur beim Warten
   vergibt). Atomar ist die Methode also nur bis zum nächsten Warten.
-- **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge) und gilt im Hauptprogramm; in einem Fire-Thread liefert es 0.
+- **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge - auch der `fire global`-Aufträge, die es selbst ausführt) und gilt
+  im Hauptprogramm; in einem Fire-Thread liefert es 0. Ein Auftrag läuft immer für sich: an den sicheren Punkten eines laufenden Auftrags wird die
+  Warteschlange nicht abgearbeitet (sonst liefe der nächste Auftrag vor dem Ende des vorigen).
   Wer es nie aufruft, lässt die Threads an ihrer ersten Änderung warten - das ist der Vertrag. Am **Programmende** (auch nach `leave`/`terminate`)
   bedient das Hauptprogramm die Warteschlange, solange Threads leben, und zerstört erst danach seine Globals; endet es, bevor ein Thread
   fertig ist (z.B. durch eine unbehandelte Exception), werden wartende und künftige Sektionen sofort gewährt.
@@ -362,15 +375,34 @@ keinen Snapshot und keine Kopie mehr:
   Threads nicht (nur die `taking`-Erfassungen) und kein `this`. Im Hauptprogramm ist es ein Auftrag an sich selbst für das nächste `sync globals`.
 - **Grenzen:** Ein Zeiger (`&`) auf ein Global ist im Thread nicht möglich. `x++` auf ein Array-Element der Globals braucht einen
   `sync global`-Block. Mit der Direktive `#noshadow` sieht der Thread keine Globals.
-- **Automatisches Abarbeiten (Standard).** Das Hauptprogramm arbeitet die Warteschlange (Sektionen der Fire-Threads, `fire global`-Aufträge,
-  Host-Callbacks) **selbst** ab, ohne dass es `sync globals` schreibt: an seinen sicheren Punkten (dieselben, an denen `leave`/`terminate` anderer
-  Threads wirken) und damit auch direkt nach einem nativen Aufruf wie `Window.Tick` (DoEvents-Prinzip). Wer bewusst eine Stelle festlegen will,
-  an der sich Globals ändern dürfen, schreibt `#nosync` an den Programmanfang: dann arbeitet **nur** `sync globals` (und das Programmende) die
-  Warteschlange ab. Zu beachten: die automatische Variante kann zwischen zwei beliebigen Anweisungen eingreifen (nicht in Destruktoren, Properties
-  und anderen verschachtelten Ausführungen), ein Wert, den das Hauptprogramm gerade gelesen hat, kann sich also danach ändern - wer das nicht will,
-  nutzt `#nosync`.
+- **Automatisches Abarbeiten: `#globaljobs safepoints|sleep|sync`.** Das Hauptprogramm arbeitet die Warteschlange (Sektionen der Fire-Threads,
+  `fire global`-Aufträge, Host-Callbacks) **selbst** ab, ohne dass es `sync globals` schreibt - wo genau, legt die Build-Einstellung fest; VM und
+  nativer Build verhalten sich in jedem Modus **gleich** (dieselben Stellen, also auch derselbe Rückgabewert von `sync globals`):
+
+  | Modus | sichere Punkte für die Warteschlange |
+  |---|---|
+  | `safepoints` (Standard) | der **Rücksprung einer Schleife** (nach jedem Durchlauf von `while`/`do`/`for`/`foreach`), **`Sleep`** (auch `Sleep(0)`), die **Wartefunktionen** (`WaitFor`, `WaitForString`, `WaitUntil`, während sie warten), `sync globals`, Programmende |
+  | `sleep` | nur `Sleep` und die Wartefunktionen, `sync globals`, Programmende |
+  | `sync` | nur `sync globals` und das Programmende (`#nosync` ist der alte Name dafür) |
+
+  **Kein** sicherer Punkt für die Warteschlange: ein Aufruf (Funktion, Methode, Konstruktor, Lambda), ein `return`, eine native Funktion (`print`,
+  `Window.Tick`, ein Lesen vom Gerät), eine einzelne Anweisung. Die Liste ist bewusst klein und billig: der Rücksprung prüft einen Zähler (VM) bzw. ein
+  Bit (nativ), nur wenn etwas eingereiht wurde, wird abgearbeitet. `leave`/`terminate` anderer Threads und die Ausnahmen der Fire-Threads
+  (`catch threads`) wirken weiter auch beim Aufruf und nach einer nativen Funktion. **Nicht** automatisch abgearbeitet wird in einem Destruktor
+  (er läuft mitten in einer Anweisung), in einem laufenden Auftrag oder Host-Callback (jeder läuft für sich, der nächste beginnt nie in ihm) und im
+  Handler von `catch threads`/`catch terminate`; in einer Property, einem Operator, einem Lambda, das eine Bibliotheksfunktion ruft (`Where`, `Sort`),
+  und in der Nachricht eines Aktors schon (ihre Schleifen und `Sleep` sind sichere Punkte wie sonst). Der Modus gilt für die Warteschlange des
+  Hauptprogramms, egal wer einreiht (das Hauptprogramm selbst, ein Fire-Thread, ein Host-Thread). Ein Thread, dessen Sektion nicht drankommt, wartet -
+  in `sleep` also bis zum nächsten `Sleep` des Hauptprogramms, in `sync` bis zum nächsten `sync globals`.
+  **Wo eingestellt:** `#globaljobs <modus>` im Quelltext (Top-Level, gilt fürs ganze Programm; mehrere: die letzte), `"globalJobs"` in den
+  Einstellungen eines Projekts (docs/PROJECTS.md), `"globalJobs"` in fire.native.json (Standard eines nativen Builds), `--global-jobs <modus>` auf der
+  Kommandozeile. **Rangfolge** wie bei `#floatwidth`: Kommandozeile > Projekt > Direktive im Quelltext > fire.native.json > `safepoints`.
+  Zu beachten: `safepoints` kann bei jedem Schleifendurchlauf eingreifen, ein Wert, den das Hauptprogramm gerade gelesen hat, kann sich danach also
+  ändern - wer das nicht will, nimmt `sleep` oder `sync`. Umsetzung: VM `VM.AutoSyncAt`/`PollQueueAtLoop`/`PollWhileWaiting` (Zähler `s_queued`,
+  `_noAutoSyncDepth`), nativ `pollLoop`/`mainPoll(waiting)`/`g_globalJobs`/`g_noSyncDepth` in fire_rt.h; der Compiler setzt `SetAutoSync <modus>`
+  an den Programmanfang (0 = sync, 1 = safepoints, 2 = sleep; nur wenn nicht `safepoints`).
 - **Host-Callbacks.** Ein Callback von einem fremden Thread (z.B. ein Seriell-Ereignis) läuft nicht mehr auf einer isolierten Kopie, sondern wird dem
-  Hauptprogramm eingereiht (`VM.PostCallback`) und dort mit den echten Globals ausgeführt - automatisch oder bei `sync globals` (`#nosync`). Eine
+  Hauptprogramm eingereiht (`VM.PostCallback`) und dort mit den echten Globals ausgeführt - automatisch (wie `#globaljobs` sagt) oder bei `sync globals`. Eine
   unbehandelte Exception darin geht als Text an den Host. Läuft das Hauptprogramm nicht (mehr), gilt weiter die isolierte Kopie. Callbacks, die beim
   Programmende noch eingereiht sind, verfallen.
 

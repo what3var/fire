@@ -1,7 +1,6 @@
 using System;
 using System.Runtime.CompilerServices;
 using fire.Terminal;
-using fire.Terminal.Sdl;
 
 namespace fire.Terminal.Windows
 {
@@ -37,12 +36,12 @@ namespace fire.Terminal.Windows
         /// <param name="framebuffer">The framebuffer to show - lives on
         /// INDEPENDENTLY of this window (it is neither created here
         /// nor destroyed when this window is disposed).</param>
-        /// <param name="renderer">Default: SdlFramebufferRenderer - see
-        /// IFramebufferRenderer for ways to swap it.</param>
+        /// <param name="renderer">What shows the pictures (see IFramebufferRenderer); without one the window cannot open (no display here: the windows of the
+        /// desktop are the C library's).</param>
         public ConsoleWindow(Framebuffer framebuffer, IFramebufferRenderer? renderer = null)
         {
             Framebuffer = framebuffer ?? throw new ArgumentNullException(nameof(framebuffer));
-            _renderer = renderer ?? new SdlFramebufferRenderer();
+            _renderer = renderer ?? new NoDisplay();
         }
 
         /// <summary>true: if the user changes the size of the window, the framebuffer gets exactly that size (as long as it is valid, see Framebuffer.IsValidSize) - instead of its content being stretched to
@@ -177,5 +176,16 @@ namespace fire.Terminal.Windows
             _disposed = true;
             if (_realized && !_failed) _renderer.Dispose();   // a window that never opened has nothing of the display to release
         }
+        /// <summary>No display: opening the window fails (it counts as closed, <see cref="FailureMessage"/> says why).</summary>
+        private sealed class NoDisplay : IFramebufferRenderer
+        {
+            public bool VSync { get; set; } = true;
+            public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) =>
+                throw new InvalidOperationException("No display: the windows of the desktop are shown by the C library of graphics and windows, which needs a C compiler to be built (see docs/UI_PLATFORM.md).");
+            public WindowPumpResult PumpEvents() => new() { StillOpen = false, Events = Array.Empty<Event.IEvent>() };
+            public void Present(Framebuffer framebuffer) { }
+            public void Dispose() { }
+        }
     }
+
 }

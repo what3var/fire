@@ -347,6 +347,94 @@ static class SyntaxTests
             """) == "212F 0C 273.15K 7C True\n1W 30dBm 20dBm 40K*s\n26.850000000000023C");
         Check("unit: Einheiten eines Programms gelten nicht fuer das naechste", Output("print(5in)") == "5in");
 
+        // `override` (SPEC 5.1): after the access modifier, before the type; only methods, properties and operators of an object
+        Check("override: nach dem Zugriffsmodifikator, vor Methode, Property, Operator (auch generisch und mit Attribut)", Output("""
+            class A { protected string M() { return "a" } int P { get { return 1 } } bool operator==(any o) { return false } T Id<T>(T x) { return x } }
+            class B : A {
+                [Doc "x"]
+                protected override string M() { return "b" }
+                override int P { get { return 2 } }
+                override bool operator==(any o) { return true }
+                override T Id<T>(T x) { return x }
+                string Show() { return this.M() + this.P + (this == 1) + this.Id(5) }
+            }
+            print(new B().Show())
+            """) == "b2True5");
+        Check("override: vor dem Zugriffsmodifikator, mit static, an Feld, Konstruktor und Destruktor ist ein Syntaxfehler",
+            Output("class A { M() { } }\nclass B : A { override public M() { } }").Contains("The access modifier comes first")
+            && Output("class B { static override int M() { return 1 } }").Contains("do not go together")
+            && Output("class B { override static int M() { return 1 } }").Contains("cannot be 'override'")
+            && Output("class B { override int x }").Contains("A field cannot be 'override'")
+            && Output("class B { override construct() { } }").Contains("A constructor is not inherited")
+            && Output("class B { override destruct() { } }").Contains("both run"));
+        Check("override ist ein reserviertes Wort", Output("var override = 1").StartsWith("ERROR"));
+        // `fire handover x` (docs/language/15-threads-and-actors.md): a keyword, repeatable and mixed with `taking`, not for `fire global`, and in a thread
+        // only for the thread's own variables
+        string handover = Output("""
+            #import "time"
+            class Item { int v }
+            var a = new Item()
+            a.v = 1
+            var b = 2
+            var c = new Item()
+            c.v = 3
+            var done = 0
+            fire handover a taking b handover c { sync global { done = a.v + b + c.v } }
+            print((a == undefined) + " " + b + " " + (c == undefined))
+            while (done == 0) { Sleep(5ms) }
+            print(done)
+            """);
+        Check("fire handover: mehrfach, mit taking gemischt, die Variablen werden undefined", handover == "True 2 True\n6", handover);
+        string handoverGlobal = Output("var a = 1\nfire global handover a { }");
+        Check("fire handover: nicht bei fire global", handoverGlobal.StartsWith("ERROR E3000 'handover' does not exist for 'fire global'"), handoverGlobal);
+        string handoverTwice = Output("var a = 1\nfire taking a handover a { }");
+        Check("fire handover: derselbe Name zweimal ist ein Fehler", handoverTwice.Contains("'a' was already captured in this 'fire'"), handoverTwice);
+        string handoverMain = Output("var g = 1\nfire { var own = 2\n fire handover own { }\n fire handover g { } }");
+        Check("fire handover: im Thread nur eigene Variablen, kein Global des Hauptprogramms", handoverMain.Contains("'handover' needs a variable of this thread: 'g' is a global variable of the main program"), handoverMain);
+        string handoverWord = Output("var handover = 1");
+        Check("fire handover: 'handover' ist ein Schluesselwort", handoverWord.StartsWith("ERROR"), handoverWord);
+
+        // ---- `#globaljobs safepoints|sleep|sync` (docs/THREADING_DESIGN.md section 7): when the main program runs its `fire global` jobs ----
+        const string jobsBody = "#import \"time\"\nfire global { print(\"job1\") }\nfor (var i = 0; i < 2; i++) { print(\"loop \" + i) }\nfire global { print(\"job2\") }\nH.f()\nSleep(1ms)\nprint(\"n \" + (sync globals))\nclass H { static undefined f() { print(\"call\") } }\n";
+        const string atSafepoints = "loop 0\njob1\nloop 1\ncall\njob2\nn 0", atSleep = "loop 0\nloop 1\ncall\njob1\njob2\nn 0", atSync = "loop 0\nloop 1\ncall\njob1\njob2\nn 2";
+        string jobsDefault = Output(jobsBody);
+        Check("#globaljobs: ohne Angabe safepoints - Ruecksprung einer Schleife und Sleep, kein Aufruf", jobsDefault == atSafepoints, jobsDefault);
+        string jobsSleep = Output("#globaljobs sleep\n" + jobsBody);
+        Check("#globaljobs sleep: nur Sleep (und sync globals)", jobsSleep == atSleep, jobsSleep);
+        string jobsSync = Output("#globaljobs sync\n" + jobsBody);
+        Check("#globaljobs sync: nur sync globals", jobsSync == atSync, jobsSync);
+        string jobsNoSync = Output("#nosync\n" + jobsBody);
+        Check("#nosync ist #globaljobs sync", jobsNoSync == atSync, jobsNoSync);
+        string jobsLast = Output("#globaljobs sync\n#globaljobs safepoints\n" + jobsBody);
+        Check("#globaljobs: die letzte Angabe gilt", jobsLast == atSafepoints, jobsLast);
+        string jobsBad = Output("#globaljobs often\nprint(1)");
+        Check("#globaljobs: ein unbekannter Modus ist E3160", jobsBad.StartsWith("ERROR E3160 '#globaljobs' expects safepoints, sleep or sync"), jobsBad);
+        string jobsMissing = Output("#globaljobs\nprint(1)");
+        Check("#globaljobs: ohne Modus ist E3160", jobsMissing.StartsWith("ERROR E3160"), jobsMissing);
+        Linker.ProcessGlobalJobs = GlobalJobsMode.Sleep;
+        string jobsCli;
+        try { jobsCli = Output("#globaljobs sync\n" + jobsBody); }
+        finally { Linker.ProcessGlobalJobs = null; }
+        Check("#globaljobs: --global-jobs geht vor die Direktive", jobsCli == atSleep, jobsCli);
+        var cli = CommandLineParser.Parse(new[] { "run", "a.fire", "--global-jobs", "SLEEP" });
+        var cliInline = CommandLineParser.Parse(new[] { "build", "a.fire", "--global-jobs=sync" });
+        var cliBad = CommandLineParser.Parse(new[] { "run", "a.fire", "--global-jobs", "often" });
+        Check("--global-jobs: Kommandozeile (auch mit =, Gross/Klein egal), ungueltig ist ein Fehler",
+            cli.Error == null && cli.GlobalJobs == GlobalJobsMode.Sleep && cliInline.GlobalJobs == GlobalJobsMode.Sync && CommandLineParser.Parse(new[] { "run", "a.fire" }).GlobalJobs == null
+            && cliBad.Error == "--global-jobs must be followed by safepoints, sleep or sync.", cliBad.Error);
+        var config = fire.Native.NativeConfig.Parse("""{ "globalJobs": "sleep" }""");
+        string configBad;
+        try { fire.Native.NativeConfig.Parse("""{ "globalJobs": "often" }"""); configBad = "(no error)"; }
+        catch (fire.Native.NativeConfigException ex) { configBad = ex.Message; }
+        Check("fire.native.json: \"globalJobs\" wird gelesen, ein unbekannter Wert gemeldet, geschrieben wie gelesen",
+            config.GlobalJobsValue == GlobalJobsMode.Sleep && configBad.Contains("\"globalJobs\": 'often' is not one of: safepoints, sleep, sync") && config.ToJson().Contains("\"globalJobs\": \"sleep\""), configBad);
+        string threadsBody = "var n = 0\nfire global { n = n + 1 }\nprint(n)\n";
+        string cConfig = fire.Compiler.NativeBuilder.GenerateLinked(new[] { threadsBody }, TargetProfile.Host, globalJobs: GlobalJobsMode.Sleep).C;
+        string cDirective = fire.Compiler.NativeBuilder.GenerateLinked(new[] { "#globaljobs sync\n" + threadsBody }, TargetProfile.Host, globalJobs: GlobalJobsMode.Sleep).C;
+        string cDefault = fire.Compiler.NativeBuilder.GenerateLinked(new[] { threadsBody }, TargetProfile.Host).C;
+        Check("fire.native.json: \"globalJobs\" gilt fuer ein Programm ohne Direktive; die Direktive geht vor; ohne alles nichts (safepoints)",
+            cConfig.Contains("g_globalJobs = 2;") && cDirective.Contains("g_globalJobs = 0;") && !cDirective.Contains("g_globalJobs = 2;") && !cDefault.Contains("g_globalJobs ="));
+
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }
 }

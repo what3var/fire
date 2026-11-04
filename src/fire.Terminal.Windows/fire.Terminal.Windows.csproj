@@ -1,12 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Windows-specific composition: GdiGlyphFont (GDI+ glyph rasterisation)
-    and ConsoleWindow (puts framebuffer + renderer + the SDL
-    renderer together into a finished window, with concrete Windows
-    defaults). References both the platform-independent core and
-    the SDL rendering project - exactly here, not in fire.Terminal
-    itself, the two come together.
+    The windows of the C# implementation of graphics and windows: ConsoleWindow
+    (framebuffer + renderer) and WindowManager. The renderer is the host's (the
+    tests, an editor that shows the pictures itself); the windows of the desktop
+    are the C library's (docs/UI_PLATFORM.md) - no SDL here any more.
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
@@ -20,7 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\fire.Terminal\fire.Terminal.csproj" />
-    <ProjectReference Include="..\fire.Terminal.Sdl\fire.Terminal.Sdl.csproj" />
   </ItemGroup>
 
 </Project>

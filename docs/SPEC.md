@@ -2,7 +2,7 @@
 
 Reference document for the interpreter. Extended as the implementation grows.
 
-Multithreading (`fire`/`taking`/`with`/`sync`/`leave`/`terminate`/
+Multithreading (`fire`/`taking`/`handover`/`with`/`sync`/`leave`/`terminate`/
 `catch threads`/`catch terminate`/actors) is deliberately NOT part of this
 document – see `THREADING_DESIGN.md` for it (fully implemented,
 architecture AND language syntax).
@@ -187,6 +187,18 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 - **Cycle protection:** `TakeTo(other)` checks whether `other` is transitively already a "descendant" (directly or indirectly owned) of `obj`. If so: run-time error instead of a cycle in the ownership tree.
 - **Race with an ongoing deletion:** If `other` (the target of `TakeTo`) is itself currently in cascade deletion (its own owner was just destroyed, its `destruct()` cascade is already running), the transfer is treated as if it had happened one second *before* the start of that deletion: `obj` is also taken into the running cascade immediately and deleted along with it (including the `destruct()` call), instead of remaining behind as an orphan with a half-destroyed owner.
 - Variable bindings (name → value) themselves do **not** move – only object ownership is transferable.
+- **Ownership in property accessors.** In the `get` and `set` bodies of a property of an object (not in methods, not in static properties, not in a lambda
+  inside the accessor) an assignment hands on what belongs to the running accessor call - an object, an array or a buffer whose owner is one of the
+  accessor's scopes (a local like `var it = new Item()`, also of an inner block), and in a setter also a value that another accessor handed to it this way:
+  - `this.field = it` / `field = it` - a **field of `this`**: `this` takes `it` over after the store (only the value itself, like `take`; what it owns goes along
+    anyway). Only fields of `this` count: `this.node.child = it` or `other.field = it` does not move anything (decided at run time: the target object must be `this`).
+  - `this.Prop = it` / `other.Prop = it` - a **property** (a setter call, of `this` or of another object): `it` goes to the setter call like `take it` - the setter
+    keeps it by assigning it to a field of its object (the same rule), else it dies when the setter returns (natively: right after the setter's own locals).
+  - **`return` wins in a getter:** a value that the getter's `this` took over in this call and that the getter returns (`this.cache = it; return it`, also
+    `return this.cache`) goes to the caller by the return rule (2.3), not to `this`. Only the returned value itself; other values the call gave to `this` stay there.
+  - An exception after the assignment does not undo it: the field keeps the object.
+  - Unchanged: what an accessor gets from outside (the setter's `value` passed by ordinary code, an object of the caller) stays with its owner and still needs
+    `take`/`TakeTo`; methods keep the rules above. An auto-property (`{ get; set; }`) behaves as before - its setter keeps a value that an accessor hands to it.
 
 ### 2.3 Lifetime / cascade deletion
 
@@ -219,7 +231,7 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
 - A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` still belongs to the scope and dies with it. The owner has to be changed explicitly:
-  `tmp.TakeTo(this)`. The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
+  `tmp.TakeTo(this)` (in a property accessor the assignment does that itself, 2.2). The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
 - **`delete expression`** destroys an object, an array or a buffer at once and detaches it from its owner: for an object the destructor runs and everything it owns is destroyed (2.3), exactly as if its owner
   had been left. Variables that still refer to it see a destroyed object (see above). `delete` on anything else is a run-time error. `delete` is a word only in front of a name on the same line.
 
@@ -273,15 +285,26 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 **Further rules**
 - **No constructor** runs - the field values are simply transferred. The destructor runs for the copy as for any object.
   Be careful with objects that hold an external resource (e.g. an `IO.FileStream` with its handle): the copy shares the
-  handle with the original, and both close it when destroyed.
+  handle with the original, and both close it when destroyed. A class marked **`[NoCopy]`** (5.12; `NativeHandle` is one) cannot be copied at all:
+  an instance of it as the operand of `flat`/`copy`, or reached by `copy` through a field or an array element, is an `ArgumentException`
+  ("'NativeHandle' cannot be copied ([NoCopy]) - ...") before anything is copied - also for a class derived from it, as an argument
+  (`f(copy h)`), assigned to a field and for the arguments of `fire global` (deep copies). `flat` of an object or array that only *refers* to one is fine
+  (the reference is shared, nothing is duplicated). The copies of the threads (no form of them moves an object - `fire handover x` does, without a copy, THREADING_DESIGN.md section 1): `fire taking x` / `fire M(args)`
+  (a copy of everything reachable, an array included) refuses one reached from any of its values at the `fire` - nothing is copied, the thread does not start
+  ("... - 'taking' would copy an instance of it, which exists only once." / "... - 'taking' reaches an instance of it (a field or an element of the copied
+  value), which exists only once."); `fire global { } taking x` refuses an object argument that reaches one before the job is queued (`'fire global'`; an
+  array argument is handed over as it is, not copied); `sync`/`try sync` refuses before anything is written back when case A (a new object, copied into
+  the original) reaches one or when case C of the full sync would write the fields of one into another instance (`'sync' reaches ...`), `sync flat` only
+  in case A (its case C keeps the reference). `fire with a` and the global variables (read directly, written in a section) share, they never copy.
 - An **actor** as an operand is an error; an actor inside a copy remains a shared reference (actor references are meant to be
-  passed around). Likewise an already destroyed object inside remains a shared reference; as an operand it is an error.
+  passed around). Likewise an already destroyed object inside remains a shared reference; as an operand it is an error (an `ArgumentException`
+  "An already destroyed object cannot be copied.").
 - Lambdas and pointers are shared in both cases, not copied.
 - Operands without content (number, text, `true`, `undefined`) simply yield themselves. An **array** as an operand: `flat` creates a new
   array with the same elements, `copy` also copies the elements; a **buffer** (`byte[]`) is copied byte by byte in both cases.
 - `flat` can leave shared references between original and copy whose owner is the original: if the original is
   destroyed (together with what it owns), the shallow copy points to destroyed objects. Whoever needs a self-contained structure uses `copy`.
-- Unlike `taking` (a copy for a thread, rejects every reference out of the ownership tree, `sync` writes back), this is an
+- Unlike `taking` (a copy for a thread of everything reachable, refuses lambdas and pointers in it, `sync` writes back), this is an
   ordinary copy without a link back to the original.
 
 ## 3. Units
@@ -556,6 +579,15 @@ supported.
 - Single inheritance: `class Foo : Bar { ... }`
 - `base(...)` in the constructor calls the parent constructor.
 - `base.Method(...)` calls an overridden parent method.
+- **`override`:** a method, a property or an operator of an object that replaces one of a base class (any class up the chain; the rule of 5.4.3
+  "Overriding" decides which method replaces which) is marked `override`, after the access modifier: `override string Speak()`,
+  `protected override undefined Draw(UI.Root root, int x, int y)`, `override int Count { get { ... } }`, `override bool operator==(any o)`.
+  The type checker reports a missing `override` (`TC014`: a warning in lax mode, an error in strict mode) and an `override` that replaces nothing - a mistyped
+  name, other parameter types, a property the base classes do not have (`TC015`, an error in lax mode too). It changes nothing at run time: every method is
+  virtual as before. Not marked: the implementation of an interface method (only interfaces declare it: `override` there is `TC015`), a method with other
+  parameter types (another overload, 5.4.3), static members (they belong to their class; `static override` is a syntax error), constructors and destructors
+  (both chains run). Code generated from markup follows the same rule: the handlers of a `.fxml` code-behind and `OnBuilt` of a circuit replace those of the
+  generated base class (`override undefined Ok(any sender)`).
 
 ### 5.2 Constructor
 
@@ -734,8 +766,8 @@ The type checker reports `TC002` when there is no such generic method.
 
 **Overriding.** A method of a derived class overrides the one of a base class
 when it has the same number of parameters and, per parameter, the same type –
-or an untyped parameter or a type parameter on either side (`string Over(int
-x)` in the derived class overrides `string Over(any x)` of the base class).
+or an untyped parameter or a type parameter on either side (`override string Over(int
+x)` in the derived class overrides `string Over(any x)` of the base class; such a method is marked `override`, 5.1).
 With other parameter types it stands next to the inherited method as another
 overload: `Derived.Hello(int)` and the inherited `Base.Hello(string)` are both
 callable on a `Derived`.
@@ -1070,13 +1102,21 @@ method infrastructure therefore works automatically.
 
 ### 5.12 Attributes
 
-`[Name arg1, arg2, ...]` on the lines before a method (several are allowed, each in its own brackets): a name and arguments without parentheses, as in C#
+`[Name arg1, arg2, ...]` on the lines before a class, a method, a field or a property (several are allowed, each in its own brackets): a name and arguments without parentheses, as in C#
 (`[Parameters 1..3, "x", {1, 2}, new List<int>()]`; `{a, b}` is an array literal here, the same as `[a, b]`). The arguments are arbitrary expressions; the
 compiler keeps them with the method (and their source text) without evaluating them - a tool that reads the attribute evaluates them where it needs them.
 Reflection (`Member.Attributes`, section on reflection) gives every attribute with its name, the source texts of its arguments and the values of those
 that are constants (numbers, strings, `bool`, arrays of constants, ranges of `int` constants; otherwise `undefined`).
-Attributes stand before methods, fields (`[NonSerialized] int secret`; before a declaration of several fields they belong to all of them) and properties - nowhere
-else. Reflection lists them for every member. A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+Attributes stand before classes (and actors), methods, fields (`[NonSerialized] int secret`; before a declaration of several fields they belong to all of them) and
+properties - nowhere else. Reflection lists them for every member (`Member.Attributes`) and for the class (`Type.Attributes`). Two attributes concern a class as a whole:
+`[Keep]` (before a class, method, field or property) - a native build keeps the declaration even when the program does not reach it (a class made only by its name,
+`Reflect.New(name)`; before a class: the class with all its members, before a member: that member and its class; not inherited; a name given as a literal to
+reflection - `Reflect.New("X")`, `Reflect.Call(o, "M")` - is kept the same way without it; the VM keeps everything anyway; how much a native build leaves out is its
+stripping level 0-3, docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
+derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md); `[NoCopy]` (before a class) -
+an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
+`ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
+`taking`, the arguments of `fire global`, what `sync` copies back - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
 and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
 editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
@@ -1089,6 +1129,9 @@ The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusi
 
 - **`value is in unit`** → `bool`. Checks whether `value` (int/float/undefined) carries a unit that is dimensionally compatible with `unit` (see 3.4), regardless of prefix/scaling factor. Example: `5mm is in m` → `true`, `5mm is in kg` → `false`.
 - **`value is of Type`** → `bool`. Checks type membership **recursively**: for base types a simple kind comparison; for `class` instances the inheritance chain is searched upwards (the instance itself or one of its parent classes matches `Type`). Example: `a is of float`. An **interface** is also allowed as a type (`value is of IEnumerable`): true if the class (or a base class) names it in `class X : IFoo`; **arrays and buffers** satisfy `IEnumerable`.
+  A **destroyed object** (2.3, 2.5) has no class any more: `x is of Dog` (a class, an interface or an enum), `x!Dog` and `throw x` throw the `DestroyedException`,
+  in the VM and natively; the kind tests (`x is of class`, `is of int`, ...) only look at the value and stay answerable (`is of class` is `true`).
+  `undefined is of Dog` stays `false`. `x is from`/`is under` of a destroyed object is `false` (it belongs to nothing).
 - **`object is from ownerExpression`** → `bool`. Checks whether the current owner of `object` is exactly `ownerExpression` (direct owner comparison). Example: `obj is from objList`.
 - **`object is under ownerExpression`** → `bool`. Like `is from`, but **transitive**: checks whether `ownerExpression` is anywhere in the ownership chain above `object` (direct owner, its owner, and so on, arbitrarily deep).
 
@@ -1311,7 +1354,7 @@ by whether a `{` follows directly after `try` (block) or not (expression).
   callback (a `try`/`catch` around the triggering call does not see it): it goes to `onUnhandled` as text, the program keeps running. As with destructors and properties, during a
   nested callback `leave`/`terminate` of other threads is not checked (only afterwards).
 - **On a thread without a running VM** (a host thread, e.g. a serial event) access to the globals would be a data race: the callback is therefore **queued** to the main program
-  (`VM.PostCallback`, via `RunCallback(..., owner)`) and executed there - automatically at a safe point or at `sync globals`, with `#nosync` only then - with the real globals. If the
+  (`VM.PostCallback`, via `RunCallback(..., owner)`) and executed there - automatically at a safe point or at `sync globals`, as `#globaljobs` says (with `sync`/`#nosync` only then) - with the real globals. If the
   main program is not (or no longer) running, the isolated copy applies as described below (`FireRuntime.CallCallback`).
 
 The rest of this section describes this isolated case.
@@ -2329,8 +2372,8 @@ Sleep(500ms)                                      // or Sleep(duration), Sleep(2
   `Parse(text)` (throws `TimeException`), `TryParse(text)` (undefined), `DaysInMonth`, `IsLeapYear`, `FromUnixSeconds`/`ToUnixSeconds`. **`Kind`** is `"local"` (`Now`, `Today`, constructors, `Parse`) or `"utc"` (`UtcNow`, `FromUnixSeconds`); `ToUtc()`/`ToLocal()` convert. Comparisons and
   differences require the same kind. Time zones beyond local/UTC do not exist.
 - **`Sleep(time)`** puts the thread to sleep. `time` is a `TimeSpan`, a value with a time unit (`500ms`, `2s`, `1.5min`) or a number (milliseconds). Sleeping is **not deaf**: in short slices, whatever otherwise runs at the safe points runs - `leave`/`terminate` end
-  it immediately, delivered fire-thread exceptions are handled, and in the main program the **automatic processing of the queue** works (sections of the fire threads, `fire global` jobs, host callbacks, see THREADING_DESIGN.md section 7; with `#nosync` only at `sync globals`).
-  A new entry in the queue wakes the sleep up earlier. A callback or destructor (nested execution) sleeps without these tasks.
+  it immediately, delivered fire-thread exceptions are handled, and in the main program the **automatic processing of the queue** works (sections of the fire threads, `fire global` jobs, host callbacks, see THREADING_DESIGN.md section 7; in the modes `safepoints` and `sleep` of `#globaljobs`, with `sync`/`#nosync` only at `sync globals`).
+  `Sleep(0)` is such a point too. A new entry in the queue wakes the sleep up earlier. In a destructor, a job, a host callback or a `catch threads`/`catch terminate` handler the sleep does not process the queue.
 
 **`ToString()` on output and concatenation.** If an object has a parameterless method `ToString()`, it is used by `print(object)`, `"text" + object`, `object + "text"` (if the class has an `operator+`, that applies, `DateTime`/`TimeSpan` handle a string there themselves) and `$"{object}"`. An
 exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` the old representation (`<object ...>`) remains.
@@ -2407,6 +2450,24 @@ sequence arrived, `false` after the wait time has expired, if the device is (or 
 
 **`#timeout value`** (top-level directive like `#nosync`, applies to the whole program): sets the default wait time of the wait functions. `value` is a time value (`10s`, `500ms`, `2min`) or a number in milliseconds; the expression is evaluated right at the start
 of the program (so it may not use variables) and also applies in the fire threads. A new program starts with 30 seconds again.
+
+**`#globaljobs safepoints|sleep|sync`** (top-level directive, applies to the whole program; `#nosync` is the old name of `#globaljobs sync`): when the main program processes
+its queue by itself - the `fire global` jobs, the sections of its fire threads (a write to a global, `sync global { }`, a method of a shared object) and the host callbacks
+(THREADING_DESIGN.md section 7). The VM and a native build process it at exactly the same points:
+
+| Mode | The queue is processed at |
+|---|---|
+| `safepoints` (default) | the **jump back of a loop** (`while`, `do`, `for`, `foreach`: after each pass), **`Sleep`** (also `Sleep(0)`) and the **wait functions** (`WaitFor`, `WaitForString`, `WaitUntil`, while they wait), `sync globals`, the end of the program |
+| `sleep` | `Sleep` and the wait functions, `sync globals`, the end of the program |
+| `sync` | only `sync globals` and the end of the program |
+
+No safe point for the queue: a call (of a function, method, constructor, lambda), a return, a native function (`print`, `Window.Tick`, a device read), a single statement.
+`leave`/`terminate` of other threads and the exceptions of fire threads (`catch threads`) still act at a call too. Inside a **destructor**, a running **job** or **host
+callback** (each runs for itself: the next one never starts inside it) and a `catch threads`/`catch terminate` handler the queue is not processed automatically; inside a
+property, an operator, a lambda called by a library function (`Where`, `Sort`) or an actor's message it is (their loops and `Sleep` are safe points as usual). `sync globals`
+always processes everything that is queued and returns how many entries that were. The mode applies to whoever posted the entry (the main program itself, a fire thread, a host
+thread). Several directives: the last one counts. Precedence (as for `#floatwidth`): `--global-jobs` on the command line, then the project's `globalJobs`, then `#globaljobs`/
+`#nosync` in the source, then `"globalJobs"` in fire.native.json (a native build), then `safepoints`. An unknown mode is `E3160`.
 
 **Shared devices.** If a script runs in the editor, its serial devices are those of the editor's common manager (`DeviceManager.IsShared()`): devices and open connections survive the run, several scripts one after the other work with
 the same devices. A script can destroy neither the manager nor a shared device (there is no function for it; `DeviceManager.Dispose()` has no effect on a shared manager, only the owner tears it down via `Shutdown()`).
@@ -2485,7 +2546,7 @@ program through `Simulation` of the package `devices` (every access to a simulat
 
 ### 8.20 Network (`#import "net"`)
 
-The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream`), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
+The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream` and a `Net.IConnection`, the interface of network connections that `Tls.Stream` implements too), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
 `io` and `time`. Every call that waits takes a time limit; waiting polls the natives and sleeps 1 to 10 ms between the attempts, so `terminate` and the other threads work while a program waits for the network. Errors are `Net.NetException` (with a `code`) and subclasses;
 the host can restrict the network with a `NetPolicy` (a refused access is a `Net.PermissionException`). A platform without a network throws `NetException` (code 9).
 

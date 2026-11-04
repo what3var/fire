@@ -95,6 +95,10 @@ namespace fire.Compiler
         /// <summary>A cast `x!Dog` that can never succeed: the static type of `x` and the target are unrelated classes (or a class and an interface no class of
         /// the program joins).</summary>
         public const string ImpossibleCastCode = "TC013";
+        /// <summary>A method, property or operator that replaces one of a base class without `override` (a warning in lax mode).</summary>
+        public const string MissingOverrideCode = "TC014";
+        /// <summary>`override` on a member that replaces nothing (a mistyped name or other parameters) - an error in lax mode too.</summary>
+        public const string NothingToOverrideCode = "TC015";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -420,9 +424,15 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>The class or interface a base reference names (`Command<IDevice>`: the generic `Command`).</summary>
-        private string NameOf(TypeRef baseRef) =>
-            baseRef.TypeArgs is { Count: > 0 } a ? GenericName(PlainName(baseRef.BaseName), a.Count) : PlainName(baseRef.BaseName);
+        /// <summary>The class or interface a base reference names (`Command<IDevice>`: the generic `Command`), resolved against the namespaces the reference
+        /// is written in (`class B : A` inside `namespace N`: `N.A`), like TypeRef.ResolveBaseName.</summary>
+        private string NameOf(TypeRef baseRef)
+        {
+            int count = baseRef.TypeArgs?.Count ?? 0;
+            bool Known(string n) => _classes.ContainsKey(n) || _interfaces.ContainsKey(n);
+            string name = (baseRef with { BaseName = PlainName(baseRef.BaseName) }).ResolveBaseName(n => Known(n) || count > 0 && Known(GenericClassNames.Mangle(n, count)));
+            return count > 0 ? GenericName(name, count) : name;
+        }
 
         /// <summary>`value` seen as its base class or interface `baseName` (with the type arguments it has there); null when it is none.</summary>
         private StaticType? AsBase(StaticType value, string baseName)
@@ -1047,9 +1057,124 @@ namespace fire.Compiler
             _class = decl;
             // a class without a constructor of its own calls the one of its base class without arguments
             if (!decl.Members.OfType<ConstructorDecl>().Any() && BaseClassName() is { } baseClass) CheckConstructorAccess(baseClass, 0, decl.Line);
+            CheckOverrides(decl);
             CheckMembers(decl.Members, decl.Name);
             _class = previousClass;
         }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // `override` (SPEC 5.1): a member that replaces one of a base class says so; one that says so replaces something
+        // -------------------------------------------------------------------------------------------------------------
+        /// <summary>The base classes of a class, the nearest first (interfaces are not followed: implementing an interface member needs no `override`).</summary>
+        private IEnumerable<ClassDecl> BaseClassesOf(ClassDecl decl)
+        {
+            var current = decl;
+            for (int guard = 0; guard < 64; guard++)
+            {
+                var baseRef = current.BaseRefs?.FirstOrDefault(b => _classes.ContainsKey(NameOf(b)));
+                if (baseRef == null || !_classes.TryGetValue(NameOf(baseRef), out var next) || ReferenceEquals(next, decl)) yield break;
+                yield return next;
+                current = next;
+            }
+        }
+
+        /// <summary>A method (`m`, a member of `owner`) replaces `baseMethod` (of `baseOwner`) - the rule of the VM (Bytecode.Overloads.Overrides): the same number
+        /// of parameters, and per parameter the same type, or an untyped one / a type parameter on either side.</summary>
+        private bool Replaces(MethodDecl m, ClassDecl owner, MethodDecl baseMethod, ClassDecl baseOwner)
+        {
+            if (baseMethod.IsStatic || baseMethod.Name != m.Name || baseMethod.Params.Count != m.Params.Count) return false;
+            for (int i = 0; i < m.Params.Count; i++)
+            {
+                string a = OverloadDescriptor(m.Params[i], owner, m.TypeParams), b = OverloadDescriptor(baseMethod.Params[i], baseOwner, baseMethod.TypeParams);
+                if (a == b || a.Length == 0 || a[0] == 'g' || b.Length == 0 || b[0] == 'g') continue;
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>What overloading by type makes of a parameter (like Compiler.OverloadTypeOf): "" untyped, "g" a type parameter, "k:int", "c:Class", "i:Interface", ...</summary>
+        private string OverloadDescriptor(LambdaParam p, ClassDecl owner, IReadOnlyList<TypeParam>? methodTypeParams)
+        {
+            var t = p.Type;
+            if (p.ByRef) return "";
+            if (p.ArrayRanks.Count > 0 || t is { ArrayRank: > 0 }) return "k:array";
+            if (t == null || t.IsInferred || t.PointerDepth > 0) return "";
+            if (t.LambdaSignature != null || t.BaseName == "lambda") return "k:lambda";
+            if (methodTypeParams?.Any(tp => tp.Name == t.BaseName) == true || owner.TypeParams?.Any(tp => tp.Name == t.BaseName) == true) return "g";
+            switch (t.BaseName)
+            {
+                case "int": return "k:int";
+                case "float": return "k:float";
+                case "bool": return "k:bool";
+                case "char": return "k:char";
+                case "string": return "k:string";
+                case "class": return "k:class";
+                case "any": return "";
+            }
+            if (_enumNames.ContainsKey(t.BaseName)) return "k:int";
+            bool Known(string n) => _classes.ContainsKey(n) || _interfaces.ContainsKey(n);
+            string name = t.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(t, args.Count, Known) : t.ResolveBaseName(Known);
+            if (_enumNames.ContainsKey(name)) return "k:int";
+            if (_interfaces.ContainsKey(name)) return "i:" + name;
+            if (_classes.ContainsKey(name)) return "c:" + name;
+            return "";
+        }
+
+        /// <summary>A method, a property or an operator that replaces an inherited one must say `override` (TC014, a warning in lax mode); `override` on one that
+        /// replaces nothing is an error (TC015, also in lax mode) - it finds a mistyped name or other parameters.</summary>
+        private void CheckOverrides(ClassDecl decl)
+        {
+            var bases = BaseClassesOf(decl).ToList();
+            string plain = PlainName(decl.Name);
+            foreach (var member in decl.Members)
+            {
+                switch (member)
+                {
+                    case MethodDecl { IsStatic: false } m:
+                    {
+                        bool isOperator = m.Name.StartsWith("operator", StringComparison.Ordinal) || m.Name is "GetIndex" or "SetIndex";
+                        string what = isOperator ? $"The operator '{OperatorText(m.Name)}'" : $"The method '{m.Name}'";
+                        var replaced = bases.FirstOrDefault(b => b.Members.OfType<MethodDecl>().Any(bm => Replaces(m, decl, bm, b)));
+                        if (replaced != null && !m.IsOverride)
+                            Report(MissingOverrideCode, $"{what} of '{plain}' replaces the one of its base class '{PlainName(replaced.Name)}' - mark it 'override' ({(m.Access == AccessModifier.Public ? "" : AccessText(m.Access) + " ")}override {(m.ReturnType != null && !m.ReturnType.IsInferred ? TypeText(m.ReturnType) + " " : "")}{(isOperator ? "operator" + OperatorText(m.Name) : m.Name)}({ParamsText(m.Params)}))", m.Line);
+                        else if (replaced == null && m.IsOverride)
+                        {
+                            bool sameName = bases.Any(b => b.Members.OfType<MethodDecl>().Any(bm => !bm.IsStatic && bm.Name == m.Name));
+                            bool inInterface = !sameName && InterfaceHasMethod(decl, m.Name);
+                            ReportError(NothingToOverrideCode, $"{what} of '{plain}' is marked 'override', but no base class of '{plain}' has {(isOperator ? "this operator" : $"a method '{m.Name}'")}"
+                                + (sameName ? " with these parameters" : "") + (inInterface ? " (a method of an interface is implemented without 'override')" : "") + " - nothing is overridden", m.Line);
+                        }
+                        break;
+                    }
+                    case PropertyDecl { IsStatic: false } p:
+                    {
+                        var replaced = bases.FirstOrDefault(b => b.Members.OfType<PropertyDecl>().Any(bp => !bp.IsStatic && bp.Name == p.Name));
+                        if (replaced != null && !p.IsOverride)
+                            Report(MissingOverrideCode, $"The property '{p.Name}' of '{plain}' replaces the one of its base class '{PlainName(replaced.Name)}' - mark it 'override' (override {(p.Type != null && !p.Type.IsInferred ? TypeText(p.Type) + " " : "")}{p.Name} {{ ... }})", p.Line);
+                        else if (replaced == null && p.IsOverride)
+                            ReportError(NothingToOverrideCode, $"The property '{p.Name}' of '{plain}' is marked 'override', but no base class of '{plain}' has a property '{p.Name}' - nothing is overridden", p.Line);
+                        break;
+                    }
+                }
+            }
+        }
+
+        private bool InterfaceHasMethod(ClassDecl decl, string name)
+        {
+            foreach (var c in BaseClassesOf(decl).Prepend(decl))
+                foreach (var b in c.BaseRefs ?? Array.Empty<TypeRef>())
+                    if (_interfaces.TryGetValue(NameOf(b), out var iface) && iface.Methods.Any(m => m.Name == name)) return true;
+            return false;
+        }
+
+        /// <summary>`operator+` -> `+`, the index operator (`GetIndex`/`SetIndex`) -> `[]`.</summary>
+        private static string OperatorText(string name) => name is "GetIndex" or "SetIndex" ? "[]" : name.StartsWith("operator", StringComparison.Ordinal) ? name.Substring("operator".Length) : name;
+
+        private static string ParamsText(IReadOnlyList<LambdaParam> parameters) =>
+            string.Join(", ", parameters.Select(p => (p.ByRef ? "ref " : "") + (p.Type != null && !p.Type.IsInferred ? TypeText(p.Type) + " " : "") + p.Name + string.Concat(Enumerable.Repeat("[]", p.ArrayRanks.Count))));
+
+        private static string TypeText(TypeRef t) => (t.TypeArgs is { Count: > 0 } args ? PlainName(t.BaseName) + "<" + string.Join(", ", args.Select(TypeText)) + ">" : PlainName(t.BaseName))
+            + string.Concat(Enumerable.Repeat("[]", t.ArrayRank));
 
         private void ReportNoReturnType(string method, int line) =>
             Report(NoReturnTypeCode, $"Method '{method}' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing).", line);

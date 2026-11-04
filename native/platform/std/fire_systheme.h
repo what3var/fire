@@ -55,7 +55,15 @@ static void fire_theme_fontSpec(const char* spec, char* family, size_t size, dou
 }
 
 /* "family;a;b" into the fonts of the theme. */
-static void fire_theme_fonts(FireSystemTheme* t, const char* family, const char* rest) { snprintf(t->fonts, sizeof t->fonts, "%s%s", family, rest); }
+static void fire_theme_fonts(FireSystemTheme* t, const char* family, const char* rest) {
+    /* (cut to the size of the field, like snprintf - written out: gcc warns about a possible truncation where the call is inlined) */
+    size_t cap = sizeof t->fonts - 1, n = strlen(family), m = strlen(rest);
+    if (n > cap) n = cap;
+    if (m > cap - n) m = cap - n;
+    memcpy(t->fonts, family, n);
+    memcpy(t->fonts + n, rest, m);
+    t->fonts[n + m] = 0;
+}
 
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 /* The output of a command (its first line, trimmed) into `out` (`size` bytes), "" when it fails. */
@@ -139,6 +147,9 @@ static void fire_display_systemTheme(FireSystemTheme* t) {
         size = sizeof value;
         if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", L"AccentColor", RRF_RT_REG_DWORD, NULL, &value, &size) == ERROR_SUCCESS)
             t->accent = (int)(((value & 0xFF) << 16) | (value & 0xFF00) | ((value >> 16) & 0xFF));   /* stored as 0xAABBGGRR */
+        size = sizeof value;
+        if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"EnableTransparency", RRF_RT_REG_DWORD, NULL, &value, &size) == ERROR_SUCCESS)
+            t->transparency = value != 0;
         memset(&metrics, 0, sizeof metrics);
         metrics.cbSize = sizeof metrics;
         if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof metrics, &metrics, 0)) {
@@ -151,6 +162,7 @@ static void fire_display_systemTheme(FireSystemTheme* t) {
     }
 #elif defined(__EMSCRIPTEN__)
     t->dark = EM_ASM_INT({ return (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 1 : 0; });
+    t->transparency = EM_ASM_INT({ return (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-transparency: reduce)').matches) ? 0 : 1; });
 #elif defined(__APPLE__)
     {
         char out[512];
@@ -162,6 +174,7 @@ static void fire_display_systemTheme(FireSystemTheme* t) {
             int i = atoi(out) + 1;
             if (i >= 0 && i < 8) t->accent = colors[i];
         } else t->accent = 0x007AFF;
+        if (strcmp(fire_theme_run("defaults read com.apple.universalaccess reduceTransparency 2>/dev/null", out, sizeof out), "1") == 0) t->transparency = 0;
         snprintf(t->fonts, sizeof t->fonts, "%s", "SF Pro Text;SF Pro;SFNS;Helvetica Neue;Helvetica;Arial");
         t->fontSize = 13;
     }

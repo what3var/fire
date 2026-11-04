@@ -151,6 +151,40 @@ Performance mode and native programs do not check.
 `Takes.This` (only the object), `Takes.Children` (also what it points to directly), `Takes.Locals` (everything reachable that belongs to the current
 call), `Takes.All` (everything reachable).
 
+## In property accessors
+
+In the `get` and `set` of a property, an assignment hands on what belongs to the accessor call itself (a local object, array or buffer of it):
+
+| Assignment in `get`/`set` | `it` (a local of the accessor) |
+|---|---|
+| `this.field = it` / `field = it` (a field of `this`) | `this` owns it |
+| `this.Prop = it` / `other.Prop = it` (a property) | goes to the setter like `take it` |
+| `this.cache = it; return it` in a getter | goes to the caller - `return` wins |
+
+```fire
+class Item {
+    string n
+    construct(string n) { this.n = n }
+}
+class Holder {
+    Item cache
+    int Count {
+        get {
+            var it = new Item("cached")
+            this.cache = it             // the holder owns it now
+            return 1
+        }
+    }
+}
+var h = new Holder()
+print(h.Count)
+print(h.cache is from h)            // True - without the rule it would have died with the getter
+```
+
+Only fields of `this` take an object over (`this.node.child = it` does not), and only what belongs to the accessor call: the setter's `value` from ordinary
+code, or an object of the caller, stays with its owner. Methods do not do this - there, use `take`/`TakeTo`. An exception thrown after the assignment does not
+undo it.
+
 ## `delete`
 
 `delete x` destroys an object, array or buffer at once:
@@ -169,6 +203,9 @@ try {
     print("caught: " + e.message)
 }
 ```
+
+A destroyed object has no class any more: `x is of Item`, `x!Item` and `throw x` throw the `DestroyedException` as well. Only the kind of the value is
+still known - `x is of class` is `True`.
 
 ## Testing the owner
 
@@ -196,6 +233,40 @@ print(deep.item == bag.item)        // False - copied
 
 No constructor runs for a copy. The copy has an owner like a new object (the current scope, the object it is assigned to, or the called method when it is
 an argument). Be careful with objects that hold an external resource (a file): a `flat` copy shares it.
+
+A class that stands for something that exists only once - a handle, a connection - is marked **`[NoCopy]`**. Its instances are never duplicated: `flat x`
+and `copy x` of one, and a `copy` that reaches one through a field or an array element, throw an `ArgumentException` before anything is copied.
+The attribute is inherited (a class derived from a resource is still that resource). A `flat` copy of an object that only refers to one is fine - the
+reference is shared. `NativeHandle` ([native code](18-native-code.md)) is `[NoCopy]`.
+
+```fire
+[NoCopy]
+class Connection { int id }
+class Client { Connection conn
+    construct() { this.conn = new Connection() } }
+var client = new Client()
+var same = flat client              // fine: same.conn == client.conn
+try {
+    var twin = copy client
+} catch (ArgumentException e) {
+    print(e.message)                // 'Connection' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it ...
+}
+```
+
+The same holds for the copies that [threads](15-threads-and-actors.md#copies-taking-and-sync) make - no form of `taking` moves an object to the
+thread, every one copies it; `handover` moves it instead (the way to give a resource to a thread):
+
+| Form | Copies or shares | With a `[NoCopy]` instance |
+|---|---|---|
+| `fire taking x { }`, `fire Method(args)` (`this` and every argument) | a copy of everything reachable from `x` (an array too), whoever owns the parts; the copies belong to the thread | refused when `x`, a field or an element reaches one: the `ArgumentException` at the `fire`, nothing is copied, the thread does not start |
+| `fire handover x { }` (also `fire Method(args) handover x`) | nothing is copied: `x` and everything reachable from it move to the thread, the variable becomes `undefined` | fine - that is what it is for; the thread owns the instance and its destructor runs there |
+| `fire global { } taking x` | an object is copied for the job; an array or a text is handed over as it is | an object that reaches one is refused before the job is queued (the job never runs); an array that holds one is fine |
+| `sync x`, `try sync x` | a new object in the copy is copied into the original (case A); an object on both sides stays and is synced field by field (case C) | refused before anything is written back when case A reaches one, or when case C would write one into another instance |
+| `sync flat x`, `try sync flat x` | like `sync`, but case C keeps the reference and copies nothing | case A is refused as with `sync`; case C is fine |
+| `fire with a`, the global variables (also in `sync global { }`) | shared: the actor or the object itself, no copy | fine - a resource in a global variable is used by the threads in a section |
+
+The text names the form: "'Connection' cannot be copied ([NoCopy]) - 'taking' would copy an instance of it, which exists only once." (`'sync' reaches an
+instance of it ...` for a field or an element). A resource a thread needs is therefore created in the thread, handed over with `fire handover x`, or kept in a global variable.
 
 ## Destructors
 

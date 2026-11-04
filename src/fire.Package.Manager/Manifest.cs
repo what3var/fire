@@ -127,6 +127,9 @@ namespace fire.Package.Manager
         public Dictionary<string, string>? Resources { get; set; }
         /// <summary>The device drivers of the import (classes of the device framework, made with `new Class()`): the IDE loads them and lists their devices. null: none.</summary>
         public List<string>? Drivers { get; set; }
+        /// <summary>`false`: the classes of the prelude cannot be written to or read from JSON (docs/JSON.md; like `[NotSerializable]` on each, derived classes included) - a
+        /// native build never keeps them for JSON. null: serializable.</summary>
+        public bool? Serializable { get; set; }
     }
 
     /// <summary>C++ source for the native backend. The files are put into the generated file after the runtime, outside of any namespace: they include what they need

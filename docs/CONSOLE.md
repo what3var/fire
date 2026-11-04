@@ -11,12 +11,10 @@ fire.Terminal                  (net10.0, plattformunabhängig)
   Blitter, Bilder (PNG/BMP/GIF), Schriften (IntegratedGlyphFont, TrueType), Slicer,
   IGlyphFont, IFramebufferRenderer, IdManager, FramebufferManager, RendererManager
 
-fire.Terminal.Sdl              (net10.0, referenziert nur .Terminal)
-  SdlFramebufferRenderer         – IFramebufferRenderer über SDL3-CS
-  SdlClipboard                   – IClipboard über SDL3-CS (Text, image/png, image/bmp, text/uri-list)
-  WinClipboard, DropFiles        – Dateien in der Zwischenablage von Windows (CF_HDROP, P/Invoke; SDL3 hat es nicht)
+(fire.Terminal.Sdl mit SDL3-CS gibt es nicht mehr: die Fenster des Desktops zeigt die VM über die C-Bibliothek von graphics und windows,
+docs/UI_PLATFORM.md "Stand Teil 2"; die C#-Fenster brauchen einen Renderer des Hosts.)
 
-fire.Terminal.Windows          (net10.0, referenziert .Terminal + .Sdl)
+fire.Terminal.Windows          (net10.0, referenziert .Terminal)
   ConsoleWindow                   – zeigt EINEN Framebuffer in einem Fenster an
   WindowManager                   – verwaltet ConsoleWindow-Instanzen über IDs
 
@@ -460,7 +458,7 @@ außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das vo
 offen ist; ein eigenes Board-Package ohne `FIRE_DISPLAY_CAN_START_DRAG` sagt ebenfalls `false`. Die UI-Bibliothek lässt ein Ziehen dann im Fenster weiterlaufen, statt es beim Verlassen zu beenden.
 
 - **Windows**: OLE (`DoDragDrop`) mit einem eigenen `IDataObject` - der Text als `CF_UNICODETEXT`, die Dateien als `CF_HDROP` - und einer `IDropSource`; nativ in C (die COM-Objekte als
-  Strukturen mit ihren Funktionstabellen, `ole32.dll` wird beim ersten Ziehen geladen), in der VM genauso über Funktionszeiger (`src/fire.Terminal.Sdl/SdlDragOut.cs`). `DoDragDrop` ist modal und
+  Strukturen mit ihren Funktionstabellen, `ole32.dll` wird beim ersten Ziehen geladen), in der VM genauso (die VM benutzt dieselbe C-Anzeige). `DoDragDrop` ist modal und
   holt die Nachrichten des Threads selbst ab, bis losgelassen wird. Angeboten werden Kopieren und Verschieben; welches, entscheidet das Ziel (und die Tasten).
 - **X11**: das XDND-Protokoll als Quelle (Version 5: `XdndEnter`/`XdndPosition`/`XdndLeave`/`XdndDrop` an das Fenster mit `XdndAware` unter dem Zeiger, `XdndStatus`/`XdndFinished` zurück; die
   Auswahl `XdndSelection` gehört dem Fenster und liefert `text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING` und `text/plain`). Kopieren, mit Umschalt Verschieben. libX11 wird zur Laufzeit

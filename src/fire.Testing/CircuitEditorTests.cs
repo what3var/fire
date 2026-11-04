@@ -508,7 +508,7 @@ static class CircuitEditorTests
                 int calls = 0
                 float amps = 0.001
                 construct() : base("pump") { this.AddPort("a") }
-                undefined StampStep(Circuits.Solver solver) {
+                override undefined StampStep(Circuits.Solver solver) {
                     this.calls = this.calls + 1
                     solver.CurrentInto(this.PortAt(0), this.amps)
                 }

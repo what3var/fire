@@ -86,6 +86,31 @@
 #define FIRE_TLS
 #endif
 
+/* Linkage "shared" on Windows (FIRE_DLL, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): the runtime is a DLL of its own (FIRE_DLL_RUNTIME: the translation unit that
+ * is it), the program and the DLLs of the library modules import its state (FIRE_RT_DATA) and functions (FIRE_RT_FN). A DLL cannot import from the program: what the
+ * runtime or a module calls of the program's code (the hooks: makeClassError, the JSON tables, ...) and the program's data (g_dimNames, the tables of the modules) are
+ * pointers in the DLL (FIRE_DLL_LINKED: the generated head names them `(*fire_hp_name)`), filled by its fire_link_* function from the program's table when it starts. */
+#if defined(FIRE_DLL_RUNTIME)
+#define FIRE_RT_DATA __declspec(dllexport)
+#define FIRE_RT_FN __declspec(dllexport)
+#elif defined(FIRE_DLL)
+#define FIRE_RT_DATA __declspec(dllimport)
+#define FIRE_RT_FN
+#else
+#define FIRE_RT_DATA
+#define FIRE_RT_FN
+#endif
+#if defined(FIRE_DLL_LINKED) && !defined(FIRE_DLL_LINKED_ELSEWHERE)
+#define FIRE_HOST_EXTERN   /* (a pointer of this DLL, see above) */
+#else   /* (FIRE_DLL_LINKED_ELSEWHERE: the natives in C++ of a fire plugin - the pointers are those of its C file) */
+#define FIRE_HOST_EXTERN extern
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+#define FIRE_CONST_FN __attribute__((const))
+#else
+#define FIRE_CONST_FN
+#endif
+
 #ifdef __cplusplus
 #define FIRE_BEGIN extern "C" { namespace fire {
 #define FIRE_END } }
@@ -117,8 +142,14 @@ typedef float Real;
 typedef double Real;
 #endif
 
+#ifdef FIRE_DEBUG
+FIRE_RT_FN void fire_dbgExited(int code);   /* the debugger hears that the program ends (fire_debug.h) */
+#endif
 /* Ends the process. With threads the other threads must not run static destructors under their feet: no cleanup, only the streams are flushed. */
 FIRE_NORETURN FIRE_FN void exitNow(int code) {
+#ifdef FIRE_DEBUG
+    fire_dbgExited(code);
+#endif
     fflush(stdout);
     fflush(stderr);
     fire_plat_exit(code);
@@ -159,8 +190,8 @@ FIRE_FN Value Undef(void) { return UndefU(0); }
  * program sets the table (fire_init). Every operation on whole numbers works on it as before (and gives a plain int: Int() clears `reserved`). */
 typedef struct FireEnumMember { const char* name; int64_t value; } FireEnumMember;
 typedef struct FireEnum { const char* name; uint8_t flags; const FireEnumMember* members; uint32_t count; } FireEnum;
-extern const FireEnum* g_enums;
-extern uint32_t g_enumCount;
+extern FIRE_RT_DATA const FireEnum* g_enums;
+extern FIRE_RT_DATA uint32_t g_enumCount;
 /* A value of the enum `index` (1-based, the generated table). */
 FIRE_FN Value EnumV(int64_t v, uint16_t index) { Value r; r.kind = K_Int; r.width = 0; r.reserved = index; r.unit = 0; r.i = v; return r; }
 /* The enum of a value (null: none). */
@@ -207,12 +238,29 @@ typedef struct Owned Owned;
 /* The objects that are destroyed while a destroy batch runs (see `destroy`): their memory is freed when the batch ends, so that a destructor can still look at an
  * object that was destroyed before it (the order in a scope is the order of creation: a writer's destructor flushes a stream that is already destroyed). */
 typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
+/* Property accessors (SPEC 2.2 "Ownership in property accessors"): what the `this` of the running getters took over (a `return` of it goes to the caller after
+ * all), and the argument list in which a property assignment of an accessor hands a value to the setter it calls (the setter takes it on entry). */
+typedef struct AccEntry { Owned* o; uint32_t slot; uint16_t gen; } AccEntry;
+typedef struct AccState { AccEntry* items; uint32_t top, cap; OwnList* handOff; } AccState;
 #ifdef __cplusplus
 #define FIRE_ZERO_INIT {}
 #else
 #define FIRE_ZERO_INIT {0}
 #endif
+/* The debugger (fire_debug.h): the top of the shadow stack of this thread, the depth of the code the VM would run nested, the thread for the debugger. */
+typedef struct DbgFrame DbgFrame;
+typedef struct DbgThread DbgThread;
+#ifdef FIRE_DEBUG
+extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
+#define FIRE_DEBUG_THREAD_VARS(X) \
+    X(DbgFrame*, g_dbgTop, NULL) \
+    X(int32_t, g_dbgNest, 0) \
+    X(DbgThread*, g_dbgSelf, NULL)
+#else
+#define FIRE_DEBUG_THREAD_VARS(X)
+#endif
 #define FIRE_THREAD_VARS(X) \
+    FIRE_DEBUG_THREAD_VARS(X) \
     X(UnwindState, g_unwind, FIRE_ZERO_INIT) \
     X(Pool, g_pool, FIRE_ZERO_INIT) \
     X(Handler*, g_handlers, NULL) \
@@ -221,6 +269,7 @@ typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
     X(uint64_t, g_throwToken, 0) \
     X(uint8_t, g_isThread, 0)           /* 1 on a fire thread */ \
     X(int32_t, g_jobDepth, 0)           /* a `fire global` job is running on this thread */ \
+    X(int32_t, g_noSyncDepth, 0)        /* something runs for itself (a destructor, a host service, `catch threads`/`catch terminate`): no automatic queue in it */ \
     X(uint32_t, g_attnMask, 7u)         /* the signals this thread looks at (ATTN_ALL|ATTN_MAIN|ATTN_SECT); fire threads clear all but ATTN_ALL */ \
     X(int32_t, g_tick, 4096) \
     X(uint8_t, g_leaving, 0)            /* unwinding because of leave/terminate (or an unhandled exception): no more signals */ \
@@ -237,14 +286,29 @@ typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
     X(Zombies, g_zombies, FIRE_ZERO_INIT)          /* destroyed objects whose memory is freed at the end of the batch */ \
     X(BridgeError, g_ioError, FIRE_ZERO_INIT)      /* the IO bridge: the last error of this thread */ \
     X(BridgeError, g_deviceError, FIRE_ZERO_INIT)  /* the device bridge */ \
-    X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */
+    X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */ \
+    X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */
 
-#if defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT)
+#if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL))
 typedef struct ThreadLocals {
 #define FIRE_X(type, name, init) type name;
     FIRE_THREAD_VARS(FIRE_X)
 #undef FIRE_X
 } ThreadLocals;
+#ifdef FIRE_DLL
+/* Linkage "shared" on Windows: a DLL cannot hand out its thread-local variables (__declspec(thread) cannot be imported) - the runtime DLL keeps them in one block per
+ * thread, the program and the modules ask it for the block of the calling thread (the same block for the whole life of a thread: FIRE_CONST_FN lets the compiler
+ * ask once per function). */
+#ifdef FIRE_DLL_RUNTIME
+#define FIRE_XI(type, name, init) init,
+static FIRE_TLS ThreadLocals fire_tlsBlock = { FIRE_THREAD_VARS(FIRE_XI) };
+#undef FIRE_XI
+#define FIRE_TLV(name) (fire_tlsBlock.name)
+#else
+#define FIRE_TLV(name) (fire_tl()->name)
+#endif
+FIRE_RT_FN ThreadLocals* fire_tl(void) FIRE_CONST_FN;
+#else
 /* The structure of the calling task (made when the task first asks). */
 FIRE_FN ThreadLocals* fire_tl(void) {
     void* p = fire_tls_get();
@@ -259,33 +323,42 @@ FIRE_FN ThreadLocals* fire_tl(void) {
     }
     return (ThreadLocals*)p;
 }
-#define g_unwind (fire_tl()->g_unwind)
-#define g_pool (fire_tl()->g_pool)
-#define g_handlers (fire_tl()->g_handlers)
-#define g_globalOwn (fire_tl()->g_globalOwn)
-#define g_pending (fire_tl()->g_pending)
-#define g_throwToken (fire_tl()->g_throwToken)
-#define g_isThread (fire_tl()->g_isThread)
-#define g_jobDepth (fire_tl()->g_jobDepth)
-#define g_attnMask (fire_tl()->g_attnMask)
-#define g_tick (fire_tl()->g_tick)
-#define g_leaving (fire_tl()->g_leaving)
-#define g_threadFailed (fire_tl()->g_threadFailed)
-#define g_travel (fire_tl()->g_travel)
-#define g_curSection (fire_tl()->g_curSection)
-#define g_secDepth (fire_tl()->g_secDepth)
-#define g_callDepth (fire_tl()->g_callDepth)
-#define g_scopeLists (fire_tl()->g_scopeLists)
-#define g_scopeCount (fire_tl()->g_scopeCount)
-#define g_reflCaller (fire_tl()->g_reflCaller)
-#define g_callTArgs (fire_tl()->g_callTArgs)
-#define g_explicitTArgs (fire_tl()->g_explicitTArgs)
-#define g_zombies (fire_tl()->g_zombies)
-#define g_ioError (fire_tl()->g_ioError)
-#define g_deviceError (fire_tl()->g_deviceError)
-#define g_gfxError (fire_tl()->g_gfxError)
+#define FIRE_TLV(name) (fire_tl()->name)
+#endif
+#define g_unwind FIRE_TLV(g_unwind)
+#define g_pool FIRE_TLV(g_pool)
+#define g_handlers FIRE_TLV(g_handlers)
+#define g_globalOwn FIRE_TLV(g_globalOwn)
+#define g_pending FIRE_TLV(g_pending)
+#define g_throwToken FIRE_TLV(g_throwToken)
+#define g_isThread FIRE_TLV(g_isThread)
+#define g_jobDepth FIRE_TLV(g_jobDepth)
+#define g_noSyncDepth FIRE_TLV(g_noSyncDepth)
+#define g_attnMask FIRE_TLV(g_attnMask)
+#define g_tick FIRE_TLV(g_tick)
+#define g_leaving FIRE_TLV(g_leaving)
+#define g_threadFailed FIRE_TLV(g_threadFailed)
+#define g_travel FIRE_TLV(g_travel)
+#define g_curSection FIRE_TLV(g_curSection)
+#define g_secDepth FIRE_TLV(g_secDepth)
+#define g_callDepth FIRE_TLV(g_callDepth)
+#define g_scopeLists FIRE_TLV(g_scopeLists)
+#define g_scopeCount FIRE_TLV(g_scopeCount)
+#define g_reflCaller FIRE_TLV(g_reflCaller)
+#define g_callTArgs FIRE_TLV(g_callTArgs)
+#define g_explicitTArgs FIRE_TLV(g_explicitTArgs)
+#define g_zombies FIRE_TLV(g_zombies)
+#define g_ioError FIRE_TLV(g_ioError)
+#define g_deviceError FIRE_TLV(g_deviceError)
+#define g_gfxError FIRE_TLV(g_gfxError)
+#define g_acc FIRE_TLV(g_acc)
+#ifdef FIRE_DEBUG
+#define g_dbgTop FIRE_TLV(g_dbgTop)
+#define g_dbgNest FIRE_TLV(g_dbgNest)
+#define g_dbgSelf FIRE_TLV(g_dbgSelf)
+#endif
 #else
-#define FIRE_X(type, name, init) extern FIRE_TLS type name;
+#define FIRE_X(type, name, init) extern FIRE_RT_DATA FIRE_TLS type name;
 FIRE_THREAD_VARS(FIRE_X)
 #undef FIRE_X
 #endif
@@ -356,6 +429,32 @@ FIRE_NORETURN FIRE_FN void unsupported(const char* what) {
 FIRE_NORETURN FIRE_FN Value fireError(const char* cls, const char* utf8) { fireLibraryJump(2, cls, utf8); }
 /* (in a package library an exception of the language goes to the VM, which throws it there) */
 FIRE_NORETURN FIRE_FN void fatalException(const char* cls, const char* message) { fireLibraryJump(2, cls, message); }
+#ifndef FIRE_THREADS
+/* The services of the runtime for a package with a thread of its own (the windows' managers), in a library for the VM: what the main program of a native build does
+ * at its safe points, the VM does - the library asks it (fire_host.request_service), and it calls fire_pkg_service of the library back on its thread. The holds on the
+ * end of the program are the VM's (fire_host.hold). The GIL of a native build is the lock of the library's calls (fire_pkg_wrapper.h): a native that waits lets go of it. */
+typedef void (*HostService)(void);
+extern HostService g_hostServices[8];
+extern uint32_t g_hostServiceCount;
+extern fire_atomic32 g_hostPending;
+#define FIRE_HOST_HAS(field) (g_libraryHost != NULL && (size_t)g_libraryHost->size >= offsetof(fire_host, field) + sizeof g_libraryHost->field && g_libraryHost->field != NULL)
+FIRE_FN void hostAddService(HostService service) { if (g_hostServiceCount < 8) g_hostServices[g_hostServiceCount++] = service; }
+FIRE_FN void hostRequest(void) {
+    fire_atomic_store(&g_hostPending, 1);
+    if (FIRE_HOST_HAS(request_service)) g_libraryHost->request_service();
+}
+FIRE_FN void hostHold(int32_t delta) { if (FIRE_HOST_HAS(hold)) g_libraryHost->hold(delta); }
+/* (fire_pkg_service: the library's services, if one was asked for) */
+FIRE_FN void hostServe(void) {
+    uint32_t i;
+    if (fire_atomic_exchange(&g_hostPending, 0) == 0) return;
+    for (i = 0; i < g_hostServiceCount; i++) g_hostServices[i]();
+}
+void fire_pkgLock(void);
+void fire_pkgUnlock(void);
+FIRE_FN void gilAcquire(void) { fire_pkgLock(); }
+FIRE_FN void gilRelease(void) { fire_pkgUnlock(); }
+#endif
 #else
 FIRE_NORETURN FIRE_COLD FIRE_FN void fatal(const char* message) {
     fflush(stdout);
@@ -445,8 +544,10 @@ FIRE_FN int formatReal(Real v, char* out) { return formatFloating((double)v, siz
 #ifndef FIRE_NDIMS
 #define FIRE_NDIMS 1
 #endif
-/* The base symbols, in the order of the dimension vectors (sorted like the VM prints them). Defined by the generated code. */
-extern const char* const g_dimNames[];
+/* The base symbols, in the order of the dimension vectors (sorted like the VM prints them). Defined by the generated code; with linkage "shared" a fire plugin
+ * puts the dimensions of its units the program does not have into its free (empty) places - then g_dimsAdded is set and the names are printed in their order
+ * (unitDimOrder), not in that of the places. */
+FIRE_HOST_EXTERN const char* g_dimNames[];
 
 typedef struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; double offset; int32_t conv; int32_t ulconv; } UnitInit;
 typedef struct UnitDef {
@@ -460,10 +561,11 @@ typedef struct UnitDef {
 } UnitDef;
 /* The conversion functions of the units that have them (the static methods To and From of their hidden classes, generated). */
 typedef Value (*UnitConvFn)(Value);
-extern const UnitConvFn* g_unitTo;
-extern const UnitConvFn* g_unitFrom;
-extern UnitDef* g_ud;
-extern uint32_t g_udCount, g_udCap;
+extern FIRE_RT_DATA const UnitConvFn* g_unitTo;
+extern FIRE_RT_DATA const UnitConvFn* g_unitFrom;
+extern FIRE_RT_DATA UnitDef* g_ud;
+extern FIRE_RT_DATA uint32_t g_udCount, g_udCap;
+extern FIRE_RT_DATA bool g_dimsAdded;
 
 FIRE_FN bool unitDimsZero(const int32_t* dims) {
     int i;
@@ -472,6 +574,29 @@ FIRE_FN bool unitDimsZero(const int32_t* dims) {
 }
 /* Unit.IsUnitless: no dimensions (whatever the scale). */
 FIRE_FN bool unitIsUnitless(uint32_t u) { return unitDimsZero(g_ud[u].dims); }
+/* The places of the dimensions in the order of their names, as the VM sorts them (letters without case first, then lower before upper case): the order of the
+ * places, unless a plugin added dimensions (g_dimsAdded). */
+FIRE_FN int unitDimCompare(const char* a, const char* b) {
+    const char* x = a;
+    const char* y = b;
+    for (; *x && *y; x++, y++) {
+        int cx = (*x >= 'A' && *x <= 'Z') ? *x + 32 : (unsigned char)*x, cy = (*y >= 'A' && *y <= 'Z') ? *y + 32 : (unsigned char)*y;
+        if (cx != cy) return cx - cy;
+    }
+    if (*x || *y) return *x ? 1 : -1;
+    for (x = a, y = b; *x; x++, y++) if (*x != *y) return (*x >= 'a' && *x <= 'z') ? -1 : 1;
+    return 0;
+}
+FIRE_FN void unitDimOrder(int* order) {
+    int i, j;
+    for (i = 0; i < FIRE_NDIMS; i++) order[i] = i;
+    if (FIRE_LIKELY(!g_dimsAdded)) return;
+    for (i = 1; i < FIRE_NDIMS; i++) {
+        int x = order[i];
+        for (j = i; j > 0 && unitDimCompare(g_dimNames[order[j - 1]], g_dimNames[x]) > 0; j--) order[j] = order[j - 1];
+        order[j] = x;
+    }
+}
 /* The text printed after a number: nothing for a unit without dimensions. */
 FIRE_FN const char* unitSuffix(uint32_t u) { return unitIsUnitless(u) ? "" : g_ud[u].name; }
 
@@ -488,9 +613,11 @@ FIRE_FN char* unitBuildName(const int32_t* dims, double scale, const char* displ
     if (unitDimsZero(dims)) fire_put(&t, "unitless");
     else if (display) fire_put(&t, display);
     else {
-        int numerators = 0, denominators = 0, i;
+        int numerators = 0, denominators = 0, i, o, order[FIRE_NDIMS];
         char tmp[16];
-        for (i = 0; i < FIRE_NDIMS; i++) {
+        unitDimOrder(order);
+        for (o = 0; o < FIRE_NDIMS; o++) {
+            i = order[o];
             if (dims[i] > 0) { if (numerators++) fire_put(&t, "*"); fire_put(&t, g_dimNames[i]); if (dims[i] != 1) { snprintf(tmp, sizeof tmp, "^%d", (int)dims[i]); fire_put(&t, tmp); } }
         }
         if (!numerators) fire_put(&t, "1");
@@ -499,8 +626,8 @@ FIRE_FN char* unitBuildName(const int32_t* dims, double scale, const char* displ
             int k = 0;
             fire_put(&t, "/");
             if (denominators > 1) fire_put(&t, "(");
-            for (i = 0; i < FIRE_NDIMS; i++)
-                if (dims[i] < 0) { if (k++) fire_put(&t, "*"); fire_put(&t, g_dimNames[i]); if (dims[i] != -1) { snprintf(tmp, sizeof tmp, "^%d", (int)-dims[i]); fire_put(&t, tmp); } }
+            for (o = 0; o < FIRE_NDIMS; o++)
+                if (dims[i = order[o]] < 0) { if (k++) fire_put(&t, "*"); fire_put(&t, g_dimNames[i]); if (dims[i] != -1) { snprintf(tmp, sizeof tmp, "^%d", (int)-dims[i]); fire_put(&t, tmp); } }
             if (denominators > 1) fire_put(&t, ")");
         }
         if (fabs(scale - 1.0) > 1e-12) {
@@ -539,16 +666,11 @@ FIRE_FN void unitsInit(const UnitInit* init, uint32_t count, const UnitConvFn* t
     g_udCount = count;
 }
 
-/* The index of the unit with these dimensions, scale and display text (made when it is new). */
-FIRE_FN uint32_t unitIntern(const int32_t* dims, double scale, const char* display) {
-    uint32_t i;
+/* A new unit at the end of the table. */
+FIRE_FN uint32_t unitAppend(const int32_t* dims, double scale, const char* display, double offset, int32_t conv, int32_t ulconv) {
     UnitDef* d;
-    for (i = 0; i < g_udCount; i++) {
-        const UnitDef* e = &g_ud[i];
-        if (e->scale == scale && e->offset == 0 && e->conv < 0 && e->ulconv < 0 && memcmp(e->dims, dims, sizeof e->dims) == 0 && ((e->display == NULL) == (display == NULL)) && (!display || strcmp(e->display, display) == 0)) return i;
-    }
     if (g_udCount == g_udCap) {
-        g_udCap *= 2;
+        g_udCap = g_udCap ? g_udCap * 2 : 32;
         g_ud = (UnitDef*)realloc(g_ud, sizeof(UnitDef) * g_udCap);
         if (!g_ud) outOfMemory();
     }
@@ -557,10 +679,20 @@ FIRE_FN uint32_t unitIntern(const int32_t* dims, double scale, const char* displ
     d->scale = scale;
     d->display = display;
     d->name = unitBuildName(dims, scale, display);
-    d->offset = 0;
-    d->conv = -1;
-    d->ulconv = -1;
+    d->offset = offset;
+    d->conv = conv;
+    d->ulconv = ulconv;
     return g_udCount++;
+}
+
+/* The index of the unit with these dimensions, scale and display text (made when it is new). */
+FIRE_FN uint32_t unitIntern(const int32_t* dims, double scale, const char* display) {
+    uint32_t i;
+    for (i = 0; i < g_udCount; i++) {
+        const UnitDef* e = &g_ud[i];
+        if (e->scale == scale && e->offset == 0 && e->conv < 0 && e->ulconv < 0 && memcmp(e->dims, dims, sizeof e->dims) == 0 && ((e->display == NULL) == (display == NULL)) && (!display || strcmp(e->display, display) == 0)) return i;
+    }
+    return unitAppend(dims, scale, display, 0, -1, -1);
 }
 
 FIRE_FN bool unitCompatible(uint32_t a, uint32_t b) { return a == b || memcmp(g_ud[a].dims, g_ud[b].dims, sizeof g_ud[a].dims) == 0; }
@@ -628,8 +760,8 @@ FIRE_FN double unitFactorCached(double* cache, uint32_t from, uint32_t to) {
 
 /* The units of fire and of the program a text may name (`"5mm".ToFloat()`, see below; the names of combined units look at them too). */
 typedef struct TextUnit { const char* symbol; uint32_t unit; bool prefixable; } TextUnit;
-extern const TextUnit* g_textUnits;
-extern uint32_t g_textUnitCount;
+extern FIRE_RT_DATA const TextUnit* g_textUnits;
+extern FIRE_RT_DATA uint32_t g_textUnitCount;
 
 /* ---- The names of combined units (Unit.CombinedName, the same steps): a list of symbols with powers. A product or a quotient keeps the symbols of its
  * operands (`kg*m/s^2`, `km/h`, `m*mm`), the same symbol counts once (`mm^2`); parts of one unit of fire with different prefixes that cancel (`m/mm*s`)
@@ -683,11 +815,13 @@ FIRE_FN bool unitTermsOfText(const char* text, UnitTerms* out) {
  * or conversion functions counts as its reference unit (Unit.LinearPart). */
 FIRE_FN bool unitTermsOf(uint32_t u, UnitTerms* out) {
     const UnitDef* d = &g_ud[u];
-    int i;
+    int i, o, order[FIRE_NDIMS];
     if (d->display && unitLinear(u)) return unitTermsOfText(d->display, out);
     if (fabs(d->scale - 1.0) > 1e-12) return false;
     out->n = 0;
-    for (i = 0; i < FIRE_NDIMS; i++) {
+    unitDimOrder(order);
+    for (o = 0; o < FIRE_NDIMS; o++) {
+        i = order[o];
         if (!d->dims[i]) continue;
         if (strlen(g_dimNames[i]) >= sizeof out->t[0].sym || out->n == FIRE_UNIT_TERMS) return false;
         strcpy(out->t[out->n].sym, g_dimNames[i]);
@@ -1135,7 +1269,7 @@ typedef struct SlotTable {
     Owned** hdr;   /* the header of the array or buffer in each slot: the pointers into arrays and buffers (`p + n`) find the bounds here */
 #endif
 } SlotTable;
-extern SlotTable g_slots;
+extern FIRE_RT_DATA SlotTable g_slots;
 
 FIRE_COLD FIRE_FN uint32_t slotGrow(void) {
     uint32_t cap = g_slots.cap ? g_slots.cap * 2 : 256;
@@ -1761,8 +1895,131 @@ typedef struct Obj {
 } Obj;
 FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
 
-/* Runs the destructors of the object's class chain, derived class first (generated; empty if no class has one). */
-void runDestructors(Obj* o);
+/* A class of the program as the runtime sees it (ROADMAP 9, A0): the generated program fills a table of these (one row per class id, `g_classDescs`) instead of a
+ * function with a switch over the class ids for each question. Its name, the number of fields, the field `message` (an exception that nothing catches) and the
+ * whole-number field `ticks` (a TimeSpan for the time functions) - -1 when the class has none or the program does not need it -, the destructors of the class
+ * and its base classes (derived class first, NULL: none), ToString() (NULL: none) and the exception types (the ids of `catch (T e)`, HandlerInfo.types) an
+ * object of the class is, ending with -1 (NULL: none). */
+#ifdef FIRE_MODULES
+/* Modules (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): every module serves the members of its own classes itself (its dispatchers switch over
+ * them); an object of a class it does not know - of a module that needs it, of the program, of a plugin - is served through the members the class's module
+ * declares by name. A table of one module for one class: its methods sorted by name (strcmp) and number of arguments (one row per number a method takes, with
+ * its number of parameters), its fields sorted by name; `k` is the class as the functions of that module number it. A function of a row serves the class `k`
+ * of its module (and every class derived from it that does not declare the member anew). */
+typedef Value (*FireMethodFn)(uint32_t k, Value self, const Value* a, OwnList* list, uint32_t caller);
+typedef struct FireMethod { const char* name; uint32_t argc; uint32_t params; FireMethodFn fn; } FireMethod;
+typedef Value (*FireFieldGetFn)(uint32_t k, Value v, OwnList* list, uint32_t caller);
+typedef void (*FireFieldSetFn)(uint32_t k, Value v, Value x, OwnList* list, uint32_t caller);
+typedef Value (*FireFieldPtrFn)(uint32_t k, Value v);
+typedef struct FireField { const char* name; int32_t index; FireFieldGetFn get; FireFieldSetFn set; FireFieldPtrFn ptr; } FireField;
+typedef struct FireMembers { uint32_t k; uint32_t nmethods; const FireMethod* methods; uint32_t nfields; const FireField* fields; } FireMembers;
+#endif
+
+typedef struct FireClassDesc {
+    const char* name;
+    uint32_t nfields;
+    int32_t messageIndex;
+    int32_t ticksIndex;
+    void (*destroy)(Obj* o);
+    Value (*toString)(Value self);
+    const int32_t* excTypes;
+#ifdef FIRE_MODULES
+    const char* const* isa;              /* the names of the classes of its chain, the class first (NULL-terminated) */
+    const char* const* ifaces;           /* the interfaces of its chain (NULL-terminated; NULL: none) */
+    const FireMembers* const* members;   /* the tables of its members, the class first, then its bases (NULL-terminated; NULL: none) */
+    const TArg* (*targOf)(Obj* o, const char* cls, int k);   /* the k-th type argument of its generic base `cls` (NULL: no generic class in its chain) */
+#endif
+    uint32_t flags;   /* 1: `[NoCopy]` on the class or a base class - flat/copy refuse to duplicate it */
+} FireClassDesc;
+extern FIRE_RT_DATA const FireClassDesc* g_classDescs;
+extern FIRE_RT_DATA uint32_t g_classDescCount;
+#ifdef FIRE_MODULES
+/* The members of an object by name, for an object of a class the calling module does not serve (defined with the runtime's state). */
+FIRE_RT_FN const FireMethod* fireFindMethod(uint32_t cls, const char* name, int argc, uint32_t* k);
+FIRE_RT_FN Value fireCallMethod(Value self, const char* name, int argc, const Value* a, OwnList* list, uint32_t caller);
+FIRE_RT_FN Value fireNoMethod(Value self, const char* name, int argc);
+FIRE_RT_FN Value fireGetField(Value v, const char* name, OwnList* list, uint32_t caller);
+FIRE_RT_FN void fireSetField(Value v, Value x, const char* name, OwnList* list, uint32_t caller);
+FIRE_RT_FN Value fireFieldPtr(Value v, const char* name);
+FIRE_RT_FN bool fireIsOf(uint32_t cls, const char* name);
+FIRE_RT_FN bool fireClassIsSub(uint32_t cls, const char* name);
+FIRE_RT_FN int fireClassScore(uint32_t cls, const char* name, int exact, int none);
+FIRE_RT_FN const TArg* fireTArgOf(Obj* o, const char* cls, int k);
+/* A probe on an object of any module (Reflect.Set): the member is written and read by its name (no access check for reading the old value of a field). */
+FIRE_RT_FN void fireProbeRawSet(Value obj, const char* name, Value value, OwnList* list, uint32_t caller);
+FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
+
+/* ---- fire plugins (ROADMAP 9, phase D b; docs/NATIVE_BACKEND.md "Plugins"): a library module built on its own (`--linkage plugin`), loaded while the program
+ * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
+ * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
+ * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
+#define FIRE_PLUGIN_FORMAT 3
+/* A plugin that calls a native in C of the program (`fire_cn_<function>`) the program does not export: what Load says (the function: %.*s). */
+#define FIRE_PLUGIN_CNATIVE "it calls the native function '%.*s' in C, which this program does not export to plugins (natives in C are the program's: build the program again with the package of the native; of graphics and windows it exports only those its libraries call)."
+typedef struct FirePlugin {
+    uint32_t format;                     /* FIRE_PLUGIN_FORMAT */
+    const char* name;                    /* its module */
+    const char* head;                    /* the configuration of the runtime it is built for (the hash of the head of its file) */
+    uint32_t ndeps;
+    const char* const* depNames;         /* the modules it needs and their interfaces it was built against ("format:hash") */
+    const char* const* depAbis;
+    uint32_t nclasses;
+    const char* const* classNames;       /* its classes, in the order of their ids */
+    uint32_t* base;                      /* fire_mb_<p>: the id of its first class (set when it is registered) */
+    void (*fillClasses)(FireClassDesc* rows);   /* the descriptors of its classes (after *base is set) */
+    uint32_t nenums;
+    const FireEnum* enums;               /* its enums - by name the program's number (fire_enums_<p>[k + 1]) */
+    uint8_t* enumMap;
+    uint32_t nexc;
+    const char* const* excNames;         /* its catch types - by name the program's id (fire_exct_<p>) */
+    int32_t* excMap;
+    const void* const* rfRows;           /* its reflection rows (const RfClass*, one per class; NULL: none) */
+    void (*init)(void);                  /* the static initialisers of its classes */
+    const char* (*link)(const void* (*find)(const char*));   /* Windows: fills its pointers to the program (NULL elsewhere); the name the program lacks */
+    uint32_t nunits;
+    const UnitInit* units;               /* its units (row 0: none), their dimensions over dimNames - by dimensions, scale and symbol the program's (unitMap) */
+    uint16_t* unitMap;                   /* fire_units_<p> */
+    uint32_t ndims;
+    const char* const* dimNames;         /* the dimensions of its units, by name the program's (a new one in a free place of g_dimNames) */
+    uint32_t nconv;
+    const UnitConvFn* convTo;            /* the conversion functions of its units (UnitInit.conv/ulconv) */
+    const UnitConvFn* convFrom;
+    const uint8_t* convOwn;              /* 1: of a unit the plugin declares (always a new unit), 0: of a library (the program's unit when it has it) */
+    uint32_t ntext;
+    const TextUnit* textUnits;           /* the units a text may name (`"5in".ToFloat()`), with its numbers: those the program does not know are added */
+    /* JSON (the program has `#import "json"`; NULL: it has not): the JsonClassInfo of its class k (fire_json.h; the units of the fields are the program's once
+     * it is registered), the k of its class of a name (-1: none), the texts of its type arguments and back (NULL: not its own) */
+    const void* (*jsonAt)(uint32_t k);
+    int32_t (*jsonNamed)(const char* name);
+    const char* (*jsonTargText)(const TArg* t);   /* (not jsonTArgText: a DLL defines that name as a macro) */
+    const TArg* (*jsonTargFor)(const char* text);
+} FirePlugin;
+/* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
+typedef struct FirePluginHost {
+    const char* head;                                /* the hash of the head of its files */
+    const char* (*moduleAbi)(const char* module);    /* the interface ("format:hash") of a library module of the program, NULL: none of that name */
+    const char* const* excNames;                     /* its catch types by name (index = id) */
+    uint32_t nexc;
+    const void* (*find)(const char* name);           /* Windows: what a DLL may use of the program */
+} FirePluginHost;
+extern FIRE_RT_DATA const FirePluginHost* g_pluginHost;
+/* The reflection rows of the plugins' classes (const RfClass*; the program's rf_find looks here after its own). */
+extern FIRE_RT_DATA const void** g_pluginRf;
+extern FIRE_RT_DATA uint32_t g_pluginRfCount;
+/* Registers a plugin (once; again: the same answer): an array of the names of its classes, or a string that says why it does not fit. */
+FIRE_RT_FN Value fireRegisterPlugin(const FirePlugin* p, OwnList* list);
+/* JSON of the classes of the plugins (the program's jsonClassAt, ... ask here for what is not in its tables): the JsonClassInfo of a class id (NULL: no class of a
+ * plugin, or none with JSON), the id of a class name (-1: none), the text of a type argument of a plugin and back (NULL: none). */
+FIRE_RT_FN const void* firePluginJsonAt(uint32_t cls);
+FIRE_RT_FN int32_t firePluginJsonNamed(const char* name);
+FIRE_RT_FN const char* firePluginTArgText(const TArg* t);
+FIRE_RT_FN const TArg* firePluginTArgFor(const char* text);
+#endif
+/* The catch type `Exception` (catches every exception object): always type id 0. */
+#define FIRE_EXC_ANY 0
+
+/* Runs the destructors of the object's class chain, derived class first (the descriptor of its class). */
+FIRE_RT_FN void runDestructors(Obj* o);
 
 FIRE_FN Value ObjV(Obj* o) { Value r; r.kind = K_Class; r.width = 0; r.reserved = o->h.gen; r.unit = o->h.slot; r.p = o; return r; }
 FIRE_FN Obj* asObj(Value v) {
@@ -1773,7 +2030,7 @@ FIRE_FN Obj* asObj(Value v) {
 FIRE_FN Obj* objAt(Value v) { return (Obj*)v.p; }
 
 #ifdef FIRE_THREADS
-extern bool g_domainOn;   /* a fire thread exists: the objects of the global scope are the shared domain (flag 64) */
+extern FIRE_RT_DATA bool g_domainOn;   /* a fire thread exists: the objects of the global scope are the shared domain (flag 64) */
 FIRE_FN void domainLink(OwnList* list, Owned* o);
 #endif
 FIRE_FN void ownLink(OwnList* list, Owned* o) {
@@ -2067,12 +2324,25 @@ FIRE_FN Value rebindLam(Value lam, Value on, OwnList* list) {
     l->on = on;
     return LamV(l);
 }
-FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
+/* `callee(args...)` of the generated code. */
+FIRE_FN Value callLamV(Value callee, int argc, const Value* args, OwnList* list) {
     Lam* l;
     if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
     l = lamOf(callee);
     if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) return callLamDefaults(callee, argc, args, list);
     return l->fn(callee, args);
+}
+/* A lambda that the runtime or a native calls (a probe, a job, a callback): in a debug build the VM runs it nested - no stops inside. */
+FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
+#ifdef FIRE_DEBUG
+    Value r;
+    g_dbgNest++;
+    r = callLamV(callee, argc, args, list);
+    g_dbgNest--;
+    return r;
+#else
+    return callLamV(callee, argc, args, list);
+#endif
 }
 
 /* CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException). */
@@ -2224,10 +2494,11 @@ FIRE_FN Buf* allocBufExternal(uint8_t* data, uint32_t length, OwnList* list) {
 /* ---------------------------------------------------------------------------------------------------------------------
  * Strings
  * --------------------------------------------------------------------------------------------------------------------- */
-/* Generated: calls the ToString() method of the object's class if it has one (the result is a string value created in `list`). */
-bool userToString(Value object, OwnList* list, Value* result);
+/* Calls the ToString() method of the object's class if it has one (the result is a string value created in `list`; the descriptor of the class). */
+FIRE_RT_FN bool userToString(Value object, OwnList* list, Value* result);
 
-const char* className(uint32_t cls);   /* (generated) */
+/* The name of the class with this id ("?" for none; the descriptor of the class). */
+FIRE_RT_FN const char* className(uint32_t cls);
 
 /* The characters of a value as `+` and `$"..."` append them (Value.ToString()). */
 typedef struct Piece {
@@ -2730,8 +3001,8 @@ FIRE_FN Value charCall(int64_t method, Value ch, OwnList* list) {
 /* ---- embedded files: `new Resource("path")` (docs/RESOURCES.md) ------------------------------------------------------------------------------------------------- */
 /* The files the compiler embedded in the program: the generated file points these at its table (a library without resources has none). */
 typedef struct ResEntry { const char* name; const uint8_t* data; uint32_t length; } ResEntry;
-extern const ResEntry* g_resources;
-extern int g_resourceCount;
+extern FIRE_RT_DATA const ResEntry* g_resources;
+extern FIRE_RT_DATA int g_resourceCount;
 
 /* The UTF-16 units of UTF-8 bytes (invalid sequences become U+FFFD, characters above U+FFFF two surrogates - like the VM): written to `out` (when it is not
  * null); returns their number. */
@@ -2787,8 +3058,8 @@ FIRE_FN void strToUtf8(Value v, char* out, uint32_t cap) {
 }
 /* ---- `__EnvCall(id[, a[, b]])` (EnvironmentMethods): the process - arguments, path, environment variables, line break, platform. What depends on the
  * system is the platform layer's (fire_plat_eachArg, fire_plat_programPath, fire_plat_getenv/setenv/envEach, fire_plat_name). ---- */
-extern int g_argc;
-extern char** g_argv;
+extern FIRE_RT_DATA int g_argc;
+extern FIRE_RT_DATA char** g_argv;
 /* The entry point of a process hands over its arguments (before fire_init). */
 FIRE_FN void fire_setArgs(int argc, char** argv) { g_argc = argc; g_argv = argv; }
 
@@ -3050,6 +3321,8 @@ typedef struct RfClass {
     const char* const* ifaces; uint32_t nIfaces;
     const RfMember* members; uint32_t nMembers;
     Value (*attrs)(OwnList* list);    /* the attributes before the class (generated), null: none */
+    const char* const* stripped; uint32_t nStripped;   /* the methods stripping left out, after the highest level that keeps them ("1Bark"; docs/NATIVE_BACKEND.md) */
+    Value (*make)(int argc, const Value* items, OwnList* list, uint32_t caller);   /* a class of a plugin: Reflect.New (NULL: the program knows the class) */
 } RfClass;
 
 /* Is the string equal to this UTF-8 text? */
@@ -3076,7 +3349,7 @@ FIRE_FN Value strArrayOf(const char* const* items, uint32_t n, OwnList* list) {
     return ArrV(a);
 }
 /* Generated: builds a ReflectionException (message) owned by the global scope. */
-Value makeReflectError(Value message);
+FIRE_HOST_EXTERN Value makeReflectError(Value message);
 #endif
 
 FIRE_FN const char* kindName(Value v) {
@@ -3249,7 +3522,7 @@ FIRE_FN bool fitsTArg(Value* v, const TArg* ta) {
 /* The type arguments of a `new` or a call that names a type parameter of the running code (`new Box<T>()`): the same list for the same arguments. The
  * generator passes a compound literal: internTArgsN((const TArg* const[]){&TA_1, &TA_2}, 2). */
 typedef struct fire_TArgsEntry { struct fire_TArgsEntry* next; uint32_t n; const TArg* a[1]; } fire_TArgsEntry;
-extern fire_TArgsEntry* g_targsHead;
+extern FIRE_RT_DATA fire_TArgsEntry* g_targsHead;
 FIRE_FN TArgs internTArgsN(const TArg* const* items, uint32_t n) {
     fire_TArgsEntry* e;
     uint32_t i;
@@ -3282,7 +3555,9 @@ typedef struct HandlerInfo {
     uint32_t ncatch;
     const int32_t* types;   /* per catch clause: the type id for excMatches, -1 = catches everything */
     uint8_t hasFinally;
+    const int32_t* typeMap; /* a library module (ROADMAP 9): its type ids -> those of the program (fire_exct_M); NULL: the ids are the program's */
 } HandlerInfo;
+#define FIRE_HANDLER_TYPE(info, i) ((info)->typeMap && (info)->types[i] >= 0 ? (info)->typeMap[(info)->types[i]] : (info)->types[i])
 
 struct Handler {
     Handler* prev;
@@ -3293,12 +3568,12 @@ struct Handler {
     uint8_t finallyOnly;
 };
 
-/* Generated: does the exception match the catch type (`typeId` as stored in HandlerInfo.types)? */
-bool excMatches(Value exception, int32_t typeId);
+/* Does the exception match the catch type (`typeId` as stored in HandlerInfo.types; FIRE_EXC_ANY: `Exception`)? The descriptor of its class lists its types. */
+FIRE_RT_FN bool excMatches(Value exception, int32_t typeId);
 /* Generated: builds an IndexOutOfBoundsException (message, index, length) owned by the global scope. */
-Value makeIndexError(Value message, int64_t index, int64_t length);
+FIRE_HOST_EXTERN Value makeIndexError(Value message, int64_t index, int64_t length);
 /* Generated: builds a UnitMismatchException (message, expected unit, actual unit) owned by the global scope. */
-Value makeUnitError(Value message, Value expected, Value actual);
+FIRE_HOST_EXTERN Value makeUnitError(Value message, Value expected, Value actual);
 
 FIRE_FN void pushHandler(Handler* h) { h->prev = g_handlers; h->origin = h; h->finallyOnly = 0; g_handlers = h; }
 FIRE_FN void popHandler(void) { g_handlers = g_handlers->prev; }
@@ -3325,8 +3600,8 @@ FIRE_FN void takeGlobal(Obj* o) {
     ownLink(g_globalOwn, &o->h);
 }
 
-/* Generated: the index of the field `message` of an object of the class, -1 when the class has none. */
-int32_t excMessageIndex(uint32_t cls);
+/* The index of the field `message` of an object of the class, -1 when the class has none (the descriptor of the class). */
+FIRE_RT_FN int32_t excMessageIndex(uint32_t cls);
 /* An exception that nothing catches: the text of the VM (UncaughtScriptException) - the class and the text of the field `message`. */
 FIRE_COLD FIRE_FN void reportUnhandled(Value exception) {
     Obj* o = asObj(exception);
@@ -3353,10 +3628,29 @@ FIRE_FN Value jobUnhandled(Value exception);
 
 /* `throw exception`. Returns the resume value if the exception is resumed at this very point; otherwise it returns with `g_unwind.active` set and the caller
  * has to unwind (the generated code checks the flag after every call). `throwValue(x)` is resumable, `throwValue(x, false)` (a rethrow) is not. */
+#ifdef FIRE_DEBUG
+FIRE_RT_FN int fire_dbgUnhandled(Value exception);
+FIRE_RT_FN void fire_dbgRet(DbgFrame* caller);
+/* Would a catch block of this thread take the exception (VM.WouldBeCaught)? */
+FIRE_FN bool wouldBeCaught(Value exception) {
+    Handler* h;
+    uint32_t i;
+    for (h = g_handlers; h; h = h->prev)
+        if (!h->finallyOnly)
+            for (i = 0; i < h->info->ncatch; i++)
+                if (h->info->types[i] < 0 || excMatches(exception, FIRE_HANDLER_TYPE(h->info, i))) return true;
+    return false;
+}
+#endif
 FIRE_FN Value throwValueR(Value exception, bool resumable) {
     Handler* h;
     if (FIRE_UNLIKELY(exception.kind != K_Class)) fatal("throw expects an exception object.");
+    if (FIRE_UNLIKELY(!leafAlive(exception))) return destroyedError(exception);   /* (a destroyed object: what is thrown is the DestroyedException, like in the VM) */
     takeGlobal(asObj(exception));
+#ifdef FIRE_DEBUG
+    /* a debugger: an exception that nothing catches stops at the throw, before anything is unwound; `resume` ignores it (the throw gives undefined) */
+    if (FIRE_UNLIKELY(g_dbgArmed) && !wouldBeCaught(exception) && fire_dbgUnhandled(exception)) return Undef();
+#endif
     h = g_handlers;
     if (!h) {   /* nothing catches it: the program ends here (like the VM, without unwinding the stack) */
 #ifdef FIRE_THREADS
@@ -3371,7 +3665,7 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
         int found = -1;
         uint32_t i;
         for (i = 0; i < h->info->ncatch && found < 0; i++)
-            if (h->info->types[i] < 0 || excMatches(exception, h->info->types[i])) found = (int)i;
+            if (h->info->types[i] < 0 || excMatches(exception, FIRE_HANDLER_TYPE(h->info, i))) found = (int)i;
         if (found >= 0) {
             Pending pending;
             Handler fin;
@@ -3391,6 +3685,9 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
                 clearUnwind();
                 h->prev = saved;      /* the resumed code is still inside the try block: its handler is armed again */
                 g_handlers = h;
+#ifdef FIRE_DEBUG
+                if (FIRE_UNLIKELY(g_dbgArmed) && g_dbgTop) fire_dbgRet(g_dbgTop);   /* back at the throw site (like the VM after resume) */
+#endif
                 return v;
             }
             if (!g_unwind.active) fatal("internal error: a catch block ended without leaving.");
@@ -3495,7 +3792,7 @@ FIRE_FN void unitMismatch(Value v, Value expectedText) {
 #ifdef FIRE_EXCEPTIONS
 /* Generated: the exception object of the class `cls` (a class that natives of packages throw: `exceptions` of the package) with the message, or an undefined
  * value. */
-Value makeClassError(const char* cls, Value message);
+FIRE_HOST_EXTERN Value makeClassError(const char* cls, Value message);
 #endif
 /* An exception of the program that a native of a package throws (`fireError("TimeException", "text")`): thrown, or - when the program has no exceptions - the
  * end of the program. */
@@ -3510,6 +3807,9 @@ FIRE_FN Value fireError(const char* cls, const char* utf8) {
     if (exception.kind == K_Class) return throwValue(exception);
 #endif
     fatalException(cls, utf8);
+#ifdef __TINYC__
+    return Undef();   /* (not reached: TinyCC does not see that fatalException does not return) */
+#endif
 }
 #endif
 
@@ -3575,8 +3875,8 @@ typedef struct ProbeNode {
     const char* running[8]; uint32_t nrunning;
     struct ProbeNode* next;
 } ProbeNode;
-extern ProbeNode* g_probeNodes;
-extern int64_t g_probeNextId;
+extern FIRE_RT_DATA ProbeNode* g_probeNodes;
+extern FIRE_RT_DATA int64_t g_probeNextId;
 
 FIRE_FN ProbeNode* probeNodeOf(Obj* o, bool create) {
     ProbeNode* p;
@@ -3684,9 +3984,18 @@ FIRE_FN void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw
     uint32_t i;
     ownListInit(&local, poolMark(), NULL);
     if (node) for (i = 0; i < node->nrunning; i++) if (strcmp(node->running[i], name) == 0) nested = true;
-    if (!node || nested || node->nrunning >= 8) { raw(obj, value, &local, caller); leave(&local); return; }
+#ifdef FIRE_MODULES
+#define FIRE_PROBE_RAW() (raw ? raw(obj, value, &local, caller) : fireProbeRawSet(obj, name, value, &local, caller))
+#else
+#define FIRE_PROBE_RAW() raw(obj, value, &local, caller)
+#endif
+    if (!node || nested || node->nrunning >= 8) { FIRE_PROBE_RAW(); leave(&local); return; }
     node->running[node->nrunning++] = name;
+#ifdef FIRE_MODULES
+    oldValue = get ? get(obj, &local) : fireProbeRawGet(obj, name, &local);
+#else
     oldValue = get(obj, &local);
+#endif
     retain(oldValue);   /* (the assignment below may drop the last reference of the old value: the probes still compare with it and get it) */
     for (i = 0; i < node->n && !g_unwind.active; i++) {
         ProbeEntry e = node->entries[i];
@@ -3697,7 +4006,7 @@ FIRE_FN void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw
         if (verdict.kind == K_Bool && !verdict.i) { cancelled = true; break; }
     }
     if (!g_unwind.active && !cancelled) {
-        raw(obj, value, &local, caller);
+        FIRE_PROBE_RAW();
         if (!g_unwind.active && !eq(oldValue, value))
             for (i = 0; i < node->n && !g_unwind.active; i++) {
                 ProbeEntry e = node->entries[i];
@@ -3730,6 +4039,7 @@ FIRE_FN void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw
     fire_probeDone(node, name);
     release(oldValue);
     leave(&local);
+#undef FIRE_PROBE_RAW
 }
 #endif
 
@@ -3745,7 +4055,7 @@ FIRE_FN Value fire_asciiMessage(const char* text) {
 }
 
 /* Generated: builds an AccessDeniedException (message) owned by the global scope. */
-Value makeAccessError(Value message);
+FIRE_HOST_EXTERN Value makeAccessError(Value message);
 
 /* A private or protected member used from where it may not be (SPEC 5.7): an AccessDeniedException, or the end of the program when there are no exceptions. */
 FIRE_FN Value accessDenied(const char* text) {
@@ -3762,9 +4072,9 @@ FIRE_FN Value accessDenied(const char* text) {
  * --------------------------------------------------------------------------------------------------------------------- */
 #define TICKS_PER_MS ((int64_t)10000)
 
-/* Generated: the `ticks` of a TimeSpan (any class with a whole number field `ticks`); false for another object (and for every object when the program has
- * none). */
-bool timeObjTicks(Value v, int64_t* ticks);
+/* The `ticks` of a TimeSpan (any class with a whole number field `ticks`, the descriptor of the class); false for another object (and for every object when the
+ * program has none). */
+FIRE_RT_FN bool timeObjTicks(Value v, int64_t* ticks);
 
 /* Is the unit a unit of time (the dimension `s` and nothing else)? `factor` is then its size in seconds. */
 FIRE_FN bool unitOfTime(uint32_t u, double* factor) {
@@ -3790,7 +4100,7 @@ FIRE_FN bool timeTicksOf(Value a, int64_t* ticks) {
 }
 
 /* How long a waiting function waits without a time of its own: `#timeout`, else 30 seconds. */
-extern int64_t g_defaultTimeoutTicks;
+extern FIRE_RT_DATA int64_t g_defaultTimeoutTicks;
 
 #ifdef FIRE_THREADS
 FIRE_FN void sleepTicks(int64_t ticks);
@@ -3806,10 +4116,10 @@ FIRE_FN void setDefaultTimeout(Value t) {
 }
 
 /* Generated: builds a DestroyedException (message) owned by the global scope. */
-Value makeDestroyedError(Value message);
+FIRE_HOST_EXTERN Value makeDestroyedError(Value message);
 
 /* Generated: builds a DivideByZeroException (message) owned by the global scope. */
-Value makeDivideError(Value message);
+FIRE_HOST_EXTERN Value makeDivideError(Value message);
 
 FIRE_FN Value divideByZero(void) {
 #ifdef FIRE_EXCEPTIONS
@@ -3818,6 +4128,9 @@ FIRE_FN Value divideByZero(void) {
     return fireError("DivideByZeroException", "Division by zero.");
 #else
     fatalException("DivideByZeroException", "Division by zero.");
+#ifdef __TINYC__
+    return Undef();   /* (not reached) */
+#endif
 #endif
 }
 
@@ -4185,6 +4498,7 @@ FIRE_FN bool isFrom(Value operand, Value owner, bool transitive) {
     Owned* target;
     OwnList* l;
     if (FIRE_UNLIKELY(operand.kind != K_Class || owner.kind != K_Class)) fatal("'is from'/'is under' expects objects.");
+    if (FIRE_UNLIKELY(!leafAlive(operand) || !leafAlive(owner))) return false;   /* (a destroyed object owns nothing and belongs to nothing, like in the VM) */
     target = &asObj(owner)->h;
     for (l = asObj(operand)->h.owner; l; l = l->holder->owner) {
         if (l->holder == target) return true;
@@ -4277,6 +4591,68 @@ FIRE_FN void finishArgs(Value result, OwnList* al) {
     if (al->head) destroyList(al);
 }
 
+/* ---- Ownership in property accessors (SPEC 2.2): what belongs to the running accessor call - in one of its scopes `lists`, or handed to a setter by the
+ * property assignment of another accessor (`mine`, the argument list it found in g_acc.handOff on entry) - goes to `this` when it is assigned to a field of
+ * `this`, and to the setter like `take x` when it is assigned to a property. */
+FIRE_FN Owned* accMine(Value v, OwnList* const* lists, int n, OwnList* mine) {
+    Owned* o = ownedOf(v);
+    int i;
+    if (!o || !o->owner) return NULL;
+    if (mine && o->owner == mine) return o;
+    for (i = 0; i < n; i++) if (o->owner == lists[i]) return o;
+    return NULL;
+}
+/* `this.field = v` (after the store): `this` takes v over; a getter (`track`) remembers it for its `return` (accReturn). */
+FIRE_FN void accKeep(Value self, Value obj, Value v, OwnList* const* lists, int n, OwnList* mine, bool track) {
+    Owned* o;
+    if (obj.kind != K_Class || self.kind != K_Class || obj.p != self.p || !leafAlive(self)) return;
+    o = accMine(v, lists, n, mine);
+    if (!o || o == &asObj(self)->h) return;
+    takeToObject(o, asObj(self));
+    if (!track || o->owner != &asObj(self)->owned) return;
+    if (g_acc.top == g_acc.cap) {
+        g_acc.cap = g_acc.cap ? g_acc.cap * 2 : 16;
+        g_acc.items = (AccEntry*)realloc(g_acc.items, g_acc.cap * sizeof(AccEntry));
+        if (!g_acc.items) allocFailed();
+    }
+    g_acc.items[g_acc.top].o = o;
+    g_acc.items[g_acc.top].slot = o->slot;
+    g_acc.items[g_acc.top].gen = o->gen;
+    g_acc.top++;
+}
+/* `return r` of a getter (`base`: g_acc.top when it started): a value its `this` took over in this call belongs to the call again (`to`: its function scope),
+ * so that it goes to the caller like a returned local. `done`: the function ends now (not a `finally` first) - it forgets what this call remembered. */
+FIRE_FN void accReturn(Value r, Value self, uint32_t base, OwnList* to, bool done) {
+    Owned* o = ownedOf(r);
+    uint32_t i;
+    if (o && self.kind == K_Class && leafAlive(self) && o->owner == &asObj(self)->owned)
+        for (i = base; i < g_acc.top; i++)
+            if (g_acc.items[i].o == o && g_acc.items[i].slot == o->slot && g_acc.items[i].gen == o->gen) { ownUnlink(o); ownLink(to, o); break; }
+    if (done && g_acc.top > base) g_acc.top = base;
+}
+/* `obj.Prop = v`: v travels in the argument list `al` of the setter call (like `take x`); the setter finds `al` in g_acc.handOff. Returns where v was (NULL:
+ * not the accessor's, nothing handed over). */
+FIRE_FN OwnList* accHandOver(Value v, OwnList* const* lists, int n, OwnList* mine, OwnList* from, OwnList* al) {
+    Owned* o = accMine(v, lists, n, mine);
+    OwnList* was;
+    if (!o) return NULL;
+    was = o->owner;
+    takeArg(v, from, al);
+    g_acc.handOff = al;
+    return was;
+}
+/* ... after the call: when no setter took the hand-over (the name was a field of that object), v goes back to where it was (`giveBack`). The caller then
+ * finishes `al` (finishArgs): what the setter did not keep dies. */
+FIRE_FN void accHandEnd(Value v, OwnList* was, OwnList* al, bool giveBack) {
+    if (giveBack && was && g_acc.handOff == al) {
+        Owned* o = ownedOf(v);
+        if (o && o->owner == al) { ownUnlink(o); ownLink(was, o); }
+    }
+    g_acc.handOff = NULL;
+}
+/* The start of a setter: the hand-over is its own (NULL: none). */
+FIRE_FN OwnList* accTakeHandOff(void) { OwnList* l = g_acc.handOff; g_acc.handOff = NULL; return l; }
+
 /* ---------------------------------------------------------------------------------------------------------------------
  * What travels along: `return` and `Takes.*` (SPEC 2.2, 2.3)
  * --------------------------------------------------------------------------------------------------------------------- */
@@ -4340,7 +4716,7 @@ FIRE_FN OwnList* carrierOf(Owned* node) {
 /* Generated when the program uses a `Takes` mode and has classes that implement IEnumerable: hands the items of such an object (through its enumerator) to
  * `sink`. False for an object that is not enumerable (or when an exception ended the enumeration). */
 typedef bool (*EnumerateItemsFn)(Value obj, OwnList* list, void (*sink)(Value, void*), void* ctx);
-extern EnumerateItemsFn g_enumerateItems;
+extern FIRE_RT_DATA EnumerateItemsFn g_enumerateItems;
 
 typedef struct fire_MoveSink { OwnList* carrier; OwnedStack* seen; } fire_MoveSink;
 FIRE_FN void fire_moveSinkItem(Value v, void* ctx) {
@@ -4478,13 +4854,37 @@ FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList
 /* ---------------------------------------------------------------------------------------------------------------------
  * `flat x` and `copy x` (SPEC 2.4): no constructor runs, the copy belongs to `owner` like any new value.
  * --------------------------------------------------------------------------------------------------------------------- */
+/* `[NoCopy]` on the class or a base class (FireClassDesc.flags 1): flat/copy never duplicate an instance of it. */
+FIRE_FN bool classNoCopy(uint32_t cls) { return cls < g_classDescCount && (g_classDescs[cls].flags & 1u) != 0; }
+/* ... an ArgumentException instead (the text of RuntimeClass.NoCopyMessage in the VM). `op`: NULL for flat/copy, else the copy of a thread
+ * ("taking", "fire global", "sync" - sync always reaches it through a field or an element). */
+FIRE_COLD FIRE_FN Value noCopyErrorOp(uint32_t cls, bool nested, const char* op) {
+    char text[400];
+    const char* name = cls < g_classDescCount && g_classDescs[cls].name ? g_classDescs[cls].name : "?";
+    if (!op) {
+        if (nested) snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.", name);
+        else snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.", name);
+    } else if (nested || strcmp(op, "sync") == 0)
+        snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - '%s' reaches an instance of it (a field or an element of the copied value), which exists only once.", name, op);
+    else snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - '%s' would copy an instance of it, which exists only once.", name, op);
+    return fireError("ArgumentException", text);
+}
+FIRE_COLD FIRE_FN Value noCopyError(uint32_t cls, bool nested) { return noCopyErrorOp(cls, nested, NULL); }
+/* The operand of flat/copy is a destroyed object (its memory is freed: nothing of it can be read). */
+FIRE_COLD FIRE_FN Value copyDestroyedError(void) { return fireError("ArgumentException", "An already destroyed object cannot be copied."); }
+
 FIRE_FN Value flatCopy(Value v, OwnList* owner) {
     uint32_t i;
     switch (v.kind) {
         case K_Class: {
-            Obj* src = asObj(v);
-            Value c = newObject(src->cls, src->nfields, owner);
-            Obj* dst = asObj(c);
+            Obj* src;
+            Value c;
+            Obj* dst;
+            if (FIRE_UNLIKELY(!leafAlive(v))) return copyDestroyedError();
+            src = asObj(v);
+            if (FIRE_UNLIKELY(classNoCopy(src->cls))) return noCopyError(src->cls, false);
+            c = newObject(src->cls, src->nfields, owner);
+            dst = asObj(c);
             dst->targs = src->targs;
             for (i = 0; i < src->nfields; i++) { objFields(dst)[i] = objFields(src)[i]; retain(objFields(dst)[i]); }
             return c;
@@ -4557,16 +4957,11 @@ FIRE_NORETURN FIRE_COLD FIRE_FN void takingViolation(const char* what) {
     exitNow(1);
 }
 
-/* Is `o` the object `root` or (transitively) owned by it? */
-FIRE_FN bool withinTree(Obj* o, Obj* root) {
-    Owned* x = &o->h;
-    for (;;) {
-        OwnList* l;
-        if (x == &root->h) return true;
-        l = x->owner;
-        if (!l || !l->holder) return false;
-        x = l->holder;
-    }
+/* ... the same reason found before anything is copied (the check of `fire ... taking x`): the ArgumentException, the thread does not start. */
+FIRE_COLD FIRE_FN Value takingRefused(const char* what) {
+    char text[200];
+    snprintf(text, sizeof text, "'taking' rejected: %s", what);
+    return fireError("ArgumentException", text);
 }
 
 /* A growing array of anything (`elem` bytes per item). */
@@ -4581,8 +4976,9 @@ FIRE_FN void* fire_growPush(void* items, uint32_t* count, uint32_t* cap, size_t 
 
 typedef struct DeepCopier {
     OwnList* owner;
-    bool taking;          /* a copy for a fire thread (`taking`): only the own ownership tree of treeRoot, copies are marked */
-    Obj* treeRoot;
+    bool taking;          /* a copy for a fire thread (`taking`): everything reachable is copied (whoever owns it), copies are marked; no lambdas/pointers */
+    bool noCopy;          /* `copy x` (and the arguments of a job): an instance of a `[NoCopy]` class is an ArgumentException */
+    const char* noCopyOp; /* ... its text: NULL for copy, else "taking"/"fire global"/"sync" (noCopyErrorOp) */
     CopyMap objects;      /* object -> copy (the objects found, which are copied) */
     CopyMap containers;   /* array/buffer -> copy */
     Obj** order;
@@ -4613,26 +5009,24 @@ FIRE_FN bool copierSeenArray(DeepCopier* c, const void* a) {
     for (i = 0; i < c->seenCount; i++) if (c->seen[i] == a) return true;
     return false;
 }
-/* Phase 1: everything reachable through fields and array elements (objects in discovery order). */
-FIRE_FN void copierDiscover(DeepCopier* c, Value start) {
+/* Phase 1: everything reachable through fields and array elements (objects in discovery order); false: an instance of a `[NoCopy]` class is among them
+ * (the ArgumentException is thrown, nothing is copied yet). A destroyed object stays a shared reference (its memory is freed). */
+FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
     uint32_t i;
     copierPushPending(c, start);
     while (c->pendingCount) {
         Value v = c->pending[--c->pendingCount];
-        if (c->taking && v.kind == K_Lambda) takingViolation("lambda values cannot be copied for a thread.");
-        if (c->taking && v.kind == K_Pointer) takingViolation("raw pointers cannot be copied for a thread.");
+        if (c->taking && (v.kind == K_Lambda || v.kind == K_Pointer)) {
+            const char* what = v.kind == K_Lambda ? "lambda values cannot be copied for a thread." : "raw pointers cannot be copied for a thread.";
+            if (c->noCopy) { takingRefused(what); return false; }   /* the check before `taking` (noCopyFree): the ArgumentException */
+            takingViolation(what);
+        }
         if (v.kind == K_Class) {
-            Obj* o = asObj(v);
+            Obj* o;
+            if (!leafAlive(v)) continue;
+            o = asObj(v);
             if (copyMapFind(&c->objects, o)) continue;
-            if (c->taking && c->treeRoot && !withinTree(o, c->treeRoot)) {
-#ifdef FIRE_THREADS
-                char text[200];
-                snprintf(text, sizeof text, "a field refers to an instance of '%s', which is not part of its own ownership tree.", className(o->cls));
-                takingViolation(text);
-#else
-                takingViolation("a field refers to an instance that is not part of its own ownership tree.");
-#endif
-            }
+            if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyErrorOp(o->cls, start.kind != K_Class || o != asObj(start), c->noCopyOp); return false; }
             copyMapPut(&c->objects, o, Undef());   /* marks it as found; the copy is made in phase 2 */
             c->order = (Obj**)fire_growPush(c->order, &c->orderCount, &c->orderCap, sizeof(Obj*));
             c->order[c->orderCount++] = o;
@@ -4645,6 +5039,7 @@ FIRE_FN void copierDiscover(DeepCopier* c, Value start) {
             for (i = 0; i < a->length; i++) copierPushPending(c, arrItems(a)[i]);
         }
     }
+    return true;
 }
 /* Phase 2: the copy of an object belongs to the copy of its owner when that is copied too, else to `owner`. */
 FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
@@ -4666,7 +5061,7 @@ FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
 FIRE_FN Value copierMap(DeepCopier* c, Value v) {
     uint32_t i;
     switch (v.kind) {
-        case K_Class: { Value* m = copyMapFind(&c->objects, asObj(v)); return m && m->kind == K_Class ? *m : v; }
+        case K_Class: { Value* m = leafAlive(v) ? copyMapFind(&c->objects, asObj(v)) : NULL; return m && m->kind == K_Class ? *m : v; }
         case K_Array: {
             Arr* src;
             Arr* dst;
@@ -4702,7 +5097,7 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
 }
 FIRE_FN Value copierRun(DeepCopier* c, Value root) {
     uint32_t i, f;
-    copierDiscover(c, root);
+    if (!copierDiscover(c, root)) return Undef();
     for (i = 0; i < c->orderCount; i++) copierMaterialize(c, c->order[i]);
     for (i = 0; i < c->orderCount; i++) {
         Obj* src = c->order[i];
@@ -4714,10 +5109,12 @@ FIRE_FN Value copierRun(DeepCopier* c, Value root) {
 
 /* `copy x`: the copy of everything reachable from x, once each (cycles included); what belonged to a copied object belongs to its copy. */
 FIRE_FN Value deepCopy(Value v, OwnList* owner) {
+    if (v.kind == K_Class && FIRE_UNLIKELY(!leafAlive(v))) return copyDestroyedError();
     if (v.kind == K_Class || ((v.kind == K_Array || v.kind == K_Buffer) && ownedOf(v))) {
         DeepCopier c;
         Value r;
         copierInit(&c, owner);
+        c.noCopy = true;
         r = copierRun(&c, v);
         copierFree(&c);
         return r;
@@ -4727,6 +5124,22 @@ FIRE_FN Value deepCopy(Value v, OwnList* owner) {
 }
 
 FIRE_FN Value copyValue(Value v, bool deep, OwnList* owner) { return deep ? deepCopy(v, owner) : flatCopy(v, owner); }
+
+/* `[NoCopy]` before a copy for another thread (`taking`, the arguments of `fire global`, case A of `sync`): false - the ArgumentException is thrown - when
+ * an instance of a `[NoCopy]` class is reachable from v through fields and array elements. Only looks (the discovery of a deep copy), so it runs before
+ * anything is copied, queued or started; the VM walks the same way (ObjectCopier.RequireNoCopyFree). */
+FIRE_FN bool noCopyFree(Value v, const char* op) {
+    DeepCopier c;
+    bool ok;
+    if (v.kind != K_Class && !(v.kind == K_Array && ownedOf(v))) return true;
+    copierInit(&c, NULL);
+    c.noCopy = true;
+    c.noCopyOp = op;
+    c.taking = strcmp(op, "taking") == 0;   /* (a lambda or a pointer in it cannot be copied for a thread either) */
+    ok = copierDiscover(&c, v);
+    copierFree(&c);
+    return ok;
+}
 
 /* `obj.field = copy x`: the copy belongs to the object (when it is being destroyed already, the copy goes with it at once). */
 FIRE_FN Value copyOwned(Value target, Value v, bool deep) {
@@ -4882,6 +5295,174 @@ FIRE_FN void externPtrFree(ExternPtr* e) {
     }
 }
 
+/* ---- `Library` (docs/language/18-native-code.md, fire.Standard.LibraryMethods): a native library loaded at run time and its functions by C signature.
+ * The system's part is the platform layer's (fire_plat_dlopen, fire_plat_dlsym); a call goes through the thunk the program generated for the signature - one for
+ * every text of the program that is a signature (fire_libThunk, NULL for any other). The errors are thrown by the fire code of the class (the same as in the VM). ---- */
+/* `release`: the library's `void(void*)` that frees a returned string after it is copied (Get's `release:`; NULL: never freed). */
+typedef Value (*FireLibThunk)(void* fn, const Value* args, void* release, OwnList* list);
+FIRE_HOST_EXTERN FireLibThunk fire_libThunk(const char* signature);   /* (generated: by the signature without white space) */
+
+/* The signature without white space; 0 when it does not fit. */
+FIRE_FN int fire_libSigNorm(Value text, char* out, uint32_t cap) {
+    char raw[256];
+    uint32_t i, n = 0;
+    if (text.kind != K_String || strOf(text)->length >= sizeof raw) return 0;
+    strToUtf8(text, raw, sizeof raw);
+    for (i = 0; raw[i]; i++) if (raw[i] != ' ' && raw[i] != '\t' && raw[i] != '\r' && raw[i] != '\n') { if (n + 1 >= cap) return 0; out[n++] = raw[i]; }
+    out[n] = 0;
+    return 1;
+}
+
+/* One type of a signature at *p (the grammar of LibraryMethods.Parse): 1 a type, 2 `void` alone, 0 not a type. */
+FIRE_FN int fire_libSigType(const char** p) {
+    const char* s = *p;
+    const char* name = s;
+    size_t len;
+    long width = -1;
+    int depth = 0;
+    while (*s >= 'a' && *s <= 'z') s++;
+    len = (size_t)(s - name);
+    if (*s == '[') {
+        char* end;
+        width = strtol(s + 1, &end, 10);
+        if (end == s + 1 || *end != ']') return 0;
+        s = end + 1;
+    }
+    while (*s == '*') { depth++; s++; }
+    *p = s;
+    if (len == 4 && memcmp(name, "void", 4) == 0) return width >= 0 ? 0 : depth > 0 ? 1 : 2;
+    if ((len == 4 && (memcmp(name, "bool", 4) == 0 || memcmp(name, "char", 4) == 0)) || (len == 6 && memcmp(name, "string", 6) == 0)) return width < 0;
+    if (len == 3 && memcmp(name, "int", 3) == 0) return width < 0 || width == 8 || width == 16 || width == 32 || width == 64;
+    if (len == 5 && memcmp(name, "float", 5) == 0) return width < 0 || width == 32 || width == 64;
+    return 0;
+}
+
+/* The number of parameters of a signature (without white space); -1 when it is not one. */
+FIRE_FN int fire_libSigArity(const char* s) {
+    int n = 0, t = fire_libSigType(&s);
+    if (t == 0 || *s++ != '(') return -1;
+    if (*s == ')') return s[1] ? -1 : 0;
+    for (;;) {
+        t = fire_libSigType(&s);
+        if (t == 2 && n == 0 && *s == ')') return s[1] ? -1 : 0;   /* `int(void)` */
+        if (t != 1) return -1;
+        n++;
+        if (*s == ',') { s++; continue; }
+        if (*s == ')') return s[1] ? -1 : n;
+        return -1;
+    }
+}
+
+/* What Get needs to know of a valid signature (without white space; LibraryMethod.Shape): 1 the result is a pointer, 2 it is a string, 4 a parameter is a pointer. */
+FIRE_FN int fire_libSigShape(const char* s) {
+    const char* open = strchr(s, '(');
+    int shape = 0;
+    if (!open) return 0;
+    if (open > s && open[-1] == '*') shape |= 1;
+    else if (open - s == 6 && memcmp(s, "string", 6) == 0) shape |= 2;
+    if (strchr(open, '*')) shape |= 4;
+    return shape;
+}
+
+/* `__LibCall(id, a, b, c, d)` (LibraryMethods: 1 load, 2 a function's address, 3 the number of parameters of a signature, 4 a call, 5 a fire plugin's classes,
+ * 6 the shape of a signature, 7 a NativeHandle's release). */
+FIRE_FN Value libCall(Value id, Value a, Value b, Value c, Value d, OwnList* list) {
+    char text[512];
+    switch (id.i) {
+        case 1: {
+            void* h;
+            if (a.kind != K_String) return Int(0);
+            strToUtf8(a, text, sizeof text);
+            h = fire_plat_dlopen(text);
+            if (!h) {
+                /* a fire plugin by its bytecode (`kit.fireplugin`, the VM's): its library next to it */
+                size_t n = strlen(text);
+#if defined(_WIN32)
+                const char* ext = ".dll";
+#elif defined(__APPLE__)
+                const char* ext = ".dylib";
+#else
+                const char* ext = ".so";
+#endif
+                size_t e = strlen(ext);
+                bool plugin = n > 11 && strcmp(text + n - 11, ".fireplugin") == 0;
+                if (plugin) { memcpy(text + n - 11, ext, e + 1); h = fire_plat_dlopen(text); n = n - 11 + e; }
+                /* a fire plugin (its bytecode next to it) that does not load into a program that cannot load plugins: -1, Load says so */
+#ifdef FIRE_MODULES
+                if (!h && !g_pluginHost)
+#else
+                if (!h)
+#endif
+                {
+                    if (!plugin && n > e && strcmp(text + n - e, ext) == 0 && n - e + 11 < sizeof text) {
+                        FILE* f;
+                        memcpy(text + n - e, ".fireplugin", 12);
+                        if ((f = fopen(text, "rb")) != NULL) { fclose(f); plugin = true; }
+                    }
+                    if (plugin) return Int(-1);
+                }
+#ifdef FIRE_MODULES
+                /* a fire plugin that calls a native in C of the program the program does not export (`fire_cn_<function>`): a text, Load throws it */
+                if (!h) {
+                    const char* why = fire_plat_dlerror();
+                    const char* cn = why ? strstr(why, "fire_cn_") : NULL;
+                    if (cn) {
+                        char t[700];
+                        size_t k = 0;
+                        cn += 8;
+                        while (k < 200 && ((cn[k] >= 'a' && cn[k] <= 'z') || (cn[k] >= 'A' && cn[k] <= 'Z') || (cn[k] >= '0' && cn[k] <= '9') || cn[k] == '_')) k++;
+                        snprintf(t, sizeof t, "The plugin library '%s' cannot be loaded: " FIRE_PLUGIN_CNATIVE, text, (int)k, cn);
+                        return newStrFromUtf8((const uint8_t*)t, strlen(t), list);
+                    }
+                }
+#endif
+            }
+            return Int((int64_t)(intptr_t)h);
+        }
+        case 2:
+            if (a.kind != K_Int || b.kind != K_String) return Int(0);
+            strToUtf8(b, text, sizeof text);
+            return Int((int64_t)(intptr_t)fire_plat_dlsym((void*)(intptr_t)a.i, text));
+        case 3: {
+            int n;
+            if (!fire_libSigNorm(a, text, sizeof text) || (n = fire_libSigArity(text)) < 0) return Int(-1);
+            return Int(fire_libThunk(text) ? n : -2);
+        }
+        case 4: {
+            FireLibThunk thunk;
+            Arr* args;
+            int n;
+            if (!fire_libSigNorm(b, text, sizeof text) || !(thunk = fire_libThunk(text))) return fireError("LibraryException", "The signature of a native function is not known to this native build.");
+            n = fire_libSigArity(text);
+            args = c.kind == K_Array ? arrOf(c) : NULL;
+            if (!args || (int)args->length != n) {
+                char t[160];
+                snprintf(t, sizeof t, "The function expects %d argument(s), got %d.", n, args ? (int)args->length : 0);
+                return fireError("ArgumentException", t);
+            }
+            return thunk((void*)(intptr_t)a.i, arrItems(args), d.kind == K_Int ? (void*)(intptr_t)d.i : NULL, list);
+        }
+        case 5: {
+            /* a fire plugin (it exports fire_module_info): its classes registered - an array of their names; undefined: no fire plugin; a string: why it does not fit */
+            const void* info = a.kind == K_Int ? fire_plat_dlsym((void*)(intptr_t)a.i, "fire_module_info") : NULL;
+            if (!info) return Undef();
+#ifdef FIRE_MODULES
+            return fireRegisterPlugin((const FirePlugin*)info, list);
+#else
+            return Int(-1);   /* (this program cannot load fire plugins: not built with modules) */
+#endif
+        }
+        case 6:
+            if (!fire_libSigNorm(a, text, sizeof text) || fire_libSigArity(text) < 0) return Int(0);
+            return Int(fire_libSigShape(text));
+        case 7:
+            /* a NativeHandle is destroyed (its destructor runs once): the library's own function frees its pointer */
+            if (a.kind == K_Int && a.i != 0 && b.kind == K_Int) ((void (*)(void*))(intptr_t)a.i)((void*)(intptr_t)b.i);
+            return Undef();
+        default: fatal("__LibCall: unknown function");
+    }
+}
+
 /* `print(value)`: writes the text of the value (Value.ToString(), or its ToString() method) and a line break. */
 FIRE_FN Value print(Value v, OwnList* list) {
     Piece p;
@@ -4965,8 +5546,8 @@ FIRE_FN void ptrVecPush(PtrVec* v, void* p) {
 
 /* ---- the GIL ---- */
 typedef struct Gil { fire_mutex m; fire_cond cv; uint64_t next, serving; } Gil;
-extern Gil g_gil;
-extern fire_atomic32 g_gilWaiting;
+extern FIRE_RT_DATA Gil g_gil;
+extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
 
 FIRE_FN void gilAcquire(void) {
     uint64_t ticket;
@@ -4991,9 +5572,9 @@ FIRE_FN void gilYield(void) {
 }
 
 /* An event: something changed that a waiting thread may be looking for (called with the GIL held, after the change). */
-extern fire_mutex g_evM;
-extern fire_cond g_evCv;
-extern uint64_t g_evCount;
+extern FIRE_RT_DATA fire_mutex g_evM;
+extern FIRE_RT_DATA fire_cond g_evCv;
+extern FIRE_RT_DATA uint64_t g_evCount;
 FIRE_FN void notifyEvent(void) {
     fire_mutex_lock(&g_evM);
     g_evCount++;
@@ -5002,13 +5583,13 @@ FIRE_FN void notifyEvent(void) {
 }
 
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
- * wait for it; not looked at with `#nosync`). */
+ * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4 };
-extern fire_atomic32 g_attn;
+extern FIRE_RT_DATA fire_atomic32 g_attn;
 
 typedef struct TerminateState { bool requested; Value value; } TerminateState;
-extern TerminateState g_terminate;
-extern OwnList g_terminateOwn;   /* what a terminate value owns lives on until the process ends */
+extern FIRE_RT_DATA TerminateState g_terminate;
+extern FIRE_RT_DATA OwnList g_terminateOwn;   /* what a terminate value owns lives on until the process ends */
 
 FIRE_FN int64_t steadyMs(void) { return fire_plat_nowMs(); }
 
@@ -5037,12 +5618,12 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
 #ifndef FIRE_THREAD_STACK_BYTES
 #define FIRE_THREAD_STACK_BYTES 0   /* 0: the platform's own default */
 #endif
-extern int g_threadsLive;
-extern PtrVec g_threadList;     /* fire_thread* */
+extern FIRE_RT_DATA int g_threadsLive;
+extern FIRE_RT_DATA PtrVec g_threadList;     /* fire_thread* */
 /* unhandled exceptions of fire threads that wait for the main program */
 typedef struct ValueQueue { Value* items; uint32_t count, cap; } ValueQueue;
-extern ValueQueue g_pendingExc;
-extern PtrVec g_graveyard;      /* the global scopes of threads that ended with an unhandled exception (never freed: the exception is handed on) */
+extern FIRE_RT_DATA ValueQueue g_pendingExc;
+extern FIRE_RT_DATA PtrVec g_graveyard;      /* the global scopes of threads that ended with an unhandled exception (never freed: the exception is handed on) */
 FIRE_FN void pendingExcPush(Value e) {
     g_pendingExc.items = (Value*)fire_growPush(g_pendingExc.items, &g_pendingExc.count, &g_pendingExc.cap, sizeof(Value));
     g_pendingExc.items[g_pendingExc.count++] = e;
@@ -5056,13 +5637,23 @@ typedef struct ThreadStart {
 } ThreadStart;
 FIRE_FN void sectionAbort(void);   /* the end of a thread that is still inside a section */
 
+#ifdef FIRE_DEBUG
+FIRE_RT_FN void fire_dbgThreadBegin(void);
+FIRE_RT_FN void fire_dbgThreadEnd(void);
+#endif
 FIRE_FN void threadEntry(ThreadStart st) {
     gilAcquire();
     g_isThread = 1;
     g_attnMask = ATTN_ALL;
     g_tick = 4096;
     g_travel = st.travel;
+#ifdef FIRE_DEBUG
+    fire_dbgThreadBegin();
+#endif
     st.fn(st.args);
+#ifdef FIRE_DEBUG
+    fire_dbgThreadEnd();
+#endif
     sectionAbort();
     free(st.args);
     free(g_pool.items);
@@ -5116,7 +5707,7 @@ typedef Value (*MsgFn)(Value self, const Value* args, OwnList* list);
 typedef struct Msg { MsgFn fn; Value* args; uint32_t n; } Msg;
 /* A ring queue of messages. */
 typedef struct Mailbox { Msg* items; uint32_t head, count, cap; } Mailbox;
-extern PtrMap g_mailboxes;   /* Obj* -> Mailbox* */
+extern FIRE_RT_DATA PtrMap g_mailboxes;   /* Obj* -> Mailbox* */
 FIRE_FN void mailboxPush(Mailbox* b, Msg m) {
     if (b->count == b->cap) {
         uint32_t cap = b->cap ? b->cap * 2 : 8, i;
@@ -5200,7 +5791,7 @@ FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
  * safe point, or at `sync globals` with `#nosync`); the main program then waits until the section ends, so there is one writer at a time. A method call on an
  * object of the domain is one section as a whole. */
 #define F_SHARED ((uint8_t)64)
-extern OwnList* g_domainRoot;   /* the global scope of the main program */
+extern FIRE_RT_DATA OwnList* g_domainRoot;   /* the global scope of the main program */
 FIRE_FN void markOwnedShared(Owned* c);
 FIRE_FN void markArrayShared(Arr* a) {
     uint32_t i;
@@ -5240,7 +5831,7 @@ typedef struct JobReq { Value lam; Value* args; uint32_t n; OwnList* holder; } J
 typedef struct Req { SectionReq* sec; JobReq* job; } Req;
 /* The requests of the threads (a ring queue). */
 typedef struct ReqQueue { Req* items; uint32_t head, count, cap; } ReqQueue;
-extern ReqQueue g_reqs;
+extern FIRE_RT_DATA ReqQueue g_reqs;
 FIRE_FN void reqPush(Req r) {
     if (g_reqs.count == g_reqs.cap) {
         uint32_t cap = g_reqs.cap ? g_reqs.cap * 2 : 8, i;
@@ -5307,11 +5898,15 @@ FIRE_FN void sectionScopeExit(bool entered) { if (entered) { g_secDepth = 0; sec
 FIRE_FN void sectionEnterOp(void) { if (g_isThread && g_secDepth++ == 0) sectionAcquire(); }
 FIRE_FN void sectionExitOp(void) { if (g_isThread && g_secDepth > 0 && --g_secDepth == 0) sectionRelease(); }
 
-/* `fire global { ... } taking x`: the job (a lambda with the copies as parameters) is queued, the caller goes on. */
+/* `fire global { ... } taking x`: the job (a lambda with the copies as parameters) is queued, the caller goes on. An argument that reaches an instance of a
+ * `[NoCopy]` class is the ArgumentException before anything is copied or queued (no job runs). */
 FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) {
-    JobReq* j = (JobReq*)malloc(sizeof(JobReq));
+    JobReq* j;
     Req q;
     uint32_t i;
+    for (i = 0; i < n; i++)
+        if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return;
+    j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
     j->lam = lam;
     retain(lam);
@@ -5377,8 +5972,8 @@ FIRE_FN int drainQueue(void) {
 
 /* The copies that `taking` made remember their original (flag 32 on the copy, 4 on the original), for `sync`. A destroyed original is recorded as null: `sync`
  * then says `undefined`. */
-extern PtrMap g_originOf;   /* copy -> original (null: destroyed) */
-extern PtrMap g_copiesOf;   /* original -> PtrVec* of its copies */
+extern FIRE_RT_DATA PtrMap g_originOf;   /* copy -> original (null: destroyed) */
+extern FIRE_RT_DATA PtrMap g_copiesOf;   /* original -> PtrVec* of its copies */
 FIRE_FN void originAdd(Obj* copy, Obj* original) {
     void** slot;
     PtrVec* copies;
@@ -5424,8 +6019,9 @@ FIRE_FN void originFree(Obj* o) {
     }
 }
 
-/* `fire ... taking x`: what the thread gets. An object, array or buffer is copied (isolated, THREADING_DESIGN 3), the copy goes to `travel`; a string or lambda
- * is shared (the thread gets a count of it), other values are plain. */
+/* `fire ... taking x`: what the thread gets. An object, array or buffer is copied with everything reachable from it, whoever owns the parts (isolated,
+ * THREADING_DESIGN 3); a copied object owned by another copied one belongs to its copy, every other copy to `travel` (the root scope of the thread). A string
+ * or lambda is shared (the thread gets a count of it), other values are plain. */
 FIRE_FN Value takeCopy(Value v, OwnList* travel) {
     DeepCopier c;
     Value copy;
@@ -5433,7 +6029,6 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
         case K_Class:
             copierInit(&c, travel);
             c.taking = true;
-            c.treeRoot = asObj(v);
             copy = copierRun(&c, v);
             copierFree(&c);
             originAdd(asObj(copy), asObj(v));
@@ -5448,6 +6043,113 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
         case K_String: case K_Lambda: retain(v); return v;
         default: return v;
     }
+}
+
+/* `fire ... taking a taking b`: every `taking` is a copy, so an instance of a `[NoCopy]` class reachable from one of them is the ArgumentException - checked
+ * for all of them before the first is copied (the thread does not start). */
+FIRE_FN bool takingNoCopyFree(const Value* vs, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) if (!noCopyFree(vs[i], "taking")) return false;
+    return true;
+}
+
+/* ---- `fire handover x`: x goes to the thread without a copy (the VM: Runtime.ObjectHandover). Everything reachable from x through fields and elements, and
+ * what the objects (and arrays) own, moves as it is: a part whose owner moves too keeps it, every other part belongs to `travel` (the root scope of the thread)
+ * from then on, whoever owned it before; the parts leave the shared domain of the globals. Actors and destroyed values stay shared references. */
+FIRE_FN Value ownedValue(Owned* h) { return h->okind == O_Object ? ObjV((Obj*)h) : h->okind == O_Array ? ArrV((Arr*)h) : BufV((Buf*)h); }
+FIRE_COLD FIRE_FN Value handoverRefused(const char* what) {
+    char text[200];
+    snprintf(text, sizeof text, "'handover' rejected: %s", what);
+    return fireError("ArgumentException", text);
+}
+/* The parts that move (`seen` marks them, `parts` lists them in discovery order); false - the ArgumentException is thrown - for a lambda or a pointer in a field
+ * or an element, and in a fire thread for a part of the main program's globals (the thread does not own it). Nothing is changed. */
+FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* count, uint32_t* cap) {
+    Value* pending = NULL;
+    uint32_t pn = 0, pcap = 0, i;
+    bool ok = true;
+    if (!ownedOf(v)) return true;
+    pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+    pending[pn++] = v;
+    while (pn) {
+        Value x = pending[--pn];
+        Owned* h;
+        Owned* k;
+        if (x.kind == K_Lambda || x.kind == K_Pointer) {
+            handoverRefused(x.kind == K_Lambda ? "lambda values cannot be handed to a thread." : "raw pointers cannot be handed to a thread.");
+            ok = false;
+            break;
+        }
+        h = ownedOf(x);
+        if (!h || copyMapFind(seen, h)) continue;
+        if (h->okind == O_Object && (h->flags & 8)) continue;   /* an actor stays a shared reference */
+        if (g_isThread && (h->flags & F_SHARED)) {
+            handoverRefused("it reaches an object of the main program's global variables, which this thread does not own.");
+            ok = false;
+            break;
+        }
+        copyMapPut(seen, h, Undef());
+        *parts = (Owned**)fire_growPush(*parts, count, cap, sizeof(Owned*));
+        (*parts)[(*count)++] = h;
+        if (h->okind == O_Object) {
+            Obj* o = (Obj*)h;
+            for (i = 0; i < o->nfields; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = objFields(o)[i];
+            }
+            for (k = o->owned.head; k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        } else if (h->okind == O_Array) {
+            Arr* a = (Arr*)h;
+            for (i = 0; i < a->length; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = arrItems(a)[i];
+            }
+            for (k = a->parts ? a->parts->head : NULL; k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        }
+    }
+    free(pending);
+    return ok;
+}
+/* The check before anything is copied or moved (for all `handover` values of a `fire`). */
+FIRE_FN bool handoverFree(const Value* vs, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        CopyMap seen = {0};
+        Owned** parts = NULL;
+        uint32_t count = 0, cap = 0;
+        bool ok = handoverDiscover(vs[i], &seen, &parts, &count, &cap);
+        copyMapFree(&seen);
+        free(parts);
+        if (!ok) return false;
+    }
+    return true;
+}
+/* What the thread gets for `handover x`: x itself, moved (see above); a string or lambda is shared as with `taking`. */
+FIRE_FN Value handOver(Value v, OwnList* travel) {
+    CopyMap seen = {0};
+    Owned** parts = NULL;
+    uint32_t count = 0, cap = 0, i;
+    if (v.kind == K_String || v.kind == K_Lambda) { retain(v); return v; }
+    if (!ownedOf(v)) return v;
+    handoverDiscover(v, &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
+    for (i = 0; i < count; i++) {
+        Owned* h = parts[i];
+        OwnList* l = h->owner;
+        if (!(l && l->holder && copyMapFind(&seen, l->holder))) {
+            if (l) ownUnlink(h);
+            ownLink(travel, h);
+        }
+    }
+    for (i = 0; i < count; i++) parts[i]->flags &= (uint8_t)~F_SHARED;
+    copyMapFree(&seen);
+    free(parts);
+    return v;
 }
 
 /* ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):
@@ -5516,6 +6218,38 @@ FIRE_FN void syncFields(Obj* src, Obj* tgt, bool flat) {
     }
 }
 
+/* The walk of syncFields without writing anything (`[NoCopy]`, SPEC 5.12): case A of anything that reaches an instance of a `[NoCopy]` class, and case C of a
+ * full sync whose source is one (its fields would go into another instance), are the ArgumentException; case C of the same instance or of `sync flat`, and
+ * case B, copy nothing. The same walk as SyncEngine.RequireNoCopyFields in the VM. `seen`: the source objects visited (a cycle). */
+FIRE_FN bool syncNoCopyFields(Obj* src, Obj* tgt, bool flat, CopyMap* seen);
+FIRE_FN bool syncNoCopySingle(Value src, Value tgt, bool flat, CopyMap* seen) {
+    uint32_t i;
+    if (src.kind == K_Class && tgt.kind == K_Class) {
+        Obj* s;
+        if (flat || !leafAlive(src) || !leafAlive(tgt) || asObj(src) == asObj(tgt)) return true;
+        s = asObj(src);
+        if (FIRE_UNLIKELY(classNoCopy(s->cls))) { noCopyErrorOp(s->cls, true, "sync"); return false; }
+        return syncNoCopyFields(s, asObj(tgt), false, seen);
+    }
+    if (src.kind == K_Class) return noCopyFree(src, "sync");
+    if (tgt.kind == K_Class || src.kind != K_Array || !ownedOf(src)) return true;
+    {
+        Arr* sa = arrOf(src);
+        Arr* oldArr = (tgt.kind == K_Array && ownedOf(tgt)) ? arrOf(tgt) : NULL;
+        for (i = 0; i < sa->length; i++)
+            if (!syncNoCopySingle(arrItems(sa)[i], (oldArr && i < oldArr->length) ? arrItems(oldArr)[i] : Undef(), flat, seen)) return false;
+    }
+    return true;
+}
+FIRE_FN bool syncNoCopyFields(Obj* src, Obj* tgt, bool flat, CopyMap* seen) {
+    uint32_t i;
+    if (copyMapFind(seen, src)) return true;
+    copyMapPut(seen, src, Undef());
+    for (i = 0; i < src->nfields; i++)
+        if (!syncNoCopySingle(objFields(src)[i], i < tgt->nfields ? objFields(tgt)[i] : Undef(), flat, seen)) return false;
+    return true;
+}
+
 /* `sync x` / `sync flat x` (also the `try` forms: there is only one thread at a time, so nothing is ever busy): true, or `undefined` when the original does
  * not exist any more. */
 FIRE_FN Value syncValue(Value v, bool flat) {
@@ -5526,6 +6260,12 @@ FIRE_FN Value syncValue(Value v, bool flat) {
     slot = ptrMapFind(&g_originOf, copy);
     if (!slot) fatal("sync: this object is not a 'taking' copy (no SyncOrigin set).");
     if (!*slot) return Undef();
+    {
+        CopyMap seen = {0};
+        bool ok = syncNoCopyFields(copy, (Obj*)*slot, flat, &seen);
+        copyMapFree(&seen);
+        if (!ok) return Undef();   /* (the ArgumentException: nothing was written back) */
+    }
     syncFields(copy, (Obj*)*slot, flat);
     return Bool(true);
 }
@@ -5585,9 +6325,9 @@ FIRE_FN Value threadUnhandled(Value exception) {
 
 /* `catch threads(...)` and `catch terminate(...)`: generated functions, registered when the program starts. */
 typedef struct ThreadsCatch { int32_t typeId; Value (*fn)(Value); } ThreadsCatch;
-extern ThreadsCatch* g_threadsCatches;
-extern uint32_t g_threadsCatchCount, g_threadsCatchCap;
-extern Value (*g_terminateFn)(Value);
+extern FIRE_RT_DATA ThreadsCatch* g_threadsCatches;
+extern FIRE_RT_DATA uint32_t g_threadsCatchCount, g_threadsCatchCap;
+extern FIRE_RT_DATA Value (*g_terminateFn)(Value);
 FIRE_FN void registerThreadsCatch(int32_t typeId, Value (*fn)(Value)) {
     g_threadsCatches = (ThreadsCatch*)fire_growPush(g_threadsCatches, &g_threadsCatchCount, &g_threadsCatchCap, sizeof(ThreadsCatch));
     g_threadsCatches[g_threadsCatchCount].typeId = typeId;
@@ -5598,11 +6338,11 @@ FIRE_FN void registerTerminateCatch(Value (*fn)(Value)) { g_terminateFn = fn; }
 
 /* Host services: native code on a thread of its own (the thread of a window manager, `#import "windows"`) asks the main program to run something at its next
  * safe point - with the GIL and the real globals, like a job. Holds keep the program alive at its end (windows that are still open). */
-extern fire_atomic32 g_hostPending;
-extern fire_atomic32 g_hostHolds;   /* (a signed count in an unsigned word) */
+extern FIRE_RT_DATA fire_atomic32 g_hostPending;
+extern FIRE_RT_DATA fire_atomic32 g_hostHolds;   /* (a signed count in an unsigned word) */
 typedef void (*HostService)(void);
-extern HostService* g_hostServices;
-extern uint32_t g_hostServiceCount, g_hostServiceCap;
+extern FIRE_RT_DATA HostService* g_hostServices;
+extern FIRE_RT_DATA uint32_t g_hostServiceCount, g_hostServiceCap;
 /* Registered by the main program (a package that runs a thread of its own, once). */
 FIRE_FN void hostAddService(HostService service) {
     g_hostServices = (HostService*)fire_growPush((void*)g_hostServices, &g_hostServiceCount, &g_hostServiceCap, sizeof(HostService));
@@ -5623,12 +6363,18 @@ FIRE_FN void hostHold(int32_t delta) {
 FIRE_FN void hostServe(void) {
     uint32_t i;
     if (fire_atomic_exchange(&g_hostPending, 0) == 0) return;
+    g_noSyncDepth++;   /* (what a service runs - a window's event handler - runs for itself: its own safe points do not serve the queue) */
     for (i = 0; i < g_hostServiceCount; i++) g_hostServices[i]();
+    g_noSyncDepth--;
 }
 
-/* The main program at a safe point: what the fire threads left for it (their exceptions; sections and jobs unless `#nosync`). */
-extern bool g_autoSync;
-FIRE_FN void mainPoll(void) {
+/* When the main program serves its queue by itself (docs/THREADING_DESIGN.md section 7; `SetAutoSync`, the same values as fire.Runtime.GlobalJobsMode):
+ * GJ_SAFEPOINTS (the default) at a loop's jump back and while waiting (`Sleep`, the wait functions), GJ_SLEEP only while waiting, GJ_SYNC never (`#nosync`);
+ * `sync globals` and the end of the program always. A call (function entry) and a native call (`print`) are no safe points for it - as in the VM. */
+enum { GJ_SYNC = 0, GJ_SAFEPOINTS = 1, GJ_SLEEP = 2 };
+extern FIRE_RT_DATA uint8_t g_globalJobs;
+/* The exceptions of the fire threads (and of the jobs) that reached the main program: `catch threads`, or the program ends. */
+FIRE_FN void deliverThreadExceptions(void) {
     while (g_pendingExc.count && !g_unwind.active) {
         Value e = g_pendingExc.items[0];
         Value (*handler)(Value) = NULL;
@@ -5638,31 +6384,49 @@ FIRE_FN void mainPoll(void) {
         for (i = 0; i < g_threadsCatchCount; i++)
             if (g_threadsCatches[i].typeId < 0 || excMatches(e, g_threadsCatches[i].typeId)) { handler = g_threadsCatches[i].fn; break; }
         if (!handler) { reportUnhandled(e); exitNow(1); }
+        g_noSyncDepth++;   /* (a handler runs for itself, as in the VM) */
         handler(e);
+        g_noSyncDepth--;
     }
     if (!g_pendingExc.count) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
-    if (g_autoSync && !g_unwind.active) { drainQueue(); hostServe(); }
+}
+/* The main program at a safe point: what the fire threads left for it - their exceptions, and (as the mode says: `waiting` = Sleep or a wait function, else a loop's
+ * jump back) the sections, jobs and host services. */
+FIRE_FN void mainPoll(bool waiting) {
+    deliverThreadExceptions();
+    if (!(g_globalJobs == GJ_SAFEPOINTS || (waiting && g_globalJobs == GJ_SLEEP))) return;
+    /* (not inside a running job: its own safe points would run the next jobs nested, before it ends - out of order; not in a destructor, a host service, a
+     * `catch threads` handler; the VM does not either) */
+    if (!g_unwind.active && g_jobDepth == 0 && g_noSyncDepth == 0) { drainQueue(); hostServe(); }
 }
 
-FIRE_COLD FIRE_FN bool pollSlow(void) {
+FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
     if (g_leaving) return false;
     if (g_terminate.requested) { startLeave(); return true; }
-    if (g_attnMask & ATTN_MAIN) mainPoll();
+    if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
     return g_unwind.active != 0;
 }
 
-/* A safe point (loop back edge, function entry, after a native call): now and then the GIL is offered to the other threads, and the signals are looked at.
- * True when a leave/an exception is unwinding because of it. */
+/* A safe point for the signals (function entry, after a native function that waits): now and then the GIL is offered to the other threads, and the signals are
+ * looked at - not the queue (ATTN_SECT). True when a leave/an exception is unwinding because of it. */
 FIRE_FN bool pollSignals(void) {
     if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
+    if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask & ~(uint32_t)ATTN_SECT))) return false;
+    return pollSlow(false);
+}
+
+/* A loop's jump back: like pollSignals, and the main program serves its queue there (ATTN_SECT is in its mask only in the mode `safepoints`). */
+FIRE_FN bool pollLoop(void) {
+    if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
     if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask))) return false;
-    return pollSlow();
+    return pollSlow(true);
 }
 
 /* `sync globals`: serves the queue (main program) and gives the other threads a turn; a thread gets 0. */
 FIRE_FN int64_t syncGlobals(void) {
     int64_t handled = 0;
-    if (!g_isThread) { mainPoll(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
+    /* (not mainPoll: its automatic processing would run the queue without counting it - `sync globals` counts what it processes, as in the VM) */
+    if (!g_isThread) { deliverThreadExceptions(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
     gilYield();
     return handled;
 }
@@ -5671,13 +6435,27 @@ FIRE_FN int64_t syncGlobals(void) {
  * threads leave for it (sections, jobs, their exceptions) while it sleeps; whatever that raises ends the sleep. */
 FIRE_FN bool fire_sleepWake(void* ctx) {
     (void)ctx;
-    if (!g_isThread) mainPoll();
+    if (!g_isThread) mainPoll(true);
     return g_unwind.active != 0;
+}
+/* A wait function of a device (or any wait that is not `Sleep`): waits with blockUntil until `pred(ctx)`, and the main program serves meanwhile, like `Sleep`. */
+typedef struct FireWaitServing { bool (*pred)(void*); void* ctx; } FireWaitServing;
+FIRE_FN bool fire_waitServingPred(void* c) {
+    FireWaitServing* w = (FireWaitServing*)c;
+    if (!g_isThread) { mainPoll(true); if (g_unwind.active) return true; }
+    return w->pred(w->ctx);
+}
+FIRE_FN bool blockUntilServing(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs) {
+    FireWaitServing w;
+    w.pred = pred;
+    w.ctx = ctx;
+    return blockUntil(fire_waitServingPred, &w, stopOnTerminate, deadlineMs);
 }
 FIRE_FN void sleepTicks(int64_t ticks) {
     int32_t held;
     int64_t deadline;
-    if (ticks <= 0) { gilYield(); return; }
+    /* (`Sleep(0)` is a safe point too: the main program serves its queue once, as in the VM) */
+    if (ticks <= 0) { if (!g_isThread) fire_sleepWake(NULL); gilYield(); return; }
     /* a thread sleeping inside a method of a shared object gives its section back for the sleep */
     held = sectionYieldBegin();
     deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
@@ -5689,7 +6467,7 @@ FIRE_FN void sleepTicks(int64_t ticks) {
  * globals are destroyed. */
 FIRE_FN bool fire_mainDone(void* ctx) {
     (void)ctx;
-    mainPoll();
+    deliverThreadExceptions();
     drainQueue();
     if (!g_unwind.active) hostServe();
     return g_threadsLive == 0 && g_pendingExc.count == 0 && g_reqs.count == 0 && ((int32_t)fire_atomic_load(&g_hostHolds) <= 0 || g_terminate.requested);
@@ -5700,7 +6478,9 @@ FIRE_FN void mainFinish(void) {
     g_leaving = 0;
     if (g_terminate.requested && g_terminateFn) {
         g_leaving = 1;   /* no more signals while the handler runs */
+        g_noSyncDepth++;
         g_terminateFn(g_terminate.value);
+        g_noSyncDepth--;
         clearUnwind();
         g_leaving = 0;
     }
@@ -5737,8 +6517,15 @@ FIRE_FN void fire_threadsInit(void) {
 jmp_buf* g_libraryJump = NULL;
 FireLibraryError g_libraryError;
 const fire_host* g_libraryHost = NULL;
+#ifndef FIRE_THREADS
+HostService g_hostServices[8];
+uint32_t g_hostServiceCount = 0;
+fire_atomic32 g_hostPending;
 #endif
-#if !(defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT))
+#endif
+#if defined(FIRE_THREADS) && defined(FIRE_DLL)
+ThreadLocals* fire_tl(void) { return &fire_tlsBlock; }   /* (linkage "shared" on Windows: the block of the calling thread) */
+#elif !(defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT))
 #define FIRE_X(type, name, init) FIRE_TLS type name = init;
 FIRE_THREAD_VARS(FIRE_X)
 #undef FIRE_X
@@ -5747,6 +6534,7 @@ const UnitConvFn* g_unitTo = NULL;
 const UnitConvFn* g_unitFrom = NULL;
 UnitDef* g_ud = NULL;
 uint32_t g_udCount = 0, g_udCap = 0;
+bool g_dimsAdded = false;
 const TextUnit* g_textUnits = NULL;
 uint32_t g_textUnitCount = 0;
 #ifndef FIRE_UNCHECKED
@@ -5791,9 +6579,505 @@ fire_atomic32 g_hostPending;
 fire_atomic32 g_hostHolds;
 HostService* g_hostServices = NULL;
 uint32_t g_hostServiceCount = 0, g_hostServiceCap = 0;
-bool g_autoSync = true;
+uint8_t g_globalJobs = GJ_SAFEPOINTS;
 #endif
 #endif  /* FIRE_RT_IMPLEMENTATION */
+
+#ifdef FIRE_DEBUG
+#include "fire_debug.h"
+#endif
+
+/* ---------------------------------------------------------------------------------------------------------------------
+ * The questions the runtime asks about a class, answered from the table of class descriptors (g_classDescs, set by the program's fire_init). In the
+ * translation unit with the runtime's state; a library of a package for the VM (FIRE_LIBRARY) has no classes and answers them itself (fire_pkg_wrapper.h).
+ * --------------------------------------------------------------------------------------------------------------------- */
+#if defined(FIRE_RT_IMPLEMENTATION) && !defined(FIRE_LIBRARY) && !defined(__cplusplus)
+const FireClassDesc* g_classDescs = NULL;
+uint32_t g_classDescCount = 0;
+#ifdef FIRE_MODULES
+const FirePluginHost* g_pluginHost = NULL;
+const void** g_pluginRf = NULL;
+uint32_t g_pluginRfCount = 0;
+/* the catch types by name: the program's (g_excStatic of them), then those plugins brought (g_excExtra: there are some) */
+static const char** g_excNames = NULL;
+static uint32_t g_excCount = 0, g_excStatic = 0;
+static bool g_excExtra = false;
+#endif
+
+FIRE_FN const FireClassDesc* classDescOf(uint32_t cls) { return cls < g_classDescCount ? &g_classDescs[cls] : NULL; }
+
+const char* className(uint32_t cls) {
+    const FireClassDesc* d = classDescOf(cls);
+    return d ? d->name : "?";
+}
+
+void runDestructors(Obj* o) {
+    const FireClassDesc* d = classDescOf(o->cls);
+    /* (a destructor runs in the middle of something: the main program does not serve its queue in it, as in the VM) */
+    if (d && d->destroy) { g_noSyncDepth++; d->destroy(o); g_noSyncDepth--; }
+}
+
+int32_t excMessageIndex(uint32_t cls) {
+    const FireClassDesc* d = classDescOf(cls);
+    return d ? d->messageIndex : -1;
+}
+
+bool excMatches(Value exception, int32_t typeId) {
+    const FireClassDesc* d;
+    const int32_t* t;
+    if (typeId == FIRE_EXC_ANY) return true;
+    d = classDescOf(asObj(exception)->cls);
+#ifdef FIRE_MODULES
+    /* a catch type a plugin brought (the program has no id for it): by the name of the class */
+    if (d && g_excExtra && typeId >= (int32_t)g_excStatic) return typeId < (int32_t)g_excCount && fireClassIsSub(asObj(exception)->cls, g_excNames[typeId]);
+#endif
+    if (!d || !d->excTypes) return false;
+    for (t = d->excTypes; *t >= 0; t++) if (*t == typeId) return true;
+    return false;
+}
+
+bool timeObjTicks(Value v, int64_t* ticks) {
+    const FireClassDesc* d = classDescOf(asObj(v)->cls);
+    Value t;
+    if (!d || d->ticksIndex < 0) return false;
+    t = objFields(asObj(v))[d->ticksIndex];
+    if (t.kind != K_Int) return false;
+    *ticks = t.i;
+    return true;
+}
+
+bool userToString(Value object, OwnList* list, Value* result) {
+    const FireClassDesc* d = classDescOf(asObj(object)->cls);
+    if (!d || !d->toString) return false;
+#ifdef FIRE_DEBUG
+    FIRE_DBG_NESTED(*result = d->toString(object));
+#else
+    *result = d->toString(object);
+#endif
+    adopt(*result, list);
+    return true;
+}
+
+#ifdef FIRE_MODULES
+/* ---- modules (ROADMAP 9): the members of an object by name - the tables of its class and its bases ---- */
+static int fireMethodCmp(const char* name, uint32_t argc, const FireMethod* m) {
+    int c = strcmp(name, m->name);
+    return c != 0 ? c : argc < m->argc ? -1 : argc > m->argc ? 1 : 0;
+}
+
+const FireMethod* fireFindMethod(uint32_t cls, const char* name, int argc, uint32_t* k) {
+    const FireClassDesc* d = classDescOf(cls);
+    const FireMembers* const* t;
+    if (!d || !d->members) return NULL;
+    for (t = d->members; *t; t++) {
+        uint32_t lo = 0, hi = (*t)->nmethods;
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            int c = fireMethodCmp(name, (uint32_t)argc, &(*t)->methods[mid]);
+            if (c == 0) { *k = (*t)->k; return &(*t)->methods[mid]; }
+            if (c < 0) hi = mid; else lo = mid + 1;
+        }
+    }
+    return NULL;
+}
+
+/* No method `name` with `argc` arguments: a class that has it with other numbers of arguments is an ArgumentException that lists them, otherwise a
+ * MissingMemberException (the texts of the VM). */
+Value fireNoMethod(Value self, const char* name, int argc) {
+    const FireClassDesc* d;
+    const FireMembers* const* t;
+    uint32_t seen[16], n = 0, i, j;
+    char list[160], text[500];
+    if (self.kind != K_Class || !leafAlive(self)) return missingMethod(self, name, argc);
+    d = classDescOf(asObj(self)->cls);
+    if (d && d->members)
+        for (t = d->members; *t; t++)
+            for (i = 0; i < (*t)->nmethods; i++) {
+                if (strcmp((*t)->methods[i].name, name) != 0) continue;
+                for (j = 0; j < n && seen[j] != (*t)->methods[i].params; j++) { }
+                if (j == n && n < 16) seen[n++] = (*t)->methods[i].params;
+            }
+    if (n == 0) return missingMethod(self, name, argc);
+    for (i = 1; i < n; i++) for (j = i; j > 0 && seen[j - 1] > seen[j]; j--) { uint32_t s = seen[j]; seen[j] = seen[j - 1]; seen[j - 1] = s; }
+    list[0] = 0;
+    for (i = 0; i < n; i++) snprintf(list + strlen(list), sizeof list - strlen(list), i == 0 ? "%u" : ", %u", (unsigned)seen[i]);
+    snprintf(text, sizeof text, "Method '%s' on '%s' has no overload with %d argument(s) (available: %s argument(s)).", name, className(asObj(self)->cls), argc, list);
+    return fireError("ArgumentException", text);
+}
+
+Value fireCallMethod(Value self, const char* name, int argc, const Value* a, OwnList* list, uint32_t caller) {
+    uint32_t k;
+    const FireMethod* m = self.kind == K_Class ? fireFindMethod(asObj(self)->cls, name, argc, &k) : NULL;
+    if (m) return m->fn(k, self, a, list, caller);
+    return fireNoMethod(self, name, argc);
+}
+
+static const FireField* fireFindField(uint32_t cls, const char* name, uint32_t* k) {
+    const FireClassDesc* d = classDescOf(cls);
+    const FireMembers* const* t;
+    if (!d || !d->members) return NULL;
+    for (t = d->members; *t; t++) {
+        uint32_t lo = 0, hi = (*t)->nfields;
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            int c = strcmp(name, (*t)->fields[mid].name);
+            if (c == 0) { *k = (*t)->k; return &(*t)->fields[mid]; }
+            if (c < 0) hi = mid; else lo = mid + 1;
+        }
+    }
+    return NULL;
+}
+
+/* A field of an object (a real field of its class wins, otherwise its property `get_name`), by name like the VM. */
+Value fireGetField(Value v, const char* name, OwnList* list, uint32_t caller) {
+    uint32_t k;
+    const FireField* f;
+    const FireMethod* m;
+    char accessor[200];
+    if (v.kind != K_Class) return missingField(v, name);
+    if (!leafAlive(v)) return destroyedError(v);
+    f = fireFindField(asObj(v)->cls, name, &k);
+    if (f) return f->get(k, v, list, caller);
+    snprintf(accessor, sizeof accessor, "get_%s", name);
+    m = fireFindMethod(asObj(v)->cls, accessor, 0, &k);
+    if (m) { Value r = m->fn(k, v, NULL, list, caller); adopt(r, list); return r; }
+    accessor[0] = 's';
+    if (fireFindMethod(asObj(v)->cls, accessor, 1, &k)) {
+        char text[400];
+        snprintf(text, sizeof text, "Property '%s' of '%s' has no getter (only 'set').", name, className(asObj(v)->cls));
+        fatal(text);
+    }
+    return missingField(v, name);
+}
+
+void fireSetField(Value v, Value x, const char* name, OwnList* list, uint32_t caller) {
+    uint32_t k;
+    const FireField* f;
+    const FireMethod* m;
+    char accessor[200];
+    if (v.kind != K_Class) { notObjectAssign(v); return; }
+    if (!leafAlive(v)) { destroyedError(v); return; }
+    f = fireFindField(asObj(v)->cls, name, &k);
+    if (f) { f->set(k, v, x, list, caller); return; }
+    snprintf(accessor, sizeof accessor, "set_%s", name);
+    m = fireFindMethod(asObj(v)->cls, accessor, 1, &k);
+    if (m) { Value r = m->fn(k, v, &x, list, caller); adopt(r, list); return; }
+    accessor[0] = 'g';
+    if (fireFindMethod(asObj(v)->cls, accessor, 0, &k)) {
+        char text[400];
+        snprintf(text, sizeof text, "Property '%s' on '%s' has no setter (only 'get').", name, className(asObj(v)->cls));
+        fatal(text);
+    }
+    missingField(v, name);
+}
+
+Value fireFieldPtr(Value v, const char* name) {
+    uint32_t k;
+    const FireField* f;
+    char text[300];
+    if (v.kind == K_Class && !leafAlive(v)) return destroyedError(v);
+    f = v.kind == K_Class ? fireFindField(asObj(v)->cls, name, &k) : NULL;
+    if (f && f->ptr) return f->ptr(k, v);
+    snprintf(text, sizeof text, "The address of '%s' cannot be taken (it is a property or does not exist).", name);
+    fatal(text);
+}
+
+/* `is of`: the class, a class of its chain or an interface of the chain is called `name`. */
+bool fireIsOf(uint32_t cls, const char* name) {
+    const FireClassDesc* d = classDescOf(cls);
+    const char* const* n;
+    if (!d) return false;
+    if (d->isa) for (n = d->isa; *n; n++) if (strcmp(*n, name) == 0) return true;
+    if (d->ifaces) for (n = d->ifaces; *n; n++) if (strcmp(*n, name) == 0) return true;
+    return false;
+}
+
+/* The class is `name` or derived from it (the access to a protected member). */
+bool fireClassIsSub(uint32_t cls, const char* name) {
+    const FireClassDesc* d = classDescOf(cls);
+    const char* const* n;
+    if (!d || !d->isa) return false;
+    for (n = d->isa; *n; n++) if (strcmp(*n, name) == 0) return true;
+    return false;
+}
+
+/* The score of an object of class `cls` for a parameter of class `name` (overloads): `exact` for the class itself, one less per step to a derived class. */
+int fireClassScore(uint32_t cls, const char* name, int exact, int none) {
+    const FireClassDesc* d = classDescOf(cls);
+    int distance = 0;
+    const char* const* n;
+    if (!d || !d->isa) return none;
+    for (n = d->isa; *n; n++, distance++) if (strcmp(*n, name) == 0) return exact - distance;
+    return none;
+}
+
+const TArg* fireTArgOf(Obj* o, const char* cls, int k) {
+    const FireClassDesc* d = o ? classDescOf(o->cls) : NULL;
+    return d && d->targOf ? d->targOf(o, cls, k) : NULL;
+}
+
+FIRE_RT_FN void fireProbeRawSet(Value obj, const char* name, Value value, OwnList* list, uint32_t caller) { fireSetField(obj, value, name, list, caller); }
+
+Value fireProbeRawGet(Value obj, const char* name, OwnList* list) {
+    uint32_t k;
+    const FireField* f = fireFindField(asObj(obj)->cls, name, &k);
+    const FireMethod* m;
+    char accessor[200];
+    if (f && f->index >= 0) return objFields(asObj(obj))[f->index];
+    snprintf(accessor, sizeof accessor, "get_%s", name);
+    m = fireFindMethod(asObj(obj)->cls, accessor, 0, &k);
+    if (m) { Value r = m->fn(k, obj, NULL, list, 0xFFFFFFFFu); adopt(r, list); return r; }
+    return Undef();
+}
+
+/* ---- fire plugins (see FirePlugin): the checks, then the registration of its classes, catch types, enums and reflection rows ---- */
+static const FirePlugin* g_plugins[64];
+static Value firePlText(const char* text, OwnList* list) { return newStrFromUtf8((const uint8_t*)text, strlen(text), list); }
+static uint32_t g_pluginCount = 0;
+
+static Value firePluginClassNames(const FirePlugin* p, OwnList* list) {
+    uint32_t i, n = 0;
+    Arr* names;
+    for (i = 0; i < p->nclasses; i++) if (strncmp(p->classNames[i], "__", 2) != 0) n++;   /* (not the classes behind its enums) */
+    names = allocArr(n, list);
+    for (i = 0, n = 0; i < p->nclasses; i++)
+        if (strncmp(p->classNames[i], "__", 2) != 0) { Value s = firePlText(p->classNames[i], list); arrItems(names)[n++] = s; retain(s); }
+    return ArrV(names);
+}
+
+const void* firePluginJsonAt(uint32_t cls) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const FirePlugin* p = g_plugins[i];
+        if (p->jsonAt && cls >= *p->base && cls - *p->base < p->nclasses) return p->jsonAt(cls - *p->base);
+    }
+    return NULL;
+}
+int32_t firePluginJsonNamed(const char* name) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const FirePlugin* p = g_plugins[i];
+        int32_t k = p->jsonNamed ? p->jsonNamed(name) : -1;
+        if (k >= 0) return (int32_t)(*p->base + (uint32_t)k);
+    }
+    return -1;
+}
+const char* firePluginTArgText(const TArg* t) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const char* text = g_plugins[i]->jsonTargText ? g_plugins[i]->jsonTargText(t) : NULL;
+        if (text) return text;
+    }
+    return NULL;
+}
+const TArg* firePluginTArgFor(const char* text) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const TArg* t = g_plugins[i]->jsonTargFor ? g_plugins[i]->jsonTargFor(text) : NULL;
+        if (t) return t;
+    }
+    return NULL;
+}
+
+static Value firePluginRefused(const FirePlugin* p, const char* text, OwnList* list) {
+    char t[900];
+    snprintf(t, sizeof t, "The plugin '%s' cannot be loaded: %s", p->name, text);
+    return firePlText(t, list);
+}
+
+/* The id of a catch type by its name: the program's, else a new one (excMatches compares it by the name of the class). */
+static int32_t firePluginExcId(const char* name) {
+    uint32_t i;
+    const char** grown;
+    for (i = 0; i < g_excCount; i++) if (strcmp(g_excNames[i], name) == 0) return (int32_t)i;
+    grown = (const char**)malloc((g_excCount + 1) * sizeof *grown);
+    if (!grown) fatal("out of memory");
+    if (g_excCount) memcpy(grown, g_excNames, g_excCount * sizeof *grown);
+    grown[g_excCount] = name;
+    g_excNames = grown;   /* (the old table stays: another thread may read it) */
+    g_excExtra = true;
+    return (int32_t)g_excCount++;
+}
+
+/* The number of an enum by its name: the program's, else a new one. */
+static uint8_t firePluginEnum(const FireEnum* e) {
+    uint32_t i;
+    FireEnum* grown;
+    for (i = 0; i < g_enumCount; i++) if (strcmp(g_enums[i].name, e->name) == 0) return (uint8_t)(i + 1);
+    if (g_enumCount >= 255) fatal("too many enums");
+    grown = (FireEnum*)malloc((g_enumCount + 1) * sizeof *grown);
+    if (!grown) fatal("out of memory");
+    if (g_enumCount) memcpy(grown, g_enums, g_enumCount * sizeof *grown);
+    grown[g_enumCount] = *e;
+    g_enums = grown;
+    return (uint8_t)++g_enumCount;
+}
+
+/* Its units: their dimensions by name in the program's places (new ones in free places: false when there are not enough), then each unit the program's with the
+ * same dimensions, scale, symbol and offset - a unit with conversion functions only when it is not the plugin's own -, else a new one (with its functions). */
+static bool firePluginDims(const FirePlugin* p, int32_t* place, bool apply) {
+    uint32_t i;
+    int k, next = 0;
+    for (i = 0; i < p->ndims; i++) {
+        place[i] = -1;
+        for (k = 0; k < FIRE_NDIMS; k++) if (g_dimNames[k][0] && strcmp(g_dimNames[k], p->dimNames[i]) == 0) { place[i] = k; break; }
+        if (place[i] >= 0) continue;
+        while (next < FIRE_NDIMS && g_dimNames[next][0]) next++;
+        if (next == FIRE_NDIMS) return false;
+        place[i] = next;
+        if (apply) { g_dimNames[next] = p->dimNames[i]; g_dimsAdded = true; }
+        next++;
+    }
+    return true;
+}
+static void firePluginUnits(const FirePlugin* p) {
+    int32_t place[FIRE_NDIMS], conv[64];
+    uint32_t i, j, k, hostConv = 0;
+    if (p->nunits <= 1 && p->ntext == 0) return;
+    firePluginDims(p, place, true);
+    for (i = 0; i < g_udCount; i++) {
+        if (g_ud[i].conv >= 0 && (uint32_t)g_ud[i].conv + 1 > hostConv) hostConv = (uint32_t)g_ud[i].conv + 1;
+        if (g_ud[i].ulconv >= 0 && (uint32_t)g_ud[i].ulconv + 1 > hostConv) hostConv = (uint32_t)g_ud[i].ulconv + 1;
+    }
+    for (k = 0; k < p->nconv && k < 64; k++) conv[k] = -1;
+    p->unitMap[0] = 0;
+    for (k = 1; k < p->nunits; k++) {
+        const UnitInit* u = &p->units[k];
+        int32_t dims[FIRE_NDIMS];
+        bool own = (u->conv >= 0 && p->convOwn[u->conv]) || (u->ulconv >= 0 && p->convOwn[u->ulconv]);
+        uint32_t found = 0;
+        memset(dims, 0, sizeof dims);
+        for (j = 0; j < p->ndims; j++) dims[place[j]] = u->dims[j];
+        if (!own)
+            for (i = 1; i < g_udCount && !found; i++) {
+                const UnitDef* e = &g_ud[i];
+                if (e->scale == u->scale && e->offset == u->offset && (e->conv >= 0) == (u->conv >= 0) && (e->ulconv >= 0) == (u->ulconv >= 0) && memcmp(e->dims, dims, sizeof dims) == 0
+                    && ((e->display == NULL) == (u->display == NULL)) && (!u->display || strcmp(e->display, u->display) == 0)) found = i;
+            }
+        if (!found) {
+            /* (a new unit: its conversion functions get the next numbers of the program) */
+            int32_t c[2];
+            int32_t from[2];
+            int n;
+            from[0] = u->conv; from[1] = u->ulconv;
+            for (n = 0; n < 2; n++) {
+                c[n] = -1;
+                if (from[n] < 0 || (uint32_t)from[n] >= p->nconv || from[n] >= 64) continue;
+                if (conv[from[n]] < 0) {
+                    UnitConvFn* to = (UnitConvFn*)malloc((hostConv + 1) * sizeof *to);
+                    UnitConvFn* back = (UnitConvFn*)malloc((hostConv + 1) * sizeof *back);
+                    if (!to || !back) outOfMemory();
+                    if (hostConv) { memcpy(to, g_unitTo, hostConv * sizeof *to); memcpy(back, g_unitFrom, hostConv * sizeof *back); }
+                    to[hostConv] = p->convTo[from[n]];
+                    back[hostConv] = p->convFrom[from[n]];
+                    g_unitTo = to;   /* (the old tables stay: another thread may read them) */
+                    g_unitFrom = back;
+                    conv[from[n]] = (int32_t)hostConv++;
+                }
+                c[n] = conv[from[n]];
+            }
+            found = unitAppend(dims, u->scale, u->display, u->offset, c[0], c[1]);
+        }
+        p->unitMap[k] = (uint16_t)found;
+    }
+    /* the units a text may name: those of the plugin the program does not know by that symbol */
+    if (p->ntext) {
+        TextUnit* text = (TextUnit*)malloc((g_textUnitCount + p->ntext) * sizeof *text);
+        uint32_t n = g_textUnitCount;
+        if (!text) outOfMemory();
+        if (n) memcpy(text, g_textUnits, n * sizeof *text);
+        for (k = 0; k < p->ntext; k++) {
+            for (i = 0; i < g_textUnitCount && strcmp(g_textUnits[i].symbol, p->textUnits[k].symbol) != 0; i++) { }
+            if (i < g_textUnitCount) continue;
+            text[n] = p->textUnits[k];
+            text[n].unit = p->unitMap[p->textUnits[k].unit];
+            n++;
+        }
+        g_textUnits = text;
+        g_textUnitCount = n;
+    }
+}
+
+Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
+    uint32_t i, j, base;
+    int32_t places[FIRE_NDIMS];
+    FireClassDesc* rows;
+    char t[600];
+    for (i = 0; i < g_pluginCount; i++) if (g_plugins[i] == p) return firePluginClassNames(p, list);   /* (loaded before) */
+    if (p->format != FIRE_PLUGIN_FORMAT) return firePlText("The library is a fire plugin of another version of fire: build it again.", list);
+    if (!g_pluginHost) return firePluginRefused(p, "this program cannot load fire plugins - build it with linkage \"shared\".", list);
+    for (i = 0; i < p->ndeps; i++) {
+        const char* has = g_pluginHost->moduleAbi(p->depNames[i]);
+        if (!has) { snprintf(t, sizeof t, "it needs the module '%s', which this program does not have.", p->depNames[i]); return firePluginRefused(p, t, list); }
+        if (strcmp(has, p->depAbis[i]) != 0) {
+            snprintf(t, sizeof t, "it was built against another interface of the module '%s' (%.14s, the program has %.14s) - build it again against the libraries of this program.", p->depNames[i], p->depAbis[i], has);
+            return firePluginRefused(p, t, list);
+        }
+    }
+    if (strcmp(p->head, g_pluginHost->head) != 0) {
+        snprintf(t, sizeof t, "it was built for another configuration of the runtime (%.12s, the program has %.12s: other switches, target or version of fire) - build it for this program (--host).", p->head, g_pluginHost->head);
+        return firePluginRefused(p, t, list);
+    }
+    for (i = 0; i < g_pluginCount; i++)
+        if (strcmp(g_plugins[i]->name, p->name) == 0) return firePluginRefused(p, "another plugin of that name is loaded already.", list);
+    for (i = 0; i < p->nclasses; i++)
+        for (j = 0; j < g_classDescCount; j++)
+            if (strcmp(g_classDescs[j].name, p->classNames[i]) == 0) { snprintf(t, sizeof t, "the program has a class '%s' already.", p->classNames[i]); return firePluginRefused(p, t, list); }
+    if (g_pluginCount >= sizeof g_plugins / sizeof g_plugins[0]) return firePluginRefused(p, "too many plugins.", list);
+    if (p->ndims > FIRE_NDIMS || !firePluginDims(p, places, false)) {
+        snprintf(t, sizeof t, "its units need more dimensions than the program has room for (%d in all with linkage \"shared\").", FIRE_NDIMS);
+        return firePluginRefused(p, t, list);
+    }
+    if (p->nconv > 64) return firePluginRefused(p, "it has more than 64 units with conversion functions.", list);
+    if (p->link) {
+        const char* missing = g_pluginHost->find ? p->link(g_pluginHost->find) : "fire_hostFind";
+        if (missing && strncmp(missing, "fire_cn_", 8) == 0) { snprintf(t, sizeof t, FIRE_PLUGIN_CNATIVE, (int)strlen(missing + 8), missing + 8); return firePluginRefused(p, t, list); }
+        if (missing) { snprintf(t, sizeof t, "it needs '%s', which the program does not have.", missing); return firePluginRefused(p, t, list); }
+    }
+    /* its units: the program's numbers (new ones for those it does not have) */
+    firePluginUnits(p);
+    if (!g_excNames) {
+        g_excNames = (const char**)g_pluginHost->excNames;
+        g_excCount = g_excStatic = g_pluginHost->nexc;
+    }
+    /* the catch types and enums of its code: the program's numbers (new ones for those it does not have) */
+    for (i = 0; i < p->nexc; i++) p->excMap[i] = firePluginExcId(p->excNames[i]);
+    p->enumMap[0] = 0;
+    for (i = 0; i < p->nenums; i++) p->enumMap[i + 1] = firePluginEnum(&p->enums[i]);
+    /* its classes: the next ids */
+    base = g_classDescCount;
+    rows = (FireClassDesc*)calloc(base + p->nclasses + 1, sizeof *rows);
+    if (!rows) fatal("out of memory");
+    if (base) memcpy(rows, g_classDescs, base * sizeof *rows);
+    *p->base = base;
+    p->fillClasses(rows + base);
+    for (i = 0; i < p->nclasses; i++) {
+        /* the catch types of the program an object of the class is (by the names of its chain) */
+        int32_t* types = (int32_t*)malloc((g_excStatic + 1) * sizeof *types);
+        uint32_t n = 0;
+        const char* const* c;
+        if (!types) fatal("out of memory");
+        for (j = 1; j < g_excStatic; j++)
+            for (c = rows[base + i].isa; c && *c; c++) if (strcmp(*c, g_excNames[j]) == 0) { types[n++] = (int32_t)j; break; }
+        types[n] = -1;
+        rows[base + i].excTypes = types;
+    }
+    g_classDescs = rows;   /* (the old table stays: another thread may read it) */
+    g_classDescCount = base + p->nclasses;
+    if (p->rfRows) {
+        const void** rf = (const void**)malloc((g_pluginRfCount + p->nclasses) * sizeof *rf);
+        if (!rf) fatal("out of memory");
+        if (g_pluginRfCount) memcpy(rf, g_pluginRf, g_pluginRfCount * sizeof *rf);
+        for (i = 0; i < p->nclasses; i++) rf[g_pluginRfCount + i] = p->rfRows[i];
+        g_pluginRf = rf;
+        g_pluginRfCount += p->nclasses;
+    }
+    g_plugins[g_pluginCount++] = p;
+    if (p->init) p->init();
+    return firePluginClassNames(p, list);
+}
+#endif
+#endif
 
 FIRE_END
 

@@ -79,6 +79,9 @@ namespace fire.Standard
 
         private sealed class JsonError : Exception { public JsonError(string message) : base(message) { } }
 
+        /// <summary>Why a class is not written or read (an ArgumentException; native/runtime/fire_json.h says the same).</summary>
+        public const string NotSerializableReason = "it is not serializable ([NotSerializable] on it or a base class, or \"serializable\": false in its package).";
+
         // ---------------------------------------------------------------------------------------------------------------------------------
         // Field metadata
         // ---------------------------------------------------------------------------------------------------------------------------------
@@ -382,6 +385,7 @@ namespace fire.Standard
             private void WriteObject(ObjectInstance obj, string type, object? container, bool isRoot)
             {
                 if (obj.Mailbox != null || obj.RtClass?.IsActor == true) throw new JsonError($"An actor ('{obj.ClassName}') cannot be written to JSON.");
+                if (obj.RtClass?.IsNotSerializable() == true) throw _host.Error("ArgumentException", $"The class '{obj.RtClass.Name}' cannot be written to JSON: {NotSerializableReason}");
                 bool shared = _ids.TryGetValue(obj, out int id);
                 if (shared && !(isRoot || CanDefine(obj, container))) { _sb.Append("{\"$ref\":").Append(id).Append('}'); return; }
                 if (shared) _written.Add(obj);
@@ -824,6 +828,7 @@ namespace fire.Standard
                     throw new JsonError($"{path}: unknown class '{type}'.");
                 }
                 if (rc.IsActor) throw new JsonError($"{path}: an actor ('{rc.Name}') cannot be read from JSON.");
+                if (rc.IsNotSerializable()) throw _host.Error("ArgumentException", $"{path}: the class '{rc.Name}' cannot be read from JSON: {NotSerializableReason}");
                 var obj = new ObjectInstance(rc.Name, owner, rc);
                 if (typeArgs != null) obj.TypeArgs = typeArgs;
                 var value = Value.MakeClassRef(obj);

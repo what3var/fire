@@ -225,10 +225,21 @@ static int fire_io_consoleWrite(int kind, const uint8_t* data, int64_t count) {
     return !host || !host->std_write || count == 0 || host->std_write(kind, data, (int)count) >= 0;
 }
 static void fire_io_consoleFlush(int kind) { const fire_host* host = libraryHost(); if (host && host->std_flush) host->std_flush(kind); }
+#elif defined(FIRE_DEBUG)
+/* a debug build: while the debug agent owns the input (a framed transport - the console UART of an ESP32, stdio), standard input is what it passes on */
+static int fire_io_getc(void) {
+    uint8_t b;
+    if (g_dbgStdin) return fire_dbgStdinRead(&b, 1) == 1 ? b : -1;
+    return getc(stdin);
+}
+static void fire_io_ungetc(int c) { if (g_dbgStdin) fire_dbgStdinUnget(c); else ungetc(c, stdin); }
+static int64_t fire_io_consoleRead(uint8_t* out, int64_t count) { return g_dbgStdin ? fire_dbgStdinRead(out, count) : (int64_t)fread(out, 1, (size_t)count, stdin); }
 #else
 static int fire_io_getc(void) { return getc(stdin); }
 static void fire_io_ungetc(int c) { ungetc(c, stdin); }
 static int64_t fire_io_consoleRead(uint8_t* out, int64_t count) { return (int64_t)fread(out, 1, (size_t)count, stdin); }
+#endif
+#ifndef FIRE_LIBRARY
 static int fire_io_consoleWrite(int kind, const uint8_t* data, int64_t count) {
     FILE* f = kind == 1 ? stdout : stderr;
     if (count > 0 && fwrite(data, 1, (size_t)count, f) != (size_t)count) { clearerr(f); return 0; }

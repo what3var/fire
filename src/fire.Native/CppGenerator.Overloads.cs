@@ -62,7 +62,7 @@ namespace fire.Native
                 GetFunc(proto, kind);
                 DefaultArgs(proto, argc, "self", "list");   // (registers the functions of the default values)
             }
-            selector = new OverloadSelector($"ovs_{_overloadSelectors.Count}", rc, protos, declaring, argc, kind, deniedMessages, addresses, name, hint);
+            selector = new OverloadSelector($"{Px}ovs_{_overloadSelectors.Count}", rc, protos, declaring, argc, kind, deniedMessages, addresses, name, hint);
             _overloadSelectors[key] = selector;
             return selector;
         }
@@ -194,7 +194,7 @@ namespace fire.Native
         {
             _isOfTypes.Add(name);
             string enumerable = isInterface && GenericClassNames.PlainName(name) == "IEnumerable" ? $"{v}.kind == K_Array || {v}.kind == K_Buffer || {v}.kind == K_String || " : "";
-            return $"({enumerable}({v}.kind == K_Class && isof_{Mangle(name)}({v})))";
+            return $"({enumerable}({v}.kind == K_Class && {IsOfFn(name)}({v})))";
         }
 
         /// <summary>The C++ expression of the score of the value `v` for a parameter with this descriptor (Overloads.Score).</summary>
@@ -219,12 +219,12 @@ namespace fire.Native
             {
                 case 'c':
                     _ovClassNames.Add(name);
-                    return $"({v}.kind == K_Class ? ovd_{Mangle(name)}({v}) : {orUndefined})";
+                    return $"({v}.kind == K_Class ? {OvdFn(name)}({v}) : {orUndefined})";
                 case 'i':
                 {
                     _isOfTypes.Add(name);
                     string enumerable = GenericClassNames.PlainName(name) == "IEnumerable" ? $"{v}.kind == K_Array || {v}.kind == K_Buffer || {v}.kind == K_String || " : "";
-                    return $"({enumerable}isof_{Mangle(name)}({v}) ? {Overloads.InterfaceScore} : {orUndefined})";
+                    return $"({enumerable}{IsOfFn(name)}({v}) ? {Overloads.InterfaceScore} : {orUndefined})";
                 }
                 case 'g':
                 {
@@ -246,7 +246,7 @@ namespace fire.Native
                     // the test is a function of its own (C has no lambdas): the value, and the object whose type arguments count
                     string body = $"{{ (void)own; {byTypeArg}return {fits}; }}";
                     if (!_ovGenericTests.TryGetValue(body, out var testName))
-                        _ovGenericTests[body] = testName = $"ovg_{_ovGenericTests.Count}";
+                        _ovGenericTests[body] = testName = $"{Px}ovg_{_ovGenericTests.Count}";
                     return $"({v}.kind == K_Undefined ? {Overloads.UndefinedScore} : {testName}({v}, {(usesOwner ? ownerObj : "NULL")}) ? {Overloads.GenericScore} : {Overloads.NoMatch})";
                 }
             }
@@ -254,14 +254,15 @@ namespace fire.Native
         }
 
         /// <summary>`ovd_Name(v)`: the score of an object for a parameter of class Name - ClassExact for an object of Name, one less per step to a derived class.</summary>
-        private string OverloadClassFunctions()
+        private string OverloadClassFunctions(bool classScores = true)
         {
             var sb = new StringBuilder();
             foreach (var (body, testName) in _ovGenericTests)
                 sb.AppendLine($"FIRE_MAYBE_UNUSED static bool {testName}(Value ovc, Obj* own) {body}");
-            foreach (var name in _ovClassNames)
+            foreach (var name in classScores ? _ovClassNames : new SortedSet<string>())
             {
-                sb.AppendLine($"FIRE_MAYBE_UNUSED static int ovd_{Mangle(name)}(Value v) {{");
+                if (Modular) { sb.Append(ModClassScore(name)); continue; }
+                sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}int ovd_{Mangle(name)}(Value v) {{");
                 sb.AppendLine($"    if (!leafAlive(v)) return {Overloads.UndefinedScore};");
                 var cases = new StringBuilder();
                 foreach (var cls in _classList)

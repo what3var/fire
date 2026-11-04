@@ -18,42 +18,39 @@ namespace fire.Compiler
     /// </summary>
     public sealed class LiveSession : IDisposable
     {
-        /// <summary>The window of the program: events from the host, pictures to the host, about 60 per second.</summary>
-        private sealed class HostWindow : IFramebufferRenderer
+        /// <summary>The window of the program (<see cref="IHostDisplay"/>: the C library's, or <see cref="HostRenderer"/> over the C# one): events from the host, pictures to the
+        /// host, about 60 per second.</summary>
+        private sealed class HostWindow : IHostDisplay
         {
             private readonly LiveSession _owner;
             private long _lastPresent;
             public HostWindow(LiveSession owner) => _owner = owner;
-            public bool VSync { get; set; } = true;
-            public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) { }
 
-            public WindowPumpResult PumpEvents()
+            public bool NextEvent(int window, out HostDisplayEvent e)
             {
-                List<IEvent> events;
                 lock (_owner._lock)
                 {
-                    events = new List<IEvent>(_owner._events);
-                    _owner._events.Clear();
+                    if (_owner._events.Count == 0) { e = default; return false; }
+                    e = _owner._events[0];
+                    _owner._events.RemoveAt(0);
+                    return true;
                 }
-                return new WindowPumpResult { StillOpen = !_owner._stopping, Events = events };
             }
 
-            public void Present(Framebuffer framebuffer)
+            public void Present(int window, ReadOnlySpan<uint> source, int width, int height, bool vsync)
             {
                 bool changed;
                 lock (_owner._lock)
                 {
-                    int n = framebuffer.Width * framebuffer.Height;
-                    var source = framebuffer.Pixels.AsSpan(0, Math.Min(n, framebuffer.Pixels.Length));
+                    int n = width * height;
                     // the same picture as last time (a paused simulation, an idle editor): nothing to hand over - the host neither copies nor uploads it again
-                    changed = _owner._pixels.Length != n || _owner._width != framebuffer.Width || _owner._height != framebuffer.Height
-                              || !source.SequenceEqual(_owner._pixels.AsSpan(0, source.Length));
+                    changed = _owner._pixels.Length != n || _owner._width != width || _owner._height != height || !source.SequenceEqual(_owner._pixels.AsSpan(0, source.Length));
                     if (changed)
                     {
                         if (_owner._pixels.Length != n) _owner._pixels = new uint[n];
                         source.CopyTo(_owner._pixels);
-                        _owner._width = framebuffer.Width;
-                        _owner._height = framebuffer.Height;
+                        _owner._width = width;
+                        _owner._height = height;
                         _owner._frame++;
                     }
                 }
@@ -61,23 +58,21 @@ namespace fire.Compiler
                 // about 60 pictures per second: the program waits like for the vertical blank of a screen
                 long now = Environment.TickCount64;
                 long wait = 16 - (now - _lastPresent);
-                if (wait > 0 && VSync) Thread.Sleep((int)wait);
+                if (wait > 0 && vsync) Thread.Sleep((int)wait);
                 _lastPresent = Environment.TickCount64;
             }
 
             /// <summary>Window.Cursor of the program: the host shows that pointer over the picture.</summary>
-            public void SetCursor(int cursor)
+            public void Cursor(int window, int cursor)
             {
                 if (cursor == _owner.Cursor) return;
                 _owner.Cursor = cursor;
                 _owner.CursorChanged?.Invoke(cursor);
             }
-
-            public void Dispose() { }
         }
 
         private readonly object _lock = new();
-        private readonly List<IEvent> _events = new();
+        private readonly List<HostDisplayEvent> _events = new();
         private readonly Queue<string> _commands = new();
         private uint[] _pixels = Array.Empty<uint>();
         private int _width, _height;
@@ -113,7 +108,7 @@ namespace fire.Compiler
             {
                 if (args.Length > 0) Message?.Invoke(args[0].ToString() ?? "");
                 return Value.MakeUndefined();
-            }, basePath: basePath, windowRenderer: () => new HostWindow(this), externs: externs);
+            }, basePath: basePath, externs: externs, hostWindows: new HostWindows(new HostWindow(this)));
             var session = _session;
             _thread = new Thread(() =>
             {
@@ -139,33 +134,45 @@ namespace fire.Compiler
             lock (_lock) _commands.Enqueue(command);
         }
 
-        private void Post(IEvent e)
+        private void Post(HostDisplayEvent e)
         {
             lock (_lock)
             {
                 // a move right after a move replaces it: the program only needs the last position (a fast pointer would flood it)
-                if (e is MotionEvent && _events.Count > 0 && _events[^1] is MotionEvent) _events[^1] = e;
+                if (e.Type == (int)EventType.MouseMove && _events.Count > 0 && _events[^1].Type == (int)EventType.MouseMove) _events[^1] = e;
                 else _events.Add(e);
             }
         }
 
         /// <summary>Mouse button pressed / released at (x, y) in pixels of the picture (1 left, 2 middle, 3 right).</summary>
         public void MouseButton(int button, bool down, double x, double y) =>
-            Post(new ClickEvent { Type = down ? EventType.MouseDown : EventType.MouseUp, Button = button, X = (float)x, Y = (float)y, IsButtonDown = down });
+            Post(new HostDisplayEvent { Type = (int)(down ? EventType.MouseDown : EventType.MouseUp), Button = button, X = (float)x, Y = (float)y });
 
-        public void MouseMove(double x, double y, int buttons) => Post(new MotionEvent { Type = EventType.MouseMove, X = (float)x, Y = (float)y, ButtonState = buttons });
+        public void MouseMove(double x, double y, int buttons) => Post(new HostDisplayEvent { Type = (int)EventType.MouseMove, X = (float)x, Y = (float)y, Buttons = buttons });
 
         /// <summary>The wheel (dy > 0: up) at (x, y).</summary>
-        public void Wheel(double dx, double dy, double x, double y) => Post(new ScrollEvent { Type = EventType.MouseScroll, ScrollX = (float)dx, ScrollY = (float)dy, X = (float)x, Y = (float)y });
+        public void Wheel(double dx, double dy, double x, double y) => Post(new HostDisplayEvent { Type = (int)EventType.MouseScroll, Dx = (float)dx, Dy = (float)dy, X = (float)x, Y = (float)y });
 
         /// <summary>A key with the codes of SDL (letters are their lower case character, see UI.Keys) and its modifiers (1/2 shift, 64/128 ctrl, 256/512 alt).</summary>
         public void Key(int keyCode, int modifiers, bool down) =>
-            Post(new KeyEvent { Type = down ? EventType.KeyDown : EventType.KeyUp, KeyCode = keyCode, Modifier = modifiers, IsButtonDown = down });
+            Post(new HostDisplayEvent { Type = (int)(down ? EventType.KeyDown : EventType.KeyUp), KeyCode = keyCode, Modifiers = modifiers });
 
-        public void Text(string text) => Post(new TextEvent { Type = EventType.TextInput, Text = text });
+        /// <summary>Typed text (in pieces that fit an event of the display: up to 31 bytes of UTF-8 each).</summary>
+        public void Text(string text)
+        {
+            var piece = new System.Text.StringBuilder();
+            int bytes = 0;
+            foreach (var rune in text.EnumerateRunes())
+            {
+                if (bytes + rune.Utf8SequenceLength > 31) { Post(new HostDisplayEvent { Type = (int)EventType.TextInput, Text = piece.ToString() }); piece.Clear(); bytes = 0; }
+                piece.Append(rune.ToString());
+                bytes += rune.Utf8SequenceLength;
+            }
+            if (piece.Length > 0) Post(new HostDisplayEvent { Type = (int)EventType.TextInput, Text = piece.ToString() });
+        }
 
         /// <summary>The area that shows the picture has a new size: the program's framebuffer follows (with AutoResize) and it lays itself out again.</summary>
-        public void Resize(int width, int height) => Post(new ResizeEvent { Type = EventType.Resize, Width = width, Height = height });
+        public void Resize(int width, int height) => Post(new HostDisplayEvent { Type = (int)EventType.Resize, Width = width, Height = height });
 
         /// <summary>The last picture (RGBA per pixel, row by row) into `into` (grown when needed); its number (counts up with every picture) and size.</summary>
         public long CopyFrame(ref uint[] into, out int width, out int height)
@@ -183,6 +190,7 @@ namespace fire.Compiler
         /// <summary>Stops the program (its window is closed) and waits a moment for it.</summary>
         public void Stop()
         {
+            if (!_stopping) Post(new HostDisplayEvent { Type = (int)EventType.Close });   // (the window closes: the program's loop ends)
             _stopping = true;
             if (_thread != null && _thread != Thread.CurrentThread) _thread.Join(2000);
         }

@@ -780,7 +780,21 @@ Editor) - die normale Ausführung (`VM.Run()`) ist davon unberührt:
   `UnhandledException` (siehe Abschnitt 19: gesetzt statt geworfen, wenn ein
   `throw` in DIESER VM-Instanz keinen passenden `catch` findet - Editor/
   Host-Code prüft dieses Feld NACH einem Run()/Step*()-Aufruf, statt einen
-  `try`/`catch` darum zu legen).
+  `try`/`catch` darum zu legen), `DebugGlobalScope` und `ScopeLevel.Scope` (die Scopes selbst, für `set`),
+  `DebugAssignMember(obj, name, value)` (das `set` des Debuggers auf ein Feld: wie die Zuweisung im Programm - Probes feuern, ein
+  Property ruft seinen Setter, Einheit und Typ des Felds gelten; läuft auf dem Thread der VM).
+- **Engine-unabhängig: `fire.Debugging`** (`src/fire.Compiler/Debugging`, ROADMAP Abschnitt 8): spark (`DebugSession`, `DebugThreadContext`,
+  die Panels) sieht die VM nicht mehr direkt, sondern nur `IDebugTarget`/`IDebugThread` und `DebugValue` (Name, Text, Art, Id, Kinder auf
+  Anfrage). `VmDebugTarget` übersetzt mit `RuntimeSession.Build`, macht aus jeder VM (Hauptprogramm, jeder `fire`-Thread über
+  `FireRuntime.ThreadBodyInterceptor`) einen `VmDebugThread` und reicht die Stepping-API oben unverändert durch; `print`/`IO.Stdio` kommen
+  als `Output(thread, text)`. Die Steuerung blockiert, bis der Thread wieder steht (spark ruft sie auf einem eigenen Thread je
+  `DebugThreadContext`). `TrySetValue(wert, text)` setzt ein Local, ein Global, ein Arrayelement (direkt) oder ein Feld
+  (`DebugAssignMember`); der Text wird als Wert derselben Art gelesen (Zahl derselben Breite/Einheit, `true`/`false`, Zeichen, String mit
+  oder ohne Anführungszeichen) - Objekte, Arrays und Lambdas lassen sich nicht setzen. Tests: `FIRE_TESTS_ONLY=debugger` (der
+  Debugger-Lauf, das Ziel und die `DebugSession` ohne Fenster).
+- **Quelle der Zeilen innerer Chunks**: der Rumpf eines `fire`-Blocks, eines Lambdas auf oberster Ebene und von `catch threads`/`catch
+  terminate` markiert seine Zeilen mit dem Quellindex der Datei, in der er steht (vorher 0 = Prelude, wo der Compiler den Rumpf in einem
+  eigenen Compiler ohne Klasse übersetzte) - ein Haltepunkt in einem `fire`-Block trifft so, und der Debugger zeigt die richtige Datei.
 
 ## 16. Methodenüberladung, `with`, Extension-Klassen, Konstruktor-Überladung, optionale Parameter, `switch`, Generics
 
@@ -1462,7 +1476,7 @@ dem Prüfintervall (Release 16, Performance 4096). `UnwindForShutdown(destroyGlo
 und die Abwicklung nach einer unbehandelten Exception lassen den globalen Scope wie bisher aus.
 
 **Host-Sicherheitsnetz.** `IoBridge.RegisterAll` gibt ein `IDisposable` zurück (`IoHost.Dispose` schließt alle noch offenen, nicht-permanenten Streams); die Sessions halten es
-(`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger `DebugSession` ruft es, sobald alle Threads des Laufs beendet sind, und in `Reset()` bei einem abgebrochenen Lauf; höchstens einmal je Lauf).
+(`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger ruft es über `VmDebugTarget.ReleaseResources()`, sobald alle Threads des Laufs beendet sind, und in `DebugSession.Reset()` bei einem abgebrochenen Lauf; höchstens einmal je Lauf).
 
 ## 29. Shutdown-Signale an sicheren Punkten, Programmende räumt ab
 
@@ -1604,7 +1618,12 @@ Siehe docs/THREADING_DESIGN.md Abschnitt 7. Umsetzung (alles in `VM.cs`, Besitze
 - `GlobalsBroker.EnterSection`/`PostJob` rufen `VM.RaiseSignal()` (globale Epoche), damit der Besitzer es an seinem nächsten sicheren Punkt bemerkt.
 - `AutoSyncNow()` (nicht in verschachtelter Ausführung, nur bei `_autoSync`) wird von `PollSignalsAfterOp` und `PollSignalsSlow` gerufen, also an denselben Punkten wie die Shutdown-Signale, und im Einzelschritt
   nach jeder Instruktion (`StepInstruction`). Kein Mehraufwand im Normalfall: dieselbe Epochen-Prüfung wie bisher (Benchmark vor/nach 852/866 ms vs. 854/855 ms, Performance).
-- `#nosync` = `NoSyncDirective` (AST) -> der Compiler setzt am Programmanfang `SetAutoSync 0` -> `_autoSync = false`.
+- `#globaljobs safepoints|sleep|sync` (und `#nosync` = `sync`) = `GlobalJobsDirective` (AST) -> der Compiler setzt am Programmanfang `SetAutoSync <modus>`
+  (0 = sync, 1 = safepoints, 2 = sleep; nichts bei safepoints; Kommandozeile/Projekt gehen vor, fire.native.json danach) -> `_globalJobs`. Abgearbeitet
+  wird nur am Rücksprung einer Schleife (`Jump` rückwärts: `PollQueueAtLoop`, ein Vergleich mit dem Zähler `s_queued`; nur `safepoints`) und beim Warten
+  (`SleepTicks`/`WaitUntilTicks`: `PollWhileWaiting`; `safepoints`, `sleep`) - nicht mehr nach jeder nativen Funktion, nicht beim Aufruf, nicht im
+  Einzelschritt nach jeder Instruktion (THREADING_DESIGN.md Abschnitt 7). Gesperrt in Destruktoren, Aufträgen, Host-Callbacks und den Handlern von
+  `catch threads`/`catch terminate` (`_noAutoSyncDepth`); in Properties, Operatoren, Callbacks von Bibliotheksfunktionen nicht mehr (wie nativ).
 
 Tests: Suite-Blöcke "Callbacks auf dem VM-Thread" (Host-Thread-Callback automatisch/`#nosync`/Exception) und "Globals und Fire-Threads" (Standard-Automatik, `fire global` ohne `sync globals`, `#nosync`).
 
@@ -1831,3 +1850,16 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
   Alle laufen über `OwnershipWalk.TakeValue(wert, halter, runner)` (Zyklenprüfung, ein Ziel in Zerstörung nimmt den Wert mit).
 - **Zeiger-Bereiche.** `ScopeSlotPointerTarget`/`FieldPointerTarget` tragen einen Versatz (`Advance` addiert nur), benutzbar ist nur Versatz 0; `ElementPointerTarget` prüft Index und Zerstörtheit. Sie werfen `PointerRangeException`, die
   `TryReadPointer`/`TryWritePointer` der VM in `IndexOutOfBoundsException`/`DestroyedException` verwandeln. `ptr - ptr` ist `PointerTarget.DistanceTo`.
+
+## 47. Besitz in Property-Accessoren: `SetFieldAccessor`
+
+- **`SetFieldAccessor u16 name, u8 flags`** (SPEC 2.2 "Ownership in property accessors"): im Rumpf eines `get`/`set` einer Objekt-Property (`Compiler._accessor`, nicht statisch, nicht in Lambdas) übersetzt
+  der Compiler `obj.name = wert` und `name = wert` (Feld/Property von `this`) mit diesem Befehl statt `SetField` - außer bei `new`/Aufruf/`copy`/`take` rechts (die haben ihre eigenen Regeln). Stack `[obj, wert]` wie
+  `SetField`. Gehört der Wert (Objekt, Array, Puffer) einem Scope des laufenden Accessor-Aufrufs (`IsCurrentCallOwner`), dann: ist `name` eine Property von `obj` (kein Feld, ein `set_name`), geht der Wert wie `take` an den
+  Setter-Aufruf (`_takeSetterArg` -> `CallMethodNested(..., takeFirst)` -> `TakeArgument`); sonst wird gespeichert und, wenn `obj` das `this` des Accessors ist, übernimmt `this` den Wert (`OwnershipWalk.TakeValue`).
+  Bit 0 von `flags` (ein Getter): die Übernahme wird mit der Rahmentiefe gemerkt (`_accessorAdopted`); `DoReturn` holt einen zurückgegebenen gemerkten Wert in die Scope des Aufrufs zurück (`PullBackAdopted`), damit die
+  Return-Regel ihn zum Aufrufer bringt ("return gewinnt"); `DoReturn`/`UnwindTo` vergessen die Einträge beendeter Aufrufe.
+- **Nativ** (`CppGenerator`, `accMine`/`accKeep`/`accReturn`/`accHandOver`/`accHandEnd` in fire_rt.h): ein Feld (bekannte Klasse oder ein Name, der nirgends Property ist) - speichern, dann `accKeep`; eine Property - der Wert
+  wandert in der Argumentliste `AL` des Aufrufers (`takeArg`), `g_acc.handOff` zeigt auf sie, jeder Setter übernimmt sie beim Eintritt (`MYAL = accTakeHandOff()`) und zählt sie zu seinen Scopes; nach dem Aufruf
+  `finishArgs` (was der Setter nicht behielt, stirbt). Ein Name, der in einer Klasse Feld und in einer anderen Property ist: hat kein Setter die Übergabe genommen, geht der Wert zurück (`accHandEnd(..., giveBack)`).
+  Ein Getter mit Übernahmen merkt sie in `g_acc.items` ab `ACCB` (Stand beim Eintritt); `ReturnSeq` ruft `accReturn` (zurück in die Funktions-Scope), Rückkehr und Ausnahme-Ausgang setzen `g_acc.top = ACCB`.

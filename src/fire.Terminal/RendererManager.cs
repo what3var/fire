@@ -89,6 +89,27 @@ namespace fire.Terminal
         public void FloodFillBorder(int id, int x, int y, int brush, int border) =>
             _renderers.Get(id).FloodFill(x, y, _brushes.Get(brush), Paint.FromArgument(border));
 
+        // ---- rounded rectangles and effects: the C library draws them (packages/graphics/native/fire_gfx_fx.h); this implementation draws the plain shapes - no
+        //      antialiasing, no shadow, no blur, a material as its tint (the fallback where the library cannot be had) ----
+
+        public void FillRoundRect(int id, int x, int y, int w, int h, int radius, int brush) => FillRect(id, x, y, w, h, brush);
+        public void DrawRoundRect(int id, int x, int y, int w, int h, int radius, int pen) => DrawRect(id, x, y, w, h, pen);
+        public void DrawMaterial(int id, int kind, int x, int y, int w, int h, int radius, int tint, int baseColor, int options)
+        {
+            uint t = (uint)tint, a = t >> 24;
+            if ((options & 2) == 0) a = 255;   // (no transparency: opaque - roughly the tint over the base)
+            else if (kind == 1) a += (255 - a) / 3;
+            else if (kind == 2) a += (255 - a) / 2;
+            uint color = (options & 2) == 0 ? MixOver((uint)baseColor | 0xFF000000u, t) : (t & 0x00FFFFFFu) | (a << 24);
+            _renderers.Get(id).FillRect(x, y, w, h, new SolidBrush(Paint.FromArgument(unchecked((int)color))));
+        }
+        private static uint MixOver(uint dst, uint src)
+        {
+            uint a = src >> 24, inv = 255 - a;
+            uint Ch(int shift) => ((((src >> shift) & 0xFF) * a + ((dst >> shift) & 0xFF) * inv + 127) / 255) << shift;
+            return Ch(0) | Ch(8) | Ch(16) | 0xFF000000u;
+        }
+
         // ---- Zeichnen (Stift-ID) ----
 
         public void DrawPoint(int id, int x, int y, int pen) => _renderers.Get(id).DrawPoint(x, y, _pens.Get(pen));

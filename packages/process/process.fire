@@ -68,10 +68,10 @@ class ProcessStream : IO.Stream {
         this.which = which
     }
 
-    bool CanRead { get { return !this.closed && this.which != 0 } }
-    bool CanWrite { get { return !this.closed && this.which == 0 } }
+    override bool CanRead { get { return !this.closed && this.which != 0 } }
+    override bool CanWrite { get { return !this.closed && this.which == 0 } }
 
-    int Read(byte buffer[], int offset, int count) {
+    override int Read(byte buffer[], int offset, int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
         if (this.which == 0) { throw new IO.IOException("The input of a process cannot be read.", 8) }
         var tries = 0
@@ -93,7 +93,7 @@ class ProcessStream : IO.Stream {
         return n
     }
 
-    int Write(byte buffer[], int offset, int count) {
+    override int Write(byte buffer[], int offset, int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
         if (this.which != 0) { throw new IO.IOException("The output of a process cannot be written.", 8) }
         var done = 0
@@ -113,7 +113,7 @@ class ProcessStream : IO.Stream {
     }
 
     /// Closes the pipe; for the input: the process reads the end of it.
-    undefined Close() {
+    override undefined Close() {
         if (this.closed) { return }
         this.closed = true
         if (this.which == 0 && this.owner.handle >= 0) { __ProcCloseInput(this.owner.handle) }

@@ -129,8 +129,28 @@ namespace Net {
         static string First(string host) { return Net.Dns.Resolve(host)[0] }
     }
 
+    // A network connection (Net.TcpClient, Tls.Stream): a stream to a remote host with limits for Read and Write. An interface has methods only, so the
+    // properties of the classes (ReadTimeout, RemoteHost, ...) are here as Get/Set methods; the classes have both. What implements it is an IO.Stream (at least an
+    // IO.IStream): `connection!IO.IStream` gives it to code that only reads and writes.
+    interface IConnection {
+        int Read(byte buffer[], int offset, int count)
+        int Write(byte buffer[], int offset, int count)
+        undefined Flush()
+        undefined Close()
+        // The limit of Read and Write (milliseconds or a time like 5s; undefined: no limit), see ReadTimeout/WriteTimeout.
+        any GetReadTimeout()
+        undefined SetReadTimeout(any timeout)
+        any GetWriteTimeout()
+        undefined SetWriteTimeout(any timeout)
+        // The addresses of the two ends ("127.0.0.1", port).
+        string GetRemoteHost()
+        int GetRemotePort()
+        string GetLocalHost()
+        int GetLocalPort()
+    }
+
     // A connection (TCP): an IO.Stream. Read returns 0 when the other side has closed its end.
-    class TcpClient : IO.Stream {
+    class TcpClient : IO.Stream, Net.IConnection {
         int handle
         bool closed
         int readLimit
@@ -165,8 +185,8 @@ namespace Net {
 
         destruct() { try { this.Close() } catch (NetException e) { } }
 
-        bool CanRead { get { return !this.closed } }
-        bool CanWrite { get { return !this.closed } }
+        override bool CanRead { get { return !this.closed } }
+        override bool CanWrite { get { return !this.closed } }
 
         bool IsClosed { get { return this.closed } }
 
@@ -216,6 +236,16 @@ namespace Net {
                 return Net.NetErrors.Handle(__NetLocalPort(this.handle))
             }
         }
+
+        // Net.IConnection
+        any GetReadTimeout() { return this.ReadTimeout }
+        undefined SetReadTimeout(any timeout) { this.ReadTimeout = timeout }
+        any GetWriteTimeout() { return this.WriteTimeout }
+        undefined SetWriteTimeout(any timeout) { this.WriteTimeout = timeout }
+        string GetRemoteHost() { return this.RemoteHost }
+        int GetRemotePort() { return this.RemotePort }
+        string GetLocalHost() { return this.LocalHost }
+        int GetLocalPort() { return this.LocalPort }
 
         // The number the operating system gave the socket (for the tls package, which works on it): do not close or use it yourself.
         int NativeHandle {
@@ -268,7 +298,7 @@ namespace Net {
         }
 
         // Up to `count` bytes (at least one unless the other side has closed: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-        int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], int offset, int count) {
             this.Check()
             var deadline = Net.Clock.Deadline(this.readLimit)
             var tries = 0
@@ -283,7 +313,7 @@ namespace Net {
         }
 
         // All `count` bytes (waits as long as the system needs; WriteTimeout limits each wait).
-        int Write(byte buffer[], int offset, int count) {
+        override int Write(byte buffer[], int offset, int count) {
             this.Check()
             var done = 0
             while (done < count) {
@@ -309,7 +339,7 @@ namespace Net {
             this.Write(bytes, 0, bytes.length)
         }
 
-        undefined Flush() { }
+        override undefined Flush() { }
 
         // Ends one direction: 0 receiving, 1 sending (the other side then reads 0), 2 both.
         undefined Shutdown(int how) {
@@ -317,7 +347,7 @@ namespace Net {
             if (!__NetShutdown(this.handle, how)) { Net.NetErrors.Throw() }
         }
 
-        undefined Close() {
+        override undefined Close() {
             if (this.closed) { return }
             this.closed = true
             if (this.handle >= 0) { __NetClose(this.handle) }

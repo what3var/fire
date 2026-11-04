@@ -98,8 +98,8 @@ print(Window.Line("item", bullet: "*"))                     // 0* item
 
 ## Inheritance
 
-A class can derive from **one** base class: `class Dog : Animal`. It inherits all fields and methods; a method with the same name and number of
-parameters **replaces** the inherited one (every method can be overridden, there is no `virtual` keyword).
+A class can derive from **one** base class: `class Dog : Animal`. It inherits all fields and methods; a method with the same name and parameters
+**replaces** the inherited one and is marked **`override`** (every method can be overridden, there is no `virtual` keyword).
 
 ```fire
 class Animal {
@@ -110,8 +110,8 @@ class Animal {
 }
 class Dog : Animal {
     construct(string name) : base(name) { }
-    string Speak() { return "Woof" }
-    string Describe() { return base.Describe() + "!" }
+    override string Speak() { return "Woof" }
+    override string Describe() { return base.Describe() + "!" }
 }
 
 Animal a = new Dog("Rex")
@@ -119,6 +119,10 @@ print(a.Describe())             // Rex says Woof!
 print(a is of Dog)              // True
 ```
 
+- `override` stands after the access modifier (`protected override string Speak()`) and also marks a property (`override int Legs { get { ... } }`) and an
+  operator (`override bool operator==(any o)`) that replace inherited ones. Without it the type checker warns (`TC014`, in strict mode an error); `override` on a
+  member that replaces nothing - a typo in the name, other parameter types - is always an error (`TC015`). A method that only implements an interface method is
+  not marked, nor are static members, constructors and destructors.
 - `construct(...) : base(args)` calls the constructor of the base class first.
 - `base.Method(...)` calls the version of the base class.
 - Constructors are not inherited: `new Dog(...)` uses only the constructors of `Dog`.
@@ -273,7 +277,7 @@ print(Show.Of<int>(1))          // generic - written type arguments mean the gen
   it makes the same choice and knows the return type of that overload.
 - An `int` goes into a `float` parameter, but an exact `int` overload wins.
 - Two methods with the same parameter types in one class are an error.
-- In a derived class, a method with the same parameter types (or untyped ones) **overrides** the inherited one; with other types it is one more
+- In a derived class, a method with the same parameter types (or untyped ones) **overrides** the inherited one (mark it `override`); with other types it is one more
   overload next to it.
 - Constructors and operators (`Vec operator*(float f)`, `Vec operator*(Vec o)`) are overloaded the same way.
 
@@ -354,6 +358,27 @@ class Account {
     int cachedBalance
     construct() { }
 }
+```
+
+Two attributes before a class change what happens to it:
+
+- **`[Keep]`** (before a class, method, field or property): a native build keeps it even when the program never reaches it - for a class only made by its name
+  (`Reflect.New("Plugin", [])`, `Type.Named("Plugin")`) or read from JSON. Before a class it keeps the class with all its members; before a member that member
+  and its class. It is not inherited. A name given as a literal to reflection (`Reflect.New("Plugin", [])`) is kept the same way without it; the VM keeps everything
+  anyway (see [Probes and reflection](16-probes-and-reflection.md#reflection-in-native-builds), the stripping levels).
+- **`[NotSerializable]`** (before a class): `#import "json"` neither writes nor reads objects of the class or of a class derived from it (an `ArgumentException`).
+- **`[NoCopy]`** (before a class): `flat` and `copy` never duplicate an instance of the class or of a class derived from it (an `ArgumentException`, see
+  [Ownership](13-ownership.md#copying-flat-and-copy)) - for classes that stand for a resource, like `NativeHandle`.
+
+```fire
+[Keep]
+class Plugin {
+    construct() { }
+    string Hello() { return "hello" }
+}
+
+[NotSerializable]
+class Session { int token }
 ```
 
 An attribute whose name is a `flag enum` takes members of that enum as its arguments (`[Access Read, Write]`) and marks the declaration with
