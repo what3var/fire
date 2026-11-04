@@ -84,6 +84,9 @@ namespace fire.Runtime
         /// PackageNativeBinding): the VM registers those the program does not have.</summary>
         public List<string> PackageNatives { get; set; } = new();
         public List<string> PackageLibraries { get; set; } = new();
+        /// <summary>The methods its `class extends` adds to classes it does not declare (of the program, of libraries, base types `$string`, ...): class, method,
+        /// number of parameters (properties: `get_x`/`set_x`).</summary>
+        public List<string[]> Extensions { get; set; } = new();
         [System.Text.Json.Serialization.JsonIgnore]
         public LinkedProgram? Program { get; set; }
         /// <summary>The folder of its file (the libraries of its natives lie there).</summary>
@@ -95,8 +98,21 @@ namespace fire.Runtime
             var modules = program.SourceModules;
             var header = new PluginBytecode { Name = name, Deps = deps.Select(d => new[] { d.Module, d.Abi }).ToList(), Natives = program.NativeNames?.ToList() ?? new List<string>() };
             foreach (var (native, library) in packageNatives ?? Enumerable.Empty<(string, string)>()) { header.PackageNatives.Add(native); header.PackageLibraries.Add(library); }
+            if (modules != null)
+                foreach (var rc in program.Program.Classes.Values.OrderBy(c => c.Name, StringComparer.Ordinal))
+                    if (rc.Decl != null && rc.Decl.Source < modules.Count && (modules[rc.Decl.Source] != null || rc.Name.StartsWith('$')))
+                        foreach (var member in rc.Decl.Members)
+                        {
+                            if (member.Source >= modules.Count || modules[member.Source] != null) continue;
+                            if (member is Ast.MethodDecl m) header.Extensions.Add(new[] { rc.Name, m.Name, m.Params.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+                            else if (member is Ast.PropertyDecl prop)
+                            {
+                                if (prop.Getter != null) header.Extensions.Add(new[] { rc.Name, "get_" + prop.Name, "0" });
+                                if (prop.Setter != null) header.Extensions.Add(new[] { rc.Name, "set_" + prop.Name, "1" });
+                            }
+                        }
             foreach (var rc in program.Program.Classes.Values)
-                if (rc.Decl != null && modules != null && rc.Decl.Source < modules.Count && modules[rc.Decl.Source] == null) header.Classes.Add(rc.Name);
+                if (rc.Decl != null && modules != null && rc.Decl.Source < modules.Count && modules[rc.Decl.Source] == null && !rc.Name.StartsWith('$')) header.Classes.Add(rc.Name);
             header.Classes.Sort(StringComparer.Ordinal);
             byte[] json = JsonSerializer.SerializeToUtf8Bytes(header);
             byte[] body = MemoryPackSerializer.Serialize(program);

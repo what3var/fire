@@ -815,7 +815,11 @@ prelude: combined) program, otherwise it is an error –
 an extension cannot create a new class. Several `class extends
 Name` blocks for the same name are all merged. This allows
 e.g. your own additional methods for `List` from the standard library without having to
-touch its source code yourself.
+touch its source code yourself. The name may be qualified (`class extends Api.Device`). In a
+fire plugin (`--linkage plugin`) an extension of a class it does not declare (of a library, a
+base type) may contain only methods and properties with bodies - a field, an auto-property, a
+constructor, a destructor or an operator is a build error, because the program that loads the
+plugin makes the objects of that class.
 
 ### 5.5.1 Extending base types (`class extends string`)
 

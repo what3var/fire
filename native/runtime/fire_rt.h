@@ -1936,6 +1936,7 @@ extern FIRE_RT_DATA uint32_t g_classDescCount;
 #ifdef FIRE_MODULES
 /* The members of an object by name, for an object of a class the calling module does not serve (defined with the runtime's state). */
 FIRE_RT_FN const FireMethod* fireFindMethod(uint32_t cls, const char* name, int argc, uint32_t* k);
+FIRE_RT_FN const FireMethod* fireFindValueMethod(Value self, const char* name, int argc, uint32_t* k);
 FIRE_RT_FN Value fireCallMethod(Value self, const char* name, int argc, const Value* a, OwnList* list, uint32_t caller);
 FIRE_RT_FN Value fireNoMethod(Value self, const char* name, int argc);
 FIRE_RT_FN Value fireGetField(Value v, const char* name, OwnList* list, uint32_t caller);
@@ -1953,7 +1954,7 @@ FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
  * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
  * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
  * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
-#define FIRE_PLUGIN_FORMAT 3
+#define FIRE_PLUGIN_FORMAT 4
 /* A plugin that calls a native in C of the program (`fire_cn_<function>`) the program does not export: what Load says (the function: %.*s). */
 #define FIRE_PLUGIN_CNATIVE "it calls the native function '%.*s' in C, which this program does not export to plugins (natives in C are the program's: build the program again with the package of the native; of graphics and windows it exports only those its libraries call)."
 typedef struct FirePlugin {
@@ -1993,6 +1994,10 @@ typedef struct FirePlugin {
     int32_t (*jsonNamed)(const char* name);
     const char* (*jsonTargText)(const TArg* t);   /* (not jsonTArgText: a DLL defines that name as a macro) */
     const TArg* (*jsonTargFor)(const char* text);
+    /* its `class extends` of classes of the program and of libraries, and of base types (`$string`, ...): the class by name and the table of the methods it adds */
+    uint32_t nexts;
+    const char* const* extClasses;
+    const FireMembers* const* extTables;
 } FirePlugin;
 /* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
 typedef struct FirePluginHost {
@@ -6666,20 +6671,63 @@ static int fireMethodCmp(const char* name, uint32_t argc, const FireMethod* m) {
     return c != 0 ? c : argc < m->argc ? -1 : argc > m->argc ? 1 : 0;
 }
 
+static const FireMethod* fireMethodIn(const FireMembers* t, const char* name, int argc) {
+    uint32_t lo = 0, hi = t->nmethods;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        int c = fireMethodCmp(name, (uint32_t)argc, &t->methods[mid]);
+        if (c == 0) return &t->methods[mid];
+        if (c < 0) hi = mid; else lo = mid + 1;
+    }
+    return NULL;
+}
+
+/* The members plugins add to classes of the program, of its libraries and to base types (`class extends Api.Device` in a plugin, `$string` for
+ * `class extends string`): a table per class and plugin, by the name of the class - an object finds them by the names of its chain, after the tables of its
+ * descriptor (copied and appended when a plugin is registered: the old array stays for other threads). */
+typedef struct FireExtTable { const char* cls; const FireMembers* members; } FireExtTable;
+static const FireExtTable* g_extTables = NULL;
+static uint32_t g_extCount = 0;
+
+static const FireMethod* fireFindExtMethod(const char* const* isa, const char* name, int argc, uint32_t* k) {
+    const FireExtTable* ext = g_extTables;
+    uint32_t i, n = g_extCount;
+    if (!isa || n == 0) return NULL;
+    for (; *isa; isa++)
+        for (i = 0; i < n; i++)
+            if (strcmp(ext[i].cls, *isa) == 0) {
+                const FireMethod* m = fireMethodIn(ext[i].members, name, argc);
+                if (m) { *k = ext[i].members->k; return m; }
+            }
+    return NULL;
+}
+
 const FireMethod* fireFindMethod(uint32_t cls, const char* name, int argc, uint32_t* k) {
     const FireClassDesc* d = classDescOf(cls);
     const FireMembers* const* t;
-    if (!d || !d->members) return NULL;
-    for (t = d->members; *t; t++) {
-        uint32_t lo = 0, hi = (*t)->nmethods;
-        while (lo < hi) {
-            uint32_t mid = lo + (hi - lo) / 2;
-            int c = fireMethodCmp(name, (uint32_t)argc, &(*t)->methods[mid]);
-            if (c == 0) { *k = (*t)->k; return &(*t)->methods[mid]; }
-            if (c < 0) hi = mid; else lo = mid + 1;
+    if (!d) return NULL;
+    if (d->members)
+        for (t = d->members; *t; t++) {
+            const FireMethod* m = fireMethodIn(*t, name, argc);
+            if (m) { *k = (*t)->k; return m; }
         }
+    return fireFindExtMethod(d->isa, name, argc, k);
+}
+
+/* A method of any value by name: of the class of a living object (its tables, then what plugins add), of a base value what plugins add to its type. */
+const FireMethod* fireFindValueMethod(Value self, const char* name, int argc, uint32_t* k) {
+    static const char* const kStr[] = {"$string", NULL}, * const kChr[] = {"$char", NULL}, * const kInt[] = {"$int", NULL}, * const kFlt[] = {"$float", NULL},
+        * const kBool[] = {"$bool", NULL}, * const kArr[] = {"$array", NULL};
+    switch (self.kind) {
+        case K_Class: return leafAlive(self) ? fireFindMethod(asObj(self)->cls, name, argc, k) : NULL;
+        case K_String: return fireFindExtMethod(kStr, name, argc, k);
+        case K_Char: return fireFindExtMethod(kChr, name, argc, k);
+        case K_Int: return fireFindExtMethod(kInt, name, argc, k);
+        case K_Float: return fireFindExtMethod(kFlt, name, argc, k);
+        case K_Bool: return fireFindExtMethod(kBool, name, argc, k);
+        case K_Array: return fireFindExtMethod(kArr, name, argc, k);
+        default: return NULL;
     }
-    return NULL;
 }
 
 /* No method `name` with `argc` arguments: a class that has it with other numbers of arguments is an ArgumentException that lists them, otherwise a
@@ -6708,7 +6756,7 @@ Value fireNoMethod(Value self, const char* name, int argc) {
 
 Value fireCallMethod(Value self, const char* name, int argc, const Value* a, OwnList* list, uint32_t caller) {
     uint32_t k;
-    const FireMethod* m = self.kind == K_Class ? fireFindMethod(asObj(self)->cls, name, argc, &k) : NULL;
+    const FireMethod* m = fireFindValueMethod(self, name, argc, &k);
     if (m) return m->fn(k, self, a, list, caller);
     return fireNoMethod(self, name, argc);
 }
@@ -6839,10 +6887,10 @@ static uint32_t g_pluginCount = 0;
 static Value firePluginClassNames(const FirePlugin* p, OwnList* list) {
     uint32_t i, n = 0;
     Arr* names;
-    for (i = 0; i < p->nclasses; i++) if (strncmp(p->classNames[i], "__", 2) != 0) n++;   /* (not the classes behind its enums) */
+    for (i = 0; i < p->nclasses; i++) if (strncmp(p->classNames[i], "__", 2) != 0 && p->classNames[i][0] != '$') n++;   /* (not the classes behind its enums, nor `$int` of its `class extends int`) */
     names = allocArr(n, list);
     for (i = 0, n = 0; i < p->nclasses; i++)
-        if (strncmp(p->classNames[i], "__", 2) != 0) { Value s = firePlText(p->classNames[i], list); arrItems(names)[n++] = s; retain(s); }
+        if (strncmp(p->classNames[i], "__", 2) != 0 && p->classNames[i][0] != '$') { Value s = firePlText(p->classNames[i], list); arrItems(names)[n++] = s; retain(s); }
     return ArrV(names);
 }
 
@@ -7022,7 +7070,7 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
     for (i = 0; i < g_pluginCount; i++)
         if (strcmp(g_plugins[i]->name, p->name) == 0) return firePluginRefused(p, "another plugin of that name is loaded already.", list);
     for (i = 0; i < p->nclasses; i++)
-        for (j = 0; j < g_classDescCount; j++)
+        for (j = 0; j < g_classDescCount && p->classNames[i][0] != '$'; j++)
             if (strcmp(g_classDescs[j].name, p->classNames[i]) == 0) { snprintf(t, sizeof t, "the program has a class '%s' already.", p->classNames[i]); return firePluginRefused(p, t, list); }
     if (g_pluginCount >= sizeof g_plugins / sizeof g_plugins[0]) return firePluginRefused(p, "too many plugins.", list);
     if (p->ndims > FIRE_NDIMS || !firePluginDims(p, places, false)) {
@@ -7030,6 +7078,23 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
         return firePluginRefused(p, t, list);
     }
     if (p->nconv > 64) return firePluginRefused(p, "it has more than 64 units with conversion functions.", list);
+    /* what it adds to classes it does not declare: nothing they have (the classes by name - of the program, of libraries, of another plugin) */
+    for (i = 0; i < p->nexts; i++) {
+        const FireMembers* tab = p->extTables[i];
+        for (j = 0; j < tab->nmethods; j++) {
+            const FireMethod* m = &tab->methods[j];
+            uint32_t c, k, e;
+            bool has = false;
+            for (c = 0; c < g_classDescCount && !has; c++)
+                if (strcmp(g_classDescs[c].name, p->extClasses[i]) == 0) has = fireFindMethod(c, m->name, (int)m->argc, &k) != NULL;
+            for (e = 0; e < g_extCount && !has; e++) has = strcmp(g_extTables[e].cls, p->extClasses[i]) == 0 && fireMethodIn(g_extTables[e].members, m->name, (int)m->argc) != NULL;
+            if (has) {
+                snprintf(t, sizeof t, "it adds the method '%s' (%u arguments) to '%s', which has it already (another plugin added it, or the class of the program has it).",
+                    m->name, (unsigned)m->argc, p->extClasses[i][0] == '$' ? p->extClasses[i] + 1 : p->extClasses[i]);
+                return firePluginRefused(p, t, list);
+            }
+        }
+    }
     if (p->link) {
         const char* missing = g_pluginHost->find ? p->link(g_pluginHost->find) : "fire_hostFind";
         if (missing && strncmp(missing, "fire_cn_", 8) == 0) { snprintf(t, sizeof t, FIRE_PLUGIN_CNATIVE, (int)strlen(missing + 8), missing + 8); return firePluginRefused(p, t, list); }
@@ -7072,6 +7137,14 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
         for (i = 0; i < p->nclasses; i++) rf[g_pluginRfCount + i] = p->rfRows[i];
         g_pluginRf = rf;
         g_pluginRfCount += p->nclasses;
+    }
+    if (p->nexts) {
+        FireExtTable* ext = (FireExtTable*)malloc((g_extCount + p->nexts) * sizeof *ext);
+        if (!ext) fatal("out of memory");
+        if (g_extCount) memcpy(ext, g_extTables, g_extCount * sizeof *ext);
+        for (i = 0; i < p->nexts; i++) { ext[g_extCount + i].cls = p->extClasses[i]; ext[g_extCount + i].members = p->extTables[i]; }
+        g_extTables = ext;   /* (the old array stays: another thread may read it) */
+        g_extCount += p->nexts;
     }
     g_plugins[g_pluginCount++] = p;
     if (p->init) p->init();

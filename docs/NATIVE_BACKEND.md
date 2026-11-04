@@ -1183,7 +1183,21 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   ausgeführt. Code, der Variablen der obersten Ebene seiner Datei oder `extern`/versuchbare Natives benutzt, lädt nicht (mit einer Meldung). Eine Einheit der VM
   trägt ihre Dimensionen und die versteckte Klasse ihrer Umrechnung beim Namen - nur die Einheiten, die ein Text nennen darf, kommen zu denen des Programms
   (`Unit.AddCustomUnits`; ein gepacktes Programm kennt seine Liste nicht und nimmt sie nicht auf).
-* Noch nicht: `class extends` einer Klasse des Programms oder einer Library in einem Plugin; benannte Argumente in Aufrufen des nativen Programms auf Objekten
+* **`class extends` im Plugin** (einer Klasse einer Library - `class extends Api.Device`, der Name darf qualifiziert sein -, von `List`, eines Basistyps
+  `string`/`int`/...): ein Plugin fügt **Methoden** (auch statische) und **Properties mit Rümpfen** hinzu; ein Feld (auch eine Auto-Property), ein Konstruktor,
+  Destruktor oder Operator ist ein Fehler beim Bau (`PluginExtensionProblem`: „'class extends Api.Device' in a plugin (line 4): the field 'age' cannot be added
+  ...“) - die Objekte dieser Klassen legt das Programm an, ohne Platz dafür. Nativ schreibt das Plugin für jede solche Klasse eine Tabelle der Member (wie sonst
+  ein Modul, das eine Klasse eines anderen erweitert) und nennt sie in `FirePlugin.extClasses`/`extTables` (`FIRE_PLUGIN_FORMAT` 4); beim Registrieren kommen sie
+  in `g_extTables` (kopiert und angehängt), und `fireFindMethod` sucht nach den Tabellen des Deskriptors in denen, deren Klasse in der Kette des Objekts steht
+  (`isa`) - so finden die Verteiler des Plugins (über `miss_`), `any`-Aufrufe und Reflect.Call des Programms die Methoden auf jedem Objekt, auch einer Unterklasse
+  im Programm. Basiswerte (`"x".Shout()` über `any`) fragt `fireFindValueMethod` nach `$string`, `$int`, ...; ist das Plugin das einzige, das einen Basistyp
+  erweitert, ist `$int` eine Klasse des Plugins - sie wird nicht genannt und nicht gegen das Programm geprüft, ihre Tabelle ist eine Erweiterung wie die anderen.
+  Fügt ein zweites Plugin dieselbe Methode (Name und Zahl der Argumente) hinzu, lädt es nicht („... it adds the method 'Tag' (0 arguments) to 'Api.Device', which
+  has it already ...“). Die VM hängt die Methoden an die Klassen des Programms (die `.fireplugin`-Datei nennt sie: `PluginBytecode.Extensions`), vergisst die
+  gefundenen Methoden aller Klassen (`RuntimeClass.ForgetFoundMethods`) und vergleicht die Schnittstellen der Module weiter mit denen, die das Programm vor dem
+  ersten Plugin hatte. Dabei behoben: ein Programm, das Plugins laden kann, nennt in den Tabellen seiner Klassen **jede** Methode (`TableWants` kannte die
+  offene Welt nicht) - eine Klasse des Programms, die eine Methode einer Library überschreibt, die nur ein Plugin ruft, rief vorher die der Library.
+* Noch nicht: benannte Argumente in Aufrufen des nativen Programms auf Objekten
   eines Plugins (die Verteiler des Programms kennen nur seine Klassen - die Runtime bräuchte die Namen und Vorgaben der Parameter in den Tabellen der Member);
   Debuggen eines Plugins; msvc.
 * Getestet (`FIRE_TESTS_ONLY=linkage`, nur die Plugins mit `FIRE_TESTS_FILTER=plugin`): ein Projekt mit der Library `Api`, dem Programm (shared) und dem Plugin `Kit`
@@ -1194,7 +1208,9 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   Programms hinein und zurück (`ft`, `apples`), Texte mit seinen Einheiten, ein Name aus einer hinzugefügten und einer Dimension des Programms; dazu Natives in C++ im Ordner `native/` des Projekts
   (`std::string`, eigener Zustand, eine Ausnahme aus C++). JSON (ein Programm mit `#import "json"`, Kit und Meter dafür gebaut): Serialize/Deserialize eines
   Objekts von Kit (eine Liste, ein Feld mit einem Objekt des Plugins), `Json.Deserialize<Api.Device>` mit `"$type"` einer Klasse von Kit, Felder mit Einheiten von
-  Meter - nativ, VM, Windows. Natives in C (`CApi` mit `"language": "c"`): das Plugin ruft eines, das weder das Programm noch `CApi` ruft; eines, das das Programm
+  Meter - nativ, VM, Windows. `class extends` in Kit (Api.Device: Methode, Property, statische Methode; `string`, `int` - nur von Kit erweitert -, `List`) auf
+  Objekten des Programms (eine Unterklasse, die `Speed` überschreibt) und des Plugins, über `any` und Reflect.Call; ein Feld - der Fehler beim Bau; ein zweites
+  Plugin `Kit2` mit derselben Methode - die Meldung (nativ, VM, Windows). Natives in C (`CApi` mit `"language": "c"`): das Plugin ruft eines, das weder das Programm noch `CApi` ruft; eines, das das Programm
   nicht hat - die lesbare Meldung (Linux, Windows; die VM ruft es).
 
 ### Debuggen

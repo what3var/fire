@@ -611,6 +611,13 @@ namespace fire.Bytecode
 
         public FunctionProto? FindMethod(string name, int argCount) => FindMethodWithAccess(name, argCount).Proto;
 
+        /// <summary>Forgets the methods found so far (a fire plugin added methods to this class or one of its bases: `class extends` in a plugin, VM.Plugins.cs).</summary>
+        public void ForgetFoundMethods()
+        {
+            _methodCache.Clear();
+            _candidateCache.Clear();
+        }
+
         /// <summary>Like FindMethod, additionally returns the class that
         /// actually declares `name` ITSELF (relevant for the base-class chain
         /// with inheritance/overrides) together with its access modifier -

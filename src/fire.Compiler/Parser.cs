@@ -2397,6 +2397,12 @@ namespace fire.Compiler
             string targetName = isBaseType
                 ? Advance().Lexeme
                 : Expect(TokenType.Identifier, "Expected the name of the class to extend").Lexeme;
+            // (a qualified name: `class extends Api.Device` - a class of another namespace, e.g. of a library)
+            while (!isBaseType && Check(TokenType.Dot) && PeekAt(1).Type == TokenType.Identifier)
+            {
+                Advance();
+                targetName += "." + Advance().Lexeme;
+            }
             if (isBaseType && !BaseTypeExtensions.IsExtendable(targetName))
                 throw Error(targetName == "byte"
                     ? "'byte' cannot be extended - a byte is an int at run time, extend 'int'"
