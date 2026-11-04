@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using fire.Compiler;
+using fire.Debugging;
 using fire.Native;
 using fire.Package.Manager;
 using fire.Projects;
@@ -275,7 +276,8 @@ static class LinkageTests
             // (FIRE_TESTS_FILTER=plugin: only the fire plugins; =library: only Library.Load/Get)
             string filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") ?? "";
             // (=cancel: only the progress and the cancelling of a build, spark's build window)
-            if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
+            if (filter.Contains("plugindebug", StringComparison.OrdinalIgnoreCase)) PluginDebug(root);   // (only debugging a plugin)
+            else if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
             else if (filter.Contains("library", StringComparison.OrdinalIgnoreCase)) LibraryLoad(root);
             else if (filter.Contains("cancel", StringComparison.OrdinalIgnoreCase)) ProgressAndCancel(root);
             else if (filter.Contains("vmgraphics", StringComparison.OrdinalIgnoreCase)) VmGraphicsForWindows(root);
@@ -980,9 +982,49 @@ static class LinkageTests
                 }
                 else Console.WriteLine("(Plugin unter Windows: uebersprungen - MinGW/Wine fehlt)");
                 PluginNativesC(root);
+                PluginDebug(root);
             }
         }
         finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null); Environment.SetEnvironmentVariable("FIRE_TEST_JSON", null); }
+    }
+
+    /// <summary>Debugging a native plugin (docs/NATIVE_DEBUG_PROTOCOL.md "sources"): a debug build of a program with linkage "shared" loads the debug build of the plugin
+    /// Kit; the event `sources` gives its file the next index, NativeDebugTarget sends the breakpoints by file in it (the program waits for them), Step Into goes into
+    /// its method, scopes and `this` (the field names from the plugin's own table), Step Out - the plan of the VM (DebuggerTests.PluginPlan).</summary>
+    private static void PluginDebug(string root)
+    {
+        string s = Path.Combine(root, "plugdbg");
+        string kitFile = Write(s, "Kit/kit.fire", DebuggerTests.PluginKitText);
+        Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "settings": { "linkage": "plugin" } }""");
+        Write(s, "Host/Host.fireproj", """{ "name": "Host", "settings": { "linkage": "shared" } }""");
+        Write(s, "Host/main.fire", "#import \"reflection\"\nvar lib = Library.Load(Environment.Get(\"FIRE_TEST_PLUGIN\"))\nany w = Reflect.New(\"Kit.Worker\", [])\nvar r = w.Work(5)\nprint(\"result \" + r)\n");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Kit/Kit.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
+        BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
+        var hostPlan = Plan("Host");
+        Directory.CreateDirectory(Path.Combine(root, "plugdbg-out"));
+        var host = Build(hostPlan.SourceTexts, "shared", Path.Combine(root, "plugdbg-out", "host"), plan: hostPlan, mode: VmExecutionMode.Debug);
+        var kitPlan = Plan("Kit");
+        var config = new NativeConfig { Linkage = "plugin", Host = host.Exe };
+        var kit = NativeBuilder.BuildSafe(kitPlan.SourceTexts, config, TargetProfile.Host, config.ResolveToolchain(TargetProfile.Host, "gcc"), Path.Combine(root, "plugdbg-out", "kit"), VmExecutionMode.Debug, plan: kitPlan);
+        if (!host.Ok || !kit.Ok) { Check("Plugin-Debug: Debug-Build von Programm und Plugin", false, host.Log + "\n" + kit.Log); return; }
+        Check("Plugin-Debug: das Plugin ist ein Debug-Build (-O0 -g)", kit.Log.Contains("-O0 -g"), kit.Log);
+        try
+        {
+            using var listener = NativeDebugListener.Start();
+            var psi = new ProcessStartInfo(host.Exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = root };
+            psi.Environment[NativeDebugListener.EnvironmentVariable] = listener.EnvironmentValue;
+            psi.Environment["FIRE_TEST_PLUGIN"] = Path.Combine(root, "plugdbg-out", "kit.so");
+            using var process = Process.Start(psi)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            using var target = listener.Accept(TimeSpan.FromSeconds(30), () => process.HasExited ? "the program ended: " + stderr.Result : null);
+            int user = Enumerable.Range(0, target.SourceFiles.Count).First(i => target.SourceFiles[i] is { } f && Path.GetFileName(f) == "main.fire");
+            DebuggerTests.PluginPlan(target, kitFile, user, null, (ok, title, detail) => Check("Plugin-Debug (nativ): " + title, ok, detail));
+            target.MainThread.RunUntilEnd(() => false);
+            if (!process.WaitForExit(30000)) { try { process.Kill(true); } catch (Exception) { } }
+            Check("Plugin-Debug (nativ): das Programm endet mit dem Ergebnis", stdout.Result.Contains("result 16"), stdout.Result + stderr.Result);
+        }
+        catch (Exception ex) { Check("Plugin-Debug (nativ): ohne Ausnahme", false, ex.ToString()); }
     }
 
     /// <summary>A plugin that calls natives in C of a library (they live in the program, `fire_cn_<function>`): one that neither the program nor the library calls

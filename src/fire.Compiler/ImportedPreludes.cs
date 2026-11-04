@@ -160,7 +160,7 @@ namespace fire.Compiler
             foreach (var key in nativeImports.Where(k => k.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal))
             {
                 var package = PackageStore.Default.FindKey(key) ?? throw new Exception($"The import '{key.Substring(PackageStore.KeyPrefix.Length)}' belongs to a package that is not installed.");
-                if (PreludeOf(package) is { } prelude) { processedSources.Insert(1, Marked(preprocess(prelude), package, key)); inserted++; }
+                if (Wants(key) && PreludeOf(package) is { } prelude) { processedSources.Insert(1, Marked(preprocess(prelude), package, key)); inserted++; }
                 PackageImports.RegisterNames(natives, package);
             }
 

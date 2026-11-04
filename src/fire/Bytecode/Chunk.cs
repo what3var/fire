@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using fire.Values;
 using MemoryPack;
 
@@ -155,6 +157,34 @@ namespace fire.Bytecode
         }
 
         public void MarkLocalName(int depth, int slot, string name) => DebugLocalNames[(depth, slot)] = name;
+
+        // The line table is not part of the serialised chunk (a packed program needs none); a fire plugin carries it for the debugger in DebugLocalNames under
+        // the key (-2, 0) as text "offset,source,line;..." (PluginBytecode.Write/Read), so the serialised form of a chunk does not change.
+        private const int LineTableDepth = -2;
+
+        /// <summary>Puts the line table into the serialised part of the chunk (a plugin's bytecode, for the debugger).</summary>
+        public void KeepLineTable()
+        {
+            if (_lineTable.Count == 0) return;
+            DebugLocalNames[(LineTableDepth, 0)] = string.Join(";", _lineTable.Select(e => $"{e.Offset},{e.SourceIndex},{e.Line}"));
+        }
+
+        /// <summary>After deserialising: the line table <see cref="KeepLineTable"/> kept (if any).</summary>
+        public void RestoreLineTable()
+        {
+            if (!DebugLocalNames.Remove((LineTableDepth, 0), out var text) || _lineTable.Count > 0) return;
+            foreach (var entry in text.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var p = entry.Split(',');
+                if (p.Length == 3 && int.TryParse(p[0], out int offset) && int.TryParse(p[1], out int source) && int.TryParse(p[2], out int line)) _lineTable.Add((offset, source, line));
+            }
+        }
+
+        /// <summary>The source indexes of the line table mapped (a plugin's sources get the next indexes of the program that loads it).</summary>
+        public void RemapSources(Func<int, int> map)
+        {
+            for (int i = 0; i < _lineTable.Count; i++) _lineTable[i] = (_lineTable[i].Offset, map(_lineTable[i].SourceIndex), _lineTable[i].Line);
+        }
 
         // The names of the variables a `DeclareLocal` makes, by the offset of the instruction: the VM writes them into the scope when it makes the slot
         // (see Scope.DebugNameOf), so the debugger shows every variable - globals and those of inner blocks too - with its name. Kept in the same

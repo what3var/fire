@@ -122,7 +122,9 @@ namespace fire.Native
             sb.AppendLine($"static uint16_t fire_units_{id}[{Math.Max(1, _units.Count)}];");
             sb.AppendLine($"static uint8_t fire_enums_{id}[{_enumList.Count + 1}];");
             sb.AppendLine($"static int32_t fire_exct_{id}[{Math.Max(1, _excTypes.Count)}];");
-            sb.AppendLine($"FIRE_MAYBE_UNUSED static const int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}] = {{0}};");
+            // (a debug build: the indexes of its sources among the program's, given when it is registered - fire_dbgPlugin)
+            sb.AppendLine(DebugBuild ? $"static int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}];"
+                : $"FIRE_MAYBE_UNUSED static const int32_t fire_dbgsrc_{id}[{Math.Max(1, _self.Sources.Count)}] = {{0}};");
             return sb.ToString();
         }
 
@@ -210,6 +212,7 @@ namespace fire.Native
                 sb.AppendLine($"static const FireMembers* const kPlExtTables[] = {{{string.Join(", ", extended.Select(c => "&" + MembersName(ModId, c)))}}};");
                 exts = $"{extended.Count}u, kPlExtClasses, kPlExtTables";
             }
+            string debug = PluginDebugTables(sb);
             string link = "NULL";
             if (_dll)
             {
@@ -218,8 +221,27 @@ namespace fire.Native
             }
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}extern const FirePlugin fire_module_info;");
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}const FirePlugin fire_module_info = {{FIRE_PLUGIN_FORMAT, {CString(_self.Name)}, \"{PluginHeadMark}\", {_pluginDeps.Count}u, {depNames}, {depAbis}, "
-                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}}};");
+                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}, {debug}}};");
             return sb.ToString();
+        }
+
+        /// <summary>A debug plugin (fire_rt.h FirePlugin, fire_debug.h fire_dbgPlugin): its sources - file and hash, in the order of fire_dbgsrc_&lt;p&gt; -, the table the
+        /// runtime fills with their indexes among the program's sources, and its classes for the debugger (the names of their fields). Not a debug build: none.</summary>
+        private string PluginDebugTables(StringBuilder sb)
+        {
+            if (!DebugBuild) return "0u, NULL, NULL, NULL, NULL";
+            var files = _program.SourceFiles ?? Array.Empty<string?>();
+            var hashes = _program.SourceHashes ?? Array.Empty<string?>();
+            var sources = _self!.Sources.OrderBy(s => s).ToList();
+            string At(IReadOnlyList<string?> list, int src) => src < list.Count && list[src] != null ? CString(list[src]!) : "NULL";
+            sb.AppendLine($"static const char* const kPlSrcFiles[] = {{{string.Join(", ", sources.Select(s => At(files, s)).DefaultIfEmpty("NULL"))}}};");
+            sb.AppendLine($"static const char* const kPlSrcHashes[] = {{{string.Join(", ", sources.Select(s => At(hashes, s)).DefaultIfEmpty("NULL"))}}};");
+            var classes = _self.Classes.Select(RegisterClass).ToList();
+            for (int k = 0; k < classes.Count; k++)
+                if (classes[k].Fields.Count > 0) sb.AppendLine($"static const char* const kPlDbgFields{k}[] = {{{string.Join(", ", classes[k].Fields.Select(CString))}}};");
+            sb.AppendLine("static const DbgClass kPlDbgClasses[] = {" + string.Join(", ", classes.Select((c, k) => $"{{{CString(c.Rc.Name)}, {c.Fields.Count}, {(c.Fields.Count > 0 ? $"kPlDbgFields{k}" : "NULL")}}}").DefaultIfEmpty("{\"\", 0, NULL}")) + "};");
+            sb.AppendLine($"static const void* fire_pl_dbgClass(uint32_t k) {{ return k < {classes.Count}u ? (const void*)&kPlDbgClasses[k] : NULL; }}");
+            return $"{sources.Count}u, kPlSrcFiles, kPlSrcHashes, fire_dbgsrc_{_self.Id}, fire_pl_dbgClass";
         }
 
         /// <summary>A plugin: the tables of its units (the program's numbers for them are found by dimensions, scale and symbol when it is registered, fire_rt.h

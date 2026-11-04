@@ -67,6 +67,10 @@ namespace fire.Compiler
         /// whose classes the program that loads it reaches by reflection (Reflect.Get/Set, `Type.Of(x).Members`).</summary>
         public bool ClassMeta { get; set; }
 
+        /// <summary>Imports of packages (their keys, `pkg:usb`) whose fire code is the program's own source (a plugin made of a package's prelude, PackageDriverAgent):
+        /// their natives are the program's, their prelude is not inserted again.</summary>
+        public IReadOnlyCollection<string>? OwnImports { get; set; }
+
         /// <summary>The symbols of `#if`: the ones asked for and those of the project's settings.</summary>
         private IReadOnlyList<string>? EffectiveDefines()
         {
@@ -356,6 +360,11 @@ namespace fire.Compiler
             string? ownImport = Plan?.Type == fire.Projects.OutputType.Library ? Plan.Project.Project.ImportName : null;
             var ownBuiltIn = new HashSet<string>();
             if (ownImport != null && BuiltInKey(ownImport) is { } ownKey) { ownBuiltIn.Add(ownKey); nativeImports.Add(ownKey); }
+            foreach (var key in OwnImports ?? Array.Empty<string>())
+            {
+                ownBuiltIn.Add(key);
+                foreach (var with in ImportedPreludes.WithDependencies(key)) nativeImports.Add(with);   // (what its package requires comes along as usual)
+            }
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)

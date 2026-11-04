@@ -239,10 +239,11 @@ und Symbol, neue Dimensionen auf freien Plätzen); Natives in C++ des Plugins in
 dem Bytecode), Natives in C von Packages über die `fire_cn_` des Programms (es legt sie für alle an; fehlt eines, eine lesbare Meldung); JSON der Objekte der
 Plugins (ihre Zeilen `JsonClassInfo`, die Runtime fragt sie nach Id und Namen); `class extends` von Klassen der Libraries und von Basistypen im Plugin (Methoden und
 Properties mit Rümpfen, keine Felder; die Runtime hängt ihre Tabellen an die Klassen, die VM die Methoden); das Programm ist dann eine offene Welt;
-Linux, Windows (MinGW, unter Wine) und die VM (sie lädt den Bytecode, Entscheidung 9.8).
+Linux, Windows (MinGW, unter Wine) und die VM (sie lädt den Bytecode, Entscheidung 9.8). Debuggen eines Plugins (Debug-Build von Programm und Plugin): seine
+Quellen bekommen beim Laden die nächsten Indizes (Ereignis `sources` des Debug-Protokolls, die VM schreibt die Zeilentabellen um), Haltepunkte nach Datei, Step Into, Scopes.
 Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), in Plugins
 Felder in `class extends` fremder Klassen (der Platz in den Objekten des Programms), benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
-Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
+**die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
 Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur
@@ -282,7 +283,8 @@ Dynamisches Laden:
   sind in VM und nativ eine `DestroyedException` (nativ las `isof_*` vorher den freigegebenen Speicher).
 * **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert
   ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie; Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.
-  Offen: spark lädt so die Treiber installierter Packages.
+  spark lädt so die Treiber installierter Packages (der Treiber-Agent: das Prelude jedes Packages mit Treibern einmal als Plugin für die VM übersetzt und im Cache,
+  `Library.Load` + `Reflect.New`; passt ein Plugin nicht, der alte Weg über `#import`; docs/DEVICES.md, Test `FIRE_TESTS_ONLY=drivers`).
 
 ## 10. Clipboard, Drag & Drop
 

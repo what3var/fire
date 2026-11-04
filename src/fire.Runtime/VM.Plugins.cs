@@ -150,6 +150,7 @@ namespace fire.Runtime
                 extensions.Add((target!, rc, added));
             }
             if (problem != null) return problem;
+            LinkPluginSources(plugin, host);
             foreach (var rc in own) classes[rc.Name] = rc;
             foreach (var (target, copy, added) in extensions)
             {
@@ -182,6 +183,29 @@ namespace fire.Runtime
                     rc.StaticFieldValues[field] = value;
                 }
             return null;
+        }
+
+        /// <summary>A plugin's sources got the next source indexes of the program (its lines are told apart from the program's): the classes of the program, the first new
+        /// index, the files and the hashes of the plugin's sources. The debugger (VmDebugTarget) grows its list of sources; raised on the thread that loads the plugin.</summary>
+        public static event Action<object, int, IReadOnlyList<string?>, IReadOnlyList<string?>>? PluginSourcesLinked;
+
+        /// <summary>The sources the plugins added to a program (a set of classes), after the program's own.</summary>
+        private static readonly ConditionalWeakTable<object, StrongBox<int>> PluginSourceCounts = new();
+
+        /// <summary>The line tables of a plugin's code: its own sources become the next indexes after the program's (and the plugins' before), the sources of its
+        /// libraries 0 (their code is the program's); a program that does not know its sources (a packed one) keeps the plugin's numbers.</summary>
+        private void LinkPluginSources(PluginBytecode plugin, LinkedProgram? host)
+        {
+            var program = plugin.Program!;
+            var own = plugin.Sources.Where(s => s.Length == 3 && int.TryParse(s[0], out _)).ToList();
+            if (host?.SourceFiles is not { } hostFiles || own.Count == 0) return;
+            var added = PluginSourceCounts.GetOrCreateValue(_classes);
+            int first = hostFiles.Count + added.Value;
+            added.Value += own.Count;
+            var map = new Dictionary<int, int>();
+            for (int k = 0; k < own.Count; k++) map[int.Parse(own[k][0]!, System.Globalization.CultureInfo.InvariantCulture)] = first + k;
+            foreach (var chunk in PluginBytecode.Chunks(program.Program)) chunk.RemapSources(s => map.TryGetValue(s, out var to) ? to : 0);
+            PluginSourcesLinked?.Invoke(_classes, first, own.Select(s => s[1]).ToList(), own.Select(s => s[2]).ToList());
         }
 
         private static string Short(string abi) => abi.Length > 14 ? abi.Substring(0, 14) : abi;

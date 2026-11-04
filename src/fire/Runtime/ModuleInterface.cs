@@ -87,6 +87,8 @@ namespace fire.Runtime
         /// <summary>The methods its `class extends` adds to classes it does not declare (of the program, of libraries, base types `$string`, ...): class, method,
         /// number of parameters (properties: `get_x`/`set_x`).</summary>
         public List<string[]> Extensions { get; set; } = new();
+        /// <summary>Its own sources (the debugger: the VM gives them the next source indexes of the program): index in its bytecode, file, hash (null: none).</summary>
+        public List<string?[]> Sources { get; set; } = new();
         [System.Text.Json.Serialization.JsonIgnore]
         public LinkedProgram? Program { get; set; }
         /// <summary>The folder of its file (the libraries of its natives lie there).</summary>
@@ -114,7 +116,14 @@ namespace fire.Runtime
             foreach (var rc in program.Program.Classes.Values)
                 if (rc.Decl != null && modules != null && rc.Decl.Source < modules.Count && modules[rc.Decl.Source] == null && !rc.Name.StartsWith('$')) header.Classes.Add(rc.Name);
             header.Classes.Sort(StringComparer.Ordinal);
+            if (modules != null)
+                for (int i = 1; i < modules.Count; i++)
+                    if (modules[i] == null)
+                        header.Sources.Add(new[] { i.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            program.SourceFiles is { } f && i < f.Count ? f[i] : null, program.SourceHashes is { } h && i < h.Count ? h[i] : null });
             byte[] json = JsonSerializer.SerializeToUtf8Bytes(header);
+            // (the line tables go along: the debugger shows the plugin's lines - Chunk.KeepLineTable)
+            foreach (var chunk in Chunks(program.Program)) chunk.KeepLineTable();
             byte[] body = MemoryPackSerializer.Serialize(program);
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
             fs.Write(Magic);
@@ -134,9 +143,39 @@ namespace fire.Runtime
             var program = MemoryPackSerializer.Deserialize<LinkedProgram>(all.AsSpan(Magic.Length + 4 + length));
             if (program == null) return null;
             program.Program.RelinkAfterDeserialize();
+            foreach (var chunk in Chunks(program.Program)) chunk.RestoreLineTable();
             header.Program = program;
             header.Directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? "";
             return header;
+        }
+
+        /// <summary>The chunks of a program: its top level, the members of its classes, the functions inside them (each once).</summary>
+        public static List<Chunk> Chunks(CompiledProgram program)
+        {
+            var seen = new HashSet<Chunk>(ReferenceEqualityComparer.Instance);
+            var list = new List<Chunk>();
+            void VisitChunk(Chunk chunk)
+            {
+                if (!seen.Add(chunk)) return;
+                list.Add(chunk);
+                foreach (var f in chunk.Functions) Visit(f);
+            }
+            void Visit(FunctionProto? proto)
+            {
+                if (proto == null) return;
+                VisitChunk(proto.Chunk);
+                foreach (var d in proto.ParamDefaults) Visit(d);
+            }
+            VisitChunk(program.TopLevel);
+            foreach (var rc in program.Classes.Values)
+            {
+                foreach (var (_, init) in rc.Fields) Visit(init);
+                foreach (var (_, init) in rc.StaticFields) Visit(init);
+                foreach (var overloads in rc.Methods.Values) foreach (var m in overloads) Visit(m);
+                foreach (var ctor in rc.AllConstructors) Visit(ctor);
+                Visit(rc.Destructor);
+            }
+            return list;
         }
     }
 }
