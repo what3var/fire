@@ -24358,8 +24358,9 @@ else
                     var k = v.Read(buf, 0, 64)
                     print("by ip " + IO.Utf8.GetString(buf, 0, k))
                     Net.IConnection iv = v
-                    iv.SetReadTimeout(3000)
-                    print("tls iconnection " + (v is of Net.IConnection) + " " + iv.GetRemoteHost() + " " + (iv.GetRemotePort() == port) + " " + (iv.GetLocalPort() == v.LocalPort) + " " + v.LocalHost + " " + iv.GetReadTimeout())
+                    iv.ReadTimeout = 3000
+                    IO.IStream sv = iv
+                    print("tls iconnection " + (v is of Net.IConnection) + " " + iv.RemoteHost + " " + (iv.RemotePort == port) + " " + (iv.LocalPort == v.LocalPort) + " " + v.LocalHost + " " + iv.ReadTimeout + " " + (sv is of Net.IConnection))
                     v.Close()
                     """),
                 ("Https: Client und Server ueber TLS (https://-URL, Zertifikat des Tests, Zertifikatsfehler)", tlsHead + """
@@ -24936,9 +24937,10 @@ else
             print("got " + n + " " + IO.Utf8.GetString(buf, 0, n))
             print("remote " + s.RemoteHost + " " + (s.RemotePort == c.LocalPort) + " " + (c.RemotePort == l.Port))
             Net.IConnection ic = s
-            ic.SetReadTimeout(700)
-            ic.SetWriteTimeout(2s)
-            print("iconnection " + (s is of Net.IConnection) + " " + ic.GetRemoteHost() + " " + (ic.GetRemotePort() == c.LocalPort) + " " + (ic.GetLocalPort() == l.Port) + " " + ic.GetLocalHost() + " " + ic.GetReadTimeout() + " " + s.ReadTimeout + " " + ic.GetWriteTimeout())
+            ic.ReadTimeout = 700
+            ic.WriteTimeout = 2s
+            IO.IStream plain = ic
+            print("iconnection " + (s is of Net.IConnection) + " " + ic.RemoteHost + " " + (ic.RemotePort == c.LocalPort) + " " + (ic.LocalPort == l.Port) + " " + ic.LocalHost + " " + ic.ReadTimeout + " " + s.ReadTimeout + " " + ic.WriteTimeout + " " + (plain is of IO.IStream))
             s.WriteString("pong!")
             c.ReadTimeout = 500
             var m = c.Read(buf, 0, 16)
