@@ -129,7 +129,11 @@ print(d.Name())                            // my driver
   ("The plugin library '...' cannot be loaded: it calls the native function 'x' in C, which this program does not export to plugins ...").
 - **JSON** of objects of a plugin's classes works like that of the program's (`Json.Serialize`, `Json.Deserialize` with `"$type": "Kit.Settings"`, fields
   with the plugin's units) when the program imports `json`.
-- Not yet: plugins with `class extends` of a class of the program or a library; named arguments in calls of a native program on objects of a plugin;
+- A plugin may **extend** classes of its libraries and base types (`class extends Api.Device { ... }`, `class extends string { ... }`): with methods and
+  properties that have bodies - not with fields, constructors or operators (the objects are made by the program; the build says so). What it adds is there
+  for every object of the class once the plugin is loaded, also for the program (`any d = dev; d.Tag()`, `Reflect.Call`). Two plugins that add the same method
+  to a class do not load together (a `LibraryException`).
+- Not yet: named arguments in calls of a native program on objects of a plugin;
   in a native program `Reflect.Get`/`Set` of a plugin's own fields unless the plugin imports `reflection` itself; debugging a plugin.
 
 ### Functions that can fail: `try Name(...)`

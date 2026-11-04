@@ -236,10 +236,11 @@ VM), ein Programm mit `"shared"` lädt es mit `Library.Load` (Prüfung nur über
 registriert seine Klassen (Deskriptoren, Typen von `catch` und Enums nach Namen, Reflection, statische Initialisierer) und seine Einheiten (nach Dimensionen, Faktor
 und Symbol, neue Dimensionen auf freien Plätzen); Natives in C++ des Plugins in seiner Bibliothek (eine eigene Kopie; für die VM eine Bibliothek mit der C-ABI neben
 dem Bytecode), Natives in C von Packages über die `fire_cn_` des Programms (es legt sie für alle an; fehlt eines, eine lesbare Meldung); JSON der Objekte der
-Plugins (ihre Zeilen `JsonClassInfo`, die Runtime fragt sie nach Id und Namen); das Programm ist dann eine offene Welt;
+Plugins (ihre Zeilen `JsonClassInfo`, die Runtime fragt sie nach Id und Namen); `class extends` von Klassen der Libraries und von Basistypen im Plugin (Methoden und
+Properties mit Rümpfen, keine Felder; die Runtime hängt ihre Tabellen an die Klassen, die VM die Methoden); das Programm ist dann eine offene Welt;
 Linux, Windows (MinGW, unter Wine) und die VM (sie lädt den Bytecode, Entscheidung 9.8).
 Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), in Plugins
-`class extends` fremder Klassen, benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
+Felder in `class extends` fremder Klassen (der Platz in den Objekten des Programms), benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
 Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
 Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:

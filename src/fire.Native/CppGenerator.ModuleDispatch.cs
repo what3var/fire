@@ -104,7 +104,7 @@ namespace fire.Native
 
         /// <summary>Does the table of the program list the method (some module calls it by name)? A library lists all its members.</summary>
         private bool TableWants(string name, int argc) =>
-            LibraryRole || _dispatchers.Contains((name, argc)) || _libDispatchers.Contains((name, argc))
+            LibraryRole || _openWorld || _dispatchers.Contains((name, argc)) || _libDispatchers.Contains((name, argc))
             || argc == 0 && name.StartsWith("get_", StringComparison.Ordinal) && WantsField(name.Substring(4))
             || argc == 1 && name.StartsWith("set_", StringComparison.Ordinal) && WantsField(name.Substring(4));
 
@@ -271,7 +271,8 @@ namespace fire.Native
             sb.AppendLine("    (void)list; (void)caller;");
             string av = argc == 0 ? "NULL" : "av_";
             string avDecl = argc == 0 ? "" : $"Value av_[{argc}] = {{{string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}"))}}}; ";
-            sb.AppendLine($"    if (self.kind == K_Class && leafAlive(self)) {{ uint32_t k_; const FireMethod* m_ = fireFindMethod(asObj(self)->cls, {CString(name)}, {argc}, &k_); if (m_) {{ {avDecl}return m_->fn(k_, self, {av}, list, caller); }} }}");
+            // (a base value: what plugins add to its type - `class extends string` in a plugin)
+            sb.AppendLine($"    {{ uint32_t k_; const FireMethod* m_ = fireFindValueMethod(self, {CString(name)}, {argc}, &k_); if (m_) {{ {avDecl}return m_->fn(k_, self, {av}, list, caller); }} }}");
             if (OwnMethodId(name, argc) is { } ownId)
             {
                 int baseArgs = OwnMethodBaseArgs(ownId);

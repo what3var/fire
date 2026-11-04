@@ -199,6 +199,17 @@ namespace fire.Native
             foreach (var (cls, field, init) in _pluginStaticInits)
                 sb.AppendLine($"    {{ Value r = {init.Name}(Undef()); {(_usesExceptions ? "if (g_unwind.active) return; " : "")}adopt(r, g_globalOwn); {StaticFieldVar(cls, field)} = r; retain(r); }}   // {cls}.{field}");
             sb.AppendLine("}");
+            // its `class extends` of classes it does not declare (of the program, of libraries, base types): their tables by the name of the class (the runtime adds
+            // them to what an object of such a class finds by name - fireFindMethod)
+            // (`class extends int` where nothing else extends int: `$int` is a class of the plugin - its table is an extension all the same)
+            string exts = "0u, NULL, NULL";
+            var extended = ExtServed.Select(c => c.Rc).Concat(_self.Classes.Where(n => n.StartsWith('$')).Select(FindClass)).ToList();
+            if (extended.Count > 0)
+            {
+                sb.AppendLine($"static const char* const kPlExtClasses[] = {{{string.Join(", ", extended.Select(c => CString(c.Name)))}}};");
+                sb.AppendLine($"static const FireMembers* const kPlExtTables[] = {{{string.Join(", ", extended.Select(c => "&" + MembersName(ModId, c)))}}};");
+                exts = $"{extended.Count}u, kPlExtClasses, kPlExtTables";
+            }
             string link = "NULL";
             if (_dll)
             {
@@ -207,7 +218,7 @@ namespace fire.Native
             }
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}extern const FirePlugin fire_module_info;");
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}const FirePlugin fire_module_info = {{FIRE_PLUGIN_FORMAT, {CString(_self.Name)}, \"{PluginHeadMark}\", {_pluginDeps.Count}u, {depNames}, {depAbis}, "
-                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}}};");
+                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}, {exts}}};");
             return sb.ToString();
         }
 
@@ -281,6 +292,7 @@ namespace fire.Native
                 if (rc.Decl != null && self.Sources.Contains(rc.Decl.Source)) self.Classes.Add(rc.Name);
             self.Classes.Sort(StringComparer.Ordinal);
             if (self.Classes.Count == 0) throw new NativeNotSupportedException("the plugin declares no classes");
+            if (PluginExtensionProblem(program, self.Sources) is { } extensionProblem) throw new NativeNotSupportedException(extensionProblem);
             var all = specs.Append(self).ToList();
             ModuleFlags? flags = host != null ? ParseFlags(host.Flags) : null;
             if (host != null && host.Target != target.Name) throw new NativeNotSupportedException($"the program '{host.Target}' is built for another target than the plugin ('{target.Name}')");
@@ -327,6 +339,33 @@ namespace fire.Native
             string? natives = output.NativeThunks.Length > 0 ? headGen.PluginNativesCpp(output) : null;
             log.AppendLine($"plugin {name}: {self.Classes.Count} classes, switches {flags.Value}, runtime {key.Substring(0, 12)}{(natives != null ? $", natives in C++ ({output.CppNatives.Count})" : "")}");
             return new PluginBuildPlan(c, natives, name, specs.Select(s => (s.Name, $"{InterfaceFormat}:{abi[s]}")).ToList(), log.ToString());
+        }
+
+        /// <summary>A plugin's `class extends` of a class of the program or a library (or of a base type): it may add methods and properties with bodies - the
+        /// objects of that class are made by the program, they have no room for a field the plugin adds (nor does the class a constructor, destructor, static field
+        /// or operator the program would have to know). Null: fine; else what is wrong (the text of the build error).</summary>
+        public static string? PluginExtensionProblem(LinkedProgram program, IReadOnlySet<int> pluginSources)
+        {
+            foreach (var rc in program.Program.Classes.Values.OrderBy(c => c.Name, StringComparer.Ordinal))
+            {
+                if (rc.Decl == null || pluginSources.Contains(rc.Decl.Source)) continue;
+                string target = BaseTypeExtensions.TryGetTypeName(rc.Name, out var baseType) ? baseType : rc.Name;
+                foreach (var member in rc.Decl.Members)
+                {
+                    if (!pluginSources.Contains(member.Source)) continue;
+                    string? what = member switch
+                    {
+                        FieldDecl f => $"the field '{f.Name}'",
+                        ConstructorDecl => "a constructor",
+                        DestructorDecl => "a destructor",
+                        MethodDecl m when m.Name.StartsWith("operator", StringComparison.Ordinal) || m.Name is "GetIndex" or "SetIndex" => $"the operator '{m.Name}'",
+                        _ => null,
+                    };
+                    if (what != null)
+                        return $"'class extends {target}' in a plugin (line {member.Line}): {what} cannot be added to a class of the program or a library - its objects are made by the program; a plugin adds methods and properties with get/set bodies only.";
+                }
+            }
+            return null;
         }
 
         /// <summary>A plugin's natives in C++ (this generator: the plugin's program, its packages collected): the configuration of the runtime of its C file, fire_rt_cpp.hpp,

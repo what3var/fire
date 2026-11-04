@@ -496,7 +496,20 @@ static class LinkageTests
 
     private const string PluginKit = """
         #import "Api"
+        // (class extends of a class of a library and of base types: methods, a property with a body, a static method - the objects are the program's)
+        class extends Api.Device {
+            string Tag() { return "tag " + this.id + " " + this.Speed() }
+            string Label { get { return "L" + this.id } }
+            static string Kind() { return "devices" }
+        }
+        class extends string { string Shout() { return this.ToUpper() + "!" } }
+        class extends int { bool Big() { return this > 100 } }
+        class extends List { int Twice() { return this.Count * 2 } }
         namespace Kit {
+            class Probe {
+                construct() { }
+                string Look(Api.Device d) { var l = new List<int>(); l.Add(1); return d.Tag() + " " + "hi".Shout() + " " + l.Twice() + " " + d.Label + " " + Api.Device.Kind() + " " + 500.Big() }
+            }
             enum Mode { Slow, Fast }
             class MyDriver : Api.IDriver {
                 static int made = 0
@@ -540,6 +553,10 @@ static class LinkageTests
         class Mine : Api.Device {
             construct() : base("mine") { }
         }
+        class Quick : Api.Device {
+            construct() : base("quick") { }
+            override int Speed() { return 3 }
+        }
         any lib = undefined
         try { lib = Library.Load(Environment.Get("FIRE_TEST_PLUGIN")) } catch (LibraryException e) { print("load: " + e.message); terminate(3) }
         var names = lib.Classes()
@@ -572,6 +589,13 @@ static class LinkageTests
         tuned.Level = tuned.Level + 1
         Api.INamed named = tuned
         print(named.Title + " " + tuned.Level + " " + (named is of Api.ITuned) + " " + (tuned is of Api.INamed))
+        // (what Kit's class extends adds to Api.Device, string, int, List: on objects of the program - a subclass that overrides Speed - and of the plugin)
+        any probe = Reflect.New("Kit.Probe", [])
+        print(probe.Look(new Quick()) + " | " + probe.Look(dev))
+        any qd = new Quick()
+        any sx = "abc"
+        any nx = 7
+        print(qd.Tag() + " " + Reflect.Call(new Api.Device("r"), "Tag", []) + " " + qd.Label + " " + sx.Shout() + " " + nx.Big())
         any up = Environment.Get("FIRE_TEST_UNITS")
         if (up != undefined) {
             Library.Load(up)
@@ -584,6 +608,8 @@ static class LinkageTests
             print(Reflect.Call(g, "Native", [21]))
             print(c + " " + (c * 4apples) + " " + (c * 1m / 1s) + " " + (4apples * 1s) + " " + "3mm".ToFloat() + " " + "2ft".ToFloat() + " " + (1.0ft + 1.0m) + " " + (m * c))
         }
+        any dupPlugin = Environment.Get("FIRE_TEST_DUP")
+        if (dupPlugin != undefined) { try { Library.Load(dupPlugin) } catch (LibraryException e) { print("dup: " + e.message) } }
         """;
 
     /// <summary>JSON of the plugins' objects (a program with `#import "json"`): Kit.Settings (a list, a field with an object of the plugin), a subclass of a class of
@@ -669,9 +695,10 @@ static class LinkageTests
     private const string PluginJsonExpected = "{\"$type\":\"Kit.Settings\",\"title\":\"kit\",\"level\":3,\"marks\":[1,2],\"dev\":{\"$type\":\"Kit.FastDevice\",\"id\":\"j0\"}}\n"
         + "kit 3 2 2 fast j0 9 Kit.Settings\nfast j1 9\n{\"$type\":\"Meter.Reading\",\"level\":3.0,\"span\":2.5,\"heat\":20.0,\"loose\":{\"$value\":4.0,\"$unit\":\"bn\"}}\n3pears 2.5km 20C 293.15K 4bn\n";
 
-    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Settings Kit.Tuner True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
-        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 5\nnope: Unknown class 'Kit.Nope'.\n"
-        + "7 kit title:string level:int marks:List<int> dev:Api.Device method\ntuner 5 True True\n";
+    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Probe Kit.Settings Kit.Tuner True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
+        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 6\nnope: Unknown class 'Kit.Nope'.\n"
+        + "7 kit title:string level:int marks:List<int> dev:Api.Device method\ntuner 5 True True\n"
+        + "tag quick 3 HI! 2 Lquick devices True | tag x1 9 HI! 2 Lx1 devices True\ntag quick 3 tag r 1 Lquick ABC! False\n";
 
     /// <summary>fire plugins (ROADMAP 9 phase D b): a project with a library `Api` (an interface, a class, an exception), a program with linkage "shared" that loads the
     /// plugin `Kit` (built with `--linkage plugin --host`) and uses its classes through the interface, the base class, reflection and catch; the errors when the plugin does
@@ -683,12 +710,14 @@ static class LinkageTests
         Write(s, "Api/Api.fireproj", """{ "name": "Api", "type": "library" }""");
         Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
         Write(s, "Kit/kit.script", PluginKit);
+        Write(s, "Kit2/Kit2.fireproj", """{ "name": "Kit2", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
+        Write(s, "Kit2/kit2.script", "#import \"Api\"\nclass extends Api.Device { string Tag() { return \"other\" } }\nnamespace Kit2 { class Other { construct() { } } }\n");
         Write(s, "Meter/Meter.fireproj", """{ "name": "Meter", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" }, "native": { } }""");
         Write(s, "Meter/native/meter.hpp", PluginMeterCpp);
         Write(s, "Meter/meter.script", PluginMeter);
         Write(s, "Host/Host.fireproj", """{ "name": "Host", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "shared" } }""");
         Write(s, "Host/main.script", PluginHost);
-        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Meter/Meter.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Kit2/Kit2.fireproj", "Meter/Meter.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
         BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
         Built BuildPlugin(string output, string? host, ToolchainDef? toolchain = null, TargetProfile? target = null, string project = "Kit")
         {
@@ -750,6 +779,30 @@ static class LinkageTests
                     Check("Plugin: die VM prueft die Schnittstelle genauso", vmMismatch.Contains("The plugin 'Kit' cannot be loaded: it was built against another interface of the module 'Api'"), vmMismatch);
                 }
                 finally { File.WriteAllText(apiSource, apiBefore); }
+
+                // class extends in a plugin: a field cannot be added to a class of a library (its objects are made by the program) - the build says so
+                string kitSource = Path.Combine(s, "Kit", "kit.script");
+                string kitBefore = File.ReadAllText(kitSource);
+                try
+                {
+                    File.WriteAllText(kitSource, kitBefore.Replace("    static string Kind()", "    int age = 3\n    static string Kind()"));
+                    var withField = BuildPlugin(Path.Combine(root, "plug-field", "kit"), host.Exe);
+                    Check("Plugin: class extends einer Klasse einer Library mit einem Feld - der Bau sagt, dass ein Plugin nur Methoden und Properties hinzufuegt",
+                        !withField.Ok && withField.Log.Contains("'class extends Api.Device' in a plugin") && withField.Log.Contains("the field 'age' cannot be added"), withField.Log);
+                }
+                finally { File.WriteAllText(kitSource, kitBefore); }
+                // a second plugin that adds the same method to Api.Device: readable error (natively and in the VM)
+                var kit2 = BuildPlugin(Path.Combine(root, "plug-kit2", "kit2"), host.Exe, project: "Kit2");
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.so"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_DUP", Path.Combine(root, "plug-kit2", "kit2.so"));
+                string dupNative = host.Ok && kit2.Ok ? Exec(host.Exe) : "";
+                Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plug-kit", "kit.fireplugin"));
+                Environment.SetEnvironmentVariable("FIRE_TEST_DUP", Path.Combine(root, "plug-kit2", "kit2.fireplugin"));
+                string dupVm = Vm(hostPlan.SourceTexts, hostPlan);
+                Environment.SetEnvironmentVariable("FIRE_TEST_DUP", null);
+                const string dupText = "dup: The plugin 'Kit2' cannot be loaded: it adds the method 'Tag' (0 arguments) to 'Api.Device', which has it already";
+                Check("Plugin: zwei Plugins fuegen Api.Device dieselbe Methode hinzu - eine lesbare LibraryException (nativ)", dupNative.Contains(dupText), $"{dupNative}\n{kit2.Log}");
+                Check("Plugin: zwei Plugins fuegen dieselbe Methode hinzu - die VM wie nativ", dupVm.Contains(dupText), dupVm);
 
                 // a program with linkage "static" cannot load plugins
                 Directory.CreateDirectory(Path.Combine(root, "plug-static"));

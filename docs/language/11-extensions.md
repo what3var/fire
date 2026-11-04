@@ -25,6 +25,9 @@ print(a.Describe())         // Tom (3)
 - The class must exist in the program (or its standard library). Several `class extends` blocks for the same class are merged, also from other files.
 - A member that the class already has with the same name and number of parameters is a duplicate definition, not a replacement.
 - Generic classes are extended with their raw name: `class extends List { T Last() { return this[this.Count - 1] } }`.
+- A class of another namespace is named in full or found through the current namespace and `#using`: `class extends Api.Device { ... }`.
+- In a fire plugin ([Native code](18-native-code.md#fire-plugins)) an extension of a class of a library or of a base type may add methods and properties
+  with bodies only (no fields, constructors or operators): the objects are made by the program that loads the plugin.
 
 ## Extending base types
 
