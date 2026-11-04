@@ -1,0 +1,39 @@
+<Window Class="Styled" Title="Styles" Width="460" Height="190">
+  <Resources>
+    <!-- without a key: every CheckBox of this window -->
+    <Style Target="CheckBox">
+      <Setter Property="Foreground" Value="#2B579A"/>
+    </Style>
+    <Style Key="Heading" Target="Label">
+      <Setter Property="Color" Value="#2B579A"/>
+      <Setter Property="FontSize" Value="18"/>
+    </Style>
+    <!-- with a key: for the elements that ask for it -->
+    <Style Key="Primary" Target="Button">
+      <Setter Property="Background" Value="#2B579A"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="Width" Value="120"/>
+      <Trigger Property="Hover" Value="true">
+        <Setter Property="Background" Value="#3D6FBF"/>
+      </Trigger>
+    </Style>
+    <!-- a new look for a control: one root element made of other elements -->
+    <ControlTemplate Key="Pill" Target="Button">
+      <Border Name="bd" Background="#3DA35D" Padding="14,6" Thickness="0">
+        <Label Name="txt" Text="{TemplateBinding Text}" Color="#FFFFFF"/>
+      </Border>
+      <Trigger Property="Pressed" Value="true">
+        <Setter Target="bd" Property="Background" Value="#1F5E33"/>
+      </Trigger>
+    </ControlTemplate>
+  </Resources>
+  <StackPanel Margin="16" Spacing="12">
+    <Label Text="Styles and templates" Style="Heading"/>
+    <CheckBox Text="Implicit style: every check box is blue" IsChecked="true"/>
+    <StackPanel Orientation="Horizontal" Spacing="12">
+      <Button Text="Default"/>
+      <Button Text="Primary" Style="Primary"/>
+      <Button Text="Pill template" Template="Pill" Width="-1"/>
+    </StackPanel>
+  </StackPanel>
+</Window>

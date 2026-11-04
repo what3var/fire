@@ -1,0 +1,15 @@
+// Made from docs/ui/menus.md by extract.py - edit the page, not this file.
+#include "ui-menus/Editor.fxml"
+#include "shot.fire"
+
+class EditorWindow : EditorBase {
+    override undefined NewFile(any sender) { this.text.SetText("") }
+    override undefined OpenFile(any sender) { print("open ...") }
+    override undefined ToggleWrap(any sender) { this.text.WordWrap = !this.text.WordWrap }
+    override undefined Quit(any sender) { this.window.Close() }
+}
+
+var window = new EditorWindow()
+window.ui.Tick()
+window.menu.Open(window.ui, 0)
+Shot.Save(window, "ui-menus.png")

@@ -1,0 +1,19 @@
+<Window Class="People" Title="People" Width="560" Height="260">
+  <Grid Width="560" Height="260" Columns="*, 180">
+    <ListView Name="table" Grid.Column="0" Width="-1" Height="-1" Margin="8" ItemsSource="{Binding people}" OnActivate="ShowPerson">
+      <Column Header="Name" Member="name" Width="140"/>
+      <Column Header="Born" Member="born" Width="60"/>
+      <Column Header="Known for" Member="field" Width="-1"/>
+    </ListView>
+    <TreeView Grid.Column="1" Width="-1" Height="-1" Margin="0,8,8,8">
+      <TreeNode Text="Computing" Expanded="true">
+        <TreeNode Text="Languages" Expanded="true">
+          <TreeNode Text="fire"/>
+          <TreeNode Text="COBOL"/>
+        </TreeNode>
+        <TreeNode Text="Machines"/>
+      </TreeNode>
+      <TreeNode Text="Mathematics"/>
+    </TreeView>
+  </Grid>
+</Window>
