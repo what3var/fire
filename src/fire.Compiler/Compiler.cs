@@ -501,6 +501,15 @@ namespace fire.Compiler
             _chunk.EmitByte(0);
         }
 
+        /// <summary>The type of a `catch`: a class, or an interface the exception class implements (`catch (IRetryable e)`).</summary>
+        private string ResolveCatchType(TypeRef tr)
+        {
+            string name = ResolveTypeRef(tr);
+            if (_knownClassNames == null || _knownClassNames.Contains(name) || tr.TypeArgs is { Count: > 0 }) return name;
+            string iface = tr.ResolveBaseName(n => _refParams.InterfaceNames.Contains(n));
+            return _refParams.InterfaceNames.Contains(iface) ? iface : name;
+        }
+
         private string ResolveTypeRef(TypeRef tr) =>
             _knownClassNames == null ? tr.BaseName
             : tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, _knownClassNames.Contains)
@@ -710,6 +719,30 @@ namespace fire.Compiler
         };
 
         /// <summary>The reflection metadata of a class: what the runtime otherwise does not keep (type names, parameter names, `readonly`, property form).</summary>
+        /// <summary>The interface `name` and every interface it extends (`interface IConnection : IO.IStream`), each once, the interface itself first. A cycle
+        /// (the resolver reports it) ends where a name repeats.</summary>
+        internal static List<string> InterfaceClosure(string name, IReadOnlyDictionary<string, InterfaceDecl> interfaces)
+        {
+            var result = new List<string>();
+            var pending = new Stack<string>();
+            pending.Push(name);
+            while (pending.Count > 0)
+            {
+                string n = pending.Pop();
+                if (result.Contains(n)) continue;
+                result.Add(n);
+                if (!interfaces.TryGetValue(n, out var id)) continue;
+                var bases = id.BaseRefs ?? Array.Empty<TypeRef>();
+                for (int i = bases.Count - 1; i >= 0; i--)
+                {
+                    var b = bases[i];
+                    bool Known(string k) => interfaces.ContainsKey(k);
+                    pending.Push(b.TypeArgCount == 0 ? b.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(b, b.TypeArgCount, Known));
+                }
+            }
+            return result;
+        }
+
         private ClassMeta BuildClassMeta(ClassDecl cd)
         {
             var meta = new ClassMeta();
@@ -815,6 +848,8 @@ namespace fire.Compiler
             // need no runtime representation of their own (purely dynamic
             // method call by name), the resolver has already checked fulfilment.
             var interfaceNames = new HashSet<string>(program.OfType<InterfaceDecl>().Select(i => i.Name));
+            var interfaceDecls = new Dictionary<string, InterfaceDecl>();
+            foreach (var id in program.OfType<InterfaceDecl>()) interfaceDecls.TryAdd(id.Name, id);
             _refParams.InterfaceNames.UnionWith(interfaceNames);
             _refParams.EnumNames.UnionWith(program.OfType<EnumDecl>().Select(e => e.Name));
             var baseRefOf = new Dictionary<RuntimeClass, TypeRef>();
@@ -824,7 +859,8 @@ namespace fire.Compiler
                 {
                     bool Known(string name) => name == "Exception" || classes.ContainsKey(name) || interfaceNames.Contains(name);
                     string n = baseRef.TypeArgCount == 0 ? baseRef.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(baseRef, baseRef.TypeArgCount, Known);
-                    if (interfaceNames.Contains(n)) { rc.Interfaces.Add(n); continue; }
+                    // (an interface and every interface it extends: the object is of each - `is of`, casts, overloads and the native isof tables read this list)
+                    if (interfaceNames.Contains(n)) { foreach (var i in InterfaceClosure(n, interfaceDecls)) if (!rc.Interfaces.Contains(i)) rc.Interfaces.Add(i); continue; }
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
                     if (n == "Exception" && !classes.ContainsKey(n)) continue; // no RuntimeClass available (a program without the prelude) -> Base stays null
                     // (the interfaces may follow the base class: `class Puppy : Dog, IPet` - the loop goes on for them)
@@ -2188,7 +2224,7 @@ namespace fire.Compiler
             foreach (var c in t.Catches)
             {
                 int catchAddr = _chunk.Here;
-                template.Catches.Add((c.TypeRef == null ? null : ResolveTypeRef(c.TypeRef), catchAddr));
+                template.Catches.Add((c.TypeRef == null ? null : ResolveCatchType(c.TypeRef), catchAddr));
 
                 // The catch scope created by the VM counts along for a `break`/`continue` in the block (see CompileBreakOrContinue).
                 tryContext.Phase = TryPhase.Catch;

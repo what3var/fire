@@ -328,9 +328,12 @@ namespace fire.Ast
     /// Type may carry a unit (`int Delay : ms { get; }`).</summary>
     public sealed record InterfacePropertySig(int Line, TypeRef? Type, string Name, bool HasGet, bool HasSet);
 
+    /// <summary>BaseRefs: the interfaces this one extends (`interface IConnection : IO.IStream, IOther`) - a class implementing it implements them too and is
+    /// of every one of them (the compiler puts the whole closure into RuntimeClass.Interfaces).</summary>
     public sealed record InterfaceDecl(
         int Source, int Line, string Name, IReadOnlyList<InterfaceMethodSig> Methods,
         IReadOnlyList<TypeParam>? TypeParams = null,
+        IReadOnlyList<TypeRef>? BaseRefs = null,
         IReadOnlyList<InterfacePropertySig>? Properties = null) : Stmt(Source, Line)
     {
         public IReadOnlyList<InterfacePropertySig> PropertySigs => Properties ?? System.Array.Empty<InterfacePropertySig>();

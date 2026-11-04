@@ -611,6 +611,93 @@ static class TypeTests
                 && Run("interface I { X { get; } }\nprint(1)") is var untyped && untyped == "|ERROR E3162", Run("interface I { X { get; } }\nprint(1)"));
         }
 
+        // interface inheritance (SPEC 8.5): `interface IConnection : IStream, IOther` - a class implements all of it and is of every base interface
+        {
+            string ifaces = """
+                interface IReader { int Read() }
+                interface IWriter { undefined Write(int v) }
+                interface IStream : IReader, IWriter { int Size { get; } }
+
+                """;
+            Check("Interface-Vererbung: zuweisbar an das Basis-Interface und als Parameter, is of, Cast, Overload", Run(ifaces + """
+                class Mem : IStream {
+                    int last
+                    int Read() { return this.last }
+                    undefined Write(int v) { this.last = v }
+                    int Size { get { return 1 } }
+                }
+                class Use {
+                    static int Pull(IReader r) { return r.Read() }
+                    static string Pick(IWriter w) { return "writer" }
+                    static string Pick(string s) { return "string" }
+                }
+                IStream s = new Mem()
+                s.Write(7)
+                IReader r = s
+                IWriter w = s
+                print(Use.Pull(s) + " " + r.Read() + " " + Use.Pick(s) + " " + s.Size)
+                print((s is of IReader) + " " + (new Mem() is of IWriter) + " " + (r!IStream).Size)
+                """) is var basic && basic == "|7 7 writer 1\nTrue True 1", basic);
+            Check("Interface-Vererbung: strikt ohne Befund", Run(ifaces + """
+                class Mem : IStream { int Read() { return 1 }
+                 undefined Write(int v) { }
+                 int Size { get { return 1 } } }
+                IStream s = new Mem()
+                IReader r = s
+                print(r.Read())
+                """, TypeCheckMode.Strict) is var strict && strict == "|1", strict);
+            Check("Interface-Vererbung: where T is of IReader nimmt eine Klasse eines abgeleiteten Interfaces und das Interface selbst (kein E4013)", Run(ifaces + """
+                class Mem : IStream { int Read() { return 1 }
+                 undefined Write(int v) { }
+                 int Size { get { return 1 } } }
+                class Holder<T> where T is of IReader { T item }
+                var a = new Holder<Mem>()
+                var b = new Holder<IStream>()
+                print(2)
+                """) is var where && where == "|2"
+                && Run(ifaces + "class Holder<T> where T is of IStream { T item }\nvar a = new Holder<IReader>()") == "|ERROR E4013", where);
+            Check("Interface-Vererbung: ein geerbtes Mitglied fehlt (E4010)", Run(ifaces + "class Mem : IStream { int Read() { return 1 }\n int Size { get { return 1 } } }\nprint(1)") is var missing && missing == "|ERROR E4010", missing);
+            Check("Interface-Vererbung: ein geerbtes Mitglied privat (E4063)", Run(ifaces + "class Mem : IStream { int Read() { return 1 }\n private undefined Write(int v) { }\n int Size { get { return 1 } } }\nprint(1)") is var priv && priv == "|ERROR E4063", priv);
+            Check("Interface-Vererbung: ein Zyklus ist E4068, eine Klasse als Basis E4067", Run("interface IA : IB { }\ninterface IB : IC { }\ninterface IC : IA { }\nprint(1)") is var cycle && cycle.StartsWith("|ERROR E4068")
+                && Run("class K { }\ninterface IA : K { }\nprint(1)") == "|ERROR E4067"
+                && CompileText("interface IA : IB { }\ninterface IB : IA { }").Contains("Interface 'IA' extends itself (IA -> IB -> IA)"), cycle);
+            Check("Interface-Vererbung: Raute (zwei Wege zum selben Interface)", Run("""
+                interface IBase { int Id() }
+                interface ILeft : IBase { int L() }
+                interface IRight : IBase { int R() }
+                interface IBoth : ILeft, IRight { }
+                class Both : IBoth { int Id() { return 1 }
+                 int L() { return 2 }
+                 int R() { return 3 } }
+                IBoth b = new Both()
+                ILeft l = b
+                IBase x = l
+                IRight r = b
+                print(x.Id() + l.L() + r.R() + b.Id())
+                print(b is of IBase)
+                """, TypeCheckMode.Strict) is var diamond && diamond == "|7\nTrue", diamond);
+            Check("Interface-Vererbung: ein unverwandtes Interface ist nicht zuweisbar (TC001)", Run(ifaces + """
+                class Mem : IStream { int Read() { return 1 }
+                 undefined Write(int v) { }
+                 int Size { get { return 1 } } }
+                interface IOther { }
+                IReader r = new Mem()
+                IOther o = r
+                """) is var unrelated && unrelated.StartsWith("TC001|"), unrelated);
+            Check("Interface-Vererbung: generisch (IList<T> : IEnumerable<T>) - foreach kennt den Elementtyp", Run("""
+                interface IList<T> : IEnumerable<T> { int Count { get; } }
+                class Nums : IList<int> {
+                    int Count { get { return 2 } }
+                    IEnumerator<int> GetEnumerator() { var l = new List<int>(); l.Add(3); l.Add(4); return l.GetEnumerator() }
+                }
+                IList<int> n = new Nums()
+                int sum = 0
+                foreach (x in n) { sum = sum + x }
+                print(sum + n.Count)
+                """, TypeCheckMode.Strict) is var generic && generic == "|9"
+                && Run("interface IList<T> : IEnumerable<T> { }\nclass Nums : IList<int> { IEnumerator<int> GetEnumerator() { return new List<int>().GetEnumerator() } }\nIList<int> n = new Nums()\nforeach (x in n) { bool b = x }") is var elem && elem.StartsWith("TC001|"), generic);
+        }
+
         // named arguments: each goes to the parameter of its name (its type is checked there); an unknown name and a parameter without value are errors
         {
             string decl = "class C { static int F(int a, string b = \"x\", int c = 3) { return a + c }\n construct(int size, bool open = false) { } }\n";

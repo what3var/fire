@@ -2,7 +2,7 @@
 
 ## Interfaces
 
-An `interface` lists methods that a class promises to have. It has no fields and no code.
+An `interface` lists methods (and properties, see below) that a class promises to have. It has no fields and no code.
 
 ```fire
 interface IShape {
@@ -39,8 +39,74 @@ print(new Square(1.0) is of IShape)     // True
   `IShape` is a compile error (`E4063`). That holds for a derived class too - it cannot hide a method of its base class's interface with a
   `private` one. A public method inherited from the base class counts, and other methods of the same name (another number of parameters) may be
   private. A call through a value of an interface type (`s.Area()` with `IShape s`) therefore needs no access check.
-- An interface is a type: parameters, fields, variables and return values can be declared with it, and `is of IShape` tests it.
+- An interface is a type: parameters, fields, variables and return values can be declared with it, and `is of IShape` tests it. `catch (IShape e)`
+  catches an exception whose class implements it.
 - Interfaces can be generic: `interface ICommand<T> { undefined Execute(T context) }`.
+
+### Properties in an interface
+
+An interface can declare properties - written like an auto-property of a class, the accessors without bodies:
+
+```fire
+interface IGauge {
+    int Limit { get; set; }
+    string Label { get; }
+    float Delay : ms { get; }
+}
+
+class Gauge : IGauge {
+    int Limit { get; set; }                          // an auto-property
+    string Label { get { return "gauge" } }          // a property with its own get
+    float Delay : ms { get; set; }                   // read-write for a read-only member: fine
+}
+
+IGauge g = new Gauge()
+g.Limit = 5
+print(g.Label + " " + g.Limit)      // gauge 5
+// g.Label = "x"                    // error TC016: IGauge declares Label without 'set'
+```
+
+- `{ get; set; }`, `{ get; }` or `{ set; }`; the type is required (`any` if every type is allowed), a unit is written as in a class (`float Delay : ms`).
+- The class implements it with a **property** of the same name - an auto-property, one with its own `get`/`set`, or one inherited from the base class.
+  It needs at least the accessors the interface names; a read-only member may be implemented by a read-write property. A missing property (or a missing
+  `set`) is `E4064`, a `private`/`protected` one `E4063`, another value type or unit (`string` for `int`, `int : s` for `int : ms`) `E4066`.
+- A **field** of the same name does not implement it (`E4065`), and neither do methods `get_Limit()`/`set_Limit(v)` - a property is what the interface promises.
+- Through a value of the interface type the property has its declared type and unit (`g.Limit = "x"` is `TC001`), and writing a property declared without
+  `set` (or reading one without `get`) is the error `TC016`, even when the class of the object would have the accessor.
+
+### Interfaces that extend interfaces
+
+An interface can extend one or more interfaces. A class that implements it implements all of their members and is of every one of them:
+
+```fire
+interface IReader { int Read() }
+interface IWriter { undefined Write(int v) }
+interface IStream : IReader, IWriter { int Size { get; } }
+
+class Memory : IStream {
+    int last
+    int Read() { return this.last }
+    undefined Write(int v) { this.last = v }
+    int Size { get { return 1 } }
+}
+
+class Copy {
+    static int Pull(IReader r) { return r.Read() }
+}
+
+IStream s = new Memory()
+s.Write(7)
+IReader r = s                    // no cast needed: an IStream is an IReader
+print(Copy.Pull(s) + r.Read())   // 14
+print(s is of IWriter)           // True
+```
+
+- A missing member of a base interface is `E4010` (`E4064` for a property), as for the interface itself.
+- `is of`, casts (`r!IStream`), `catch`, overloads (`Pick(IWriter w)`) and `where T is of IReader` see the base interfaces too.
+- Only interfaces can be extended (`interface I : SomeClass` is `E4067`). An interface may not extend itself over any chain (`E4068`); reaching the same
+  interface on two ways (a diamond: `IBoth : ILeft, IRight` with `ILeft : IBase` and `IRight : IBase`) is fine.
+- A generic interface can extend a generic one: `interface IList<T> : IEnumerable<T> { ... }` - `foreach` over an `IList<int>` knows its elements are `int`.
+- `Type.Of(x).Interfaces` (reflection) lists the interfaces the class names, not the ones they extend.
 
 ## IEnumerable
 

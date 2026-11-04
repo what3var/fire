@@ -402,6 +402,10 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   inline). Er entsteht nur, wo er etwas spart: der Name ist irgendwo eingeschränkt, oder eine Klasse außerhalb des Interfaces hat die Methode auch. Messung
   (gcc -O2, 2·10⁸ Aufrufe `s.F(acc)` über `IShape s`, eine fremde Klasse mit `private int F(int)`): 0,65 s → 0,40 s, so schnell wie ohne die fremde Klasse; wird die
   Methode auch anderswo gerufen (nicht mehr inline), ändert sich nichts messbar (~1,1 s vorher wie nachher).
+  Eine Property eines Interfaces (`int Limit { get; set; }`) über einen Wert des Interface-Typs geht an die Feldhelfer `gf_`/`sf_` des Namens, wie jede Property
+  eines Objekts unbekannter Klasse (die Klasse des Objekts entscheidet, ihr Getter/Setter ist öffentlich). Ein Interface, das andere erweitert (`interface
+  IConnection : IO.IStream`), braucht nichts Eigenes: der Compiler schreibt in die Interface-Liste jeder Klasse (`RuntimeClass.Interfaces`) auch die geerbten
+  Interfaces, daraus entstehen die `isof_`-Prüfungen, die Klassen eines `icall_`-Verteilers und die Interface-Listen der Klassenbeschreibungen für Module und Plugins.
 
 * **Eingebaute Umwandlungen**: `string.ToBytes/ToUnicode`, `char.ToByte/ToUnicode`, `byte.ToChar`, `buffer.ToString/ToUnicode/ToUnicodeChar/ToLittleEndian/ToBigEndian` und `buffer.littleEndian`
   (SPEC 8.10; ein Puffer trägt seine Byte-Reihenfolge, die der Maschine wird zur Laufzeit festgestellt) stehen im Dispatcher der Methode, wenn keine Klasse sie selbst deklariert.

@@ -2500,8 +2500,8 @@ namespace fire.Compiler
             return name;
         }
 
-        /// <summary>`interface Name { [ReturnType] Method(params) ... Type Prop { get; set; } }` - method and property signatures, no
-        /// fields/constructor/bodies.</summary>
+        /// <summary>`interface Name : IBase, IOther { [ReturnType] Method(params) ... Type Prop { get; set; } }` - method and property signatures, no
+        /// fields/constructor/bodies. The names after ':' are the interfaces it extends (the resolver checks that they are interfaces and form no cycle).</summary>
         private Stmt ParseInterfaceDecl()
         {
             int line = Peek().Line;
@@ -2509,6 +2509,19 @@ namespace fire.Compiler
             string name = Expect(TokenType.Identifier, "Expected an interface name").Lexeme;
             // `interface ICommand<T> { ... }`: generic like a class (see ParseClassOrActorDecl); as there only name and number of type parameters count
             var typeParamNames = ParseOptionalTypeParamNames();
+            // `interface IConnection : IO.IStream, IOther`: the interfaces it extends (like the base list of a class, see ParseClassOrActorDecl)
+            List<TypeRef>? baseRefs = null;
+            if (Match(TokenType.Colon))
+            {
+                var namespaces = CurrentNamespaces();
+                baseRefs = new List<TypeRef>();
+                do
+                {
+                    string baseName = ParseDottedName("interface names");
+                    var baseTypeArgs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
+                } while (Match(TokenType.Comma));
+            }
             var typeParams = typeParamNames.Count > 0 ? ParseWhereClauses(typeParamNames, line) : null;
             Expect(TokenType.LBrace, "Expected '{' after the interface head");
 
@@ -2540,7 +2553,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the interface");
 
-            return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods, typeParams, properties.Count > 0 ? properties : null);
+            return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods, typeParams, baseRefs, properties.Count > 0 ? properties : null);
         }
 
         /// <summary>`{ get; set; }`, `{ get; }` or `{ set; }` of a property in an interface - accessors without bodies (an interface has no code).</summary>

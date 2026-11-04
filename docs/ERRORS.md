@@ -236,6 +236,8 @@ configuration of the native build, a toolchain that is missing).
 | `E3158` | The id of a warning ('warn <id>: "text"') is a whole number from 0 to 99999 |
 | `E3159` | The target of '{*}' must not contain a call, '++', '--' or an assignment (write the assignment out) |
 | `E3160` | '#globaljobs' expects safepoints, sleep or sync |
+| `E3161` | A property of an interface has no body: write '…;' (the class that implements it has the code) |
+| `E3162` | Property '…' of an interface needs a type (use 'any' if every type is allowed) |
 
 ### E4xxx - Resolver: names, types, declarations
 
@@ -303,7 +305,12 @@ configuration of the native build, a toolchain that is missing).
 | `E4060` | Property '…' of class '…' needs a type (use the type it holds, or 'any' if every type is allowed) |
 | `E4061` | '…' is generic with … type parameter(s), not … |
 | `E4062` | '…' is ambiguous: … (more than one '#using' brings it); write the full name |
-| `E4063` | Method '…' of class '…' implements interface '…' and must be public, not … (a member of an interface is public) |
+| `E4063` | Method/Property '…' of class '…' implements interface '…' and must be public, not … (a member of an interface is public) |
+| `E4064` | Class '…' does not implement interface '…' completely (missing property '…' with '…') (also a property without the `set` or `get` the interface names) |
+| `E4065` | '…' of class '…' is a field - interface '…' wants a property '…' with '…' |
+| `E4066` | Property '…' of class '…' is '…', interface '…' declares it as '…' (another value type or unit) |
+| `E4067` | '…' of interface '…' is not a known interface (an interface can only extend interfaces) |
+| `E4068` | Interface '…' extends itself (… -> … -> …) |
 | `E4058` | 'var …' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int …') |
 
 ### E5xxx - Bytecode compiler
@@ -372,5 +379,6 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC013` | A value of type '…' can never be a '…': the cast '!…' always fails at run time (only undefined passes) (`x!Dog` where the static type of `x` and `Dog` are unrelated classes, or a class and an interface that no class of the program joins) |
 | `TC014` | The method/property/operator '…' of '…' replaces the one of its base class '…' - mark it 'override' (…) (a member that replaces an inherited one without `override`, SPEC 5.1) |
 | `TC015` | The method '…' of '…' is marked 'override', but no base class of '…' has a method '…' [with these parameters] - nothing is overridden (`override` on a member that replaces nothing: a mistyped name, other parameter types, an interface method; an error also in lax mode) |
+| `TC016` | The property '…' of interface '…' has no 'set' - it cannot be assigned through '…' / … has no 'get' - it cannot be read through '…' (through a value of an interface type; an error also in lax mode) |
 
 `…` stands for a part of the message that varies (a name, a number).

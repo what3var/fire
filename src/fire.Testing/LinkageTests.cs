@@ -478,6 +478,9 @@ static class LinkageTests
                 string Name()
                 int Run(int x)
             }
+            // (a property in an interface, an interface that extends another: implemented by a class of the plugin, used by the program)
+            interface INamed { string Title { get; } }
+            interface ITuned : Api.INamed { int Level { get; set; } }
             class Device {
                 string id
                 construct(string id) { this.id = id }
@@ -514,6 +517,10 @@ static class LinkageTests
             }
             class KitError : Exception {
                 construct(string m) : base(m) { }
+            }
+            class Tuner : Api.ITuned {
+                string Title { get { return "tuner" } }
+                int Level { get; set; }
             }
             class Settings {
                 string title = "kit"
@@ -560,6 +567,11 @@ static class LinkageTests
         var kitFields = ""
         foreach (var kf in Type.Of(kitSettings).Fields()) { kitFields = kitFields + " " + kf.Name + ":" + kf.TypeName }
         print(Reflect.Get(kitSettings, "level") + " " + Reflect.Get(kitSettings, "title") + kitFields + " " + Type.Of(kitSettings).Find("Show").Kind)
+        Api.ITuned tuned = Reflect.New("Kit.Tuner", [])
+        tuned.Level = 4
+        tuned.Level = tuned.Level + 1
+        Api.INamed named = tuned
+        print(named.Title + " " + tuned.Level + " " + (named is of Api.ITuned) + " " + (tuned is of Api.INamed))
         any up = Environment.Get("FIRE_TEST_UNITS")
         if (up != undefined) {
             Library.Load(up)
@@ -657,9 +669,9 @@ static class LinkageTests
     private const string PluginJsonExpected = "{\"$type\":\"Kit.Settings\",\"title\":\"kit\",\"level\":3,\"marks\":[1,2],\"dev\":{\"$type\":\"Kit.FastDevice\",\"id\":\"j0\"}}\n"
         + "kit 3 2 2 fast j0 9 Kit.Settings\nfast j1 9\n{\"$type\":\"Meter.Reading\",\"level\":3.0,\"span\":2.5,\"heat\":20.0,\"loose\":{\"$value\":4.0,\"$unit\":\"bn\"}}\n3pears 2.5km 20C 293.15K 4bn\n";
 
-    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Settings True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
-        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 4\nnope: Unknown class 'Kit.Nope'.\n"
-        + "7 kit title:string level:int marks:List<int> dev:Api.Device method\n";
+    private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Settings Kit.Tuner True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
+        + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 5\nnope: Unknown class 'Kit.Nope'.\n"
+        + "7 kit title:string level:int marks:List<int> dev:Api.Device method\ntuner 5 True True\n";
 
     /// <summary>fire plugins (ROADMAP 9 phase D b): a project with a library `Api` (an interface, a class, an exception), a program with linkage "shared" that loads the
     /// plugin `Kit` (built with `--linkage plugin --host`) and uses its classes through the interface, the base class, reflection and catch; the errors when the plugin does

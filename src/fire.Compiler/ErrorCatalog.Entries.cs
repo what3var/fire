@@ -269,6 +269,8 @@ namespace fire.Compiler
         ("E4064", ErrorArea.Resolver, "Class '{*}' does not implement interface '{*}' completely (missing property '{*}' with '{*}')"),
         ("E4065", ErrorArea.Resolver, "'{*}' of class '{*}' is a field - interface '{*}' wants a property '{*}' with '{*}'"),
         ("E4066", ErrorArea.Resolver, "Property '{*}' of class '{*}' is {*}, interface '{*}' declares it as {*}"),
+        ("E4067", ErrorArea.Resolver, "'{*}' of interface '{*}' is not a known interface (an interface can only extend interfaces)"),
+        ("E4068", ErrorArea.Resolver, "Interface '{*}' extends itself ({*})"),
         ("E4058", ErrorArea.Resolver, "'var {*}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {*}')"),
         ("E5001", ErrorArea.Compiler, "Only the first 16 parameters of a method can be 'ref'."),
         ("E5002", ErrorArea.Compiler, "Internal error: 'class extends {*}' was not merged (the program must be produced by Parser.Parse()/ParseMultiple())."),

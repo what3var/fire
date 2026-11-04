@@ -5334,6 +5334,7 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("Aufruf ohne this.", "class A { B mk() { return new B() }\n M() { mk().| } }\nclass B { Z() {} }", "Z", "M", exact: true);
     CheckCompletion("generische Klasse", "class Box<T> where T is of A {\n T item\n Get() { return this.item }\n}\nclass A { Run() {} }\nvar b = new Box<A>()\nb.|", "Get,item", "Run", exact: true);
     CheckCompletion("Interface-Mitglieder", "interface I { Foo() }\nclass A : I { Bar() {} }\nI a\na.|", "Foo", "Bar", exact: true);
+    CheckCompletion("Interface-Mitglieder: Properties und geerbte Interfaces", "interface IBase { Foo() }\ninterface IOther { int Size { get; } }\ninterface I : IBase, IOther { int Limit { get; set; }\n float Delay : ms { get; } }\nclass A : I { Bar() {} }\nI a\na.|", "Foo,Size,Limit,Delay", "Bar,get,set,ms", exact: true);
     CheckCompletion("Prelude-Klasse", "var l = new List()\nl.|", "Add,GetEnumerator", "Speak");
     CheckCompletion("Erweiterung per #import", "#import \"graphics\"\nvar fb = new Framebuffer(1, 2)\nfb.|", "Width,Height,ReadByte");
     CheckCompletion("#import io: IO. zeigt Streams und Enums", "#import \"io\"\nIO.|", "MemoryStream,Stream,IStream,SeekOrigin,IOException,TextReader", "FileStream,FileMode,Directory");
@@ -19579,6 +19580,71 @@ else
             IGauge g2 = gone
             delete gone
             try { print(g2.Label) } catch (Exception e) { print("destroyed") }
+            """),
+        ("Interface-Vererbung: is of, Cast, Parameter eines Basis-Interfaces, Raute, catch, Overload, where, geerbte Methode ueber das abgeleitete Interface", """
+            interface IReader { int Read() }
+            interface IWriter { undefined Write(int v) }
+            interface IStream : IReader, IWriter { int Size { get; } }
+            interface IBase { string Id() }
+            interface ILeft : IBase { int L() }
+            interface IRight : IBase { int R() }
+            interface IBoth : ILeft, IRight { }
+            class Mem : IStream {
+                int last
+                int Read() { return this.last }
+                undefined Write(int v) { this.last = v }
+                int Size { get { return 1 } }
+            }
+            class Other { private int Read() { return 99 } int Peek() { return this.Read() } }
+            class Both : IBoth {
+                string Id() { return "both" }
+                int L() { return 1 }
+                int R() { return 2 }
+            }
+            class Oops : Exception, IRight {
+                construct(string m) : base(m) { }
+                string Id() { return "oops" }
+                int R() { return 7 }
+            }
+            class Holder<T> where T is of IReader {
+                T item
+                construct(T item) { this.item = item }
+                int Get() { return this.item.Read() + 10 }
+            }
+            class Use {
+                static int First<T>(T x) where T is of IReader { return x.Read() + 20 }
+                static int Pull(IReader r) { return r.Read() }
+                static undefined Push(IWriter w, int v) { w.Write(v) }
+                static int Twice(IStream s) { s.Write(s.Read() + 1); return s.Read() + s.Size }
+                static string Kind(IBase b) { return "base " + b.Id() }
+                static string Kind(string s) { return "string" }
+                static string Side(ILeft l) { return "left" }
+                static string Side(int n) { return "int" }
+            }
+            IStream s = new Mem()
+            Use.Push(s, 4)
+            print(Use.Pull(s) + " " + Use.Twice(s))
+            IReader r = s
+            print((r is of IStream) + " " + (r is of IWriter) + " " + (s is of IBase) + " " + r!IStream.Size)
+            any o = new Other()
+            print((o is of IReader) + " " + new Other().Peek())
+            try { print(o!IReader) } catch (Exception e) { print("cast failed") }
+            IBoth b = new Both()
+            ILeft l = b
+            IRight rt = b
+            IBase x = l
+            print(x.Id() + " " + l.L() + rt.R() + " " + (b is of IBase) + " " + (rt is of ILeft) + " " + Use.Kind(b) + " " + Use.Side(b))
+            try { throw new Oops("bad") } catch (IBase e) { print("caught " + e.Id() + " " + (e is of IRight)) }
+            var hm = new Mem()
+            hm.Write(1)
+            var holder = new Holder<Mem>(hm)
+            IStream hs = hm
+            var viaInterface = new Holder<IStream>(hs)
+            print(holder.Get() + " " + viaInterface.Get() + " " + Use.First(hs))
+            var all = new List<IBase>()
+            all.Add(b)
+            all.Add(new Oops("x"))
+            foreach (item in all) { print(item.Id()) }
             """),
         ("Reflection: Type, Member, Get/Set/Call/New/Has, Selektoren, Zugriffsregeln; probe/silence", """
             #import "reflection"

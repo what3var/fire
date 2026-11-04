@@ -1746,9 +1746,24 @@ class List : IEnumerable {
   but can additionally implement **several** interfaces
   (`class Foo : Bar, IEnumerable, IComparable`) – the inheritance model remains
   single, only interfaces can be implemented multiple times.
-- An `interface` only declares method signatures (no fields, no
-  constructor), similar to `extern`, just for class-internal contracts instead of
+- An `interface` only declares method and property signatures (no fields, no
+  constructor, no code), similar to `extern`, just for class-internal contracts instead of
   native functions.
+- **Properties in interfaces:** `int Limit { get; set; }`, `string Host { get; }` (or `{ set; }`), with a unit like in a class (`float Delay : ms { get; }`) - the
+  accessors without bodies, the type is required (`E3162`; a body is `E3161`). A class implements it with a **property** of that name (an auto-property or one
+  with its own `get`/`set`, also inherited from the base class) that has at least the accessors of the interface: a read-only member may be implemented by a
+  read-write property. A field of the same name does not count (`E4065`), nor do methods `get_Limit()`/`set_Limit(v)`; a missing property or accessor is
+  `E4064`, a non-public one `E4063`, a different value type or unit (`string` for `int`, `int : s` for `int : ms`) `E4066` (class types and `any` are not
+  compared). Through a value of the interface type the property has the declared type and unit (`l.Limit = "x"` is `TC001`), and writing a property the
+  interface declares without `set` is `TC016` (also in lax mode - even if the class of the object has a setter). At run time nothing is special: `x.Limit`
+  calls `get_Limit` of the object's class, as for any property (VM and native alike).
+- **Interface inheritance:** `interface IConnection : IO.IStream, IOther { ... }` - an interface extends one or more interfaces (only interfaces: a class there
+  is `E4067`; a cycle `IA : IB`, `IB : IA` is `E4068`; reaching the same interface on two ways - a diamond - is fine). A class that implements `IConnection`
+  must implement every member of it and of the interfaces it extends (`E4010`/`E4064`), and **is of** each of them: `x is of IO.IStream`, the cast
+  `x!IO.IStream`, a `catch (IO.IStream e)`, overload resolution and `where T is of IO.IStream` all see them. A value of type `IConnection` goes to an
+  `IO.IStream` variable or parameter without a cast, and its members include the inherited ones. (The compiler puts the whole closure into the interface list
+  of the class; reflection's `Type.Interfaces` stays the list the class names.)
+- `catch (IName e)` with an interface catches an exception whose class implements it.
 - The methods of an interface are **public**: the method that implements one (found by name and number of parameters, the nearest in the base-class chain) must be
   public - `private`/`protected` is the compile error `E4063`, also in a derived class of an implementing class (it would hide the public one). A public method
   inherited from the base class counts; other methods of the name (another number of parameters) may be private. A call through a value of an interface type is

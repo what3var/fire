@@ -300,9 +300,14 @@ namespace fire.Compiler
 
         private bool DerivesFrom(string derived, string baseName)
         {
+            // an interface derives from the interfaces it extends (`interface IConnection : IO.IStream`)
+            if (IsInterface(derived)) return InterfaceClosure(derived).Contains(baseName);
             for (int guard = 0; guard < 64; guard++)
             {
                 if (derived == baseName) return true;
+                // a class is of every interface its interfaces extend
+                if (_classes.TryGetValue(derived, out var withInterfaces)
+                    && withInterfaces.BaseRefs?.Any(b => IsInterface(NameOf(b)) && InterfaceClosure(NameOf(b)).Contains(baseName)) == true) return true;
                 if (!_classes.TryGetValue(derived, out var decl) || decl.BaseRefs is not { Count: > 0 }) return false;
                 // an interface or an unknown base is not followed: the relation is then not known to be wrong
                 if (decl.BaseRefs.Any(b => PlainName(b.BaseName) == baseName)) return true;
@@ -317,7 +322,29 @@ namespace fire.Compiler
 
         private bool IsInterface(string name) => _interfaces.ContainsKey(name) && !_classes.ContainsKey(name);
 
-        /// <summary>An interface-typed receiver: the interface with what its type parameters stand for. Empty for anything else.</summary>
+        private readonly Dictionary<string, List<string>> _interfaceClosures = new();
+        /// <summary>The interface `name` and every interface it extends, directly or over others (each once, itself first).</summary>
+        private List<string> InterfaceClosure(string name)
+        {
+            if (_interfaceClosures.TryGetValue(name, out var known)) return known;
+            var result = new List<string>();
+            var pending = new Stack<string>();
+            pending.Push(name);
+            while (pending.Count > 0)
+            {
+                string n = pending.Pop();
+                if (result.Contains(n)) continue;
+                result.Add(n);
+                if (!_interfaces.TryGetValue(n, out var id)) continue;
+                var bases = id.BaseRefs ?? Array.Empty<TypeRef>();
+                for (int i = bases.Count - 1; i >= 0; i--) pending.Push(NameOf(bases[i]));
+            }
+            _interfaceClosures[name] = result;
+            return result;
+        }
+
+        /// <summary>An interface-typed receiver: the interface and every interface it extends, each with what its type parameters stand for (`interface
+        /// IList&lt;T&gt; : IEnumerable&lt;T&gt;` seen as `IList&lt;int&gt;`: `IEnumerable` with T = int). Empty for anything else.</summary>
         private IEnumerable<(InterfaceDecl Decl, Dictionary<string, StaticType>? Map, IReadOnlyList<StaticType>? Args)> InterfaceChain(StaticType receiver)
         {
             if (receiver.Class == null || !IsInterface(receiver.Class)) yield break;
@@ -330,6 +357,8 @@ namespace fire.Compiler
                 if (!seen.Add(name) || !_interfaces.TryGetValue(name, out var decl)) continue;
                 var map = MapFor(decl.TypeParams, args);
                 yield return (decl, map, args);
+                foreach (var b in decl.BaseRefs ?? Array.Empty<TypeRef>())
+                    pending.Enqueue((NameOf(b), b.TypeArgs?.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList()));
             }
         }
 
@@ -368,6 +397,7 @@ namespace fire.Compiler
                 {
                     string plain = PlainName(b.BaseName);
                     if (plain == iface || !_classes.ContainsKey(NameOf(b)) && !_interfaces.ContainsKey(plain)) return true;
+                    if (IsInterface(NameOf(b)) && InterfaceClosure(NameOf(b)).Any(i => PlainName(i) == iface)) return true;   // (over an interface it extends)
                 }
                 name = decl.BaseRefs?.Select(b => NameOf(b)).FirstOrDefault(n => _classes.ContainsKey(n));
             }
@@ -458,11 +488,18 @@ namespace fire.Compiler
         /// <summary>`value` seen as its base class or interface `baseName` (with the type arguments it has there); null when it is none.</summary>
         private StaticType? AsBase(StaticType value, string baseName)
         {
+            foreach (var (iface, _, args) in InterfaceChain(value))
+                if (iface.Name == baseName) return StaticType.ClassOf(baseName, args);
             foreach (var (decl, map) in Chain(value))
             {
                 if (decl.Name == baseName) return StaticType.ClassOf(decl.Name, map == null ? null : decl.TypeParams!.Select(p => map[p.Name]).ToList());
                 foreach (var b in decl.BaseRefs ?? Array.Empty<TypeRef>())
-                    if (NameOf(b) == baseName) return StaticType.ClassOf(baseName, b.TypeArgs?.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList());
+                {
+                    var args = b.TypeArgs?.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList();
+                    if (NameOf(b) == baseName) return StaticType.ClassOf(baseName, args);
+                    // (an interface the class names extends it: `class Rows : IList<int>` with `interface IList<T> : IEnumerable<T>`)
+                    if (IsInterface(NameOf(b)) && AsBase(StaticType.ClassOf(NameOf(b), args), baseName) is { } viaInterface) return viaInterface;
+                }
             }
             return null;
         }
@@ -629,7 +666,7 @@ namespace fire.Compiler
         /// parameters replaced by the instance's type arguments); null when there is none.</summary>
         private StaticType? FindMember(StaticType receiver, string name)
         {
-            // a property of an interface: its declared type and unit
+            // a property of an interface (or of one it extends): its declared type and unit
             foreach (var (iface, imap, _) in InterfaceChain(receiver))
                 if (iface.PropertySigs.FirstOrDefault(p => p.Name == name) is { } sig) return DeclaredOrDynamic(sig.Type, 0, imap);
             foreach (var (decl, map) in Chain(receiver))
@@ -739,7 +776,7 @@ namespace fire.Compiler
                     if (arg.Kind == StaticKind.Object) return Unknown;
                     if (arg.Kind == StaticKind.Array && declared.Class == "IEnumerable") return Bytecode.Overloads.InterfaceScore;
                     if (arg.Kind != StaticKind.Class || arg.Class == null || declared.Class == null) return NoMatch;
-                    if (_interfaces.ContainsKey(declared.Class)) return Implements(arg.Class, declared.Class) ? Bytecode.Overloads.InterfaceScore : _interfaces.ContainsKey(arg.Class) ? Unknown : NoMatch;
+                    if (_interfaces.ContainsKey(declared.Class)) return Implements(arg.Class, declared.Class) || IsInterface(arg.Class) && InterfaceClosure(arg.Class).Contains(declared.Class) ? Bytecode.Overloads.InterfaceScore : _interfaces.ContainsKey(arg.Class) ? Unknown : NoMatch;
                     int distance = ClassDistance(arg.Class, declared.Class);
                     if (distance >= 0) return Bytecode.Overloads.ClassExact - distance;
                     // a value declared as a base class may be an object of the parameter's class at run time
@@ -767,7 +804,7 @@ namespace fire.Compiler
             string? name = className;
             for (int d = 0; d < 64 && name != null && _classes.TryGetValue(name, out var decl); d++)
             {
-                if (decl.BaseRefs?.Any(b => NameOf(b) == iface) == true) return true;
+                if (decl.BaseRefs?.Any(b => NameOf(b) == iface || IsInterface(NameOf(b)) && InterfaceClosure(NameOf(b)).Contains(iface)) == true) return true;
                 name = decl.BaseRefs?.Select(b => NameOf(b)).FirstOrDefault(n => _classes.ContainsKey(n));
             }
             return false;
@@ -1189,7 +1226,7 @@ namespace fire.Compiler
         {
             foreach (var c in BaseClassesOf(decl).Prepend(decl))
                 foreach (var b in c.BaseRefs ?? Array.Empty<TypeRef>())
-                    if (_interfaces.TryGetValue(NameOf(b), out var iface) && iface.Methods.Any(m => m.Name == name)) return true;
+                    if (_interfaces.ContainsKey(NameOf(b)) && InterfaceClosure(NameOf(b)).Any(i => _interfaces.TryGetValue(i, out var iface) && iface.Methods.Any(m => m.Name == name))) return true;
             return false;
         }
 
