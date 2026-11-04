@@ -581,9 +581,23 @@ static Value fire_gfx_RndGetAlphaBlending(Value id) { return Bool(fire_gfxb_rend
 static Value fire_gfx_RndSetClip(Value id, Value x, Value y, Value w, Value h) { fire_gfx_rendererSetClip(fire_gfxb_rendererOf(id), fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h)); return Undef(); }
 static Value fire_gfx_RndResetClip(Value id) { fire_gfx_rendererResetClip(fire_gfxb_rendererOf(id)); return Undef(); }
 static Value fire_gfx_RndSetAlphaBlending(Value id, Value on) { fire_gfxb_rendererOf(id)->alphaBlending = on.i != 0; return Undef(); }
+/* The colour of a paint for an RGBA framebuffer (a palette index through its palette). */
+static uint32_t fire_gfxb_rgbaOfPaint(const FireGfxFramebuffer* fb, FireGfxPaint paint) {
+    return fire_gfx_paintIsIndex(paint) ? fire_gfx_paletteGet(&fb->palette, (uint8_t)paint.index) : paint.rgba;
+}
+/* Text on the GPU when the framebuffer has a twin there (1: drawn; 0: the software draws it). */
+static int fire_gfxb_gpuText(FireGfxRenderer* r, FireGfxTextFont* font, int size, int x, int y, const Str* s, const FireGfxBrush* fg, const FireGfxBrush* bg) {
+    int clip[4];
+    if (r->target->gpu == NULL) return 0;
+    clip[0] = r->clipLeft; clip[1] = r->clipTop; clip[2] = r->clipRight; clip[3] = r->clipBottom;
+    return fire_gfx_gpuText(r->target, clip, !r->alphaBlending, font, r->smallFont, r->cellWidth, r->cellHeight, size, x, y, s->data, s->length,
+                            fire_gfxb_rgbaOfPaint(r->target, fg->color), bg != NULL, bg != NULL ? fire_gfxb_rgbaOfPaint(r->target, bg->color) : 0);
+}
+
 static Value fire_gfx_RndDrawText(Value id, Value x, Value y, Value text, Value fg, Value bg) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
     const Str* s = strOf(text);
+    if (fire_gfxb_gpuText(r, NULL, 0, fire_gfxb_I(x), fire_gfxb_I(y), s, fire_gfxb_brushOf(fg), fire_gfxb_I(bg) == 0 ? NULL : fire_gfxb_brushOf(bg))) return Undef();
     fire_gfx_rendererDrawText(r, fire_gfxb_I(x), fire_gfxb_I(y), s->data, s->length, fire_gfxb_brushOf(fg), fire_gfxb_I(bg) == 0 ? NULL : fire_gfxb_brushOf(bg));
     return Undef();
 }
@@ -594,6 +608,7 @@ static Value fire_gfx_RndDrawTextFont(Value id, Value x, Value y, Value text, Va
     int64_t f = (int32_t)font.i;
     FireGfxTextFont* tf = f == 0 ? NULL : fire_gfx_fontTableGet(&fire_gfxb_tables()->fonts, f);
     if (f != 0 && !tf) fire_gfxb_noResource(f);
+    if (fire_gfxb_gpuText(r, tf, fire_gfxb_I(size), fire_gfxb_I(x), fire_gfxb_I(y), s, fire_gfxb_brushOf(fg), fire_gfxb_I(bg) == 0 ? NULL : fire_gfxb_brushOf(bg))) return Undef();
     fire_gfx_drawTextIn(r, tf, fire_gfxb_I(size), fire_gfxb_I(x), fire_gfxb_I(y), s->data, s->length, fire_gfxb_brushOf(fg), fire_gfxb_I(bg) == 0 ? NULL : fire_gfxb_brushOf(bg));
     return Undef();
 }
@@ -777,6 +792,8 @@ static Value fire_gfx_RndDrawPolygon(Value id, Value points, Value pen, Value cl
 }
 static Value fire_gfx_RndBlit(Value id, Value src, Value sx, Value sy, Value sw, Value sh, Value dx, Value dy, Value dw, Value dh, Value mode, Value key) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
+    if (r->target->gpu != NULL && fire_gfx_gpuBlit(r->target, fire_gfxb_fbOf(src), fire_gfxb_I(sx), fire_gfxb_I(sy), fire_gfxb_I(sw), fire_gfxb_I(sh), fire_gfxb_I(dx), fire_gfxb_I(dy),
+                                                   fire_gfxb_I(dw), fire_gfxb_I(dh), fire_gfxb_I(mode), r->alphaBlending, r->clipLeft, r->clipTop, r->clipRight, r->clipBottom)) return Undef();
     fire_gfx_blit(r->target, fire_gfxb_fbOf(src), fire_gfxb_I(sx), fire_gfxb_I(sy), fire_gfxb_I(sw), fire_gfxb_I(sh), fire_gfxb_I(dx), fire_gfxb_I(dy), fire_gfxb_I(dw), fire_gfxb_I(dh),
                   fire_gfxb_I(mode), fire_gfxb_I(key), r->alphaBlending, r->clipLeft, r->clipTop, r->clipRight, r->clipBottom);
     return Undef();

@@ -11,7 +11,7 @@ trap 'rm -rf "$tmp"' EXIT
     echo "#ifndef FIRE_GFX_SHADERS_H"
     echo "#define FIRE_GFX_SHADERS_H"
     echo "#include <stdint.h>"
-    for s in gfx_shape.vert gfx_shape.frag; do
+    for s in gfx_shape.vert gfx_shape.frag gfx_image.vert gfx_image.frag; do
         name=$(echo "$s" | sed 's/^gfx_//; s/\./_/')
         glslangValidator -V --target-env vulkan1.0 -Os -o "$tmp/$s.spv" "$s" > "$tmp/log" || { cat "$tmp/log" >&2; exit 1; }
         echo "static const uint32_t fire_gfx_spv_$name[] = {"

@@ -31,6 +31,7 @@ typedef uint64_t VkDeviceSize;
 typedef uint32_t VkFlags;
 typedef uint32_t VkSampleMask;
 
+#define VK_NULL_HANDLE 0
 #define VK_FALSE                          0U
 #define VK_QUEUE_FAMILY_IGNORED           (~0U)
 #define VK_SUBPASS_EXTERNAL               (~0U)
@@ -143,6 +144,7 @@ typedef enum VkFormat {
     VK_FORMAT_R32_SFLOAT = 100,
     VK_FORMAT_R32G32_SFLOAT = 103,
     VK_FORMAT_R32G32B32_SFLOAT = 106,
+    VK_FORMAT_R32G32B32A32_SINT = 108,
     VK_FORMAT_R32G32B32A32_SFLOAT = 109,
     VK_FORMAT_D16_UNORM = 124,
     VK_FORMAT_X8_D24_UNORM_PACK32 = 125,

@@ -11347,13 +11347,18 @@ uiDrawScript = """
     // the GPU backend (part 4): the same shapes on the GPU and in software - at most 2 steps apart; text (software) in between keeps its order; a resize and
     // drawing without blending. FIRE_GFX_GPU=cpu takes a Vulkan device that is a CPU (lavapipe); without Vulkan the check has nothing to compare.
     Environment.SetEnvironmentVariable("FIRE_GFX_GPU", "cpu");
-    CheckUi("GPU: Formen auf der GPU wie in Software (hoechstens 2 Stufen), Text dazwischen in Reihenfolge, Groesse aendern, ohne Blending", uiHead + """
+    CheckUi("GPU: Formen, Text (Konsolen-, Bitmap-, TrueType-Schrift) und Blits (skaliert, gespiegelt, alle Modi) wie in Software (hoechstens 2 Stufen), Groesse aendern, ohne Blending", uiHead + """
         var a = new Framebuffer(160, 100)
         var b = new Framebuffer(160, 100)
         a.Accelerated = false
         b.Accelerated = true
         var ra = new Renderer(a)
         var rb = new Renderer(b)
+        var img = new Framebuffer(16, 12)
+        var ri = new Renderer(img)
+        ri.ClearTo(0x00000000)
+        ri.FillRect(0, 0, 8, 12, new SolidBrush(0xFF2050F0))
+        ri.FillRect(8, 0, 8, 6, new SolidBrush(0x80F02020))
         var worst = 0
         for (var pass = 0; pass < 2; pass = pass + 1) {
             foreach (r in [ra, rb]) {
@@ -11367,7 +11372,17 @@ uiDrawScript = """
                 r.AlphaBlending = false
                 r.FillRoundRect(120, 5, 30, 30, 15, new SolidBrush(0x80FFFF00))
                 r.AlphaBlending = true
+                // text (the console font, a built-in one, TrueType where there is one) and blits (1:1, scaled, mirrored; copy, transparent, blend) - part 4.2
+                r.DrawText(2, 84, "Hallo fire!", new SolidBrush(0xFF000000), new SolidBrush(0xFFCCE0FF))
+                r.DrawText(100, 84, "small", new SolidBrush(0xC0800000), new SolidBrush(0x40000000), Fonts.Get("8x8"), 0)
+                r.DrawText(2, 60, "fire 1.0", new SolidBrush(0xC0303030), undefined, Fonts.Get("DejaVu Sans"), 15)
+                r.Blit(img, 100, 30)
+                r.Blit(img, 118, 30, 2)
+                r.Blit(img, 136, 30, 1)
+                r.BlitScaled(img, 0, 0, 16, 12, 100, 45, 37, 29, 2)
+                r.BlitScaled(img, 2, 1, 13, 9, 140, 45, -15, 25, 1)
             }
+            ri.FillRect(0, 0, 4, 4, new SolidBrush(0xFF00FF00))   // (after the blits: what was drawn keeps the old picture)
             for (var y = 0; y < a.Height(); y = y + 1) {
                 for (var x = 0; x < a.Width(); x = x + 1) {
                     var pa = ra.GetPixel(x, y)

@@ -229,5 +229,18 @@ ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
 * **Schalter:** `Framebuffer.Accelerated` (`Framebuffer.GpuError()` sagt, warum nicht), `FIRE_GFX_GPU=1|cpu` beschleunigt jeden RGBA-Framebuffer. Auf Boards, im Browser und
   ohne Vulkan bleibt alles Software; die C#-Rückfall-Implementierung hat keine GPU.
 * **Tests:** GPU gegen Software auf lavapipe (höchstens 2 Farbstufen Abweichung, gemessen 1), und die ganze UI-Gruppe läuft mit `FIRE_GFX_GPU=cpu` grün.
-* Noch langsamer als Software, solange Text und Blits den Abgleich erzwingen (4.2); der Schalter ist bis dahin zum Ausprobieren gedacht.
+
+4.2 (Text und Blits):
+
+* **Glyphen-Atlas:** eine Textur mit einem Byte Abdeckung je Pixel (2048×2048, in Regalen gefüllt, Schlüssel je Schrift, Größe und Glyphe); TrueType-Glyphen bringen ihr
+  Abdeckungsbild aus dem Cache der Schrift mit, Bitmap-Glyphen (Konsolenschrift, 8x8, 8x14) werden zu 0/255. Geändertes geht beim nächsten Lauf hoch; ist er voll, wird
+  erst gezeichnet, was ihn noch braucht, dann fängt er neu an. Hintergründe von Text sind Rechtecke.
+* **Blits:** eine RGBA-Quelle bekommt selbst einen Zwilling; beim Einreihen des Blits wird sie hochgeladen bzw. ihr eigenes Zeichnen ausgeführt - der Blit zeichnet, was sie
+  da war. Der Shader wählt das Quellpixel wie `fire_gfx_blit` (nächster Nachbar, ganzzahlig `s + (2f+1)·sw/(2|dw|)`, gespiegelt bei negativer Breite/Höhe); Kopie,
+  transparent und Blend. Palettenquellen und ein Framebuffer in sich selbst bleiben Software, ebenso die Konsolenausgabe (`Print`, Scrollen).
+* **Reihenfolge über mehrere Framebuffer:** Zwillinge mit offener Arbeit stehen in einer Liste in der Reihenfolge ihres ersten Befehls; ein Lauf führt erst die vor ihm
+  aus (sie lesen ihn womöglich noch im alten Zustand), die nach ihm warten (sie können neuere Befehle tragen).
+* **Tests:** Formen, Text (drei Schriftarten, Hintergründe, Clip) und Blits (alle Modi, skaliert, gespiegelt, Quelle danach geändert) gegen Software: höchstens 1 Stufe;
+  die ganze UI-Gruppe läuft auch komplett auf der GPU.
+* Noch offen bis 4.3/4.4: Schatten, Blur und Materialien laufen über den Abgleich (Software), und das Fenster bekommt die Pixel zurückgelesen.
 
