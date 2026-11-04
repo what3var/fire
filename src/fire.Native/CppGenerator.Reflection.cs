@@ -762,8 +762,9 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             if (_usesProbes) sb.Append(ProbeCode(fieldNames));
             if (!_openWorld)
             {
-                // (no plugins: rf_classes lists the program's classes)
-                sb.Replace("    for (uint32_t i = 0; i < RF_PLUGIN_COUNT; i++) { Value s = strFromUtf8(((const RfClass*)g_pluginRf[i])->name, list); arrItems(names)[kRfClassCount + i] = s; retain(s); }\n", "");
+                // (no plugins: rf_classes lists the program's classes - without the line's end in the pattern: the text above is a verbatim string, and a checkout
+                // on Windows (.gitattributes: text=auto) gives it \r\n)
+                sb.Replace("    for (uint32_t i = 0; i < RF_PLUGIN_COUNT; i++) { Value s = strFromUtf8(((const RfClass*)g_pluginRf[i])->name, list); arrItems(names)[kRfClassCount + i] = s; retain(s); }", "");
                 sb.Replace("allocArr(kRfClassCount + RF_PLUGIN_COUNT, list)", "allocArr(kRfClassCount, list)");
             }
             return sb.ToString();
