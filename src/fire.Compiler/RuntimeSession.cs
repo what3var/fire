@@ -189,7 +189,8 @@ namespace fire.Compiler
             if (linkedProgram.PackageNatives is { Count: > 0 })
                 ioResources = PackageHost.Begin(ioPolicy, ioStdio, linkedProgram.NativeImports.Contains("pkg:devices"), deviceManager, netPolicy);   // `deviceManager`: the manager of the host (e.g. the shared one of the editor); without it the program gets one with the built-in drivers, freed after the run
 
-            PackageImports.RegisterForRun(natives, linkedProgram);   // the natives of imports of packages: names only (they are C++)
+            try { PackageImports.RegisterForRun(natives, linkedProgram); }   // the natives of imports of packages: their libraries (built now when missing)
+            catch (OperationCanceledException) { ioResources?.Dispose(); throw; }   // (the build of a package's natives was cancelled: nothing runs)
 
             var globalScope = new Scope(null, isGlobal: true);
             

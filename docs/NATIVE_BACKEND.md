@@ -788,7 +788,9 @@ Die Schnittstelle dafür ist **`BuildMonitor`** (`src/fire.Native/BuildMonitor.c
   (`new BuildMonitor(token, progress, log)`); innen ist er `BuildMonitor.Current` (ein `AsyncLocal`, das in die parallelen Schritte mitgeht), so dass der
   Prozessstarter (`NativeBuilder.Run`), der Linker und die Generatoren keinen weiteren Parameter brauchen. `DebugSession.CompileAsync` (spark) übersetzt so für die VM.
 * **Fortschritt** (`IProgress<BuildProgress>`): `BuildProgress(Phase, Text, Done, Total)` mit `BuildPhase` `CompileFire` (der Linker meldet seine vier Schritte:
-  Parsen, Namen, Typen, Bytecode), `GenerateC`, `CompileC` (linkage `static`/`shared`: `BeginCount` meldet 0/N, jede fertige Library eins mehr - N sind die Module,
+  Parsen, Namen, Typen, Bytecode), `PackageNatives` (die Natives von Packages und Bibliotheksprojekten für die VM, `PackageLibrary.Ensure`: *Building natives of
+  package X*, bei mehreren je Paket gezählt - `PackageLibrary.CountBuilds` zählt die, die nicht gebaut sind, `n-1/N` beim Beginn, `n/N` am Ende; beim Start eines
+  Programms in der VM, beim Packen und beim Bytecode eines Plugins), `GenerateC`, `CompileC` (linkage `static`/`shared`: `BeginCount` meldet 0/N, jede fertige Library eins mehr - N sind die Module,
   die nicht im Cache sind; linkage `source`: das C des Programms), `Link`, `Flash` (`Esp32Launch.BuildAndFlash(..., cancel, progress)`: die Schritte von ninja `[n/m]`
   und von esptool `(n %)` - hier gibt es nur die Ausgabe des Werkzeugs) und `Pack`. `Total` 0 heißt: ohne Zahl. Die Meldungen kommen in der Reihenfolge der Phasen
   (fällt ein Bau auf linkage `source` zurück, beginnt er neu bei `CompileFire`).
@@ -798,11 +800,15 @@ Die Schnittstelle dafür ist **`BuildMonitor`** (`src/fire.Native/BuildMonitor.c
   halten an ihrem nächsten Punkt (`BuildMonitor.Step`/`Checkpoint`) mit `OperationCanceledException`. `BuildSafe` gibt dann ein Ergebnis mit `Cancelled` zurück
   und löscht das Programm, wenn dieser Bau es schon zu schreiben begonnen hatte. Im Cache bleibt keine halbe Library: eine Library entsteht in einer temporären Datei,
   die ein abgebrochener oder fehlgeschlagener Bau löscht, und die Schnittstelle wird erst nach ihr geschrieben (siehe "Cache und Schnittstelle").
+  Ebenso die Library der Natives eines Packages: sie entsteht in einem eigenen Ordner (`fire-pkgbuild-*`, danach gelöscht) und kommt über eine `.partial`-Datei mit einem
+  Umbenennen in den Cache; ein Abbruch merkt sich keinen Fehlschlag (`.failed`), der nächste Lauf baut sie neu.
 
 Getestet ohne Fenster (`FIRE_TESTS_ONLY=linkage`, `FIRE_TESTS_FILTER=cancel`): ein Bau mit linkage `static` und leerem Cache wird abgebrochen, während gcc die Module
 übersetzt - gcc/cc1 laufen binnen Sekunden nicht mehr, kein temporäres File und keine Library ohne Schnittstelle im Cache, kein Programm; der nächste Bau in denselben
 Cache gelingt, seine Phasen kommen in Reihenfolge, `CompileC` zählt 0..N, das Log hat die Befehle. `FIRE_TESTS_ONLY=projects`: die Phasen von Pack, ein abgebrochenes
-Pack hinterlässt kein `.fpk`. **Nicht geprüft**: das Fenster selbst und die Statusleiste (spark ist hier nicht zu klicken), das Abbrechen von `idf.py` auf einem
+Pack hinterlässt kein `.fpk`; ein Programm in der VM mit zwei Bibliotheken mit Natives in C: abgebrochen, während gcc die erste übersetzt - gcc läuft danach nicht mehr,
+`OperationCanceledException`, keine Library (auch kein `.partial`/`.failed`); der nächste Lauf meldet `PackageNatives` nach `CompileFire` mit 1/2 und 2/2 und hat die zwei
+Befehle im Log, ein dritter keine solche Phase mehr. **Nicht geprüft**: das Fenster selbst und die Statusleiste (spark ist hier nicht zu klicken), das Abbrechen von `idf.py` auf einem
 echten ESP-IDF und Windows.
 
 #### Ziel `esp32`: Run und Debug auf dem Board (ROADMAP 8.6)

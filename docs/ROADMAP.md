@@ -211,7 +211,7 @@ der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Wind
 9. ~~**Build-Fenster**~~ (umgesetzt): jeder Bau aus spark (F5 mit der VM, nativ, ESP32, Build, Pack) zeigt nach 0,5 s ein Fenster mit Phase, Fortschritt (die Library-Module
    von linkage `static`/`shared` gezählt, sonst unbestimmt) und Log, *Hide* (Fortschritt in der Statusleiste) und *Cancel* (Prozessbaum der Compiler beendet, nichts
    Halbes bleibt) - `BuildMonitor` (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"). Offen: das Fenster ist nicht von Hand durchgeklickt; `idf.py` abbrechen nur
-   ohne echtes ESP-IDF geprüft; die Natives eines Packages, die für die VM gebaut werden, melden keine eigene Phase (nur ihre Befehle im Log).
+   ohne echtes ESP-IDF geprüft. Die Natives eines Packages, die für die VM gebaut werden, sind eine eigene Phase (*natives of packages*, je Paket gezählt) und abbrechbar.
 
 Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 
