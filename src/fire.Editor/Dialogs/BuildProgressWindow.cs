@@ -123,6 +123,7 @@ namespace fire.Editor
         private static string PhaseName(BuildPhase? phase) => phase switch
         {
             BuildPhase.CompileFire => "Phase: compile fire  ·  ",
+            BuildPhase.PackageNatives => "Phase: natives of packages  ·  ",
             BuildPhase.GenerateC => "Phase: generate C  ·  ",
             BuildPhase.CompileC => "Phase: compile C  ·  ",
             BuildPhase.Link => "Phase: link  ·  ",

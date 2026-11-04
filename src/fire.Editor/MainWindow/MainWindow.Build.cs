@@ -162,9 +162,14 @@ namespace fire.Editor
             string savePath;
             try { config = LoadNativeConfig(out savePath); }
             catch (fire.Native.NativeConfigException ex) { await Dialogs.Message(owner ?? this, ex.Message, "Toolchain Settings"); return false; }
-            var dialog = new NativeBuildDialog(config, savePath);
+            var dialog = new NativeBuildDialog(config, savePath, _settings.IdfPath);
             if (toolchainPage) dialog.SelectToolchainTab();
             if (await dialog.ShowDialog<bool?>(owner ?? this) != true) return false;
+            if (dialog.IdfPath != _settings.IdfPath)
+            {
+                _settings.IdfPath = dialog.IdfPath;   // (spark-settings.json `idfPath`: the ESP-IDF folder for every project)
+                _settings.Save();
+            }
             try
             {
                 var chosen = dialog.Result.ResolveToolchain(dialog.Result.ResolveTarget());

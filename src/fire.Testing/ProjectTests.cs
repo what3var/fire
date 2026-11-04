@@ -32,6 +32,142 @@ static class ProjectTests
         return output.ToString().Replace("\r\n", "\n");
     }
 
+    /// <summary>spark's build window for a run in the VM: the natives of the libraries (PackageLibrary) are a phase of their own, counted per package; cancelled while gcc
+    /// compiles one, the run stops (OperationCanceledException) and no library - whole or half - is left in the cache; the next run builds both.</summary>
+    private static void PackageNativesPhase(string s)
+    {
+        foreach (var name in new[] { "PnA", "PnB" })
+        {
+            string low = name.ToLowerInvariant();
+            Write(s, $"{name}/{name}.fireproj", "{ \"name\": \"" + name + "\", \"type\": \"library\", \"native\": { \"language\": \"c\" } }");
+            Write(s, $"{name}/native/{low}.h", $"static inline Value {low}_twice(Value a) {{ return Int(a.i * 2); }}\n");
+            Write(s, $"{name}/{low}.fire", $"namespace {name} {{\n    class N {{\n        static int Twice(int a) {{ return __{low}_twice(a) }}\n    }}\n}}\n");
+        }
+        Write(s, "PnApp/PnApp.fireproj", """{ "name": "PnApp", "references": [ { "project": "../PnA/PnA.fireproj" }, { "project": "../PnB/PnB.fireproj" } ] }""");
+        Write(s, "PnApp/main.fire", "#import \"PnA\"\n#import \"PnB\"\nprint(PnA.N.Twice(2) + PnB.N.Twice(10))\n");
+        string sln = Write(s, "Pn.firesln", """{ "name": "Pn", "projects": ["PnA/PnA.fireproj", "PnB/PnB.fireproj", "PnApp/PnApp.fireproj"], "startup": "PnApp" }""");
+        var ws = Workspace.Open(sln);
+        var plan = BuildPlan.Create(ws, ws.FindByName("PnApp")!);
+        // where a library of the two could be: next to the project (obj/native) or in the temporary files
+        string tempPackages = Path.Combine(Path.GetTempPath(), "fire-packages");
+        List<string> Left() => new[] { "PnA", "PnB" }.SelectMany(n => Directory.Exists(Path.Combine(s, n, "obj")) ? Directory.EnumerateFiles(Path.Combine(s, n, "obj"), "*", SearchOption.AllDirectories) : Array.Empty<string>())
+            .Concat(Directory.Exists(tempPackages) ? Directory.EnumerateFiles(tempPackages, "*", SearchOption.AllDirectories).Where(f => f.Contains("project_pna_") || f.Contains("project_pnb_")) : Array.Empty<string>()).ToList();
+        string output = "";
+        Exception? Run(fire.Native.BuildMonitor monitor) => CatchException(() =>
+        {
+            var o = new StringBuilder();
+            using (fire.Native.BuildMonitor.Use(monitor))
+            {
+                var session = RuntimeSession.Build(plan.SourceTexts, null, args => { o.AppendLine(args.Length > 0 ? args[0].ToString() : ""); return Value.MakeUndefined(); }, plan: plan);
+                session.Run();
+            }
+            output = o.ToString().Trim();
+        });
+
+        // cancelled while gcc compiles the first library
+        using (var cancel = new CancellationTokenSource())
+        {
+            var compiling = new ManualResetEventSlim();
+            var phases = new List<fire.Native.BuildProgress>();
+            var monitor = new fire.Native.BuildMonitor(cancel.Token, p => { lock (phases) phases.Add(p); }, l => { if (l.Contains("wrapper.c")) compiling.Set(); });
+            var running = Task.Run(() => Run(monitor));
+            bool started = compiling.Wait(TimeSpan.FromSeconds(60));
+            Thread.Sleep(200);   // (gcc runs now)
+            // (Linux: the compiler of this build is a process whose command line names its folder fire-pkgbuild-..., its output fire_pkg_project_pn...)
+            static bool CompilerRuns()
+            {
+                if (!OperatingSystem.IsLinux()) return true;
+                foreach (var dir in Directory.EnumerateDirectories("/proc"))
+                    try { if (File.ReadAllText(Path.Combine(dir, "cmdline")).Contains("fire-pkgbuild-") && File.ReadAllText(Path.Combine(dir, "cmdline")).Contains("fire_pkg_project_pn")) return true; }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                return false;
+            }
+            bool gccRan = CompilerRuns();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            cancel.Cancel();
+            var error = running.Wait(TimeSpan.FromSeconds(30)) ? running.Result : new TimeoutException("the run did not stop");
+            bool gccGone = !OperatingSystem.IsLinux() || !CompilerRuns();
+            var left = Left();
+            Check("Natives (Build-Fenster): abgebrochen, waehrend gcc die Natives einer Bibliothek uebersetzt, endet der Lauf bald (OperationCanceledException), keine Bibliothek (auch keine halbe, kein .partial, kein .failed) bleibt",
+                started && gccRan && gccGone && error is OperationCanceledException && watch.Elapsed < TimeSpan.FromSeconds(15) && left.All(f => !Path.GetFileName(f).Contains("fire_pkg_")) && phases.Any(p => p.Phase == fire.Native.BuildPhase.PackageNatives),
+                $"started {started}, gcc ran {gccRan}, gone {gccGone}, {watch.Elapsed}, {error?.GetType().Name}: {error?.Message}\nleft: {string.Join(", ", left)}");
+        }
+
+        // the next run: both libraries are built, each a step of the phase
+        {
+            var phases = new List<fire.Native.BuildProgress>();
+            var lines = new List<string>();
+            var error = Run(new fire.Native.BuildMonitor(default, p => phases.Add(p), l => lines.Add(l)));
+            var natives = phases.Where(p => p.Phase == fire.Native.BuildPhase.PackageNatives).ToList();
+            int firstNative = phases.FindIndex(p => p.Phase == fire.Native.BuildPhase.PackageNatives);
+            Check("Natives (Build-Fenster): die Natives der Pakete sind eine eigene Phase nach dem Uebersetzen von fire, je Paket gezaehlt (1/2, 2/2), das Log hat die Befehle",
+                error == null && output == "24" && natives.Count >= 3 && natives.All(p => p.Total == 2) && natives[0].Done == 0 && natives[^1].Done == 2
+                && natives.Any(p => p.Text.Contains("PnA") && p.Text.Contains("(1/2)")) && natives.Any(p => p.Text.Contains("PnB") && p.Text.Contains("(2/2)"))
+                && firstNative > 0 && phases.Take(firstNative).All(p => p.Phase == fire.Native.BuildPhase.CompileFire) && lines.Count(l => l.Contains("wrapper.c")) == 2,
+                $"{error}\n{output}\n" + string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
+            phases.Clear();
+            var errorAgain = Run(new fire.Native.BuildMonitor(default, p => phases.Add(p)));
+            Check("Natives (Build-Fenster): gebaute Bibliotheken sind keine Phase mehr", errorAgain == null && output == "24" && phases.All(p => p.Phase != fire.Native.BuildPhase.PackageNatives),
+                $"{errorAgain}\n" + string.Join(" | ", phases.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
+        }
+        Value.SingleFloats = false;
+    }
+
+    private static Exception? CatchException(Action action)
+    {
+        try { action(); return null; }
+        catch (Exception ex) { return ex; }
+    }
+
+    /// <summary>The serial port and the baud rate of a board (project settings, a target of fire.native.json) and the ESP-IDF folder of spark keep their JSON keys through
+    /// a save and a load (spark's dialogs write them); the list of ports and the check of ESP-IDF.</summary>
+    private static void BoardSettingsRoundTrip(string s)
+    {
+        Directory.CreateDirectory(s);
+        var project = new FireProject { Name = "Board", FilePath = Path.Combine(s, "Board.fireproj"), Settings = new ProjectSettings { Port = "/dev/ttyUSB3", Baud = 921600 } };
+        project.Save();
+        string projectText = File.ReadAllText(project.FilePath!);
+        var loaded = FireProject.Load(project.FilePath!);
+        Check("Board: port und baud des Projekts bleiben beim Speichern und Laden (settings.port, settings.baud)",
+            loaded.Settings?.Port == "/dev/ttyUSB3" && loaded.Settings?.Baud == 921600 && projectText.Contains("\"port\": \"/dev/ttyUSB3\"") && projectText.Contains("\"baud\": 921600"), projectText);
+        loaded.Settings!.Port = null; loaded.Settings.Baud = null;
+        loaded.Save();
+        string cleared = File.ReadAllText(project.FilePath!);
+        Check("Board: auto (kein Wert) laesst die Schluessel weg", !cleared.Contains("\"port\"") && !cleared.Contains("\"baud\""), cleared);
+
+        string configPath = Path.Combine(s, fire.Native.NativeConfig.FileName);
+        var config = fire.Native.NativeConfig.Parse("""{ "targets": { "esp32": { "port": "COM5", "baud": 460800 } } }""");
+        config.Save(configPath);
+        var again = fire.Native.NativeConfig.FindFor(Path.Combine(s, "Board.fireproj"));
+        var esp = again.ResolveTarget("esp32");
+        string configText = File.ReadAllText(configPath);
+        Check("Board: port und baud eines Ziels in fire.native.json bleiben (targets.esp32.port/baud)",
+            esp.Native.Port == "COM5" && esp.Native.Baud == 460800 && configText.Contains("\"port\": \"COM5\"") && configText.Contains("\"baud\": 460800"), configText);
+
+        string settingsFile = Path.Combine(s, "spark-settings.json");
+        new EditorSettings { IdfPath = "/opt/esp-idf" }.Save(settingsFile);
+        Check("Board: idfPath der spark-Einstellungen bleibt", EditorSettings.Load(settingsFile).IdfPath == "/opt/esp-idf" && File.ReadAllText(settingsFile).Contains("\"idfPath\": \"/opt/esp-idf\""), File.ReadAllText(settingsFile));
+
+        string idf = Path.Combine(s, "esp-idf");
+        Check("Board: ESP-IDF ohne Ordner: nicht gefunden", !fire.Debugging.Esp32Launch.CheckIdf(idf).Ok, fire.Debugging.Esp32Launch.CheckIdf(idf).Message);
+        Write(idf, OperatingSystem.IsWindows() ? "export.bat" : "export.sh", "");
+        Check("Board: ESP-IDF mit export-Skript, aber ohne tools/idf.py: nicht gefunden", !fire.Debugging.Esp32Launch.CheckIdf(idf).Ok, fire.Debugging.Esp32Launch.CheckIdf(idf).Message);
+        Write(idf, "tools/idf.py", "");
+        var found = fire.Debugging.Esp32Launch.CheckIdf(idf);
+        Check("Board: ESP-IDF mit export-Skript und tools/idf.py: gefunden", found.Ok && found.Message.Contains("idf.py found"), found.Message);
+        var ports = fire.Debugging.Esp32Launch.SerialPorts();
+        var usb = fire.Debugging.SerialFramedTransport.CandidatePorts();
+        Check("Board: die Liste der seriellen Schnittstellen hat die USB-Ports zuerst und keinen doppelt",
+            ports.Distinct().Count() == ports.Count && ports.Take(usb.Count).SequenceEqual(usb), string.Join(", ", ports));
+        Check("Board: die Port-Auswahl - leer und auto heissen auto (kein Wert), ein Port bleibt wie getippt",
+            fire.Debugging.Esp32Launch.PortChoice("") == null && fire.Debugging.Esp32Launch.PortChoice("auto") == null && fire.Debugging.Esp32Launch.PortChoice("auto - now /dev/ttyUSB0") == null
+            && fire.Debugging.Esp32Launch.PortChoice(" COM7 ") == "COM7" && fire.Debugging.Esp32Launch.PortChoice("/dev/serial/by-id/usb-Silicon_Labs-if00") == "/dev/serial/by-id/usb-Silicon_Labs-if00");
+        Check("Board: die Baud-Auswahl - leer ist der Standard, eine Zahl die Rate, anderes wird abgelehnt",
+            fire.Debugging.Esp32Launch.BaudChoice("") == (true, null) && fire.Debugging.Esp32Launch.BaudChoice("921600") == (true, 921600) && fire.Debugging.Esp32Launch.BaudChoice("fast").Ok == false
+            && fire.Debugging.Esp32Launch.BaudChoice("-5").Ok == false && fire.Debugging.Esp32Launch.BaudChoice("0").Ok == false);
+        Check("Board: die ueblichen Baudraten beginnen mit 115200", fire.Debugging.Esp32Launch.CommonBauds[0] == 115200 && fire.Debugging.Esp32Launch.CommonBauds.Contains(921600));
+    }
+
     private static string Describe(Exception ex) => ex is ProjectException ? ex.Message : CompileErrors.Describe(ex);
 
     public static void Run()
@@ -421,6 +557,8 @@ static class ProjectTests
         var cLibPlan = BuildPlan.Create(cSolution, cSolution.FindByName("NC")!);
         var cImport = fire.Package.Manager.Fpk.ReadManifest(ProjectBuilder.PackLibrary(cLibPlan, Path.Combine(t, "NC", "out"))).Imports[0];
         Check("Natives (C): das Paket enthaelt das C, die Sprache und die Funktionen", cImport.Native != null && cImport.Native.IsC && cImport.Native.Functions.Count == 3 && cImport.Native.Sources.Count == 1, cImport.Native?.Language ?? "(none)");
+        PackageNativesPhase(Path.Combine(t, "PN"));
+        BoardSettingsRoundTrip(Path.Combine(t, "Board"));
         var noSources = new FireProject { Name = "Empty", Type = OutputType.Library, Native = new ProjectNative(), FilePath = Path.Combine(t, "Empty", "Empty.fireproj") };
         Directory.CreateDirectory(Path.Combine(t, "Empty")); noSources.Save();
         var emptyWs = Workspace.Open(noSources.FilePath!);

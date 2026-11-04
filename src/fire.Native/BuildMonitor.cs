@@ -10,6 +10,9 @@ namespace fire.Native
     {
         /// <summary>The fire compiler: parsing, names, types, bytecode (the VM's program is ready after it).</summary>
         CompileFire,
+        /// <summary>The natives of the packages a program in the VM uses (PackageLibrary: the wrapper and the package's C/C++ as a shared library), one step per package that is not
+        /// built yet - before the program runs, or while a library is packed.</summary>
+        PackageNatives,
         /// <summary>The C (and the natives in C++) of the program and of its library modules.</summary>
         GenerateC,
         /// <summary>The C compiler: with linkage "static"/"shared" one step per library module that is not in the cache (side by side), with linkage "source" the program.</summary>

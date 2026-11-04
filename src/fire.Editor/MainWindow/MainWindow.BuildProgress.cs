@@ -127,7 +127,7 @@ namespace fire.Editor
             BuildStatusButton.IsVisible = show;
             if (!show) return;
             var p = job!.Last;
-            string count = p is { Indeterminate: false } q ? $" {q.Done}/{q.Total}" + (q.Phase == BuildPhase.CompileC && q.Text.Contains("module", StringComparison.Ordinal) ? " modules" : "") : "";
+            string count = p is { Indeterminate: false } q ? $" {q.Done}/{q.Total}" + (q.Phase == BuildPhase.CompileC && q.Text.Contains("module", StringComparison.Ordinal) ? " modules" : q.Phase == BuildPhase.PackageNatives ? " packages" : "") : "";
             BuildStatusText.Text = job.Cancelling ? "Cancelling the build..." : $"Building...{count}";
             BuildStatusBar.IsIndeterminate = p is not { Indeterminate: false } || job.Cancelling;
             if (p is { Indeterminate: false } r)
