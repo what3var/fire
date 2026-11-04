@@ -5,6 +5,9 @@ finds their devices by identifier. The serial port of a printer, the GPIO port o
 `Write(data)`, `Connect()`/`Disconnect()`. On top of these come text (`ReadString`, `WriteString`), commands (`DoCommand`) and waiting for data (`WaitFor`,
 `WaitForString`).
 
+The buses have pages of their own: [GPIO](gpio.md), [I2C](i2c.md), [SPI](spi.md), [USB](usb.md); serial ports and the loopback device come with
+`devices` itself. In spark the **Devices** panel shows the devices and traces their packets.
+
 ```fire
 #import "devices"
 #import "gpio"
@@ -16,10 +19,14 @@ DeviceManager.AddDriver(new I2cDriver())        // I2C buses: i2c:i2c-1, ..., i2
 
 foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
 
-var port = DeviceManager.Get("gpioa")           // a bare name works when only one driver has it
+var port = DeviceManager.Get("gpiosim")         // a bare name works when only one driver has it; on a board: "gpioa"
 port.Write(0b1010)                              // lines 1 and 3 high, the others low (all as outputs)
-var sensor = DeviceManager.Get("i2c:i2c-1/0x48") // a device at an address of a bus
-print(sensor.ReadRegister(0))
+print(port.Read())                              // 10
+
+I2c.Sim.Add(0x48)                               // a simulated sensor; on a board: "i2c:i2c-1/0x48"
+I2c.Sim.SetRegister(0x48, 0, 21)
+var sensor = DeviceManager.Get("i2c:sim/0x48")!I2c.Target   // a device at an address of a bus
+print(sensor.ReadRegister(0))                   // 21
 ```
 
 ## Devices
@@ -49,6 +56,8 @@ print(sensor.ReadRegister(0))
 ## Drivers of your own
 
 ```fire
+#import "devices"
+
 class Thermometer : Device {
     construct(Driver driver) : base(driver, "thermo0") { }
     override any Read() { return 21 }          // ask the hardware here

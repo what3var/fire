@@ -1,0 +1,14 @@
+// Made from docs/circuits/README.md by extract.py - edit the page, not this file.
+#import "circuits.ui"
+#include "Blinker.biscuit"
+#include "shot.fire"
+
+var fb = new Framebuffer(800, 460)
+var win = new Window(fb, "Circuit")
+var ui = new UI.Root(fb, win)
+var blinker = new Blinker()
+var view = new UI.CircuitView(blinker, 0, 0, 800, 460)
+ui.Add(view)
+ui.Tick()                   // the first layout: now the view knows its size
+view.FitToView()
+Shot.Save(ui, "circuit-view.png")

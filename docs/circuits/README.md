@@ -782,18 +782,23 @@ or of a member of `Circuits.Circuit`). Renaming an element moves the bindings al
 
 ## The circuit view (`#import "circuits.ui"`)
 
-`UI.CircuitView` is a control of the UI library (docs/ui/README.md) that shows a circuit as a live schematic, like Falstad's simulator: wires and leads coloured by their voltage
+`UI.CircuitView` is a control of the [UI library](../ui/README.md) that shows a circuit as a live schematic, like Falstad's simulator: wires and leads coloured by their voltage
 (green positive, red negative, grey 0 V; `voltageRange`), dots running with the current through the parts and the wires, LEDs that light up, logic outputs, probes,
 scopes drawn into the schematic. While `running` it simulates in real time at the speed of the circuit (`Circuit.Speed`, see "Real time"; Space pauses).
 
+![The 555 blinker that comes with spark, running in a CircuitView](../images/circuit-view.png)
+
 ```fire
 #import "circuits.ui"
+#include "Blinker.biscuit"
 
-var fb = new Framebuffer(800, 500)
-var ui = new UI.Root(fb, new Window(fb, "Circuit"))
-var amp = new Amp()
-var view = new UI.CircuitView(amp, 0, 0, 800, 500)
+var fb = new Framebuffer(800, 460)
+var win = new Window(fb, "Circuit")
+var ui = new UI.Root(fb, win)
+var blinker = new Blinker()
+var view = new UI.CircuitView(blinker, 0, 0, 800, 460)
 ui.Add(view)
+ui.Tick()                   // the first layout: now the view knows its size
 view.FitToView()
 ui.Run()
 ```
