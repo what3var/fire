@@ -280,7 +280,8 @@ Dynamisches Laden:
   sind in VM und nativ eine `DestroyedException` (nativ las `isof_*` vorher den freigegebenen Speicher).
 * **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert
   ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie; Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.
-  Offen: spark lädt so die Treiber installierter Packages.
+  spark lädt so die Treiber installierter Packages (der Treiber-Agent: das Prelude jedes Packages mit Treibern einmal als Plugin für die VM übersetzt und im Cache,
+  `Library.Load` + `Reflect.New`; passt ein Plugin nicht, der alte Weg über `#import`; docs/DEVICES.md, Test `FIRE_TESTS_ONLY=drivers`).
 
 ## 10. Clipboard, Drag & Drop
 

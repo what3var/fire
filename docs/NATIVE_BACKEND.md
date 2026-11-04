@@ -1200,6 +1200,10 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
 * Noch nicht: benannte Argumente in Aufrufen des nativen Programms auf Objekten
   eines Plugins (die Verteiler des Programms kennen nur seine Klassen - die Runtime bräuchte die Namen und Vorgaben der Parameter in den Tabellen der Member);
   Debuggen eines Plugins; msvc.
+* **Nur für die VM** (`NativeBuilder.WriteVmPlugin`, ohne native Bibliothek): spark lädt so die Treiber installierter Packages (docs/DEVICES.md, `PackageDriverAgent`).
+  Das Prelude eines Imports ist die eigene Quelle des Plugins: `Linker.OwnImports` nennt den Import, seine Natives sind die des Plugins, sein Prelude wird nicht noch
+  einmal eingefügt (was das Package verlangt, kommt wie sonst dazu). Die `.fireplugin`-Datei nennt seine Natives mit dem vollen Pfad der Bibliothek des Packages für die
+  VM (`PackageNatives`/`PackageLibraries`; ein Pfad statt eines Dateinamens geht, `Path.Combine` mit dem Ordner des Plugins lässt ihn stehen).
 * Getestet (`FIRE_TESTS_ONLY=linkage`, nur die Plugins mit `FIRE_TESTS_FILTER=plugin`): ein Projekt mit der Library `Api`, dem Programm (shared) und dem Plugin `Kit`
   - Interface, Basisklasse mit überschriebenen Methoden, Reflect.New/Get/Set/Call, Type.Of (auch `Fields()`/`Find` der Felder von Kit, das `reflection` nicht
   importiert), Ausnahmen beider Richtungen, Enum, statische Felder - nativ, in der VM und

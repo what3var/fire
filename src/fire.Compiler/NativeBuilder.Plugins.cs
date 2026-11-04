@@ -43,6 +43,18 @@ namespace fire.Compiler
             return result;
         }
 
+        /// <summary>A fire plugin for the VM only (no native library): the classes of `sources` compiled for the VM (`ownImports`: imports of packages whose prelude these sources
+        /// are - their natives are the plugin's), as <see cref="PluginBytecode"/> at `path`. `packageNatives` picks the natives the VM binds when it links the plugin (name,
+        /// library file - relative to the plugin's folder, or a full path). Compile errors are thrown.</summary>
+        public static LinkedProgram WriteVmPlugin(string path, string name, IReadOnlyList<string> sources, IReadOnlyList<string?>? sourcePaths, VmExecutionMode mode,
+            IReadOnlyCollection<string>? ownImports = null, Func<LinkedProgram, IEnumerable<(string Native, string Library)>>? packageNatives = null)
+        {
+            var linked = new Linker { ClassMeta = true, Engine = "vm", SourcePaths = sourcePaths, OwnImports = ownImports }.CompileAndLink(sources, null, null, mode);
+            var deps = (ModuleInterface.Modules(linked) ?? new()).OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => (m.Key, ModuleInterface.Text(linked, m.Value.Classes, m.Value.Sources)));
+            PluginBytecode.Write(path, name, linked, deps, packageNatives?.Invoke(linked));
+            return linked;
+        }
+
         /// <summary>`--linkage plugin` (ROADMAP 9 phase D b, docs/NATIVE_BACKEND.md "Plugins"): the classes of the program's own sources as a fire plugin - a shared library
         /// (`<output>.so`/`.dll`) that a program with linkage "shared" loads with `Library.Load`, and its bytecode for the VM (`<output>.fireplugin`). With `--host <program>`
         /// it is built for that program (its switches, the files of its libraries - on Windows needed: the DLL imports from them).</summary>

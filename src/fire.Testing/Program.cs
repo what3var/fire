@@ -50,6 +50,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { Dockin
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "debugger") { DebuggerTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "drivers") { int driverFailures = DriverAgentTests.Run(); Console.WriteLine(driverFailures == 0 ? "Alle Treiber-Pruefungen bestanden." : $"FEHLER: {driverFailures} Treiber-Pruefung(en) fehlgeschlagen."); return; }
 // (filled by sections that FIRE_TESTS_ONLY may skip: the native device cases by the device checks of the VM, the UI drawing by the UI checks)
 var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
 string uiDrawScript = "";
@@ -13960,49 +13961,8 @@ devNativeCases.Clear();
     }
 
     // Treiber aus Paketen: Manifest-Feld drivers (Projekt -> Paket), der Treiber-Agent bringt usb:sim in einen DeviceManager, Senden und Echo kommen an
-    {
-        var proj = fire.Projects.FireProject.Parse("{\"name\": \"x\", \"type\": \"library\", \"drivers\": [\"A.MyDriver\"]}");
-        var again = fire.Projects.FireProject.Parse(proj.ToJson());
-        var manifest = fire.Package.Manager.PackageManifest.Parse("{\"name\": \"p\", \"version\": \"1.0.0\", \"imports\": [{\"name\": \"p\", \"drivers\": [\"PDriver\"]}]}");
-        bool ok = again.Drivers is { Count: 1 } && again.Drivers[0] == "A.MyDriver" && manifest.Imports[0].Drivers is { Count: 1 }
-            && !fire.Projects.FireProject.Parse("{\"name\": \"y\"}").ToJson().Contains("drivers");
-        if (!ok) devFailures++;
-        Console.WriteLine(ok ? "OK: Treiber im Paket: 'drivers' im Projekt und im Manifest (leer wird nicht geschrieben)" : "FEHLER: drivers im Projekt/Manifest");
-
-        var found = fire.Compiler.PackageDriverAgent.FindDrivers();
-        ok = found.Any(d => d.Class == "UsbDriver" && d.Import == "usb") && found.Any(d => d.Class == "GpioDriver");
-        if (!ok) devFailures++;
-        Console.WriteLine(ok ? "OK: Treiber im Paket: die installierten Standardpakete melden ihre Treiber (usb, gpio, i2c, spi)" : "FEHLER: FindDrivers: " + string.Join(", ", found));
-
-        using var agent = new fire.Compiler.PackageDriverAgent();
-        ok = agent.Start(new[] { new fire.Compiler.PackageDriver("fire-usb", "usb", "UsbDriver"), new fire.Compiler.PackageDriver("x", "usb", "GibtEsNicht") });
-        var manager = new fire.Device.Manager.DeviceManager.DeviceManager();
-        var captured = new List<fire.Device.Manager.DeviceManager.PacketRecord>();
-        string detail = agent.EndedWith ?? "";
-        if (ok)
-        {
-            agent.Attach(manager);
-            manager.PacketCaptured += p => { lock (captured) captured.Add(p); };
-            manager.RefreshDevices(true);
-            var slot = manager.GetSlotByIdentifier("usb:sim");
-            ok = slot != null && slot.Device.Description == "simulated USB device (echo)" && !slot.Device.IsConnected && agent.StartErrors.Count == 1 && agent.StartErrors[0].Contains("GibtEsNicht");
-            if (ok)
-            {
-                slot!.Device.Connect();
-                ok = slot.Device.IsConnected && slot.Device.Write(System.Text.Encoding.ASCII.GetBytes("ping"));
-                for (int i = 0; i < 300 && ok; i++) { lock (captured) if (captured.Count >= 2) break; Thread.Sleep(10); }
-                lock (captured)
-                    ok = ok && captured.Count == 2 && captured[0].Direction == fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice
-                        && captured[1].Direction == fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost && captured.All(c => System.Text.Encoding.ASCII.GetString(c.Data) == "ping");
-                slot.Device.Disconnect();
-                ok = ok && !slot.Device.IsConnected;
-            }
-            detail = string.Join(" | ", manager.GetSlots().Select(s => s.Identifier)) + " / " + string.Join(";", agent.StartErrors) + " / " + captured.Count;
-        }
-        if (!ok) devFailures++;
-        Console.WriteLine(ok ? "OK: Treiber im Paket: der Treiber-Agent bringt usb:sim in den DeviceManager (Beschreibung, Verbinden, Senden, Echo, Trennen); ein Treiber, den es nicht gibt, wird gemeldet" : "FEHLER: Treiber-Agent: " + detail);
-        manager.Shutdown();
-    }
+    // (als Plugins und mit #import; DriverAgentTests.cs, allein: FIRE_TESTS_ONLY=drivers)
+    devFailures += DriverAgentTests.Run();
 
     Console.WriteLine(devFailures == 0 ? "Alle Geraete-Pruefungen bestanden." : $"FEHLER: {devFailures} Geraete-Pruefung(en) fehlgeschlagen.");
 }
