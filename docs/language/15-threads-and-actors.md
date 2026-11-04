@@ -79,7 +79,18 @@ Sleep(100ms)
 
 - Everything reachable from `x` through fields and elements (and what the objects own) goes along, as it is - like `taking`, but moved instead of
   copied. A part whose owner goes along keeps it; every other part belongs to the thread now, whoever owned it before.
-- Other references the sender still has to these objects point into another thread: do not use them (this is not checked).
+- **Every other reference to them is dead.** The objects belong to the thread now; any other reference that existed before the handover - another
+  variable, a field, an element, in the sender or anywhere else (also one the thread itself reads from the main program's globals) - is treated like a
+  reference to a destroyed object: using it throws a catchable `DestroyedException` with the message
+  "Access to an object that was handed over to a thread ('fire handover')." (`an array` / `a buffer`), instead of a data race. Only the thread's own
+  variable and the references among the moved objects themselves work. Once the thread has destroyed them, the message is the usual
+  "Access to a destroyed object.". What counts as a use: reading or writing a field or an element, `Length`, calling a method, `is of` a class
+  (an interface, an enum) and `x!Class`, `throw`, `take`, `foreach` (`copy`/`flat` refuse it like a destroyed object: an `ArgumentException`). Not a use (always answered, never an exception): `==`/`!=` - they compare the
+  object, so a dead reference is equal to the one the thread got - `x == undefined` (`False`), `is of class`, and passing or storing the reference.
+- This costs nothing outside the `fire`: the moved objects get a new identity at the handover (natively the next generation of their handle slot), so
+  the checks that already find a destroyed object find these references too. In `#performance` nothing is checked (as for destroyed objects).
+- What the thread later shares itself (an object it assigns to a global variable in `sync global { }`) is a new reference and works, like any
+  object a thread shares; the main program then must not change it while the thread does.
 - `handover` can be repeated and mixed with `taking`: `fire taking a handover b handover c { ... }`, also `fire Method(args) handover h`.
 - A lambda or a pointer in a field or an element cannot go to another thread, and a thread cannot hand over what belongs to the main program's
   global variables: the `fire` throws an `ArgumentException` and nothing moves. A global variable of the main program named in a thread is a compile

@@ -43,6 +43,15 @@ namespace fire.Runtime
             _rest?.Remove(obj);
         }
 
+        /// <summary>`fire handover`: `fresh` takes the place of `old` (same position in the order of destruction).</summary>
+        public void Replace(ObjectInstance old, ObjectInstance fresh)
+        {
+            if (ReferenceEquals(_first, old)) { _first = fresh; return; }
+            if (_rest == null) return;
+            int i = _rest.IndexOf(old);
+            if (i >= 0) _rest[i] = fresh;
+        }
+
         public void Clear()
         {
             _first = null;

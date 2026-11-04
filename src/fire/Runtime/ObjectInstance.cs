@@ -168,6 +168,79 @@ namespace fire.Runtime
         /// that is not generic, or created without them (`new List()`). A declaration `T value` in the class is checked against them.</summary>
         public string[]? TypeArgs { get; set; }
 
+        // -----------------------------------------------------------
+        // `fire handover` (docs/THREADING_DESIGN.md section 1, Runtime.ObjectHandover): the moved object gets a new identity - a new instance takes its
+        // place (the same fields, owner, owned objects), and this one is retired: every reference that still points to it (the sender's, from before
+        // the handover) is a reference to a dead object - its use is the DestroyedException "... was handed over to another thread". Natively the
+        // same happens with the generation of the object's slot. Costs nothing outside the handover: the fast paths already miss a dead object.
+        // -----------------------------------------------------------
+
+        /// <summary>The instance that took this one's place at a `fire handover` (null: never handed over).</summary>
+        public ObjectInstance? HandedOverTo { get; private set; }
+
+        private ObjectInstance(ObjectInstance old)
+        {
+            ClassName = old.ClassName;
+            RtClass = old.RtClass;
+            Fields = old.Fields;
+            Owner = old.Owner;
+            _owned = old._owned;
+            _leaves = old._leaves;
+            ThreadLock = old.ThreadLock;
+            SyncOrigin = old.SyncOrigin;
+            IsTakingCopy = old.IsTakingCopy;
+            TypeArgs = old.TypeArgs;
+            RefreshGuard();
+        }
+
+        /// <summary>The new instance for a handover (not registered anywhere yet - ObjectHandover puts it in this one's place).</summary>
+        internal ObjectInstance Relocate() => new(this) { _hash = GetHashCode() };
+
+        // `==` compares the object, not the instance: a reference from before a handover equals the one the thread got (natively both are the same
+        // address), so the instances of one object share their hash. Two live objects are never equal (only a retired instance has HandedOverTo).
+        private int _hash;
+        public override int GetHashCode()
+        {
+            if (_hash == 0) _hash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this) | 1;
+            return _hash;
+        }
+        public override bool Equals(object? obj) =>
+            ReferenceEquals(this, obj)
+            || (obj is ObjectInstance other && (HandedOverTo != null || other.HandedOverTo != null) && ReferenceEquals(Latest(this), Latest(other)));
+        private static ObjectInstance Latest(ObjectInstance o)
+        {
+            while (o.HandedOverTo != null) o = o.HandedOverTo;
+            return o;
+        }
+
+        internal void SetOwnerAfterHandover(IOwner owner) => Owner = owner;
+        internal void ReplaceOwned(ObjectInstance old, ObjectInstance fresh) => _owned.Replace(old, fresh);
+        internal void ReplaceLeaf(IOwnedLeaf old, IOwnedLeaf fresh) { int i = _leaves?.IndexOf(old) ?? -1; if (i >= 0) _leaves![i] = fresh; }
+
+        /// <summary>After the handover: this instance is dead (no destructor runs - `fresh` is the object now), it owns nothing and belongs to no one.</summary>
+        internal void RetireAfterHandover(ObjectInstance fresh)
+        {
+            HandedOverTo = fresh;
+            _owned = default;
+            _leaves = null;
+            _referrers = null;
+            _destroyed = true;
+            InGlobalsDomain = false;
+            Owner = DeadOwner.Instance;
+            Kill();
+        }
+
+        /// <summary>Was the object behind this (dead) instance handed over to a thread, and does it still live there? (false: destroyed.)</summary>
+        public bool LivesInAnotherThread
+        {
+            get
+            {
+                var current = HandedOverTo;
+                while (current?.HandedOverTo != null) current = current.HandedOverTo;
+                return current != null && !current.IsDestroyed;
+            }
+        }
+
         public ObjectInstance(string className, IOwner initialOwner, RuntimeClass? rtClass = null)
         {
             ClassName = className;

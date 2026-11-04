@@ -1263,6 +1263,9 @@ FIRE_FN uint8_t* bufBytes(Buf* b) { return b->data; }
 #ifndef FIRE_UNCHECKED
 typedef struct SlotTable {
     uint16_t* gen;
+    /* the generation of each slot when its value was made (or the slot was freed): a stale Value of the value that lives in the slot now - its generation
+     * between `born` and `gen` - is a reference from before a `fire handover` (the value lives on in a thread under the next generation, handOverAll) */
+    uint16_t* born;
     uint32_t* freed;
     uint32_t count, cap, nfree, freedCap;
 #ifdef FIRE_PTRBOUNDS
@@ -1277,6 +1280,12 @@ FIRE_COLD FIRE_FN uint32_t slotGrow(void) {
     if (!gen) outOfMemory();
     memset(gen + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(uint16_t));
     g_slots.gen = gen;
+    {
+        uint16_t* born = (uint16_t*)realloc(g_slots.born, cap * sizeof(uint16_t));
+        if (!born) outOfMemory();
+        memset(born + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(uint16_t));
+        g_slots.born = born;
+    }
 #ifdef FIRE_PTRBOUNDS
     {
         Owned** hdr = (Owned**)realloc(g_slots.hdr, cap * sizeof(Owned*));
@@ -1303,6 +1312,7 @@ FIRE_FN void slotAcquire(Owned* o) {
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
     g_slots.gen[slot] = (uint16_t)(g_slots.gen[slot] + 1);
+    g_slots.born[slot] = g_slots.gen[slot];
     if (g_slots.nfree == g_slots.freedCap) {
         uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
         uint32_t* freed = (uint32_t*)realloc(g_slots.freed, cap * sizeof(uint32_t));
@@ -1324,6 +1334,19 @@ FIRE_FN bool leafAlive(Value v) {
     return true;
 #else
     return FIRE_LIKELY(g_slots.gen[v.unit] == v.reserved);
+#endif
+}
+/* A dead Value of an object, array or buffer that still lives - in a fire thread it was handed over to (`fire handover`, handOverAll): the sender's reference
+ * from before the handover. (A destroyed one is false.) */
+FIRE_FN bool handedOverRef(Value v) {
+#ifdef FIRE_UNCHECKED
+    (void)v;
+    return false;
+#else
+    uint16_t born;
+    if ((v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) || v.unit >= g_slots.cap) return false;
+    born = g_slots.born[v.unit];
+    return (uint16_t)(v.reserved - born) < (uint16_t)(g_slots.gen[v.unit] - born);
 #endif
 }
 
@@ -4140,8 +4163,18 @@ FIRE_FN Value divideByZero(void) {
 #endif
 }
 
+/* The text of the DestroyedException for a reference from before a `fire handover` (the value lives on in the thread), else `text`. */
+FIRE_COLD FIRE_FN const char* handedOverText(Value leaf, const char* text) {
+    if (!handedOverRef(leaf)) return text;
+    return leaf.kind == K_Buffer ? "Access to a buffer that was handed over to a thread ('fire handover')."
+         : leaf.kind == K_Class ? "Access to an object that was handed over to a thread ('fire handover')."
+         : "Access to an array that was handed over to a thread ('fire handover').";
+}
 FIRE_FN Value destroyedError(Value leaf) {
     const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : leaf.kind == K_Class ? "Access to a destroyed object." : "Access to a destroyed array.";
+#ifdef FIRE_THREADS
+    text = handedOverText(leaf, text);   /* (only a program with threads can hand over: without them destroyedError needs nothing but the kind) */
+#endif
 #ifdef FIRE_EXCEPTIONS
     return throwValue(makeDestroyedError(fire_asciiMessage(text)));
 #else
@@ -6136,14 +6169,26 @@ FIRE_FN bool handoverFree(const Value* vs, uint32_t n) {
     }
     return true;
 }
-/* What the thread gets for `handover x`: x itself, moved (see above); a string or lambda is shared as with `taking`. */
-FIRE_FN Value handOver(Value v, OwnList* travel) {
+#ifndef FIRE_UNCHECKED
+/* (a reference to a moved part: the next generation - the one the part gets) */
+FIRE_FN void handoverRehome(Value* v, CopyMap* seen) {
+    if ((v->kind == K_Class || v->kind == K_Array || v->kind == K_Buffer) && leafAlive(*v) && copyMapFind(seen, (Owned*)v->p))
+        v->reserved = (uint16_t)(v->reserved + 1);
+}
+#endif
+/* What the thread gets for the `handover` values `vs` of one `fire` (all together: one may reach another): each value itself, moved (see above); a string or
+ * lambda is shared as with `taking`. Every moved part gets the next generation of its slot - the references among the parts and the values the thread gets
+ * carry it, every other Value (the sender's, from before the handover) is dead from then on: its use is the DestroyedException "... was handed over to a
+ * thread" (destroyedError, handedOverRef), as in the VM (Runtime.ObjectHandover.MoveAll). An original with `taking` copies counts as gone for their `sync`. */
+FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* travel) {
     CopyMap seen = {0};
     Owned** parts = NULL;
     uint32_t count = 0, cap = 0, i;
-    if (v.kind == K_String || v.kind == K_Lambda) { retain(v); return v; }
-    if (!ownedOf(v)) return v;
-    handoverDiscover(v, &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
+    for (i = 0; i < n; i++) {
+        out[i] = vs[i];
+        if (vs[i].kind == K_String || vs[i].kind == K_Lambda) retain(vs[i]);
+        else handoverDiscover(vs[i], &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
+    }
     for (i = 0; i < count; i++) {
         Owned* h = parts[i];
         OwnList* l = h->owner;
@@ -6153,9 +6198,38 @@ FIRE_FN Value handOver(Value v, OwnList* travel) {
         }
     }
     for (i = 0; i < count; i++) parts[i]->flags &= (uint8_t)~F_SHARED;
+#ifndef FIRE_UNCHECKED
+    for (i = 0; i < count; i++) {
+        Owned* h = parts[i];
+        uint32_t k;
+        if (h->okind == O_Object) {
+            Obj* o = (Obj*)h;
+            for (k = 0; k < o->nfields; k++) handoverRehome(&objFields(o)[k], &seen);
+            if (h->flags & 4) {   /* an original with `taking` copies: for them it is gone (`sync` says undefined), as in the VM */
+                void** cs = ptrMapFind(&g_copiesOf, o);
+                if (cs) {
+                    PtrVec* copies = (PtrVec*)*cs;
+                    for (k = 0; k < copies->count; k++) ptrMapPut(&g_originOf, copies->items[k], NULL);
+                    free(copies->items);
+                    free(copies);
+                    ptrMapRemove(&g_copiesOf, o);
+                }
+                h->flags &= (uint8_t)~4;
+            }
+        } else if (h->okind == O_Array) {
+            Arr* a = (Arr*)h;
+            for (k = 0; k < a->length; k++) handoverRehome(&arrItems(a)[k], &seen);
+        }
+    }
+    for (i = 0; i < n; i++) handoverRehome(&out[i], &seen);
+    for (i = 0; i < count; i++) {
+        Owned* h = parts[i];
+        g_slots.gen[h->slot] = (uint16_t)(g_slots.gen[h->slot] + 1);
+        h->gen = g_slots.gen[h->slot];
+    }
+#endif
     copyMapFree(&seen);
     free(parts);
-    return v;
 }
 
 /* ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):

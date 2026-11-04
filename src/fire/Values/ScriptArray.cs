@@ -59,6 +59,55 @@ namespace fire.Values
         public bool Special { get; private set; }
         public int Length => Items.Length;
 
+        /// <summary>`fire handover` (see ObjectInstance.HandedOverTo): the array that took this one's place; this one is dead (destroyed) from then on.</summary>
+        public ScriptArray? HandedOverTo { get; private set; }
+
+        private ScriptArray(Value[] items) { Items = items; }
+
+        /// <summary>The new array for a handover: the same elements, owner, owned objects and parts (not registered anywhere yet).</summary>
+        internal ScriptArray Relocate() => new(Items) { LeafOwner = LeafOwner, Parts = Parts, _ownedObjects = _ownedObjects, _hash = GetHashCode() };
+
+        // `==` compares the array, not the instance (see ObjectInstance.Equals).
+        private int _hash;
+        public override int GetHashCode()
+        {
+            if (_hash == 0) _hash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this) | 1;
+            return _hash;
+        }
+        public override bool Equals(object? obj) =>
+            ReferenceEquals(this, obj)
+            || (obj is ScriptArray other && (HandedOverTo != null || other.HandedOverTo != null) && ReferenceEquals(Latest(this), Latest(other)));
+        private static ScriptArray Latest(ScriptArray a)
+        {
+            while (a.HandedOverTo != null) a = a.HandedOverTo;
+            return a;
+        }
+
+        internal void ReplaceOwned(fire.Runtime.ObjectInstance old, fire.Runtime.ObjectInstance fresh) => _ownedObjects.Replace(old, fresh);
+        internal void ReplaceLeaf(fire.Runtime.IOwnedLeaf old, fire.Runtime.IOwnedLeaf fresh) { int i = Parts?.IndexOf(old) ?? -1; if (i >= 0) Parts![i] = fresh; }
+
+        internal void RetireAfterHandover(ScriptArray fresh)
+        {
+            HandedOverTo = fresh;
+            _ownedObjects = default;
+            Parts = null;
+            LeafOwner = null;
+            IsDestroyed = true;
+            _shared = false;
+            Special = true;
+        }
+
+        /// <summary>See ObjectInstance.LivesInAnotherThread.</summary>
+        public bool LivesInAnotherThread
+        {
+            get
+            {
+                var current = HandedOverTo;
+                while (current?.HandedOverTo != null) current = current.HandedOverTo;
+                return current != null && !current.IsDestroyed;
+            }
+        }
+
         public ScriptArray(int length)
         {
             Items = new Value[length];

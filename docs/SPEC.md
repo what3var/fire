@@ -227,6 +227,13 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   (there is no destructor), the inner arrays it owns (2.1) are destroyed with it.
 - **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
   nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** is treated the same way (2.3): dead objects throw `DestroyedException` (a shallow copy, 2.4, may point to one).
+- **References from before a `fire handover`** (THREADING_DESIGN.md section 1) are dead the same way: the handed-over value and everything reachable from it
+  belong to the thread, and every other reference to them that existed before - in the sender or anywhere else, in any thread - throws the
+  `DestroyedException` "Access to an object that was handed over to a thread ('fire handover')." (`an array`, `a buffer`; "Access to a destroyed object."
+  once the thread has destroyed it) wherever a destroyed one throws: a field or element read or written, `Length`, a method call, `is of`/`!` a class,
+  `throw`, `take`, `foreach` (`copy`/`flat`: the `ArgumentException` of a destroyed object). `==`/`!=`, `== undefined` and `is of class` are no use: they answer, and `==` compares the object (a dead reference
+  equals the thread's). Only the thread's variable and the references among the moved values work. VM and native the same (the moved values get a new
+  identity: a new instance in the VM, the next generation of the handle slot natively - no check is added anywhere else); not checked in `#performance`.
 - **Debug warning for references that outlive their object**: in Debug mode the VM notes when a field or an array element is given an object that belongs to a scope (a local, an
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
@@ -1120,7 +1127,7 @@ stripping level 0-3, docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSeria
 derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md); `[NoCopy]` (before a class) -
 an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
 `ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
-`taking`, the arguments of `fire global`, what `sync` copies back - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+`taking`, the arguments of `fire global`, what `sync` copies back, the isolated copy of the globals for a host callback after the end of the program - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
 and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
 editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
@@ -1410,7 +1417,12 @@ The actual novelty lies on the C# side:
   **never** the real, shared global scope of the main program, exactly
   as required. An unhandled script exception in the callback body
   does NOT propagate out into the native caller, but only goes
-  to an optional `onUnhandled` callback.
+  to an optional `onUnhandled` callback. The copy follows the `[NoCopy]` rules (5.12) like every other copy: when an object of the snapshot (a
+  field, an element of it) reaches an instance of a `[NoCopy]` class, it is refused before anything is copied - the callback does not run, and
+  `onUnhandled` gets "Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' would copy an instance
+  of it, which exists only once." (`reaches an instance of it ...` for a field or an element); a lambda or a pointer in a field is refused the same
+  way. An array of the snapshot is shared, not copied (so a `[NoCopy]` instance in it is fine). A native program has no such copy: a host service
+  runs only in the main program, never after its end.
 
 This matches the existing lambda semantics exactly (SPEC 4.2,
 `Runtime.LambdaValue`): a lambda anyway ALWAYS sees only its own

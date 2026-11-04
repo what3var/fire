@@ -60,6 +60,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") goto uiTests;
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "native") goto nativeTests;
 // FIRE_TESTS_ONLY=packer: only the packer (single file, payload, loader) and the native targets checked there (wasm with Emscripten and the browser)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") goto packerTests;
+// FIRE_TESTS_ONLY=callbacks: only the host callbacks in the VM (nested on the VM thread, queued from a host thread, the isolated copy after the end)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") goto callbackTests;
 // FIRE_TESTS_FILTER=text: of the checks that are listed as cases (the native cases, the native device and window cases, the UI checks) only those whose name contains
 // the text (several texts separated by '|'; case does not matter) - together with FIRE_TESTS_ONLY a run of a minute instead of half an hour.
 static bool TestSelected(string name)
@@ -13027,7 +13029,9 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
 
 // ---------------------------------------------------------------------------
 // Native callbacks (window events) run nested on the VM of the thread: real globals, no copying
+// (FIRE_TESTS_ONLY=callbacks: only this section)
 // ---------------------------------------------------------------------------
+callbackTests:
 {
     Console.WriteLine();
     Console.WriteLine("=== Callbacks auf dem VM-Thread ===");
@@ -13066,6 +13070,10 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
             t.Join();
             return Value.MakeUndefined();
         });
+        // after the end of the program (the globals stay, as for a host that still holds them): the remembered lambda from another thread - the VM
+        // does not run any more, the callback gets the isolated copy of the globals
+        bool runAfterEnd = false;
+        natives.Register("__RunKeptAfterEnd", args => { runAfterEnd = true; vm!.DestroyGlobalsAtEnd = false; return Value.MakeUndefined(); });
 
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -13073,6 +13081,13 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
         VM.ResetTerminateForTests();
         vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
         vm.Run();
+        if (runAfterEnd)
+        {
+            var t = new Thread(() => FireRuntime.RunCallback(kept[0], Array.Empty<Value>(), natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm));
+            t.Start();
+            t.Join();
+            lines.Add("main afterwards: " + string.Join(" ", vm.SnapshotGlobals().Where(v => v.Kind == ValueKind.Int).Select(v => v.ToString())));
+        }
         VM.ResetTerminateForTests();
         if (vm.UnhandledException != null)
             lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
@@ -13234,7 +13249,48 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
         print("weiter")
         """, new[] { "CB: Unhandled exception of type 'Exception': kaputt", "weiter" });
 
+    CheckCb("Host-Thread-Callback nach dem Programmende: laeuft auf der isolierten Kopie der Globals (das Hauptprogramm behaelt seine Werte)", cbHead + """
+        class Item { int v }
+        var counter = 41
+        var item = new Item()
+        item.v = 1
+        __Keep(func () => { counter = counter + 1; item.v = 5; print("cb " + counter + " " + item.v) })
+        __RunKeptAfterEnd()
+        """, new[] { "cb 42 5", "main afterwards: 41" });
+
+    CheckCb("Host-Thread-Callback nach dem Programmende: ein [NoCopy]-Objekt in den Globals - die Kopie wird vorher abgelehnt, der Callback laeuft nicht (ArgumentException als Text)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        class Holder { Res res }
+        var counter = 1
+        var holder = new Holder()
+        holder.res = new Res()
+        __Keep(func () => { counter = counter + 1; print("never") })
+        __RunKeptAfterEnd()
+        """, new[] { "CB: Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' reaches an instance of it (a field or an element of the copied value), which exists only once.", "main afterwards: 1" });
+
+    CheckCb("Host-Thread-Callback nach dem Programmende: ein [NoCopy]-Objekt direkt in einem Global, eines in einem Array (geteilt, nicht kopiert)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        var list = [new Res()]
+        var res = new Res()
+        __Keep(func () => { print("never") })
+        __RunKeptAfterEnd()
+        """, new[] { "CB: Unhandled exception of type 'ArgumentException': 'Res' cannot be copied ([NoCopy]) - 'host callback' would copy an instance of it, which exists only once.", "main afterwards: " });
+
+    CheckCb("Host-Thread-Callback, waehrend das Hauptprogramm laeuft: ein [NoCopy]-Global ist kein Problem (echte Globals, keine Kopie)", cbHead + """
+        [NoCopy]
+        class Res { int id }
+        var res = new Res()
+        res.id = 7
+        __Keep(func () => { res.id = res.id + 1; print("cb " + res.id) })
+        __RunKeptOnOtherThread()
+        for (var i = 0; i < 1; i++) { }
+        print("res " + res.id)
+        """, new[] { "cb 8", "res 8" });
+
     Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
+    if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "callbacks") return;
 }
 
 // ---------------------------------------------------------------------------
@@ -19617,6 +19673,94 @@ else
             w.n = 11
             w.Start(new Res(12))
             while (released < 6) { sync globals }
+            print("end")
+            """),
+        ("Threads: fire handover - die anderen Verweise des Senders auf die uebergebenen Objekte (auch Erreichbares, Arrays, im Thread) sind eine DestroyedException 'handed over to a thread'; == vergleicht das Objekt", """
+            #nosync
+            #import "time"
+            var step = 0
+            var released = 0
+            [NoCopy]
+            class Res { int id
+                construct(int i) { this.id = i }
+                int Twice() { return this.id * 2 }
+                destruct() { print("release " + this.id)
+                    sync global { released = released + 1 } } }
+            class Item { int v
+                construct(int v) { this.v = v } }
+            class Conn { Res res; Item items[]; Item other
+                construct(int i) { this.res = new Res(i) } }
+            var c = new Conn(1)
+            var keepRes = c.res
+            var other = new Item(3)
+            c.other = other
+            c.items = [new Item(2)]
+            var keepItems = c.items
+            var keepC = c
+            var b = new Conn(6)
+            b.other = c.other
+            var a = new Res(5)
+            var back = new Item(0)
+            fire handover c handover b {
+                print("thread: " + c.res.id + " " + c.items[0].v + " " + c.other.v + " " + b.res.id + " " + b.other.v)
+                print("thread same: " + (b.other == c.other) + " " + (c.res is from c) + " " + c.res.Twice())
+                c.other.v = 30
+                sync global { back = c.other; step = 1 }
+                while (step < 2) { Sleep(1ms) }
+            }
+            while (step < 1) { sync globals }
+            print("undefined: " + (c == undefined) + " " + (b == undefined))
+            try { print(keepRes.id) } catch (DestroyedException e) { print("field: " + e.message) }
+            try { keepRes.id = 3 } catch (DestroyedException e) { print("set: " + e.message) }
+            try { print(keepRes.Twice()) } catch (DestroyedException e) { print("call: " + e.message) }
+            try { print(other.v) } catch (DestroyedException e) { print("reached: " + e.message) }
+            try { print(keepItems[0].v) } catch (DestroyedException e) { print("element: " + e.message) }
+            try { keepItems[0] = undefined } catch (DestroyedException e) { print("element set: " + e.message) }
+            try { print(keepItems.Length) } catch (DestroyedException e) { print("length: " + e.message) }
+            try { print(keepC is of Conn) } catch (DestroyedException e) { print("is of: " + e.message) }
+            print("is of class: " + (keepC is of class) + ", compare: " + (keepRes == keepRes) + " " + (keepRes == undefined) + " " + (keepC != undefined))
+            print("a stays: " + a.id + ", the same object: " + (other == back) + " " + (back == other) + " " + (back != other) + ", the thread's reference works: " + back.v)
+            step = 2
+            while (released < 2) { sync globals }
+            try { print(keepRes.id) } catch (DestroyedException e) { print("after the thread: " + e.message) }
+            fire {
+                var own = new Res(8)
+                var alias = own
+                fire handover own {
+                    while (step < 3) { Sleep(1ms) }
+                    print("inner " + own.id)
+                }
+                try { print(alias.id) } catch (DestroyedException e) { print("in a thread: " + e.message) }
+                sync global { step = 3 }
+            }
+            while (released < 3) { sync globals }
+            print("end")
+            """),
+        ("Threads: fire handover - ein toter Verweis von vorher bei copy/flat (ArgumentException), throw, take, foreach, x!Klasse", """
+            #nosync
+            #import "time"
+
+            class Item { int v; Item next }
+            var step = 0
+            var it = new Item()
+            it.v = 4
+            var keep = it
+            var ex = new Exception("x")
+            var keepEx = ex
+            var arr = [1, 2]
+            var keepArr = arr
+            fire handover it handover ex handover arr {
+                sync global { step = 1 }
+                while (step < 2) { Sleep(1ms) }
+            }
+            while (step < 1) { sync globals }
+            try { var c = copy keep } catch (DestroyedException e) { print("copy: " + e.message) } catch (Exception e) { print("copy other: " + e.message) }
+            try { var f = flat keep } catch (DestroyedException e) { print("flat: " + e.message) } catch (Exception e) { print("flat other: " + e.message) }
+            try { throw keepEx } catch (DestroyedException e) { print("throw: " + e.message) } catch (Exception e) { print("throw other: " + e.message) }
+            try { var tk = take keep } catch (DestroyedException e) { print("take: " + e.message) } catch (Exception e) { print("take other: " + e.message) }
+            try { foreach (var x in keepArr) { print(x) } } catch (DestroyedException e) { print("foreach: " + e.message) }
+            try { print(keep!Item) } catch (DestroyedException e) { print("cast: " + e.message) }
+            step = 2
             print("end")
             """),
         ("Abbruch: eine Thread-Exception, die erst am Programmende ankommt, beendet das Programm (VM wie nativ, nicht verschluckt)", """
