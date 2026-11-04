@@ -1,5 +1,11 @@
 # Packages and `ember`
 
+| Page | |
+| --- | --- |
+| **This page** | using packages: `ember`, sources, the standard libraries, the cache |
+| [Building a package](building.md) | a package in fire only - from a library project or from a description |
+| [Packages with natives](natives.md) | C or C++ code in a package: how to write it and connect it to fire |
+
 fire can import more than the libraries that come with the compiler (`graphics`, `io`, `time`, ...): a **package** brings one or more imports of its own, for example the
 interface to a sensor, a protocol or an operating system API. `#import "name"` finds the imports of the installed packages like the built-in ones.
 
@@ -50,59 +56,6 @@ A source is a **folder** (`.fpk` files, and/or an `index.json`) or an **index** 
 The `url` is relative to the index or absolute; `sha256` (optional) is checked after the download. `ember index Folder [BaseUrl]` writes the `index.json` for the `.fpk`
 files of a folder, ready to be put on a web page together with them. A source that cannot be read (no network) is reported and skipped.
 
-## The package file (.fpk)
-
-A `.fpk` is a zip file with a `package.json` in its root and the files that it names (paths relative to the root of the zip):
-
-```json
-{
-  "format": 1,
-  "name": "sensorkit",
-  "version": "1.0.0",
-  "author": "Jane",
-  "description": "Sensors on the I2C bus",
-  "license": "MIT",
-  "homepage": "https://example.com/sensorkit",
-  "dependencies": [ "otherpackage" ],
-  "imports": [
-    {
-      "name": "sensorkit",
-      "prelude": "sensorkit/sensorkit.fire",
-      "requires": [ "io" ],
-      "native": {
-        "sources": [ "sensorkit/sensorkit.hpp" ],
-        "platforms": [ "posix", "freertos" ],
-        "functions": [ { "name": "__sk_read", "arguments": 1, "cpp": "sk_read", "needsList": false, "returnsReference": false } ]
-      }
-    }
-  ]
-}
-```
-
-* `imports`: the names for `#import "name"` (letters, digits, `_`, parts may be joined by dots like `ui.docking`; not case sensitive; not one of the compiler: `print graphics windows devices io ui linq reflection time random json net`).
-  A package can bring several. An import can have a **prelude**, **natives**, or both. A package that is only a prelude is allowed.
-* `requires`: other imports (of the compiler or of packages) that this one switches on, like `ui` switches on `graphics`.
-* `dependencies`: other *packages* that `ember install` installs too.
-* `resources` (of an import): the files its prelude embeds with `new Resource("path")` - `{ "icons/up.png": "sensorkit/icons/up.png" }`, the path as the prelude
-  writes it (relative to the prelude's folder) and where the file lies in the package (in a forge file: where it is now). `forge build` of a library fills it
-  (docs/stdlib/resources.md).
-
-### The prelude
-
-Fire source that is added to the program by `#import` - classes, functions, `namespace`s - like the preludes of the compiler's libraries. It works in the virtual machine and in
-native builds.
-
-### Natives (C++)
-
-`native.sources` are C++ files, `native.functions` lists the functions that fire code can call by `name` (typically the prelude calls them, but a script may too).
-The C++ is written once and works in both engines: a **native build** (`--engine native`, any target) puts the text of the source files into the generated file after the runtime, and
-the **virtual machine** loads a shared library that the compiler builds from the same sources for the machine (a generated wrapper exports the C ABI of `native/abi/fire_pkg_abi.h`; the first run
-of a script that imports the package takes a few seconds for that and needs a C++ compiler on the machine, unless the package brings a prebuilt library, `native.libraries`).
-Per-system code goes into `native.platformSources` (or behind `FIRE_TARGET_*`/`FIRE_HAL_*`), `platforms` limits where the C++ may be used.
-The sources are built in one file in the order of the lists; an entry can give an explicit build order, `{ "file": "native/x.h", "order": -10 }` (smaller first, without one 0), and a source
-that `#include`s a source of the same import that comes after it is reported with file and line when the package is packed or built (docs/packages/natives.md, "Build order").
-How to write a native, what crosses to the VM, prebuilt libraries and packed programs: **docs/packages/natives.md**.
-
 ## The standard libraries (`packages/`, `Source/`)
 
 The libraries of fire - `graphics`, `windows`, `devices`, `io`, `filesystem`, `dialogs`, `ui`, `ui.docking`, `linq`, `reflection`, `time`, `random`, `json`, `circuits`, `circuits.ui`, `testing`, `net`, `tls`, `http`, `gpio`, `i2c`, `spi`, `wifi`, `audio`,
@@ -134,8 +87,9 @@ The next start of spark or forge would install it, too.
 
 What makes these projects special is small: `"standard": true` lets a project have the import name of a library of the compiler (`time`, `graphics`, ...), `"serializable": false` (in `ui`)
 keeps its classes out of JSON (docs/stdlib/json.md; written to the import in `package.json`), and `"native": { "discover": false,
-"functions": [...] }` names the natives explicitly (`"c": "fire_io_FileOpen"` for a package in C, `"cpp": "mathkit::Add"` for one in C++). Five imports have natives that are part of the virtual machine (C#): `graphics`,
-`windows`, `ui`, `linq`, `reflection` - their fire code still comes from the package, and for native builds the C of `graphics` and `windows` too. Only the core prelude (`Exception`,
+"functions": [...] }` names the natives explicitly (`"c": "fire_io_FileOpen"` for a package in C, `"cpp": "mathkit::Add"` for one in C++). Five imports are known to the compiler by name: `graphics`,
+`windows`, `ui`, `linq`, `reflection` - their fire code still comes from the package; the C of `graphics` and `windows` runs in the VM (as a library built for
+the machine) and in native builds alike. Only the core prelude (`Exception`,
 `List<T>`, `Math`, string methods, ...) is built into the compiler.
 
 Inside its own project a library is the program: `#import "time"` in the tests of `time` means the project's files (and its C++, built for the VM), not the installed package.
@@ -148,7 +102,7 @@ manager (docs/devices/README.md).
 
 ### Plugins
 
-A package (or a library of a project) can be the interface between a program and its plugins: the program and the plugin both import it, the plugin implements its
+A package (or a library of a project) can be the interface between a program and its plugins ([libraries and plugins](../libraries/README.md)): the program and the plugin both import it, the plugin implements its
 interfaces or derives from its classes, the program creates the plugin's classes by name after `Library.Load` (docs/language/18-native-code.md, docs/spec/NATIVE_BACKEND.md
 "Plugins"). The plugin loads only into a program whose package has the same interface (the hash of its classes and members) - a new version of the package that only
 changes the code of its methods keeps it.
@@ -163,18 +117,6 @@ on macOS (`FIRE_NATIVE_CACHE` moves it). An entry is found by the content hash o
 ember cache          where the cache is and how big it is
 ember cache clean    empty it
 ```
-
-## Making packages
-
-```
-ember create Kit.json      a description with example values and the example files (a prelude and a C++ native) next to it
-ember blank Kit.json       a description with all fields there but empty
-ember forge Kit.json       builds the package: Kit.json\..\build\name-version.fpk   (-o Dir: another folder)
-```
-
-The file that `forge` reads (the *forge file*) is the same description as the `package.json`, but its paths are **absolute** (or relative to the file itself): they say where the
-prelude and the C++ files are on this machine. `forge` puts every file below a folder of its import in the zip, writes the `package.json` with the relative paths, and keeps a copy of the forge
-file - with absolute paths - in `Dir\json\name-version.json`. Open that file later to forge the package again (`ember forge Dir\json\name-version.json`).
 
 ## Where it is in the code
 

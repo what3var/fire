@@ -1,6 +1,6 @@
 # Writing the natives of a package (C or C++) and connecting them to the prelude
 
-A package (docs/packages/README.md) can bring **natives**: functions written in C++ that fire code calls. This is how a package reaches an operating system API, a sensor, a
+A [package](README.md) - or a [library project](../libraries/README.md) - can bring **natives**: functions written in C or C++ that fire code calls. This is how a package reaches an operating system API, a sensor, a
 protocol stack or a fast algorithm. You write the C++ **once**; the compiler uses it in both engines:
 
 | engine | what happens to your C++ |
@@ -9,6 +9,84 @@ protocol stack or a fast algorithm. You write the C++ **once**; the compiler use
 | virtual machine (`fire.Compiler run`, the editor, a packed standalone program) | the compiler builds your sources into a **shared library** (`.dll`, `.so`, `.dylib`) for the machine, with a generated wrapper that exports a small C interface (`native/abi/fire_pkg_abi.h`); the VM loads it and calls it |
 
 So the C# VM never needs to know your functions: it only knows the C ABI, and the wrapper is generated for you.
+
+## Quick start: a library with natives in C
+
+The shortest way is a library project with a folder `native/` (in spark: *File > New > Project... > Native Library (C)*):
+
+```
+Calc/
+  Calc.fireproj      "type": "library", "native": { "language": "c" }
+  calc.fire          the fire side: wraps the natives in a class
+  native/calc.h      the natives: C functions on Value
+App/
+  App.fireproj       "references": [ { "project": "../Calc/Calc.fireproj" } ]
+  main.fire
+```
+
+`Calc/Calc.fireproj`
+
+```json
+{
+  "format": 1,
+  "name": "Calc",
+  "type": "library",
+  "settings": { "version": "1.0.0", "description": "Small arithmetic in C" },
+  "native": { "language": "c" }
+}
+```
+
+`Calc/native/calc.h`: every `static inline Value name(Value a, ...)` in the folder becomes the fire function `__name`
+
+```c
+#ifndef NATIVES_CALC_H
+#define NATIVES_CALC_H
+
+static inline Value calc_add(Value a, Value b) { return Int(a.i + b.i); }
+
+static inline Value calc_clamp(Value v, Value low, Value high) {
+    int64_t x = v.i;
+    if (x < low.i) x = low.i;
+    if (x > high.i) x = high.i;
+    return Int(x);
+}
+
+#endif
+```
+
+`Calc/calc.fire`: the fire side wraps them
+
+```fire
+namespace Calc {
+    class Fast {
+        static int Add(int a, int b) { return __calc_add(a, b) }
+        static int Clamp(int v, int low, int high) { return __calc_clamp(v, low, high) }
+    }
+}
+```
+
+`App/main.fire`
+
+```fire
+#import "Calc"
+
+print(Calc.Fast.Add(2, 3))          // 5
+print(Calc.Fast.Clamp(150, 0, 100)) // 100
+```
+
+```bash
+forge run App/App.fireproj
+forge build App/App.fireproj --engine native
+forge build Calc/Calc.fireproj
+```
+
+The first run builds the C into a library for the VM ("Building the native part of the package 'project:Calc' ..."; it needs a C compiler on the
+machine). The native build puts it into the program. Packing the library (`forge build Calc/Calc.fireproj`, or *Pack as Package*) gives
+`Calc/bin/Calc-1.0.0.fpk` - the C files travel in the package, and every machine that installs it builds them itself.
+
+A function that allocates its result (a string, an array) takes a last parameter `OwnList* list`; arguments are `Value`s (`.i` for an int, `.d` for a
+float, `strOf(v)->data` for a string, `bufOf(v)->data` for a byte buffer - check `v.kind == K_Buffer` before you use it: fire may pass an array instead). Several packages share one C file in a
+native build: give every function and global a prefix of your own. The rest of this page explains all of it in detail.
 
 ## 0. C or C++
 
