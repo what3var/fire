@@ -11398,6 +11398,55 @@ uiDrawScript = """
         }
         print("gpu " + (!b.Accelerated || worst <= 2) + " " + (b.Accelerated || Framebuffer.GpuError() != ""))
         """, new[] { "gpu True True" });
+    // part 4.3: shadows, blur and the materials on the GPU - the passes of the software in whole numbers (at most 2 steps apart), between other drawing, clipped,
+    // without blending
+    CheckUi("GPU: Schatten, Blur, Glas, Acryl und Tönung wie in Software (hoechstens 2 Stufen), mit Clip, ohne Blending, Groesse aendern", uiHead + """
+        var a = new Framebuffer(200, 140)
+        var b = new Framebuffer(200, 140)
+        a.Accelerated = false
+        b.Accelerated = true
+        var ra = new Renderer(a)
+        var rb = new Renderer(b)
+        var worst = 0
+        for (var pass = 0; pass < 2; pass = pass + 1) {
+            foreach (r in [ra, rb]) {
+                r.ClearTo(0xFFF0F0F0)
+                for (var i = 0; i < 10; i = i + 1) { r.FillRect(i * 20, 0, 10, 140, new SolidBrush(0xFF000000 + i * 0x101B23)) }
+                r.DrawText(4, 4, "fire GPU effects", new SolidBrush(0xFF000000))
+                r.DrawShadow(20, 20, 60, 40, 8, 10, 0x50000000, 3)
+                r.FillRoundRect(20, 20, 60, 40, 8, new SolidBrush(0xFFFFFFFF))
+                r.DrawShadow(100, 15, 30, 20, 4, 2, 0x80000000, 1)
+                r.Blur(100, 50, 80, 30, 6, 6)
+                r.DrawMaterial(MaterialKind.Glass, 10, 80, 80, 50, 10, 0x30FFFFFF, 0xFFDDDDDD)
+                r.DrawMaterial(MaterialKind.Acrylic, 100, 85, 90, 45, 8, 0x80F0F0F0, 0xFFDDDDDD, 7)
+                r.SetClip(150, 10, 40, 30)
+                r.DrawMaterial(MaterialKind.Glass, 140, 5, 60, 40, 6, 0x20FFFFFF, 0xFFDDDDDD)
+                r.ResetClip()
+                r.DrawMaterial(MaterialKind.Tint, 130, 40, 60, 10, 4, 0x40FF0000, 0xFFDDDDDD, 0)
+                r.Blur(0, 100, 200, 40, 30, 0)
+                r.DrawShadow(150, 100, 30, 30, 15, 40, 0x60000000, -4)
+                r.AlphaBlending = false
+                r.DrawMaterial(MaterialKind.Glass, 60, 60, 50, 30, 6, 0x30FFFFFF, 0xFFDDDDDD)
+                r.DrawMaterial(MaterialKind.Acrylic, 120, 60, 50, 30, 6, 0x80FFFFFF, 0xFFDDDDDD, 1)
+                r.Blur(0, 0, 40, 40, 3, 4)
+                r.AlphaBlending = true
+                r.FillRect(0, 135, 200, 5, new SolidBrush(0xFF00AA00))
+            }
+            for (var y = 0; y < a.Height(); y = y + 1) {
+                for (var x = 0; x < a.Width(); x = x + 1) {
+                    var pa = ra.GetPixel(x, y)
+                    var pb = rb.GetPixel(x, y)
+                    for (var c = 0; c < 32; c = c + 8) {
+                        var d = Math.Abs(((pa >> c) & 255) - ((pb >> c) & 255))
+                        if (d > worst) { worst = d }
+                    }
+                }
+            }
+            a.Resize(180, 140)
+            b.Resize(180, 140)
+        }
+        print("gpu " + (!b.Accelerated || worst <= 2) + " " + (b.Accelerated || Framebuffer.GpuError() != ""))
+        """, new[] { "gpu True True" });
     Environment.SetEnvironmentVariable("FIRE_GFX_GPU", null);
 
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """

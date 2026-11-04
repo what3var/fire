@@ -15,6 +15,7 @@
 
 #include "fire_gfx.h"
 #include "fire_gfx_text.h"
+#include "fire_gfx_fx.h"
 
 #if defined(ESP_PLATFORM) || defined(__EMSCRIPTEN__) || defined(FIRE_GFX_NO_GPU) || defined(FIRE_PLATFORM_FREERTOS_H)
 
@@ -34,6 +35,18 @@ static int fire_gfx_gpuText(FireGfxFramebuffer* fb, const int* clip, int copy, F
 static int fire_gfx_gpuBlit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* src, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int blend,
                             int cl, int ct, int cr, int cb) {
     (void)dst; (void)src; (void)sx; (void)sy; (void)sw; (void)sh; (void)dx; (void)dy; (void)dw; (void)dh; (void)mode; (void)blend; (void)cl; (void)ct; (void)cr; (void)cb;
+    return 0;
+}
+static int fire_gfx_gpuShadow(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int blend, int x, int y, int w, int h, int radius, int soft, uint32_t color, int dy) {
+    (void)fb; (void)cl; (void)ct; (void)cr; (void)cb; (void)blend; (void)x; (void)y; (void)w; (void)h; (void)radius; (void)soft; (void)color; (void)dy;
+    return 0;
+}
+static int fire_gfx_gpuBlur(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int x, int y, int w, int h, int corner, int radius) {
+    (void)fb; (void)cl; (void)ct; (void)cr; (void)cb; (void)x; (void)y; (void)w; (void)h; (void)corner; (void)radius;
+    return 0;
+}
+static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int blend, int x, int y, int w, int h, int corner, int kind, uint32_t tint, uint32_t base, int flags) {
+    (void)fb; (void)cl; (void)ct; (void)cr; (void)cb; (void)blend; (void)x; (void)y; (void)w; (void)h; (void)corner; (void)kind; (void)tint; (void)base; (void)flags;
     return 0;
 }
 
@@ -77,7 +90,13 @@ typedef struct FireGfxGpuShape { float quad[4], box[4], param[4]; uint32_t color
 /* One picture for the GPU (the vertex input of shaders/gfx_image.vert): a glyph of the atlas or a blit - 68 bytes. */
 typedef struct FireGfxGpuImage { float quad[4]; int32_t dst[4], src[4], mode[4]; uint32_t color; } FireGfxGpuImage;
 enum { FIRE_GFX_GPU_GLYPH = 0, FIRE_GFX_GPU_COPY = 1, FIRE_GFX_GPU_TRANSPARENT = 2, FIRE_GFX_GPU_BLEND = 3 };
-/* A run of shapes (kind 0) or pictures (kind 1, from the texture of `set`) with the same clip and pipeline - in the order they were drawn. */
+/* A blur or a material in a rounded rectangle (fire_gfx_fxBlurMaterial): its passes run between the other drawing (kind 2 of a batch). */
+typedef struct FireGfxGpuEffect { int clip[4]; int x, y, w, h, corner, radius, kind, rim; uint32_t tint; } FireGfxGpuEffect;
+/* The push constants of shaders/gfx_effect.* (96 bytes). */
+typedef struct FireGfxGpuPass { float size[2]; int32_t mode, f; int32_t rect[4], region[4], box[4], p[4], q[4]; } FireGfxGpuPass;
+/* A temporary picture of the effects (the smaller picture and its blur). */
+typedef struct FireGfxGpuTemp { int width, height, ready; VkImage image; VkDeviceMemory memory; VkImageView view; VkFramebuffer framebuffer; VkDescriptorSet set; } FireGfxGpuTemp;
+/* A run of shapes (kind 0), pictures (kind 1, from the texture of `set`) or one effect (kind 2) with the same clip and pipeline - in the order they were drawn. */
 typedef struct FireGfxGpuBatch { int kind; int clip[4]; int copy; VkDescriptorSet set; uint32_t first, count; } FireGfxGpuBatch;
 
 typedef struct FireGfxVkBuffer { VkBuffer buffer; VkDeviceMemory memory; void* mapped; VkDeviceSize size; } FireGfxVkBuffer;
@@ -90,6 +109,7 @@ typedef struct FireGfxGpuTwin {
     int cpuValid, gpuValid;           /* who holds the current pixels (both: the same) */
     FireGfxGpuShape* shapes; uint32_t shapeCount, shapeCap;
     FireGfxGpuImage* images; uint32_t imageCount, imageCap;
+    FireGfxGpuEffect* effects; uint32_t effectCount, effectCap;
     FireGfxGpuBatch* batches; uint32_t batchCount, batchCap;
     VkDescriptorSet set;              /* the picture as a texture (a blit from this framebuffer into another) */
     FireGfxFramebuffer* fb;           /* whose twin it is */
@@ -142,6 +162,11 @@ static struct {
     int dirty[4];              /* x0, y0, x1, y1 of what changed in the mirror (x1 <= x0: nothing) */
     FireGfxAtlasSlot* slots; int slotCount;
     FireGfxGpuTwin* pending;   /* the twins with drawing to do, the oldest first */
+    /* blur and materials */
+    VkShaderModule effectVert, effectFrag;
+    VkPipelineLayout effectLayout;
+    VkPipeline effectCopy, effectBlend;
+    FireGfxGpuTemp temps[2];
 } g_fireGfxVk;
 
 static const char* fire_gfx_gpuError(void) { return g_fireGfxVk.state > 0 ? "" : g_fireGfxVk.error[0] ? g_fireGfxVk.error : "There is no GPU (not tried yet: set Accelerated first)."; }
@@ -671,11 +696,260 @@ static int fire_gfx_gpuImagePipelines(void) {
     return fire_gfx_gpuBuffer(&g_fireGfxVk.images, sizeof(FireGfxGpuImage) * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 }
 
+/* The pipelines of blur and materials (shaders/gfx_effect.*): no vertex input (the rectangle comes as a push constant), a texture; copying (into the temporary pictures)
+ * and blending (into the framebuffer: alpha is the coverage). */
+static int fire_gfx_gpuEffectPipelines(void) {
+    VkPushConstantRange push;
+    VkPipelineLayoutCreateInfo li;
+    VkPipelineShaderStageCreateInfo stages[2];
+    VkPipelineVertexInputStateCreateInfo vi;
+    VkPipelineInputAssemblyStateCreateInfo ia;
+    VkPipelineViewportStateCreateInfo vp;
+    VkPipelineRasterizationStateCreateInfo rs;
+    VkPipelineMultisampleStateCreateInfo ms;
+    VkPipelineColorBlendAttachmentState blendAtt;
+    VkPipelineColorBlendStateCreateInfo cb;
+    VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo ds;
+    VkGraphicsPipelineCreateInfo gi;
+    int k;
+    if (!fire_gfx_gpuModule(fire_gfx_spv_effect_vert, sizeof fire_gfx_spv_effect_vert, &g_fireGfxVk.effectVert)) return 0;
+    if (!fire_gfx_gpuModule(fire_gfx_spv_effect_frag, sizeof fire_gfx_spv_effect_frag, &g_fireGfxVk.effectFrag)) return 0;
+    memset(&push, 0, sizeof push);
+    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    push.size = sizeof(FireGfxGpuPass);
+    memset(&li, 0, sizeof li);
+    li.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    li.setLayoutCount = 1;
+    li.pSetLayouts = &g_fireGfxVk.setLayout;
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &push;
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkCreatePipelineLayout(g_fireGfxVk.device, &li, NULL, &g_fireGfxVk.effectLayout), "vkCreatePipelineLayout")) return 0;
+    memset(stages, 0, sizeof stages);
+    for (k = 0; k < 2; k++) { stages[k].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; stages[k].pName = "main"; }
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = g_fireGfxVk.effectVert;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = g_fireGfxVk.effectFrag;
+    memset(&vi, 0, sizeof vi);
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    memset(&ia, 0, sizeof ia);
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    memset(&vp, 0, sizeof vp);
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+    memset(&rs, 0, sizeof rs);
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+    memset(&ms, 0, sizeof ms);
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    memset(&blendAtt, 0, sizeof blendAtt);
+    blendAtt.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    memset(&cb, 0, sizeof cb);
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1;
+    cb.pAttachments = &blendAtt;
+    memset(&ds, 0, sizeof ds);
+    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    ds.dynamicStateCount = 2;
+    ds.pDynamicStates = dyn;
+    memset(&gi, 0, sizeof gi);
+    gi.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gi.stageCount = 2;
+    gi.pStages = stages;
+    gi.pVertexInputState = &vi;
+    gi.pInputAssemblyState = &ia;
+    gi.pViewportState = &vp;
+    gi.pRasterizationState = &rs;
+    gi.pMultisampleState = &ms;
+    gi.pColorBlendState = &cb;
+    gi.pDynamicState = &ds;
+    gi.layout = g_fireGfxVk.effectLayout;
+    gi.renderPass = g_fireGfxVk.pass;
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkCreateGraphicsPipelines(g_fireGfxVk.device, NULL, 1, &gi, NULL, &g_fireGfxVk.effectCopy), "vkCreateGraphicsPipelines")) return 0;
+    blendAtt.blendEnable = VK_TRUE;
+    blendAtt.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAtt.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAtt.colorBlendOp = VK_BLEND_OP_ADD;
+    blendAtt.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAtt.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAtt.alphaBlendOp = VK_BLEND_OP_ADD;
+    return fire_gfx_gpuCheck(g_fireGfxVk.vkCreateGraphicsPipelines(g_fireGfxVk.device, NULL, 1, &gi, NULL, &g_fireGfxVk.effectBlend), "vkCreateGraphicsPipelines");
+}
+
+static void fire_gfx_gpuFreeTemp(FireGfxGpuTemp* t) {
+    if (t->set) g_fireGfxVk.vkFreeDescriptorSets(g_fireGfxVk.device, g_fireGfxVk.descPool, 1, &t->set);
+    if (t->framebuffer) g_fireGfxVk.vkDestroyFramebuffer(g_fireGfxVk.device, t->framebuffer, NULL);
+    if (t->view) g_fireGfxVk.vkDestroyImageView(g_fireGfxVk.device, t->view, NULL);
+    if (t->image) g_fireGfxVk.vkDestroyImage(g_fireGfxVk.device, t->image, NULL);
+    if (t->memory) g_fireGfxVk.vkFreeMemory(g_fireGfxVk.device, t->memory, NULL);
+    memset(t, 0, sizeof *t);
+}
+
+/* A temporary picture of width x height (RGBA, drawn into and sampled). 0: it failed. */
+static int fire_gfx_gpuMakeTemp(FireGfxGpuTemp* t, int width, int height) {
+    VkImageCreateInfo ii;
+    VkMemoryRequirements req;
+    VkMemoryAllocateInfo ai;
+    VkImageViewCreateInfo vi;
+    VkFramebufferCreateInfo fi;
+    int type;
+    fire_gfx_gpuFreeTemp(t);
+    memset(&ii, 0, sizeof ii);
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.extent.width = (uint32_t)width; ii.extent.height = (uint32_t)height; ii.extent.depth = 1;
+    ii.mipLevels = 1;
+    ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkCreateImage(g_fireGfxVk.device, &ii, NULL, &t->image), "vkCreateImage")) return 0;
+    g_fireGfxVk.vkGetImageMemoryRequirements(g_fireGfxVk.device, t->image, &req);
+    type = fire_gfx_gpuMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type < 0) type = fire_gfx_gpuMemoryType(req.memoryTypeBits, 0);
+    if (type < 0) return 0;
+    memset(&ai, 0, sizeof ai);
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = (uint32_t)type;
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkAllocateMemory(g_fireGfxVk.device, &ai, NULL, &t->memory), "vkAllocateMemory")
+        || !fire_gfx_gpuCheck(g_fireGfxVk.vkBindImageMemory(g_fireGfxVk.device, t->image, t->memory, 0), "vkBindImageMemory")) return 0;
+    memset(&vi, 0, sizeof vi);
+    vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.image = t->image;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vi.subresourceRange.levelCount = 1;
+    vi.subresourceRange.layerCount = 1;
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkCreateImageView(g_fireGfxVk.device, &vi, NULL, &t->view), "vkCreateImageView")) return 0;
+    memset(&fi, 0, sizeof fi);
+    fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fi.renderPass = g_fireGfxVk.pass;
+    fi.attachmentCount = 1;
+    fi.pAttachments = &t->view;
+    fi.width = (uint32_t)width; fi.height = (uint32_t)height; fi.layers = 1;
+    if (!fire_gfx_gpuCheck(g_fireGfxVk.vkCreateFramebuffer(g_fireGfxVk.device, &fi, NULL, &t->framebuffer), "vkCreateFramebuffer")) return 0;
+    t->set = fire_gfx_gpuSetFor(t->view);
+    if (t->set == FIRE_GFX_NO_SET) return 0;
+    t->width = width; t->height = height; t->ready = 0;
+    return 1;
+}
+
+/* The temporary pictures hold at least width x height (they grow, they never shrink). */
+static int fire_gfx_gpuTemps(int width, int height) {
+    int k;
+    for (k = 0; k < 2; k++) {
+        FireGfxGpuTemp* t = &g_fireGfxVk.temps[k];
+        if (t->width >= width && t->height >= height) continue;
+        if (!fire_gfx_gpuMakeTemp(t, width > t->width ? width : t->width, height > t->height ? height : t->height)) return 0;
+    }
+    return 1;
+}
+
+/* Everything drawn before (into a picture, a transfer) is visible to what samples or draws after. */
+static void fire_gfx_gpuPassBarrier(VkCommandBuffer cmd) {
+    VkMemoryBarrier mb;
+    memset(&mb, 0, sizeof mb);
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    g_fireGfxVk.vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+}
+
+/* Begins the render pass into `framebuffer` (width x height), its viewport. */
+static void fire_gfx_gpuBeginPass(VkCommandBuffer cmd, VkFramebuffer framebuffer, int width, int height) {
+    VkRenderPassBeginInfo rb;
+    VkViewport viewport;
+    memset(&rb, 0, sizeof rb);
+    rb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rb.renderPass = g_fireGfxVk.pass;
+    rb.framebuffer = framebuffer;
+    rb.renderArea.extent.width = (uint32_t)width; rb.renderArea.extent.height = (uint32_t)height;
+    g_fireGfxVk.vkCmdBeginRenderPass(cmd, &rb, VK_SUBPASS_CONTENTS_INLINE);
+    memset(&viewport, 0, sizeof viewport);
+    viewport.width = (float)width; viewport.height = (float)height; viewport.maxDepth = 1.0f;
+    g_fireGfxVk.vkCmdSetViewport(cmd, 0, 1, &viewport);
+}
+
+/* The parameters of the effect as fire_gfx_fxBlurMaterial takes them: the factor of the smaller picture, the area around the rectangle, its size, the blur radius. */
+static void fire_gfx_gpuEffectSizes(const FireGfxGpuTwin* t, const FireGfxGpuEffect* e, int* f, int* region, int* tw, int* th, int* rb) {
+    int pad;
+    *f = e->radius >= 10 ? 4 : e->radius >= 2 ? 2 : 1;
+    pad = e->radius + *f;
+    region[0] = e->x - pad < 0 ? 0 : e->x - pad; region[1] = e->y - pad < 0 ? 0 : e->y - pad;
+    region[2] = e->x + e->w + pad > t->width ? t->width : e->x + e->w + pad; region[3] = e->y + e->h + pad > t->height ? t->height : e->y + e->h + pad;
+    *tw = region[2] > region[0] ? (region[2] - region[0] + *f - 1) / *f : 0;
+    *th = region[3] > region[1] ? (region[3] - region[1] + *f - 1) / *f : 0;
+    *rb = (e->radius + *f) / (2 * *f);
+}
+
+static void fire_gfx_gpuBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from);
+
+/* One pass of an effect: `mode` into the temporary picture `to` (or, `to` NULL, into the framebuffer of the twin, blending) from the texture of `from`. */
+static void fire_gfx_gpuEffectPass(VkCommandBuffer cmd, FireGfxGpuTwin* t, FireGfxGpuTemp* to, VkDescriptorSet from, FireGfxGpuPass* pc, const int* scissorRect) {
+    VkRect2D scissor;
+    int w = to ? to->width : t->width, h = to ? to->height : t->height;
+    if (to != NULL && !to->ready) { fire_gfx_gpuBarrier(cmd, to->image, VK_IMAGE_LAYOUT_UNDEFINED); to->ready = 1; }
+    fire_gfx_gpuBeginPass(cmd, to ? to->framebuffer : t->framebuffer, w, h);
+    g_fireGfxVk.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, to ? g_fireGfxVk.effectCopy : g_fireGfxVk.effectBlend);
+    g_fireGfxVk.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_fireGfxVk.effectLayout, 0, 1, &from, 0, NULL);
+    pc->size[0] = (float)w; pc->size[1] = (float)h;
+    g_fireGfxVk.vkCmdPushConstants(cmd, g_fireGfxVk.effectLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof *pc, pc);
+    scissor.offset.x = scissorRect[0]; scissor.offset.y = scissorRect[1];
+    scissor.extent.width = (uint32_t)scissorRect[2]; scissor.extent.height = (uint32_t)scissorRect[3];
+    g_fireGfxVk.vkCmdSetScissor(cmd, 0, 1, &scissor);
+    g_fireGfxVk.vkCmdDraw(cmd, 6, 1, 0, 0);
+    g_fireGfxVk.vkCmdEndRenderPass(cmd);
+    fire_gfx_gpuPassBarrier(cmd);
+}
+
+/* An effect (outside a render pass): smaller into temps[0], the box blur (along x twice, along y twice) back and forth, then into the framebuffer. */
+static void fire_gfx_gpuRecordEffect(VkCommandBuffer cmd, FireGfxGpuTwin* t, const FireGfxGpuEffect* e) {
+    FireGfxGpuPass pc;
+    int f, region[4], tw, th, rb, k, rect[4], x0, y0, x1, y1;
+    FireGfxGpuTemp* a = &g_fireGfxVk.temps[0];
+    FireGfxGpuTemp* b = &g_fireGfxVk.temps[1];
+    fire_gfx_gpuEffectSizes(t, e, &f, region, &tw, &th, &rb);
+    x0 = e->x > e->clip[0] ? e->x : e->clip[0]; y0 = e->y > e->clip[1] ? e->y : e->clip[1];
+    x1 = e->x + e->w < e->clip[2] ? e->x + e->w : e->clip[2]; y1 = e->y + e->h < e->clip[3] ? e->y + e->h : e->clip[3];
+    if (tw <= 0 || th <= 0 || x1 <= x0 || y1 <= y0) return;
+    fire_gfx_gpuPassBarrier(cmd);
+    memset(&pc, 0, sizeof pc);
+    pc.f = f;
+    memcpy(pc.region, region, sizeof region);
+    pc.box[0] = e->x; pc.box[1] = e->y; pc.box[2] = e->w; pc.box[3] = e->h;
+    pc.p[0] = e->corner; pc.p[1] = rb; pc.p[2] = e->kind; pc.p[3] = e->rim;
+    pc.q[0] = (int32_t)e->tint; pc.q[1] = e->kind == FIRE_GFX_MATERIAL_GLASS ? 307 : e->kind == FIRE_GFX_MATERIAL_ACRYLIC ? 282 : 256; pc.q[2] = tw; pc.q[3] = th;
+    rect[0] = 0; rect[1] = 0; rect[2] = tw; rect[3] = th;
+    pc.mode = 0;
+    memcpy(pc.rect, rect, sizeof rect);
+    fire_gfx_gpuEffectPass(cmd, t, a, t->set, &pc, rect);
+    if (rb > 0)
+        for (k = 0; k < 4; k++) {
+            pc.mode = k < 2 ? 1 : 2;
+            fire_gfx_gpuEffectPass(cmd, t, (k & 1) ? a : b, (k & 1) ? b->set : a->set, &pc, rect);
+        }
+    pc.mode = 3;
+    rect[0] = x0; rect[1] = y0; rect[2] = x1 - x0; rect[3] = y1 - y0;
+    memcpy(pc.rect, rect, sizeof rect);
+    fire_gfx_gpuEffectPass(cmd, t, NULL, a->set, &pc, rect);
+}
+
 /* Vulkan once (1: ready). */
 static int fire_gfx_gpuReady(void) {
     if (g_fireGfxVk.state != 0) return g_fireGfxVk.state > 0;
     g_fireGfxVk.state = -1;
-    if (!fire_gfx_gpuLoad() || !fire_gfx_gpuInstance() || !fire_gfx_gpuPick() || !fire_gfx_gpuDevice() || !fire_gfx_gpuPipelines() || !fire_gfx_gpuImagePipelines()) return 0;
+    if (!fire_gfx_gpuLoad() || !fire_gfx_gpuInstance() || !fire_gfx_gpuPick() || !fire_gfx_gpuDevice() || !fire_gfx_gpuPipelines() || !fire_gfx_gpuImagePipelines() || !fire_gfx_gpuEffectPipelines()) return 0;
     if (!fire_gfx_gpuBuffer(&g_fireGfxVk.shapes, sizeof(FireGfxGpuShape) * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)) return 0;
     g_fireGfxVk.state = 1;
     return 1;
@@ -711,6 +985,7 @@ static void fire_gfx_gpuFreeTwin(FireGfxGpuTwin* t) {
     }
     free(t->shapes);
     free(t->images);
+    free(t->effects);
     free(t->batches);
     free(t);
 }
@@ -836,6 +1111,17 @@ static int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fet
     if (!upload && !draw && !(fetch && !t->cpuValid)) return 1;
     if (!fire_gfx_gpuFill(&g_fireGfxVk.shapes, t->shapes, sizeof(FireGfxGpuShape), t->shapeCount, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
         || !fire_gfx_gpuFill(&g_fireGfxVk.images, t->images, sizeof(FireGfxGpuImage), t->imageCount, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)) return 0;
+    {
+        /* (the temporary pictures of the effects are big enough before anything is recorded: none is made anew while commands use it) */
+        int needW = 0, needH = 0, f, region[4], tw, th, rb;
+        uint32_t k;
+        for (k = 0; k < t->effectCount; k++) {
+            fire_gfx_gpuEffectSizes(t, &t->effects[k], &f, region, &tw, &th, &rb);
+            if (tw > needW) needW = tw;
+            if (th > needH) needH = th;
+        }
+        if (needW > 0 && needH > 0 && !fire_gfx_gpuTemps(needW, needH)) return 0;
+    }
     if (upload) memcpy(t->staging.mapped, fb->pixels, bytes);
     memset(&bi, 0, sizeof bi);
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -875,24 +1161,22 @@ static int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fet
         fire_gfx_gpuBarrier(cmd, t->image, VK_IMAGE_LAYOUT_GENERAL);
     }
     if (draw) {
-        VkRenderPassBeginInfo rb;
-        VkViewport viewport;
         VkDeviceSize offset = 0;
         float size[2];
         uint32_t k;
-        memset(&rb, 0, sizeof rb);
-        rb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rb.renderPass = g_fireGfxVk.pass;
-        rb.framebuffer = t->framebuffer;
-        rb.renderArea.extent.width = (uint32_t)t->width; rb.renderArea.extent.height = (uint32_t)t->height;
-        g_fireGfxVk.vkCmdBeginRenderPass(cmd, &rb, VK_SUBPASS_CONTENTS_INLINE);
-        memset(&viewport, 0, sizeof viewport);
-        viewport.width = (float)t->width; viewport.height = (float)t->height; viewport.maxDepth = 1.0f;
-        g_fireGfxVk.vkCmdSetViewport(cmd, 0, 1, &viewport);
+        int inPass = 0;
         size[0] = (float)t->width; size[1] = (float)t->height;
         for (k = 0; k < t->batchCount; k++) {
             const FireGfxGpuBatch* b = &t->batches[k];
             VkRect2D scissor;
+            if (b->kind == 2) {
+                /* an effect: its passes sample what is drawn so far - the render pass of the framebuffer ends for them */
+                uint32_t e;
+                if (inPass) { g_fireGfxVk.vkCmdEndRenderPass(cmd); inPass = 0; }
+                for (e = b->first; e < b->first + b->count; e++) fire_gfx_gpuRecordEffect(cmd, t, &t->effects[e]);
+                continue;
+            }
+            if (!inPass) { fire_gfx_gpuPassBarrier(cmd); fire_gfx_gpuBeginPass(cmd, t->framebuffer, t->width, t->height); inPass = 1; }
             scissor.offset.x = b->clip[0]; scissor.offset.y = b->clip[1];
             scissor.extent.width = (uint32_t)(b->clip[2] - b->clip[0]); scissor.extent.height = (uint32_t)(b->clip[3] - b->clip[1]);
             if (b->kind == 0) {
@@ -908,7 +1192,7 @@ static int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fet
             g_fireGfxVk.vkCmdSetScissor(cmd, 0, 1, &scissor);
             g_fireGfxVk.vkCmdDraw(cmd, 6, b->count, 0, b->first);
         }
-        g_fireGfxVk.vkCmdEndRenderPass(cmd);
+        if (inPass) g_fireGfxVk.vkCmdEndRenderPass(cmd);
     }
     if (fetch) {
         fire_gfx_gpuBarrier(cmd, t->image, VK_IMAGE_LAYOUT_GENERAL);
@@ -923,7 +1207,7 @@ static int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fet
     if (!fire_gfx_gpuCheck(g_fireGfxVk.vkQueueSubmit(g_fireGfxVk.queue, 1, &si, g_fireGfxVk.fence), "vkQueueSubmit")) return 0;
     if (!fire_gfx_gpuCheck(g_fireGfxVk.vkWaitForFences(g_fireGfxVk.device, 1, &g_fireGfxVk.fence, VK_TRUE, ~(uint64_t)0), "vkWaitForFences")) return 0;
     t->gpuValid = 1;
-    t->shapeCount = 0; t->imageCount = 0; t->batchCount = 0;
+    t->shapeCount = 0; t->imageCount = 0; t->effectCount = 0; t->batchCount = 0;
     if (draw) t->cpuValid = 0;
     if (fetch) { memcpy(fb->pixels, t->staging.mapped, bytes); t->cpuValid = 1; }
     return 1;
@@ -998,7 +1282,7 @@ static FireGfxGpuBatch* fire_gfx_gpuBatch(FireGfxGpuTwin* t, int kind, int cl, i
         b->clip[0] = cl; b->clip[1] = ct; b->clip[2] = cr; b->clip[3] = cb;
         b->copy = copy;
         b->set = set;
-        b->first = kind == 0 ? t->shapeCount : t->imageCount; b->count = 0;
+        b->first = kind == 0 ? t->shapeCount : kind == 1 ? t->imageCount : t->effectCount; b->count = 0;
     }
     fire_gfx_gpuList(t);
     t->cpuValid = 0;
@@ -1080,11 +1364,11 @@ static int fire_gfx_gpuAtlasReset(void) {
 }
 
 /* The place of glyph `key` (w x h) in the atlas: found, or made from `coverage` (w*h bytes; NULL: from the 8 bits of each row of `rows`). 0: it does not fit at all. */
-static int fire_gfx_gpuAtlasGlyph(uint64_t key, int w, int h, const uint8_t* coverage, const uint8_t* rows, int* ax, int* ay) {
+static int fire_gfx_gpuAtlasPlace(uint64_t key, int w, int h, int maxH, const uint8_t* coverage, const uint8_t* rows, int* ax, int* ay) {
     uint64_t probe;
     FireGfxAtlasSlot* slot;
     int tries, gy, gx;
-    if (w <= 0 || h <= 0 || w > FIRE_GFX_ATLAS_SIZE || h > 256) return 0;
+    if (w <= 0 || h <= 0 || w > FIRE_GFX_ATLAS_SIZE || h > maxH) return 0;
     key = (key << 1) | 1;   /* (0 marks a free slot; the shift keeps neighbouring keys apart) */
     for (tries = 0; tries < 2; tries++) {
         probe = fire_gfx_gpuHash(key);
@@ -1121,6 +1405,10 @@ static int fire_gfx_gpuAtlasGlyph(uint64_t key, int w, int h, const uint8_t* cov
         return 1;
     }
     return 0;
+}
+/* (a glyph: at most 256 high) */
+static int fire_gfx_gpuAtlasGlyph(uint64_t key, int w, int h, const uint8_t* coverage, const uint8_t* rows, int* ax, int* ay) {
+    return fire_gfx_gpuAtlasPlace(key, w, h, 256, coverage, rows, ax, ay);
 }
 
 /* A glyph at (x, y): its coverage times `rgba` (blended; `copy`: copied where it covers - as fire_gfx_put without blending). 0: the GPU cannot. */
@@ -1200,6 +1488,112 @@ static int fire_gfx_gpuBlit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* s
     if (!blend && mode == FIRE_GFX_BLIT_BLEND) mode = FIRE_GFX_BLIT_TRANSPARENT;
     gpuMode = mode == FIRE_GFX_BLIT_COPY ? FIRE_GFX_GPU_COPY : mode == FIRE_GFX_BLIT_BLEND ? FIRE_GFX_GPU_BLEND : FIRE_GFX_GPU_TRANSPARENT;
     return fire_gfx_gpuPicture(t, st->set, cl, ct, cr, cb, sx, sy, sw, sh, dx, dy, dw, dh, gpuMode, 0, gpuMode != FIRE_GFX_GPU_BLEND);
+}
+
+/* ---- shadows, blur and materials (as fire_gfx_fx.h) ---- */
+
+/* fire_gfx_fxShadow on the GPU: the blurred mask (the software makes it once, fire_gfx_fxShadowMask) in the atlas, stretched and coloured by the shader. Blending only
+ * (without it there is no shadow - 1). 0: the GPU cannot (no twin, a mask too big for the atlas): the caller draws it in software. */
+static int fire_gfx_gpuShadow(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int blend, int x, int y, int w, int h, int radius, int soft, uint32_t color, int dy) {
+    FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
+    FireGfxShadowMask* m;
+    FireGfxGpuImage* im;
+    FireGfxGpuBatch* b;
+    int ax, ay, ox, oy, x0, y0, x1, y1;
+    uint64_t key;
+    if (t == NULL || t->width != fb->width || t->height != fb->height) return 0;
+    if (w <= 0 || h <= 0 || (color >> 24) == 0 || soft <= 0 || !blend) return 1;
+    if (soft > 256) soft = 256;
+    if (dy <= -32768 || dy >= 32768) return 0;
+    m = fire_gfx_fxShadowMask(w, h, radius, soft);
+    if (m == NULL) return 0;
+    if (!fire_gfx_gpuClip(t, &cl, &ct, &cr, &cb)) return 1;
+    ox = x - m->pad; oy = y - m->pad + dy;
+    x0 = cl > ox ? cl : ox; x1 = cr < ox + m->mw * m->scale ? cr : ox + m->mw * m->scale;
+    y0 = ct > oy ? ct : oy; y1 = cb < oy + m->mh * m->scale ? cb : oy + m->mh * m->scale;
+    if (x1 <= x0 || y1 <= y0) return 1;
+    /* (the mask by what makes it: a key of its own, apart from the glyphs) */
+    key = fire_gfx_gpuHash(((uint64_t)3 << 60) ^ (uint64_t)(uint32_t)w);
+    key = fire_gfx_gpuHash(key ^ (uint64_t)(uint32_t)h);
+    key = fire_gfx_gpuHash(key ^ ((uint64_t)(uint32_t)radius << 32) ^ (uint64_t)(uint32_t)soft);
+    if (!fire_gfx_gpuAtlasPlace(key, m->mw, m->mh, FIRE_GFX_ATLAS_SIZE / 2, m->mask, NULL, &ax, &ay)) return 0;
+    if (t->imageCount == t->imageCap) {
+        uint32_t cap = t->imageCap ? t->imageCap * 2 : 256;
+        FireGfxGpuImage* grown = (FireGfxGpuImage*)realloc(t->images, sizeof(FireGfxGpuImage) * cap);
+        if (grown == NULL) return 0;
+        t->images = grown; t->imageCap = cap;
+    }
+    b = fire_gfx_gpuBatch(t, 1, cl, ct, cr, cb, 0, g_fireGfxVk.atlasSet);
+    if (b == NULL) return 0;
+    im = &t->images[t->imageCount++];
+    im->quad[0] = (float)x0; im->quad[1] = (float)y0; im->quad[2] = (float)(x1 - x0); im->quad[3] = (float)(y1 - y0);
+    im->dst[0] = x; im->dst[1] = y; im->dst[2] = w; im->dst[3] = h;
+    im->src[0] = ax; im->src[1] = ay; im->src[2] = m->mw; im->src[3] = m->mh;
+    im->mode[0] = 4; im->mode[1] = m->scale; im->mode[2] = radius; im->mode[3] = m->pad + dy * 65536;
+    im->color = color;
+    b->count++;
+    return 1;
+}
+
+/* A blur or a material (fire_gfx_fxBlurMaterial) into the twin: its passes run in the order of the drawing. 0: no twin, or without memory. */
+static int fire_gfx_gpuEffect(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int x, int y, int w, int h, int corner, int radius, int kind, uint32_t tint, int rim) {
+    FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
+    FireGfxGpuEffect* e;
+    FireGfxGpuBatch* b;
+    if (t == NULL || t->width != fb->width || t->height != fb->height || t->set == FIRE_GFX_NO_SET) return 0;
+    if (w <= 0 || h <= 0) return 1;
+    if (!fire_gfx_gpuClip(t, &cl, &ct, &cr, &cb)) return 1;
+    if (x >= cr || y >= cb || x + w <= cl || y + h <= ct) return 1;
+    if (t->effectCount == t->effectCap) {
+        uint32_t cap = t->effectCap ? t->effectCap * 2 : 16;
+        FireGfxGpuEffect* grown = (FireGfxGpuEffect*)realloc(t->effects, sizeof(FireGfxGpuEffect) * cap);
+        if (grown == NULL) return 0;
+        t->effects = grown; t->effectCap = cap;
+    }
+    b = fire_gfx_gpuBatch(t, 2, cl, ct, cr, cb, 0, FIRE_GFX_NO_SET);
+    if (b == NULL) return 0;
+    e = &t->effects[t->effectCount++];
+    e->clip[0] = cl; e->clip[1] = ct; e->clip[2] = cr; e->clip[3] = cb;
+    e->x = x; e->y = y; e->w = w; e->h = h; e->corner = corner; e->radius = radius; e->kind = kind; e->rim = rim;
+    e->tint = kind == FIRE_GFX_MATERIAL_TINT ? 0 : tint;
+    b->count++;
+    return 1;
+}
+
+/* fire_gfx_fxBlur on the GPU. 0: the caller blurs in software. */
+static int fire_gfx_gpuBlur(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int x, int y, int w, int h, int corner, int radius) {
+    if (fb->gpu == NULL) return 0;
+    if (radius <= 0) return 1;
+    if (radius > 64) radius = 64;
+    return fire_gfx_gpuEffect(fb, cl, ct, cr, cb, x, y, w, h, corner, radius, FIRE_GFX_MATERIAL_TINT, 0, 0);
+}
+
+/* fire_gfx_fxMaterial on the GPU (an RGBA framebuffer with a twin): the same branches - opaque, a translucent tint, the blurred material - and the hairline. 0: the caller
+ * draws it in software (nothing was drawn then). */
+static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int blend, int x, int y, int w, int h, int corner, int kind, uint32_t tint, uint32_t base, int flags) {
+    FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
+    int dark = (flags & FIRE_GFX_FX_DARK) != 0;
+    if (t == NULL || t->width != fb->width || t->height != fb->height || t->set == FIRE_GFX_NO_SET) return 0;
+    if (w <= 0 || h <= 0) return 1;
+    if (!(flags & FIRE_GFX_FX_TRANSPARENCY)) {
+        uint32_t c = fire_gfx_mix(base | 0xFF000000u, tint);
+        if ((blend && (c >> 24) != 0) || !blend) { if (!fire_gfx_gpuShape(fb, cl, ct, cr, cb, x, y, w, h, corner, 0, c, !blend)) return 0; }
+    } else if (kind == FIRE_GFX_MATERIAL_TINT || !(flags & FIRE_GFX_FX_BLUR) || !blend) {
+        uint32_t a = tint >> 24, c;
+        if (kind == FIRE_GFX_MATERIAL_GLASS) a = a + (255 - a) / 3;
+        else if (kind == FIRE_GFX_MATERIAL_ACRYLIC) a = a + (255 - a) / 2;
+        c = (tint & 0x00FFFFFFu) | (a << 24);
+        if (!blend || a != 0) { if (!fire_gfx_gpuShape(fb, cl, ct, cr, cb, x, y, w, h, corner, 0, c, !blend)) return 0; }
+    } else {
+        if (!fire_gfx_gpuEffect(fb, cl, ct, cr, cb, x, y, w, h, corner, kind == FIRE_GFX_MATERIAL_ACRYLIC ? 10 : 7, kind, tint, dark ? 10 : 18)) return 0;
+    }
+    /* the hairline: 1 px inside the edge, a little lighter at the top */
+    {
+        uint32_t edge = dark ? 0x1CFFFFFFu : 0x1A000000u, top = dark ? 0x22FFFFFFu : 0x40FFFFFFu;
+        if (!fire_gfx_gpuShape(fb, cl, ct, cr, cb, x, y, w, h, corner, 1, edge, !blend)) return 0;
+        if (h > 2 * corner + 2 && w - 2 * corner - 2 > 0 && !fire_gfx_gpuShape(fb, cl, ct, cr, cb, x + corner + 1, y + 1, w - 2 * corner - 2, 1, 0, 0, top, !blend)) return 0;
+    }
+    return 1;
 }
 
 #endif

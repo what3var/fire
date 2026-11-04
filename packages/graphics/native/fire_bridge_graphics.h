@@ -672,19 +672,29 @@ static Value fire_gfx_RndDrawRoundRect(Value id, Value x, Value y, Value w, Valu
 }
 static Value fire_gfx_RndDrawShadow(Value id, Value x, Value y, Value w, Value h, Value radius, Value soft, Value color, Value dy) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
-    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    FireGfxSurface s;
+    if (r->target->gpu != NULL && fire_gfx_gpuShadow(r->target, r->clipLeft, r->clipTop, r->clipRight, r->clipBottom, r->alphaBlending, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w),
+                                                     fire_gfxb_I(h), fire_gfxb_I(radius), fire_gfxb_I(soft), (uint32_t)(int32_t)color.i, fire_gfxb_I(dy))) return Undef();
+    s = fire_gfx_rendererSurface(r);
     fire_gfx_fxShadow(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), fire_gfxb_I(soft), (uint32_t)(int32_t)color.i, fire_gfxb_I(dy));
     return Undef();
 }
 static Value fire_gfx_RndBlur(Value id, Value x, Value y, Value w, Value h, Value radius, Value corner) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
-    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    FireGfxSurface s;
+    if (r->target->gpu != NULL && fire_gfx_gpuBlur(r->target, r->clipLeft, r->clipTop, r->clipRight, r->clipBottom, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h),
+                                                   fire_gfxb_I(corner), fire_gfxb_I(radius))) return Undef();
+    s = fire_gfx_rendererSurface(r);
     fire_gfx_fxBlur(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(corner), fire_gfxb_I(radius));
     return Undef();
 }
 static Value fire_gfx_RndDrawMaterial(Value id, Value kind, Value x, Value y, Value w, Value h, Value radius, Value tint, Value base, Value flags) {
     FireGfxRenderer* r = fire_gfxb_rendererOf(id);
-    FireGfxSurface s = fire_gfx_rendererSurface(r);
+    FireGfxSurface s;
+    if (r->target->gpu != NULL && fire_gfx_gpuMaterial(r->target, r->clipLeft, r->clipTop, r->clipRight, r->clipBottom, r->alphaBlending, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w),
+                                                       fire_gfxb_I(h), fire_gfxb_I(radius), fire_gfxb_I(kind), (uint32_t)(int32_t)tint.i, (uint32_t)(int32_t)base.i,
+                                                       fire_gfxb_I(flags))) return Undef();
+    s = fire_gfx_rendererSurface(r);
     fire_gfx_fxMaterial(&s, fire_gfxb_I(x), fire_gfxb_I(y), fire_gfxb_I(w), fire_gfxb_I(h), fire_gfxb_I(radius), fire_gfxb_I(kind), (uint32_t)(int32_t)tint.i, (uint32_t)(int32_t)base.i,
                         fire_gfxb_I(flags));
     return Undef();

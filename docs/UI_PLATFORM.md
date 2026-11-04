@@ -214,7 +214,7 @@ Noch offen:
 
 ## Stand Teil 4
 
-Stufen: **4.1** Grundgerüst (umgesetzt), **4.2** Text über einen Glyphen-Atlas und Blits über Texturen, **4.3** Schatten, Blur und Materialien auf der GPU, **4.4** Präsentieren
+Stufen: **4.1** Grundgerüst, **4.2** Text über einen Glyphen-Atlas und Blits über Texturen, **4.3** Schatten, Blur und Materialien auf der GPU, **4.4** Präsentieren
 ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
 
 4.1 (`packages/graphics/native/fire_gfx_gpu.h`):
@@ -242,5 +242,17 @@ ohne Zurücklesen (direkt ins Fenster, wie scene3d DirectDrawing).
   aus (sie lesen ihn womöglich noch im alten Zustand), die nach ihm warten (sie können neuere Befehle tragen).
 * **Tests:** Formen, Text (drei Schriftarten, Hintergründe, Clip) und Blits (alle Modi, skaliert, gespiegelt, Quelle danach geändert) gegen Software: höchstens 1 Stufe;
   die ganze UI-Gruppe läuft auch komplett auf der GPU.
-* Noch offen bis 4.3/4.4: Schatten, Blur und Materialien laufen über den Abgleich (Software), und das Fenster bekommt die Pixel zurückgelesen.
+
+4.3 (Schatten, Blur, Materialien):
+
+* **Schatten:** die weichgezeichnete Maske macht weiter die Software einmal (`fire_gfx_fxShadowMask`, mit ihrem Cache); sie kommt mit eigenem Schlüssel in den Atlas
+  (bis 1024 hoch). Ein Bild-Quad mit Modus 4 streckt sie bilinear in 16.16 wie `fire_gfx_fxSample`, lässt das Rechteck selbst aus und färbt mit der Deckkraft - eine Maske,
+  die nicht in den Atlas passt, bleibt Software.
+* **Blur und Materialien:** dieselben Schritte wie `fire_gfx_fxBlurMaterial`, ganzzahlig im Shader (`shaders/gfx_effect.*`): verkleinern (Mittel aus f×f), zweimal Box
+  längs x, zweimal längs y (Ping-Pong zwischen zwei Hilfsbildern, die mitwachsen), zurück bilinear mit Sättigung, Tönung, Korn und Lichtrand, Abdeckung der Ecken als
+  Alpha. Ein Effekt ist ein eigener Batch-Typ: der Render-Pass endet vor ihm, er liest, was bis dahin gezeichnet ist, und der Pass danach zeichnet darüber weiter.
+  `DrawMaterial` geht dieselben Zweige wie in Software (deckend, Tönung ohne Blur, Material) samt Haarlinie als Formen.
+* **Tests:** Schatten (auch negativ versetzt), Blur (Radius 3 bis 30), Glas, Acryl, Tönung, mit Clip und ohne Blending, nach einer Größenänderung - gegen Software
+  höchstens 1 Stufe.
+* Noch offen bis 4.4: das Fenster bekommt die Pixel zurückgelesen.
 
