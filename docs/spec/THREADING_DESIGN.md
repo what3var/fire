@@ -2,7 +2,7 @@
 
 Das Threading-Modell von fire (`fire`, `taking`/`sync`, Actors, `leave`/`terminate`, Globals und Sektionen) mit den Gründen für die
 Entscheidungen. Es ist in der VM und im nativen Backend umgesetzt; die Sprachreferenz beschreibt die Benutzung
-(`docs/language/15-threads-and-actors.md`), dieses Dokument die Semantik im Detail.
+([Threads and actors](../language/15-threads-and-actors.md)), dieses Dokument die Semantik im Detail.
 
 ## 0. Grundphilosophie
 
@@ -407,7 +407,7 @@ keinen Snapshot und keine Kopie mehr:
   Hauptprogramms, egal wer einreiht (das Hauptprogramm selbst, ein Fire-Thread, ein Host-Thread). Ein Thread, dessen Sektion nicht drankommt, wartet -
   in `sleep` also bis zum nächsten `Sleep` des Hauptprogramms, in `sync` bis zum nächsten `sync globals`.
   **Wo eingestellt:** `#globaljobs <modus>` im Quelltext (Top-Level, gilt fürs ganze Programm; mehrere: die letzte), `"globalJobs"` in den
-  Einstellungen eines Projekts (docs/tools/projects.md), `"globalJobs"` in fire.native.json (Standard eines nativen Builds), `--global-jobs <modus>` auf der
+  Einstellungen eines Projekts ([Projects and solutions](../tools/projects.md)), `"globalJobs"` in fire.native.json (Standard eines nativen Builds), `--global-jobs <modus>` auf der
   Kommandozeile. **Rangfolge** wie bei `#floatwidth`: Kommandozeile > Projekt > Direktive im Quelltext > fire.native.json > `safepoints`.
   Zu beachten: `safepoints` kann bei jedem Schleifendurchlauf eingreifen, ein Wert, den das Hauptprogramm gerade gelesen hat, kann sich danach also
   ändern - wer das nicht will, nimmt `sleep` oder `sync`. Umsetzung: VM `VM.AutoSyncAt`/`PollQueueAtLoop`/`PollWhileWaiting` (Zähler `s_queued`,

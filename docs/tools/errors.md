@@ -358,7 +358,7 @@ configuration of the native build, a toolchain that is missing).
 | `E7002` | The C++ compiler of the native build reported errors |
 | `E7003` | The configuration of the native build cannot be used |
 
-### TCxxx - Type checker (docs/spec/TYPES.md)
+### TCxxx - Type checker ([Gradual typing](../spec/TYPES.md))
 
 A warning in lax mode, an error in strict mode (`--types`, the project setting `typeChecking`, `#lax` / `#strict` in a file); the code is the same.
 

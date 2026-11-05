@@ -52,7 +52,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   solche Natives (auch eines mit JSON) ist reines C.
 * **JSON** (`#import "json"`): `native/runtime/fire_json.h` - die Engine in C (Schreiben, Parser, Lesen; dieselben Texte und Fehler wie `JsonMethods` der VM; was sie
   für sich braucht, kommt aus einer Arena des Aufrufs) und die Tabellen der Klassen des Programms, die der Generator dahinter schreibt (`kJsonClasses`, `jsonClassAt`, ...).
-  Schreiben zieht keine Klassen nach; Lesen die der deklarierten Typen (mit Unterklassen und Feldtypen), ein Slot ohne Klasse alle; nicht serialisierbare Klassen nie (docs/stdlib/json.md).
+  Schreiben zieht keine Klassen nach; Lesen die der deklarierten Typen (mit Unterklassen und Feldtypen), ein Slot ohne Klasse alle; nicht serialisierbare Klassen nie ([JSON](../stdlib/json.md)).
 * **Bauen** (`NativeBuilder.BuildCommands`): ohne Natives in C ein Aufruf des C-Compilers (`gcc -std=c11 ... -lm`); mit Natives wird das Programm zur Objektdatei
   übersetzt und vom C++-Compiler zusammen mit `fire_natives.cpp` gelinkt. Der C-Compiler gehört zum C++-Compiler der Toolchain (`g++` -> `gcc`, `clang++` -> `clang`,
   `em++` -> `emcc`, `x86_64-w64-mingw32-g++` -> `...-gcc`; MSVC: `cl /TC`), oder `toolchain.cCompiler`/`cStd`. Ein ESP-IDF-Komponent listet beide Dateien.
@@ -466,7 +466,7 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   deren Adresse genommen wird, ist ab dann im Speicher (nur diese Funktion wird langsamer). Eine Methode ohne `ref` an derselben Stelle bekommt den
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
-* **Threads** (`docs/spec/THREADING_DESIGN.md`): ein Programm mit `fire`, `leave`, `terminate`, `sync`, Actors oder `catch threads/terminate` bekommt `FIRE_THREADS` (Binary mit
+* **Threads** ([fire – Multithreading-Design](THREADING_DESIGN.md)): ein Programm mit `fire`, `leave`, `terminate`, `sync`, Actors oder `catch threads/terminate` bekommt `FIRE_THREADS` (Binary mit
   `-pthread` linken; nur auf Hosts, nicht auf Embedded-Zielen). Jeder Fire-Thread ist ein echter `std::thread`; aller fire-Code läuft unter **einer globalen Sperre (GIL)**,
   einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und an sicheren Punkten ab (Schleifen-Rücksprung, Funktionsanfang, alle 4096 Stationen
   ein `gilYield`). Dadurch sehen Besitzstrukturen, Handle-Tabelle und Zähler nie zwei Threads zugleich. Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, `g_pending`,
@@ -550,7 +550,7 @@ zur Laufzeit (`-ldl -lpthread`), Windows linkt user32 und gdi32 (imm32, dwmapi, 
 Gemeinsam: `std/fire_display_keys.h` (die Nummern der Tasten, Modifier, Maustasten, Cursor - die von SDL3, die Programme kennen sie), `std/fire_display_common.h` (die Warteschlange
 eines Fensters, Drops, Kompositionen, die Ereignisse der Tests), `std/fire_display_joystick.h` (Joysticks: `/dev/input/js*`, XInput, GameController, Gamepad-API). Neu gegenüber den
 SDL-Anzeigen: Kompositionen einer Eingabemethode (`FIRE_EV_TEXT_EDITING`, `Window.SetTextInputArea`), `FIRE_EV_SCALE`, Maus herein/hinaus, Fokus, und was hinter dem Fenster liegt
-(`Window.Backdrop`: transparent, Blur, Acryl, Mica - je nach System). Entwurf und Stand: docs/spec/UI_PLATFORM.md.
+(`Window.Backdrop`: transparent, Blur, Acryl, Mica - je nach System). Entwurf und Stand: [Eigene Plattformschicht statt SDL, Effekte und ein modernerer Stil](UI_PLATFORM.md).
 
 **SDL (wählbar).** `"sdl": 2|3` des Ziels (0: der Build probiert) oder `FIRE_SDL=2|3|auto` nehmen statt der eigenen Anzeige SDL (das Programm sagt dann `#define FIRE_DISPLAY_SDL 1`).
 Mitgeliefert: `std/fire_display_sdl3.h` (SDL3, für `posix` und `windows`, wenn
@@ -689,7 +689,7 @@ Der Generator übersetzt nur, was vom Programm aus erreichbar ist: Funktionen we
   beschreiben die **erreichten** Klassen: gemacht, mit benutztem Code oder statischen Feldern, ihre Basisklassen, `[Keep]`. Vorher erzeugte ein einziger Aufruf von `Reflect.Has`
   (das `ui` tut das für Stile, Trigger und Bindungen) **alle** Klassen des Programms mit allen Konstruktoren und Methoden.
 * **JSON**: Schreiben zieht nichts nach; Lesen die Klassen der deklarierten Typen (`Json.Deserialize<T>`, ihre Feldtypen, Unterklassen, Klassen eines Interfaces), ein Slot ohne
-  Klasse (`any`, ein Typname als Text) alle; `[NotSerializable]` und `"serializable": false` (das Package `ui`) schließen Klassen aus (docs/stdlib/json.md).
+  Klasse (`any`, ein Typname als Text) alle; `[NotSerializable]` und `"serializable": false` (das Package `ui`) schließen Klassen aus ([JSON](../stdlib/json.md)).
 * **`[Keep]`** (SPEC 5.12) vor einer Klasse behält sie mit allen Mitgliedern, vor einem Mitglied dieses und seine Klasse; nicht vererbt.
 * Tabellen: Feldhelfer und Verteiler nur für die Namen, die erreicht werden; gleiche Zweige eines `switch` über die Klassen stehen einmal (`case 3: case 9: ...`); `fp_` (die Adresse
   eines Felds) nur für Namen, deren Adresse das Programm nimmt; die Reflection-Tabellen halten nur die eigenen Mitglieder jeder Klasse (die geerbten kommen zur Laufzeit aus der
@@ -785,7 +785,7 @@ Toolchain, die ein Programm macht) in den Ordner `bin/<ziel>-<modus>` des Projek
 * **Debug**: gebaut mit `-O0 -g` (MSVC `/Od /Zi`), Symbole bleiben (`NativeLaunch.DebugToolchain`). spark lauscht auf `127.0.0.1` an einem freien Port, startet das
   Programm mit `FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T`, nimmt **eine** Verbindung an, deren `hello` das Token trägt, und wartet, bis der Hauptthread am Eintritt steht
   (`NativeLaunch.LaunchDebug`, `NativeDebugListener`). Danach ist es eine gewöhnliche Debug-Sitzung über `NativeDebugTarget` (`src/fire.Compiler/Debugging`,
-  Protokoll: docs/spec/NATIVE_DEBUG_PROTOCOL.md): Haltepunkte, Schritte, Pause, Threads, Scope-Ansicht mit *Set Value...*, unbehandelte Ausnahmen mit *Ignore Error and
+  Protokoll: [Debug-Protokoll nativer Programme](NATIVE_DEBUG_PROTOCOL.md)): Haltepunkte, Schritte, Pause, Threads, Scope-Ansicht mit *Set Value...*, unbehandelte Ausnahmen mit *Ignore Error and
   Continue*. Das Stack-Panel (der Operandenstapel der VM) ist ausgeblendet. Passen die Hashes der Quellen im `hello` nicht zu den Texten des Editors, steht eine Warnung
   im Output-Panel. *Stop* schickt `terminate` und beendet den Prozess.
 * **Release/Performance**: nicht debugbar (Entscheidung 8.4) - das Programm läuft einfach; stdout und stderr kommen zeilenweise ins Output-Panel, das Ende mit
@@ -1119,7 +1119,7 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
     die DLLs, eine DLL mit anderer Schnittstelle). **msvc** baut `static`: der C-Code hält sich an das, was msvc braucht (`dllimport` für Daten, Exporte der
     Runtime), aber die Tabellen des Programms zeigen in statischen Initialisierern auf Daten der Modul-DLLs (MinGW löst das mit seinen Pseudo-Relocations, msvc nicht),
     und die Exporte der Modul-DLLs bräuchten eine `.def`-Datei - nicht umgesetzt, ohne msvc hier nicht zu testen.
-* **Laden zur Laufzeit** (Phase D a): `Library.Load(path)` / `lib.Get(name, signatur)` (docs/language/18-native-code.md) - die Klasse `Library` steht im Prelude
+* **Laden zur Laufzeit** (Phase D a): `Library.Load(path)` / `lib.Get(name, signatur)` ([Native code](../language/18-native-code.md)) - die Klasse `Library` steht im Prelude
   (`fire.Standard.LibraryMethods`, eine native Funktion `__LibCall`). Die VM lädt mit `NativeLibrary` und ruft über einen Delegate, den sie für die Signatur baut (wie
   `#extern`; `VM.Library.cs`). Nativ lädt die Plattformschicht (`fire_plat_dlopen`/`fire_plat_dlsym`: `dlopen` unter POSIX, `LoadLibraryW` unter Windows, auf den
   Boards und im Browser keine); ein Aufruf geht über einen **Thunk je Signatur**: das Programm erzeugt einen für jeden Text des Programms (aller Module), der eine
@@ -1136,7 +1136,7 @@ Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Except
 
 ### Plugins (Phase D b)
 
-Ein **fire-Plugin** ist ein Library-Modul, das für sich gebaut und von einem laufenden Programm geladen wird (`Library.Load`, docs/language/18-native-code.md
+Ein **fire-Plugin** ist ein Library-Modul, das für sich gebaut und von einem laufenden Programm geladen wird (`Library.Load`, [Native code](../language/18-native-code.md)
 "fire plugins"). Gebaut wird es mit `--linkage plugin` (oder `"linkage": "plugin"` im Projekt): die Klassen der eigenen Dateien des Programms werden das Modul des
 Plugins (benannt nach dem Projekt bzw. der Ausgabe), alle anderen Module (core, die Imports, die Libraries des Projekts) sind die, die es braucht. Heraus kommen
 `<ausgabe>.so` (`.dll`, `.dylib`) und `<ausgabe>.fireplugin`, der Bytecode für die VM (Entscheidung 9.8; für die VM übersetzt - `#if vm` -, mit den Namen seiner
@@ -1225,7 +1225,7 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
 * **Debuggen** (ein Debug-Build des Programms mit `"shared"` und des Plugins, `-m debug` für beide; das Plugin wird dann mit `-O0 -g` übersetzt): die Zeilen des
   Plugins melden ihre Quelle über `fire_dbgsrc_<p>`, das jetzt nicht mehr konstant ist - `fireRegisterPlugin` ruft `fire_dbgPlugin` (fire_debug.h), das seinen
   Quellen die nächsten Indizes nach denen des Programms gibt (`FirePlugin.nsources`/`srcFiles`/`srcHashes`/`srcMap`, `FIRE_PLUGIN_FORMAT` 5), dem Debugger das
-  Ereignis `sources` schickt und auf seine Haltepunkte wartet (docs/spec/NATIVE_DEBUG_PROTOCOL.md). Die Tabellen der Funktionen und Scopes braucht die Runtime nicht zu
+  Ereignis `sources` schickt und auf seine Haltepunkte wartet ([Debug-Protokoll nativer Programme](NATIVE_DEBUG_PROTOCOL.md)). Die Tabellen der Funktionen und Scopes braucht die Runtime nicht zu
   kennen: jeder Rahmen zeigt auf die seiner Funktion (`DbgFrame.fn`); die Namen der Felder seiner Klassen gibt das Plugin über `FirePlugin.dbgClass`. In der **VM**
   trägt die `.fireplugin`-Datei die Zeilentabellen ihres Codes (`Chunk.KeepLineTable`, in `DebugLocalNames` - die Form eines Chunks bleibt) und ihre eigenen
   Quellen (`PluginBytecode.Sources`); `LinkPlugin` schreibt die Quellindizes ihrer Zeilen auf die nächsten des Programms um (die Quellen ihrer Libraries auf 0) und
@@ -1234,7 +1234,7 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   Getestet: `FIRE_TESTS_ONLY=linkage FIRE_TESTS_FILTER=plugindebug` (nativ: Haltepunkt im Programm, `sources`, Step Into in die Methode des Plugins, Scopes,
   `this` mit dem Feld des Plugins, Haltepunkt nach Datei im Plugin, Step Out) und derselbe Plan in der VM (`FIRE_TESTS_ONLY=debugger`, "Plugins in der VM").
   Nicht geprüft: das Fenster von spark (die Haltepunkte im Editor in einer Datei des Plugins), Windows.
-* **Nur für die VM** (`NativeBuilder.WriteVmPlugin`, ohne native Bibliothek): spark lädt so die Treiber installierter Packages (docs/devices/README.md, `PackageDriverAgent`).
+* **Nur für die VM** (`NativeBuilder.WriteVmPlugin`, ohne native Bibliothek): spark lädt so die Treiber installierter Packages ([Devices](../devices/README.md), `PackageDriverAgent`).
   Das Prelude eines Imports ist die eigene Quelle des Plugins: `Linker.OwnImports` nennt den Import, seine Natives sind die des Plugins, sein Prelude wird nicht noch
   einmal eingefügt (was das Package verlangt, kommt wie sonst dazu). Die `.fireplugin`-Datei nennt seine Natives mit dem vollen Pfad der Bibliothek des Packages für die
   VM (`PackageNatives`/`PackageLibraries`; ein Pfad statt eines Dateinamens geht, `Path.Combine` mit dem Ordner des Plugins lässt ihn stehen).
@@ -1324,7 +1324,7 @@ Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emsc
 
 ## Natives von Packages in der VM (Shared Library, C-ABI)
 
-Die C++-Natives eines Packages (docs/packages/README.md, docs/packages/natives.md) laufen in der VM nicht als Fehler-Stub, sondern über eine **Shared Library**: `PackageLibrary` (fire.Compiler) erzeugt einen
+Die C++-Natives eines Packages ([Packages and ember](../packages/README.md), [Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)) laufen in der VM nicht als Fehler-Stub, sondern über eine **Shared Library**: `PackageLibrary` (fire.Compiler) erzeugt einen
 Wrapper (`native/abi/fire_pkg_wrapper.hpp` + je Funktion ein Thunk), kompiliert ihn zusammen mit `fire_rt.h` (als C++, über `fire_rt_cpp.hpp`) in dem Modus `FIRE_LIBRARY` (`fatal`/`unsupported` werfen eine `FireFatalError`, statt das
 Programm zu beenden; `runDestructors` ist leer) und den Quellen des Packages für die Plattform dieses Rechners (`platformSources`) mit dem Toolchain-Aufruf von `NativeBuilder.CompilerCommand(sharedLibrary: true)`.
 Die Bibliothek exportiert die C-Schnittstelle aus `native/abi/fire_pkg_abi.h` (`fire_pkg_call` mit `fire_val`: Zahlen, Text als UTF-16, Arrays und Puffer werden kopiert). `PackageNativeBinding` (fire.Runtime) lädt sie

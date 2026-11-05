@@ -47,7 +47,7 @@ window.Run()
 `SetDataContext` keeps an object that is handed to it (`new Person()` or `take model`); an object that belongs to someone else stays theirs and
 the window only points to it.
 
-In a project the `#include` is not needed: the `.fxml` files of a project are compiled with it (docs/tools/projects.md), and the code-behind is simply the `.fire` file of the
+In a project the `#include` is not needed: the `.fxml` files of a project are compiled with it ([Projects and solutions](../tools/projects.md)), and the code-behind is simply the `.fire` file of the
 same name next to it. The editor makes both when you add an **FXML Window** or **FXML View** (Add > New), and the solution explorer shows the markup as a node that opens: its
 first row **Designer** opens the markup editor (like a double click on the markup itself), below it is the code-behind.
 
@@ -86,7 +86,7 @@ For `<Window Class="Greeter">` the script defines `class GreeterBase` (`Base="..
 | `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (`Title`, `Width`, `Height` from the attributes) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
 | one method per handler name | `undefined Ok(any sender) { }` - empty; the derived class overrides it. `sender` is the element |
-| `Run(other = undefined)`, `OnTick()` | a window: `Run()` is the start of the program - it runs the window's manager (docs/spec/GRAPHICS_LAYER.md, *Window managers*) on this thread until the windows are closed (if it already runs, the window is only shown there) and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
+| `Run(other = undefined)`, `OnTick()` | a window: `Run()` is the start of the program - it runs the window's manager ([fire.Terminal – Framebuffer, Zeichnen und Fenster](../spec/GRAPHICS_LAYER.md), *Window managers*) on this thread until the windows are closed (if it already runs, the window is only shown there) and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
 | `Show(modal = false)` | a window: shows it and goes on - a window manager that nobody runs yet gets a thread of its own, the program handles the events at its safe points and waits at its end until the window is closed. `Show(true)`: modal - returns when the window is closed, the other windows of the manager take no input meanwhile |
 | `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
 | `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
@@ -100,7 +100,7 @@ that a window can be composed of views.
 ## Elements and properties
 
 Every element has the properties it shares with all others - `Left Top Width Height Visible Enabled`, `Margin` (`4`, `4,2` = horizontal, vertical, or `1,2,3,4` = left, top, right, bottom), `HorizontalAlign` (`Stretch Left Center Right`),
-`VerticalAlign` (`Stretch Top Center Bottom`), `MinWidth MinHeight MaxWidth MaxHeight`, `Background` `Foreground` (colours), `Pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `Font` (a font name for `Fonts.Get`, docs/graphics/fonts.md; empty = that of the surrounding element) and `FontSize` (pixels), `Style`, `Template` (keys of
+`VerticalAlign` (`Stretch Top Center Bottom`), `MinWidth MinHeight MaxWidth MaxHeight`, `Background` `Foreground` (colours), `Pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `Font` (a font name for `Fonts.Get`, [Fonts: bitmap and TrueType text](../graphics/fonts.md); empty = that of the surrounding element) and `FontSize` (pixels), `Style`, `Template` (keys of
 resources, see below) - plus `Name`, and its own properties. The attached properties of the containers are written as in XAML: `Grid.Row`, `Grid.Column`, `Grid.RowSpan`, `Grid.ColumnSpan`, `DockPanel.Dock` (`Left Top Right Bottom`).
 The attribute names are written in PascalCase (case does not matter when they are read). Each sets the field of the element with exactly the same name
 (`Text` sets `button.Text`, `IsChecked` sets `IsChecked`, `OnClick` sets `OnClick`, `Left`/`Top` set `Left`/`Top`), so code and markup use the same names -
@@ -131,7 +131,7 @@ The old names `x`, `y`, `halign`, ... are reported with the new one.
 | `RadioButtons` (`<Item>text</Item>`) | `Header`, `Horizontal`, `Spacing`, `SelectedIndex` | `OnChange` |
 | `MenuBar` (`<Menu Header="File">` with `<MenuItem Header="Open" Shortcut="Ctrl+O" Checkable="true" IsChecked="true" Enabled="false" OnClick="Open">`, nested items, `<MenuSeparator/>`) | | `OnClick` of the items |
 | `Separator` | | |
-| `Image` | `Source` (a path: the file is embedded, see docs/stdlib/resources.md), `Stretch` (`None Fill Uniform UniformToFill`) | |
+| `Image` | `Source` (a path: the file is embedded, see [Resources: files inside the program](../stdlib/resources.md)), `Stretch` (`None Fill Uniform UniformToFill`) | |
 | `Rectangle`, `Ellipse` | `Fill` (colour), `Stroke` (pen) | |
 | `Line` | `X1 Y1 X2 Y2`, `Stroke` | |
 | `Path` | `Data` (`"M 0 0 L 40 0 L 20 30 Z"`, see [shapes](shapes.md#path-and-geometry)), `Fill`, `Stroke` | |

@@ -25,7 +25,7 @@ chip.Mode = 3                                      // clock polarity and phase; 
 * **The simulated device** is a loopback by default (MISO tied to MOSI: what is sent comes back - the usual wiring test). `Spi.Sim.Reply(bytes)` makes it a device that answers: one queued byte comes back per byte sent, starting with the first - so the answer to a command
   byte is in the bytes *after* it (queue a leading 0 for the command byte, as the data sheets draw it); when the queue is empty it answers 0. `Spi.Sim.Loopback()` turns the loopback on again. `Spi.Sim.Sent()` is everything the program sent (the first 65536 bytes),
   `Mode()`, `Speed()`, `LsbFirst()` and `Transfers()` say what a chip would have seen, `LastSent()` and `TotalSent()` the last byte and how many were sent since the start, `Clear()` forgets it.
-  `Spi.Sim.SetReply(bytes)` is `Reply` that drops the queued answers first. Shift registers of a circuit can sit on the device (`Circuits.SpiShiftOut`/`SpiShiftIn`, docs/circuits/README.md).
+  `Spi.Sim.SetReply(bytes)` is `Reply` that drops the queued answers first. Shift registers of a circuit can sit on the device (`Circuits.SpiShiftOut`/`SpiShiftIn`, [Circuits](../circuits/README.md)).
 * Errors are `Spi.SpiException` (with a `code`): `NotFoundException` (3), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `spi`), `UnsupportedException` (6) and `TimeoutException` (8). Bad arguments (mode, speed, buffer range) are code 1.
 * Not tried on hardware yet: the Linux backend compiles against the kernel headers; the ESP32 file compiles against a stand-in of the driver headers.
 

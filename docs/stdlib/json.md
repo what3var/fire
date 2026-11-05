@@ -39,8 +39,8 @@ string text = Json.Serialize(ann)
 // {"$type":"Person","$id":1,"name":"Ann","age":41,"friend":{"name":"Bob","age":null,"friend":{"$ref":1},"path":null,"nick":null},
 //  "path":[{"x":1.5,"y":2.0}],"nick":null}
 
-Person copy = Json.Deserialize<Person>(text)
-print(copy.friend.friend == copy)   // True: the cycle is back
+Person back = Json.Deserialize<Person>(text)
+print(back.friend.friend == back)   // True: the cycle is back
 ```
 
 ## The API
@@ -102,10 +102,10 @@ The class of an object comes from `"$type"`, else from the declared type of the 
 
 ## Native builds
 
-The native backend (docs/spec/NATIVE_BACKEND.md) has the same functions in its runtime (`fire_json.h`, C, included by the program when it uses JSON) and writes a table
+The native backend ([Natives Backend (AOT): fire -> C](../spec/NATIVE_BACKEND.md)) has the same functions in its runtime (`fire_json.h`, C, included by the program when it uses JSON) and writes a table
 of the program's classes for it. It needs exceptions in the runtime (for `JsonException`), not C++ exceptions, so it also works on boards whose compiler has them switched off.
 
-A native build only keeps the classes the program can reach (docs/spec/NATIVE_BACKEND.md, "Größe des Programms"), and JSON adds what reading can make:
+A native build only keeps the classes the program can reach ([Natives Backend (AOT): fire -> C](../spec/NATIVE_BACKEND.md), "Größe des Programms"), and JSON adds what reading can make:
 
 - **Writing** (`Json.Serialize`) adds nothing: the objects it writes exist, so their classes are there.
 - **Reading** (`Json.Deserialize<T>`) adds the classes of the declared types: `T`, the types of its fields (transitively), and for each of them the derived classes and the

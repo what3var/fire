@@ -17,7 +17,7 @@ a folder of it                    Fire Class / FXML Window / FXML View    only t
 ```
 
 The name is typed in a box, and the extension of the template is shown behind it and added automatically (`Greeter` + `.fire`; a typed `.fire` is not doubled). **FXML Window** and
-**FXML View** make two files: the markup `Name.fxml` and its code-behind `Name.fire` (`class Name : NameBase { ... }`, docs/ui/markup.md); the markup opens in the editor. A project or a solution also
+**FXML View** make two files: the markup `Name.fxml` and its code-behind `Name.fire` (`class Name : NameBase { ... }`, [UI markup (.fxml)](../ui/markup.md)); the markup opens in the editor. A project or a solution also
 asks for the folder.
 
 ## Where templates are

@@ -243,7 +243,7 @@ parts you need most:
   virtual machine, a native build (also a library module of linkage `static`/`shared`) and plugins. **Checked:** a source that includes another source of the import that comes after it is an
   error when the package is packed (`ember pack`, Pack Library; for every platform of `platformSources`) and when it is built, with the file and the line:
   `native/sensor_bridge.h:3: #include "sensor_types.h" is a source of the same package that is built after it - give 'native/sensor_types.h' a smaller build order ("order") than 'native/sensor_bridge.h', or list it before.`
-  (The includes are not resolved automatically on purpose: the order is written down, and the editor shows and sets it - *Properties* of the file, docs/tools/projects.md.)
+  (The includes are not resolved automatically on purpose: the order is written down, and the editor shows and sets it - *Properties* of the file, [Projects and solutions](../tools/projects.md).)
 
 ## 4. The virtual machine: what crosses the C boundary
 

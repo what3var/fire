@@ -50,7 +50,7 @@ weiter als C++ gegen `fire_rt.h` (das als C++ in `extern "C"` + `namespace fire`
 Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_program.c`) gegen `fire_rt.h`; `fire_rt.hpp` ist entfernt.
 
 1. ~~Der Generator erzeugt C gegen `fire_rt.h`~~ - Catch-Blöcke sind eigene Funktionen mit dem Frame ihrer Funktion, Sections und Aufruftiefe explizit,
-   `fire_init()` statt statischer Initialisierung (docs/spec/NATIVE_BACKEND.md, "C statt C++").
+   `fire_init()` statt statischer Initialisierung ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md), "C statt C++").
 2. ~~JSON und Reflection nach C~~ - `fire_json.h` (die Engine in C), die Reflection-Tabellen ohne C++.
 3. ~~Package-Natives als eigene Übersetzungseinheit~~ - `fire_natives.cpp` mit `fire_rt_cpp.hpp`, Aufrufe über `fire_nat_N` (C-Linkage).
 4. ~~VM-Seite~~ - die Bibliotheken der Packages für die VM bauen gegen `fire_rt.h` (als C++, `FIRE_LIBRARY`).
@@ -59,7 +59,7 @@ Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_progr
 6. ~~`fire_rt.hpp` entfernen~~.
 
 Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native Fälle wie vor dem Umbau, gcc und clang ohne Warnungen (`-Wall -Wextra`, clang
-auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher (docs/spec/NATIVE_BACKEND.md, "Benchmarks vor und nach dem C-Port"): der Programmstart
+auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md), "Benchmarks vor und nach dem C-Port"): der Programmstart
 ist als C gut 0,5 ms kürzer, die Rechenzeit gleich oder bis 20 % besser ; `method` war durch den Zugriffsschutz knapp 4x langsamer (`this.count`
 über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist; ebenso private/geschützte Methoden und Properties. Die Zugriffsregeln entscheidet der Typprüfer, wo die Klasse des Objekts bekannt ist (`TC012`, auch lax ein Fehler); zur Laufzeit geprüft werden nur noch `any` und die Reflection. Aufrufe über ein Interface brauchen keine Prüfung: die Implementierung eines Interface-Mitglieds muss öffentlich sein (`E4063`), nativ gehen sie an einen eigenen Verteiler ohne Aufruferklasse. Interfaces haben Properties (`int ReadTimeout { get; set; }`, implementiert von einer öffentlichen Property, `E4064`/`E4065`/`E4066`, `TC016`) und erweitern andere Interfaces (`interface IConnection : IO.IStream`, Zyklen `E4068`) - VM und nativ gleich, auch über Module und Plugins (SPEC 8.5); `Net.IConnection` nutzt beides. Ein Mitglied, das ein Interface-Typ (samt seinen Basis-Interfaces) nicht deklariert, ist `TC008` wie bei einer bekannten Klasse (lax Warnung, strikt Fehler; die Besitz-Methoden `TakeTo`/`TakeLocal`/... gehen immer, der Cast `x!Klasse` erreicht den Rest); `Type.Interfaces` der Reflection listet alle Interfaces, die die Klasse erreicht (auch über Basisklassen und Interface-Vererbung, volle Namen), `Type.DeclaredInterfaces` nur die genannten - VM und nativ gleich, auch Module und Plugins. Offen dabei: der Typ einer implementierenden Property wird nur bei Werttypen und Einheiten mit dem des Interfaces verglichen. Emscripten (6.0): ein Programm unter node und ein Fenster im Browser (Testgruppe `packer`). Offen: MSVC und
 macOS sind hier nicht installiert. ESP32: mit ESP-IDF 5.5 gebaut (ohne Warnung) und im Emulator von Espressif (QEMU) ausgeführt - Ausgabe wie in der VM;
@@ -68,7 +68,7 @@ auf echter Hardware noch nicht.
 Danach: ~~die Natives der Standard-Packages in C~~ - **umgesetzt**: process, time, io, net, tls (OpenSSL, mbedTLS, SChannel), gpio, i2c, spi, usb, wifi,
 devices, audio, tracker, graphics und windows sind C99 (`"language": "c"` im Manifest), ihre Plattformschichten ebenso (`native/platform/std/fire_<teil>_c.h`).
 Ein Programm mit diesen Packages ist reines C und lässt sich mit TinyCC bauen (`--toolchain tcc`). Auch die 3D-Engine `scene3d` ist C99 (Branch `scene-c`:
-derselbe Software-Renderer, bytegleiche Bilder wie vorher, dazu ein optionaler Hardware-Renderer über Vulkan, docs/graphics/3d.md "Hardware"), und der Simulator
+derselbe Software-Renderer, bytegleiche Bilder wie vorher, dazu ein optionaler Hardware-Renderer über Vulkan, [3D scenes](graphics/3d.md) "Hardware"), und der Simulator
 `circuits` (Branch `circuits-c`: derselbe Kern, jede Rechnung in derselben Reihenfolge - die Ausgaben der Tests sind bytegleich, auch ungerundet). Kein
 Standard-Package braucht mehr C++; `fire_rt_cpp.hpp` und `fire_platform.hpp` bleiben für Packages, die ihre Natives in C++ schreiben. Geprüft: die Testsuite (VM == nativ, ASan/UBSan),
 die Fälle der Packages zusätzlich mit TinyCC und - wo möglich - für Windows (MinGW) unter Wine; ESP32/FreeRTOS nur mit Ersatz-Headern übersetzt.
@@ -143,14 +143,14 @@ wirkt `Set` nur auf die Sicht des Programms (nicht auf spark/forge). Unter Windo
 * POSIX: `posix_spawn` + `pipe`/`poll`; Windows: `CreateProcessW` + Pipes; kein Prozess auf Embedded-Zielen (`NotSupportedException`).
 * Ein Paket `process` (Import `"process"`), Natives in C.
 
-Stand: umgesetzt (docs/stdlib/process.md) - `Process.Run`/`Start`, `ProcessOptions` (Arbeitsordner, Umgebung, Umleitungen, `MergeError`), `ProcessStream` als
+Stand: umgesetzt ([Processes:](stdlib/process.md)) - `Process.Run`/`Start`, `ProcessOptions` (Arbeitsordner, Umgebung, Umleitungen, `MergeError`), `ProcessStream` als
 `IO.Stream`, `WaitForExit(timeout)`, `Kill`, `ExitCode`, `Id`, Zeilen als Ereignisse (`OnOutput`/`OnError`/`OnExit`, ausgeliefert von `Pump()`, ohne zu
 blockieren). Die Natives sind - wie bei den anderen Standardpaketen - C99 (`fire_bridge_process.h`, `"language": "c"`; auch mit TinyCC), in der VM als Shared Library; POSIX mit `fork`/`execvp`
 statt `posix_spawn` (der Arbeitsordner braucht sonst `posix_spawn_file_actions_addchdir_np`); Windows unter Wine geprüft.
 
 ## 6. SHA-256
 
-Stand: **umgesetzt** (docs/stdlib/hash.md) - Paket `hash`: MD5, SHA-1, SHA-256/384/512, CRC-32, Adler-32 und HMAC in reinem C (gegen die Testvektoren von
+Stand: **umgesetzt** ([Hash functions](stdlib/hash.md)) - Paket `hash`: MD5, SHA-1, SHA-256/384/512, CRC-32, Adler-32 und HMAC in reinem C (gegen die Testvektoren von
 FIPS 180, RFC 1321/2202/4231 und gegen Python geprüft; VM, gcc und TinyCC gleich). Der Zustand eines Hashers ist ein Byte-Puffer des fire-Objekts (keine
 Handle-Tabelle). Eine Anbindung an mbedTLS/OpenSSL gibt es nicht - die eigene Implementierung ist überall gleich und schnell genug.
 
@@ -161,7 +161,7 @@ Reines C ohne Abhängigkeiten (läuft auch auf dem ESP32); auf Zielen mit mbedTL
 
 ## 7. Zip / Deflate
 
-Stand: **umgesetzt** (docs/stdlib/compression.md) - Paket `compression`: Deflate/Inflate in eigenem C (streamfähig, gegen Python-zlib und mit 1500 kaputten
+Stand: **umgesetzt** ([Compression and Zip](stdlib/compression.md)) - Paket `compression`: Deflate/Inflate in eigenem C (streamfähig, gegen Python-zlib und mit 1500 kaputten
 Strömen unter ASan geprüft; Größe wie zlib), `DeflateStream`/`GZipStream`/`ZLibStream`, Einmal-Funktionen, `Zip.Archive` lesen (Zip64, Datendeskriptoren,
 CP437/UTF-8) und schreiben (auch streamend), Entpacken mit Schutz vor Pfaden außerhalb des Ziels. Zip64 auch beim Schreiben: Einträge über 4 GB (Zip64-Extra-Feld
 im zentralen Verzeichnis, im lokalen Header bei bekannter Größe bzw. mit dem Parameter `zip64` von `CreateEntry` und bei `AddFile` großer Dateien, Datendeskriptoren mit
@@ -180,10 +180,10 @@ Ursprünglicher Plan:
 
 Ein Debug-Agent im nativen Debug-Build, damit spark native Programme genauso debuggt wie die VM - auf jedem Ziel, ohne gdb/lldb.
 
-Stand: **Generator, Runtime und Agent umgesetzt** (Punkte 1, 3, 4, 5 für TCP, stdio und die UART des ESP32, 6, 7; docs/spec/NATIVE_BACKEND.md "Zeilen des Programms im C" und "Debug-Builds",
+Stand: **Generator, Runtime und Agent umgesetzt** (Punkte 1, 3, 4, 5 für TCP, stdio und die UART des ESP32, 6, 7; [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Zeilen des Programms im C" und "Debug-Builds",
 Protokoll: [NATIVE_DEBUG_PROTOCOL.md](spec/NATIVE_DEBUG_PROTOCOL.md)); getestet gegen die VM (`NativeDebugTests.cs`). spark-Seite (2, 8) ebenfalls umgesetzt (`IDebugTarget`, `NativeDebugTarget`, Engine-Box, natives Run/Debug; Tests `FIRE_TESTS_ONLY=debugger`).
 **ESP32 umgesetzt** (8.6): Transport UART gerahmt (CRC-16), 3 s Wartezeit, Standardeingabe durch den Agenten, spark baut/flasht über `idf.py` und debuggt bzw. zeigt die Konsole
-über die serielle Schnittstelle (docs/spec/NATIVE_BACKEND.md "Ziel `esp32`: Run und Debug auf dem Board"); getestet unter QEMU, nicht auf einem echten Board. Offen:
+über die serielle Schnittstelle ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Ziel `esp32`: Run und Debug auf dem Board"); getestet unter QEMU, nicht auf einem echten Board. Offen:
 WLAN (TCP auf dem Board), andere Chips (USB-Serial-JTAG der C3/S3) als eigene Ziele, wasm. Die serielle Schnittstelle, die Baudrate und der Ordner von ESP-IDF sind in spark einzustellen (Projekteigenschaften, Toolchain Settings; nicht von Hand durchgeklickt). Nicht getestet: `set` eines Felds mit Probes (die gibt es nur mit Reflection; geprüft ist der Setter mit der Prüfung
 der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Windows).
 
@@ -205,16 +205,16 @@ der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Wind
 6. ~~**Threads**~~: Anhalten aller Threads über die GIL; ein angehaltener Thread wartet ohne GIL (wie `Sleep`), damit `ContinueThread` einzelne Threads laufen lässt.
 7. ~~**Unbehandelte Ausnahmen**~~: anhalten vor dem Abrollen, wenn kein Handler da ist; `resume` wie `TryResumeUnhandled` der VM.
 8. ~~`NativeDebugTarget` in spark; *Run > Debug* mit der Engine `native` (und dem Ziel aus dem Projekt)~~ (umgesetzt, spark-Seite): `NativeDebugTarget`/`NativeDebugThread`
-   sprechen das Protokoll (docs/spec/NATIVE_DEBUG_PROTOCOL.md); spark lauscht, übergibt `FIRE_DEBUG`, nimmt eine Verbindung mit dem Token an. Engine-Box *VM/Native* neben der
+   sprechen das Protokoll ([Debug-Protokoll nativer Programme](spec/NATIVE_DEBUG_PROTOCOL.md)); spark lauscht, übergibt `FIRE_DEBUG`, nimmt eine Verbindung mit dem Token an. Engine-Box *VM/Native* neben der
    Modus-Box (gespeichert in `settings.engine`), natives *Run* (Release/Performance: Ausgabe ins Output-Panel) und *Debug* (Build mit `-O0 -g` nach `bin/<ziel>-dbg`),
-   Stack-Panel bei nativ ausgeblendet (docs/spec/NATIVE_BACKEND.md "Ausführen und Debuggen aus spark"). Getestet gegen einen Schein-Agenten; Ende-zu-Ende-Test gegen einen
+   Stack-Panel bei nativ ausgeblendet ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Ausführen und Debuggen aus spark"). Getestet gegen einen Schein-Agenten; Ende-zu-Ende-Test gegen einen
    echten Debug-Build, sobald die Runtime den Agenten hat. ESP32 (8.6): Ziel `esp32` + Run/Debug baut das ESP-IDF-Projekt in `bin/esp32-<modus>`, `idf.py build flash`,
    öffnet die serielle Schnittstelle (`port`/`baud` aus Projekt oder Ziel, sonst erkannt) - Debug über `SerialFramedTransport`, Run mit der Konsole im Output-Panel
    und einer Eingabezeile darunter. Ein fire-Thread zeigt in der Scope-Ansicht seine eigenen Variablen der obersten Ebene (`globals` mit `thread`). Offen: die
    Oberfläche ist nicht von Hand durchgeklickt, kein echtes Board.
 9. ~~**Build-Fenster**~~ (umgesetzt): jeder Bau aus spark (F5 mit der VM, nativ, ESP32, Build, Pack) zeigt nach 0,5 s ein Fenster mit Phase, Fortschritt (die Library-Module
    von linkage `static`/`shared` gezählt, sonst unbestimmt) und Log, *Hide* (Fortschritt in der Statusleiste) und *Cancel* (Prozessbaum der Compiler beendet, nichts
-   Halbes bleibt) - `BuildMonitor` (docs/spec/NATIVE_BACKEND.md "Fortschritt und Abbrechen"). Offen: das Fenster ist nicht von Hand durchgeklickt; `idf.py` abbrechen nur
+   Halbes bleibt) - `BuildMonitor` ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Fortschritt und Abbrechen"). Offen: das Fenster ist nicht von Hand durchgeklickt; `idf.py` abbrechen nur
    ohne echtes ESP-IDF geprüft. Die Natives eines Packages, die für die VM gebaut werden, sind eine eigene Phase (*natives of packages*, je Paket gezählt) und abbrechbar.
 
 Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
@@ -223,7 +223,7 @@ Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 
 Zwei Teile: **getrennte Übersetzung** (Code teilen, schneller bauen) und **dynamisches Laden** (Plugins, Treiber, Natives in einer VM in fire).
 
-Stand: **Phasen A0, A, B, B2 und C umgesetzt** (C ohne Windows) (docs/spec/NATIVE_BACKEND.md "Klassen-Deskriptoren" und "Getrennte Übersetzung: `linkage`"): Klassen-Deskriptoren statt
+Stand: **Phasen A0, A, B, B2 und C umgesetzt** (C ohne Windows) ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Klassen-Deskriptoren" und "Getrennte Übersetzung: `linkage`"): Klassen-Deskriptoren statt
 `switch` in den Hooks der Runtime (A0); Module mit eigener Registrierung der Zahlen über Tabellen des Programms, in einer Datei hinter `FIRE_MODULES=1` (A);
 `"linkage": "static"` (Projekt, `fire.native.json`, `--linkage`) mit Schnittstellendatei (Formatversion + ABI-Hash), Cache des Benutzers nach Inhalts-Hash,
 `ember cache clean`, Varianten je Menge von Schaltern, öffentliche Schnittstelle einer Library als Wurzel (§11), Debug-Tabellen je Modul (ein Haltepunkt in einer
@@ -235,7 +235,7 @@ Reflect.New je Modul, Natives in C, die für sich stehen, und die JSON-Engine in
 `"linkage": "shared"` (C, Linux und macOS mit gcc/clang): die Libraries als Shared Libraries neben dem Programm, das den Zustand der Runtime exportiert; jede
 nennt ihre Schnittstelle, das Programm prüft sie beim Start (eine lesbare Meldung statt eines Absturzes). Windows (MinGW, unter Wine getestet): die Runtime eine DLL
 für sich, die thread-lokalen Variablen hinter `fire_tl()`, was eine DLL vom Programm braucht über Zeiger, die ihre `fire_link_*`-Funktion beim Start füllt.
-Plugins (Phase D b, docs/spec/NATIVE_BACKEND.md "Plugins"): `--linkage plugin` baut die Klassen eines Programms als Modul für sich (`.so`/`.dll` und `.fireplugin` für die
+Plugins (Phase D b, [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Plugins"): `--linkage plugin` baut die Klassen eines Programms als Modul für sich (`.so`/`.dll` und `.fireplugin` für die
 VM), ein Programm mit `"shared"` lädt es mit `Library.Load` (Prüfung nur über Hashes: die Schnittstellen der Module, die Konfiguration der Runtime), die Runtime
 registriert seine Klassen (Deskriptoren, Typen von `catch` und Enums nach Namen, Reflection, statische Initialisierer) und seine Einheiten (nach Dimensionen, Faktor
 und Symbol, neue Dimensionen auf freien Plätzen); Natives in C++ des Plugins in seiner Bibliothek (eine eigene Kopie; für die VM eine Bibliothek mit der C-ABI neben
@@ -267,7 +267,7 @@ Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heut
 
 Dynamisches Laden:
 
-* **umgesetzt** (Phase D a; docs/language/18-native-code.md): `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
+* **umgesetzt** (Phase D a; [Native code](language/18-native-code.md)): `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
   das nur feste Namen kennt). `Get(..., release: "free")`: die Freigabefunktion der Bibliothek - ein zurückgegebener Zeiger wird ein `NativeHandle`, das dem Besitz folgt
   (`delete` oder das Ende des Besitzers gibt ihn einmal frei), ein zurückgegebener String wird kopiert und gleich freigegeben. `NativeHandle` ist `[NoCopy]` (SPEC 5.12,
   vererbt): `flat`/`copy` verdoppeln es nie (eine `ArgumentException`, auch als Feld oder Element einer tiefen Kopie). Ebenso die Kopien der Threads
@@ -287,11 +287,11 @@ Dynamisches Laden:
 * **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert
   ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie; Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.
   spark lädt so die Treiber installierter Packages (der Treiber-Agent: das Prelude jedes Packages mit Treibern einmal als Plugin für die VM übersetzt und im Cache,
-  `Library.Load` + `Reflect.New`; passt ein Plugin nicht, der alte Weg über `#import`; docs/devices/README.md, Test `FIRE_TESTS_ONLY=drivers`).
+  `Library.Load` + `Reflect.New`; passt ein Plugin nicht, der alte Weg über `#import`; [Devices](devices/README.md), Test `FIRE_TESTS_ONLY=drivers`).
 
 ## 10. Clipboard, Drag & Drop
 
-Stand: **umgesetzt** (docs/spec/GRAPHICS_LAYER.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/ui/README.md "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", docs/spec/NATIVE_BACKEND.md "SDL3 oder SDL2"):
+Stand: **umgesetzt** ([fire.Terminal – Framebuffer, Zeichnen und Fenster](spec/GRAPHICS_LAYER.md) "Drag & Drop aus anderen Programmen, Zwischenablage", [User interfaces](ui/README.md) "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "SDL3 oder SDL2"):
 `Clipboard.GetText`/`SetText`/`HasText`, `GetImage`/`SetImage`/`HasImage` (PNG über `Framebuffer.ToPng`, unter Windows auch `CF_DIB`) und `GetFiles`/`SetFiles`/`HasFiles` (`text/uri-list`, unter
 Windows `CF_HDROP`, nativ und in der VM) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms, unter X11 auch mit dem, was vor dem Start kopiert wurde (SDL 3.2 sähe es nicht); die Ereignisse `DropFiles`/`DropText` mit Position
 und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
@@ -319,7 +319,7 @@ Ursprünglicher Plan:
 
 ## 11. Ungenutzten Code weglassen
 
-**Umgesetzt (Phasen A-C, Stand und Messung: docs/spec/NATIVE_BACKEND.md "Größe des Programms").** Anlass war, dass ein minimales Programm mit `#import "ui"` (ein Fenster, ein `UI.Root`,
+**Umgesetzt (Phasen A-C, Stand und Messung: [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Größe des Programms").** Anlass war, dass ein minimales Programm mit `#import "ui"` (ein Fenster, ein `UI.Root`,
 ein `UI.Label`) 7,85 MB C ergab und `gcc -O2` dafür über zwei Minuten brauchte. Die Ursache: `ui` benutzt die Reflection (Stile, Trigger, Bindungen setzen Properties per Name), und ein
 einziger Aufruf eines `__refl_*` erzeugte **jede** Klasse des Programms mit allen Konstruktoren und Methoden. Jetzt:
 
@@ -487,7 +487,7 @@ Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht 
 
 ## 14. UI-Markup: fehlende Eigenschaften
 
-Oberflächen werden in erster Linie mit `.fxml` gebaut (docs/ui/markup.md). Einige Eigenschaften, die jedes `UI.Element` hat, kennt das Schema des
+Oberflächen werden in erster Linie mit `.fxml` gebaut ([UI markup (.fxml)](ui/markup.md)). Einige Eigenschaften, die jedes `UI.Element` hat, kennt das Schema des
 Markups (`src/fire.UI.Markup/MarkupSchema.cs`, `Common`) noch nicht - sie gehen heute nur im Code-Behind:
 
 * **`ToolTip`** (Text; `Element.ToolTip`).

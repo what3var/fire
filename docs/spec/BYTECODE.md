@@ -1263,9 +1263,9 @@ vermerkt statt umgesetzt):
 
 ## 23. IO-Bridge (`#import "io"`) und zwei Sprachänderungen dazu
 
-> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C von `packages/io/native/fire_bridge_io.h`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/packages/natives.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
+> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C von `packages/io/native/fire_bridge_io.h`, die VM führt sie in einer Shared Library über die Paket-ABI aus ([Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
 
-`src/fire.IO.Bridge` (inzwischen ein Paket, s.u. und docs/packages/natives.md): dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
+`src/fire.IO.Bridge` (inzwischen ein Paket, s.u. und [Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)): dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
 (echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),
 `IoBridge.PreludeSource` (fire, `namespace IO`), `NativeImports.IO = "io"`. Streams sind
 Handles (`ConcurrentDictionary<int, StreamEntry>` pro `RegisterAll`, jeder Stream mit eigener
@@ -1555,14 +1555,14 @@ opak 370 -> 32 ns/Zeichen, transparent 270 -> 26 ns/Zeichen. Der Test-Block "Fon
 
 **Pixel-Text.** `Renderer.DrawText/MeasureText`, `RendererManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Renderer.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (inzwischen mit Brush/Pen statt rohen Farben).
 
-**Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe `docs/spec/GRAPHICS_LAYER.md`), `Window.EnableEvents()/NextEvent()`. `SdlFramebufferRenderer` rechnet die Mausposition von Fenster- auf
+**Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe [fire.Terminal – Framebuffer, Zeichnen und Fenster](GRAPHICS_LAYER.md)), `Window.EnableEvents()/NextEvent()`. `SdlFramebufferRenderer` rechnet die Mausposition von Fenster- auf
 Framebuffer-Koordinaten um (`SDL.GetWindowSize`) und startet die Texteingabe. `WindowManager(framebuffers, runner, rendererFactory)`.
 
 **Warum Abfrage statt Callback.** `Session.CallLambda` -> `FireRuntime.CallCallback` kopiert für JEDES Ereignis alle globalen Objekte (`ObjectCopier.Take`, außerdem wird dabei auf deren Baum
 Thread-Sharing aktiviert); ein Objekt mit Lambda-Feld oder mit einem Verweis auf ein fremdes Objekt wirft dabei `TakingViolationException` (der Callback schlägt fehl, SPEC 8.1.4 beschreibt das so). Ein Widget-Baum
 mit `OnClick`-Lambdas wäre davon betroffen, deshalb holt `UI.Root.Tick` die Ereignisse per Warteschlange im Hauptprogramm ab.
 
-**UI.** `src/fire.UI.Bridge` (`UiBridge.PreludeSource`, `namespace UI`, siehe `docs/ui/README.md`); `NativeImports.Ui = "ui"`, `ImportedPreludes.WithDependencies("ui") = graphics + windows + reflection + ui` (Styles und Trigger setzen Eigenschaften per `Reflect`; Linker, Editor-Diagnose und
+**UI.** `src/fire.UI.Bridge` (`UiBridge.PreludeSource`, `namespace UI`, siehe [User interfaces](../ui/README.md)); `NativeImports.Ui = "ui"`, `ImportedPreludes.WithDependencies("ui") = graphics + windows + reflection + ui` (Styles und Trigger setzen Eigenschaften per `Reflect`; Linker, Editor-Diagnose und
 `CreateProjectDirectiveRegistry` tragen alle Schlüssel ein), `PackagePlan` kennt `ui` ohne eigene DLL. Innerhalb eines Namespace sind statische Klassen nur vollqualifiziert erreichbar (`UI.Color.Rgb`), Felder
 brauchen einen Typ (`Element hoverElement`), ein Lambda-Feld ruft man über eine lokale Variable (`var callback = this.OnClick`, `callback()`), nicht als `this.OnClick()`. Der Quelltext liegt in `src/fire.UI.Bridge/ui/*.fire` (eingebettet, nach Dateinamen geordnet: Kern, Style/Vorlagen, Elemente und Layout, Steuerelemente, Bildlauf, Listen, Baum, Eingaben, Menüs, Formen, Root).
 Ein Lambda als Feld oder Parameter heißt `var`; ein Objekt, das ein Konstruktor- oder Methodenargument ist, gehört der Funktion und stirbt mit ihr, wenn sie es nicht mit `TakeTo` übernimmt (`UI.M.Own` tut das für Werte, die auch einfach sein können).
@@ -1582,7 +1582,7 @@ Tests: Suite-Block "Callbacks auf dem VM-Thread".
 
 ## 33. Globals und Fire-Threads: Broker, Sektionen, `sync globals`
 
-Siehe docs/spec/THREADING_DESIGN.md Abschnitt 7 für das Verhalten. Umsetzung:
+Siehe [fire – Multithreading-Design](THREADING_DESIGN.md) Abschnitt 7 für das Verhalten. Umsetzung:
 
 **`GlobalsBroker`** (`fire.Runtime/GlobalsBroker.cs`): entsteht im Hauptprogramm beim ersten `fire`/`fire global` (`VM.EnsureOwnerBroker`), hält den globalen Scope des Hauptprogramms, den gemeinsamen
 `ThreadShareLock` und eine FIFO-Warteschlange aus `SectionRequest` (ein Thread wartet auf `Granted`, das Hauptprogramm wartet danach auf `Done`) und `JobRequest` (`fire global`). `Drain()` ist
@@ -1610,7 +1610,7 @@ statische Felder, verschachtelte Threads).
 
 ## 34. Automatisches Abarbeiten, `#nosync`, Host-Callbacks in der Warteschlange
 
-Siehe docs/spec/THREADING_DESIGN.md Abschnitt 7. Umsetzung (alles in `VM.cs`, Besitzer = Hauptprogramm-VM):
+Siehe [fire – Multithreading-Design](THREADING_DESIGN.md) Abschnitt 7. Umsetzung (alles in `VM.cs`, Besitzer = Hauptprogramm-VM):
 
 - `SyncGlobalsNow()` (= `sync globals`) liefert `DrainInbound()` + `GlobalsBroker.Drain()`.
 - `PostCallback(lambda, args, onUnhandled)` (threadsicher, von jedem Thread) reiht ein `InboundCallback` in eine `ConcurrentQueue` und hebt das Signal; es liefert false, wenn die VM nicht läuft (`_acceptingCallbacks`

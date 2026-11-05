@@ -338,7 +338,7 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 - Since both positions are syntactically unambiguous (prefix in front of a unary operand, suffix after an already parsed expression), a single lexer token (`Bang`) is enough; the disambiguation is done in the parser by grammar position.
 - **`~expression`** (prefix only) → bitwise inversion.
 
-**Type checking.** A conflict between two *known* types - assigning a string to an `int`, an argument that does not fit a typed parameter - is reported by the type checker (docs/spec/TYPES.md): a warning in
+**Type checking.** A conflict between two *known* types - assigning a string to an `int`, an argument that does not fit a typed parameter - is reported by the type checker ([Gradual typing](TYPES.md)): a warning in
 `lax` mode (the default), an error in `strict` mode (`--types strict`, the project setting `typeChecking`, `#strict` / `#lax` at the top of a file). `int` goes to `float` implicitly, everything goes to
 `string`, `undefined` goes to everything, an object goes to the class it derives from. The type of a variable never changes. `var x = expr` has the type of its initializer (a value, a variable, a
 return value, `undefined!Type`); `var x` without an initializer is an error (declare it with a type: `int x`). Untyped values are `dynamic` and never reported.
@@ -794,7 +794,7 @@ assumptions are checked (one test per argument); when they hold, the overload
 runs without scoring the candidates, and the call site caches it like any other
 call. Should a value not be what its static type says (in lax mode after a
 warning), the call scores the candidates as usual - the result is always the
-same as without the shortcut (docs/spec/TYPES.md).
+same as without the shortcut ([Gradual typing](TYPES.md)).
 
 ### 5.5 Extension classes (`class extends`)
 
@@ -954,7 +954,7 @@ two generic classes of the same name remain a duplicate definition (even
 with a different number of type parameters).
 
 **Type arguments in declarations and the raw form.** A generic class (or interface) can be named with its type arguments wherever a type stands: `List<int> xs`,
-`Box<Dog> b`, `List<List<int>> rows`, `IEnumerable<float> GetValues()`, `class Bag : IEnumerable<float>`. The type checker (docs/spec/TYPES.md) then replaces the type parameters
+`Box<Dog> b`, `List<List<int>> rows`, `IEnumerable<float> GetValues()`, `class Bag : IEnumerable<float>`. The type checker ([Gradual typing](TYPES.md)) then replaces the type parameters
 by them: `xs.Add("x")` is a conflict, `xs[0]` is an `int`, `foreach (x in xs)` gives `int`s - also over every class that implements `IEnumerable<T>` (otherwise over what
 the `GetCurrent()` of its enumerator returns). `List<int>` and `List<string>` do not go into each other. Without type arguments a generic class is its **raw form**:
 `new List()` and `List xs` take values of every type (every type argument is `any`), and a raw form fits every instance of the class. The number of type arguments must be
@@ -964,7 +964,7 @@ generic in this way.
 **Type arguments at run time.** The type arguments are not erased: the check against the `where` conditions happens
 **once at `new Name<...>(...)`**, and the object keeps its type arguments - a parameter, a field or a local declared `T`
 then takes only what the type argument says (`new Box<int>()`: ints; a whole number for a `float` is converted; see
-section 3 and docs/spec/TYPES.md). There is one class at run time for all instantiations (a `Box<int>` and a `Box<string>`
+section 3 and [Gradual typing](TYPES.md)). There is one class at run time for all instantiations (a `Box<int>` and a `Box<string>`
 are both a `Box`); the native backend additionally makes **specialised copies** of the methods for type arguments
 `int`, `float` and `bool` (typed arithmetic instead of generic values) and sends calls there that fit them.
 Generic **methods** (`RetType Name<T>(params) where T ... { }`) take their type arguments from the arguments
@@ -1123,15 +1123,15 @@ properties - nowhere else. Reflection lists them for every member (`Member.Attri
 `[Keep]` (before a class, method, field or property) - a native build keeps the declaration even when the program does not reach it (a class made only by its name,
 `Reflect.New(name)`; before a class: the class with all its members, before a member: that member and its class; not inherited; a name given as a literal to
 reflection - `Reflect.New("X")`, `Reflect.Call(o, "M")` - is kept the same way without it; the VM keeps everything anyway; how much a native build leaves out is its
-stripping level 0-3, docs/spec/NATIVE_BACKEND.md "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
-derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/stdlib/json.md); `[NoCopy]` (before a class) -
+stripping level 0-3, [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
+derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, [JSON](../stdlib/json.md)); `[NoCopy]` (before a class) -
 an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
 `ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
 `taking`, the arguments of `fire global`, what `sync` copies back, the isolated copy of the globals for a host callback after the end of the program - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
-declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/tools/testing.md), `#import "json"` reads `NonSerialized`
-and `JsonName` on fields (docs/stdlib/json.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
+declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` ([Testing: forge test](../tools/testing.md)), `#import "json"` reads `NonSerialized`
+and `JsonName` on fields ([JSON](../stdlib/json.md)); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
 editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
-schematic marks its ports so (docs/circuits/README.md).
+schematic marks its ports so ([Circuits](../circuits/README.md)).
 
 The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusive, descending when `b < a`; the unit of `a` stays on every element. In
 `[Parameters]` a range runs a test once per element.
@@ -1301,7 +1301,7 @@ already inserted file are silently skipped – like
 when two files include the same third file. Circular includes
 are detected and abort with a clear error.
 
-**Markup of a user interface**: a file ending in `.fxml` is not read as text but translated first - `#include "Form.fxml"` inserts the fire script generated from it (docs/ui/markup.md): the base
+**Markup of a user interface**: a file ending in `.fxml` is not read as text but translated first - `#include "Form.fxml"` inserts the fire script generated from it ([UI markup (.fxml)](../ui/markup.md)): the base
 class of the code-behind with the elements, handlers and data bindings of the interface. Mistakes in the markup abort with the line of the markup file.
 
 **Global composition instead of separate insertion trees**: "only
@@ -1496,7 +1496,7 @@ Registers several related native functions at once, all
 under the same name prefix - the name actually registered for each
 entry is `prefix + suffix`. A pure convenience/naming scheme for
 self-contained API groups (e.g. a graphics/console bridge, see
-`fire.Terminal.Bridge`, docs/spec/GRAPHICS_LAYER.md) - equivalent to several
+`fire.Terminal.Bridge`, [fire.Terminal – Framebuffer, Zeichnen und Fenster](GRAPHICS_LAYER.md)) - equivalent to several
 individual `Register(...)` calls, and additionally returns the list of the
 names created.
 
@@ -1569,7 +1569,7 @@ class's own code is not told about its own obsolete parts. As the language has n
 a variable declared with a class (`Cache c`) or with `new` (`var c = new Cache()`), a parameter with a class. A call on an object of unknown class (an untyped parameter, the result of a call) reports
 the declared warnings of every class that has a member of that name and that number of arguments - with the class in the message, so that it can be told.
 
-Every **error** of the compiler has a code, too: `E` and four digits (`E4022: Unknown identifier 'x'`); docs/tools/errors.md lists them. After a build, its errors and warnings are in the Error List
+Every **error** of the compiler has a code, too: `E` and four digits (`E4022: Unknown identifier 'x'`); [Error codes and warnings](../tools/errors.md) lists them. After a build, its errors and warnings are in the Error List
 until the next build replaces them; the Error List has a filter for the warnings.
 
 A reference `ClassName.Member` to a static member that the class (or a base class) does not have is an error when the program is compiled (`E4056`), not a failure at run time.
@@ -1662,7 +1662,7 @@ unsafe {
   objects with unit/width metadata – this conversion only happens at the
   actual API call (marshalling), not already at `&x` itself.
 
-**Implemented** (see the section in `docs/spec/BYTECODE.md` for details): a
+**Implemented** (see the section in [fire – Bytecode-ISA](BYTECODE.md) for details): a
 pointer points to an *existing, managed storage location* – a
 scope slot (local/global variable) or an object field – instead of to a
 raw memory address. This gives real aliasing (`*p = x` actually changes
@@ -1711,7 +1711,7 @@ array literals (`[1, 2, 3]`, opcode `MakeArrayLiteral`), bounds checking
 (an index outside `0..Length-1` yields a catchable
 `IndexOutOfBoundsException`, see VM.ThrowIndexOutOfBounds - internally via
 `ScriptArray.TryGet`/`TrySet`, without a C# exception in the hot path, see
-docs/spec/BYTECODE.md sections 18/19).
+[fire – Bytecode-ISA](BYTECODE.md) sections 18/19).
 Multidimensional arrays are deliberately NOT a multidimensional
 run-time representation of their own, but nested `ScriptArray` instances
 ("jagged arrays", as in Java/C#).
@@ -2152,7 +2152,7 @@ here, `BinaryNumericOrOperator` there).
 `#import "io"` unlocks the namespace `IO` with the streams (the package `fire-io`: its prelude and the C of `packages/io/native/fire_bridge_io.h`; in the VM a library built
 from it, like `graphics`/`devices`: native functions `__IO...` plus a fire prelude). `#import "filesystem"` (the package `fire-filesystem`, fire only, on the natives of `io`)
 adds the file system to the same namespace: `IO.FileStream`, `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileMode`, `IO.FileAccess`, `IO.SearchOption` - named like
-System.IO in .NET (docs/stdlib/filesystem.md). Everything lives in `namespace IO`, so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
+System.IO in .NET ([Files, directories and paths](../stdlib/filesystem.md)). Everything lives in `namespace IO`, so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
 namespace is only reachable **fully qualified** (`IO.FileMode.Create`).
 
 Structure: streams (`IO.MemoryStream`, your own streams; with `filesystem` also `IO.FileStream`), text (`IO.TextReader`, `IO.TextWriter`, `IO.Utf8`), standard
@@ -2191,7 +2191,7 @@ new), `OpenOrCreate`, `Append`. `IO.FileAccess`: `Read`, `Write`, `ReadWrite`.
 
 **File and directory API (`#import "filesystem"`).** Static methods, always written with the namespace
 (`IO.File.Exists(...)`, a static access is only resolved via the exactly written
-name). The names are those of .NET (docs/stdlib/filesystem.md has the full list).
+name). The names are those of .NET ([Files, directories and paths](../stdlib/filesystem.md) has the full list).
 
 ```
 #import "filesystem"
@@ -2470,7 +2470,7 @@ exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` th
 
 ### 8.16 Devices (`#import "devices"`)
 
-The device framework is fire code (the package `fire-devices`; docs/devices/README.md): every device is a `Device` with `Read()`/`Write(data)` - a device that cannot do one
+The device framework is fire code (the package `fire-devices`; [Devices](../devices/README.md)): every device is a `Device` with `Read()`/`Write(data)` - a device that cannot do one
 throws `NotSupportedException` - and comes from a `Driver`. `DeviceManager` holds the drivers of the program and finds devices by their identifier `driver:name`:
 
 ```
@@ -2598,7 +2598,7 @@ class Circle {
 
 Besides the libraries of the compiler, `#import "name"` also finds the imports of **installed packages**: a package (`.fpk`, a zip with a `package.json`) brings a prelude in fire
 and/or natives as C++ source for the native backend, and is installed for the machine with the package manager `ember` (also in the editor). An unknown import is an error
-that points to `ember`. The natives of a package are C++ (docs/packages/natives.md): a native build puts the source into the generated file, the virtual machine calls a shared library that the compiler builds from it for the machine. See docs/packages/README.md.
+that points to `ember`. The natives of a package are C++ ([Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)): a native build puts the source into the generated file, the virtual machine calls a shared library that the compiler builds from it for the machine. See [Packages and ember](../packages/README.md).
 
 ### 8.19 Random numbers (`#import "random"`)
 
@@ -2618,11 +2618,11 @@ Not for secrets: the sequence can be predicted from a few outputs.
 `Json.Deserialize(text, "TypeName")`) reads them back without running constructors and calls `OnDeserialized()` afterwards; `Json.Parse(text)` reads JSON without
 classes into `JsonObject`s. Shared objects and cycles are kept with `"$id"`/`"$ref"`, the class travels as `"$type"` where the declared type does not give it, a
 field can be left out (`[NonSerialized]`) or renamed (`[JsonName "x"]`). Errors are a `JsonException` with line and column or the path of the value
-(`$.path[1].x`). The same text in the VM and in native builds; the details are in docs/stdlib/json.md.
+(`$.path[1].x`). The same text in the VM and in native builds; the details are in [JSON](../stdlib/json.md).
 
 ### 8.19b Circuit simulation (`#import "circuits"`)
 
-The package `fire-circuits` (docs/circuits/README.md is the reference), written in fire: `Circuits.Circuit` holds parts with ports (`Resistor`, `Capacitor`, `Inductor`,
+The package `fire-circuits` ([Circuits](../circuits/README.md) is the reference), written in fire: `Circuits.Circuit` holds parts with ports (`Resistor`, `Capacitor`, `Inductor`,
 `VoltageSource`, `SineSource`, `SquareSource`, `CurrentSource`, `Switch`, `Ground`, own parts derived from `Part`/`TwoTerminal`) and nested circuits with ports of their
 own; `port.Connect(other)` joins two ports into one node. `Step()`/`Run(duration)` solve the circuit in time steps (modified nodal analysis, trapezoidal rule for `C` and
 `L`). `Scope`, `Multimeter` and `Fft` measure. The first step after a change compiles the circuit into a plan that a C++ kernel of the package runs (a sparse
@@ -2636,55 +2636,55 @@ program through `Simulation` of the package `devices` (every access to a simulat
 
 ### 8.20 Network (`#import "net"`)
 
-The package `fire-net` (docs/networking/README.md is the reference): `Net.TcpClient` (an `IO.Stream` and a `Net.IConnection`, the interface of network connections that `Tls.Stream` implements too), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
+The package `fire-net` ([Networking](../networking/README.md) is the reference): `Net.TcpClient` (an `IO.Stream` and a `Net.IConnection`, the interface of network connections that `Tls.Stream` implements too), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
 `io` and `time`. Every call that waits takes a time limit; waiting polls the natives and sleeps 1 to 10 ms between the attempts, so `terminate` and the other threads work while a program waits for the network. Errors are `Net.NetException` (with a `code`) and subclasses;
 the host can restrict the network with a `NetPolicy` (a refused access is a `Net.PermissionException`). A platform without a network throws `NetException` (code 9).
 
 ### 8.21 HTTP (`#import "http"`)
 
-The package `fire-http` (docs/networking/README.md is the reference): `Http.Client` (GET/POST/..., redirects, chunked bodies), `Http.Server` (routes, one connection after the other) and the classes around them, written in fire on the `net` package.
+The package `fire-http` ([Networking](../networking/README.md) is the reference): `Http.Client` (GET/POST/..., redirects, chunked bodies), `Http.Server` (routes, one connection after the other) and the classes around them, written in fire on the `net` package.
 Errors are `Http.HttpException` (with a `code`) and the exceptions of `net`.
 
 ### 8.22 TLS (`#import "tls"`)
 
-The package `fire-tls` (docs/networking/README.md is the reference): `Tls.Stream` (an `IO.Stream` over a `Net.TcpClient`), `Tls.Server`, `Tls.Options`; SChannel (Windows), OpenSSL or mbedTLS underneath. `#import "http"` brings it along for `https://`. Errors are
+The package `fire-tls` ([Networking](../networking/README.md) is the reference): `Tls.Stream` (an `IO.Stream` over a `Net.TcpClient`), `Tls.Server`, `Tls.Options`; SChannel (Windows), OpenSSL or mbedTLS underneath. `#import "http"` brings it along for `https://`. Errors are
 `Tls.TlsException` and `Tls.CertificateException` (both `Net.NetException`s).
 
 ### 8.23 GPIO (`#import "gpio"`)
 
-The package `fire-gpio` (docs/networking/README.md is the reference): `Gpio.Pin` (input with pull and edge events, output, read/write/toggle), `Gpio.Board` (the chips of the machine) and `Gpio.Sim` (the simulated chip `"sim"` that every platform has); the character device of Linux or
+The package `fire-gpio` ([Networking](../networking/README.md) is the reference): `Gpio.Pin` (input with pull and edge events, output, read/write/toggle), `Gpio.Board` (the chips of the machine) and `Gpio.Sim` (the simulated chip `"sim"` that every platform has); the character device of Linux or
 ESP-IDF underneath. It needs `time`. Nothing blocks: edges are collected and handed out by `TakeEdge`/`WaitEdge`/`Poll`. Errors are `Gpio.GpioException` (with a `code`) and subclasses.
 
 ### 8.24 I2C (`#import "i2c"`)
 
-The package `fire-i2c` (docs/networking/README.md is the reference): `I2c.Bus` (write, read, write-then-read with a repeated start, register helpers, probe, scan), `I2c.Board` (the buses of the machine) and `I2c.Sim` (devices on the simulated bus `"sim"` that every platform has);
+The package `fire-i2c` ([Networking](../networking/README.md) is the reference): `I2c.Bus` (write, read, write-then-read with a repeated start, register helpers, probe, scan), `I2c.Board` (the buses of the machine) and `I2c.Sim` (devices on the simulated bus `"sim"` that every platform has);
 `/dev/i2c-N` of Linux or the master driver of ESP-IDF underneath. Transfers are done in the call; errors are `I2c.I2cException` (with a `code`) and subclasses, `I2c.NoAckException` when no device answers.
 
 ### 8.25 SPI (`#import "spi"`)
 
-The package `fire-spi` (docs/networking/README.md is the reference): `Spi.Device` (a bus with one chip select: full-duplex `Transfer`, `Write`, `Read`, `WriteRead`, mode/speed/bit order), `Spi.Board` (the devices of the machine) and `Spi.Sim` (the simulated device `"sim"`: loopback or
+The package `fire-spi` ([Networking](../networking/README.md) is the reference): `Spi.Device` (a bus with one chip select: full-duplex `Transfer`, `Write`, `Read`, `WriteRead`, mode/speed/bit order), `Spi.Board` (the devices of the machine) and `Spi.Sim` (the simulated device `"sim"`: loopback or
 queued answers, a log of what was sent); `/dev/spidevB.C` of Linux or the SPI master driver of ESP-IDF underneath. Transfers are done in the call; errors are `Spi.SpiException` (with a `code`) and subclasses.
 
 ### 8.26 WiFi (`#import "wifi"`)
 
-The package `fire-wifi` (docs/networking/README.md is the reference): `WiFi.Station` (scan, join, state, address), `WiFi.AccessPoint`, `WiFi.Board` (the radios of the machine) and `WiFi.Sim` (the simulated radio `"sim"` that every platform has); the WiFi driver of ESP-IDF underneath, "not
+The package `fire-wifi` ([Networking](../networking/README.md) is the reference): `WiFi.Station` (scan, join, state, address), `WiFi.AccessPoint`, `WiFi.Board` (the radios of the machine) and `WiFi.Sim` (the simulated radio `"sim"` that every platform has); the WiFi driver of ESP-IDF underneath, "not
 supported" where the operating system owns the network. It needs `time`; scanning and joining poll the natives and sleep between the questions. Errors are `WiFi.WiFiException` (with a `code`) and subclasses (`AuthException`, `NotFoundException`, `TimeoutException`, ...).
 
 ### 8.27 Audio (`#import "audio"`)
 
-The package `fire-audio` (docs/audio/README.md is the reference): `Audio.Output` (a sound device that plays 16 bit samples: `Write`/`Offer`, `Tone`, `Beep`, `Play(sound)`, `Drain`, `Stop`, volume), `Audio.Sound` (PCM in memory, read from a WAV file or generated), `Audio.Board` (the devices of the
+The package `fire-audio` ([Sound](../audio/README.md) is the reference): `Audio.Output` (a sound device that plays 16 bit samples: `Write`/`Offer`, `Tone`, `Beep`, `Play(sound)`, `Drain`, `Stop`, volume), `Audio.Sound` (PCM in memory, read from a WAV file or generated), `Audio.Board` (the devices of the
 machine) and `Audio.Sim` (the simulated device `"sim"` that every platform has and that records what is played). PulseAudio or ALSA (whichever is there, loaded at run time) on Linux, winmm on Windows, SDL2 on macOS, PWM on a GPIO pin that the program chooses (`new Audio.Output(25)`) on an ESP32. It needs `time`:
 `Write` and `Drain` sleep between the questions, so a program stays abortable. Errors are `Audio.AudioException` (with a `code`) and subclasses.
 
 ### 8.28 Tracker modules (`#import "tracker"`)
 
-The package `fire-tracker` (docs/audio/tracker.md is the reference): `Tracker.Song` (a ProTracker `.mod` module with 4 to 32 channels: its score, its instruments and the state of the replayer; `Render` mixes 16 bit samples into a buffer, `ToSound` renders the whole song,
+The package `fire-tracker` ([Tracker modules](../audio/tracker.md) is the reference): `Tracker.Song` (a ProTracker `.mod` module with 4 to 32 channels: its score, its instruments and the state of the replayer; `Render` mixes 16 bit samples into a buffer, `ToSound` renders the whole song,
 `Seek`, `Mute`, `Separation`, `Interpolate`, `Gain`, `Loop`), `Tracker.Player` (a song on an `Audio.Output`: `Pump()` feeds the output without waiting, `Play()` plays to the end) and `Tracker.Note`. The replayer and the mixer are C++ (the VM calls them through the package ABI, a native build compiles them in; both render the
 same samples). It needs `audio` and `time`. Errors are `Tracker.TrackerException` (with a `code`), `Tracker.BadFormatException` (8) and `Tracker.UnsupportedException` (6).
 
 ### 8.28b USB (`#import "usb"`)
 
-The package `fire-usb` (docs/devices/usb.md is the reference): `Usb.Bus` (`Available()`, `Devices()`, `Find(vendorId, productId)`), `Usb.Device` (opened by id or by vendor and product id: `Endpoints()`,
+The package `fire-usb` ([USB devices](../devices/usb.md) is the reference): `Usb.Bus` (`Available()`, `Devices()`, `Find(vendorId, productId)`), `Usb.Device` (opened by id or by vendor and product id: `Endpoints()`,
 `ClaimInterface`, control transfers `Control`/`ControlIn`/`ControlOut`, `BulkRead`/`BulkWrite`, `InterruptRead`/`InterruptWrite`, `ClearHalt`, `Close`) and `Usb.UsbStream` (the bulk endpoints of an interface as an
 `IO.Stream`: `device.OpenStream()`). libusb-1.0 (loaded at run time) on Linux and macOS, WinUSB on Windows; every platform has the simulated loopback device `"sim"`. Transfers wait in slices of 20 ms, so a
 program stays abortable. Errors are `Usb.UsbException` (with a `code`) and subclasses (`TimeoutException`, `StallException`, `NotFoundException`, ...).
@@ -2694,15 +2694,15 @@ program stays abortable. Errors are `Usb.UsbException` (with a `code`) and subcl
 `Renderer.DrawText(x, y, text, foreground, background = undefined, font = undefined, size = 0)` draws in the console font of the renderer (the built-in 8x14 or 8x8 bitmap font) or, given a `Font`, in one of the two built-in
 bitmap fonts (`"8x14"`/`"14x8"`, `"8x8"`) or in a TrueType font of `size` pixels. `Fonts.Get(name)` finds a font by name - the built-in ones, then the ones added with `Fonts.Add(new Resource("x.ttf"), alias = "")` (by alias,
 file name, family or full name), then the fonts installed on the system (the font folders and `FIRE_FONT_DIRS`), otherwise the console font; `Fonts.Has`, `Fonts.FromBytes`, `Font.Name/IsBitmap/Release`, `Renderer.TextWidth/TextHeight/TextAscent`.
-The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `Font` and `FontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/graphics/fonts.md.
+The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `Font` and `FontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: [Fonts: bitmap and TrueType text](../graphics/fonts.md).
 
 ### 8.28b 3D scenes (`#import "scene3d"`)
 
-The package `fire-scene3d` (docs/graphics/3d.md is the reference; it needs `graphics`): a `Scene` holds `Object`s (from `Template.Box/Sphere/Cylinder/Cone/Plane`, from a `Model` or OBJ text, or empty with `AddTriangle`), `Camera`s, `Light`s and `Texture`s, each with an optional key (`scene.Add(item, "key")`, `scene.Get("key")`; the lists are `Objects`, `Cameras`, `Lights`, `Textures`). A `Camera` is made for a framebuffer (`new Camera(fb)`), has a position, a rotation (`LookAt`), a field of view, and `Render()` draws the scene into the framebuffer. Lengths take a unit of length (`1m`, `20cm`, `3mm`), angles `deg` or `rad`; a plain number is a `Scene3DException`. An object has a position, an anchor (the point of the object that sits at the position), a rotation, and outer dimensions `Width`/`Height`/`Depth` that set the scale of an axis; its look is a colour or a `Texture` (with its own size, position and rotation on the object) and a `Material`. The renderer is software (C, a perspective camera, a depth buffer, per-pixel Blinn-Phong lighting): the VM and a native build give the same pixels. `scene.Renderer = RenderMode.Hardware` lets the GPU draw instead (Vulkan, loaded at run time; without a GPU the software renderer draws, `camera.LastRenderer` says who did); `camera.DirectDrawing = true` puts its pictures straight into the window that shows the framebuffer (the framebuffer becomes the overlay).
+The package `fire-scene3d` ([3D scenes](../graphics/3d.md) is the reference; it needs `graphics`): a `Scene` holds `Object`s (from `Template.Box/Sphere/Cylinder/Cone/Plane`, from a `Model` or OBJ text, or empty with `AddTriangle`), `Camera`s, `Light`s and `Texture`s, each with an optional key (`scene.Add(item, "key")`, `scene.Get("key")`; the lists are `Objects`, `Cameras`, `Lights`, `Textures`). A `Camera` is made for a framebuffer (`new Camera(fb)`), has a position, a rotation (`LookAt`), a field of view, and `Render()` draws the scene into the framebuffer. Lengths take a unit of length (`1m`, `20cm`, `3mm`), angles `deg` or `rad`; a plain number is a `Scene3DException`. An object has a position, an anchor (the point of the object that sits at the position), a rotation, and outer dimensions `Width`/`Height`/`Depth` that set the scale of an axis; its look is a colour or a `Texture` (with its own size, position and rotation on the object) and a `Material`. The renderer is software (C, a perspective camera, a depth buffer, per-pixel Blinn-Phong lighting): the VM and a native build give the same pixels. `scene.Renderer = RenderMode.Hardware` lets the GPU draw instead (Vulkan, loaded at run time; without a GPU the software renderer draws, `camera.LastRenderer` says who did); `camera.DirectDrawing = true` puts its pictures straight into the window that shows the framebuffer (the framebuffer becomes the overlay).
 
 ### 8.29 Projects and solutions
 
-A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/tools/projects.md is the reference). A project names its files (default: all `*.fire` of its
+A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files ([Projects and solutions](../tools/projects.md) is the reference). A project names its files (default: all `*.fire` of its
 folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;
 `#import "Name"` in the source turns it on, exactly as for a package, and the library's files are processed before the files of the project. The files of a project are part of the program without an `#include` (UI markup files, `.fxml`, as the script generated from them); an `#include` of such a file adds nothing. A project may have C++ natives in its folder `native/`: each `inline Value name(Value ...)` there is the native function `__name`, built like the natives of a package. A library is packed with `fire build Core.fireproj` into an ordinary `.fpk`.
 Build settings are taken from the project first, then from the solution, then from the tags in the source (`#debug`, `#name "..."`, `#floatwidth 32`, `#noconsole`, ...), then the defaults; `#if` symbols of all levels are added up; options on the command line go before the project.

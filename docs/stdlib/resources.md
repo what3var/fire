@@ -43,4 +43,4 @@ a native build. A file that does not exist is an error when the library is packe
 | `Text()` | the content as text (UTF-8) |
 | `id` | the number of the resource |
 
-Libraries take resources where they take files: `Framebuffer.FromResource(resource)` (PNG, BMP, GIF). `Fonts.Add(resource)` reads a TrueType font (docs/graphics/fonts.md).
+Libraries take resources where they take files: `Framebuffer.FromResource(resource)` (PNG, BMP, GIF). `Fonts.Add(resource)` reads a TrueType font ([Fonts: bitmap and TrueType text](../graphics/fonts.md)).

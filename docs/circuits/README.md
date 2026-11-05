@@ -489,7 +489,7 @@ fire (see [Speed](#speed)).
 
 ## Parts at the simulated devices
 
-The GPIO, I2C and SPI packages have a simulated device each (the chip `"sim"`, the bus `"sim"`, the device `"sim"`; docs/devices/README.md). These parts connect a circuit to
+The GPIO, I2C and SPI packages have a simulated device each (the chip `"sim"`, the bus `"sim"`, the device `"sim"`; [Devices](../devices/README.md)). These parts connect a circuit to
 them: a program that uses the simulated devices - directly or through the device framework (`gpio:gpiosim`, `i2c:sim`, `spi:sim`) - talks to the circuit, without a
 change in the program when it later runs on the board.
 
@@ -586,7 +586,7 @@ var volts = output.Read()     // 4800 samples
 ### Sound devices
 
 A stream can go to a sound device, or come from one, without the program in between - **the fast way**: the kernel hands the samples to the device itself (with the platform layer
-of the package `audio`, docs/audio/README.md), also while the circuit runs in its thread.
+of the package `audio`, [Sound](../audio/README.md)), also while the circuit runs in its thread.
 
 ```fire
 c.PlayTo(amp.Out)                                  // the voltage of amp.Out on the default device: 1 V is full scale
@@ -733,7 +733,7 @@ print(s.ToText())                      // the schematic as the text of a .biscui
 ### The file and the generated class
 
 A `.biscuit` file is that text: JSON with the elements (`type`, `name`, `from`, `to` and the properties that differ from the defaults), optionally `class`, `namespace`,
-`timeStep` and `parameters`. Like a `.fxml` file (docs/ui/markup.md) it is compiled into a script: **one class**, named like the file (or `class`), that derives from
+`timeStep` and `parameters`. Like a `.fxml` file ([UI markup (.fxml)](../ui/markup.md)) it is compiled into a script: **one class**, named like the file (or `class`), that derives from
 `Circuits.Circuit`, loads the schematic in its constructor and has a field for every named element, typed with its part.
 
 ```fire

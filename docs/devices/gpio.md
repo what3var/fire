@@ -27,7 +27,7 @@ button.Poll()                                              // hands every waitin
   Nothing is debounced: a mechanical button needs a pause in the program.
 * **The simulated chip** has the lines 0..31. `Gpio.Sim.Wire(a, b)` / `Unwire(a, b)` connect two lines (what one drives, the other sees; two outputs that disagree: low wins), `Gpio.Sim.Drive(line, level)` / `Release(line)` drive a line from outside like a button or sensor
   (`Gpio.Sim.Level(line)` looks at the level, `Gpio.Sim.Output(line)` what the program drives: 1/0, or -1 while the line is no output of it), pull resistors work on inputs, `Gpio.Sim.Reset()` removes wires and drives. Edges and busy-ness behave as on the real thing.
-  A circuit of the package `circuits` can sit on the lines (`Circuits.GpioLine`, docs/circuits/README.md).
+  A circuit of the package `circuits` can sit on the lines (`Circuits.GpioLine`, [Circuits](../circuits/README.md)).
 * Errors are `Gpio.GpioException` (with a `code`): `NotFoundException` (3: no such chip or line), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `gpio`) and `UnsupportedException` (6).
   Bad use (reading a pin that is not set up, writing an input, taking edges of an output) is code 1.
 * Not tried on hardware yet: the Linux and ESP32 backends are written against the documented interfaces; the ESP32 file compiles against a stand-in of `driver/gpio.h`, the Linux one against the kernel headers.

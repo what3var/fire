@@ -1,7 +1,7 @@
 # Sound (`#import "audio"`, the package `fire-audio`)
 
-Sound output and input: play samples, generate tones, play WAV files, record from a microphone or a line in. Like every bridge it is a **package** (`ember`, docs/packages/README.md): a prelude in fire plus C in `packages/audio/native/fire_bridge_audio.h` over the platform layer in C `fire_audio_*`
-(`native/platform/std/fire_audio_*.h`), so the same code runs in the virtual machine (through the package ABI, docs/packages/natives.md) and in a native build. It needs `time`.
+Sound output and input: play samples, generate tones, play WAV files, record from a microphone or a line in. Like every bridge it is a **package** (`ember`, [Packages and ember](../packages/README.md)): a prelude in fire plus C in `packages/audio/native/fire_bridge_audio.h` over the platform layer in C `fire_audio_*`
+(`native/platform/std/fire_audio_*.h`), so the same code runs in the virtual machine (through the package ABI, [Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)) and in a native build. It needs `time`.
 
 ```
 program        #import "audio"        Audio.Output, Audio.Input, Audio.Sound, Audio.Board, Audio.Sim   (fire, package fire-audio)
@@ -10,8 +10,8 @@ platform       fire_audio_*           open / write / queued / stop / close,     
                                       openInput / read / available / closeInput
 ```
 
-Music from tracker modules (`.mod`) is played by the package `fire-tracker` (docs/audio/tracker.md) on top of this one. Sound through a simulated circuit - a guitar through a
-pedal, a microphone through a filter - goes with the package `circuits` (docs/circuits/README.md, "Streams" and "Sound devices").
+Music from tracker modules (`.mod`) is played by the package `fire-tracker` ([Tracker modules](tracker.md)) on top of this one. Sound through a simulated circuit - a guitar through a
+pedal, a microphone through a filter - goes with the package `circuits` ([Circuits](../circuits/README.md), "Streams" and "Sound devices").
 
 ## Quick start
 

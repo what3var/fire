@@ -41,7 +41,7 @@ print(sensor.ReadRegister(0))                   // 21
 | `WaitFor(bytes, timeout)` / `WaitForString(text, timeout)` | waits until the data arrives and cuts what was received behind it (what came after stays) |
 | `HasData()` | is received data waiting? |
 | `Connect()`, `Disconnect()`, `IsConnected`, `EnsureConnected()` | the connection (a GPIO port is always connected) |
-| `IsShared`, `PortName()`, `Availability()`, `TestAvailability()` | as before (docs/spec/SPEC.md 8.16) |
+| `IsShared`, `PortName()`, `Availability()`, `TestAvailability()` | as before ([fire – Language Specification (v0.1)](../spec/SPEC.md) 8.16) |
 
 ## The drivers of the standard libraries
 
@@ -50,7 +50,7 @@ print(sensor.ReadRegister(0))                   // 21
 | `SerialDriver` | `devices` | the serial ports of the platform and `loopback:echo`. In the editor these are the editor's devices: they stay connected after the run and the editor traces their packets. Without any `AddDriver` the program gets this driver the first time it asks. |
 | `GpioDriver(width = 32)` | `gpio` | a port per GPIO chip: `gpioa`, `gpiob`, ... in the order of `Gpio.Board.Chips()`. `gpiosim` is the simulated chip. `Read()` gives all lines as an `int` (bit n = line n) and `Write(int)` sets them. A port that cannot be read or written as a whole (a missing or busy line) throws `NotSupportedException`. `PinAt(n)` gives one line as a `Gpio.Pin`. |
 | `I2cDriver(speed = 100000)` | `i2c` | the buses (`i2c-1`, `sim`). A bus has no data of its own, so its `Read`/`Write` are `NotSupported`. `bus.At(0x48)` or `DeviceManager.Get("i2c:i2c-1/0x48")` gives an `I2c.Target`, whose `Read()` reads `ReadSize` bytes and whose `Read(n)` reads n. It also has `Write(bytes)`, `WriteRead(bytes, n)`, `ReadRegister`, `WriteRegister`. |
-| `UsbDriver()` | `usb` | the USB devices of the bus (`usb:sim` - the simulated echo device -, `usb:001:004`) as `Usb.Port`. `Connect()` opens the device and takes the first interface with bulk endpoints; `Write(bytes)` sends to its bulk OUT endpoint, `Read()` returns what came on its bulk IN endpoint (an empty buffer when nothing came, after about a millisecond). `Description()` gives vendor:product and the product name; `Opened` the `Usb.Device` for control and interrupt transfers. See docs/devices/usb.md. |
+| `UsbDriver()` | `usb` | the USB devices of the bus (`usb:sim` - the simulated echo device -, `usb:001:004`) as `Usb.Port`. `Connect()` opens the device and takes the first interface with bulk endpoints; `Write(bytes)` sends to its bulk OUT endpoint, `Read()` returns what came on its bulk IN endpoint (an empty buffer when nothing came, after about a millisecond). `Description()` gives vendor:product and the product name; `Opened` the `Usb.Device` for control and interrupt transfers. See [USB devices](usb.md). |
 | `SpiDriver()` | `spi` | the SPI devices (`spidev0.0`, `sim`) as `SpiDevice`. `Read()`/`Read(n)` read while sending zeros, and there are `Write(bytes)`, `Transfer(bytes)`, `WriteRead(bytes, n)`. `Mode`, `Speed` and `LsbFirst` can be set before the device is opened on first use. |
 
 ## Drivers of your own
@@ -92,7 +92,7 @@ cannot be made (a class that is not there, a constructor that throws) is left ou
 package, **Reload Package Drivers** (the button with the circular arrow in the device panel, or its context menu) loads them again. The standard libraries `gpio`,
 `i2c`, `spi` and `usb` list their drivers.
 
-The drivers of a package come to the agent as a **fire plugin** (docs/language/18-native-code.md "fire plugins"): the prelude of the import is compiled once, for
+The drivers of a package come to the agent as a **fire plugin** ([Native code](../language/18-native-code.md) "fire plugins"): the prelude of the import is compiled once, for
 the VM, as a plugin of its own (`NativeBuilder.WriteVmPlugin`; its natives - C or C++ - are those of the package's library for the VM, named in the plugin by their
 path) and kept in the user-wide cache (`<cache>/driver-plugins/<key>/`, `ember cache clean` empties it). The key covers the build of fire, the package and its version,
 its prelude, the preludes it imports (and theirs) and the path of its library - a changed package is a new plugin. The agent imports the modules the plugin was built
@@ -126,5 +126,5 @@ connected is connected first. `Show sent` hides what was sent, `Follow` keeps th
 ## Simulations that run alongside
 
 `Simulation` is something simulated that runs next to the program - a circuit at the simulated GPIO chip, I2C bus and SPI device (`circuit.RunAlongside()`,
-docs/circuits/README.md). `Simulation.Start(s)` makes an object of a class derived from it the one that runs, `Simulation.Stop()` ends it, `Simulation.Current()` gives it.
+[Circuits](../circuits/README.md)). `Simulation.Start(s)` makes an object of a class derived from it the one that runs, `Simulation.Stop()` ends it, `Simulation.Current()` gives it.
 The simulated devices call `Simulation.Touch()` before every access of the program; it calls `Advance()` of the running simulation, which catches up with the time.

@@ -84,7 +84,7 @@ argument, 2 invalid handle (closed device), 7 other, 11 overflow (the device sen
 
 ## In the device framework
 
-`#import "usb"` also brings `UsbDriver` (docs/devices/README.md): `DeviceManager.AddDriver(new UsbDriver())` lists every device of the bus as `usb:<id>`, a `Usb.Port`
+`#import "usb"` also brings `UsbDriver` ([Devices](README.md)): `DeviceManager.AddDriver(new UsbDriver())` lists every device of the bus as `usb:<id>`, a `Usb.Port`
 whose `Read`/`Write` go to the bulk endpoints of its first interface that has some. The package names the driver in its project (`"drivers": ["UsbDriver"]`), so the device
 manager of spark lists the USB devices too, and its terminal talks to them.
 

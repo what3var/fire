@@ -59,7 +59,7 @@ files of a folder, ready to be put on a web page together with them. A source th
 ## The standard libraries (`packages/`, `Source/`)
 
 The libraries of fire - `graphics`, `windows`, `devices`, `io`, `filesystem`, `dialogs`, `ui`, `ui.docking`, `linq`, `reflection`, `time`, `random`, `json`, `circuits`, `circuits.ui`, `testing`, `net`, `tls`, `http`, `gpio`, `i2c`, `spi`, `wifi`, `audio`,
-`tracker`, `scene3d` - are ordinary **library projects** (docs/tools/projects.md) that you can open, change and test like your own: the folder `packages/` of the repository holds the solution
+`tracker`, `scene3d` - are ordinary **library projects** ([Projects and solutions](../tools/projects.md)) that you can open, change and test like your own: the folder `packages/` of the repository holds the solution
 `Packages.firesln` with one project per import:
 
 ```
@@ -86,7 +86,7 @@ as shipped; after a change of the C++ the library is built on first use like tha
 The next start of spark or forge would install it, too.
 
 What makes these projects special is small: `"standard": true` lets a project have the import name of a library of the compiler (`time`, `graphics`, ...), `"serializable": false` (in `ui`)
-keeps its classes out of JSON (docs/stdlib/json.md; written to the import in `package.json`), and `"native": { "discover": false,
+keeps its classes out of JSON ([JSON](../stdlib/json.md); written to the import in `package.json`), and `"native": { "discover": false,
 "functions": [...] }` names the natives explicitly (`"c": "fire_io_FileOpen"` for a package in C, `"cpp": "mathkit::Add"` for one in C++). Five imports are known to the compiler by name: `graphics`,
 `windows`, `ui`, `linq`, `reflection` - their fire code still comes from the package; the C of `graphics` and `windows` runs in the VM (as a library built for
 the machine) and in native builds alike. Only the core prelude (`Exception`,
@@ -98,18 +98,18 @@ Inside its own project a library is the program: `#import "time"` in the tests o
 
 A library with drivers of the device framework names them in its project file, `"drivers": ["MyDriver", "Kit.OtherDriver"]` (classes made with `new Class()`).
 `forge` writes them to the import in `package.json` (`"drivers": [...]`). spark loads the drivers of the installed packages and shows their devices in its device
-manager (docs/devices/README.md).
+manager ([Devices](../devices/README.md)).
 
 ### Plugins
 
 A package (or a library of a project) can be the interface between a program and its plugins ([libraries and plugins](../libraries/README.md)): the program and the plugin both import it, the plugin implements its
-interfaces or derives from its classes, the program creates the plugin's classes by name after `Library.Load` (docs/language/18-native-code.md, docs/spec/NATIVE_BACKEND.md
+interfaces or derives from its classes, the program creates the plugin's classes by name after `Library.Load` ([Native code](../language/18-native-code.md), [Natives Backend (AOT): fire -> C](../spec/NATIVE_BACKEND.md)
 "Plugins"). The plugin loads only into a program whose package has the same interface (the hash of its classes and members) - a new version of the package that only
 changes the code of its methods keeps it.
 
 ### The cache of native libraries
 
-A native build with `"linkage": "static"` (docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung") turns every package (and the prelude, every library of a project) into a static
+A native build with `"linkage": "static"` ([Natives Backend (AOT): fire -> C](../spec/NATIVE_BACKEND.md) "Getrennte Übersetzung") turns every package (and the prelude, every library of a project) into a static
 library (`"shared"`: a shared library, on Linux and macOS, a DLL on Windows with MinGW) and keeps it in a cache of the user: `~/.local/share/fire/cache/native` on Linux, `%LOCALAPPDATA%\fire\cache\native` on Windows, `~/Library/Application Support/fire/cache/native`
 on macOS (`FIRE_NATIVE_CACHE` moves it). An entry is found by the content hash of everything its C depends on, so a stale entry is never used, only left behind.
 

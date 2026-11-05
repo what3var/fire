@@ -1,6 +1,6 @@
 # Debug-Protokoll nativer Programme
 
-Ein nativer Debug-Build (Modus `debug`, siehe docs/spec/NATIVE_BACKEND.md "Debug-Builds") enthält einen Debug-Agenten (`fire_debug.h`, Teil der Runtime). Ist beim Start
+Ein nativer Debug-Build (Modus `debug`, siehe [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "Debug-Builds") enthält einen Debug-Agenten (`fire_debug.h`, Teil der Runtime). Ist beim Start
 die Umgebungsvariable `FIRE_DEBUG` gesetzt (auf einem ESP32: immer, über die Konsolen-UART, siehe "Transport"), verbindet sich das Programm mit dem Debugger (spark) und lässt sich von dort genauso steuern wie die VM
 (`VM.StepLine`/`StepInto`/`StepOut`/`RunUntilBreakpoint`, `DebugScopeChain`, `DebugGlobals`, `DebugThisValue`, `PauseOnUnhandled`/`TryResumeUnhandled`). Dieses Dokument beschreibt
 das Protokoll; die Semantik ist die der VM (unten, "Semantik").
@@ -106,7 +106,7 @@ Haltepunkten (wie `DebugThreadContext.ForFireThread`).
 **`exited`** - das Programm endet: `{"event": "exited", "code": 0}` (danach schließt es die Verbindung). Auch nach `terminate`, nach einer unbehandelten Ausnahme
 (`code` 1) und nach `leave`/`terminate(n)` des Programms.
 
-**`sources`** - das Programm hat ein fire-Plugin geladen, das als Debug-Build Quellen mitbringt (`Library.Load`, docs/spec/NATIVE_BACKEND.md "Plugins"):
+**`sources`** - das Programm hat ein fire-Plugin geladen, das als Debug-Build Quellen mitbringt (`Library.Load`, [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "Plugins"):
 
 ```json
 {"event": "sources", "plugin": "Kit", "sources": [{"index": 4, "file": "/home/me/p/Kit/kit.fire", "hash": "1c2f..."}]}

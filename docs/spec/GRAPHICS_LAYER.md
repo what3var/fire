@@ -101,7 +101,7 @@ Grafik-Brücke, und das eigentliche Nutzer-Skript.
   Typ (`EventType`), der Rest je Typ - `MouseDown`/`MouseUp` `[typ, taste, x, y]`, `MouseMove` `[typ, x, y, tasten]`, `MouseScroll` `[typ, scrollX, scrollY, x, y]`, `KeyDown`/`KeyUp`
   `[typ, keycode, scancode, modifier, wiederholt]`, `TextInput` `[typ, text]`, `Close` `[typ]`; Positionen sind ganze Pixel. `WindowManager` nimmt dafür optional eine Renderer-Fabrik entgegen
   (`Func<IFramebufferRenderer>`, Vorgabe SDL) - so lassen sich Fenster ohne SDL testen.
-- Die Oberflächen-Bibliothek `#import "ui"` baut darauf auf, siehe `docs/ui/README.md`.
+- Die Oberflächen-Bibliothek `#import "ui"` baut darauf auf, siehe [User interfaces](../ui/README.md).
 
 ## Drei unabhängig verwaltete Ressourcenarten, jede über eine eigene ID
 
@@ -198,7 +198,7 @@ Pixel-/Index-Array, `MarkDirty`); der `Framebuffer` implementiert es, ein eigene
   `DrawPolygon` (sie sind Pfade). Breite 1..512; `PenShape.Round` (Kreisspitze: Pixel mit `(2i-(w-1))^2 + (2j-(w-1))^2 <= w^2-1`) oder `PenShape.Square`. Die Spitze wird **vorgerendert** (die Zeilen des Stempels) und dann nur noch kopiert bzw. gemischt;
   ein halbdurchsichtiger Stift mischt die VEREINIGUNG aller Stempel genau einmal (Überlappungen werden nicht doppelt gemischt).
 - Eigenschaften: `SolidBrush.Color`, `Pen.Color/Width/Shape` (änderbar; ein Stift rendert dann neu).
-- Text: `DrawText(x, y, text, vordergrundPinsel, hintergrundPinsel = undefined)`; ohne Hintergrundpinsel bleibt die Zelle unberührt. Mit `font` und `size` als weiteren Argumenten (`DrawText(x, y, text, pinsel, hintergrund, Fonts.Get("Name"), 18)`) wird eine andere Schrift benutzt - eine der beiden eingebauten Bitmap-Schriften (`"8x14"`, `"8x8"`) oder eine TrueType-Schrift (eingebettet oder auf dem System); siehe docs/graphics/fonts.md. `SetPixel`/`GetPixel`/`GetPixelIndex` und `Clear`/`Clear(farbe)` bleiben farbbasiert.
+- Text: `DrawText(x, y, text, vordergrundPinsel, hintergrundPinsel = undefined)`; ohne Hintergrundpinsel bleibt die Zelle unberührt. Mit `font` und `size` als weiteren Argumenten (`DrawText(x, y, text, pinsel, hintergrund, Fonts.Get("Name"), 18)`) wird eine andere Schrift benutzt - eine der beiden eingebauten Bitmap-Schriften (`"8x14"`, `"8x8"`) oder eine TrueType-Schrift (eingebettet oder auf dem System); siehe [Fonts: bitmap and TrueType text](../graphics/fonts.md). `SetPixel`/`GetPixel`/`GetPixelIndex` und `Clear`/`Clear(farbe)` bleiben farbbasiert.
 
 **Alpha-Blending** ist schaltbar (`renderer.AlphaBlending`, Vorgabe an; C#: `Renderer.AlphaBlending`):
 
@@ -242,7 +242,7 @@ Aus fire (`#import "graphics"`):
 - `Framebuffer.FromFile(pfad, modus = -1)` und `Framebuffer.FromImage(puffer, modus = -1)` (ein `byte`-Puffer mit den Bytes einer Bilddatei, z.B. aus `IO.File.ReadAllBytes` oder einem Stream) legen einen NEUEN Framebuffer in der Größe des Bildes an. `modus -1`: wie das Bild -
   indiziert (PNG mit Palette, GIF, BMP bis 8 Bit) wird ein **Palette-Framebuffer mit der Palette der Datei**, alles andere **RGBA**. `ColorMode.Rgba`/`ColorMode.Palette` erzwingt einen Modus: ein indiziertes Bild in einen RGBA-Framebuffer wird über seine Palette aufgelöst, ein Truecolor-Bild in einen
   Palette-Framebuffer je Pixel auf den nächsten Eintrag der Standard-Palette abgebildet (ohne eigene Palette zu berechnen, Alpha geht dabei verloren).
-- `FromFile` liest nur, was die **`IoPolicy` des Hosts** (`IoPolicy`, siehe `docs/spec/BYTECODE.md` Abschnitt 23) zum Lesen erlaubt, wie `IO.File`; `GraphicsBridge.RegisterAll(..., readFile)` nimmt dafür eine Lesefunktion entgegen (Vorgabe: die Datei einfach lesen). Das Bild muss nicht per `#import "filesystem"` geladen werden.
+- `FromFile` liest nur, was die **`IoPolicy` des Hosts** (`IoPolicy`, siehe [fire – Bytecode-ISA](BYTECODE.md) Abschnitt 23) zum Lesen erlaubt, wie `IO.File`; `GraphicsBridge.RegisterAll(..., readFile)` nimmt dafür eine Lesefunktion entgegen (Vorgabe: die Datei einfach lesen). Das Bild muss nicht per `#import "filesystem"` geladen werden.
 - `framebuffer.ToPng()`: der Framebuffer als Bytes einer PNG-Datei (RGBA, 8 Bit je Kanal; ein Palette-Framebuffer über seine Palette, sein durchsichtiger Index wird durchsichtig) - zum Speichern
   (`IO.File.WriteAllBytes`) oder für die Zwischenablage; `Framebuffer.FromImage` liest es zurück. VM: `ImageEncoder.EncodePng`, nativ: `fire_gfx_encodePng` (Deflate mit den festen Huffman-Codes und LZ77).
 - `Framebuffer.FromPixels(breite, hoehe, puffer, modus = 0, palette = undefined)`: ein Framebuffer aus rohen Pixeln, zeilenweise von oben nach unten - `Rgba` `breite*hoehe*4` Byte (R, G, B, A je Pixel), `Palette` `breite*hoehe` Byte (je Pixel ein Index) und optional eine Palette (768 oder 1024 Byte).
@@ -398,13 +398,13 @@ Größe des Fensters - das Bild wird nicht gestreckt, die Mauspositionen sind Pi
   Framebuffer die Größe schon, wenn das Ereignis ankommt (und ist sie ungültig, behält er die alte).
 - VM und natives Backend verhalten sich gleich (`__GRPHFbResize`, `__GRPHWinSetAutoResize`/`GetAutoResize`; die Plattform liefert `EV_RESIZE` mit `width`/`height`).
 
-Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe docs/ui/README.md, "Fenstergröße").
+Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe [User interfaces](../ui/README.md), "Fenstergröße").
 
 
 `window.SetSize(breite, höhe)` gibt dem Fenster selbst eine neue Größe in Bildschirmpixeln (vor dem ersten Zeigen: die Größe, mit der es aufgeht); der Framebuffer behält seine, mit `AutoResize` folgt er.
 
 `SystemTheme.Current()` sagt, wie Programme auf dem Desktop aussehen sollen: `scale` (1.5 = 150 %), `dark`, `accent` (0xRRGGBB), `font` (die erste installierte Schrift der Oberfläche, `""` = keine),
-`fontSize` (logische Pixel) und `embedded` (ein Board ohne Desktop). Die UI-Bibliothek nutzt es von selbst (docs/ui/README.md "Systemaussehen"); `FIRE_SYSTEM_THEME=off` schaltet die Abfrage ab.
+`fontSize` (logische Pixel) und `embedded` (ein Board ohne Desktop). Die UI-Bibliothek nutzt es von selbst ([User interfaces](../ui/README.md) "Systemaussehen"); `FIRE_SYSTEM_THEME=off` schaltet die Abfrage ab.
 
 ## Touchscreen und Joystick
 
@@ -423,7 +423,7 @@ Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM un
 - Eine Achse steht von -1 bis 1 (0 ist die Mitte; die Ruhelage kann um ein paar Prozent daneben liegen - eine Totzone ist Sache des Programms). `richtungen` beim Kreuz ist eine Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links, 0 Mitte.
 - `joystick` ist die Nummer des Geräts, solange es angesteckt ist. Alle Geräte, die schon beim Start da sind (und später angesteckte), werden geöffnet und melden `JoystickAdded`. Ohne Joystick-Treiber öffnet sich das Fenster trotzdem.
 - `window.TouchMouse` (Vorgabe `true`): SDL macht aus einem Finger zusätzlich Mausereignisse, ein Programm, das nur auf die Maus hört, ist so auch mit dem Finger bedienbar. Mit `false` kommen nur die Touch-Ereignisse
-  (die UI-Bibliothek schaltet es aus und wertet die Finger selbst aus, siehe docs/ui/README.md "Bedienung").
+  (die UI-Bibliothek schaltet es aus und wertet die Finger selbst aus, siehe [User interfaces](../ui/README.md) "Bedienung").
 - Im nativen Backend liefert die Anzeige `EV_TOUCH_*` und `EV_JOY_*` (Felder `finger`, `pressure`, `joystick`, `index`, `value`, `x`, `y`); ein Board-Paket ohne Touchscreen oder Joystick meldet sie einfach nicht.
 
 ## Drag & Drop aus anderen Programmen, Zwischenablage
@@ -441,11 +441,11 @@ Was der Nutzer aus einem anderen Programm auf das Fenster zieht (Dateien aus dem
   SDL2 (native Builds ohne SDL3) nicht: dort ist es die Stelle des Mauszeigers beim Loslassen.
 - `DragHover` kommt, solange etwas aus einem anderen Programm über dem Fenster ist (bei jeder Bewegung; SDL3: `SDL_EVENT_DROP_POSITION`), `DragLeave`, wenn es das Fenster wieder verlässt, ohne fallen
   gelassen zu werden. Was gezogen wird, sagt das Betriebssystem erst beim Drop. Ein nativer Build mit SDL2 meldet beides nicht.
-- Die UI-Bibliothek reicht die Drops an das Element darunter weiter (docs/ui/README.md "Drag & Drop").
+- Die UI-Bibliothek reicht die Drops an das Element darunter weiter ([User interfaces](../ui/README.md) "Drag & Drop").
 
 **Aus dem Fenster heraus** zieht `window.StartDrag(text, dateien)` einen Text und/oder Dateien (ihre Pfade: `string[]` oder eine `List`; `undefined`: keine) in ein anderes Programm - einen
 Dateimanager, einen Editor, einen Browser. Das Programm ruft es auf, während eine Maustaste gehalten wird (typisch: der Zeiger verlässt bei einem eigenen Ziehen das Fenster - SDL meldet die Maus
-außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das von selbst, docs/ui/README.md "Drag & Drop"). Der Aufruf kehrt zurück, wenn der Nutzer loslässt:
+außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das von selbst, [User interfaces](../ui/README.md) "Drag & Drop"). Der Aufruf kehrt zurück, wenn der Nutzer loslässt:
 
 | Rückgabe | |
 |---|---|
@@ -501,4 +501,4 @@ da ist, was ein anderes Programm vor dem Start kopiert hat, sagt fire SDL beim e
 
 Im nativen Backend: `fire_display_clipboardSet/Get/Has` (Text), `fire_display_clipboardGetImage/SetImage/HasImage` und `GetFiles/SetFiles/HasFiles` der Anzeige (`fire_display_c.h`; SDL3, SDL2 sagt "nicht
 vorhanden", ohne Desktop die eigene des Programms), die Drops als `EV_DROP_FILES`/`EV_DROP_TEXT` mit `data` (Pfade zeilenweise bzw. der Text), das Schweben als `EV_DRAG_HOVER`/`EV_DRAG_LEAVE`
-(siehe docs/spec/NATIVE_BACKEND.md "SDL3 oder SDL2").
+(siehe [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "SDL3 oder SDL2").

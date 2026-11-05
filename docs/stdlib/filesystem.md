@@ -19,7 +19,7 @@ IO.Directory.Delete(folder, true)
 ```
 
 The natives are those of the IO bridge (`packages/io/native/fire_bridge_io.h`, C): a `FileStream` is a handle in the same table as every other stream. Every access
-goes through the host's `IoPolicy` (docs/spec/SPEC.md 8.11): a denied access is an `IO.PermissionException`.
+goes through the host's `IoPolicy` ([fire – Language Specification (v0.1)](../spec/SPEC.md) 8.11): a denied access is an `IO.PermissionException`.
 
 ## `IO.Path`
 
@@ -55,7 +55,7 @@ overwrite = false)`, `Move(source, target, overwrite = false)`; whole files: `Re
 ## `IO.FileStream`
 
 `new IO.FileStream(path, mode = IO.FileMode.Open, access)`: an `IO.Stream` on a file (`Read`, `Write`, `ReadByte`, `Seek`, `Position`, `Length`, `Flush`, `Close`, ...;
-docs/spec/SPEC.md 8.11). `IO.FileMode`: `Open`, `Create`, `CreateNew`, `OpenOrCreate`, `Append`; `IO.FileAccess`: `Read`, `Write`, `ReadWrite` (without one: `Open` reads,
+[fire – Language Specification (v0.1)](../spec/SPEC.md) 8.11). `IO.FileMode`: `Open`, `Create`, `CreateNew`, `OpenOrCreate`, `Append`; `IO.FileAccess`: `Read`, `Write`, `ReadWrite` (without one: `Open` reads,
 `Append` writes, the rest does both). Its destructor closes it.
 
 ## Errors

@@ -31,7 +31,7 @@ notes/
 ```
 
 `"notes": "docs/notes"` in the `.fireproj` (or the `.firesln`) puts the folder somewhere else; the path is relative to that file. Markdown files are not code, so the notes are
-content of the project (docs/tools/projects.md): they are not compiled and change nothing in a build.
+content of the project ([Projects and solutions](projects.md)): they are not compiled and change nothing in a build.
 
 ## Todo lists
 
