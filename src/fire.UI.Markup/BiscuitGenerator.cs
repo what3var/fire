@@ -79,7 +79,7 @@ namespace fire.UI.Markup
         {
             "class", "var", "int", "float", "bool", "string", "char", "any", "undefined", "true", "false", "if", "else", "while", "for", "foreach", "in", "of", "from", "is",
             "return", "new", "delete", "namespace", "using", "func", "on", "off", "copy", "take", "try", "catch", "finally", "throw", "break", "continue", "switch", "case",
-            "default", "static", "construct", "destruct", "fire", "sync", "unit", "enum", "interface", "extern", "native", "byte", "do", "readonly", "flat", "override",
+            "default", "static", "construct", "destruct", "fire", "sync", "unit", "enum", "interface", "extern", "native", "byte", "word", "do", "readonly", "flat", "override",
         };
 
         /// <summary>Reads a `.biscuit` text (checks it; throws <see cref="MarkupException"/> with the lines of the mistakes).</summary>

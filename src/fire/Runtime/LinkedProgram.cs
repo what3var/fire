@@ -87,6 +87,10 @@ namespace fire.Runtime
         /// on a target with 32-bit pointers together with `#floatwidth 32` a value takes 8 bytes instead of 16 (SPEC 8.2.1).</summary>
         public int IntWidth { get; init; } = 64;
 
+        /// <summary>Width of `word` (SPEC 8.10): the machine word of the target the program was built for (16, 32 or 64; the VM runs on the machine itself: 64).
+        /// The VM computes with it (Value.WordBits), natively FIRE_WORD_BITS.</summary>
+        public int WordWidth { get; init; } = 64;
+
         public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports, int firstUserSource, VmExecutionMode executionMode = VmExecutionMode.Release)
         {
             Program = program;

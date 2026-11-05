@@ -30,6 +30,10 @@ namespace fire.Runtime
         /// <summary>Default width of `int` in bits (32 or 64; 64 on every built-in target); `#intwidth` in the program and `-i` override it.</summary>
         public int IntWidth { get; init; } = 64;
 
+        /// <summary>Width of `word` in bits (SPEC 8.10): the target's machine word, unsigned - 16 (AVR, DOS real mode, Win16), 32 (ESP32, Cortex-M, wasm, DPMI,
+        /// Win9x), 64 (x86-64, ARM64: the desktop targets). `wordWidth` in a target of fire.native.json changes it; `#if word16|word32|word64` sees it.</summary>
+        public int WordWidth { get; init; } = 64;
+
         /// <summary>Default stack size of a fire thread in bytes (used when `#stacksize` is not given and cannot be derived).</summary>
         public int DefaultStackBytes { get; init; } = 64 * 1024;
 
@@ -68,7 +72,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Esp32 = new()
         {
             Name = "esp32", Symbols = new[] { "esp32", "freertos" }, HalPackage = "esp32",
-            FloatWidth = 32, DefaultStackBytes = 8192, IsEmbedded = true,
+            FloatWidth = 32, WordWidth = 32, DefaultStackBytes = 8192, IsEmbedded = true,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
@@ -84,7 +88,7 @@ namespace fire.Runtime
         public static readonly TargetProfile FreeRtos = new()
         {
             Name = "freertos", Symbols = new[] { "freertos" }, HalPackage = "freertos",
-            FloatWidth = 32, DefaultStackBytes = 8192, IsEmbedded = true,
+            FloatWidth = 32, WordWidth = 32, DefaultStackBytes = 8192, IsEmbedded = true,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
@@ -99,7 +103,7 @@ namespace fire.Runtime
         /// Emscripten), the files are in memory, there are no sockets. The result is a single `.html` file that opens as it is.</summary>
         public static readonly TargetProfile Wasm = new()
         {
-            Name = "wasm", Symbols = new[] { "wasm", "browser" }, HalPackage = "wasm",
+            Name = "wasm", Symbols = new[] { "wasm", "browser" }, HalPackage = "wasm", WordWidth = 32,
             Native = new NativeTarget { Platform = "wasm", SupportsThreads = false, Toolchain = "emscripten" },
         };
 

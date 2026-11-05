@@ -387,5 +387,6 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC014` | The method/property/operator '…' of '…' replaces the one of its base class '…' - mark it 'override' (…) (a member that replaces an inherited one without `override`, SPEC 5.1) |
 | `TC015` | The method '…' of '…' is marked 'override', but no base class of '…' has a method '…' [with these parameters] - nothing is overridden (`override` on a member that replaces nothing: a mistyped name, other parameter types, an interface method; an error also in lax mode) |
 | `TC016` | The property '…' of interface '…' has no 'set' - it cannot be assigned through '…' / … has no 'get' - it cannot be read through '…' (through a value of an interface type; an error also in lax mode) |
+| `TC017` | A value in '…' cannot be stored in … of type 'byte'/'word': 'byte' and 'word' are raw data without a unit / '…' is a 'byte'/'word': raw data without a unit - it cannot be declared in '…' (`byte b = 5m`, `word w : s`, `byte data[] = [1m]`, a field or parameter; SPEC 8.10; an error also in lax mode - take the number with `::unitless`. At run time a value stored in a `byte` or `word` loses its unit) |
 
 `…` stands for a part of the message that varies (a name, a number).

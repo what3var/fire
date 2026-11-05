@@ -582,6 +582,7 @@ static void jsWriteValue(JsWriter* w, Value v, const char* type, const void* con
         case K_Undefined: jsAscii(J, &w->out, "null"); return;
         case K_Bool: jsAscii(J, &w->out, v.i ? "true" : "false"); return;
         case K_Int: case K_Float: jsWriteNumber(w, v, unit); return;
+        case K_Word: { char t[24]; jsAscii(J, &w->out, (snprintf(t, sizeof t, "%llu", (unsigned long long)v.w), t)); return; }   /* (a number, unsigned) */
         case K_String: { const Str* s = strOf(v); jsString(J, &w->out, s->data, s->length); return; }
         case K_Char: {
             fire_char16 c = (fire_char16)v.i;
@@ -908,6 +909,14 @@ static Value jsReadNumber(JsReader* r, const char* text, bool isInt, const char*
             return jsReadFail(r, jsCat3(r->J, path, ": expected a whole number, found ", jsCat(r->J, text, ".")));
         }
     for (k = 0; k < sizeof floats / sizeof floats[0]; k++) if (jsEq(type, floats[k])) return fire_FloatU((Real)strtod(text, NULL), unit);
+    if (jsEq(type, "word")) {
+        /* a machine word (SPEC 8.10): a whole number up to 2^64-1 (a negative one in two's complement), cut to the width */
+        char* end = NULL;
+        unsigned long long u;
+        if (isInt && text[0] != '-') { errno = 0; u = strtoull(text, &end, 10); if (errno == 0 && end && !*end) return WordV((uint64_t)u); }
+        if (isInt && jsParseLong(text, &i)) return WordV((uint64_t)i);
+        return jsReadFail(r, jsCat3(r->J, path, ": expected a whole number, found ", jsCat(r->J, text, ".")));
+    }
     if (type[0] == 0 || jsEq(type, "any")) {
         if (isInt && jsParseLong(text, &i)) return fire_IntU(i, unit);
         return fire_FloatU((Real)strtod(text, NULL), unit);

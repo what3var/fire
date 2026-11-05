@@ -44,7 +44,7 @@ namespace fire.Compiler
         private static readonly HashSet<TokenType> TypeKeywords = new()
         {
             TokenType.KwBool, TokenType.KwInt, TokenType.KwFloat,
-            TokenType.KwChar, TokenType.KwString, TokenType.KwByte, TokenType.Class, TokenType.Undefined,
+            TokenType.KwChar, TokenType.KwString, TokenType.KwByte, TokenType.KwWord, TokenType.Class, TokenType.Undefined,
         };
 
         private readonly List<Token> _tokens;
@@ -1271,6 +1271,15 @@ namespace fire.Compiler
             // explicit bit width AFTER it would be contradictory/redundant and
             // is therefore rejected, instead of silently ignoring
             // or overriding it.
+            // 'word' (SPEC 8.10): the machine word of the target - its width is the target's, so no '[...]' may follow, and it carries no unit
+            if (baseName == "word")
+            {
+                if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
+                    throw Error("'word' has the width of the target's machine word - no '[...]' may follow (use int[16], int[32] or int for a fixed width)", Peek());
+                int wordPointerDepth = 0;
+                while (Match(TokenType.Star)) wordPointerDepth++;
+                return new TypeRef("word", null, wordPointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+            }
             if (baseName == "byte")
             {
                 if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
@@ -3755,6 +3764,7 @@ namespace fire.Compiler
                     TokenType? typeKw = LineContinues() && TypeKeywords.Contains(Peek().Type)
                         ? Advance().Type : null;
                     if (typeKw == TokenType.KwByte) { expr = new TypeCoerceExpr(line, expr, TokenType.KwInt, Width: 8, Unsigned: true); continue; }
+                    if (typeKw == TokenType.KwWord) { expr = new TypeCoerceExpr(line, expr, TokenType.KwWord); continue; }
                     // `x!int[8]`, `x!float[32]`: a bit width directly after the type
                     if (typeKw is TokenType.KwInt or TokenType.KwFloat && Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.IntLiteral && PeekAt(2).Type == TokenType.RBracket)
                     {

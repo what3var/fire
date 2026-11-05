@@ -71,6 +71,15 @@ namespace fire.Values
         // ---------------------------------------------------------------
         public static bool Ints32;
 
+        // ---------------------------------------------------------------
+        // The width of `word` (SPEC 8.10): the machine word of the target the program is built for - 16, 32 or 64 bits, unsigned. A word keeps its bits in
+        // _bits (zero above the width; with 64 bits all of them, read as an unsigned number). Set by the host before a program runs from
+        // LinkedProgram.WordWidth (the VM runs on the machine itself: 64).
+        // ---------------------------------------------------------------
+        public static int WordBits = 64;
+        /// <summary>The bits a word keeps (all ones for 64).</summary>
+        public static ulong WordMask => WordBits >= 64 ? ulong.MaxValue : (1UL << WordBits) - 1;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static double Fl(double v) => SingleFloats ? (double)(float)v : v;
 
@@ -119,6 +128,17 @@ namespace fire.Values
 
         public static Value MakeBuffer(ByteBuffer buffer) =>
             new(ValueKind.Buffer, 0, buffer);
+
+        /// <summary>A machine word (SPEC 8.10): the bits cut to <see cref="WordBits"/>.</summary>
+        public static Value MakeWord(ulong bits) =>
+            new(ValueKind.Word, unchecked((long)(bits & WordMask)), null);
+
+        /// <summary>The bits of a word (unsigned).</summary>
+        public ulong AsWord()
+        {
+            RequireKind(ValueKind.Word);
+            return unchecked((ulong)_bits);
+        }
 
         // ---------------------------------------------------------------
         // Accessors (throw on wrong kind)
@@ -269,6 +289,8 @@ namespace fire.Values
                 }
                 return UnitAdaptation.Ok;
             }
+            // a word into a float declaration: its unsigned value as a float (without a unit)
+            if (value.Kind == ValueKind.Word && demand.StartsWith('#')) value = MakeFloat(WordToDouble(value.AsWord()));
             if (value.Kind is not (ValueKind.Int or ValueKind.Float or ValueKind.Undefined)) return UnitAdaptation.Ok;
             if (demand.StartsWith('#'))
             {
@@ -339,6 +361,18 @@ namespace fire.Values
         public Value CoerceType(ValueKind targetKind)
         {
             if (Kind == targetKind) return targetKind == ValueKind.Int ? WithoutEnum() : this;   // (`c!int`: the number of an enum value)
+            if (Kind == ValueKind.Word)
+            {
+                // a word as an int: the same bits as a signed number (a 64-bit word above 2^63 is negative, like a cast in C); as a float: its unsigned value
+                ulong w = unchecked((ulong)_bits);
+                switch (targetKind)
+                {
+                    case ValueKind.Int: return MakeInt(unchecked((long)w));
+                    case ValueKind.Float: return MakeFloat(WordToDouble(w));
+                    case ValueKind.Char: return MakeChar(unchecked((char)w));
+                }
+            }
+            if (targetKind == ValueKind.Word) return ToWord();
 
             switch (Kind, targetKind)
             {
@@ -452,6 +486,91 @@ namespace fire.Values
             return true;
         }
 
+        // ---------------------------------------------------------------
+        // Words (SPEC 8.10): when one operand is a word, the operation is one on words - the other operand (an int, a char) is taken as a word (cut to the
+        // width, two's complement), the result is a word cut to the width (it wraps); division, modulo, comparison and `>>` are unsigned. A float operand
+        // makes it a float operation (the word as its unsigned value). An int with a unit does not go with a word (raw data): a UnitMismatchException. The
+        // native runtime does the same (fire_rt.h wordOp).
+        // ---------------------------------------------------------------
+        public enum WordOperation : byte { Add, Sub, Mul, Div, Mod, Pow, And, Or, Xor, Shl, Shr }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool AnyWord(in Value a, in Value b) => a.Kind == ValueKind.Word || b.Kind == ValueKind.Word;
+
+        /// <summary>An operand of a word operation as a word.</summary>
+        private static ulong WordOperand(in Value v, string op)
+        {
+            switch (v.Kind)
+            {
+                case ValueKind.Word: return unchecked((ulong)v._bits);
+                case ValueKind.Int:
+                    if (v.Unit is { IsUnitless: false } unit) throw new UnitMismatchException(Values.Unit.Unitless, unit);
+                    return unchecked((ulong)v._bits) & WordMask;
+                case ValueKind.Char: return unchecked((ulong)v._bits) & WordMask;
+                default:
+                    if (op is "+" or "-" or "*" or "/" or "%" or "^" or "<") throw new InvalidOperationException($"Type {v.Kind} is not numeric.");
+                    throw new InvalidOperationException($"'{op}' expects int, not {v.Kind}.");
+            }
+        }
+
+        private static readonly string[] WordOpSymbols = { "+", "-", "*", "/", "%", "^", "&", "|", "#", "<<", ">>" };
+
+        /// <summary>`a op b` with a word on one side (see above).</summary>
+        public static Value WordOp(WordOperation op, Value a, Value b)
+        {
+            string symbol = WordOpSymbols[(int)op];
+            if ((a.Kind == ValueKind.Float || b.Kind == ValueKind.Float) && op <= WordOperation.Pow)
+            {
+                // with a float: a float operation (the word as its unsigned value, without a unit)
+                if (a.Kind == ValueKind.Word) a = MakeFloat(WordToDouble(a.AsWord()));
+                if (b.Kind == ValueKind.Word) b = MakeFloat(WordToDouble(b.AsWord()));
+                return op switch
+                {
+                    WordOperation.Add => Add(a, b), WordOperation.Sub => Subtract(a, b), WordOperation.Mul => Multiply(a, b),
+                    WordOperation.Div => Divide(a, b), WordOperation.Mod => Modulo(a, b), _ => Power(a, b),
+                };
+            }
+            // a negative int exponent: a float (like int ^ int)
+            if (op == WordOperation.Pow && b.Kind == ValueKind.Int && b._bits < 0 && a.Kind == ValueKind.Word)
+                return MakeFloat(Math.Pow(WordToDouble(a.AsWord()), b._bits));
+            ulong x = WordOperand(a, symbol), y = WordOperand(b, symbol);
+            int bits = WordBits;
+            ulong r;
+            switch (op)
+            {
+                case WordOperation.Add: r = unchecked(x + y); break;
+                case WordOperation.Sub: r = unchecked(x - y); break;
+                case WordOperation.Mul: r = unchecked(x * y); break;
+                case WordOperation.Div: if (y == 0) throw new DivideByZeroException(); r = x / y; break;
+                case WordOperation.Mod: if (y == 0) throw new DivideByZeroException(); r = x % y; break;
+                case WordOperation.Pow:
+                    r = 1;
+                    for (ulong e = y, f = x; e != 0; e >>= 1) { if ((e & 1) != 0) r = unchecked(r * f); f = unchecked(f * f); }
+                    break;
+                case WordOperation.And: r = x & y; break;
+                case WordOperation.Or: r = x | y; break;
+                case WordOperation.Xor: r = x ^ y; break;
+                // a shift by the width or more gives 0 (the count as a word: a negative int is a very large count)
+                case WordOperation.Shl: r = y >= (ulong)bits ? 0 : x << (int)y; break;
+                default: r = y >= (ulong)bits ? 0 : x >> (int)y; break;
+            }
+            return MakeWord(r);
+        }
+
+        /// <summary>A comparison with a word on one side: unsigned (an int is taken as a word); with a float by value. -1, 0, 1.</summary>
+        private static int CompareWord(in Value a, in Value b)
+        {
+            if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
+            {
+                double x = a.Kind == ValueKind.Word ? WordToDouble(a.AsWord()) : a.ToDouble(), y = b.Kind == ValueKind.Word ? WordToDouble(b.AsWord()) : b.ToDouble();
+                if (b.Kind == ValueKind.Float && b.Unit is { IsUnitless: false } ub) throw new UnitMismatchException(Values.Unit.Unitless, ub);
+                if (a.Kind == ValueKind.Float && a.Unit is { IsUnitless: false } ua) throw new UnitMismatchException(Values.Unit.Unitless, ua);
+                return x.CompareTo(y);
+            }
+            ulong p = WordOperand(a, "<"), q = WordOperand(b, "<");
+            return p < q ? -1 : p > q ? 1 : 0;
+        }
+
         public static Value Add(Value a, Value b)
         {
             if (BothNumericSameUnit(a, b))
@@ -472,6 +591,7 @@ namespace fire.Values
             // existing cross-kind representation.
             if (a.Kind == ValueKind.String || b.Kind == ValueKind.String)
                 return MakeString(a.ToString() + b.ToString());
+            if (AnyWord(a, b)) return WordOp(WordOperation.Add, a, b);
 
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);
@@ -495,6 +615,7 @@ namespace fire.Values
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Pointer)
                 return MakeInt(a.AsPointer().DistanceTo(b.AsPointer())
                     ?? throw new InvalidOperationException("Pointer difference ('ptr1 - ptr2') needs two pointers into the same array or the same variable."));
+            if (AnyWord(a, b)) return WordOp(WordOperation.Sub, a, b);
 
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);
@@ -521,6 +642,7 @@ namespace fire.Values
                     return new Value(ValueKind.Int, b._bits == -1 ? 0 : a._bits % b._bits, a._ref);   // (long.MinValue % -1 overflows in .NET)
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() % b.ToDouble())), a._ref);
             }
+            if (AnyWord(a, b)) return WordOp(WordOperation.Mod, a, b);
 
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);
@@ -532,6 +654,7 @@ namespace fire.Values
 
         public static Value Divide(Value a, Value b)
         {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Div, a, b);
             if (a._ref is Values.Unit { UnitlessConverter: not null } ua) a = MakeFloat(ua.ToUnitless(a.ToDouble()));
             if (b._ref is Values.Unit { UnitlessConverter: not null } ub) b = MakeFloat(ub.ToUnitless(b.ToDouble()));
             // Both without a unit (the same `Unitless` instance): result without a unit, like Unit.Divide.
@@ -553,6 +676,7 @@ namespace fire.Values
 
         public static Value Multiply(Value a, Value b)
         {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Mul, a, b);
             if (a._ref is Values.Unit { UnitlessConverter: not null } ua) a = MakeFloat(ua.ToUnitless(a.ToDouble()));
             if (b._ref is Values.Unit { UnitlessConverter: not null } ub) b = MakeFloat(ub.ToUnitless(b.ToDouble()));
             // Both without a unit (the same `Unitless` instance): result without a unit, like Unit.Multiply.
@@ -602,6 +726,7 @@ namespace fire.Values
 
         public static Value Negate(Value v)
         {
+            if (v.Kind == ValueKind.Word) return MakeWord(unchecked(0UL - v.AsWord()));   // (wraps: -1 as a word is the largest one)
             RequireNumeric(v);
             return v.Kind == ValueKind.Float ? MakeFloat(-v._floatValue, v.Unit) : MakeInt(-v._intValue, v.Unit);
         }
@@ -615,6 +740,7 @@ namespace fire.Values
 
         public static Value BitNot(Value v)
         {
+            if (v.Kind == ValueKind.Word) return MakeWord(~v.AsWord());
             if (v.Kind != ValueKind.Int)
                 throw new InvalidOperationException($"'~' expects int, not {v.Kind}.");
             if (v.Enum is { IsFlags: true } type) return MakeEnum(~v._intValue, type);   // (the complement of a flag value is one too)
@@ -629,6 +755,7 @@ namespace fire.Values
 
         public static Value BitAnd(Value a, Value b)
         {
+            if (AnyWord(a, b)) return WordOp(WordOperation.And, a, b);
             RequireInt(a, "&"); RequireInt(b, "&");
             RequireSameUnit(a, b);
             return FlagResult(a, b, a._intValue & b._intValue) ?? MakeInt(a._intValue & b._intValue, a.Unit);
@@ -636,6 +763,7 @@ namespace fire.Values
 
         public static Value BitOr(Value a, Value b)
         {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Or, a, b);
             RequireInt(a, "|"); RequireInt(b, "|");
             RequireSameUnit(a, b);
             return FlagResult(a, b, a._intValue | b._intValue) ?? MakeInt(a._intValue | b._intValue, a.Unit);
@@ -643,6 +771,7 @@ namespace fire.Values
 
         public static Value BitXor(Value a, Value b)
         {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Xor, a, b);
             RequireInt(a, "#"); RequireInt(b, "#");
             RequireSameUnit(a, b);
             return FlagResult(a, b, a._intValue ^ b._intValue) ?? MakeInt(a._intValue ^ b._intValue, a.Unit);
@@ -664,12 +793,14 @@ namespace fire.Values
         /// of the LEFT operand unchanged, as with `~`.</summary>
         public static Value ShiftLeft(Value a, Value b)
         {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Shl, a, b);
             RequireInt(a, "<<"); RequireInt(b, "<<");
             return MakeInt(a._intValue << (int)b._intValue, a.Unit);
         }
 
         public static Value ShiftRight(Value a, Value b)
         {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Shr, a, b);
             RequireInt(a, ">>"); RequireInt(b, ">>");
             return MakeInt(a._intValue >> (int)b._intValue, a.Unit);
         }
@@ -683,6 +814,7 @@ namespace fire.Values
         /// 0 (integer rounding of values &lt;1), which is hardly ever meant.</summary>
         public static Value Power(Value a, Value b)
         {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Pow, a, b);
             RequireNumeric(a); RequireNumeric(b);
             RequireSameUnit(a, b);
 
@@ -714,8 +846,36 @@ namespace fire.Values
             if (bits >= 64) return MakeInt(number._intValue, number.Unit);
             long mask = (1L << bits) - 1, raw = number._intValue & mask;
             if (!unsigned && (raw & (1L << (bits - 1))) != 0) raw -= 1L << bits;
-            return MakeInt(raw, number.Unit, (NumericWidth)bits);
+            // (`byte` - the unsigned width - is raw data without a unit, SPEC 8.10: the number stored there loses its unit)
+            return MakeInt(raw, unsigned ? Values.Unit.Unitless : number.Unit, (NumericWidth)bits);
         }
+
+        /// <summary>`x!word` and a store into a `word` (OpCode.ConvertWidth with the word flag, SPEC 8.10): an int cut to the width of a word (two's complement:
+        /// `-1!word` is the largest word), a float rounded to a whole number first (NaN is 0, beyond the range the nearest end), a char its code, `undefined` 0;
+        /// a unit is dropped (raw data). Anything else is an InvalidOperationException (an ArgumentException in the program).</summary>
+        public Value ToWord() => Kind switch
+        {
+            ValueKind.Word => this,
+            ValueKind.Int or ValueKind.Char => MakeWord(unchecked((ulong)_bits)),
+            ValueKind.Float => MakeWord(DoubleToWordBits(_floatValue)),
+            ValueKind.Undefined => MakeWord(0),
+            _ => throw new InvalidOperationException($"Cannot coerce type {Kind} to Word."),
+        };
+
+        /// <summary>A float as the bits of a word (the native runtime: wordOfReal): rounded half to even; NaN is 0; below -2^63 it is -2^63, from 2^64 on all ones;
+        /// a negative number in two's complement.</summary>
+        public static ulong DoubleToWordBits(double f)
+        {
+            if (double.IsNaN(f)) return 0;
+            double r = Math.Round(f);
+            if (r >= 18446744073709551616.0) return ulong.MaxValue;
+            if (r >= 9223372036854775808.0) return (ulong)r;
+            if (r <= -9223372036854775808.0) return 0x8000000000000000UL;
+            return unchecked((ulong)(long)r);
+        }
+
+        /// <summary>The unsigned value of a word as a double (rounded to float32 with `#floatwidth 32`).</summary>
+        public static double WordToDouble(ulong w) => SingleFloats ? (double)(float)w : (double)w;
 
         public Value TruncateTo(NumericWidth width)
         {
@@ -776,6 +936,13 @@ namespace fire.Values
         /// reports it, TC006). Everything else as <see cref="ValuesEqual"/>.</summary>
         public static bool OperatorEquals(Value a, Value b)
         {
+            // a word and a number: by value (an int taken as a word, `w == -1` is true for the largest word; a float by its value)
+            if (AnyWord(a, b) && a.Kind is ValueKind.Word or ValueKind.Int or ValueKind.Float && b.Kind is ValueKind.Word or ValueKind.Int or ValueKind.Float)
+            {
+                if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
+                    return (a.Kind == ValueKind.Word ? WordToDouble(a.AsWord()) : a.ToDouble()) == (b.Kind == ValueKind.Word ? WordToDouble(b.AsWord()) : b.ToDouble());
+                return (unchecked((ulong)a._bits) & WordMask) == (unchecked((ulong)b._bits) & WordMask);
+            }
             if (a.Kind is not (ValueKind.Int or ValueKind.Float) || b.Kind is not (ValueKind.Int or ValueKind.Float)) return a.Equals(b);
             if (!ReferenceEquals(a._ref, b._ref))
             {
@@ -795,6 +962,7 @@ namespace fire.Values
                 return a.ToDouble().CompareTo(b.ToDouble());
             if (a.Kind == ValueKind.Char && b.Kind == ValueKind.Char) return a.AsChar().CompareTo(b.AsChar());   // characters by their code
             if (a.Kind == ValueKind.String && b.Kind == ValueKind.String) return Math.Sign(string.CompareOrdinal(a.AsString(), b.AsString()));   // texts by their codes
+            if (AnyWord(a, b)) return CompareWord(a, b);
 
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);
@@ -891,6 +1059,7 @@ namespace fire.Values
                 case ValueKind.Int:
                 case ValueKind.Bool:
                 case ValueKind.Char:
+                case ValueKind.Word:
                     return _bits == other._bits;
                 case ValueKind.Float:
                     return _floatValue.Equals(other._floatValue);
@@ -907,7 +1076,7 @@ namespace fire.Values
 
         public override int GetHashCode() => Kind switch
         {
-            ValueKind.Int or ValueKind.Bool or ValueKind.Char => HashCode.Combine(Kind, _bits),
+            ValueKind.Int or ValueKind.Bool or ValueKind.Char or ValueKind.Word => HashCode.Combine(Kind, _bits),
             ValueKind.Float => HashCode.Combine(Kind, _floatValue),
             ValueKind.Undefined => HashCode.Combine(Kind),
             _ => HashCode.Combine(Kind, _ref),
@@ -929,6 +1098,7 @@ namespace fire.Values
             ValueKind.Array => "<array>",
             ValueKind.Buffer => $"<buffer {AsBuffer().Length} bytes>",
             ValueKind.Undefined => Unit is { IsUnitless: false } u3 ? $"undefined:{u3}" : "undefined",
+            ValueKind.Word => unchecked((ulong)_bits).ToString(CultureInfo.InvariantCulture),   // (unsigned)
             _ => "?",
         };
 
@@ -959,12 +1129,12 @@ namespace fire.Values
             {
                 case 'X':
                 case 'D':
-                    RequireFormatKind(spec, ValueKind.Int);
-                    return _intValue.ToString(spec, CultureInfo.InvariantCulture);
+                    RequireFormatKind(spec, ValueKind.Int, ValueKind.Word);
+                    return Kind == ValueKind.Word ? unchecked((ulong)_bits).ToString(spec, CultureInfo.InvariantCulture) : _intValue.ToString(spec, CultureInfo.InvariantCulture);
 
                 case 'B':
                 {
-                    RequireFormatKind(spec, ValueKind.Int);
+                    RequireFormatKind(spec, ValueKind.Int, ValueKind.Word);
                     string bin = System.Convert.ToString(_intValue, 2);
                     return rest.Length > 0 && int.TryParse(rest, out int width)
                         ? bin.PadLeft(width, '0')
@@ -973,8 +1143,8 @@ namespace fire.Values
 
                 case 'F':
                 case 'E':
-                    RequireFormatKind(spec, ValueKind.Int, ValueKind.Float);
-                    return ToDouble().ToString(spec, CultureInfo.InvariantCulture);
+                    RequireFormatKind(spec, ValueKind.Int, ValueKind.Float, ValueKind.Word);
+                    return (Kind == ValueKind.Word ? WordToDouble(unchecked((ulong)_bits)) : ToDouble()).ToString(spec, CultureInfo.InvariantCulture);
 
                 default:
                     throw new InvalidOperationException(

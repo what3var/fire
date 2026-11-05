@@ -138,7 +138,7 @@ namespace fire.Compiler
         /// effort.</summary>
         private static readonly HashSet<string> PrimitiveTypeNames = new()
         {
-            "bool", "int", "float", "char", "string", "class", "undefined", "lambda", "any",
+            "bool", "int", "float", "char", "string", "class", "undefined", "lambda", "any", "word",
         };
 
         private readonly Dictionary<Expr, ResolvedRef> _refs = new(ReferenceEqualityComparer.Instance);
@@ -761,7 +761,7 @@ namespace fire.Compiler
             return false;
         }
 
-        private static readonly HashSet<string> ValueTypeNames = new() { "int", "float", "string", "bool", "char", "byte" };
+        private static readonly HashSet<string> ValueTypeNames = new() { "int", "float", "string", "bool", "char", "byte", "word" };
 
         /// <summary>The type of an implementing property against the one of the interface: only what is surely different is a conflict - two different value
         /// types (`string` for an `int`), or two units of a different text (`int : s` for `int : ms`; a unit against none). Class types, `any`, type

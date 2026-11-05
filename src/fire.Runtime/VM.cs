@@ -3917,8 +3917,11 @@ namespace fire.Runtime
             else if (target.Kind == ValueKind.Buffer)
             {
                 if (value.Kind != ValueKind.Int)
-                    throw new InvalidOperationException(
-                        $"Assigning to a byte buffer expects an int value (byte = int[8]), not {value.Kind}.");
+                {
+                    // (no push: the exception has redirected _ip already)
+                    ThrowArgumentError($"An element of a byte buffer must be an int, not {value.Kind}.");   // (the same text natively)
+                    return;
+                }
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
                     target.AsBuffer().SetUnchecked(indexVal.AsInt(), (byte)value.AsInt());
@@ -4151,6 +4154,13 @@ namespace fire.Runtime
                     byte elemType = ReadByte();
                     int rank = ReadByte();
                     int unitIdx = ReadU16();
+                    if (elemType == ArrayElem.U8)
+                    {
+                        // `byte a[]` holds a byte buffer (SPEC 8.4.2): an array stored there becomes one
+                        var top = Peek();
+                        if (BufferFromArrayValue(ref top, null, rank, 1)) _stack[_sp - 1] = top;
+                        break;
+                    }
                     TypeArrayValue(Peek(), elemType, rank, unitIdx == 0xFFFF ? null : _constants[unitIdx].AsString(), 1);
                     break;
                 }
@@ -4158,8 +4168,15 @@ namespace fire.Runtime
                 {
                     int bits = ReadByte();
                     int flags = ReadByte();
-                    // implicit (an assignment to a declared width): only a number of the declared kind is cut
-                    if ((flags & 4) != 0 && Peek().Kind != ((flags & 1) != 0 ? ValueKind.Float : ValueKind.Int)) break;
+                    if ((flags & 8) != 0)
+                    {
+                        // `word` (SPEC 8.10): implicit - a store into a word - converts an int (and a word: nothing to do), `x!word` every number
+                        if ((flags & 4) != 0) { if (Peek().Kind == ValueKind.Int) _stack[_sp - 1] = Peek().ToWord(); break; }
+                        Push(CoerceTypeChecked(Pop(), ValueKind.Word));
+                        break;
+                    }
+                    // implicit (an assignment to a declared width): only a number of the declared kind is cut (a word counts as an int)
+                    if ((flags & 4) != 0 && Peek().Kind != ((flags & 1) != 0 ? ValueKind.Float : ValueKind.Int) && !((flags & 1) == 0 && Peek().Kind == ValueKind.Word)) break;
                     Push(CoerceWidthChecked(Pop(), bits, (flags & 1) != 0, (flags & 2) != 0));
                     break;
                 }
@@ -5549,7 +5566,7 @@ namespace fire.Runtime
         private bool ReadsDeadClass(Value v, string typeName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ObjectInstance? dead)
         {
             dead = v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)
-                && typeName is not ("bool" or "int" or "float" or "char" or "string" or "undefined" or "class") ? obj : null;
+                && typeName is not ("bool" or "int" or "float" or "char" or "word" or "string" or "undefined" or "class") ? obj : null;
             return dead != null;
         }
 
@@ -5564,6 +5581,7 @@ namespace fire.Runtime
                 case "int": return v.Kind == ValueKind.Int && !v.IsEnum;   // (an enum is not an int, like in C#)
                 case "float": return v.Kind == ValueKind.Float;
                 case "char": return v.Kind == ValueKind.Char;
+                case "word": return v.Kind == ValueKind.Word;
                 case "string": return v.Kind == ValueKind.String;
                 case "undefined": return v.Kind == ValueKind.Undefined;
                 case "class": return v.Kind == ValueKind.Class;
@@ -6612,6 +6630,45 @@ namespace fire.Runtime
             if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) return true;
             ThrowArrayElementError(unit, offending, error, message!);
             return false;
+        }
+
+        /// <summary>OpCode.TypeArray of a `byte` declaration (SPEC 8.4.2): the array `value` (at depth `rank` its inner arrays) is replaced by a byte buffer
+        /// with its elements - THE conversion of an array into a buffer (the native runtime: bufFromArray). A buffer stays as it is, anything else too. The
+        /// buffer gets the owner of the array (an inner array's: the outer one). False when that is the exception (an element that is no int; the array
+        /// stays) - `value` is unchanged then.</summary>
+        private bool BufferFromArrayValue(ref Value value, ScriptArray? outer, int rank, int depth)
+        {
+            if (value.Kind != ValueKind.Array) return true;
+            var array = value.AsArray();
+            if (array.IsDestroyed || depth > 64) return true;   // (a destroyed array is reported where it is used)
+            if (depth < rank)
+            {
+                for (int i = 0; i < array.Items.Length; i++)
+                {
+                    var inner = array.Items[i];
+                    if (!BufferFromArrayValue(ref inner, array, rank, depth + 1)) return false;
+                    array.Items[i] = inner;
+                }
+                return true;
+            }
+            var bytes = new byte[array.Length];
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                var e = array.Items[i];
+                if (e.Kind == ValueKind.Int) bytes[i] = (byte)e.AsInt();   // (cut to 8 bits, like `buffer[i] = 300`)
+                else if (e.Kind != ValueKind.Undefined)
+                {
+                    ThrowArgumentError($"An element of a byte buffer must be an int, not {e.Kind}.");   // (the same text natively)
+                    return false;
+                }
+            }
+            var buffer = new ByteBuffer(bytes.Length, ByteConversions.HostByteOrder);
+            System.Array.Copy(bytes, buffer.Bytes, bytes.Length);
+            if (array.LeafOwner is { } owner) LeafOwnership.Adopt(buffer, owner);
+            else if (outer != null && outer.Parts != null && outer.Parts.Contains(array)) LeafOwnership.AttachPart(outer, buffer);
+            else LeafOwnership.Adopt(buffer, _currentScope);
+            value = Value.MakeBuffer(buffer);
+            return true;
         }
 
         /// <summary>`array[i] = value` on a typed array (SPEC 8.4.2): the value converted to the element type. A value that does not fit is the exception

@@ -436,6 +436,42 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `{Adresse, Slot, Generation, Zähler}` (16 Byte pro lebendem Zeiger, nicht pro
    Array oder Element), gezählt wie Strings, wiederverwendet über eine Freiliste. Mit `#performance` (keine Tabelle) tragen alle direkt ihren Zeiger. Bleibt: 65535 Einheiten.
    Später, wenn eine Messung es zeigt: einen Kasten mit Zähler 1 bei `p + 1` weiterschieben statt einen neuen zu holen.
+1b. **Köpfe der Werte getrennt und schmal speichern** (Vorschlag des Benutzers, nach Punkt 1). Ein Wert besteht aus Kopf (Art, Einheit bzw. Enum, Generation)
+   und Nutzlast. Auf 64 Bit sind das heute 8 + 8 Byte, obwohl der Kopf mit 32 Bit (oder weniger) auskäme - die andere Hälfte ist Füllung für die Ausrichtung.
+   * **Idee:** wo Werte im Speicher hintereinander stehen (Elemente eines Arrays ohne Elementtyp, Felder eines Objekts, Globals, `List`/`Dictionary`), stehen
+     erst X Köpfe und dann X Nutzlasten, X so gewählt, dass die Gruppe auf die Ausrichtung aufgeht: 64 Bit mit 4-Byte-Köpfen in Zweiergruppen (8 + 16 Byte)
+     = 12 statt 16 Byte pro Wert (-25 %), mit 2-Byte-Köpfen in Vierergruppen (8 + 32) = 10 Byte; das kompakte 32-Bit-Format mit 2-Byte-Köpfen = 6 statt 8 Byte.
+     Die Breite des Kopfes richtet sich nach der Wortbreite (16-Bit-Ziele heute nach der Breite von `int`). Keine echte Kompression - nur die Füllung fällt weg.
+   * **Voraussetzung:** die Generation wandert aus dem Kopf in die Nutzlast (Punkt 1: Slot und Generation der Objekte; auf x86-64/ARM64 hätten auch die
+     oberen 16 Bit eines Zeigers Platz), dann bleiben im Kopf nur Art (4 Bit), ein paar Merker und Einheit/Enum (16 Bit).
+   * **Gilt nur im Speicher:** ein Wert in einer C-Variablen, als Argument oder Rückgabe bleibt das `Value`-Struct (Register); Lesen/Schreiben eines Elements
+     oder Feldes sind zwei Zugriffe, in der Gruppe meist in derselben Cache-Zeile.
+   * **Zu klären:** Zeiger auf Elemente und Felder (`ref a[i]`, `K_PtrElem`) zeigen dann auf zwei Stellen (der Kasten aus Punkt 1 hilft); Natives, die heute
+     `Value*` eines Arrays sehen (`arrItems`), brauchen Zugriffsfunktionen; der Debugger und JSON lesen über dieselben Funktionen; Messung vorher (ein `ui`-Programm,
+     ein Programm mit vielen Objekten) - typisierte Arrays und Puffer sind schon ohne Köpfe gepackt, der Gewinn liegt bei Objekten und gemischten Arrays.
+1c. **Rohdaten ohne Einheit: `byte` und `word`** (Entscheidung des Benutzers). `byte` und `word` sind Datentypen für rohe Daten **ohne Einheit**; Einheiten
+   bleiben bei `int`, `int[N]`, `float` und `float[N]` (dort ändert sich nichts). Ab hier unterscheiden sich die beiden Formate.
+   * **Umgesetzt:** Byte-Argumente der Natives sicher - lesende Natives nehmen einen Puffer oder ein Array aus Zahlen 0..255 (auch ein typisiertes; kopiert, bis der
+     aufrufende Scope endet), füllende verlangen einen Puffer, alles andere ist eine `ArgumentException` statt eines Absturzes (VM und nativ: `bufOf` prüfte die Art
+     nicht) - `bytesArg`/`bufferArg` in fire_rt.h (docs/PACKAGE_NATIVES.md), alle Bridges umgestellt. `byte x[] = [...]` und `byte x[n]` (auch Felder, statische
+     Felder, Globals; mehrdimensional: die inneren) deklarieren einen **Puffer** (SPEC 8.4.2): ein zugewiesenes Array wird ein neuer Puffer (int auf 8 Bit
+     gekürzt, `undefined` 0); ein Pufferelement ist nie `undefined`, ein Nicht-int dort ist eine `ArgumentException` (vorher ein Laufzeitfehler).
+     **Offen:** ein Objekt (oder ein Lambda) als Byte-Argument ist in der VM weiter der Fehler der Paket-Grenze ("only numbers, bool, char, text, ... can be passed",
+     PackageNativeBinding) statt der `ArgumentException` von `bytesArg` - nativ ist es die `ArgumentException`; meist scheitert der Prelude-Code vorher (`data.length`).
+     (Behoben: die Bibliothek eines Pakets für die VM wird jetzt auch neu gebaut, wenn sich nur die Runtime ändert - `PackageLibrary.NewestSource` zählt den Stand von fire.Native mit.)
+     Für `word`-Puffer (unten): ein Puffer mit einer Elementbreite (`Buf`/`ByteBuffer` heute nur Bytes), `bufFromArray`/`BufferFromArrayValue` mit der Breite,
+     `bytesArg` mit einer Variante für Wörter.
+   * **`word`** = das Maschinenwort des **Ziels**, vorzeichenlos: 16 Bit (AVR, DOS Real Mode, Win16), 32 Bit (ESP32, Cortex-M, RISC-V 32, wasm, DPMI, Win9x),
+     64 Bit (x86-64, ARM64) - `wordWidth` in der Konfiguration des Ziels, `#if word16|word32|word64`, `Word.Bits`. Die VM folgt dem Ziel des Baus
+     (`forge run`: der Rechner selbst). Mit 64 Bit **echt vorzeichenlos** (die VM behält die Bits; Ausgabe, Vergleich, Division, Schieben vorzeichenlos).
+     `word op word` rechnet in der Breite von `word`, gespeichert wird abgeschnitten.
+   * **`word a[] = [...]`** ist ein Puffer aus Maschinenwörtern (nativ `uintN_t*`, an Natives ohne Umpacken); seine Größe in Bytes hängt vom Ziel ab
+     (in eine Datei oder ins Netz geschrieben: plattformabhängig wie in C, dokumentieren). Byte-Reihenfolge der Elemente: die der Maschine.
+   * **`byte` ohne Einheit:** heute ist `byte` Zucker für ein vorzeichenloses `int[8]` und kann eine Einheit tragen; danach ist `byte b = 5m` ein Fehler des
+     Typprüfers (vorher die Packages und Beispiele durchsuchen).
+   * **Schmal und schnell:** der Generator legt `byte`/`word`-Locals und -Parameter als `uint8_t`/`uintN_t` an (keine Einheit, kein 16-Byte-Wert) - der erste Schritt
+     zu Ebene 2 (Punkt 9), für Prüfsummen, Protokolle und Schleifen über Puffer auf kleinen Zielen.
+   * PCM und andere vorzeichenbehaftete Daten bleiben bei `int[16]`-Arrays (gepackt, mit Einheit); kein weiterer Typ.
 2. ~~**Inline-C**~~ **Umgesetzt** (Branch `targets`; SPEC 8.1.1a, docs/language/18-native-code.md) - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
 
    ```fire
@@ -449,7 +485,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
    keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
    paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).
-   Dazu **`#intwidth 16`** (native Breite des 8086/286) und **`word`** (vorzeichenlos in Maschinenbreite, `word[8|16|32]`; die VM bekommt die Wortbreite des Ziels).
+   Dazu **`#intwidth 16`** (native Breite des 8086/286); `word` ist dort 16 Bit (Punkt 1c).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste

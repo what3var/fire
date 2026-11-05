@@ -679,7 +679,7 @@ namespace fire.Compiler
             if (type.TypeArgs == null && owner?.TypeParams is { } typeParams && typeParams.ToList().FindIndex(tp => tp.Name == b) is var k and >= 0) return "$" + k + arrays;
             switch (b)
             {
-                case "int": case "float": case "bool": case "char": case "string": case "byte": case "class":
+                case "int": case "float": case "bool": case "char": case "string": case "byte": case "word": case "class":
                 case "int8": case "int16": case "int32": case "int64": case "uint8": case "uint16": case "uint32": case "uint64": case "float32": case "float64":
                     return b + arrays;
                 case "any": return arrays.Length > 0 ? "any" + arrays : "";
@@ -1161,7 +1161,7 @@ namespace fire.Compiler
                 if (line > 0) inner._chunk.MarkLine(inner.CurrentSourceIndex, line);
                 // (it belongs to the object - [this] -> [this, array] -> [array], as for `int data[] = new int[16]`; a static field's to the program)
                 if (!isStatic) inner._chunk.EmitOp(OpCode.LoadThis);
-                inner.CompileArrayAlloc(arrayRanks, 0);
+                inner.CompileArrayAlloc(arrayRanks, 0, IsByteBuffer(type, arrayRanks.Count));
                 if (!isStatic) inner._chunk.EmitOp(OpCode.OwnValue);
             }
             else inner.EmitLoadConst(Value.MakeUndefined());
@@ -1300,6 +1300,10 @@ namespace fire.Compiler
         /// still needs the value afterwards or pops it.</summary>
         /// <summary>A variable, parameter or field declared with a bit width (`int[8]`, `byte`, `float[32]`, see TypeRef.WidthCode): the value on top of
         /// the stack is cut to it (SPEC 8.2). Implicit (flag 4): only a number of the declared kind is cut, every other value stays as it is.</summary>
+        /// <summary>A declaration with the element type `byte` and array brackets (`byte data[]`, `byte data[16]`): it holds a byte buffer, not a typed array
+        /// (SPEC 8.4.2) - the array stored in it becomes a buffer (OpCode.TypeArray with ArrayElem.U8, VM.BufferFromArrayValue / fire_rt.h bufFromArray).</summary>
+        private static bool IsByteBuffer(TypeRef? type, int rank) => ((type?.ArrayWidthCode(rank) ?? 0) & 0x100FF) == (0x10000 | fire.Values.ArrayElem.U8);
+
         private static void EmitWidthIfNeeded(Compiler target, int widthCode, string? unit = null)
         {
             if (widthCode == 0) return;
@@ -1313,6 +1317,13 @@ namespace fire.Compiler
                 return;
             }
             target._chunk.EmitOp(OpCode.ConvertWidth);
+            if (widthCode == TypeRef.WordWidthCode)
+            {
+                // `word`: into a machine word (flag 8; the width is the target's, the VM's Value.WordBits / FIRE_WORD_BITS)
+                target._chunk.EmitByte(0);
+                target._chunk.EmitByte(8 | 4);
+                return;
+            }
             target._chunk.EmitByte((byte)(widthCode & 0xFF));
             target._chunk.EmitByte((byte)(((widthCode & 0x100) != 0 ? 1 : 0) | ((widthCode & 0x200) != 0 ? 2 : 0) | 4));
         }
@@ -1489,7 +1500,7 @@ namespace fire.Compiler
                 case "char": return "k:char";
                 case "string": return "k:string";
                 case "class": return "k:class";
-                case "any": return "";
+                case "any": case "word": return "";   // (`word`: no overload by it - it takes what it gets, the store converts)
             }
             if (_refParams.EnumNames.Contains(t.BaseName)) return "k:int";
             if (_knownClassNames == null) return "";
@@ -1662,7 +1673,7 @@ namespace fire.Compiler
                         // size (e.g. `int arr[3][]`) ends the recursion -
                         // from there on the slots stay 'undefined', as before with
                         // a completely undetermined-size declarator.
-                        CompileArrayAlloc(vd.ArrayRanks, 0);
+                        CompileArrayAlloc(vd.ArrayRanks, 0, IsByteBuffer(vd.Type, vd.ArrayRanks.Count));
                     else
                         EmitLoadConst(Value.MakeUndefined());
 
@@ -2223,8 +2234,15 @@ namespace fire.Compiler
         /// (unlike class instances) on the ownership system, `Release()`
         /// at `ExitScope` therefore only concerns the temporary slots themselves,
         /// not the array VALUE that they had just pointed to.</summary>
-        private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex)
+        private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex, bool byteBuffer = false)
         {
+            // `byte data[16]` is `new byte[16]`: a `byte` declaration holds a byte buffer (SPEC 8.4.2; several dimensions: TypeArray converts the inner arrays)
+            if (byteBuffer && ranks.Count == 1 && rankIndex == 0 && ranks[0] != null)
+            {
+                CompileExpr(ranks[0]!);
+                _chunk.EmitOp(OpCode.MakeBuffer);
+                return;
+            }
             // All ranks with a size (up to the first one without): every size is evaluated ONCE, NewJagged creates the whole structure.
             // The inner arrays belong to the outer one (SPEC 2.5) - they live and die with it.
             int sized = 0;
@@ -2463,6 +2481,14 @@ namespace fire.Compiler
                     CompileExpr(cast.Operand);
                     _chunk.EmitOp(OpCode.CastTo);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(cast.TargetClass))));
+                    break;
+
+                case TypeCoerceExpr { TargetTypeKeyword: TokenType.KwWord } wordCast:
+                    // `x!word`: the value as a machine word (SPEC 8.10)
+                    CompileExpr(wordCast.Operand);
+                    _chunk.EmitOp(OpCode.ConvertWidth);
+                    _chunk.EmitByte(0);
+                    _chunk.EmitByte(8);
                     break;
 
                 case TypeCoerceExpr { Width: > 0 } widthCast:
@@ -3822,7 +3848,7 @@ namespace fire.Compiler
                     if (uc.Relabel) relabelAuto = true;
                     current = uc.Operand;
                 }
-                else if (current is TypeCoerceExpr { TargetClass: null, Width: 0 } tc)
+                else if (current is TypeCoerceExpr { TargetClass: null, Width: 0, TargetTypeKeyword: not TokenType.KwWord } tc)
                 {
                     wantsType = true;
                     explicitType = tc.TargetTypeKeyword;

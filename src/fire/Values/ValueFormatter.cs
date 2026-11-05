@@ -76,6 +76,9 @@ namespace fire.Values
                 case ValueKind.Undefined:
                     writer.WriteValue(value.Unit);
                     break;
+                case ValueKind.Word:
+                    writer.WriteValue(value.AsWord());
+                    break;
                 default:
                     throw new NotSupportedException(
                         $"A value of type {value.Kind} cannot be serialized - only pure, object-free values " +
@@ -129,6 +132,9 @@ namespace fire.Values
                     value = Value.MakeUndefined(unit);
                     break;
                 }
+                case ValueKind.Word:
+                    value = Value.MakeWord(reader.ReadValue<ulong>());
+                    break;
                 default:
                     throw new NotSupportedException(
                         $"Unknown/unsupported ValueKind '{kind}' while deserializing a value " +

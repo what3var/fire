@@ -865,6 +865,53 @@ static class TypeTests
             Check("override im Namespace: die Meldung nennt Klasse und Basis voll", CompileTextStrict(nsBase + "namespace Zoo { class Dog : Animal { string Speak() { return \"Woof\" } } }") is var nsText && nsText.Contains("The method 'Speak' of 'Zoo.Dog' replaces the one of its base class 'Zoo.Animal' - mark it 'override' (override string Speak())"), nsText);
         }
 
+        // `byte` (and `word`) are raw data without a unit (SPEC 8.10): a unit there is TC017 - an error in lax mode too; at run time the stored value has none
+        {
+            Check("byte ohne Einheit: Wert mit Einheit, Einheit an der Deklaration, Array, Feld, Parameter sind TC017 (auch lax)", Run("""
+                byte c = 5m
+                byte d : m = 5
+                byte e[] = [1m, 2m]
+                class K { byte f : s
+                 byte g = 3s
+                 undefined Set(byte v : mm) { } }
+                byte h = 1
+                h = 4s
+                """) is var rawUnits && rawUnits == "|ERROR TC017 TC017 TC017 TC017 TC017 TC017 TC017", rawUnits);
+            Check("byte ohne Einheit: die Meldung nennt den Typ", CompileText("byte c = 5m") is var rawText && rawText.Contains("A value in 'm' cannot be stored in 'c' of type 'byte'"), rawText);
+            Check("byte ohne Einheit: zur Laufzeit verliert der gespeicherte Wert die Einheit; int[8] behaelt sie", Run("""
+                any x = 5m
+                byte c = x
+                byte d = 7
+                d = x
+                int[8] i8 = x
+                print(c + " " + d + " " + x!byte + " " + i8)
+                byte ok = 5m::unitless
+                print(ok)
+                """) is var rawRun && rawRun == "|5 5 5 5m\n5", rawRun);
+            Check("word ohne Einheit: Wert mit Einheit, Einheit an der Deklaration, Feld, Parameter sind TC017 (auch lax)", Run("""
+                word a = 5m
+                word b : s = 1
+                class W { word f : kg
+                 undefined Set(word v : mm) { } }
+                word c = 1
+                c = 2s
+                """) is var wordUnits && wordUnits == "|ERROR TC017 TC017 TC017 TC017 TC017", wordUnits);
+            Check("word: int geht in word, word in float und byte; word in int will !int (TC001), float in word auch; word op int ist word", Run("""
+                word w = 5
+                int i = 3
+                w = i
+                float f = w
+                byte b = w
+                int j = w!int
+                var x = w + i
+                word y = x * 2
+                print(w + " " + f + " " + b + " " + j + " " + y + " " + (x is of word) + " " + (-x is of word) + " " + (~x is of word) + " " + ((x + 0.5) is of float))
+                """) is var wordOk && wordOk == "|3 3 3 3 12 True True True True", wordOk);
+            Check("word: int i = w und word v = 2.5 sind TC001; strikt ein Fehler", Run("word w = 5\nint i = w\nword v = 2.5\nprint(1)") is var wordBad && wordBad == "TC001 TC001|1"
+                && Run("word w = 5\nint i = w\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC001", wordBad);
+            Check("word: 'word' mit Breite ist ein Syntaxfehler", CompileText("word[16] w = 1") is var wordWidth && wordWidth.Contains("'word' has the width of the target's machine word"), wordWidth);
+        }
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "json", "circuits", "circuits.ui", "net", "process", "hash", "compression", "http", "tls", "audio", "usb", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {

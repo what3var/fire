@@ -21,12 +21,13 @@ namespace fire.Compiler
     /// <summary>
     /// The static types the checker knows. `Dynamic` is "not known": it is compatible with everything, so code that does not state its types is never reported.
     /// </summary>
-    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum }
+    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum, Word }
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
-        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null)
+        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false)
     {
+        // (Raw: a declaration `byte` or `word` - raw data without a unit, SPEC 8.10: a value with a unit does not go in, TC017)
         // (TypeParam: an `any` that is a type parameter of the running code - `$k@` of the method, `$k@Class` of the class - passed on as a type argument)
         /// <summary>The same type with the unit `unit` (null: not known); `dimensionOnly`: a declaration `: any m` that takes every unit of that dimension.</summary>
         public StaticType WithUnit(Unit? unit, bool dimensionOnly = false) => this with { Unit = unit, UnitIsDimension = dimensionOnly };
@@ -41,6 +42,8 @@ namespace fire.Compiler
         public static readonly StaticType Dynamic = new(StaticKind.Dynamic);
         public static readonly StaticType Bool = new(StaticKind.Bool);
         public static readonly StaticType Int = new(StaticKind.Int);
+        /// <summary>`word`: the machine word of the target (SPEC 8.10) - unsigned, raw data without a unit.</summary>
+        public static readonly StaticType Word = new(StaticKind.Word, Unit: Unit.Unitless, Raw: true);
         public static readonly StaticType Float = new(StaticKind.Float);
         public static readonly StaticType Char = new(StaticKind.Char);
         public static readonly StaticType String = new(StaticKind.String);
@@ -63,6 +66,7 @@ namespace fire.Compiler
             StaticKind.Enum => Class!,
             StaticKind.Dynamic => "any",
             StaticKind.Array => Element + "[]",
+            StaticKind.Int when Raw => "byte",
             StaticKind.Lambda => (Return != null ? Return + " " : "") + "lambda" + (ParamCount > 0 ? "<" + string.Join(", ", Params ?? Enumerable.Repeat(Dynamic, ParamCount)) + ">" : ""),
             _ => Kind.ToString().ToLowerInvariant() + (Unit != null && !Unit.IsUnitless ? (UnitIsDimension ? " : any " : " : ") + Unit : ""),
         };
@@ -102,6 +106,8 @@ namespace fire.Compiler
         /// <summary>Through a value of an interface type: writing a property the interface declares without `set` (or reading one without `get`) - the interface
         /// does not promise it (an error in lax mode too).</summary>
         public const string InterfaceAccessorCode = "TC016";
+        /// <summary>A unit at `byte` or `word` (raw data without a unit, SPEC 8.10): `byte b = 5m`, `word w : s`, `byte data[] = [1m]` - an error in lax mode too.</summary>
+        public const string RawUnitCode = "TC017";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -232,8 +238,15 @@ namespace fire.Compiler
                 CheckUnitAssignable(valueElement, targetElement, line, what == "an element" ? what : $"an element of {what}");
                 return;
             }
+            // `byte`/`word`: raw data without a unit (SPEC 8.10) - a value with a unit is TC017 (also lax); at runtime a stored value loses its unit
+            if (target.Raw)
+            {
+                if (value.IsNumber && value.Unit is { IsUnitless: false } rawFrom)
+                    ReportError(RawUnitCode, $"A value in '{UnitText(rawFrom)}' cannot be stored in {what} of type '{target}': 'byte' and 'word' are raw data without a unit (take the number with '::unitless')", line);
+                return;
+            }
             // a float holds a float: a whole number (or a value not known here) is converted at runtime (`float f = 3` holds 3.0)
-            if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind == StaticKind.Int))
+            if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind is StaticKind.Int or StaticKind.Word))
                 _unitChecks[valueExpr] = "#any";
             // a number declared without a unit takes unitless numbers only: a value whose unit is not known here (or is another one) is checked at runtime
             if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: true } && !target.UnitIsDimension
@@ -283,6 +296,9 @@ namespace fire.Compiler
                 return value.Return == null || target.Return == null || target.Return.Kind == StaticKind.Undefined || Assignable(value.Return, target.Return);
             }
             if (value.Kind == StaticKind.Int && target.Kind == StaticKind.Float) return true;
+            // `word` (SPEC 8.10): an int goes into a word (cut to its width), a word into a float and into a `byte` (cut); a word into an `int` wants `w!int`
+            if (target.Kind == StaticKind.Word) return value.Kind is StaticKind.Int or StaticKind.Word;
+            if (value.Kind == StaticKind.Word) return target.Kind == StaticKind.Float || target.Kind == StaticKind.Int && target.Raw;
             if (target.Kind == StaticKind.Object) return value.Kind is StaticKind.Class or StaticKind.Object;   // `class` holds objects only
             if (value.Kind == StaticKind.Object) return target.Kind is StaticKind.Class;                          // (an object may be the class the code expects)
             if (value.Kind == StaticKind.Class && target.Kind == StaticKind.Class)
@@ -428,8 +444,21 @@ namespace fire.Compiler
                     { } u when u.StartsWith("any ", StringComparison.Ordinal) => result.WithUnit(Unit.Parse(u.Substring(4)), dimensionOnly: true),
                     { } u => result.WithUnit(Unit.Parse(u)),
                 };
+            // `byte` and `word` are raw data: never a unit (a unit written at them is TC017, see CheckRawUnit)
+            if (IsRawType(type)) result = result with { Unit = Unit.Unitless, UnitIsDimension = false, Raw = true };
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
             return result;
+        }
+
+        /// <summary>`byte` (an unsigned `int[8]`) and `word`: the raw-data types without a unit (SPEC 8.10).</summary>
+        internal static bool IsRawType(TypeRef? type) => type != null && type.PointerDepth == 0 && type.LambdaSignature == null
+            && (type.BaseName == "int" && type.BitWidth == 8 && type.Unsigned || type.BaseName == "word");
+
+        /// <summary>A unit written at a `byte` or `word` declaration (`byte b : m`, `word w : s`): TC017, an error in lax mode too.</summary>
+        private void CheckRawUnit(TypeRef? type, string name, int line)
+        {
+            if (IsRawType(type) && type!.Unit != null)
+                ReportError(RawUnitCode, $"'{name}' is a '{(type.BaseName == "word" ? "word" : "byte")}': raw data without a unit - it cannot be declared in '{type.Unit}' (use an int or a float for a quantity)", line);
         }
 
         /// <summary>`[Return] lambda<P1, ..., Pn>`: the number of parameters and the return type (a selector `lambda member<T>` takes one parameter).</summary>
@@ -530,6 +559,7 @@ namespace fire.Compiler
             switch (name)
             {
                 case "int": case "byte": return StaticType.Int;
+                case "word": return StaticType.Word;
                 case "float": return StaticType.Float;
                 case "bool": return StaticType.Bool;
                 case "char": return StaticType.Char;
@@ -563,7 +593,7 @@ namespace fire.Compiler
         /// <summary>A number declared without a unit takes the unit of its initializer for good (SPEC 3.5: `int a = 5mm` is in mm from then on); an initializer
         /// whose unit is not known leaves the unit free. Without an initializer (or with a unitless one) the declaration stays unitless.</summary>
         private static StaticType WithInitializerUnit(StaticType declared, TypeRef? type, int arrayRanks, StaticType init) =>
-            declared.IsNumber && arrayRanks == 0 && type is { Unit: null } && !declared.UnitIsDimension
+            declared.IsNumber && !declared.Raw && arrayRanks == 0 && type is { Unit: null } && !declared.UnitIsDimension
                 ? init.IsNumber && init.Unit is { } unit ? declared.WithUnit(unit) : init.IsDynamic || init.IsNumber ? declared.WithUnit(null) : declared
                 : declared;
 
@@ -619,7 +649,7 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Undefined || !Assignable(value, target)) return;
             bool needed = target.Kind switch
             {
-                StaticKind.Int => value.Kind != StaticKind.Int,
+                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
@@ -635,7 +665,7 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Undefined || !Assignable(value, target)) return;
             bool needed = target.Kind switch
             {
-                StaticKind.Int => value.Kind != StaticKind.Int,
+                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
@@ -1086,6 +1116,7 @@ namespace fire.Compiler
             if (init.Kind == StaticKind.Enum && Parser.Switches.TryGetValue(v, out var caseValues)) CheckSwitchOverEnum(init.Class!, caseValues, v.Line);
             if (declared is { } target)
             {
+                CheckRawUnit(v.Type, v.Name, v.Line);
                 if (v.Initializer != null)
                 {
                     target = WithInitializerUnit(target, v.Type, v.ArrayRanks.Count, init);
@@ -1172,7 +1203,7 @@ namespace fire.Compiler
                 case "char": return "k:char";
                 case "string": return "k:string";
                 case "class": return "k:class";
-                case "any": return "";
+                case "any": case "word": return "";   // (`word`: no overload by it - it takes what it gets, the store converts)
             }
             if (_enumNames.ContainsKey(t.BaseName)) return "k:int";
             bool Known(string n) => _classes.ContainsKey(n) || _interfaces.ContainsKey(n);
@@ -1248,8 +1279,12 @@ namespace fire.Compiler
             {
                 switch (member)
                 {
+                    case FieldDecl rawField when rawField.Initializer == null:
+                        CheckRawUnit(rawField.Type, rawField.Name, rawField.Line);
+                        break;
                     case FieldDecl f when f.Initializer != null:
                         {
+                            CheckRawUnit(f.Type, f.Name, f.Line);
                             var declaredField = Declared(f.Type, f.ArrayRanks.Count);
                             var init = Infer(f.Initializer, declaredField);
                             if (declaredField != null) declaredField = WithInitializerUnit(declaredField, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
@@ -1291,6 +1326,7 @@ namespace fire.Compiler
         /// <summary>A parameter without a type is taken as `any`: said so (a warning in lax mode, an error in strict mode), because a declared type tells the user of the class what it expects.</summary>
         private void CheckParametersTyped(IReadOnlyList<LambdaParam> parameters, string owner, int line)
         {
+            foreach (var p in parameters) CheckRawUnit(p.Type, p.Name, line);
             foreach (var p in parameters)
                 if (p.Type == null || p.Type.IsInferred)
                     Report(UntypedCode, $"Parameter '{p.Name}' of '{owner}' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", line);
@@ -1406,6 +1442,8 @@ namespace fire.Compiler
                         }
                         return tc.TargetTypeKeyword switch
                         {
+                            TokenType.KwWord => StaticType.Word,
+                            TokenType.KwInt when tc.Unsigned => StaticType.Int.WithUnit(Unit.Unitless),   // (`!byte`: raw data, the unit is dropped)
                             TokenType.KwInt => StaticType.Int.WithUnit(operandUnit),
                             TokenType.KwFloat => StaticType.Float.WithUnit(operandUnit),
                             TokenType.KwBool => StaticType.Bool,
@@ -1444,9 +1482,9 @@ namespace fire.Compiler
             if (u.Op == UnaryOp.LogicalNot) CheckLogicalOperand(operand, "!", u.Line);
             return u.Op switch
             {
-                UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : StaticType.Dynamic,
+                UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Dynamic,
                 UnaryOp.LogicalNot => StaticType.Bool,
-                UnaryOp.BitNot => StaticType.Int,
+                UnaryOp.BitNot => operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Int,
                 UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take => operand,
                 _ => StaticType.Dynamic,
             };
@@ -1504,6 +1542,15 @@ namespace fire.Compiler
             if (b.Op is BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq && (left.Kind == StaticKind.Enum || right.Kind == StaticKind.Enum)) return StaticType.Bool;
             if (left.Kind == StaticKind.Enum) left = StaticType.Int;
             if (right.Kind == StaticKind.Enum) right = StaticType.Int;
+            // a word on one side (SPEC 8.10): an operation on words - with an int (or a word) a word, with a float a float (not `+` of a string)
+            if ((left.Kind == StaticKind.Word || right.Kind == StaticKind.Word) && b.Op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt
+                or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq) && left.Kind != StaticKind.String && right.Kind != StaticKind.String)
+            {
+                var other = left.Kind == StaticKind.Word ? right : left;
+                if (other.Kind is StaticKind.Int or StaticKind.Word) return StaticType.Word;
+                if (other.Kind == StaticKind.Float && b.Op is not (BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight)) return StaticType.Float;
+                return StaticType.Dynamic;
+            }
             switch (b.Op)
             {
                 case BinaryOp.And or BinaryOp.Or: return StaticType.Bool;

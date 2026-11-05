@@ -867,6 +867,7 @@ namespace fire.Native
                 case "float": return $"{value}.kind == K_Float";
                 case "bool": return $"{value}.kind == K_Bool";
                 case "char": return $"{value}.kind == K_Char";
+                case "word": return $"{value}.kind == K_Word";
                 case "string": return $"{value}.kind == K_String";
                 case "class": case "Exception": return $"{value}.kind == K_Class";
             }
@@ -994,7 +995,7 @@ namespace fire.Native
 
         /// <summary>The names a declaration tests with `is of` (each gets an `isof_` function).</summary>
         private static IEnumerable<string> IsOfNames(string spec) =>
-            DeclaredType.Parse(spec).Alternatives.SelectMany(a => a).Where(c => !c.IsUnit && c.Name is not ("int" or "float" or "bool" or "char" or "string" or "class" or "Exception")).Select(c => c.Name);
+            DeclaredType.Parse(spec).Alternatives.SelectMany(a => a).Where(c => !c.IsUnit && c.Name is not ("int" or "float" or "bool" or "char" or "word" or "string" or "class" or "Exception")).Select(c => c.Name);
 
         /// <summary>Does a value of this static type pass the check of a declaration (DeclaredType, encoded) as it is?</summary>
         private bool FitsClassType(int type, string spec) =>
@@ -1792,6 +1793,7 @@ namespace fire.Native
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             if (_program.IntWidth == 32) sb.AppendLine("#define FIRE_INT32 1 // #intwidth 32: int is a 32-bit int, like in the VM (with FIRE_FLOAT32 and 32-bit pointers a value takes 8 bytes)");
+            sb.AppendLine($"#define FIRE_WORD_BITS {_program.WordWidth} // `word`: the machine word of the target (SPEC 8.10)");
             return sb.ToString();
         }
 
@@ -3869,7 +3871,7 @@ namespace fire.Native
                     string castName = chunk.Constants[ins.A[0]].AsString();
                     string castTest = castName switch
                     {
-                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
+                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "word" => "K_Word", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
                     };
                     string test = castTest == "K_Int" ? $"{S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0"
                         : castTest.Length > 0 ? $"{S(d - 1)}.kind == {castTest}" : $"{IsOfFn(castName)}({S(d - 1)})";
@@ -3887,10 +3889,22 @@ namespace fire.Native
                     d--; SetR(d - 1, true); return Next();
                 case OpCode.ConvertWidth:
                     Need(1);
+                    if ((ins.A[1] & 8) != 0)
+                    {
+                        // `word` (SPEC 8.10): a store into a word converts an int (fire_rt.h wordOf; it cannot fail then), `x!word` every number
+                        bool implicitWord = (ins.A[1] & 4) != 0;
+                        E($"{S(d - 1)} = wordOf({S(d - 1)}, {(implicitWord ? "true" : "false")});");
+                        if (!implicitWord) Check();
+                        SetT(d - 1, TypeUnknown); _kindsKept = true;
+                        return Next();
+                    }
                     if ((ins.A[1] & 4) != 0)
                     {
-                        // implicit (an assignment to a declared width): only a number of the declared kind is cut - this cannot fail
-                        E($"if ({S(d - 1)}.kind == {((ins.A[1] & 1) != 0 ? "K_Float" : "K_Int")}) {S(d - 1)} = convertWidth({S(d - 1)}, {ins.A[0]}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {((ins.A[1] & 2) != 0 ? "true" : "false")});");
+                        // implicit (an assignment to a declared width): only a number of the declared kind is cut (a word counts as an int) - this cannot fail
+                        string implicitTest = (ins.A[1] & 1) != 0 ? $"{S(d - 1)}.kind == K_Float" : $"({S(d - 1)}.kind == K_Int || {S(d - 1)}.kind == K_Word)";
+                        E($"if ({implicitTest}) {S(d - 1)} = convertWidth({S(d - 1)}, {ins.A[0]}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {((ins.A[1] & 2) != 0 ? "true" : "false")});");
+                        // (a byte - unsigned - is raw data: the unit is dropped, SPEC 8.10)
+                        if ((ins.A[1] & 2) != 0 && K(d - 1) == KindInt) { SetT(d - 1, TypeOf(KindInt, 0)); _kindsKept = true; }
                         return Next();
                     }
                     E($"{S(d - 1)} = convertWidth({S(d - 1)}, {ins.A[0]}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {((ins.A[1] & 2) != 0 ? "true" : "false")});");
@@ -3914,7 +3928,7 @@ namespace fire.Native
                     string typeName = chunk.Constants[ins.A[0]].AsString();
                     string test = typeName switch
                     {
-                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
+                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "word" => "K_Word", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
                     };
                     if (test == "K_Int") E($"{S(d - 1)} = Bool({S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0);");   // (an enum is not an int)
                     else if (test.Length > 0) E($"{S(d - 1)} = Bool({S(d - 1)}.kind == {test});");
@@ -4902,12 +4916,18 @@ namespace fire.Native
                     Need(1);
                     // `int[8] a[] = new int[n]` (TypeArray right after): the packed array is made at once (its TypeArray then finds it typed already)
                     int at = f.IndexOf[ins.Addr] + 1;
-                    if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
+                    if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } bytes && bytes.A[1] == 1 && bytes.A[0] == ArrayElem.U8)
+                        // `byte a[] = new int[n]`: a `byte` declaration holds a buffer (SPEC 8.4.2) - of n zeros, as the conversion of n undefined elements gives
+                        E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});");
+                    else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
                         E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {typed.A[0]}, {TypeArrayUnitArgs(chunk, typed.A[2])}, &{OwnerList()});");
                     else
                         E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});");
                     SetR(d - 1, true); return Next();
                 }
+                case OpCode.TypeArray when ins.A[0] == ArrayElem.U8:
+                    // a `byte` declaration holds a byte buffer (SPEC 8.4.2): an array stored there becomes one (fire_rt.h bufFromArray)
+                    Need(1); E($"{S(d - 1)} = typeBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
                 case OpCode.TypeArray:
                     Need(1); E($"typeArray({S(d - 1)}, {ins.A[0]}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2])}, 1);"); Check(); return Next();
                 case OpCode.MakeBuffer:

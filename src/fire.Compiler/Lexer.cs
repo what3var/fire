@@ -93,6 +93,7 @@ namespace fire.Compiler
             ["char"] = TokenType.KwChar,
             ["string"] = TokenType.KwString,
             ["byte"] = TokenType.KwByte,
+            ["word"] = TokenType.KwWord,
             ["and"] = TokenType.And,
             ["or"] = TokenType.Or,
         };
@@ -347,7 +348,14 @@ namespace fire.Compiler
             }
             else
             {
-                long value = long.Parse(numberText, CultureInfo.InvariantCulture);
+                // up to 2^63-1 an int; up to 2^64-1 the same 64 bits as a hex literal has them (two's complement: `18446744073709551615` is -1 as an int and the
+                // largest 64-bit word, SPEC 8.10); beyond that an error
+                if (!long.TryParse(numberText, NumberStyles.None, CultureInfo.InvariantCulture, out long value))
+                {
+                    if (!ulong.TryParse(numberText, NumberStyles.None, CultureInfo.InvariantCulture, out ulong wide))
+                        throw new LexException($"The whole number '{numberText}' does not fit into 64 bits", line, col);
+                    value = unchecked((long)wide);
+                }
                 return new Token(TokenType.IntLiteral, lexeme, line, col, unitSuffix, value, newlineBefore);
             }
         }

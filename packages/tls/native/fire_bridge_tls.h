@@ -88,8 +88,7 @@ static FireTlsSession* fire_tlsb_session(Value h) {
     if (s == NULL) fire_tlsb_fail(FIRE_NET_E_INVALID_HANDLE, "Invalid or already closed TLS session.");
     return s;
 }
-static int fire_tlsb_checkRange(Value bufferValue, int64_t offset, int64_t count) {
-    int64_t length = bufOf(bufferValue)->length;
+static int fire_tlsb_checkRange(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         char text[176];
         snprintf(text, sizeof text, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
@@ -203,11 +202,12 @@ static Value fire_tls_Read(Value h, Value buffer, Value offset, Value count, Val
     FireTlsSession* s;
     FireNetStatus st;
     int got = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_tlsb_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    Buf* b = bufferArg(buffer, "Net.Stream.Read");
+    if (b == NULL) return Undef();
+    if (!fire_tlsb_checkRange(b->length, offset.i, count.i)) return Int(-1);
     s = fire_tlsb_session(h);
     if (s == NULL) return Int(-1);
-    if (!fire_tls_readSome(s, bufOf(buffer)->data + offset.i, (int)count.i, timeoutMs.i, &got, &st)) return Int(fire_tlsb_failStatus(&st));
+    if (!fire_tls_readSome(s, b->data + offset.i, (int)count.i, timeoutMs.i, &got, &st)) return Int(fire_tlsb_failStatus(&st));
     fire_tlsb_ok();
     return Int(got);
 }
@@ -217,11 +217,12 @@ static Value fire_tls_Write(Value h, Value buffer, Value offset, Value count, Va
     FireTlsSession* s;
     FireNetStatus st;
     int sent = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_tlsb_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    FireBytes b;
+    if (!bytesArg(buffer, "Net.Stream.Write", &b)) return Undef();
+    if (!fire_tlsb_checkRange(b.length, offset.i, count.i)) return Int(-1);
     s = fire_tlsb_session(h);
     if (s == NULL) return Int(-1);
-    if (!fire_tls_writeSome(s, bufOf(buffer)->data + offset.i, (int)count.i, timeoutMs.i, &sent, &st)) return Int(fire_tlsb_failStatus(&st));
+    if (!fire_tls_writeSome(s, b.data + offset.i, (int)count.i, timeoutMs.i, &sent, &st)) return Int(fire_tlsb_failStatus(&st));
     fire_tlsb_ok();
     return Int(sent);
 }

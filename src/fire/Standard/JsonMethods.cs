@@ -292,6 +292,7 @@ namespace fire.Standard
                     case ValueKind.Float:
                         WriteNumber(v, unit);
                         return;
+                    case ValueKind.Word: _sb.Append(v.AsWord().ToString(CultureInfo.InvariantCulture)); return;   // (a number, unsigned)
                     case ValueKind.String: WriteString(v.AsString()); return;
                     case ValueKind.Char:
                         if (type == "char") WriteString(v.AsChar().ToString());
@@ -684,6 +685,11 @@ namespace fire.Standard
                         throw new JsonError($"{path}: expected a whole number, found {text}.");
                     case "float": case "double": case "float32": case "float64":
                         return Value.MakeFloat(double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture), unit);
+                    case "word":
+                        // a machine word (SPEC 8.10): a whole number up to 2^64-1 (a negative one in two's complement), cut to the width
+                        if (isInt && ulong.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out ulong u)) return Value.MakeWord(u);
+                        if (isInt && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long sw)) return Value.MakeWord(unchecked((ulong)sw));
+                        throw new JsonError($"{path}: expected a whole number, found {text}.");
                     case "": case "any":
                         if (isInt && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long l)) return Value.MakeInt(l, unit);
                         return Value.MakeFloat(double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture), unit);

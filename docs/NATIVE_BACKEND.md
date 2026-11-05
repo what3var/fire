@@ -140,7 +140,8 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Speicher berührt wird. Mit `#performance` definiert der Generator `FIRE_UNCHECKED`: keine Tabelle, keine Prüfung (undefiniert, wie in der VM-Doku).
   **Objekte** haben dasselbe Handle (siehe oben).
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
-  `char`, `byte`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
+  `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
+  mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
   und die Daten - eine C-Zahl pro Element statt eines `Value`. `undefined` ist ein Merker (ein selten benutzter Wert des Typs: `INT8_MIN`, ein NaN mit
   festem Payload, `0xFF`, `0xFFFF`, bei `bool` die 2); nur wenn er als echte Zahl gespeichert wird, setzt das ein Bit in `real` (dann angelegt). Gelesen wird
   die Maske also nur, wenn der Merker gefunden wird (`arrPackedGet`). `OpCode.TypeArray` wird `typeArray(...)` (wandelt die Elemente um und packt);

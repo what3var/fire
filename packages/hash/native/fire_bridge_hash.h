@@ -339,16 +339,16 @@ static Value fire_hash_Init(Value algo, OwnList* list) {
 static Value fire_hash_Update(Value state, Value data, Value offset, Value count) {
     FireHashCtx c;
     int64_t length;
+    FireBytes bytes;
     if (!fire_hashb_load(state, &c)) return Undef();
-    if (data.kind != K_Buffer) return fireError("ArgumentException", "The data to hash must be a byte buffer.");
-    if (!leafAlive(data)) return destroyedError(data);
-    length = bufOf(data)->length;
+    if (!bytesArg(data, "Hash.Hasher.Update", &bytes)) return Undef();
+    length = bytes.length;
     if (offset.i < 0 || count.i < 0 || offset.i > length || count.i > length - offset.i) {
         char text[160];
         snprintf(text, sizeof text, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset.i, (long long)count.i, (long long)length);
         return fireError("ArgumentException", text);
     }
-    fire_hash_update(&c, bufOf(data)->data + offset.i, (size_t)count.i);
+    fire_hash_update(&c, bytes.data + offset.i, (size_t)count.i);
     fire_hashb_store(state, &c);
     return Bool(true);
 }
@@ -395,16 +395,14 @@ static Value fire_hash_Final(Value state, OwnList* list) {
 /* The bytes as lower-case hex digits. */
 static Value fire_hash_ToHex(Value data, OwnList* list) {
     static const char digits[] = "0123456789abcdef";
-    Buf* b;
+    FireBytes b;
     Str* s;
     uint32_t i;
-    if (data.kind != K_Buffer) return fireError("ArgumentException", "Only a byte buffer can be written as hex.");
-    if (!leafAlive(data)) return destroyedError(data);
-    b = bufOf(data);
-    s = allocStr(b->length * 2, list);
-    for (i = 0; i < b->length; i++) {
-        strChars(s)[2 * i] = (fire_char16)digits[b->data[i] >> 4];
-        strChars(s)[2 * i + 1] = (fire_char16)digits[b->data[i] & 15];
+    if (!bytesArg(data, "Hash.Hex.Encode", &b)) return Undef();
+    s = allocStr(b.length * 2, list);
+    for (i = 0; i < b.length; i++) {
+        strChars(s)[2 * i] = (fire_char16)digits[b.data[i] >> 4];
+        strChars(s)[2 * i + 1] = (fire_char16)digits[b.data[i] & 15];
     }
     return StrV(s);
 }
@@ -447,17 +445,12 @@ static Value fire_hash_FromHex(Value text, OwnList* list) {
 
 /* Whether two buffers hold the same bytes, in a time that depends only on the length (for comparing digests and MACs). */
 static Value fire_hash_Equal(Value a, Value b) {
-    Buf* x;
-    Buf* y;
+    FireBytes x, y;
     uint32_t i;
     uint8_t diff = 0;
-    if (a.kind != K_Buffer || b.kind != K_Buffer) return fireError("ArgumentException", "Only byte buffers can be compared.");
-    if (!leafAlive(a)) return destroyedError(a);
-    if (!leafAlive(b)) return destroyedError(b);
-    x = bufOf(a);
-    y = bufOf(b);
-    if (x->length != y->length) return Bool(false);
-    for (i = 0; i < x->length; i++) diff |= (uint8_t)(x->data[i] ^ y->data[i]);
+    if (!bytesArg(a, "Hash.Bytes.Equal", &x) || !bytesArg(b, "Hash.Bytes.Equal", &y)) return Undef();
+    if (x.length != y.length) return Bool(false);
+    for (i = 0; i < x.length; i++) diff |= (uint8_t)(x.data[i] ^ y.data[i]);
     return Bool(diff == 0);
 }
 

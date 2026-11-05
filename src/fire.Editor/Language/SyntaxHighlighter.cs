@@ -81,7 +81,7 @@ namespace fire.Editor
         private static readonly HashSet<TokenType> TypeKeywords = new()
         {
             TokenType.KwBool, TokenType.KwInt, TokenType.KwFloat, TokenType.KwChar, TokenType.KwString,
-            TokenType.KwByte,
+            TokenType.KwByte, TokenType.KwWord,
         };
 
         /// <summary>Like <see cref="Highlight(string)"/>, and the lines of branches of `#if` that are not taken under <paramref name="symbols"/> are greyed out (SPEC 8.1.7): what is in them is

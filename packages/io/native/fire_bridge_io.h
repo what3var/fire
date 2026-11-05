@@ -166,8 +166,7 @@ static FireStream* fire_io_find(Value h) {
     fire_io_fail(FIRE_IO_INVALID_HANDLE, "Invalid or already closed stream handle.");
     return NULL;
 }
-static int fire_io_checkRange(Value bufferValue, int64_t offset, int64_t count) {
-    int64_t length = bufOf(bufferValue)->length;
+static int fire_io_checkRange(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         char text[176];
         snprintf(text, sizeof text, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
@@ -337,16 +336,15 @@ static int fire_io_memReserve(FireStream* s, int64_t size) {
 }
 static Value fire_io_MemFromBuffer(Value buffer) {
     FireStream* s;
-    Buf* b;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    FireBytes b;
+    if (!bytesArg(buffer, "IO.MemoryStream", &b)) return Undef();
     s = fire_io_newStream(FIRE_IO_MEMORY);
     if (s == NULL) return Int(fire_io_fail(FIRE_IO_OTHER, "Out of memory."));
     s->canRead = s->canWrite = s->canSeek = 1;
-    b = bufOf(buffer);
-    if (b->length > 0) {
-        if (!fire_io_memReserve(s, b->length)) { fire_io_freeStream(s); return Int(fire_io_fail(FIRE_IO_OTHER, "Out of memory.")); }
-        memcpy(s->mem, b->data, b->length);
-        s->memSize = b->length;
+    if (b.length > 0) {
+        if (!fire_io_memReserve(s, b.length)) { fire_io_freeStream(s); return Int(fire_io_fail(FIRE_IO_OTHER, "Out of memory.")); }
+        memcpy(s->mem, b.data, b.length);
+        s->memSize = b.length;
     }
     fire_io_ok();
     return Int(fire_io_add(s));
@@ -405,22 +403,24 @@ static int64_t fire_io_writeBytes(FireStream* s, const uint8_t* data, int64_t co
 static Value fire_io_Read(Value h, Value buffer, Value offset, Value count) {
     FireStream* s;
     int64_t n;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_io_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    Buf* b = bufferArg(buffer, "IO.Stream.Read");
+    if (b == NULL) return Undef();
+    if (!fire_io_checkRange(b->length, offset.i, count.i)) return Int(-1);
     s = fire_io_find(h);
     if (s == NULL) return Int(-1);
-    n = fire_io_readBytes(s, bufOf(buffer)->data + offset.i, count.i);
+    n = fire_io_readBytes(s, b->data + offset.i, count.i);
     if (n >= 0) fire_io_ok();
     return Int(n);
 }
 static Value fire_io_Write(Value h, Value buffer, Value offset, Value count) {
     FireStream* s;
     int64_t n;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_io_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    FireBytes b;
+    if (!bytesArg(buffer, "IO.Stream.Write", &b)) return Undef();
+    if (!fire_io_checkRange(b.length, offset.i, count.i)) return Int(-1);
     s = fire_io_find(h);
     if (s == NULL) return Int(-1);
-    n = fire_io_writeBytes(s, bufOf(buffer)->data + offset.i, count.i);
+    n = fire_io_writeBytes(s, b.data + offset.i, count.i);
     if (n >= 0) fire_io_ok();
     return Int(n);
 }
@@ -938,9 +938,10 @@ static Value fire_io_StdReadAll(OwnList* list) {
 static Value fire_io_BufferIndexOf(Value buffer, Value offset, Value count, Value value) {
     const uint8_t* start;
     const void* hit;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_io_checkRange(buffer, offset.i, count.i)) return Int(-1);
-    start = bufOf(buffer)->data + offset.i;
+    FireBytes b;
+    if (!bytesArg(buffer, "IO.Buffer.IndexOf", &b)) return Undef();
+    if (!fire_io_checkRange(b.length, offset.i, count.i)) return Int(-1);
+    start = b.data + offset.i;
     hit = count.i > 0 ? memchr(start, (int)(value.i & 0xFF), (size_t)count.i) : NULL;
     fire_io_ok();
     return Int(hit ? offset.i + ((const uint8_t*)hit - start) : -1);
@@ -954,10 +955,11 @@ static Value fire_io_Utf8Encode(Value text, OwnList* list) {
     return BufV(b);
 }
 static Value fire_io_Utf8Decode(Value buffer, Value offset, Value count, OwnList* list) {
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_io_checkRange(buffer, offset.i, count.i)) return Undef();
+    FireBytes b;
+    if (!bytesArg(buffer, "IO.Utf8.GetString", &b)) return Undef();
+    if (!fire_io_checkRange(b.length, offset.i, count.i)) return Undef();
     fire_io_ok();
-    return fire_io_str8n(bufOf(buffer)->data + offset.i, (size_t)count.i, 1, list);   /* (a byte order mark at the start is dropped) */
+    return fire_io_str8n(b.data + offset.i, (size_t)count.i, 1, list);   /* (a byte order mark at the start is dropped) */
 }
 /* Lines (\n, \r\n, \r); a line break at the end does not make an empty last line. */
 static Value fire_io_SplitLines(Value text, OwnList* list) {

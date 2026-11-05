@@ -46,25 +46,27 @@ runtime `fire_rt.h` compiled as C++, and the C++ platform layer), so it includes
 
 namespace fire {
 
-// crc8(buffer) -> int
-inline Value sk_crc8(Value buffer) {
-    Buf* b = bufOf(buffer);                       // a byte buffer
+// crc8(bytes) -> int
+inline Value sk_crc8(Value data) {
+    FireBytes b;                                  // a byte buffer or an array of bytes (section 2, "Bytes as arguments")
+    if (!bytesArg(data, "Sensorkit.Crc8", &b)) return Undef();
     uint8_t crc = 0;
-    for (uint32_t i = 0; i < b->length; i++) {
-        crc ^= b->bytes()[i];
+    for (uint32_t i = 0; i < b.length; i++) {
+        crc ^= b.data[i];
         for (int bit = 0; bit < 8; bit++) crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
     }
     return Int(crc);
 }
 
-// hex(buffer) -> string        (takes the list of the scope: it allocates the string)
-inline Value sk_hex(Value buffer, OwnList* list) {
-    Buf* b = bufOf(buffer);
-    Str* s = allocStr(b->length * 2, list);
+// hex(bytes) -> string        (takes the list of the scope: it allocates the string)
+inline Value sk_hex(Value data, OwnList* list) {
+    FireBytes b;
+    if (!bytesArg(data, "Sensorkit.Hex", &b)) return Undef();
+    Str* s = allocStr(b.length * 2, list);
     static const char digits[] = "0123456789abcdef";
-    for (uint32_t i = 0; i < b->length; i++) {
-        strChars(s)[2 * i] = digits[b->bytes()[i] >> 4];
-        strChars(s)[2 * i + 1] = digits[b->bytes()[i] & 15];
+    for (uint32_t i = 0; i < b.length; i++) {
+        strChars(s)[2 * i] = digits[b.data[i] >> 4];
+        strChars(s)[2 * i + 1] = digits[b.data[i] & 15];
     }
     return StrV(s);
 }
@@ -128,6 +130,35 @@ parts you need most:
 | errors | `return indexError("Array index", i, length);` throws an `IndexOutOfBoundsException` in a native build; `fatal("text")` ends the program (native build) or reports an error to the VM (library). Check your arguments (`v.kind`) and fail with `fatal`; to let the script catch the error, throw an exception of your prelude: `return fireError("SensorException", "text");` (list the class in `exceptions`). |
 
 `Real` is `double`, or `float` with `#floatwidth 32`. A value of another kind than you expect is your bug to catch: the generated code does not check the kind of the arguments for you.
+
+### Bytes as arguments
+
+Never take `bufOf(v)` of an argument unchecked: it does not look at the kind, and an array, a string or a number there is read as a buffer - the program (or the VM, which
+runs the same C) crashes. Two functions of the runtime check a byte argument and give the same `ArgumentException` texts in both engines:
+
+| | |
+|---|---|
+| `bool bytesArg(Value v, const char* what, FireBytes* out)` | for a native that **reads** the bytes (writes, sends, hashes, compresses, queues them). It takes everything that is bytes: a byte buffer (`out->data` is its own memory), an array of ints from 0 to 255 - a plain one or a typed one (a copy made for the call). `out->data` / `out->length` are the bytes (`const uint8_t*`, `uint32_t`). |
+| `Buf* bufferArg(Value v, const char* what)` | for a native that **fills** the buffer it gets (reads into it, receives, decodes into it, changes it in place): only a real buffer (`new byte[n]`); an array is an `ArgumentException` (`<what> expects a byte buffer (new byte[n]), not an array.`) - it would be filled in a copy nobody sees. |
+
+Both check that the buffer or array is not destroyed (a `DestroyedException`) and that it is bytes at all (`<what> expects bytes (a byte buffer or an array of ints from 0 to 255), not
+String.`, `<what>: element 1 of the array is 256 - a byte is an int from 0 to 255.`). On a failure the exception is thrown - `bytesArg` returns false, `bufferArg` NULL - and the native returns
+at once, with any value:
+
+```c
+static Value fire_sk_Send(Value h, Value data, Value offset, Value count) {
+    FireBytes b;
+    if (!bytesArg(data, "Sensorkit.Send", &b)) return Undef();
+    if (offset.i < 0 || count.i < 0 || offset.i > b.length || count.i > b.length - offset.i) return Int(-1);   /* (the range: your own check) */
+    return Int(sk_send(h.i, b.data + offset.i, (size_t)count.i));
+}
+```
+
+`what` names the function in the message (the name the script knows, e.g. `"IO.Stream.Write"`). Take the arguments **before** you allocate memory or take a lock: in the library for the VM an
+exception does not come back to your function (it jumps to the wrapper of the entry point), so what you hold then is lost. The copy of an array lives until the scope that called the native is left
+(it is a temporary of the pool, like a string the native makes) - a native that keeps the bytes **beyond the call** (a queue, a texture, a module it parses) copies them, as it must for a buffer anyway
+(the program may change or delete it). A native that reads *or* fills depending on an argument (a USB transfer: the direction bit) picks the function by it (`fire_usbb_bytes` in
+`packages/usb/native/fire_bridge_usb.h`).
 
 ## 3. Platforms
 
@@ -248,6 +279,7 @@ On Linux and macOS the toolchain has to come from the package manager (`g++`/`cl
 
 1. The function is `inline Value name(Value ...)` (and `OwnList* list` last, if it allocates) in `namespace fire`, in a header that includes what it uses.
 2. Everything you allocate for the result is allocated in `list`.
+2b. Byte arguments go through `bytesArg` (read) or `bufferArg` (filled) - never `bufOf` unchecked (section 2, "Bytes as arguments").
 3. The prelude wraps the natives; the natives are called by their package names.
 4. Code for one system lives in `platformSources` or behind `FIRE_TARGET_*` / `FIRE_HAL_*`.
 5. Try both engines: `fire.Compiler run script.fire` (VM, library) and `fire.Compiler build script.fire --engine native -t linux`.

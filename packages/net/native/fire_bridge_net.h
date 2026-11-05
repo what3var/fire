@@ -138,8 +138,7 @@ static FireNetSocket* fire_net_findKind(Value h, int kind, const char* what) {
     fire_net_error(FIRE_NET_E_INVALID_ARGUMENT, text);
     return NULL;
 }
-static int fire_net_checkRange(Value bufferValue, int64_t offset, int64_t count) {
-    int64_t length = bufOf(bufferValue)->length;
+static int fire_net_checkRange(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         char text[176];
         snprintf(text, sizeof text, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
@@ -157,8 +156,6 @@ static int fire_net_checkPort(int64_t port, int allowZero) {
     }
     return 1;
 }
-/* The bytes of a buffer from `offset` (the range is checked). */
-static uint8_t* fire_net_bytes(Value buffer, int64_t offset) { return bufOf(buffer)->data + offset; }
 
 /* ---- the host: which hosts and ports a script may talk to ------------------------------------------------------------------------------------ */
 static int fire_net_allowed(const char* host, int port, int access, char* reason, size_t size) {
@@ -288,11 +285,12 @@ static Value fire_net_Send(Value h, Value buffer, Value offset, Value count, Val
     FireNetSocket* s;
     FireNetStatus st;
     int sent = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_net_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    FireBytes b;
+    if (!bytesArg(buffer, "Net.TcpClient.Write", &b)) return Undef();
+    if (!fire_net_checkRange(b.length, offset.i, count.i)) return Int(-1);
     s = fire_net_findKind(h, FIRE_NET_K_TCP, "a connection");
     if (s == NULL) return Int(-1);
-    if (!fire_net_sendBytes(s->fd, fire_net_bytes(buffer, offset.i), (int)count.i, timeoutMs.i, &sent, &st)) return Int(fire_net_errorStatus(&st));
+    if (!fire_net_sendBytes(s->fd, b.data + offset.i, (int)count.i, timeoutMs.i, &sent, &st)) return Int(fire_net_errorStatus(&st));
     fire_net_ok();
     return Int(sent);
 }
@@ -302,11 +300,12 @@ static Value fire_net_Recv(Value h, Value buffer, Value offset, Value count, Val
     FireNetSocket* s;
     FireNetStatus st;
     int got = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_net_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    Buf* b = bufferArg(buffer, "Net.TcpClient.Read");
+    if (b == NULL) return Undef();
+    if (!fire_net_checkRange(b->length, offset.i, count.i)) return Int(-1);
     s = fire_net_findKind(h, FIRE_NET_K_TCP, "a connection");
     if (s == NULL) return Int(-1);
-    if (!fire_net_recvBytes(s->fd, fire_net_bytes(buffer, offset.i), (int)count.i, timeoutMs.i, &got, &st)) return Int(fire_net_errorStatus(&st));
+    if (!fire_net_recvBytes(s->fd, b->data + offset.i, (int)count.i, timeoutMs.i, &got, &st)) return Int(fire_net_errorStatus(&st));
     fire_net_ok();
     return Int(got);
 }
@@ -332,15 +331,16 @@ static Value fire_net_SendTo(Value h, Value buffer, Value offset, Value count, V
     FireNetStatus st;
     char* to;
     int sent = 0, done;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_net_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    FireBytes b;
+    if (!bytesArg(buffer, "Net.UdpSocket.SendTo", &b)) return Undef();
+    if (!fire_net_checkRange(b.length, offset.i, count.i)) return Int(-1);
     if (!fire_net_checkPort(port.i, 0)) return Int(-1);
     s = fire_net_findKind(h, FIRE_NET_K_UDP, "a datagram socket");
     if (s == NULL) return Int(-1);
     to = fire_net_host(host, 1);
     if (to == NULL) return Int(-1);
     if (!fire_net_authorize(to, (int)port.i, FIRE_NET_A_CONNECT)) { free(to); return Int(-1); }
-    done = fire_net_sendDatagram(s->fd, fire_net_bytes(buffer, offset.i), (int)count.i, to, (int)port.i, &sent, &st);
+    done = fire_net_sendDatagram(s->fd, b.data + offset.i, (int)count.i, to, (int)port.i, &sent, &st);
     free(to);
     if (!done) return Int(fire_net_errorStatus(&st));
     fire_net_ok();
@@ -353,11 +353,12 @@ static Value fire_net_RecvFrom(Value h, Value buffer, Value offset, Value count,
     FireNetStatus st;
     char from[96];
     int got = 0, fromPort = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_net_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    Buf* b = bufferArg(buffer, "Net.UdpSocket.ReceiveFrom");
+    if (b == NULL) return Undef();
+    if (!fire_net_checkRange(b->length, offset.i, count.i)) return Int(-1);
     s = fire_net_findKind(h, FIRE_NET_K_UDP, "a datagram socket");
     if (s == NULL) return Int(-1);
-    if (!fire_net_recvDatagram(s->fd, fire_net_bytes(buffer, offset.i), (int)count.i, timeoutMs.i, &got, from, sizeof from, &fromPort, &st)) return Int(fire_net_errorStatus(&st));
+    if (!fire_net_recvDatagram(s->fd, b->data + offset.i, (int)count.i, timeoutMs.i, &got, from, sizeof from, &fromPort, &st)) return Int(fire_net_errorStatus(&st));
     snprintf(s->peerHost, sizeof s->peerHost, "%s", from);
     s->peerPort = fromPort;
     fire_net_ok();

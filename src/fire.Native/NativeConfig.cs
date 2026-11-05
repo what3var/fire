@@ -242,6 +242,8 @@ namespace fire.Native
         public int? FloatWidth { get; set; }
         /// <summary>Width of `int` (32 or 64; default 64).</summary>
         public int? IntWidth { get; set; }
+        /// <summary>Width of `word`, the machine word (16, 32 or 64; default: the base target's - 64 on the desktop, 32 on esp32/freertos/wasm).</summary>
+        public int? WordWidth { get; set; }
         /// <summary>Stack of a fire thread in bytes.</summary>
         public int? StackBytes { get; set; }
         /// <summary>The `#import` libraries that exist on the target; null: as the base.</summary>
@@ -296,6 +298,7 @@ namespace fire.Native
                 Symbols = Symbols ?? b.Symbols,
                 FloatWidth = FloatWidth ?? b.FloatWidth,
                 IntWidth = IntWidth ?? b.IntWidth,
+                WordWidth = WordWidth is null or 16 or 32 or 64 ? WordWidth ?? b.WordWidth : throw new NativeConfigException($"Target '{name}': \"wordWidth\" must be 16, 32 or 64, not {WordWidth}."),
                 DefaultStackBytes = StackBytes ?? b.DefaultStackBytes,
                 Imports = Imports ?? b.Imports,
                 IsEmbedded = Embedded ?? b.IsEmbedded,

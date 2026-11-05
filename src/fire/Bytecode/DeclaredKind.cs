@@ -61,6 +61,11 @@ namespace fire.Bytecode
                 value = Value.MakeFloat(value.AsInt(), value.Unit);
                 return null;
             }
+            if (ValueKindOf(required) == ValueKind.Float && value.Kind == ValueKind.Word)
+            {
+                value = Value.MakeFloat(Value.WordToDouble(value.AsWord()));   // (a word as its unsigned value)
+                return null;
+            }
             string expected = ValueKindOf(required) switch { ValueKind.Int => "an int", ValueKind.Float => "a float", _ => "a bool" };
             return $"{what} is {expected}, not {value.Kind}.";
         }
