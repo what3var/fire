@@ -46,6 +46,7 @@ The build defines these symbols:
 | `esp32`, `freertos` | the board of a native target |
 | `vm`, `native` | the engine: the virtual machine or a native (C++) build |
 | `float32` | `float` has 32 bits |
+| `word16`, `word32`, `word64` | the width of `word`, the machine word of the target (64 on the desktop, 32 on the ESP32) |
 | your own | `-D NAME` on the command line, `symbols` of a target in `fire.native.json`, `#define` |
 
 ## Settings of the program

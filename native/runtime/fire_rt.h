@@ -4817,6 +4817,7 @@ FIRE_FN Value arrayGet(Value a, Value i) {
         if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) return indexError("Array index", i.i, arr->length);
         return arrElemGet(arr, (uint32_t)i.i);
     }
+    if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) return arrayGet(a, Int((int64_t)(uint64_t)i.w));   /* (a word as an index: its bits as an int) */
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Buffer) {
         Buf* b;
@@ -4861,6 +4862,7 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
         release(old);
         return v;
     }
+    if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) return arraySet(a, Int((int64_t)(uint64_t)i.w), v);   /* (a word as an index: its bits as an int) */
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Buffer) {
         Buf* b;
@@ -4991,6 +4993,7 @@ FIRE_FN void requireRef(Value v, const char* name) {
 
 /* `x[i]` as a `ref` argument. */
 FIRE_FN Value addressOfIndex(Value a, Value i) {
+    if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) i = Int((int64_t)(uint64_t)i.w);   /* (a word as an index: its bits as an int) */
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Array) {
         Arr* arr;

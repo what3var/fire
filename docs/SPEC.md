@@ -1535,6 +1535,7 @@ never lexed, parsed or checked, so they may use libraries, classes or syntax tha
   `fire.native.json` lists under `symbols`;
 * the engine: `vm` or `native`;
 * `float32` when `float` has 32 bits (`-f 32` or the default of the target; `#floatwidth` is read after the symbols are needed);
+* `word16`, `word32` or `word64`: the width of `word`, the target's machine word (8.10a; `wordWidth` of the target);
 * `-D NAME` on the command line (repeatable, also `--define NAME`, `-DNAME`).
 
 The VM that runs a script in the editor uses the machine it runs on (`windows`, `linux` or `macos`, `vm`), so the same script does the same thing in the editor and
@@ -1609,6 +1610,13 @@ stored as it is. `byte` keeps `0`...`255` (unsigned), `int[N]` wraps in two's
 complement, `float[32]`/`float[16]`/`float[8]` round. `print` shows the stored value
 (`float[16] h = 0.1` prints `0.0999755859375`).
 
+**Raw data without a unit: `byte` and `word`.** `int`, `int[N]`, `float` and `float[N]` carry units (3.x) as before.
+`byte` and `word` (8.10a) are raw data: they have **no unit**. A unit at them - a value with a unit stored there
+(`byte b = 5m`, `word w = 3s`, `byte data[] = [1m]`), a unit at the declaration (`byte b : m`, a field, a parameter) - is
+the type checker's `TC017`, an error in lax mode too (take the number with `::unitless`). A value whose unit the checker
+cannot see (`any x = 5m; byte b = x`) loses its unit when it is stored: the stored value never has one (the VM and natively).
+A word also goes into a `byte` (and an `int[N]`): cut like an int.
+
 #### 8.2.1 Program-wide float precision (`#floatwidth`)
 
 ```
@@ -1642,6 +1650,7 @@ target's `intWidth` in `fire.native.json`; `#if int32` sees the width the comman
 later than the symbols). Natively, `#intwidth 32` together with `#floatwidth 32` on a target with 32-bit pointers (a
 microcontroller) makes every value 8 bytes instead of 16 (`FIRE_COMPACT`): fields, array elements, variables and stack slots take
 half the memory - such a program can have up to 65535 objects, arrays and buffers alive at once and up to 65535 different units.
+(A target whose `word` has 64 bits - 8.10a - keeps 16-byte values.)
 
 ### 8.3 Pointers & `unsafe`
 
@@ -1765,6 +1774,7 @@ bool flags[8]
 char text[16]
 float:cm sizes[] = [1cm, 2m] // the elements are converted into cm
 byte raw[64]                 // NOT a typed array: a byte buffer (new byte[64]), see below
+word regs[8]                 // NOT a typed array either: a buffer of machine words (new word[8]), see below
 ```
 
 An array stored in a variable or a field declared with the element type `int`, `int[8|16|32|64]`, `float`,
@@ -1802,6 +1812,18 @@ same; an element is always an `int` 0..255 - it cannot be `undefined` (a new buf
 (an array: `<array>`), JSON writes a buffer as base64 (`{"$buffer":"..."}`, a field declared `byte data[]`: the base64
 string), and the buffer has the methods of 8.10 (`ToString()`, `littleEndian`, ...). `ref x[i]` gives a pointer to a byte.
 The VM and the native backend behave the same (VM.BufferFromArrayValue, fire_rt.h bufFromArray).
+
+**`word` declarations hold buffers of machine words** (8.10a), the same way: `word w[8]` (variable, field, static field,
+global, the innermost arrays of `word m[2][3]`) is `new word[8]` (eight zero words), and an array stored in a `word`
+declaration becomes a new buffer of words with its elements - an `int` cut to the width of a word (two's complement:
+`-1` is the largest word), a `word` as it is, `undefined` 0, anything else an `ArgumentException` (`An element of a word
+buffer must be an int or a word, not String.`). An element read is a `word`; a write takes an `int` or a `word` (cut) and
+yields the stored word; `length` counts words; `foreach`, `copy`/`flat`, `++` work as for bytes; `print` shows `<buffer 8
+words>`. A word buffer is no bytes: the natives that read or fill bytes refuse it (`... expects bytes (a byte buffer or an
+array of ints from 0 to 255), not a word buffer.`), `ref w[i]` is an `ArgumentException`, and JSON writes it as an array of
+numbers (unsigned; a field declared `word data[]` reads one back into a word buffer). The words lie in memory in the byte
+order of the machine, each `Word.Bits / 8` bytes wide - **the size of a word buffer in bytes depends on the target** (2, 4 or
+8 bytes per word): what is written to a file or the network from its memory is platform dependent, as in C.
 
 **Bytes as arguments of natives.** A native of a package that **reads** bytes (writing a file or a stream, sending over
 the network or a bus, hashing, compressing, a queued `Spi.Sim.Reply`, ...) accepts everything that is bytes: a byte
@@ -2112,7 +2134,8 @@ IO (serial, network, files).
 explicit bit width directly after `byte` is therefore an error, it would be
 redundant) - a single element of a buffer (`buf[i]`) is thus
 simply a perfectly normal `int` value with this width, no
-special representation.
+special representation. Unlike `int[8]`, a `byte` is raw data **without a unit**
+(8.2): a unit at it is `TC017`, a stored value loses its unit (`x!byte` too).
 
 **`new byte[n]`** creates the buffer (deliberately only one-dimensional - unlike
 normal arrays there is no `new byte[n][m]`), with `n` bytes initialized to `0`
@@ -2171,6 +2194,65 @@ a RuntimeClass applies. These conversions are therefore perfectly normal
 method calls, not operators/special syntax - the operator
 overloading of `SPEC 5.11` remains unaffected (different opcodes: `CallMethod`
 here, `BinaryNumericOrOperator` there).
+
+### 8.10a The machine word (`word`)
+
+```
+word w = -1             // the largest word of the target: 18446744073709551615 on the desktop, 4294967295 on the ESP32
+word h = w / 2 + 1      // 9223372036854775808 - unsigned, all 64 bits
+print(h > 5)            // True (an unsigned comparison)
+print(Word.Bits)        // 64, 32 or 16: the width on the target the program is built for
+word regs[4]            // a buffer of machine words (8.4.2)
+#if word32
+print("a 32-bit machine")
+#endif
+```
+
+`word` is the **machine word of the target**, **unsigned** and raw data **without a unit** (8.2). Its width is the
+target's: 16 bits (AVR, DOS real mode, Win16 - targets that do not exist yet, the mechanism is there), 32 bits (ESP32,
+FreeRTOS boards such as Cortex-M, wasm, DOS with DPMI, Win9x), 64 bits (x86-64 and ARM64: the targets `windows`, `linux`,
+`macos`). A target of `fire.native.json` sets it with `"wordWidth": 16|32|64` (default: that of the target it extends);
+`#if word16` / `#if word32` / `#if word64` and `Word.Bits` (an `int`, a static field of the class `Word` of the prelude)
+see it. The VM follows the target of the build: `forge run` is the machine itself (64 bits; a target other than the machine
+is always built natively). There is no `word[16]`: a fixed width is `int[16]`, `int[32]` or `int`.
+
+**Representation.** A word is a value of its own kind (`ValueKind.Word` in the VM, `K_Word` natively) that keeps the bits
+of the word (zero above the width) - with 64 bits really all 64 bits, read as an unsigned number: `print`, `ToString`,
+`$"{w}"`, comparisons, division, modulo, `>>` and the conversion to a float are unsigned. An `int` is never a word:
+the operations on ints are not slowed down by words (a word always takes the slow path of the generic operations, which
+compute on words - Value.WordOp, fire_rt.h wordOp), and the type checker knows `word` as a type of its own.
+
+**Rules.**
+
+* **A word on one side makes it an operation on words** (like C's usual conversions for an unsigned type of the rank of
+  `int` or above): `word op word` and `word op int` / `int op word` (`+ - * / % ^ & | # << >>`) give a word - the int is
+  taken as a word (cut to the width in two's complement: `-1` is the largest word), the result is cut to the width (it
+  wraps: the largest word + 1 is 0). `/` and `%` are unsigned (by 0: `DivideByZeroException`), `>>` is a logical shift, a
+  shift by the width or more gives 0, `-w` and `~w` wrap. A negative int exponent (`w ^ -1`) gives a float, like `int ^ int`.
+* **A float on one side makes it a float operation**: the word as its unsigned value (`w * 1.5`, `w < 3.5`).
+* **Comparisons** `< <= > >= == !=` of a word with an int or a word are unsigned (the int taken as a word: `-1 < w` is
+  false for every word, `w == -1` is true for the largest one); with a float by value.
+* **An int with a unit and a word** in one operation is a `UnitMismatchException` (a word has no unit); anything that is
+  no number an `ArgumentException`, as with ints.
+* **Conversions** (`!`, 3.x): `x!word` - an int cut to the width (two's complement), a float rounded to a whole number
+  (half to even; NaN is 0; below -2^63 it is -2^63, from 2^64 on the largest word), a char its code, `undefined` 0, a unit
+  dropped; anything else an `ArgumentException`. `w!int` - the same bits as a signed int (a 64-bit word above 2^63 is
+  negative, a 32-bit word stays positive in a 64-bit int: the bits are zero-extended, like a cast in C; with `#intwidth 32`
+  they are cut to 32). `w!float` - the unsigned value. `w!byte`, `w!int[16]` cut like an int. `w is of word` is true.
+* **Declarations**: `word w = x` converts an int (and keeps a word; a store into a word variable, field or parameter
+  converts the same way); `float f = w` and `byte b = w` take a word (as its unsigned value / cut). The type checker lets an
+  `int` go into a `word` and a `word` into a `float` or a `byte`; a `word` into an `int` wants `w!int` (TC001), a float
+  into a word too.
+* A word is an index too (`a[w]`, `buffer[w]`, `text[w]`): its bits as an int.
+* Decimal literals go up to 2^64-1 (`18446744073709551615`: the 64 bits, an int `-1`, like the hex literal
+  `0xFFFFFFFFFFFFFFFF`); beyond that the literal is an error.
+* `$"{w:X}"`, `D`, `B`, `F`, `E` format a word unsigned; JSON writes it as a number (a `word` field reads one up to
+  2^64-1); a word is a key of a `Dictionary` (equal to an int with the same bits).
+
+A word passed to a native function of a package arrives as a word (`K_Word`; through the C ABI of the VM `FIRE_WORD`). A
+native reads machine words from an argument with `wordsArg` (a word buffer without a copy, an array of ints copied -
+docs/PACKAGE_NATIVES.md). Natively the generator writes word arithmetic, comparisons and the elements of buffers it made
+itself out in C (`uintN_t` arithmetic on the bits; NATIVE_BACKEND.md).
 
 ### 8.11 Streams (`#import "io"`) and files (`#import "filesystem"`)
 

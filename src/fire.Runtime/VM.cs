@@ -2122,6 +2122,7 @@ namespace fire.Runtime
             bool isPrefix = ReadByte() != 0;
             var indexVal = Pop();
             var target = Pop();
+            if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             long idx = indexVal.AsInt();
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
 
@@ -3770,6 +3771,7 @@ namespace fire.Runtime
         {
             var indexVal = Pop();
             var target = Pop();
+            if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
@@ -3898,6 +3900,7 @@ namespace fire.Runtime
             var value = Pop();
             var indexVal = Pop();
             var target = Pop();
+            if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
             // a typed array (`int[8] a[]`): the value is converted (the assignment yields the stored value), or it is the exception - before the index is checked, as natively
             if (target.Kind == ValueKind.Array && !ConvertArrayElement(target.AsArray(), ref value)) return;
@@ -4618,7 +4621,8 @@ namespace fire.Runtime
 
                 case OpCode.AddressOfIndex:
                 {
-                    long idx = Pop().AsInt();
+                    var refIndex = Pop();
+                    long idx = (refIndex.Kind == ValueKind.Word ? refIndex.CoerceType(ValueKind.Int) : refIndex).AsInt();
                     var target = Pop();
                     if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); break; }
                     if (target.Kind == ValueKind.Array)

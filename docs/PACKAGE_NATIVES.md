@@ -140,6 +140,7 @@ runs the same C) crashes. Two functions of the runtime check a byte argument and
 |---|---|
 | `bool bytesArg(Value v, const char* what, FireBytes* out)` | for a native that **reads** the bytes (writes, sends, hashes, compresses, queues them). It takes everything that is bytes: a byte buffer (`out->data` is its own memory), an array of ints from 0 to 255 - a plain one or a typed one (a copy made for the call). `out->data` / `out->length` are the bytes (`const uint8_t*`, `uint32_t`). |
 | `Buf* bufferArg(Value v, const char* what)` | for a native that **fills** the buffer it gets (reads into it, receives, decodes into it, changes it in place): only a real buffer (`new byte[n]`); an array is an `ArgumentException` (`<what> expects a byte buffer (new byte[n]), not an array.`) - it would be filled in a copy nobody sees. |
+| `bool wordsArg(Value v, const char* what, FireWords* out)` | for a native that takes **machine words** (`word`, SPEC 8.10a): a word buffer (`word a[]`, `new word[n]`: `out->data` is its own memory, `const FireWord*`, writable in place through a cast) or an array of ints and words (each cut to the width; a copy made for the call). `out->length` counts words. A byte buffer is an `ArgumentException` (`<what> expects words (a word buffer or an array of ints), not a byte buffer.`), so is an element that is no int or word. |
 
 Both check that the buffer or array is not destroyed (a `DestroyedException`) and that it is bytes at all (`<what> expects bytes (a byte buffer or an array of ints from 0 to 255), not
 String.`, `<what>: element 1 of the array is 256 - a byte is an int from 0 to 255.`). On a failure the exception is thrown - `bytesArg` returns false, `bufferArg` NULL - and the native returns
@@ -159,6 +160,23 @@ exception does not come back to your function (it jumps to the wrapper of the en
 (it is a temporary of the pool, like a string the native makes) - a native that keeps the bytes **beyond the call** (a queue, a texture, a module it parses) copies them, as it must for a buffer anyway
 (the program may change or delete it). A native that reads *or* fills depending on an argument (a USB transfer: the direction bit) picks the function by it (`fire_usbb_bytes` in
 `packages/usb/native/fire_bridge_usb.h`).
+
+A buffer of machine words (`word a[]`) is no bytes - its size in bytes depends on the target: `bytesArg` and `bufferArg` refuse it (`<what> expects bytes (a byte
+buffer or an array of ints from 0 to 255), not a word buffer.`); a native that wants words takes them with `wordsArg`:
+
+```c
+static Value fire_sk_Sum(Value data) {
+    FireWords w;
+    FireWord total = 0;
+    uint32_t i;
+    if (!wordsArg(data, "Sensorkit.Sum", &w)) return Undef();
+    for (i = 0; i < w.length; i++) total = (FireWord)(total + w.data[i]);
+    return WordV(total);   /* a word as the result (K_Word); a word argument arrives as one too (v.w) */
+}
+```
+
+`FireWord` is `uint16_t`, `uint32_t` or `uint64_t` - the target's `FIRE_WORD_BITS`; a package library for the VM is built for the machine the VM runs on (64-bit words; the C ABI carries
+word buffers as `FIRE_WORDS` and words as `FIRE_WORD`).
 
 ## 3. Platforms
 

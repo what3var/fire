@@ -286,6 +286,27 @@ class Packet {
   base64 text.
 - A parameter `byte data[]` takes what it is given (an array stays an array).
 
+### `word` declarations are buffers of machine words
+
+`word` is the machine word of the target (see [Types](02-types.md#the-machine-word-word)). Declared with array brackets it holds a buffer of
+words, just like `byte` holds a buffer of bytes:
+
+```fire
+word regs[4]                // the same as new word[4]: four zero words
+word table[] = [1, 2, -1]   // -1 becomes the largest word
+print(table)                // <buffer 3 words>
+print(table.length)         // 3 (words, not bytes)
+print(table[2])             // 18446744073709551615 on the desktop, 4294967295 on the ESP32
+regs[0] = regs[0] + 5       // an element is a word
+```
+
+- An array stored in a `word` declaration becomes a new buffer: an `int` is cut to the width of a word, a `word` stays, `undefined` becomes
+  0, anything else is an `ArgumentException`. Writing an element takes an `int` or a `word`.
+- `length` counts words; `[i]`, `foreach`, `copy`/`flat` and `++` work as for bytes. `ref table[i]` is not possible.
+- The words lie in memory in the byte order of the machine, each `Word.Bits / 8` bytes wide: **the size in bytes depends on the target**.
+  That is why the functions that read or write bytes do not take a word buffer (an `ArgumentException`: "... not a word buffer"); JSON writes
+  it as an array of numbers.
+
 ### Bytes for functions of the packages
 
 The functions of the packages that **read** bytes - writing a file (`IO.File.WriteAllBytes`), a stream or a socket, hashing, compressing,

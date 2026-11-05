@@ -22251,6 +22251,11 @@ else
             byte b[] = [1, 2]
             b[0] = 513!word
             print(b[0])
+            var tot = 0!word
+            for (word k = 0; k < 4; k++) { tot = tot + z[k] }
+            var arr = [5, 6]
+            arr[1!word] = 7
+            print(tot + " " + z[1!word] + " " + arr[1!word] + " " + "abc"[2!word])
             var ms = new IO.MemoryStream([1, 2])
             try { ms.Read(n, 0, 1) } catch (ArgumentException e) { print("A: " + e.message) }
             """),
@@ -26674,6 +26679,29 @@ else
                 string exe32 = Path.Combine(workDir, "word32.bin");
                 string build32 = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated32, workDir, "word32", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe32, out int build32Exit);
                 string nat32 = build32Exit == 0 && !build32.Contains("warning:") ? RunProc(exe32, "", workDir, out _) : "C-Compiler: " + build32;
+                // 16 bits (no such target yet: a target with wordWidth 16 - the VM and natively)
+                const string word16Source = """
+                    word m = -1
+                    word a = 40000
+                    word wb[] = [65541, -1]
+                    print(m + " " + Word.Bits + " " + (a + a) + " " + a * 3 + " " + (m >> 15) + " " + (m << 15) + " " + (m << 16) + " " + (a / 7) + " " + (-a) + " " + 70000!word + " " + wb[0] + " " + wb[1] + " " + (a > 30000))
+                    #if word16
+                    print("word16")
+                    #endif
+                    """;
+                var target16 = TargetProfile.Host with { WordWidth = 16 };
+                var vm16Lines = new List<string>();
+                var session16 = fire.Runtime.Session.Build(new Linker().CompileAndLink(new[] { word16Source }, null, null, VmExecutionMode.Release, null, target16), VmExecutionMode.Release, a => { vm16Lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+                session16.Run();
+                Value.WordBits = 64;
+                string vm16 = string.Concat(vm16Lines.Select(l => l + "\n"));
+                var generated16 = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { word16Source }, null, null, VmExecutionMode.Release, null, target16), target16);
+                Value.WordBits = 64;
+                string exe16 = Path.Combine(workDir, "word16.bin");
+                string build16 = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated16, workDir, "word16", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe16, out int build16Exit);
+                string nat16 = build16Exit == 0 && !build16.Contains("warning:") ? RunProc(exe16, "", workDir, out _) : "C-Compiler: " + build16;
+                CheckNat("word: 16 Bit (ein Ziel mit wordWidth 16) - VM und nativ wie ein 16-Bit-Rechner",
+                    vm16 == "65535 16 14464 54464 1 32768 0 5714 25536 4464 5 65535 True\nword16\n" && nat16 == vm16, $"  VM:\n{vm16}\n  nativ:\n{nat16}");
                 CheckNat("word: 32 Bit (esp32 in der VM, ein Ziel mit wordWidth 32 nativ) rechnet mit 32 Bit: Wrap, Schieben, vorzeichenlos, wie die VM",
                     vm32 == "4294967295 32 0 3705032704 3410065408 1 2147483648 0\n529290386 True True 4294967295 294967296 294967295 705032704\n5 0 2 <buffer 2 words>\nword32\n" && nat32 == vm32,
                     $"  VM (esp32):\n{vm32}\n  nativ:\n{nat32}");
