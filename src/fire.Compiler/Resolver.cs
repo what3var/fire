@@ -341,7 +341,27 @@ namespace fire.Compiler
                     continue;
                 }
                 _externs[ed.Name] = ed;
+                if (ed.InlineC != null) CheckInlineCTypes(ed);
             }
+        }
+
+        /// <summary>The types an `inline c` function can take and give (ROADMAP 13.2): `int` (FireInt; `int[8|16|32|64]` the C type of that width), `float` (Real),
+        /// `bool`, `char` (uint32_t), `string` (UTF-8, `const char*`), `byte name[]` (the bytes: `uint8_t* name` and `uint32_t name_length`), `any` (the Value),
+        /// pointers (`void*`); a result also `undefined` (none).</summary>
+        private void CheckInlineCTypes(ExternDecl ed)
+        {
+            foreach (var p in ed.Params)
+            {
+                if (p.ByRef) { AddError(new ResolverException($"The parameter '{p.Name}' of the inline C function '{ed.Name}' cannot be 'ref' (take a pointer)", ed.Line)); continue; }
+                if (p.Type == null) { AddError(new ResolverException($"The parameter '{p.Name}' of the inline C function '{ed.Name}' needs a type (int, float, bool, char, string, byte[], any or a pointer)", ed.Line)); continue; }
+                int rank = p.ArrayRanks.Count + p.Type.ArrayRank;
+                bool bytes = p.Type is { BaseName: "int", BitWidth: 8, PointerDepth: 0 } && rank == 1;   // (`byte` is `int[8]`)
+                bool scalar = rank == 0 && (p.Type.PointerDepth > 0 || p.Type.BaseName is "int" or "float" or "bool" or "char" or "string" or "any");
+                if (!bytes && !scalar)
+                    AddError(new ResolverException($"The parameter '{p.Name}' of the inline C function '{ed.Name}' has a type C cannot take (int, float, bool, char, string, byte[], any or a pointer)", ed.Line));
+            }
+            if (ed.ReturnType is { } r && !(r.ArrayRank == 0 && (r.PointerDepth > 0 || r.BaseName is "int" or "float" or "bool" or "char" or "string" or "any" or "undefined")))
+                AddError(new ResolverException($"The inline C function '{ed.Name}' has a result type C cannot give (int, float, bool, char, string, any, a pointer or undefined)", ed.Line));
         }
 
         /// <summary>Collects all `enum` declarations beforehand (allows forward

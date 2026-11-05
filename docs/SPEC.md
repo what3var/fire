@@ -1283,6 +1283,20 @@ The actual **mirroring** of individual operating system APIs (prefabricated
 NOT part of the language itself, but the task of a later
 library framework that builds on `extern`/`#extern`.
 
+#### 8.1.1a `inline c` – functions with a C body
+
+```
+inline c int Add(int a, int b) { return a + b; }
+```
+
+A function whose body is C: the lexer reads the body as one raw token (from the first `{` after the parameter list to its `}`; braces in C strings,
+character literals and comments do not count), the preprocessor of fire leaves its lines alone (its `#if` is C's), and the native generator puts it
+into the program as `static <C type> fire_inl_<Name>(...)` with a `#line` to the fire source. It is called like an `extern` function (`CallExtern`),
+the arguments converted by their declared types: `int` -> `FireInt` (`int[N]`: `intN_t`), `float` -> `Real`, `bool`, `char` -> `uint32_t`,
+`string` -> UTF-8, `byte name[]` -> `uint8_t* name` + `uint32_t name_length`, `any` -> `Value`, pointers -> `void*`; the result likewise
+(`undefined`: none). The VM cannot run it: a call throws (an alternative goes in `#if native ... #else`). A native build adds the kind of its toolchain
+as a symbol of `#if` (`gcc`, `clang`, `msvc`, `tcc`, `watcom`, ...).
+
 ### 8.1.2 `#include "fileName"`
 
 ```

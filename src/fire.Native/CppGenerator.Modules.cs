@@ -615,6 +615,7 @@ namespace fire.Native
                 sb.AppendLine("#ifndef FIRE_SYM\n#ifdef __APPLE__\n#define FIRE_SYM(n) \"_\" n\n#else\n#define FIRE_SYM(n) n\n#endif\n#endif");
                 foreach (var decl in _externDecls.Values) sb.AppendLine(decl);
             }
+            if (_usesInlineC) sb.Append(InlineCFunctions());
             for (int i = 0; i < _strings.Count; i++)
             {
                 string text = _strings[i];

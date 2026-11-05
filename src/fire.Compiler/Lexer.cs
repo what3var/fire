@@ -129,7 +129,12 @@ namespace fire.Compiler
                 char c = Peek();
                 Token tok;
 
-                if (char.IsDigit(c))
+                if (_inlineC && c == '{' && _inlineParens == 0)
+                {
+                    tok = ReadInlineCode(startLine, startCol, pendingNewline);
+                    _inlineC = false;
+                }
+                else if (char.IsDigit(c))
                     tok = ReadNumber(startLine, startCol, pendingNewline);
                 else if (IsIdentifierStart(c))
                     tok = ReadIdentifierOrKeyword(startLine, startCol, pendingNewline);
@@ -144,8 +149,71 @@ namespace fire.Compiler
 
                 tokens.Add(tok with { Length = _pos - startPos });
                 pendingNewline = false;
+                NoteInlineC(tokens);
             }
             return tokens;
+        }
+
+        // -----------------------------------------------------------
+        // `inline c [Type] Name(params) { C }`: the body goes to the C compiler unchanged, so it is read as raw text - fire's tokens would not fit C (`0B6h`,
+        // `'ab'`, `#if` in the body). `inline` is no keyword: only `inline c` at the start of a statement arms it, and the first `{` outside the parentheses
+        // of the parameter list is the body.
+        // -----------------------------------------------------------
+        private bool _inlineC;
+        private int _inlineParens;
+
+        private void NoteInlineC(List<Token> tokens)
+        {
+            var t = tokens[^1];
+            if (_inlineC)
+            {
+                // (a new line outside the parameter list that is not the body: no `inline c` function - e.g. a variable `c` of a class `inline`)
+                if (_inlineParens <= 0 && (t.NewlineBefore || t.Type == TokenType.Assign)) { _inlineC = false; return; }
+                if (t.Type == TokenType.LParen) _inlineParens++;
+                else if (t.Type == TokenType.RParen) _inlineParens--;
+                else if (_inlineParens <= 0 && t.Type is TokenType.Semicolon or TokenType.RBrace) _inlineC = false;   // (no body: the parser says so)
+                return;
+            }
+            if (tokens.Count < 2 || t.Type != TokenType.Identifier || t.Lexeme != "c" || t.NewlineBefore) return;
+            var inl = tokens[^2];
+            if (inl.Type != TokenType.Identifier || inl.Lexeme != "inline") return;
+            if (!(inl.NewlineBefore || tokens.Count == 2 || tokens[^3].Type is TokenType.Semicolon or TokenType.RBrace or TokenType.RBracket)) return;
+            _inlineC = true;
+            _inlineParens = 0;
+        }
+
+        /// <summary>The body of an `inline c` function, from `{` to its `}`: braces in C strings, character literals and comments do not count.</summary>
+        private Token ReadInlineCode(int line, int col, bool newlineBefore)
+        {
+            int start = _pos;
+            int depth = 0;
+            while (!IsAtEnd)
+            {
+                char c = Peek();
+                if (c == '"' || c == '\'')
+                {
+                    char quote = Advance();
+                    while (!IsAtEnd && Peek() != quote && Peek() != '\n') { if (Advance() == '\\' && !IsAtEnd) Advance(); }
+                    if (!IsAtEnd && Peek() == quote) Advance();
+                    continue;
+                }
+                if (c == '/' && PeekNext() == '/') { while (!IsAtEnd && Peek() != '\n') Advance(); continue; }
+                if (c == '/' && PeekNext() == '*')
+                {
+                    Advance(); Advance();
+                    while (!IsAtEnd && !(Peek() == '*' && PeekNext() == '/')) Advance();
+                    if (!IsAtEnd) { Advance(); Advance(); }
+                    continue;
+                }
+                Advance();
+                if (c == '{') depth++;
+                else if (c == '}' && --depth == 0)
+                {
+                    string text = _source.Substring(start, _pos - start);
+                    return new Token(TokenType.InlineCode, text, line, col, literalValue: text.Substring(1, text.Length - 2), newlineBefore: newlineBefore);
+                }
+            }
+            throw new LexException("The C body of an 'inline c' function is not closed ('}' missing)", line, col);
         }
 
         // -----------------------------------------------------------

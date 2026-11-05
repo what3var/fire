@@ -865,6 +865,8 @@ namespace fire.Compiler
             if (Check(TokenType.Namespace)) return ParseNamespaceDecl();
             if (Check(TokenType.Actor)) return ParseActorDecl();
             if (Check(TokenType.Interface)) return ParseInterfaceDecl();
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "inline" && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "c" && !PeekAt(1).NewlineBefore && PeekAt(2).Type != TokenType.Assign)
+                return ParseInlineCDecl();
             if (NextLooksLikeTypeThenName()) return ParseBareTypedDecl();
             if (Check(TokenType.If)) return ParseIf();
             if (Check(TokenType.While)) return ParseWhile();
@@ -1661,6 +1663,22 @@ namespace fire.Compiler
             var parms = ParseParamList();
             ExpectStatementTerminator();
             return new ExternDecl(_sourceIndex, line, returnType, name, parms, _currentExternLib);
+        }
+
+        /// <summary>`inline c [ReturnType] Name(params) { C }` (ROADMAP 13.2): a function whose body is C, handed to the C compiler unchanged (the lexer reads it as one
+        /// token, TokenType.InlineCode). An ExternDecl with a body: called like an `extern` function, the arguments converted by their declared types.</summary>
+        private Stmt ParseInlineCDecl()
+        {
+            int line = Peek().Line;
+            Advance();   // inline
+            Advance();   // c
+            TypeRef? returnType = null;
+            if (NextLooksLikeTypeThenName())
+                returnType = ParseTypeRef();
+            string name = Expect(TokenType.Identifier, "Expected a function name after 'inline c'").Lexeme;
+            var parms = ParseParamList();
+            var body = Expect(TokenType.InlineCode, "Expected the C body '{ ... }' of the 'inline c' function");
+            return new ExternDecl(_sourceIndex, line, returnType, name, parms, null, (string)body.LiteralValue!, body.Line);
         }
 
         /// <summary>Preprocessor directives, currently `#extern "libName"` and

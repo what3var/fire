@@ -436,7 +436,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `{Adresse, Slot, Generation, Zähler}` (16 Byte pro lebendem Zeiger, nicht pro
    Array oder Element), gezählt wie Strings, wiederverwendet über eine Freiliste. Mit `#performance` (keine Tabelle) tragen alle direkt ihren Zeiger. Bleibt: 65535 Einheiten.
    Später, wenn eine Messung es zeigt: einen Kasten mit Zähler 1 bei `p + 1` weiterschieben statt einen neuen zu holen.
-2. **Inline-C** - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
+2. ~~**Inline-C**~~ **Umgesetzt** (Branch `targets`; SPEC 8.1.1a, docs/language/18-native-code.md) - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
 
    ```fire
    inline c int Add(int a, int b) { return a + b; }

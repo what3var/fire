@@ -20240,6 +20240,62 @@ else
             }
             """)).ToArray();
 
+    // inline c (ROADMAP 13.2): functions with a C body - natively the C, in the VM the fire branch of `#if native` gives the same lines
+    natCases = natCases.Append(("inline c: Zahlen, bool, char, string, byte[] (Bytes + Laenge), any, undefined, int[16], #if im C-Rumpf, Klammern in Strings und Kommentaren", """
+            inline c int Add(int a, int b) { return a + b; }
+            inline c float Half(float x) { return x / 2; }
+            inline c bool IsOdd(int n) { return (n & 1) != 0; }
+            inline c char Upper(char c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
+            inline c int Sum(byte data[]) { FireInt s = 0; uint32_t i; for (i = 0; i < data_length; i++) s += data[i]; return s; }
+            inline c Fill(byte data[], int v) { memset(data, (int)v, data_length); }
+            inline c string Greet(string who) { static char buf[64]; snprintf(buf, sizeof buf, "hi %s {'}", who); return buf; }
+            inline c any Twice(any a) { return a.kind == K_Int ? Int(a.i * 2) : a; }
+            inline c undefined Nothing() { /* } in a comment */ const char* s = "}"; (void)s; }
+            inline c int[16] Narrow(int[16] x) { return (int16_t)(x + 1); }
+            inline c int Compiler() {
+            #if defined(__GNUC__)
+                return 1;   // a C comment with a } brace
+            #else
+                return 2;
+            #endif
+            }
+            inline c int UsesAdd(int a) { return fire_inl_Add(a, 100); }
+            var inline = 5
+            print(inline)
+            #if native
+            var b = new byte[3]
+            b[0] = 1; b[1] = 2; b[2] = 3
+            print(Add(2, 3) + " " + Half(5.0) + " " + IsOdd(3) + " " + Upper('q') + " " + Sum(b))
+            Fill(b, 9)
+            print(b[0] + b[1] + b[2])
+            print(Greet("bob") + " " + Twice(21) + " " + Twice("x") + " " + Nothing() + " " + Narrow(32767) + " " + Compiler() + " " + UsesAdd(1))
+            #else
+            print("5 2.5 True Q 6")
+            print(27)
+            print("hi bob {'} 42 x undefined -32768 1 101")
+            #endif
+            """)).ToArray();
+    {
+        // in the VM a call is an error (a catchable one); the `#if` of a C body is C's (the preprocessor of fire leaves it); the types are checked
+        string vmInline = vmOutput("inline c int Add(int a, int b) {\n#if defined(X)\n  return 0;\n#endif\n  return a + b; }\nprint(1)\ntry { print(Add(1, 2)) } catch (e) { print(e.message) }\nvar inline = 3\nprint(inline)");
+        CheckNat("inline c in der VM: der Aufruf ist ein Fehler, #if im C-Rumpf gehoert C, 'inline' bleibt ein Name",
+            vmInline.StartsWith("1\n'Add' is an inline C function: it runs only in a native build") && vmInline.EndsWith("\n3\n"), vmInline);
+        string InlineError(string source) { try { new Linker().CompileAndLink(new[] { source }); return ""; } catch (Exception ex) { return ex.Message; } }
+        CheckNat("inline c: Typen, die C nicht nehmen kann, sind ein Fehler beim Uebersetzen",
+            InlineError("inline c int F(int a[]) { return 0; }").Contains("has a type C cannot take")
+            && InlineError("class Dog { }\ninline c Dog G() { return 0; }").Contains("result type C cannot give")
+            && InlineError("inline c int H(a) { return 0; }").Contains("needs a type")
+            && InlineError("inline c int K(int a)").Contains("C body"), InlineError("inline c int K(int a)"));
+        var inlineSpans = fire.Editor.SyntaxHighlighter.Highlight("inline c int Add(int a) { return a + 1; /* c */ }\n");
+        string inlineText = "inline c int Add(int a) { return a + 1; /* c */ }\n";
+        string SpanAt(string word) { int at = inlineText.IndexOf(word, StringComparison.Ordinal); return inlineSpans.FirstOrDefault(sp => sp.Start == at).Category.ToString(); }
+        CheckNat("inline c im Editor: 'inline c' sind Schluesselwoerter, der Rumpf ist als C gefaerbt",
+            SpanAt("inline") == "Keyword" && SpanAt("return") == "Keyword" && SpanAt("/* c */") == "Comment" && SpanAt("1;") == "Number",
+            string.Join(", ", inlineSpans.Select(sp => $"{inlineText.Substring(sp.Start, sp.Length)}={sp.Category}")));
+        var inactiveInline = fire.Compiler.ConditionalSymbols.InactiveLines("inline c int A() {\n#if X\n  return 1;\n#endif\n  return 0; }\n", new HashSet<string>());
+        CheckNat("inline c im Editor: das #if des C-Rumpfs graut nichts aus", !inactiveInline.Contains(true));
+    }
+
     // Fire threads (THREADING_DESIGN): only programs whose output does not depend on how the threads interleave
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

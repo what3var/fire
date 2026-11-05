@@ -613,8 +613,13 @@ namespace fire.Compiler
                 externSignatures[name] = new ExternSignature
                 {
                     LibName = ed.LibName,
-                    ParamTypes = ed.Params.Select(p => p.Type).ToList(),
+                    // (an `inline c` parameter `byte data[]`: the array brackets stand after the name - the type gets its rank)
+                    ParamTypes = ed.Params.Select(p => ed.InlineC != null && p.Type != null && p.ArrayRanks.Count > 0 ? p.Type with { ArrayRank = p.ArrayRanks.Count } : p.Type).ToList(),
                     ReturnType = ed.ReturnType,
+                    InlineC = ed.InlineC,
+                    ParamNames = ed.InlineC != null ? ed.Params.Select(p => p.Name).ToList() : null,
+                    InlineSource = ed.Source,
+                    InlineLine = ed.InlineLine,
                 };
             }
 

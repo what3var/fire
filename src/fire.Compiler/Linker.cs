@@ -54,6 +54,10 @@ namespace fire.Compiler
         /// <summary>The engine the program is built for, a symbol of `#if` (`vm` or `native`).</summary>
         public string Engine { get; set; } = ConditionalSymbols.DefaultEngine;
 
+        /// <summary>The kind of the C toolchain of a native build (`gcc`, `clang`, `msvc`, `tcc`, `emscripten`, `watcom`, ...): a symbol of `#if`, so that a program
+        /// can choose the C of its `inline c` functions for the compiler (ROADMAP 13.2). Null: no native build, or not known.</summary>
+        public string? ToolchainKind { get; set; }
+
         /// <summary>Further symbols of `#if` (`-D name` on the command line).</summary>
         public IReadOnlyList<string>? Defines { get; set; }
 
@@ -375,6 +379,7 @@ namespace fire.Compiler
             var resources = new ResourceTable();
             registry.Resources = resources;
             foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, EffectiveDefines(), intWidthOverride ?? ProcessIntWidth)) registry.Symbols.Add(symbol);
+            if (!string.IsNullOrWhiteSpace(ToolchainKind)) registry.Symbols.Add(ToolchainKind.Trim());
             var projectImports = new List<string>();   // libraries of the project that a source imports
             ProjectNativeOverlay.Register(Plan);   // the C++ natives of the project and its libraries are found like those of installed packages
             if (ProjectNativeOverlay.OwnKey(Plan) is { } ownNativeKey) nativeImports.Add(ownNativeKey);

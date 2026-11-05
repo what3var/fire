@@ -40,6 +40,7 @@ configuration of the native build, a toolchain that is missing).
 | `E1009` | Unterminated char literal |
 | `E1010` | A char literal must contain exactly one character |
 | `E1011` | Unexpected character '…' |
+| `E1012` | The C body of an 'inline c' function is not closed ('}' missing) |
 
 ### E2xxx - Preprocessor: directives (`#include`, `#if`, `#import`, ...)
 
@@ -238,6 +239,8 @@ configuration of the native build, a toolchain that is missing).
 | `E3160` | '#globaljobs' expects safepoints, sleep or sync |
 | `E3161` | A property of an interface has no body: write '…;' (the class that implements it has the code) |
 | `E3162` | Property '…' of an interface needs a type (use 'any' if every type is allowed) |
+| `E3163` | Expected a function name after 'inline c' |
+| `E3164` | Expected the C body '{ ... }' of the 'inline c' function |
 
 ### E4xxx - Resolver: names, types, declarations
 
@@ -312,6 +315,10 @@ configuration of the native build, a toolchain that is missing).
 | `E4067` | '…' of interface '…' is not a known interface (an interface can only extend interfaces) |
 | `E4068` | Interface '…' extends itself (… -> … -> …) |
 | `E4058` | 'var …' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int …') |
+| `E4069` | The parameter '…' of the inline C function '…' cannot be 'ref' (take a pointer) |
+| `E4070` | The parameter '…' of the inline C function '…' needs a type (int, float, bool, char, string, byte[], any or a pointer) |
+| `E4071` | The parameter '…' of the inline C function '…' has a type C cannot take (int, float, bool, char, string, byte[], any or a pointer) |
+| `E4072` | The inline C function '…' has a result type C cannot give (int, float, bool, char, string, any, a pointer or undefined) |
 
 ### E5xxx - Bytecode compiler
 

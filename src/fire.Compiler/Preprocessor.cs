@@ -331,11 +331,19 @@ namespace fire.Compiler
             var sb = new StringBuilder();
             var lines = source.Split('\n');
             var conditional = new ConditionalState(); // `#if` nesting of this file; the symbols are those of the registry (shared by all files)
+            var inlineC = new InlineCScan();          // the C body of an `inline c` function goes through unchanged - its `#if` is C's
 
             for (int lineNo = 0; lineNo < lines.Length; lineNo++)
             {
                 var line = lines[lineNo].TrimEnd('\r');
+                if (inlineC.InBody)
+                {
+                    inlineC.Feed(line);
+                    sb.Append(line).Append('\n');
+                    continue;
+                }
                 var match = DirectiveLine.Match(line);
+                if (!match.Success && conditional.Active) inlineC.Feed(line);
                 if (!match.Success)
                 {
                     // a branch that is not taken: an empty line, the numbering stays

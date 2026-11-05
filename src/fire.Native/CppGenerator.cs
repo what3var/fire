@@ -1127,6 +1127,59 @@ namespace fire.Native
             return sb.ToString();
         }
 
+        // ---- `inline c` (ROADMAP 13.2): functions whose body is C. A C file that calls one gets all of them (static, unused ones allowed: one may call another
+        // in its C); `#line` points the C compiler's messages at the line of the fire source.
+        private bool _usesInlineC;
+
+        /// <summary>The C type of a parameter or result of an `inline c` function: `int` is a FireInt (`int[8|16|32|64]` that width), `float` a Real (`float[32|64]`
+        /// that), `any` the Value itself; `byte name[]` is `uint8_t* name` (its length follows as `uint32_t name_length`).</summary>
+        private static string InlineCType(TypeRef t)
+        {
+            if (t.PointerDepth > 0) return "void*";
+            if (IsInlineBytes(t)) return "uint8_t*";
+            return t.BaseName switch
+            {
+                "int" => t.BitWidth is 8 or 16 or 32 or 64 ? $"{(t.Unsigned ? "u" : "")}int{t.BitWidth}_t" : "FireInt",
+                "float" => t.BitWidth switch { 32 => "float", 64 => "double", _ => "Real" },
+                "bool" => "bool",
+                "char" => "uint32_t",
+                "string" => "const char*",
+                "any" => "Value",
+                _ => throw new NativeNotSupportedException($"inline C: the type '{t.BaseName}' has no C type"),
+            };
+        }
+
+        private static bool IsInlineBytes(TypeRef t) => t is { BaseName: "int", BitWidth: 8, PointerDepth: 0, ArrayRank: 1 };   // (`byte name[]`: `byte` is `int[8]`)
+
+        private static bool InlineReturnsNothing(ExternSignature sig) => sig.ReturnType == null || sig.ReturnType is { BaseName: "undefined", PointerDepth: 0 };
+
+        private string InlineCFunctions()
+        {
+            var protos = new StringBuilder();
+            var defs = new StringBuilder();
+            foreach (var (name, sig) in _program.Program.ExternSignatures.OrderBy(e => e.Key, StringComparer.Ordinal))
+            {
+                if (sig.InlineC == null) continue;
+                var ps = new List<string>();
+                for (int i = 0; i < sig.ParamTypes.Count; i++)
+                {
+                    var t = sig.ParamTypes[i]!;
+                    string pn = sig.ParamNames![i];
+                    ps.Add($"{InlineCType(t)} {pn}");
+                    if (IsInlineBytes(t)) ps.Add($"uint32_t {pn}_length");
+                }
+                string head = $"static FIRE_MAYBE_UNUSED {(InlineReturnsNothing(sig) ? "void" : InlineCType(sig.ReturnType!))} fire_inl_{Mangle(name)}({(ps.Count == 0 ? "void" : string.Join(", ", ps))})";
+                protos.AppendLine(head + ";");
+                defs.AppendLine($"{head} {{   /* inline c {name} */");
+                defs.AppendLine($"#line {sig.InlineLine} {LineFileLiteral(sig.InlineSource)}");
+                defs.Append(sig.InlineC);
+                defs.AppendLine();
+                defs.AppendLine(LineResetMarker);
+                defs.AppendLine("}");
+            }
+            return "/* ---- inline c: the functions with a C body (called as fire_inl_<name>) ---- */\n" + protos + defs;
+        }
+
         /// <summary>The C type of a parameter or result of an `extern` function: `int` is as wide as the declaration says (`int[32]`), else as wide as a pointer.</summary>
         private static string ExternCType(TypeRef t, string name)
         {
@@ -1523,6 +1576,7 @@ namespace fire.Native
                 sb.AppendLine("#endif");
                 foreach (var decl in _externDecls.Values) sb.AppendLine(decl);
             }
+            if (_usesInlineC) sb.Append(InlineCFunctions());
             sb.AppendLine();
             for (int i = 0; i < _strings.Count; i++)
             {
@@ -4126,6 +4180,50 @@ namespace fire.Native
                     string externName = chunk.Constants[ins.A[0]].AsString();
                     int argc = ins.A[1];
                     Need(argc);
+                    if (_program.Program.ExternSignatures.TryGetValue(externName, out var isig) && isig.InlineC != null)
+                    {
+                        // `inline c` (ROADMAP 13.2): the arguments converted like those of an `extern` call (by the declared types), the result back into a Value
+                        if (isig.ParamTypes.Count != argc) throw new NativeNotSupportedException($"inline C function '{externName}': {isig.ParamTypes.Count} parameter(s) declared, called with {argc}");
+                        _usesInlineC = true;
+                        int ifirst = d - argc;
+                        var ilocals = new StringBuilder();
+                        var ifrees = new List<string>();
+                        var iargs = new List<string>();
+                        for (int i = 0; i < argc; i++)
+                        {
+                            var it = isig.ParamTypes[i]!;
+                            string iv = S(ifirst + i), ictype = InlineCType(it);
+                            if (it.PointerDepth > 0) { ilocals.Append($"ExternPtr p{i}; externPtrInit(&p{i}, {iv}); "); iargs.Add($"p{i}.raw"); ifrees.Insert(0, $"externPtrFree(&p{i}); "); }
+                            else if (it.ArrayRank == 1) { ilocals.Append($"uint32_t n{i}; uint8_t* b{i} = externBytes({iv}, &n{i}); "); iargs.Add($"b{i}"); iargs.Add($"n{i}"); }
+                            else switch (it.BaseName)
+                            {
+                                case "string": ilocals.Append($"ExternString p{i}; externStringInit(&p{i}, {iv}); "); iargs.Add($"p{i}.p"); ifrees.Insert(0, $"externStringFree(&p{i}); "); break;
+                                case "any": iargs.Add(iv); break;
+                                case "float": iargs.Add($"({ictype})externFloat({iv})"); break;
+                                case "bool": iargs.Add($"externInt({iv}) != 0"); break;
+                                default: iargs.Add($"({ictype})externInt({iv})"); break;
+                            }
+                        }
+                        string icall = $"fire_inl_{Mangle(externName)}({string.Join(", ", iargs)})";
+                        string ifreeAll = string.Concat(ifrees);
+                        var ir = isig.ReturnType;
+                        if (InlineReturnsNothing(isig)) E($"{{ {ilocals}{icall}; {ifreeAll}{S(ifirst)} = Undef(); }}");
+                        else
+                        {
+                            string iconv = ir!.PointerDepth > 0 ? $"Int((int64_t)(intptr_t){icall})" : ir.BaseName switch
+                            {
+                                "bool" => $"Bool({icall})",
+                                "float" => $"Float((Real){icall})",
+                                "char" => $"Char({icall})",
+                                "string" => $"externResultString({icall}, &{OwnerList()})",
+                                "any" => icall,
+                                _ => $"Int((int64_t){icall})",
+                            };
+                            E($"{{ {ilocals}{S(ifirst)} = {iconv}; {ifreeAll}}}");
+                        }
+                        Check();
+                        d = ifirst + 1; SetR(ifirst, ir != null && ir.PointerDepth == 0 && ir.BaseName is "string" or "any"); return Next();
+                    }
                     if (!_program.Program.ExternSignatures.TryGetValue(externName, out var sig) || sig.LibName == null)
                         throw new NativeNotSupportedException($"extern function '{externName}' is not linked to a library with #extern \"lib\" ({fn})");
                     if (sig.ParamTypes.Count != argc) throw new NativeNotSupportedException($"extern function '{externName}': {sig.ParamTypes.Count} parameter(s) declared, called with {argc}");

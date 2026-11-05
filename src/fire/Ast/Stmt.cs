@@ -352,9 +352,11 @@ namespace fire.Ast
     /// by the parser, see Parser._currentExternLib) - null if no
     /// such directive preceded this declaration, in which case only
     /// manual host registration (Bytecode.ExternRegistry) remains as the way to
-    /// the implementation.</summary>
+    /// the implementation.
+    /// `inline c [ReturnType] Name(params) { C }` (ROADMAP 13.2) is an ExternDecl with a body: <paramref name="InlineC"/> is the C text between the braces (unchanged),
+    /// <paramref name="InlineLine"/> the line of its `{` - the native generator puts it into the program, the VM cannot run it.</summary>
     public sealed record ExternDecl(
-        int Source, int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName) : Stmt(Source, Line);
+        int Source, int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName, string? InlineC = null, int InlineLine = 0) : Stmt(Source, Line);
 
     /// <summary>`unsafe { ... }` - only inside such a block are
     /// dereference ('*expression') and address-of ('&expression') allowed.</summary>

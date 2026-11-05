@@ -141,6 +141,14 @@ namespace fire.Editor
 
                 ScanCommentsInGap(source, lastEnd, start, spans);
 
+                if (tok.Type == TokenType.InlineCode)
+                {
+                    // the C body of an `inline c` function: coloured as C
+                    foreach (var c in CppHighlighter.Highlight(source.Substring(start, length)))
+                        spans.Add(new HighlightSpan(start + c.Start, c.Length, c.Category));
+                    lastEnd = start + length;
+                    continue;
+                }
                 var category = IsContextKeyword(tokens, index) ? HighlightCategory.Keyword : CategoryOf(tok.Type);
                 if (category != HighlightCategory.Default)
                     spans.Add(new HighlightSpan(start, length, category));
@@ -164,6 +172,8 @@ namespace fire.Editor
                 "unit" => At(i + 2).Type == TokenType.Colon && (i == 0 || t.NewlineBefore || tokens[i - 1].Lexeme is "prefixed" or "unprefixed" or ";" or "}"),
                 "coerce" => (t.NewlineBefore || i > 0 && tokens[i - 1].Type == TokenType.LBrace) && At(i + 1).Type != TokenType.Assign,
                 "to" => i > 0 && tokens[i - 1].Lexeme == "coerce",
+                "inline" => At(i + 1).Lexeme == "c" && At(i + 1).Type == TokenType.Identifier && At(i + 1).Line == t.Line && At(i + 2).Type != TokenType.Assign,
+                "c" => i > 0 && tokens[i - 1].Lexeme == "inline" && tokens[i - 1].Line == t.Line && At(i + 1).Type != TokenType.Assign,
                 _ => false,
             };
         }

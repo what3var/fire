@@ -5883,6 +5883,16 @@ FIRE_FN void externStringInit(ExternString* e, Value v) {
     e->p = p;
 }
 FIRE_FN void externStringFree(ExternString* e) { free(e->p); e->p = NULL; }
+/* `byte name[]` of an `inline c` function: the bytes of the buffer and their number (null and 0 for `undefined`). A destroyed buffer is the exception (and
+ * null/0 for the call the generated code still makes before it looks at the exception). */
+FIRE_FN uint8_t* externBytes(Value v, uint32_t* length) {
+    *length = 0;
+    if (v.kind == K_Undefined) return NULL;
+    if (FIRE_UNLIKELY(v.kind != K_Buffer)) fatal("An inline C function expects a byte buffer (byte[]).");
+    if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return NULL; }
+    *length = bufOf(v)->length;
+    return bufOf(v)->data;
+}
 
 /* A pointer argument: a pointer to a variable gets 8 bytes of native memory with its value (and the new value is written back after the call). */
 typedef struct ExternPtr {

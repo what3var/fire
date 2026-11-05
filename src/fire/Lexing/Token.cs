@@ -16,6 +16,7 @@ namespace fire.Lexing
         Try, Catch, Finally, Throw,
         Is, Of, From, Under,
         Extern, Unsafe,
+        InlineCode, // the body of an `inline c` function: the C text between its braces, unchanged (Lexeme: with the braces, LiteralValue: without)
         Interface,
         Readonly, Enum,
         Static, // 'static' on fields/methods/properties (see Parser.ParseClassMember)

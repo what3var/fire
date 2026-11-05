@@ -146,6 +146,37 @@ var value = try ReadSensor(500ms)
 if (value == undefined) { print("timeout") }
 ```
 
+## C in the program: `inline c`
+
+A function can have a body in C. The body goes to the C compiler unchanged - also `#if`/`#define` of C and assembler in the dialect of the compiler:
+
+```fire
+inline c int Add(int a, int b) { return a + b; }
+inline c int Sum(byte data[]) { FireInt s = 0; for (uint32_t i = 0; i < data_length; i++) s += data[i]; return s; }
+#if watcom
+inline c undefined Beep(int hz) { _asm { mov al, 0B6h
+                                        out 43h, al } }
+#endif
+
+#if native
+print(Add(40, 2))       // 42
+#else
+print(40 + 2)           // the virtual machine cannot run C
+#endif
+```
+
+- Only a **native build** runs the function. In the virtual machine a call is an error (a catchable exception); give it an alternative with
+  `#if native ... #else ... #endif`.
+- The C types of parameters and result: `int` is a `FireInt` (`int[8|16|32|64]` the C type of that width), `float` a `Real` (`float[32|64]`: `float`/`double`),
+  `bool` a `bool`, `char` a `uint32_t`, `string` UTF-8 (`const char*`; a returned text is copied), `any` the `Value` itself (`fire_rt.h`), a pointer a `void*`.
+  `byte name[]` gives the bytes of the buffer, `uint8_t* name`, and their number as a second parameter `uint32_t name_length`. A result `undefined` (or none)
+  is `void`. Other types are an error when compiling; `ref` parameters are not possible (take a pointer).
+- In C a function is called `fire_inl_<Name>` (one inline function can call another: `fire_inl_Add(a, 1)`). The runtime (`fire_rt.h`) and the C library
+  are included.
+- `#if gcc`, `#if clang`, `#if msvc`, `#if tcc`, `#if watcom`, ...: a native build knows the kind of its toolchain as a symbol, so a program can choose the
+  C (or the assembler) for its compiler. A message of the C compiler names the line in the fire source.
+- `inline` is no keyword: only `inline c` at the start of a declaration starts such a function.
+
 ## Pointers: `unsafe`
 
 Inside an `unsafe { }` block, `&x` takes the address of a variable, field or array element and `*p` reads or writes through a pointer. A pointer
