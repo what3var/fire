@@ -22359,6 +22359,16 @@ else
             print(Narrow.Run(37))
             print(Narrow.Errors())
             """),
+        ("Word: Puffer-Methoden ueber alle Bytes eines Wortpuffers (ToString, ToUnicode, ToUnicodeChar); ToLittleEndian/ToBigEndian geben die Bytes Wort fuer Wort", """
+            word w[] = [258, 65]
+            var le = w.ToLittleEndian()
+            var be = w.ToBigEndian()
+            print(w.length + " " + le.length + " " + le[0] + " " + le[1] + " " + le[8] + " " + be[7] + " " + be[6] + " " + be[15])
+            print(w.ToString().length + " " + w.ToUnicode(2).length + " " + w.ToUnicodeChar(2))
+            byte b[] = [1, 2, 3]
+            var r = b.ToBigEndian()
+            print(r[0] + " " + r[2])
+            """),
         ("Word: Felder, Parameter, Rueckgabe, static, Json, Dictionary-Schluessel; word w = 5m ist zur Laufzeit ohne Einheit", """
             #import "json"
             class C { word w

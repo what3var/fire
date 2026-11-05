@@ -2192,6 +2192,9 @@ fixed width - for a single multi-byte field, e.g. a 4-byte `int`, that is
 exactly the right meaning). An explicit order at creation
 is deliberately not offered as syntax of its own - `new byte[n].ToLittleEndian()`
 achieves the same directly afterwards.
+A buffer of machine words (`word a[]`, 8.10a) is different: `ToLittleEndian()`/`ToBigEndian()` give a **byte** buffer with
+every word in that order (word by word, the words stay where they are - their serialized form), and `ToString()`, `ToUnicode()`
+and `ToUnicodeChar()` read all its bytes (`length` words of `Word.Bits / 8` bytes).
 
 The HOST byte order itself is determined at RUN TIME (no compiler flag,
 no assumption about the target platform): a 16-bit value is written,

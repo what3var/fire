@@ -5415,9 +5415,9 @@ FIRE_FN Value bufToString(Value v, OwnList* list) {
     uint32_t i;
     if (!ownedOf(v)) return destroyedError(v);
     b = bufOf(v);
-    r = allocStr(b->length, list);
+    r = allocStr((uint32_t)bufSize(b), list);   /* (a word buffer: all its bytes) */
     d = strChars(r);
-    for (i = 0; i < b->length; i++) d[i] = b->data[i];
+    for (i = 0; i < (uint32_t)bufSize(b); i++) d[i] = b->data[i];
     return StrV(r);
 }
 /* `buffer.ToUnicode(width)` */
@@ -5429,8 +5429,8 @@ FIRE_FN Value bufToUnicode(Value v, Value width, OwnList* list) {
     if (!ownedOf(v)) return destroyedError(v);
     checkCharWidth(width);
     b = bufOf(v);
-    if (FIRE_UNLIKELY(b->length % (uint32_t)width.i != 0)) fatal("The buffer size is not a multiple of the character width.");
-    count = b->length / (uint32_t)width.i;
+    if (FIRE_UNLIKELY((uint32_t)bufSize(b) % (uint32_t)width.i != 0)) fatal("The buffer size is not a multiple of the character width.");
+    count = (uint32_t)bufSize(b) / (uint32_t)width.i;
     r = allocStr(count, list);
     d = strChars(r);
     for (i = 0; i < count; i++) d[i] = (fire_char16)readCodeUnit(b->data + i * (uint32_t)width.i, (int)width.i, b->little);
@@ -5442,19 +5442,23 @@ FIRE_FN Value bufToUnicodeChar(Value v, Value width) {
     if (!ownedOf(v)) return destroyedError(v);
     checkCharWidth(width);
     b = bufOf(v);
-    if (FIRE_UNLIKELY(b->length < (uint32_t)width.i)) fatal("The buffer is too small for the character width.");
+    if (FIRE_UNLIKELY((uint32_t)bufSize(b) < (uint32_t)width.i)) fatal("The buffer is too small for the character width.");
     return Char(readCodeUnit(b->data, (int)width.i, b->little));
 }
-/* `buffer.ToLittleEndian()` / `ToBigEndian()`: a copy, mirrored as one block when the order differs. */
+/* `buffer.ToLittleEndian()` / `ToBigEndian()`: a copy, mirrored as one block when the order differs. A buffer of words: a byte buffer with each word in that
+ * order (the words stay where they are: their serialized form). */
 FIRE_FN Value bufToEndian(Value v, bool little, OwnList* list) {
     Buf* b;
     Buf* c;
-    uint32_t i;
+    uint32_t i, n, e;
     if (!ownedOf(v)) return destroyedError(v);
     b = bufOf(v);
-    c = allocBuf(b->length, list);
-    if ((b->little != 0) == little) memcpy(c->data, b->data, b->length);
-    else for (i = 0; i < b->length; i++) c->data[i] = b->data[b->length - 1 - i];
+    n = (uint32_t)bufSize(b);
+    e = b->elem;
+    c = allocBuf(n, list);
+    if ((b->little != 0) == little) memcpy(c->data, b->data, n);
+    else if (e > 1) { for (i = 0; i < n; i++) c->data[i] = b->data[(i / e) * e + (e - 1 - i % e)]; }
+    else for (i = 0; i < n; i++) c->data[i] = b->data[n - 1 - i];
     c->little = little ? 1 : 0;
     return BufV(c);
 }

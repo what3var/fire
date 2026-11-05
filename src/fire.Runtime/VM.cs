@@ -6326,12 +6326,12 @@ namespace fire.Runtime
                     // conversion in this language.
                     if (methodName == "ToLittleEndian" && args.Length == 0)
                     {
-                        result = Value.MakeBuffer(buf.Order == ByteOrder.Little ? buf.Clone() : buf.Reversed(ByteOrder.Little));
+                        result = Value.MakeBuffer(buf.IsWords ? buf.WordBytes(ByteOrder.Little) : buf.Order == ByteOrder.Little ? buf.Clone() : buf.Reversed(ByteOrder.Little));
                         return true;
                     }
                     if (methodName == "ToBigEndian" && args.Length == 0)
                     {
-                        result = Value.MakeBuffer(buf.Order == ByteOrder.Big ? buf.Clone() : buf.Reversed(ByteOrder.Big));
+                        result = Value.MakeBuffer(buf.IsWords ? buf.WordBytes(ByteOrder.Big) : buf.Order == ByteOrder.Big ? buf.Clone() : buf.Reversed(ByteOrder.Big));
                         return true;
                     }
                     return false;

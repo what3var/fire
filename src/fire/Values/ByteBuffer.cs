@@ -174,10 +174,22 @@ namespace fire.Values
         /// ReadU32/WriteU32 with explicit order, see prelude).</summary>
         public ByteBuffer Reversed(ByteOrder newOrder)
         {
+            if (IsWords) return WordBytes(newOrder);
             var copy = new byte[Bytes.Length];
             for (int i = 0; i < Bytes.Length; i++)
                 copy[i] = Bytes[Bytes.Length - 1 - i];
             return new ByteBuffer(copy, newOrder);
+        }
+
+        /// <summary>The bytes of a buffer of machine words (`ToLittleEndian()`/`ToBigEndian()`, ROADMAP 13.1c): a byte buffer with every word in the order
+        /// <paramref name="order"/> - each word on its own, the words stay where they are (the serialized form of the words).</summary>
+        public ByteBuffer WordBytes(ByteOrder order)
+        {
+            var copy = new byte[Bytes.Length];
+            System.Array.Copy(Bytes, copy, Bytes.Length);
+            if (order != Order)
+                for (int w = 0; w + ElementSize <= copy.Length; w += ElementSize) System.Array.Reverse(copy, w, ElementSize);
+            return new ByteBuffer(copy, order);
         }
     }
 }

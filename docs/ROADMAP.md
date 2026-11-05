@@ -474,8 +474,10 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    * **Umgesetzt (zum Teil): schmal und schnell** - der Generator kennt Wörter und Puffer, die er selbst gemacht hat (`KindWord`, `KindBuf`): Wort-Arithmetik und
      -Vergleiche, die Speicherung in `byte`/`word`, Elemente und `length` bekannter Puffer und `& | # << >>` zweier ints stehen als C da. Prüfsummen-Schleife über einen
      Bytepuffer in einer Methode (2 x 200 x 1.000.000, gcc -O2): 4,45 s -> 0,41 s.
+     Die Puffer-Methoden für Bytes (`ToString()`, `ToUnicode()`, `ToUnicodeChar()`) sehen bei einem Wortpuffer alle seine Bytes; `ToLittleEndian()`/`ToBigEndian()`
+     geben einen Bytepuffer, jedes Wort in dieser Reihenfolge (VM und nativ gleich).
      **Offen:** echte `uint8_t`/`uintN_t`-C-Variablen für `byte`/`word`-Locals und -Parameter (die Locals bleiben 16-Byte-Werte); ein Puffer als Parameter oder aus einem
-     Feld ist dem Generator nicht bekannt (allgemeiner Zugriff); Überladung nach `word` (`f(int)`/`f(word)`) gibt es nicht; die Puffer-Methoden für Bytes (`ToString()`, `ToUnicode()`, `ToLittleEndian()`, ...) sehen einen Wortpuffer als seine ersten `length` Bytes;
+     Feld ist dem Generator nicht bekannt (allgemeiner Zugriff); Überladung nach `word` (`f(int)`/`f(word)`) gibt es nicht;
      ein Wortpuffer der VM mit 16/32-Bit-Wörtern (nur ein Bau der VM für ein fremdes Ziel, in Tests) geht nicht an eine Paket-Bibliothek; 16 Bit über ein Ziel mit
      `wordWidth` 16 getestet (VM und nativ auf dem Rechner, kein echtes 16-Bit-Ziel); ein Wort an `extern`-Funktionen und an einen `int`-Parameter einer Native ist ein Fehler (`w!int`).
    * PCM und andere vorzeichenbehaftete Daten bleiben bei `int[16]`-Arrays (gepackt, mit Einheit); kein weiterer Typ.
