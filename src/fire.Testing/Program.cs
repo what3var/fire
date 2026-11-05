@@ -22163,6 +22163,12 @@ else
             try { Spi.Sim.Reply([1, 999]) } catch (ArgumentException e) { print("A: " + e.message) }
             dev.Close()
             """),
+        ("Bytes: ein Objekt an eine Native ist in der VM und nativ eine ArgumentException (die Grenze der Paket-Bibliothek wie bytesArg)", """
+            #import "hash"
+            class Box { int v }
+            var b = new Box()
+            try { print(__HashToHex(b)) } catch (ArgumentException e) { print("ArgumentException") }
+            """),
         ("Bytes: byte x[] = [..] und byte x[4] sind Puffer (print, length, Index, foreach, copy, Felder, mehrdimensional, Zuweisung, an Natives)", """
             #import "hash"
             byte a[] = [1, 2, 300]

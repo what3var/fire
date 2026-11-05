@@ -456,8 +456,8 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
      nicht) - `bytesArg`/`bufferArg` in fire_rt.h (docs/PACKAGE_NATIVES.md), alle Bridges umgestellt. `byte x[] = [...]` und `byte x[n]` (auch Felder, statische
      Felder, Globals; mehrdimensional: die inneren) deklarieren einen **Puffer** (SPEC 8.4.2): ein zugewiesenes Array wird ein neuer Puffer (int auf 8 Bit
      gekürzt, `undefined` 0); ein Pufferelement ist nie `undefined`, ein Nicht-int dort ist eine `ArgumentException` (vorher ein Laufzeitfehler).
-     **Offen:** ein Objekt (oder ein Lambda) als Byte-Argument ist in der VM weiter der Fehler der Paket-Grenze ("only numbers, bool, char, text, ... can be passed",
-     PackageNativeBinding) statt der `ArgumentException` von `bytesArg` - nativ ist es die `ArgumentException`; meist scheitert der Prelude-Code vorher (`data.length`).
+     Ein Objekt als Argument einer Native ist in der VM wie nativ eine `ArgumentException` (die Grenze der Paket-Bibliothek, PackageNativeBinding; der Text
+     nennt die Native statt der Funktion des Preludes) - meist scheitert der Prelude-Code vorher (`data.length`).
      (Behoben: die Bibliothek eines Pakets für die VM wird jetzt auch neu gebaut, wenn sich nur die Runtime ändert - `PackageLibrary.NewestSource` zählt den Stand von fire.Native mit.)
    * **Umgesetzt: `byte` ohne Einheit** - eine Einheit an einem `byte` (ein Wert mit Einheit, `byte b : m`, Feld, Parameter, Array) ist `TC017` des Typprüfers (auch lax ein
      Fehler, docs/ERRORS.md); ein gespeicherter Wert verliert seine Einheit (auch `x!byte`), VM und nativ. In Packages, Beispielen und Vorlagen gab es keinen `byte` mit Einheit.

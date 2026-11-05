@@ -304,7 +304,8 @@ namespace fire.Runtime
                     fv.Kind = KindLambda; fv.Length = lambda.Proto.ParamCount; fv.Bits = PackageHost.RegisterLambda(lambda);
                     break;
                 default:
-                    throw new InvalidOperationException($"An argument of the native function '{function}' is {v.Kind}: only numbers, bool, char, text, byte buffers, lambdas and arrays of these can be passed to a package's native.");
+                    // (an object at the border of the library: the ArgumentException a native compiled into the program gives as well - bytesArg, ROADMAP 13.1c)
+                    throw new ScriptErrorException("ArgumentException", $"An argument of the native function '{function}' is a {v.Kind}: only numbers, bool, char, text, byte buffers, lambdas and arrays of these can be passed to a package's native.");
             }
             Marshal.WriteInt32(dest, fv.Kind);
             Marshal.WriteInt32(dest, 4, fv.Length);
