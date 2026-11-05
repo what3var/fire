@@ -4207,7 +4207,15 @@ namespace fire.Runtime
                     if ((flags & 8) != 0)
                     {
                         // `word` (SPEC 8.10): implicit - a store into a word - converts an int (and a word: nothing to do), `x!word` every number
-                        if ((flags & 4) != 0) { if (Peek().Kind == ValueKind.Int) _stack[_sp - 1] = Peek().ToWord(); break; }
+                        if ((flags & 4) != 0)
+                        {
+                            // (a store: an int converted, a word and undefined stay, anything else - a float too - wants `!word`)
+                            var stored = Peek().Kind;
+                            if (stored == ValueKind.Int) _stack[_sp - 1] = Peek().ToWord();
+                            else if (stored is not (ValueKind.Word or ValueKind.Undefined))
+                                ThrowArgumentError($"A word takes an int or a word, not {stored} (convert with '!word').");
+                            break;
+                        }
                         Push(CoerceTypeChecked(Pop(), ValueKind.Word));
                         break;
                     }

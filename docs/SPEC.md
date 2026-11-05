@@ -2259,7 +2259,7 @@ compute on words - Value.WordOp, fire_rt.h wordOp), and the type checker knows `
   negative, a 32-bit word stays positive in a 64-bit int: the bits are zero-extended, like a cast in C; with `#intwidth 32`
   they are cut to 32). `w!float` - the unsigned value. `w!byte`, `w!int[16]` cut like an int. `w is of word` is true.
 * **Declarations**: `word w = x` converts an int (and keeps a word; a store into a word variable, field or parameter
-  converts the same way); `float f = w` and `byte b = w` take a word (as its unsigned value / cut). The type checker lets an
+  converts the same way; anything else there - a float, a text - is an `ArgumentException` at run time, also with `#lax`); `float f = w` and `byte b = w` take a word (as its unsigned value / cut). The type checker lets an
   `int` go into a `word` and a `word` into a `float` or a `byte`; a `word` into an `int` wants `w!int` (TC001), a float
   into a word too.
 * A word is an index too (`a[w]`, `buffer[w]`, `text[w]`): its bits as an int.

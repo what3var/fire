@@ -2144,8 +2144,8 @@ FIRE_FN Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
 }
 
 /* `x!word` and a store into a `word` (OpCode.ConvertWidth with the word flag, Value.ToWord): an int cut to the width (two's complement), a float rounded
- * (wordOfReal), a char its code, `undefined` 0, a unit dropped (raw data); anything else is an ArgumentException. `implicit` (a store): only an int is
- * converted, every other value stays as it is. */
+ * (wordOfReal), a char its code, `undefined` 0, a unit dropped (raw data); anything else is an ArgumentException. `implicit` (a store): an int is
+ * converted, `undefined` stays, anything else (a float, a text, ...) is the ArgumentException - a float goes into a word only with `!word`. */
 FIRE_FN Value wordOf(Value v, bool implicit) {
     char text[96];
     switch (v.kind) {
@@ -2153,7 +2153,11 @@ FIRE_FN Value wordOf(Value v, bool implicit) {
         case K_Int: return WordV((uint64_t)(int64_t)v.i);
         default: break;
     }
-    if (implicit) return v;
+    if (implicit) {
+        if (v.kind == K_Undefined) return v;
+        snprintf(text, sizeof text, "A word takes an int or a word, not %s (convert with '!word').", coerceKindName(v.kind));
+        return fireError("ArgumentException", text);
+    }
     switch (v.kind) {
         case K_Char: return WordV((uint64_t)v.i);
         case K_Float: return WordV(wordOfReal((double)v.f));

@@ -3931,7 +3931,7 @@ namespace fire.Native
                         // `word` (SPEC 8.10): a store into a word converts an int (fire_rt.h wordOf; it cannot fail then), `x!word` every number
                         bool implicitWord = (ins.A[1] & 4) != 0;
                         E($"{S(d - 1)} = wordOf({S(d - 1)}, {(implicitWord ? "true" : "false")});");
-                        if (!implicitWord) Check();
+                        Check();   // (also a store: anything but an int, a word or undefined is the ArgumentException)
                         SetT(d - 1, TypeUnknown); _kindsKept = true;
                         return Next();
                     }

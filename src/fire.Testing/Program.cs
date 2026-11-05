@@ -22372,6 +22372,21 @@ else
             var r = b.ToBigEndian()
             print(r[0] + " " + r[2])
             """),
+        ("Word: ein float (oder ein Text) in einen word-Parameter oder eine word-Variable ist eine ArgumentException (lax, zur Laufzeit); int und undefined gehen", """
+            #lax
+            class G {
+              string K(word x) { return "word " + x }
+            }
+            var g = new G()
+            any f = 2.5
+            any s = "x"
+            try { print(g.K(f)) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { print(g.K(s)) } catch (ArgumentException e) { print("A: " + e.message) }
+            print(g.K(3) + " " + g.K(undefined))
+            word w = 1
+            try { w = f } catch (ArgumentException e) { print("A2: " + e.message) }
+            print(w)
+            """),
         ("Word: Ueberladung nach word (f(int)/f(word)/f(float); ein int geht lieber in word als in float, ein float nie in word) - statisch und zur Laufzeit", """
             class F {
               static string K(int x) { return "int " + x }
