@@ -21,11 +21,7 @@
 
 #include <stdint.h>
 
-#if defined(__GNUC__) || defined(__clang__)
-#define FIRE_NORETURN __attribute__((noreturn))
-#elif defined(_MSC_VER)
-#define FIRE_NORETURN __declspec(noreturn)
-#else
+#ifndef FIRE_NORETURN   /* (fire_rt.h includes the dialect of the compiler first, cc/fire_cc.h) */
 #define FIRE_NORETURN
 #endif
 

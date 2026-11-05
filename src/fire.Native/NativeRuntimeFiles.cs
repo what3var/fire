@@ -25,6 +25,8 @@ namespace fire.Native
             WriteResource("fire_rt_cpp.hpp", directory);
             WriteResource("fire_json.h", directory);
             WriteResource("fire_debug.h", directory);   // (the debugger of a debug build)
+            foreach (string name in Names().Where(n => n.StartsWith("cc/", StringComparison.Ordinal)))
+                WriteResource(name, directory);   // (the dialect of the C compiler, cc/fire_cc.h)
             foreach (string name in Names().Where(n => n.StartsWith("abi/", StringComparison.Ordinal)))
                 WriteResource(name, directory);
             var wanted = platform == null ? AllPackages() : PackageClosure(platform);

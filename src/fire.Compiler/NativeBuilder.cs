@@ -584,6 +584,9 @@ namespace fire.Compiler
             // and for gdb/lldb (docs/NATIVE_BACKEND.md "Debug-Builds") (a debug plugin too: its lines are debugged in the program)
             bool debugBuild = (!sharedLibrary || Path.GetFileName(linkSource) == "fire_plugin.c") && File.Exists(linkSource) && File.ReadLines(linkSource).Take(60).Any(l => l.StartsWith("#define FIRE_DEBUG 1", StringComparison.Ordinal));
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
+            // a toolchain with a driver of its own (Toolchains/: Open Watcom, ...) builds its command line itself
+            if (ToolchainDrivers.For(kind) is { } driver)
+                return driver.Command(new CompileRequest(toolchain, target, cppFile, includeDir, exe, includes, libs, compileOnly, (extraInputs ?? Array.Empty<string>()).ToList(), debugBuild));
             var libDirs = new List<string>();
             // SDL: where its headers and import library are (Toolchain\SDL3, SDL3_DIR, the prefix of the compiler, the system; the same for SDL2), see SdlSetup
             if (kind == "emscripten") libs = libs.Select(l => l == "-lSDL2" ? "-sUSE_SDL=2" : l).ToList();   // Emscripten brings SDL2 itself
@@ -683,6 +686,7 @@ namespace fire.Compiler
                 // a portable toolchain (w64devkit) finds its other programs through the PATH: its folder comes first
                 if (Path.IsPathRooted(exe) && Path.GetDirectoryName(exe) is { Length: > 0 } toolDir)
                     psi.Environment["PATH"] = toolDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+                ToolchainDrivers.PrepareEnvironment(exe, psi.Environment);   // (Open Watcom: WATCOM, INCLUDE)
                 if (BuildMonitor.Current is { } monitor)
                 {
                     monitor.Line($"{exe} {arguments}");

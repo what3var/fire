@@ -640,6 +640,30 @@ Eine eigene Plattform ist ein Ordner mit `fire_platform.hpp` (Vorlage: die mitge
 (`native/sim`, auf pthreads; `NativeRuntimeFiles.WriteSimulatorTo`) erlaubt, ein FreeRTOS-Programm am PC zu probieren; die Tests lassen dieselben Thread-Programme darauf laufen
 (`FreeRTOS == VM`).
 
+### Ein Ziel, ein Compiler, eine Toolchain ergänzen (ROADMAP 13)
+
+Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
+
+* **Compiler-Dialekt** (`native/runtime/cc/`): `fire_cc.h` wählt **eine** Datei je Compiler-Familie - `fire_cc_gcc.h` (gcc, clang),
+  `fire_cc_msvc.h`, `fire_cc_watcom.h` (Open Watcom), `fire_cc_generic.h` (TinyCC und jeder andere C99-Compiler). Sie definiert, was C nicht überall
+  gleich sagt: `FIRE_COLD`, `FIRE_LIKELY`, `FIRE_NORETURN`, `FIRE_NOT_REACHED(r)` (nach einem Aufruf, dessen Nicht-Rückkehr der Compiler nicht kennt),
+  `FIRE_TLS_KEYWORD`, `FIRE_STATIC_ASSERT_C` (ohne `_Static_assert`: ein Array negativer Größe), `FIRE_CC_RUNTIME_BEGIN/END` (Warnungen um die Runtime),
+  `FIRE_FAR`/`FIRE_HUGE` (16-Bit-x86). `fire_rt.h` enthält keine Abfrage eines Compilers mehr. Ein neuer Compiler: eine Datei hier und eine Zeile in `fire_cc.h`.
+* **Toolchain** (`src/fire.Native/Toolchains/`): eine Art von Toolchain mit eigenem Treiber implementiert `IToolchainDriver` (Kommandozeile aus einer
+  `CompileRequest`, Suche des Compilers, Umgebung seiner Programme) und steht in `ToolchainDrivers`; ihr Standard (`Default`) wird ein eingebauter Name
+  (`"toolchain": "watcom"`). `NativeBuilder.CompilerCommand` fragt zuerst die Treiber - gcc, clang, msvc, tcc und emscripten stehen (noch) dort selbst.
+  `WatcomToolchain`: `owcc` übersetzt und bindet in einem Schritt (C99, jede Funktion in einem eigenen Segment - ein Segment des Real Mode fasst 64 KB),
+  gefunden auf dem PATH, unter `%WATCOM%`, `Toolchain/watcom` oder `/opt/watcom`; es setzt `WATCOM` und `INCLUDE` für seine Programme.
+* **Ziel und Plattform**: das Zielprofil (`TargetProfile`; die alten PCs in `TargetProfile.Pc.cs`, eine Familie je Datei) nennt Plattformpaket, Toolchain,
+  Breiten und die Schalter des Ziels für den Compiler (`dos16`: `-bdos -mcmodel=l -march=i86 -mstack-size=...`). Das Plattformpaket ist ein Ordner aus kleinen
+  Auswahl-Headern je Teil (`fire_platform.h`, `fire_fs.h`, `fire_net.h`, ...), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,
+  `fire_env_dos.h`, `fire_*_none.h`); eine neue Umsetzung eines Teils ist eine neue Datei in `std/`, ein neues Ziel ein neuer Ordner.
+
+**`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in
+DOSBox-X. Large Model: Zeiger 32 Bit, also mit `int`/`float` von 32 Bit (Standard des Ziels) ein 8-Byte-Wert; `word` 16 Bit. Keine fire-Threads. Die Runtime rechnet
+die Größe jedes Blocks breit (`blockSize`): ein Block über 64 KB ist ein Fehler, nie ein kleinerer Block (die Daten großer Arrays über `__huge` folgen).
+Offen: `io`/`filesystem`, Konsole/Tastatur, Grafik, die Packages `dos`/`machine`, `#intwidth 16`.
+
 ### Zielkonfiguration (`fire.native.json`)
 
 Das erzeugte C++ hat oben einen **Zielabschnitt**, den die Konfiguration des Ziels bestimmt: die `defines`, die `includes` (z.B. die FreeRTOS-Header, vor dem Plattformpaket),

@@ -591,7 +591,8 @@ FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
         if (!rf_visible(c, l, i)) continue;
         const RfMember m = l->members[i];
         Arr* d = allocArr(13, list);
-        const char* texts[] = {m.name, m.kind, m.type, m.access};
+        const char* texts[4];
+        texts[0] = m.name; texts[1] = m.kind; texts[2] = m.type; texts[3] = m.access;
         for (int k = 0; k < 4; k++) { Value s = strFromUtf8(texts[k], list); arrItems(d)[k] = s; retain(s); }
         arrItems(d)[4] = Bool((m.flags & 1) != 0); arrItems(d)[5] = Bool((m.flags & 2) != 0);
         arrItems(d)[6] = Bool((m.flags & 4) != 0); arrItems(d)[7] = Bool((m.flags & 8) != 0);
@@ -862,7 +863,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
         const char* const* deps = rf_computed(asObj(target)->cls, member, &getter);
         if (deps) {
             if (changing) { snprintf(err, cap, ""'%s' of '%s' is a computed property (a getter without a setter): it can only be probed with 'changed'."", member, cname); return -1; }
-            OwnList current = {NULL, NULL, poolMark(), 0, NULL, NULL};
+            OwnList current = scopeList(poolMark());
             Value now = getter(target, &current);
             if (FIRE_UNLIKELY(g_unwind.active)) { leave(&current); return -2; }   // the getter threw: its exception is already unwinding, no probe
             int64_t id = probeAddEntryFull(asObj(target), member, changing, handler, deps, getter, now);

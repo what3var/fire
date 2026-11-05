@@ -12,7 +12,7 @@ namespace fire.Runtime
     /// backend (entry point, defines, platform package) and - later - the preprocessor, whose `#if` symbols are
     /// <see cref="Symbols"/>. The VM that runs a script in the editor uses <see cref="Host"/>.
     /// </summary>
-    public sealed record TargetProfile
+    public sealed partial record TargetProfile
     {
         /// <summary>What the native backend needs to build for this target: which platform package of the C++ runtime (native/platform/&lt;name&gt;/), what to
         /// include before it, the entry point, extra compiler arguments. A target configuration file (fire.native.json) can change all of it.</summary>
@@ -107,7 +107,11 @@ namespace fire.Runtime
             Native = new NativeTarget { Platform = "wasm", SupportsThreads = false, Toolchain = "emscripten" },
         };
 
-        private static readonly TargetProfile[] BuiltIn = { Windows, Linux, MacOs, Esp32, FreeRtos, Wasm };
+        /// <summary>The built-in targets: the desktop and the boards here, the old PCs (DOS, BIOS, UEFI, old Windows) in TargetProfile.Pc.cs - a family of targets
+        /// is a file of its own that adds its list.</summary>
+        /// (Built at the first use: the static fields of the partial files are all set by then - their order between files is not fixed.)
+        private static TargetProfile[] BuiltIn => s_builtIn ??= new[] { Windows, Linux, MacOs, Esp32, FreeRtos, Wasm }.Concat(PcTargets()).ToArray();
+        private static TargetProfile[]? s_builtIn;
 
         public static IReadOnlyList<TargetProfile> All => BuiltIn;
 

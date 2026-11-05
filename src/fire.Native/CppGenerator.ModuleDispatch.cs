@@ -270,7 +270,7 @@ namespace fire.Native
             sb.AppendLine($"FIRE_MAYBE_UNUSED static Value {miss}(Value self{ps}, OwnList* list, uint32_t caller) {{");
             sb.AppendLine("    (void)list; (void)caller;");
             string av = argc == 0 ? "NULL" : "av_";
-            string avDecl = argc == 0 ? "" : $"Value av_[{argc}] = {{{string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}"))}}}; ";
+            string avDecl = argc == 0 ? "" : CArray("Value", "av_", Enumerable.Range(0, argc).Select(i => $"a{i}").ToList());
             // (a base value: what plugins add to its type - `class extends string` in a plugin)
             sb.AppendLine($"    {{ uint32_t k_; const FireMethod* m_ = fireFindValueMethod(self, {CString(name)}, {argc}, &k_); if (m_) {{ {avDecl}return m_->fn(k_, self, {av}, list, caller); }} }}");
             if (OwnMethodId(name, argc) is { } ownId)

@@ -26965,6 +26965,55 @@ else
         catch (NotSupportedException ex) { CheckNat("Zielprofil: nicht verfuegbare Bibliothek wird abgelehnt", ex.Message.Contains("'graphics'") && ex.Message.Contains("'esp32'"), ex.Message); }
         CheckNat("Zielprofil: Windows erlaubt die Grafik, esp32 hat Devices/IO/Time", TargetProfile.Windows.HasImport("graphics") && esp.HasImport("devices") && esp.HasImport("io") && esp.HasImport("time") && !esp.HasImport("ui"));
         CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
+        // dos16 (ROADMAP 13.3): DOS in real mode - the profile, the generated C, and with Open Watcom and DOSBox-X on the machine: built and run like the VM
+        {
+            CheckNat("dos16: Zielprofil (Plattform dos16, Toolchain watcom, int/float 32, word 16, keine Threads)", TargetProfile.TryGet("dos16", out var dos16)
+                && dos16.Native.Platform == "dos16" && dos16.Native.Toolchain == "watcom" && dos16.IntWidth == 32 && dos16.FloatWidth == 32 && dos16.WordWidth == 16 && !dos16.Native.SupportsThreads
+                && fire.Native.ToolchainDef.BuiltIn.ContainsKey("watcom") && !fire.Native.ToolchainDef.BuiltIn["watcom"].CompilesCpp);
+            const string dosSource = """
+                class Animal { string name
+                    construct(string n) { this.name = n }
+                    string Speak() { return this.name + " says hi" } }
+                var a = new Animal("Rex")
+                print(a.Speak())
+                int big = 100000
+                print(big * 3 + " " + (7.5 / 2) + " " + 5cm + 3mm)
+                var list = [3, 1, 2]
+                var sum = 0
+                foreach (x in list) { sum += x }
+                print(sum + " " + list.length)
+                try { throw new Exception("boom") } catch (e) { print("caught " + e.message) }
+                word w = 65535
+                print(w + 1)
+                """;
+            var dosLinked = new Linker().CompileAndLink(new[] { dosSource }, null, null, VmExecutionMode.Release, null, dos16);
+            string dosC = fire.Native.CppGenerator.Generate(dosLinked, dos16);
+            CheckNat("dos16: das C nennt die Plattform dos16 und die Breiten", dosC.Contains("platform/dos16/fire_platform.h") && dosC.Contains("#define FIRE_INT32 1") && dosC.Contains("#define FIRE_WORD_BITS 16"));
+            var dosVmLines = new List<string>();
+            fire.Runtime.Session.Build(dosLinked, VmExecutionMode.Release, a => { dosVmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
+            Value.WordBits = 64; Value.Ints32 = false; Value.SingleFloats = false;
+            string dosVm = string.Concat(dosVmLines.Select(l => l + "\n"));
+            var watcom = new fire.Native.WatcomToolchain();
+            string? dosbox = fire.Native.ToolchainSetup.FindProgram("dosbox-x");
+            if (watcom.Locate(fire.Native.ToolchainDef.BuiltIn["watcom"]) == null || dosbox == null)
+                Console.WriteLine("SKIP: dos16 bauen und laufen lassen - Open Watcom (owcc) oder DOSBox-X fehlt");
+            else
+            {
+                string dosDir = Path.Combine(workDir, "dos16");
+                Directory.CreateDirectory(dosDir);
+                var built = fire.Compiler.NativeBuilder.Build(new[] { dosSource }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dosDir, "PROG.EXE"), VmExecutionMode.Release);
+                string dosOut = "";
+                if (built.Ok)
+                {
+                    var env = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy", ["SDL_AUDIODRIVER"] = "dummy" };
+                    RunProc(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" -c \"mount c {dosDir}\" -c \"c:\" -c \"PROG.EXE > OUT.TXT\" -c \"exit\"", dosDir, out _, null, env);
+                    string outFile = Directory.GetFiles(dosDir).FirstOrDefault(f => Path.GetFileName(f).Equals("OUT.TXT", StringComparison.OrdinalIgnoreCase)) ?? "";
+                    dosOut = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
+                }
+                CheckNat("dos16: mit Open Watcom gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM (Objekte, Strings, Einheiten, Ausnahmen, word 16 Bit)",
+                    built.Ok && dosOut == dosVm && dosVm.Length > 0, $"  VM:\n{dosVm}\n  DOS:\n{(built.Ok ? dosOut : built.Log)}");
+            }
+        }
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
         CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",
             espCpp.Contains("\nvoid app_main(void)") && !espCpp.Contains("int main(") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")

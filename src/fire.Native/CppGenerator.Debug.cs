@@ -132,7 +132,7 @@ namespace fire.Native
             var sb = new StringBuilder();
             if (d.DvNames.Count > 0)
             {
-                sb.AppendLine($"    Value* const dv_[] = {{{string.Join(", ", d.DvNames.Select(n => "&" + n))}}};");
+                sb.AppendLine($"    {CArray("Value*", "dv_", d.DvNames.Select(n => "&" + n).ToList())}");
                 sb.AppendLine("    DF->vars = dv_;");
             }
             if (f.HasSelf || f.Kind == FuncKind.Lambda) sb.AppendLine("    DF->thisSlot = &self;");
@@ -264,7 +264,7 @@ namespace fire.Native
             sb.AppendLine("}");
             // `set` of a field: through the setter of the field (the declared kind is checked, probes hear it) as if the class itself assigned it
             sb.AppendLine("void fire_dbgSetField(Value o, uint32_t index, Value x) {");
-            sb.AppendLine("    OwnList scratch_ = {NULL, NULL, poolMark(), 0, NULL, NULL};");
+            sb.AppendLine("    OwnList scratch_ = scopeList(poolMark());");
             sb.AppendLine("    (void)scratch_;");
             var setters = _classList.Where(c => c.Fields.Any(_fieldNames.Contains)).ToList();
             if (setters.Count > 0)

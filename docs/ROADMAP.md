@@ -504,6 +504,13 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
    paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).
    Dazu **`#intwidth 16`** (native Breite des 8086/286); `word` ist dort 16 Bit (Punkt 1c).
+   **Begonnen** (Branch `targets`): Zielprofil `dos16` (TargetProfile.Pc.cs: `int`/`float` 32 Bit, `word` 16, keine Threads), Toolchain `watcom` (`owcc`,
+   Treiber in `src/fire.Native/Toolchains/`), Plattformpaket `native/platform/dos16` (Uhr, Sleep, Ende, Umgebung über `std/fire_platform_dos.h` und
+   `std/fire_env_dos.h`; alle anderen Teile `none`), der Dialekt des Compilers (`native/runtime/cc/fire_cc_watcom.h`). Der Generator schreibt C89-taugliche
+   lokale Arrays (keine Compound-Literals, keine nicht-konstanten Initialisierer). Programme ohne Imports laufen in DOSBox-X wie in der VM (Test in der Suite;
+   SKIP ohne Open Watcom/DOSBox-X). Große Blöcke: jede Größe wird breit gerechnet, ein Block über 64 KB ist ein Fehler.
+   **Offen:** Daten großer Arrays/Puffer über `__huge` (`FIRE_HUGE`), `#intwidth 16`, `io`/`filesystem` (die C-Bibliothek von Watcom hat sie), Konsole und
+   Tastatur, Grafik, die Packages `dos`/`machine`/`xms`, Geräte (serieller/paralleler Port).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste

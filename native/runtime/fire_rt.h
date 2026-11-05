@@ -19,6 +19,7 @@
 #endif
 
 #include <math.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -28,6 +29,8 @@
 #ifdef FIRE_LIBRARY
 #include "fire_pkg_abi.h"   /* (the library for the VM: the host structure) */
 #endif
+/* The dialect of the C compiler (attributes, thread-local storage, checks when compiling): one small file per compiler family, cc/fire_cc_*.h. */
+#include "cc/fire_cc.h"
 
 /* The platform layer (docs/NATIVE_BACKEND.md, "Plattformschicht"): everything that depends on the operating system or the board - exit, clock, and for fire
  * threads the mutex, the condition variable, the thread and where the per-thread state lives - is one header per platform package. The generated file names
@@ -41,47 +44,12 @@
 #endif
 #include FIRE_PLATFORM_HEADER
 
-#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 12
-/* a function keeps the list of its global scope in `g_globalOwn` for as long as it runs (the thread's or the program's top level): not a dangling pointer */
-#pragma GCC diagnostic ignored "-Wdangling-pointer"
-/* after inlining, GCC follows the pointer of a number (its bits share the union with `p`) into retain/release on paths where `isRef` is false: no real access */
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#endif
-
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-/* (C: a cold path is `static inline` and `noinline` at once, on purpose - the fast paths around it are inlined, it is not) */
-#pragma GCC diagnostic ignored "-Wattributes"
-#endif
-
-#if defined(__GNUC__) || defined(__clang__)
-#define FIRE_COLD __attribute__((noinline, cold))
-#define FIRE_UNUSED_LABEL __attribute__((unused))
-#define FIRE_MAYBE_UNUSED __attribute__((unused))
-#define FIRE_LIKELY(x) __builtin_expect(!!(x), 1)
-#define FIRE_UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define FIRE_COLD
-#define FIRE_UNUSED_LABEL
-#define FIRE_MAYBE_UNUSED
-#define FIRE_LIKELY(x) (x)
-#define FIRE_UNLIKELY(x) (x)
-#endif
+FIRE_CC_RUNTIME_BEGIN
 #define FIRE_FN static inline
 
 /* Thread-local storage of the compiler (only with fire threads; FIRE_TLS_STRUCT platforms keep the state on the task instead). */
 #if defined(FIRE_THREADS) && !defined(FIRE_TLS_STRUCT)
-#if defined(__GNUC__) || defined(__clang__)
-/* (also in C++: `thread_local` would reach the variables of the program - C, `_Thread_local` - through a wrapper of C++ that can hand out a null pointer;
- * `__thread` is the same storage as in C) */
-#define FIRE_TLS __thread
-#elif defined(_MSC_VER)
-#define FIRE_TLS __declspec(thread)
-#elif defined(__cplusplus)
-#define FIRE_TLS thread_local
-#else
-#define FIRE_TLS _Thread_local
-#endif
+#define FIRE_TLS FIRE_TLS_KEYWORD
 #else
 #define FIRE_TLS
 #endif
@@ -105,12 +73,6 @@
 #else   /* (FIRE_DLL_LINKED_ELSEWHERE: the natives in C++ of a fire plugin - the pointers are those of its C file) */
 #define FIRE_HOST_EXTERN extern
 #endif
-#if defined(__GNUC__) || defined(__clang__)
-#define FIRE_CONST_FN __attribute__((const))
-#else
-#define FIRE_CONST_FN
-#endif
-
 #ifdef __cplusplus
 #define FIRE_BEGIN extern "C" { namespace fire {
 #define FIRE_END } }
@@ -118,7 +80,7 @@
 #else
 #define FIRE_BEGIN
 #define FIRE_END
-#define FIRE_STATIC_ASSERT(c, m) _Static_assert(c, m)
+#define FIRE_STATIC_ASSERT(c, m) FIRE_STATIC_ASSERT_C(c, m)
 #endif
 
 /* Optional arguments (`Int(5)`, `Int(5, unit)`): the macro picks the function by the number of arguments. */
@@ -876,7 +838,7 @@ FIRE_FN bool unitTermsOfText(const char* text, UnitTerms* out) {
     out->n = 0;
     for (;;) {
         size_t start = i, end;
-        int power = 1;
+        int32_t power = 1;   /* (16-bit int: the check of its size must not overflow) */
         while (text[i] && unitSymbolByte((unsigned char)text[i])) i++;
         end = i;
         if (end == start) {
@@ -1321,6 +1283,17 @@ struct OwnList {
     OwnList* parent;   /* scopes: the enclosing scope (TakeUpwards; set only when the program uses it) */
     Owned* holder;     /* object lists: the object that owns the list (null for a scope) */
 };
+/* A scope's list that starts at `mark` (the height of the temporary pool) - as a value: the generated code declares its lists with it (`OwnList O = scopeList(poolMark())`;
+ * C89 compilers like Open Watcom take no aggregate initializer that is not constant). */
+FIRE_FN OwnList scopeList(uint32_t mark) {
+    OwnList l;
+    l.head = l.tail = NULL;
+    l.mark = mark;
+    l.depth = 0;
+    l.parent = NULL;
+    l.holder = NULL;
+    return l;
+}
 FIRE_FN void ownListInit(OwnList* l, uint32_t mark, Owned* holder) {
     l->head = l->tail = NULL;
     l->mark = mark;
@@ -1620,7 +1593,7 @@ typedef struct PtrBox {
     void* addr;
     uint32_t slot;
 } PtrBox;
-FIRE_STATIC_ASSERT(sizeof(PtrBox) == 16, "A pointer box takes 16 bytes");
+FIRE_STATIC_ASSERT(sizeof(PtrBox) <= 16, "A pointer box takes 16 bytes");
 #define FIRE_BOX_KEEP 64u   /* the free boxes a thread keeps */
 /* A fresh box (count 1, held by the temporary pool like a fresh string). */
 FIRE_FN PtrBox* boxNew(void* addr, uint32_t slot) {
@@ -2535,8 +2508,23 @@ FIRE_FN void ownUnlink(Owned* o) {
 FIRE_NORETURN FIRE_COLD FIRE_FN void allocFailed(void) { fatal("Out of memory."); }
 
 /* `new`: the object belongs to `owner` (the innermost scope of the creator, or - for `field = new X()` - the object that gets it). */
+/* The bytes of a block: a header of `head` bytes and `count` elements of `elem` bytes - computed wide. A block that does not fit a size_t (16-bit DOS: 64 KB)
+ * is an error, never a smaller block. (On 32 and 64 bits the compiler drops the check where it cannot happen.) */
+FIRE_FN size_t blockSize(size_t head, uint32_t count, size_t elem) {
+    uint64_t n = (uint64_t)head + (uint64_t)count * (uint64_t)elem;
+    if (FIRE_UNLIKELY(n > (uint64_t)SIZE_MAX - 8)) fatal("Out of memory: a block larger than this machine can address at once (64 KB in real mode).");
+    return (size_t)n;
+}
+
+/* The longest value of an environment variable that Environment.Get reads (16-bit DOS: a block holds less than 64 KB). */
+#if SIZE_MAX > 0xFFFFu
+#define FIRE_ENV_VALUE_MAX 65536
+#else
+#define FIRE_ENV_VALUE_MAX 4096
+#endif
+
 FIRE_FN Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
-    void* memory = malloc(FIRE_HDR(Obj) + fieldCount * sizeof(Value));
+    void* memory = malloc(blockSize(FIRE_HDR(Obj), fieldCount, sizeof(Value)));
     Obj* o;
     Value* f;
     uint32_t i;
@@ -2725,7 +2713,7 @@ FIRE_FN void registerTemp(Ref* r, OwnList* list) {
 }
 
 FIRE_FN Str* allocStr(uint32_t length, OwnList* list) {
-    Str* s = (Str*)malloc(sizeof(Str) + (size_t)(length + 1) * sizeof(fire_char16));
+    Str* s = (Str*)malloc(blockSize(sizeof(Str), length + 1, sizeof(fire_char16)));
     fire_char16* d;
     if (FIRE_UNLIKELY(!s)) allocFailed();
     s->h.type = R_Str;
@@ -2740,7 +2728,7 @@ FIRE_FN fire_char16* strChars(Str* s) { return (fire_char16*)s->data; }
 
 /* A new array; it belongs to `list` (the innermost scope of the creator, or the object that it is assigned to directly). */
 FIRE_FN Arr* allocArr(uint32_t length, OwnList* list) {
-    Arr* a = (Arr*)malloc(FIRE_HDR(Arr) + (size_t)length * sizeof(Value));
+    Arr* a = (Arr*)malloc(blockSize(FIRE_HDR(Arr), length, sizeof(Value)));
     Value* items;
     uint32_t i;
     if (FIRE_UNLIKELY(!a)) allocFailed();
@@ -2757,7 +2745,7 @@ FIRE_FN Arr* allocArr(uint32_t length, OwnList* list) {
 }
 
 FIRE_FN Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const Value*), OwnList* list) {
-    Lam* l = (Lam*)malloc(FIRE_HDR(Lam) + (size_t)ncaps * sizeof(Value));
+    Lam* l = (Lam*)malloc(blockSize(FIRE_HDR(Lam), ncaps, sizeof(Value)));
     if (FIRE_UNLIKELY(!l)) allocFailed();
     l->h.type = R_Lam;
     l->nparams = nparams;
@@ -2954,7 +2942,7 @@ FIRE_FN bool hostLittle(void) { uint16_t one = 1; return *(uint8_t*)&one == 1; }
 /* A buffer of `length` elements of `elem` bytes (1: a byte buffer; sizeof(FireWord): a buffer of machine words), all 0. The data is aligned for a word. */
 FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
     size_t head = (sizeof(Buf) + 7u) & ~(size_t)7u;
-    Buf* b = (Buf*)malloc(head + (size_t)length * elem);
+    Buf* b = (Buf*)malloc(blockSize(head, length, elem));
     if (FIRE_UNLIKELY(!b)) allocFailed();
     b->h.okind = O_Buffer;
     b->h.flags = 0;
@@ -3025,7 +3013,7 @@ FIRE_FN uint32_t utf8ToUtf16(const char* s, fire_char16* out, uint32_t cap) {
         if (c < 0x80) cp = c;
         else if ((c >> 5) == 6 && *s) cp = ((c & 0x1F) << 6) | ((unsigned char)*s++ & 0x3F);
         else if ((c >> 4) == 14 && s[0] && s[1]) { cp = ((c & 0x0F) << 12) | (((unsigned char)s[0] & 0x3F) << 6) | ((unsigned char)s[1] & 0x3F); s += 2; }
-        else if ((c >> 3) == 30 && s[0] && s[1] && s[2]) { cp = ((c & 0x07) << 18) | (((unsigned char)s[0] & 0x3F) << 12) | (((unsigned char)s[1] & 0x3F) << 6) | ((unsigned char)s[2] & 0x3F); s += 3; }
+        else if ((c >> 3) == 30 && s[0] && s[1] && s[2]) { cp = ((uint32_t)(c & 0x07) << 18) | ((uint32_t)((unsigned char)s[0] & 0x3F) << 12) | ((uint32_t)((unsigned char)s[1] & 0x3F) << 6) | ((unsigned char)s[2] & 0x3F); s += 3; }
         else cp = 0xFFFD;
         if (cp >= 0x10000) { cp -= 0x10000; out[n++] = (fire_char16)(0xD800 + (cp >> 10)); out[n++] = (fire_char16)(0xDC00 + (cp & 0x3FF)); }
         else out[n++] = (fire_char16)cp;
@@ -3643,9 +3631,9 @@ FIRE_FN Value envCall(int64_t id, Value a, Value b, OwnList* list) {
             char* value;
             Value r;
             if (!fire_envName(a, name, sizeof name)) { snprintf(text, sizeof text, "Environment.Get: '%s' is not a name of an environment variable.", name); return fireError("ArgumentException", text); }
-            value = (char*)malloc(65536);
+            value = (char*)malloc(FIRE_ENV_VALUE_MAX);
             if (value == NULL) return Undef();
-            n = fire_plat_getenv(name, value, 65536);
+            n = fire_plat_getenv(name, value, FIRE_ENV_VALUE_MAX);
             r = n < 0 ? Undef() : newStrFromUtf8((const uint8_t*)value, (size_t)n, list);
             free(value);
             return r;
@@ -4030,7 +4018,7 @@ FIRE_FN bool fitsTArg(Value* v, const TArg* ta) {
 }
 
 /* The type arguments of a `new` or a call that names a type parameter of the running code (`new Box<T>()`): the same list for the same arguments. The
- * generator passes a compound literal: internTArgsN((const TArg* const[]){&TA_1, &TA_2}, 2). */
+ * generator calls internTArgsV(2, &TA_1, &TA_2) (C89: no compound literals - Open Watcom). */
 typedef struct fire_TArgsEntry { struct fire_TArgsEntry* next; uint32_t n; const TArg* a[1]; } fire_TArgsEntry;
 extern FIRE_RT_DATA fire_TArgsEntry* g_targsHead;
 FIRE_FN TArgs internTArgsN(const TArg* const* items, uint32_t n) {
@@ -4049,6 +4037,17 @@ FIRE_FN TArgs internTArgsN(const TArg* const* items, uint32_t n) {
     e->next = g_targsHead;
     g_targsHead = e;
     return e->a;
+}
+#define FIRE_TARGS_MAX 16
+FIRE_FN TArgs internTArgsV(uint32_t n, ...) {
+    const TArg* items[FIRE_TARGS_MAX];
+    va_list ap;
+    uint32_t i;
+    if (FIRE_UNLIKELY(n > FIRE_TARGS_MAX)) fatal("More than 16 type arguments.");
+    va_start(ap, n);
+    for (i = 0; i < n; i++) items[i] = va_arg(ap, const TArg*);
+    va_end(ap);
+    return internTArgsN(items, n);
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -4317,9 +4316,7 @@ FIRE_FN Value fireError(const char* cls, const char* utf8) {
     if (exception.kind == K_Class) return throwValue(exception);
 #endif
     fatalException(cls, utf8);
-#ifdef __TINYC__
-    return Undef();   /* (not reached: TinyCC does not see that fatalException does not return) */
-#endif
+    FIRE_NOT_REACHED(Undef())
 }
 #endif
 
@@ -4638,9 +4635,7 @@ FIRE_FN Value divideByZero(void) {
     return fireError("DivideByZeroException", "Division by zero.");
 #else
     fatalException("DivideByZeroException", "Division by zero.");
-#ifdef __TINYC__
-    return Undef();   /* (not reached) */
-#endif
+    FIRE_NOT_REACHED(Undef())
 #endif
 }
 
@@ -4807,7 +4802,7 @@ FIRE_FN void arrPackedSet(Arr* a, uint32_t i, Value v) {
 /* The Values of a packed array (a native function asks for them): unpacked once; the type stays (arraySet still converts). */
 FIRE_COLD FIRE_FN Value* arrUnpack(Arr* a) {
     ArrTyped* t = a->typed;
-    Value* items = (t->own & AT_INLINE) ? (Value*)((char*)a + FIRE_HDR(Arr)) : (Value*)malloc((size_t)a->length * sizeof(Value) + 1);
+    Value* items = (t->own & AT_INLINE) ? (Value*)((char*)a + FIRE_HDR(Arr)) : (Value*)malloc(blockSize(1, a->length, sizeof(Value)));
     uint32_t i;
     if (FIRE_UNLIKELY(!items)) allocFailed();
     for (i = 0; i < a->length; i++) items[i] = arrPackedGet(a, i);
@@ -4853,7 +4848,7 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
         t->data = items;
         return true;
     }
-    t->data = malloc((size_t)a->length * arrElemSize(elem) + 1);
+    t->data = malloc(blockSize(1, a->length, arrElemSize(elem)));
     if (FIRE_UNLIKELY(!t->data)) allocFailed();
     t->own |= AT_DATA;
     t->packed = 1;
@@ -4954,7 +4949,7 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
         return r;
     }
     length = (uint32_t)size.i;
-    a = (Arr*)malloc(head + (size_t)length * arrElemSize(elem) + 1);
+    a = (Arr*)malloc(blockSize(head + 1, length, arrElemSize(elem)));
     if (FIRE_UNLIKELY(!a)) allocFailed();
     a->h.okind = O_Array;
     a->h.flags = 0;
@@ -5333,7 +5328,7 @@ FIRE_FN bool wordsArg(Value v, const char* what, FireWords* out) {
         uint32_t i;
         if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return false; }
         a = arrOf(v);
-        t = (TempBytes*)malloc(head + (size_t)a->length * sizeof(FireWord) + 1);
+        t = (TempBytes*)malloc(blockSize(head + 1, a->length, sizeof(FireWord)));
         if (FIRE_UNLIKELY(!t)) allocFailed();
         words = (FireWord*)(void*)((uint8_t*)t + head);
         for (i = 0; i < a->length; i++) {
@@ -6257,12 +6252,14 @@ FIRE_FN int64_t externInt(Value v) {
         case K_Float: return (int64_t)v.f;
         default: fatal("An extern function was called with an argument that is not a number.");
     }
+    FIRE_NOT_REACHED(0)
 }
 FIRE_FN double externFloat(Value v) {
     if (v.kind == K_Float) return (double)v.f;
     if (v.kind == K_Int) return (double)v.i;
     if (v.kind == K_Word) return (double)v.w;
     fatal("An extern function was called with an argument that is not a number.");
+    FIRE_NOT_REACHED(0)
 }
 /* A string that a C function returned (UTF-8), as a value of `list` (`undefined` for a null pointer). */
 FIRE_FN Value externResultString(const char* utf8, OwnList* list) {
@@ -6290,7 +6287,7 @@ FIRE_FN void externStringInit(ExternString* e, Value v) {
     if (v.kind == K_Undefined) return;
     if (v.kind != K_String) fatal("An extern function was called with an argument that is not a string.");
     s = strOf(v);
-    p = (char*)malloc((size_t)s->length * 4 + 1);
+    p = (char*)malloc(blockSize(1, s->length, 4));
     if (!p) allocFailed();
     for (i = 0; i < s->length; i++) {
         uint32_t c = s->data[i];
@@ -8250,8 +8247,6 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
 
 FIRE_END
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
+FIRE_CC_RUNTIME_END
 
 #endif  /* FIRE_RT_H */

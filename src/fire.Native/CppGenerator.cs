@@ -925,7 +925,17 @@ namespace fire.Native
                 if (at == t.Length - 1) return f.HasCallTArgs ? $"(ctargs ? ctargs[{k}] : NULL)" : "NULL";
                 return f.HasSelf ? TArgOfExpr(t.Substring(at + 1), k, SelfObj(f)) : "NULL";
             }
-            return $"internTArgsN((const TArg* const[]){{{string.Join(", ", parts.Select(Part))}}}, {parts.Length})";
+            return $"internTArgsV({parts.Length}, {string.Join(", ", parts.Select(Part))})";
+        }
+
+        /// <summary>A local array with its elements, C89 style (`T a[n]; a[0] = x; ...`): every C compiler takes it - Open Watcom has no compound literals and no
+        /// aggregate initializers that are not constant. (The same code for every target: one path.)</summary>
+        private static string CArray(string type, string name, IReadOnlyList<string> items)
+        {
+            var sb = new StringBuilder();
+            sb.Append(type).Append(' ').Append(name).Append('[').Append(Math.Max(1, items.Count)).Append("]; ");
+            for (int i = 0; i < items.Count; i++) sb.Append(name).Append('[').Append(i).Append("] = ").Append(items[i]).Append("; ");
+            return sb.ToString();
         }
 
         /// <summary>The type arguments' tables: a TArg per text, the constant lists and the `targOf_` functions (declared before the helpers that check fields).</summary>
@@ -2021,7 +2031,7 @@ namespace fire.Native
             if (_usesActors)
             {
                 sb.AppendLine("    if (self.kind == K_Class && FIRE_LIKELY(leafAlive(self)) && (asObj(self)->h.flags & 8)) {");
-                sb.AppendLine($"        Value av[{Math.Max(1, argc)}] = {{{string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()"))}}};");
+                sb.AppendLine($"        {CArray("Value", "av", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
                 sb.AppendLine($"        actorSend(self, {msg}, av, {argc});");
                 sb.AppendLine("        return Undef();");
                 sb.AppendLine("    }");
@@ -2979,15 +2989,15 @@ namespace fire.Native
                 if (framed) foreach (var l in localsToDeclare) Var("Value", l, "Undef()");
                 else decl.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
             }
-            string ListInit(int i) => i < 0 ? "{NULL, NULL, poolMark(), 0, NULL, NULL}" : i >= f.Chunk.Code.Count ? "{NULL, NULL, 0xFFFFFFFFu, 0, NULL, NULL}" : "{NULL, NULL, 0, 0, NULL, NULL}";   // (the list of a catch block that never ran: leaving it is a no-op)
+            string ListInit(int i) => i < 0 ? "scopeList(poolMark())" : i >= f.Chunk.Code.Count ? "scopeList(0xFFFFFFFFu)" : "scopeList(0)";   // (the list of a catch block that never ran: leaving it is a no-op)
             if (f.NeedsList.Count > 0)
             {
-                if (framed) foreach (int i in f.NeedsList.OrderBy(i => i)) Var("OwnList", ListName(i), "(OwnList)" + ListInit(i));
+                if (framed) foreach (int i in f.NeedsList.OrderBy(i => i)) Var("OwnList", ListName(i), ListInit(i));
                 else decl.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + " = " + ListInit(i))) + ";");
             }
             if (f.NeedsArgList)
             {
-                if (framed) Var("OwnList", "AL", "(OwnList){NULL, NULL, 0, 0, NULL, NULL}"); else decl.AppendLine("    OwnList AL = {NULL, NULL, 0, 0, NULL, NULL};");
+                if (framed) Var("OwnList", "AL", "scopeList(0)"); else decl.AppendLine("    OwnList AL = {NULL, NULL, 0, 0, NULL, NULL};");
             }
             // the handlers of the `try` statements, and the operand stack slots of the catch blocks
             foreach (var region in f.Regions.Values.OrderBy(r => r.Template))
@@ -3177,7 +3187,7 @@ namespace fire.Native
                 var leaving = new List<string>();
                 for (int i = fromCount - 1; i >= downTo; i--)
                     if (f.NeedsList.Contains(st.Scopes[i].Id)) leaving.Add("&" + ListName(st.Scopes[i].Id));
-                if (leaving.Count > 0) emit($"{{ OwnList* const T_[] = {{{string.Join(", ", leaving)}}}; transferTree({transfer}, T_, {leaving.Count}); }}");
+                if (leaving.Count > 0) emit($"{{ {CArray("OwnList*", "T_", leaving.ToList())}transferTree({transfer}, T_, {leaving.Count}); }}");
             }
             for (int i = fromCount - 1; i >= downTo; i--)
             {
@@ -4452,9 +4462,10 @@ namespace fire.Native
                     bool track = (ins.A[1] & 1) != 0 && f.HasSelf;
                     if (track) f.AccTrack = true;
                     string obj = S(d - 2), v = S(d - 1);
-                    string lists = st.Scopes.Count == 0 ? "NULL, 0" : $"(OwnList* const[]){{{string.Join(", ", st.Scopes.Select(sc => "&" + ListName(sc.Id)))}}}, {st.Scopes.Count}";
+                    string listsDecl = st.Scopes.Count == 0 ? "" : CArray("OwnList*", "KL_", st.Scopes.Select(sc => "&" + ListName(sc.Id)).ToList());
+                    string lists = st.Scopes.Count == 0 ? "NULL, 0" : $"KL_, {st.Scopes.Count}";
                     string mine = IsSetterFunc(f) ? "MYAL" : "NULL";
-                    string keep = f.HasSelf ? $"accKeep(self, {obj}, {v}, {lists}, {mine}, {(track ? "true" : "false")});" : "";
+                    string keep = f.HasSelf ? $"{{ {listsDecl}accKeep(self, {obj}, {v}, {lists}, {mine}, {(track ? "true" : "false")}); }}" : "";
                     string? direct = ObjSlot(d - 2) ? DirectSetField(ObjClass(Ty(d - 2)), field, obj, v, Ty(d - 1), f, IsNullable(Ty(d - 2))) : null;
                     var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
                     string store = direct ?? (setter != null
@@ -4471,7 +4482,7 @@ namespace fire.Native
                         // a property (or a name that is a field of some classes and a property of others: no setter took it - it goes back, the field rule)
                         f.NeedsArgList = true;
                         bool giveBack = setter == null && (Modular || _openWorld || LibraryRole || _classList.Any(c => c.Rc.FieldIndex.ContainsKey(field)));
-                        E($"{{ OwnList* W_ = accHandOver({v}, {lists}, {mine}, &{OwnerList()}, &AL);");
+                        E($"{{ {listsDecl}OwnList* W_ = accHandOver({v}, {lists}, {mine}, &{OwnerList()}, &AL);");
                         E("  " + store);
                         E($"  accHandEnd({v}, W_, &AL, {(giveBack ? "true" : "false")});{(giveBack && keep.Length > 0 ? " " + keep : "")} finishArgs(Undef(), &AL); }}");
                         Check();
@@ -4625,7 +4636,7 @@ namespace fire.Native
                         {
                             // with a `Takes` mode (the scopes of the running call tell what is "local") or with `try` (only the owner moves it)
                             var scopeLists = st.Scopes.Where(sc => f.NeedsList.Contains(sc.Id)).Select(sc => "&" + ListName(sc.Id)).ToList();
-                            string localsDecl = scopeLists.Count == 0 ? "" : $"OwnList* const L_[] = {{{string.Join(", ", scopeLists)}}}; ";
+                            string localsDecl = scopeLists.Count == 0 ? "" : CArray("OwnList*", "L_", scopeLists.ToList());
                             string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Int(0)";
                             if (argc > baseArgs && !_usesTakeEnumerate) { _usesTakeEnumerate = true; _version++; }
                             string call = isTry
@@ -4717,7 +4728,7 @@ namespace fire.Native
                         // an ownership method with a `Takes` mode that goes through the dispatcher (some class declares a method of this name): the built-in fallback there needs the scopes of this call
                         var dispatchScopes = st.Scopes.Where(sc => f.NeedsList.Contains(sc.Id)).Select(sc => "&" + ListName(sc.Id)).ToList();
                         if (dispatchScopes.Count > 0)
-                            E($"{{ OwnList* const L_[] = {{{string.Join(", ", dispatchScopes)}}}; g_scopeLists = L_; g_scopeCount = {dispatchScopes.Count};");
+                            E($"{{ {CArray("OwnList*", "L_", dispatchScopes.ToList())}g_scopeLists = L_; g_scopeCount = {dispatchScopes.Count};");
                         E($"{S(slot)} = {CallFn(method, argc)}({S(slot)}{Args(d - argc, argc)}{extra});");
                         if (dispatchScopes.Count > 0) E("g_scopeLists = NULL; g_scopeCount = 0; }");
                     }
@@ -4843,8 +4854,8 @@ namespace fire.Native
                     Need(argc + 1);
                     int slot = d - argc - 1;
                     string owner = OwnerList();
-                    var argList = argc == 0 ? "Undef()" : string.Join(", ", Enumerable.Range(slot + 1, argc).Select(S));
-                    E($"{{ Value args[{Math.Max(argc, 1)}] = {{{argList}}}; {S(slot)} = {(DebugBuild ? "callLamV" : "callLam")}({S(slot)}, {argc}, args, &{owner}); }}");
+                    var argItems = argc == 0 ? new List<string> { "Undef()" } : Enumerable.Range(slot + 1, argc).Select(S).ToList();
+                    E($"{{ {CArray("Value", "args", argItems)}{S(slot)} = {(DebugBuild ? "callLamV" : "callLam")}({S(slot)}, {argc}, args, &{owner}); }}");
                     Check();
                     AdoptResult(slot);
                     d = slot + 1; return Next();
@@ -5015,8 +5026,8 @@ namespace fire.Native
                     int ranks = ins.A[0];
                     Need(ranks);
                     int first = d - ranks;
-                    var sizes = string.Join(", ", Enumerable.Range(first, ranks).Select(i => $"sizeArg({S(i)})"));
-                    E($"{{ const int64_t sz[{ranks}] = {{{sizes}}}; {S(first)} = newJagged(sz, {ranks}, &{OwnerList()}); }}");
+                    var sizeItems = Enumerable.Range(first, ranks).Select(i => $"sizeArg({S(i)})").ToList();
+                    E($"{{ {CArray("int64_t", "sz", sizeItems)}{S(first)} = newJagged(sz, {ranks}, &{OwnerList()}); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.HoistValue:
@@ -5066,7 +5077,7 @@ namespace fire.Native
                     Need(2);
                     foreach (var sc in st.Scopes) f.NeedsList.Add(sc.Id);
                     E(st.Scopes.Count == 0 ? $"{S(d - 2)} = ownValueN({S(d - 2)}, {S(d - 1)}, NULL, 0);"
-                        : $"{S(d - 2)} = ownValueN({S(d - 2)}, {S(d - 1)}, (OwnList* const[]){{{string.Join(", ", st.Scopes.Select(sc => "&" + ListName(sc.Id)))}}}, {st.Scopes.Count});");
+                        : $"{{ {CArray("OwnList*", "VL_", st.Scopes.Select(sc => "&" + ListName(sc.Id)).ToList())}{S(d - 2)} = ownValueN({S(d - 2)}, {S(d - 1)}, VL_, {st.Scopes.Count}); }}");
                     SetR(d - 2, true);
                     d--; return Next();
                 case OpCode.Delete:
@@ -5329,7 +5340,7 @@ namespace fire.Native
                     // (`handover`: no copy, but a lambda/pointer in it, or in a thread a part of the main program's globals, is refused the same way)
                     if (takingCount > 0)
                     {
-                        sbf.Append($"{{ Value tv[{takingCount}] = {{{string.Join(", ", Enumerable.Range(first, takingCount).Select(S))}}}; if (");
+                        sbf.Append($"{{ {CArray("Value", "tv", Enumerable.Range(first, takingCount).Select(S).ToList())}if (");
                         if (copyCount > 0) sbf.Append($"takingNoCopyFree(tv, {copyCount})");
                         if (copyCount > 0 && handoverCount > 0) sbf.Append(" && ");
                         if (handoverCount > 0) sbf.Append($"handoverFree(tv + {copyCount}, {handoverCount})");
@@ -5405,7 +5416,7 @@ namespace fire.Native
                     int argc = ins.A[0];
                     Need(argc + 1);
                     int first = d - argc - 1;
-                    E($"{{ Value av[{Math.Max(1, argc)}] = {{{string.Join(", ", Enumerable.Range(first, argc).Select(S).DefaultIfEmpty("Undef()"))}}}; postJob({S(d - 1)}, av, {argc}); }}");
+                    E($"{{ {CArray("Value", "av", Enumerable.Range(first, argc).Select(S).DefaultIfEmpty("Undef()").ToList())}postJob({S(d - 1)}, av, {argc}); }}");
                     if (argc > 0) Check();   // (`[NoCopy]`: an argument that reaches one is the ArgumentException, nothing is queued)
                     d = first;
                     return Next();
