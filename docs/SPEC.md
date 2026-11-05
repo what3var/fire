@@ -158,7 +158,7 @@ Until a slot claims it, an unclaimed value belongs to the **statement temporarie
 | `v = E`, `v` a variable of an outer block | the scope that **declares** `v` (not the current block, not the function scope) |
 | `g = E`, `g` a global variable | the global scope |
 | `obj.f = E`, a field (also `this.f`, a bare field name in a class, a field initializer) | the object `obj` |
-| `arr[i] = E` | the **array** `arr` (an array can own objects and arrays, 2.5) |
+| `arr[i] = E`, an element of an array literal (`[new A(), Make()]`) | the **array** `arr` (an array can own objects and arrays, 2.5) |
 | `f(E)`, `obj.M(E)`, `new X(E)`, `base(E)`, a lambda call; a default value of a parameter | the scope of the **called** method (the call); it dies when the call ends, after the callee's own locals, unless the callee keeps it (`TakeTo`, `take`, a field of an object it keeps, `return`) |
 | `obj.Prop = E`, a property | the **setter call**, see "Setters" below |
 | `return E` | the target of the call expression at the caller: ownership is handed on, `var v = F()` gives it to the scope of `v`, `obj.f = F()` to `obj`, `arr[i] = F()` to the array, `f(F())` to the call of `f`, `return F()` on to the next caller |
@@ -195,7 +195,8 @@ path through the setter, where the setter passes it on - its **claim site**:
 Only the name `value` is followed (no aliases: `var v = value; this.f = v` claims nothing). A claim site that does not run on the path taken (a branch not
 taken, a loop that runs zero times) claims nothing: the value is destroyed when the setter returns - there is no fallback at run time. In a loop the first pass
 claims. A call is a claim site only where every path through it has no field or property assignment of `value` (a call followed, on some path, by
-`this.f = value` claims nothing - the assignment does). A value that is not unclaimed (`obj.Prop = tmp`) keeps its owner, as before; the setter only refers to it
+`this.f = value` claims nothing - the assignment does); where such a call is the only candidate on another path, the compiler warns that ownership
+does not pass on there (`TC018`: the value dies with the setter on that path). A value that is not unclaimed (`obj.Prop = tmp`) keeps its owner, as before; the setter only refers to it
 (it can still `take value`).
 
 ### 2.2 Ownership transfer (member functions on object instances)

@@ -62,7 +62,7 @@ A method that returns `this` passes the temporary on, so builders work: the last
 
 ```fire
 class Builder {
-    int size
+    int size = 0
     Builder With(int n) { this.size = this.size + n; return this }
     destruct() { print("destroy builder") }
 }

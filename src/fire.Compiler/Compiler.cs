@@ -1144,14 +1144,16 @@ namespace fire.Compiler
                 // An instance field with `new X()`/`flat x`/`copy x` as initialiser: the new object belongs to the instance
                 // (`this` is bound during evaluation, see CallProtoWithThis), not the initialiser scope - otherwise
                 // it would be destroyed after the constructor while the field points to it (SPEC 2.1).
-                if (!isStatic && IsOwnedCreation(initializer))
+                if (!isStatic && MayBeUnclaimed(initializer))
                 {
                     inner._chunk.EmitOp(OpCode.LoadThis);
-                    inner.TryCompileOwnedCreation(initializer);
+                    inner.CompileExpr(initializer);
+                    inner._chunk.EmitOp(OpCode.ClaimToObject);   // [this, value] -> [value]: the object owns it
                 }
                 else
                 {
                     inner.CompileExpr(initializer);
+                    if (isStatic) inner.EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(initializer), hoist: false);   // a static field: the program
                 }
                 inner.EmitCheckLambdaSignatureIfNeeded(type);
             }
@@ -1164,7 +1166,8 @@ namespace fire.Compiler
                 inner.CompileArrayAlloc(arrayRanks, 0, IsByteBuffer(type, arrayRanks.Count));
                 // (`word data[4]`: the array becomes a buffer of words - TypeArray, as for a variable)
                 if (IsWordBuffer(type, arrayRanks.Count)) EmitWidthIfNeeded(inner, type!.ArrayWidthCode(arrayRanks.Count));
-                if (!isStatic) inner._chunk.EmitOp(OpCode.OwnValue);
+                if (!isStatic) inner._chunk.EmitOp(OpCode.ClaimToObject);
+                else inner.EmitClaimToScope(0xFFFF, unclaimed: true, hoist: false);
             }
             else inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
@@ -1461,6 +1464,8 @@ namespace fire.Compiler
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
             inner._accessor = isStatic ? 0 : accessor;
+            // a setter passes its `value` on at its claim sites (SPEC 2.1 "Setters")
+            if (accessor == 2 && !isStatic) inner._setterClaims = SetterClaims.Analyze(body).Sites;
             inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
@@ -1635,6 +1640,7 @@ namespace fire.Compiler
 
                 case ExprStmt es:
                     CompileDiscardedExpr(es.Expression);
+                    EmitReleaseTemps(es.Expression);   // a value no slot took dies at the end of the statement (SPEC 2.1)
                     break;
 
                 case NoOpStmt:
@@ -1693,8 +1699,11 @@ namespace fire.Compiler
                     EmitCheckUnitIfNeeded(this, vd.Type?.UnitDemand);
                     EmitWidthIfNeeded(this, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0, vd.Type?.UnitDemand);
 
+                    // `var v = E`: an unclaimed value belongs to the scope that declares v (SPEC 2.1); `int a[10]` is made for it
+                    if (vd.Initializer != null ? MayBeUnclaimed(vd.Initializer) : autoArrayAlloc) EmitClaimToScope(0, unclaimed: true, hoist: false);
                     _chunk.MarkDeclaredName(_chunk.Here, vd.Name);
                     _chunk.EmitOp(OpCode.DeclareLocal);
+                    if (vd.Initializer != null) EmitReleaseTemps(vd.Initializer);
                     break;
                 }
 
@@ -1755,6 +1764,7 @@ namespace fire.Compiler
                 case DeleteStmt del:
                     CompileExpr(del.Target);
                     _chunk.EmitOp(OpCode.Delete);
+                    EmitReleaseTemps(del.Target);
                     break;
 
                 case ThrowStmt th:
@@ -2012,6 +2022,7 @@ namespace fire.Compiler
         private void CompileIf(IfStmt s)
         {
             CompileExpr(s.Condition);
+            EmitReleaseTemps(s.Condition);   // (the condition's temporaries die before the branch runs, SPEC 2.1)
             int elseJumpAt = EmitJumpIfFalse(); // placeholder, patched below
 
             CompileScopedBody(s.Then);
@@ -2039,6 +2050,7 @@ namespace fire.Compiler
 
             int loopStart = _chunk.Here;
             CompileExpr(s.Condition);
+            EmitReleaseTemps(s.Condition);   // (the condition's temporaries die before the branch runs, SPEC 2.1)
             int endJumpAt = EmitJumpIfFalse();
 
             CompileScopedBody(s.Body);
@@ -2079,6 +2091,7 @@ namespace fire.Compiler
             int continueTarget = _chunk.Here;
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
             CompileExpr(s.Condition);
+            EmitReleaseTemps(s.Condition);   // (the condition's temporaries die before the branch runs, SPEC 2.1)
             int endJumpAt = EmitJumpIfFalse();
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
@@ -2105,6 +2118,7 @@ namespace fire.Compiler
             if (s.Condition != null)
             {
                 CompileExpr(s.Condition);
+            EmitReleaseTemps(s.Condition);   // (the condition's temporaries die before the branch runs, SPEC 2.1)
                 endJumpAt = EmitJumpIfFalse();
             }
 
@@ -2123,7 +2137,10 @@ namespace fire.Compiler
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
 
             if (s.Increment != null)
+            {
                 CompileDiscardedExpr(s.Increment);
+                EmitReleaseTemps(s.Increment);
+            }
 
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
@@ -2171,11 +2188,11 @@ namespace fire.Compiler
             _chunk.EmitU16(0);
             // Stack (on true): [enumerator]
 
+            EmitEnterScope(); // corresponds to Resolver.PushScope() for the loop variable
             _chunk.EmitOp(OpCode.Dup);
             EmitCallMethodByName("GetCurrent", 0);
-            // Stack: [enumerator, current]
-
-            EmitEnterScope(); // corresponds to Resolver.PushScope() for the loop variable
+            // Stack: [enumerator, current] - an element GetCurrent made belongs to the loop variable's scope (SPEC 2.1)
+            EmitClaimToScope(0, unclaimed: true, hoist: false);
             _chunk.MarkDeclaredName(_chunk.Here, fs.VarName);
             _chunk.EmitOp(OpCode.DeclareLocal); // pop 'current', slot 0 of this new scope
             // Stack: [enumerator]
@@ -2194,6 +2211,7 @@ namespace fire.Compiler
             _chunk.PatchU16(endJumpAt, loopEnd);
             foreach (var addr in ctx.BreakJumpPatchAddrs) _chunk.PatchU16(addr, loopEnd);
             _chunk.EmitOp(OpCode.Pop); // Enumerator-Referenz verwerfen
+            EmitReleaseTemps(fs.Iterable);   // the collection and its enumerator lived as temporaries of the `foreach` until here (SPEC 2.1)
 
             _residents.RemoveAt(_residents.Count - 1);
             _loopStack.Pop();
@@ -2873,9 +2891,15 @@ namespace fire.Compiler
                 else
                 {
                     CompileExpr(args[i]);
-                    // `f(g())`, `f(new X())`: the returned / freshly made value goes into the parameter (the caller holds no reference to it), so it belongs
-                    // to the called function (SPEC 2.1), not to the caller
-                    if (scopeCreating && i < 16 && args[i] is CallExpr or NewExpr or NewArrayExpr) mask |= 4UL << (4 * i);
+                    // `f(g())`, `f(new X())`: an unclaimed value goes into the parameter (the caller holds no reference to it), so it belongs to the called
+                    // function (SPEC 2.1), not to the caller; a direct `new` is marked as such (a message or `fire M(...)` hands it over). A claim site of a
+                    // setter (`Store(value)`) gives the setter's value to the call if the setter call still owns it.
+                    if (scopeCreating && i < 16)
+                    {
+                        if (IsSetterClaim(args[i])) mask |= 6UL << (4 * i);
+                        else if (args[i] is NewExpr) mask |= 7UL << (4 * i);
+                        else if (MayBeUnclaimed(args[i])) mask |= 4UL << (4 * i);
+                    }
                 }
             }
             return mask;
@@ -2932,6 +2956,61 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.TakeToScope);
             _chunk.EmitU16(depth);
         }
+
+        // ---- The first slot owns an unclaimed value (SPEC 2.1) ----
+
+        /// <summary>Can the value of this expression be unclaimed - belong to the statement temporaries (`new`, a literal, a copy, what a call hands back)?
+        /// Names, literals, `this`, an assignment (its inner slot claimed already) and `take` cannot; the VM checks the rest at run time (the value must
+        /// still belong to the temporaries).</summary>
+        private static bool MayBeUnclaimed(Expr e) => e switch
+        {
+            LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or AssignExpr or IncDecExpr or LambdaExpr or InterpolatedStringExpr
+                or IsOfExpr or IsInExpr or IsFromExpr or RangeExpr or TryProcessExpr => false,
+            UnaryExpr { Op: UnaryOp.Take } => false,
+            ConditionalExpr c => MayBeUnclaimed(c.Then) || MayBeUnclaimed(c.Else),
+            _ => true,
+        };
+
+        /// <summary>Can evaluating the expression leave something in the statement temporaries (a `new`, a call, an operator, a getter)? Without it a
+        /// statement needs no ReleaseTemps.</summary>
+        private static bool MayLeaveTemps(Expr? e) => e switch
+        {
+            null or LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or LambdaExpr => false,
+            AssignExpr a => (a.Target is not IdentifierExpr && MayLeaveTemps(a.Target)) || MayLeaveTemps(a.Value),
+            IncDecExpr i => i.Target is not IdentifierExpr,
+            UnaryExpr { Op: UnaryOp.Take } u => MayLeaveTemps(u.Operand),
+            _ => true,
+        };
+
+        /// <summary>The end of a statement (SPEC 2.1): what is still in the temporaries of the current scope is destroyed.</summary>
+        private void EmitReleaseTemps(Expr? e)
+        {
+            if (MayLeaveTemps(e)) _chunk.EmitOp(OpCode.ReleaseTemps);
+        }
+
+        /// <summary>An assignment to a variable `depth` scopes up (0xFFFF: a global): an unclaimed value goes to the scope of the variable; with
+        /// `hoist` a value of an inner block moves up to it (SPEC 2.1).</summary>
+        private void EmitClaimToScope(int depth, bool unclaimed, bool hoist)
+        {
+            int flags = (unclaimed ? 1 : 0) | (hoist ? 2 : 0);
+            if (flags == 0) return;
+            _chunk.EmitOp(OpCode.ClaimToScope);
+            _chunk.EmitU16(depth);
+            _chunk.EmitByte((byte)flags);
+        }
+
+        /// <summary>`obj.name = value` with a value that may be unclaimed (or a claim site of a setter, `setterValue`): SetFieldClaim instead of SetField.</summary>
+        private void EmitSetFieldClaim(string name, bool setterValue)
+        {
+            _chunk.EmitOp(OpCode.SetFieldClaim);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(name)));
+            _chunk.EmitByte((byte)(setterValue ? 2 : 0));
+        }
+
+        /// <summary>The claim sites of the running setter's `value` (SPEC 2.1 "Setters"): assignments and call arguments; null outside a setter.</summary>
+        private HashSet<object>? _setterClaims;
+
+        private bool IsSetterClaim(object node) => _setterClaims != null && _setterClaims.Contains(node);
 
         /// <summary>Emits the prefix `CopyArgs` (only if a mask is present) - directly BEFORE the call opcode.</summary>
         private void EmitCopyArgsPrefix(ulong mask)
@@ -3281,6 +3360,7 @@ namespace fire.Compiler
                 if (_refs.TryGetValue(me, out var staticTargetRef) && staticTargetRef is ResolvedRef.StaticMember sm)
                 {
                     CompileExpr(a.Value);
+                    EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: false);   // a static field belongs to the program (SPEC 2.1)
                     EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
@@ -3290,17 +3370,7 @@ namespace fire.Compiler
 
                 CompileExpr(me.Target);
 
-                // Direct field assignment of a freshly created object: the owner becomes
-                // the target object itself, not the current scope (SPEC 2.1). For that
-                // the target object must already lie on the stack at the NewObjectOwned call
-                // (below the constructor arguments) - hence Dup before the
-                // arguments are pushed, and SetField at the end uses the second copy.
-                if (IsOwnedCreation(a.Value))
-                {
-                    _chunk.EmitOp(OpCode.Dup);
-                    TryCompileOwnedCreation(a.Value);
-                }
-                else if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeValue)
+                if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeValue)
                 {
                     CompileExpr(takeValue.Operand);          // [obj, value]
                     _chunk.EmitOp(OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
@@ -3308,6 +3378,15 @@ namespace fire.Compiler
                 else
                 {
                     CompileExpr(a.Value);
+                    // `obj.f = E`: an unclaimed value belongs to the object - or to the setter call when f is a property (SPEC 2.1); a claim site of a
+                    // setter passes the setter's value on the same way
+                    bool setterValue = IsSetterClaim(a);
+                    if (setterValue || MayBeUnclaimed(a.Value))
+                    {
+                        EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
+                        EmitSetFieldClaim(me.Name, setterValue);
+                        return;
+                    }
                     if (_accessor != 0)
                     {
                         EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
@@ -3339,7 +3418,11 @@ namespace fire.Compiler
                     CompileExpr(takeElement.Operand);
                     _chunk.EmitOp(OpCode.TakeToArray);       // the array owns the value from now on (SPEC 2.2)
                 }
-                else CompileExpr(a.Value);
+                else
+                {
+                    CompileExpr(a.Value);
+                    if (MayBeUnclaimed(a.Value)) _chunk.EmitOp(OpCode.ClaimToArray);   // `arr[i] = new X()`: the array owns it (SPEC 2.1)
+                }
                 _chunk.EmitOp(OpCode.ArraySet);
                 return;
             }
@@ -3357,15 +3440,13 @@ namespace fire.Compiler
                 return;
             }
 
-            if (_refs[id] is ResolvedRef.ImplicitThisMember && IsOwnedCreation(a.Value))
+            if (_refs[id] is ResolvedRef.ImplicitThisMember && (MayBeUnclaimed(a.Value) || IsSetterClaim(a)))
             {
+                // `field = E` in a class: like `this.field = E` (SPEC 2.1)
                 _chunk.EmitOp(OpCode.LoadThis);
-                TryCompileOwnedCreation(a.Value);       // [new object]
-                _chunk.EmitOp(OpCode.LoadThis);         // [value, obj]
-                _chunk.EmitOp(OpCode.Swap);             // [obj, value]
+                CompileExpr(a.Value);                   // [this, value]
                 EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
-                _chunk.EmitOp(OpCode.SetField);
-                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                EmitSetFieldClaim(id.Name, IsSetterClaim(a));
                 return;
             }
 
@@ -3381,14 +3462,15 @@ namespace fire.Compiler
                     // assignment.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
                     EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
-                    // an assignment from an inner block to a variable of an outer one: the value must not die with the block (SPEC 2.1)
-                    if (local.Depth > 0 && !local.ByRef) _chunk.EmitOp(OpCode.HoistValue);
+                    // `v = E`: an unclaimed value belongs to the scope that declares v; a value of an inner block moves up to it (SPEC 2.1)
+                    if (!local.ByRef) EmitClaimToScope(local.Depth, unclaimed: MayBeUnclaimed(a.Value), hoist: local.Depth > 0);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
                     EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
-                    if (_currentScopeDepth > 0 && IsTopLevelCode) _chunk.EmitOp(OpCode.HoistValue);   // top-level block assigning to a global
+                    // a global variable: an unclaimed value belongs to the global scope; a value of a block of the top-level code moves up to it (SPEC 2.1)
+                    EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: _currentScopeDepth > 0 && IsTopLevelCode);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
                     break;

@@ -86,7 +86,29 @@ namespace fire.Runtime
         public static Scope CreatePooled(Scope? parent) => new Scope(parent) { _pooled = true };
 
         /// <summary>Can this scope go back into the pool now (see above)?</summary>
-        public bool CanRecycle => _pooled && !_escaped && _owned.IsEmpty && _args.IsEmpty && (_leaves == null || _leaves.Count == 0);
+        public bool CanRecycle => _pooled && !_escaped && _owned.IsEmpty && _args.IsEmpty && (_leaves == null || _leaves.Count == 0) && (_temp == null || !_temp.HasOwned);
+
+        // -----------------------------------------------------------
+        // Statement temporaries (SPEC 2.1): an unclaimed value - `new`, a literal, a copy, a value a call handed back - belongs to them until a slot
+        // claims it; what nobody claimed dies at the end of the statement (ReleaseTemps) or when the scope is left.
+        // -----------------------------------------------------------
+        private Scope? _temp;
+
+        /// <summary>This scope holds the statement temporaries of its parent.</summary>
+        public bool IsTemp { get; private set; }
+
+        /// <summary>The statement temporaries of this scope (made on first use).</summary>
+        public Scope Temp => _temp ??= new Scope(this) { IsTemp = true };
+
+        /// <summary>The scope itself, or for the temporaries of a scope that scope (the one the variables live in).</summary>
+        public Scope Home => IsTemp ? _parent! : this;
+
+        /// <summary>End of a statement: what the temporaries still hold is destroyed.</summary>
+        public void ReleaseTemps(IDestructRunner runner)
+        {
+            var temp = _temp;
+            if (temp != null && temp.HasOwned) temp.Release(runner);
+        }
 
         /// <summary>A pointer to a slot of this scope exists (ScopeSlotPointerTarget): the scope must never be reused,
         /// otherwise the pointer would remain aimed at the variables of an entirely different block.</summary>
@@ -271,6 +293,7 @@ namespace fire.Runtime
         /// <summary>Called on leaving the scope: destroys in cascade all objects still owned by this scope.</summary>
         public void Release(IDestructRunner runner)
         {
+            ReleaseTemps(runner);   // (the temporaries of the running statement are the youngest: they go first)
             if (_owned.IsEmpty && _args.IsEmpty && _leaves == null) return;
             DestroyBatch.Enter();   // (what an array owns dies in the same batch as the objects of the scope)
             try

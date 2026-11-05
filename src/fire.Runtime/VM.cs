@@ -1230,6 +1230,15 @@ namespace fire.Runtime
 
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
+            // what the message owned goes to the method's call, like an argument (dies after its locals unless it keeps it)
+            if (message.Holder != null)
+                for (int i = 0; i < scope.SlotCount; i++)
+                {
+                    var arg = scope.GetSlot(i);
+                    if (!ReferenceEquals(OwnerOfValue(arg), message.Holder)) continue;
+                    if (arg.Kind == ValueKind.Class) ((ObjectInstance)arg.AsObjectRef()).ReparentToArgument(scope);
+                    else if (LeafOf(arg) is { } leaf) LeafOwnership.Reparent(leaf, scope);
+                }
 
             _currentThis = actor;
             _currentScope = scope;
@@ -2263,7 +2272,7 @@ namespace fire.Runtime
             {
                 int bits = (int)(mask >> (4 * i)) & 15;
                 if (bits == 0) continue;
-                if (bits == 4)
+                if (bits is 4 or 7)
                 {
                     // The argument is directly the return value of a call (`f(g())`): its ownership goes into the called function, not to the caller
                     // (SPEC 2.1) - only if the value lay freshly with the caller, not if g returned something that belongs to others.
@@ -2274,6 +2283,17 @@ namespace fire.Runtime
                 {
                     // `f(take x)` (SPEC 2.2): the value belongs to the call from now on - unconditionally, even if it belonged to someone else before
                     TakeArgument(scope.SlotRef(i), scope);
+                    continue;
+                }
+                if (bits == 6)
+                {
+                    // a claim site of a setter (SPEC 2.1 "Setters"): `Store(value)` - the value goes to the call if it still belongs to the setter call
+                    if (_frames.Count > 0 && OwnerOfValue(scope.SlotRef(i)) is Scope owner)
+                    {
+                        var function = _frames.Peek().ReturnScope;
+                        while (function.Parent != null && !function.Parent.IsGlobal) function = function.Parent;
+                        if (ReferenceEquals(owner.Home, function)) TakeArgument(scope.SlotRef(i), scope);
+                    }
                     continue;
                 }
                 if (bits == 3)
@@ -2314,14 +2334,14 @@ namespace fire.Runtime
                 case ValueKind.Class:
                 {
                     var obj = (ObjectInstance)arg.AsObjectRef();
-                    if (!obj.IsDestroyed && ReferenceEquals(obj.Owner, callerScope)) obj.ReparentToArgument(calleeScope);
+                    if (!obj.IsDestroyed && ReferenceEquals(obj.Owner, callerScope.Temp)) obj.ReparentToArgument(calleeScope);
                     break;
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
                 {
                     var leaf = arg.Kind == ValueKind.Array ? (IOwnedLeaf)arg.AsArray() : arg.AsBuffer();
-                    if (!leaf.IsDestroyed && ReferenceEquals(leaf.LeafOwner, callerScope)) LeafOwnership.Reparent(leaf, calleeScope);
+                    if (!leaf.IsDestroyed && ReferenceEquals(leaf.LeafOwner, callerScope.Temp)) LeafOwnership.Reparent(leaf, calleeScope);
                     break;
                 }
             }
@@ -2329,14 +2349,21 @@ namespace fire.Runtime
 
         /// <summary>For calls WITHOUT a function scope (built-in methods, actor messages): the copy belongs to the
         /// current scope, as with an ordinary copy.</summary>
-        private void ApplyCopyMaskToArgs(Value[] args, long mask)
+        private void ApplyCopyMaskToArgs(Value[] args, long mask, Scope? message = null)
         {
             for (int i = 0; i < args.Length && i < 16; i++)
             {
                 int bits = (int)(mask >> (4 * i)) & 15;
-                if (bits == 5) OwnershipWalk.TakeValue(args[i], _currentScope, this);   // built-in functions know no call scope: the value belongs to the current scope
+                if (bits == 5) OwnershipWalk.TakeValue(args[i], message ?? _currentScope, this);   // built-in functions know no call scope: the value belongs to the current scope (a message: to it)
                 else if (bits == 3) args[i] = ReadRefArgument(args[i]);   // built-in functions and messages know no `ref`: the value
-                else if (bits != 0) args[i] = ObjectCloner.Clone(args[i], _currentScope, deep: bits == 2);
+                else if (bits is 1 or 2) args[i] = ObjectCloner.Clone(args[i], message ?? _currentScope.Temp, deep: bits == 2);   // (a built-in: the copy dies at the end of the statement, SPEC 2.4)
+                else if (message != null && bits is 4 or 7 && IsUnclaimed(args[i]))
+                {
+                    // a message owns an unclaimed argument; a direct `new` is handed over to the actor's thread (THREADING_DESIGN.md section 2)
+                    if (bits == 7) args[i] = ObjectHandover.MoveAll(new[] { args[i] }, message)[0];
+                    else if (args[i].Kind == ValueKind.Class) ((ObjectInstance)args[i].AsObjectRef()).ReparentTo(message);
+                    else if (LeafOf(args[i]) is { } leaf) LeafOwnership.Reparent(leaf, message);
+                }
             }
         }
 
@@ -2412,6 +2439,7 @@ namespace fire.Runtime
         /// function scope whose parent is the global scope)?</summary>
         private bool OwnsWithinCall(Scope candidate)
         {
+            candidate = candidate.Home;   // (the statement temporaries of a scope count as that scope)
             for (var scope = _currentScope; scope != null; scope = scope.Parent)
             {
                 if (ReferenceEquals(scope, candidate)) return true;
@@ -2475,7 +2503,7 @@ namespace fire.Runtime
         /// the elements of a returned list would die with the scope that created them.</summary>
         private void MoveReturned(Value retVal, Func<Scope, bool> isLocalScope)
         {
-            var target = _frames.Peek().ReturnScope;
+            var target = _frames.Peek().ReturnScope.Temp;   // the caller's statement temporaries: the slot of the call claims it (SPEC 2.1, 2.3)
             switch (retVal.Kind)
             {
                 case ValueKind.Class:
@@ -2522,7 +2550,7 @@ namespace fire.Runtime
                         MoveReturned(retVal, ownerScope =>
                         {
                             for (var sc = _currentScope; sc != null && !ReferenceEquals(sc, leavingTo); sc = sc.Parent)
-                                if (ReferenceEquals(sc, ownerScope)) return true;
+                                if (ReferenceEquals(sc, ownerScope.Home)) return true;
                             return false;
                         });
                     }
@@ -2576,7 +2604,7 @@ namespace fire.Runtime
                 && (ctorEntry.Guard == null || ctorEntry.Guard.Holds(_stack.AsSpan(_sp - argCount, argCount))))
             {
                 if (ctorEntry.Guard != null) TakeGuardedHit(cachedCtor);
-                var created = new ObjectInstance(cachedClass.Name, _currentScope, cachedClass);
+                var created = new ObjectInstance(cachedClass.Name, _currentScope.Temp, cachedClass);   // unclaimed: the statement temporaries (SPEC 2.1)
                 if (cachedClass.IsActor) created.Mailbox = new ActorMailbox();
                 TakeTypeArgs(created);
                 EnterCall(cachedCtor, argCount, dropBelow: false, newThis: created, constructed: created, copyMask: copyMask);
@@ -2604,7 +2632,7 @@ namespace fire.Runtime
 
             if (ctorProto.ParamCount == argCount && (!rc.IsConstructorTypeOverloaded(argCount) || _hintTaken != null))
                 StoreSite(site, new SiteCache(rc, ctorProto, 0, guard: _hintTaken));
-            var instance = new ObjectInstance(rc.Name, _currentScope, rc);
+            var instance = new ObjectInstance(rc.Name, _currentScope.Temp, rc);   // unclaimed: the statement temporaries (SPEC 2.1)
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             TakeTypeArgs(instance);
             args = FillDefaultArgs(ctorProto, args, instance);
@@ -2834,6 +2862,44 @@ namespace fire.Runtime
             if (target == null || !ReferenceEquals(target, _currentThis) || !IsCurrentCallOwner(OwnerOfLive(value))) return;
             OwnershipWalk.TakeValue(value, target, this);
             if (getter) (_accessorAdopted ??= new List<(Value, int)>()).Add((value, _frames.Count));
+        }
+
+        /// <summary>`obj.name = value` that claims (OpCode.SetFieldClaim, SPEC 2.1): an unclaimed value - or, at a claim site of a setter (flags bit 1), a value that
+        /// still belongs to the setter call - goes to the setter when `name` is a property of `obj`, else to `obj` after the store.</summary>
+        private void OpSetFieldClaim()
+        {
+            int site = _ip - 1;
+            int fieldNameIdx = ReadU16();
+            bool setterValue = (ReadByte() & 2) != 0;
+            var value = _stack[_sp - 1];
+            if (!(setterValue ? OwnedByCallScope(value) : IsUnclaimed(value)))
+            {
+                SetFieldAt(site, fieldNameIdx);
+                return;
+            }
+            string name = _constants[fieldNameIdx].AsString();
+            var target = _stack[_sp - 2].Kind == ValueKind.Class ? _stack[_sp - 2].AsObjectRef() as ObjectInstance : null;
+            if (target != null && !IsDeadObject(target) && !target.HasFieldLocked(name) && ResolveClass(target.ClassName).FindMethod("set_" + name, 1) != null)
+            {
+                // a property: the setter call owns the value and passes it on to its claim site
+                _takeSetterArg = true;
+                try { SetFieldSlow(name, -1); }
+                finally { _takeSetterArg = false; }
+                return;
+            }
+            if (!SetFieldSlow(name, -1)) return;
+            if (target == null || IsDeadObject(target)) return;
+            if (setterValue) OwnershipWalk.TakeValue(value, target, this);
+            else ClaimTree(value, target);
+        }
+
+        /// <summary>Does the value belong to the function scope of the running call (an argument it was handed - a setter's `value`)?</summary>
+        private bool OwnedByCallScope(Value v)
+        {
+            if (OwnerOfValue(v) is not Scope owner) return false;
+            var function = _currentScope;
+            while (function.Parent != null && !function.Parent.IsGlobal) function = function.Parent;
+            return _frames.Count > 0 && ReferenceEquals(owner.Home, function);
         }
 
         /// <summary>The owner of a live object, array or buffer (null for anything else and for what is destroyed).</summary>
@@ -3245,9 +3311,10 @@ namespace fire.Runtime
             // continues normally (no jump into any chunk).
             if (obj.Mailbox != null)
             {
-                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
+                var holder = new Scope(null);   // the message owns its unclaimed arguments until it runs (SPEC 2.4)
+                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask, holder);
                 RejectArgNames("a method of an actor");
-                obj.Mailbox.Enqueue(new ActorMessage(methodName, args));
+                obj.Mailbox.Enqueue(new ActorMessage(methodName, args, holder));
                 Push(Value.MakeUndefined());
                 return;
             }
@@ -3727,7 +3794,7 @@ namespace fire.Runtime
             if (size < 0)
                 throw new InvalidOperationException($"Invalid array size {size}.");
             var created = new ScriptArray((int)size);
-            LeafOwnership.Adopt(created, _currentScope);
+            LeafOwnership.Adopt(created, _currentScope.Temp);
             Push(Value.MakeArray(created));
             return;
         }
@@ -3740,7 +3807,8 @@ namespace fire.Runtime
             var arr = new ScriptArray(count);
             for (int i = count - 1; i >= 0; i--)
                 arr.Items[i] = Pop();
-            LeafOwnership.Adopt(arr, _currentScope);
+            LeafOwnership.Adopt(arr, _currentScope.Temp);
+            ClaimElements(arr);
             Push(Value.MakeArray(arr));
             return;
         }
@@ -3975,7 +4043,7 @@ namespace fire.Runtime
             else if (target.Kind == ValueKind.Class)
             {
                 var obj = (ObjectInstance)target.AsObjectRef();
-                var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }); // Return value unused
+                var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }, adoptUnclaimed: 1); // Return value unused
                 // null == SetIndex() was left through a thrown exception
                 // (see CallMethodNested documentation) - then do NOT
                 // push, execution already continues elsewhere.
@@ -4388,7 +4456,7 @@ namespace fire.Runtime
                     // `flat x` / `copy x` (SPEC 2.4) - the copy belongs to the current scope (SPEC 2.1).
                     bool deep = (ReadByte() & 1) != 0;
                     var source = Pop();
-                    Push(ObjectCloner.Clone(source, _currentScope, deep));
+                    Push(ObjectCloner.Clone(source, _currentScope.Temp, deep));
                     break;
                 }
 
@@ -4520,7 +4588,8 @@ namespace fire.Runtime
                     for (int i = 0; i < count; i++)
                         if ((mask >> i & 1) != 0 && LeafOf(arr.Items[i]) is { } part)
                             LeafOwnership.AttachPart(arr, part);   // the inner one now belongs to the outer one, no longer to the scope that has just created it
-                    LeafOwnership.Adopt(arr, _currentScope);
+                    LeafOwnership.Adopt(arr, _currentScope.Temp);
+                    ClaimElements(arr);
                     Push(Value.MakeArray(arr));
                     break;
                 }
@@ -4535,7 +4604,7 @@ namespace fire.Runtime
                     var parts = new List<IOwnedLeaf>();
                     var outer = BuildJagged(sizes, 0, parts);
                     outer.Parts = parts.Count > 0 ? parts : null;
-                    LeafOwnership.Adopt(outer, _currentScope);
+                    LeafOwnership.Adopt(outer, _currentScope.Temp);
                     Push(Value.MakeArray(outer));
                     break;
                 }
@@ -4573,6 +4642,36 @@ namespace fire.Runtime
                 case OpCode.TakeCheck:
                     ThrowIfDeadForTake(_stack[_sp - 1]);
                     break;
+
+                case OpCode.ReleaseTemps:
+                    _currentScope.ReleaseTemps(this);
+                    break;
+
+                case OpCode.ClaimToScope:
+                {
+                    int depth = ReadU16();
+                    int flags = ReadByte();
+                    ClaimToScope(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), flags);
+                    break;
+                }
+
+                case OpCode.ClaimToObject:
+                {
+                    var value = Pop();
+                    var holderValue = Pop();
+                    if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed) ClaimTree(value, holder);
+                    Push(value);
+                    break;
+                }
+
+                case OpCode.SetFieldClaim: OpSetFieldClaim(); break;
+
+                case OpCode.ClaimToArray:
+                {
+                    var holder = _stack[_sp - 3];
+                    if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed) ClaimTree(_stack[_sp - 1], holder.AsArray());
+                    break;
+                }
 
                 case OpCode.TakeToObject:
                 {
@@ -4677,7 +4776,7 @@ namespace fire.Runtime
                     if (size < 0)
                         throw new InvalidOperationException($"Invalid byte buffer size {size} (must be >= 0).");
                     var createdBuffer = new ByteBuffer((int)size, ByteConversions.HostByteOrder);
-                    LeafOwnership.Adopt(createdBuffer, _currentScope);
+                    LeafOwnership.Adopt(createdBuffer, _currentScope.Temp);
                     Push(Value.MakeBuffer(createdBuffer));
                     break;
                 }
@@ -5839,7 +5938,7 @@ namespace fire.Runtime
             return Pop();
         }
 
-        private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args, bool takeFirst = false)
+        private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args, bool takeFirst = false, int adoptUnclaimed = -1)
         {
             _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var rc = ResolveClass(obj.ClassName);
@@ -5872,6 +5971,8 @@ namespace fire.Runtime
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
             if (takeFirst) TakeArgument(scope.SlotRef(0), scope);   // (SetFieldAccessor: a property assignment in an accessor passes the value on like `take`)
+            // `obj[i] = new X()` on an object: an unclaimed value goes to the call of SetIndex, like an argument (SPEC 2.1)
+            if (adoptUnclaimed >= 0 && _frames.Count > 0) AdoptReturnedArgument(scope.SlotRef(adoptUnclaimed), _frames.Peek().ReturnScope, scope);
 
             _currentThis = obj;
             _currentScope = scope;
@@ -5945,7 +6046,7 @@ namespace fire.Runtime
             _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
-            var instance = new ObjectInstance(rc.Name, _currentScope, rc);
+            var instance = new ObjectInstance(rc.Name, _currentScope.Temp, rc);   // unclaimed: the statement temporaries (SPEC 2.1)
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             TakeTypeArgs(instance);
             args = FillDefaultArgs(ctorProto, args, instance);
@@ -6025,7 +6126,7 @@ namespace fire.Runtime
         /// <summary>An array/buffer that a built-in or native function has freshly created (still without owner) belongs to the current scope.</summary>
         private void AdoptFresh(Value v)
         {
-            if (LeafOf(v) is { LeafOwner: null, IsDestroyed: false } leaf) LeafOwnership.Adopt(leaf, _currentScope);
+            if (LeafOf(v) is { LeafOwner: null, IsDestroyed: false } leaf) LeafOwnership.Adopt(leaf, _currentScope.Temp);
         }
 
         /// <summary>Creates a multi-dimensional array; the inner arrays come in <paramref name="parts"/> (they belong to the outer one).</summary>
@@ -6046,8 +6147,62 @@ namespace fire.Runtime
         private bool IsCurrentCallOwner(IOwner? owner)
         {
             if (owner is not Scope scope) return false;
+            scope = scope.Home;
             if (ReferenceEquals(scope, _currentScope) || OwnsWithinCall(scope)) return true;
             return _frames.Count == 0 && scope.IsGlobal;
+        }
+
+        /// <summary>The owner of an object, array or buffer (null for anything else, or a destroyed one).</summary>
+        private static IOwner? OwnerOfValue(Value v) => v.Kind switch
+        {
+            ValueKind.Class when v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o => o.Owner,
+            ValueKind.Array when !v.AsArray().IsDestroyed => v.AsArray().LeafOwner,
+            ValueKind.Buffer when !v.AsBuffer().IsDestroyed => v.AsBuffer().LeafOwner,
+            _ => null,
+        };
+
+        /// <summary>A slot claims an unclaimed value (SPEC 2.1): the value goes to `target`, and with it what hangs on it and is still in the temporaries
+        /// too (the inner copies of a `copy`, the parts of a literal) - it belongs to the object that points to it, otherwise to `target`.</summary>
+        private void ClaimTree(Value v, IOwner target)
+        {
+            var temp = _currentScope.Temp;
+            if (!ReferenceEquals(OwnerOfValue(v), temp)) return;
+            OwnershipWalk.TakeValue(v, target, this);
+            if (temp.HasOwned) OwnershipWalk.MoveReachable(v, Takes.Locals, s => ReferenceEquals(s, temp), target);
+        }
+
+        /// <summary>An array literal: its elements are slots of the array - an unclaimed element (`[new A(), Make()]`) belongs to it (SPEC 2.1).</summary>
+        private void ClaimElements(ScriptArray arr)
+        {
+            var temp = _currentScope.Temp;
+            if (!temp.HasOwned) return;
+            for (int i = 0; i < arr.Items.Length; i++)
+                if (arr.Items[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) ClaimTree(arr.Items[i], arr);
+        }
+
+        /// <summary>Is the value unclaimed - does it belong to the statement temporaries of the current scope (SPEC 2.1)?</summary>
+        private bool IsUnclaimed(Value v) => OwnerOfValue(v) is Scope { IsTemp: true } temp && ReferenceEquals(temp.Parent, _currentScope);
+
+        /// <summary>An assignment to a variable (SPEC 2.1): an unclaimed value (flags bit 0) goes to the scope of the variable; with bit 1 a value of a
+        /// block between the current one and that scope moves up to it (within the call; the global scope only from the top-level code).</summary>
+        private void ClaimToScope(Value v, Scope target, int flags)
+        {
+            if (OwnerOfValue(v) is not Scope owner || ReferenceEquals(owner, target)) return;
+            bool move = false;
+            if ((flags & 1) != 0 && owner.IsTemp && ReferenceEquals(owner.Parent, _currentScope)) { ClaimTree(v, target); return; }
+            if ((flags & 2) != 0)
+            {
+                // a scope between the current one (included) and the target (excluded) - or the temporaries of one of them
+                var home = owner.Home;
+                for (var sc = _currentScope; sc != null && !ReferenceEquals(sc, target); sc = sc.Parent)
+                {
+                    if (ReferenceEquals(sc, home)) { move = true; break; }
+                    if (sc.Parent == null || sc.Parent.IsGlobal) break;   // (the function scope was the last of the call)
+                }
+            }
+            if (!move) return;
+            if (v.Kind == ValueKind.Class) ((ObjectInstance)v.AsObjectRef()).ReparentTo(target);
+            else if (LeafOf(v) is { } leaf) LeafOwnership.Reparent(leaf, target);
         }
 
         /// <summary>`x = value` with a variable in an outer scope: if the value belongs to an inner block (loop, `if`) of the running function, it moves

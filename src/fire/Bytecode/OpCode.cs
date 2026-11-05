@@ -242,6 +242,20 @@ namespace fire.Bytecode
         // elements are converted, one that does not fit is the exception). An array that has this type already stays as it is, one of another type is
         // an ArgumentException; every other value (undefined, a value of the wrong kind the type checker has warned about) is left alone. Peeks.
         TypeArray,           // u8 elemType, u8 rank, u16 unitConstIdx (0xFFFF: the elements have no unit)
+
+        // ---- The first slot owns an unclaimed value (SPEC 2.1). `new`, literals, copies and what a call hands back belong to the statement temporaries of
+        // the current scope (Scope.Temp) until a slot claims them; what is left there dies at the end of the statement.
+        // The end of a statement: the temporaries of the current scope are destroyed.
+        ReleaseTemps,        //                     :
+        // Peek: an assignment to a variable. bit 0 of flags: the value is unclaimed - if it belongs to the temporaries of the current scope it goes to the scope
+        // `depth` levels above the current one (0xFFFF: the global scope); bit 1: hoist - if it belongs to a scope between the current one and that scope
+        // (the current one included, within the call) it moves up to it.
+        ClaimToScope,        // u16 depth, u8 flags
+        ClaimToObject,       //                     : Stack [obj, value] -> [value]: an unclaimed value of the temporaries goes to the object (a field initializer)
+        ClaimToArray,        //                     : Stack [array, index, value]: an unclaimed value of the temporaries goes to the array (`a[i] = new X()`)
+        // `obj.name = value` that claims (SPEC 2.1): like SetField, and a claimable value - unclaimed (in the temporaries); with bit 1 of flags: a claim site of a
+        // setter, the value still belongs to the setter call - goes to the setter call when `name` is a property of `obj`, else to `obj` after the store.
+        SetFieldClaim,       // u16 fieldNameIdx, u8 flags
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

@@ -2815,7 +2815,25 @@ namespace fire.Native
             return index;
         }
 
-        private static string ListName(int scopeId) => scopeId == FunctionScope ? "OP" : scopeId == GlobalScope ? "OG" : $"O{scopeId}";
+        private static string ListName(int scopeId) => IsTempId(scopeId) ? "T" + ListName(HomeOf(scopeId)) : scopeId == FunctionScope ? "OP" : scopeId == GlobalScope ? "OG" : $"O{scopeId}";
+
+        // The statement temporaries of a scope (SPEC 2.1): a list of their own (`T<scope list>`, home = the scope's list) that owns what is unclaimed until a
+        // slot claims it; the end of a statement (ReleaseTemps) and leaving the scope leave it. Its id: the scope's id moved out of the range of addresses.
+        private const int TempBase = 1 << 24;
+        private static bool IsTempId(int id) => id >= TempBase || id is -11 or -12;
+        private static int TempOf(int scopeId) => scopeId >= 0 ? scopeId + TempBase : scopeId - 10;
+        private static int HomeOf(int tempId) => tempId >= TempBase ? tempId - TempBase : tempId + 10;
+
+        /// <summary>The lists of the running call's scopes and their statement temporaries (what the caller owns, for `try x.Take...`).</summary>
+        private static List<string> CallLists(Func f, Flow st) =>
+            st.Scopes.SelectMany(sc => new[] { TempOf(sc.Id), sc.Id }).Where(f.NeedsList.Contains).Select(id => "&" + ListName(id)).ToList();
+
+        /// <summary>Leaving a scope: its temporaries first (they are the youngest), then the scope's own list.</summary>
+        private static void EmitLeave(Func f, int scopeId, Action<string> emit)
+        {
+            if (f.NeedsList.Contains(TempOf(scopeId))) emit($"leave(&{ListName(TempOf(scopeId))});");
+            if (f.NeedsList.Contains(scopeId)) emit($"leave(&{ListName(scopeId)});");
+        }
 
         private void GenerateChunk(Func f)
         {
@@ -2989,7 +3007,8 @@ namespace fire.Native
                 if (framed) foreach (var l in localsToDeclare) Var("Value", l, "Undef()");
                 else decl.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
             }
-            string ListInit(int i) => i < 0 ? "scopeList(poolMark())" : i >= f.Chunk.Code.Count ? "scopeList(0xFFFFFFFFu)" : "scopeList(0)";   // (the list of a catch block that never ran: leaving it is a no-op)
+            // (a list of statement temporaries leaves no pool - the pool belongs to the scope; the list of a catch block that never ran: leaving it is a no-op)
+            string ListInit(int i) => IsTempId(i) ? "scopeList(0xFFFFFFFFu)" : i < 0 ? "scopeList(poolMark())" : i >= f.Chunk.Code.Count ? "scopeList(0xFFFFFFFFu)" : "scopeList(0)";
             if (f.NeedsList.Count > 0)
             {
                 if (framed) foreach (int i in f.NeedsList.OrderBy(i => i)) Var("OwnList", ListName(i), ListInit(i));
@@ -3014,6 +3033,8 @@ namespace fire.Native
                 for (int i = 0; i < f.ThreadArgs; i++)
                     post.AppendLine(VarRef(VarKey(f, $"T{f.GlobalSlotCount + i}")) ? $"    T{f.GlobalSlotCount + i} = args[{i}]; retain(T{f.GlobalSlotCount + i});" : $"    T{f.GlobalSlotCount + i} = args[{i}];");
             }
+            foreach (int t in f.NeedsList.Where(IsTempId).OrderBy(i => i))
+                if (f.NeedsList.Contains(HomeOf(t))) post.AppendLine($"    {ListName(t)}.home = &{ListName(HomeOf(t))};");
             if (!f.IsTop && _usesTakeUpwards && f.NeedsList.Contains(FunctionScope)) post.AppendLine("    OP.parent = g_globalOwn;   // the parent scope of a function scope is the global scope");
             // Parameters are variables: they hold what was passed.
             for (int i = 0; i < f.ParamLike; i++)
@@ -3186,7 +3207,10 @@ namespace fire.Native
                 // a returned value that belongs to one of the scopes that are left goes to the caller, with what hangs on it and belongs to them too (SPEC 2.3)
                 var leaving = new List<string>();
                 for (int i = fromCount - 1; i >= downTo; i--)
+                {
+                    if (f.NeedsList.Contains(TempOf(st.Scopes[i].Id))) leaving.Add("&" + ListName(TempOf(st.Scopes[i].Id)));
                     if (f.NeedsList.Contains(st.Scopes[i].Id)) leaving.Add("&" + ListName(st.Scopes[i].Id));
+                }
                 if (leaving.Count > 0) emit($"{{ {CArray("OwnList*", "T_", leaving.ToList())}transferTree({transfer}, T_, {leaving.Count}); }}");
             }
             for (int i = fromCount - 1; i >= downTo; i--)
@@ -3194,7 +3218,7 @@ namespace fire.Native
                 int id = st.Scopes[i].Id;
                 // the scope of a catch block that is left (jump, return, exception): the landing site of the `try` leaves it, after the scopes of the throw site (like in the VM)
                 if (st.Region != null && id == st.Region.CatchScopeId && i == st.Region.ScopeBase) { st.Region.DeferCatchRelease = true; continue; }
-                if (f.NeedsList.Contains(id)) emit($"leave(&{ListName(id)});");
+                EmitLeave(f, id, emit);
                 foreach (var v in ScopeVariables(f, id, locals))
                     if (VarRef(VarKey(f, v))) emit(reset ? $"release({v}); {v} = Undef();" : $"release({v});");
             }
@@ -3208,13 +3232,14 @@ namespace fire.Native
                 // the end of a thread: it destroys what it created itself (the copies of `taking` skip their destructors); after an unhandled
                 // exception its global scope lives on, the exception belongs to it and is on its way to the main program
                 emit("g_leaving = 1;");
+                if (f.NeedsList.Contains(TempOf(GlobalScope))) emit($"leave(&{ListName(TempOf(GlobalScope))});");
                 emit("if (g_threadFailed) graveyardAdd(&OG); else leave(&OG);");
                 foreach (var t in f.ThreadVars)
                     if (VarRef(VarKey(f, $"T{t}"))) emit($"release(T{t});");
                 return;
             }
             if (_usesThreads) emit("mainFinish();");
-            if (f.NeedsList.Contains(GlobalScope)) emit("leave(&OG);");
+            EmitLeave(f, GlobalScope, emit);
             foreach (var g in _globals.OrderBy(x => x))
                 if (VarRef($"G{g}")) emit($"release(G{g});");
             foreach (var (key, index) in _staticFields.OrderBy(kv => kv.Value))
@@ -3305,7 +3330,7 @@ namespace fire.Native
             if (r.DeferCatchRelease)
             {
                 // the scope of the catch block (left by a jump, a return or an exception) dies here, after the scopes of the throw site (the VM destroys in this order)
-                if (f.NeedsList.Contains(r.CatchScopeId)) E($"leave(&{ListName(r.CatchScopeId)});");
+                EmitLeave(f, r.CatchScopeId, E);
                 foreach (var v in ScopeVariables(f, r.CatchScopeId, locals))
                     if (VarRef(VarKey(f, v))) E($"release({v}); {v} = Undef();");
             }
@@ -3444,7 +3469,16 @@ namespace fire.Native
             StepResult Next() { st.Depth = d; return new StepResult(true, null); }
             string Str(int constIdx) => chunk.Constants[constIdx].AsString();
             // The innermost scope owns what is created or handed back at this point.
+            // What is created or handed back at this point belongs to the statement temporaries of the innermost scope (SPEC 2.1); a slot claims it.
             string OwnerList()
+            {
+                int home = st.Scopes[^1].Id;
+                f.NeedsList.Add(home);
+                f.NeedsList.Add(TempOf(home));
+                return ListName(TempOf(home));
+            }
+            // The innermost scope itself (TakeLocal, a claim of `var v = E`).
+            string ScopeList()
             {
                 f.NeedsList.Add(st.Scopes[^1].Id);
                 return ListName(st.Scopes[^1].Id);
@@ -3573,10 +3607,17 @@ namespace fire.Native
                 for (int i = 0; i < Math.Min(argc, 16); i++)
                 {
                     int bits = (int)(mask >> (4 * i) & 15);
-                    if (bits == 4)
+                    if (bits is 4 or 7)
                     {
+                        // an unclaimed argument (a direct `new`, 7, is one too): the call owns it (SPEC 2.1)
                         f.NeedsArgList = true;
                         E($"reownArg({S(first + i)}, &{OwnerList()}, &AL);");
+                    }
+                    else if (bits == 6)
+                    {
+                        // a claim site of a setter (`Store(value)`): the setter's value goes to the call if the setter call still owns it
+                        f.NeedsArgList = true;
+                        if (IsSetterFunc(f)) E($"claimArg({S(first + i)}, MYAL, &{OwnerList()}, &AL);");
                     }
                     else if (bits == 5)
                     {
@@ -3597,7 +3638,7 @@ namespace fire.Native
             void ArgsAfter(int argc, long mask, string result)
             {
                 for (int i = 0; i < Math.Min(argc, 16); i++)
-                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4 or 5) { E($"finishArgs({result}, &AL);"); return; }
+                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4 or 5 or 6 or 7) { E($"finishArgs({result}, &AL);"); return; }
             }
             bool R(int k) => k >= 64 || (st.Refs >> k & 1UL) != 0;
             void SetR(int k, bool value)
@@ -4068,7 +4109,7 @@ namespace fire.Native
                     // a catch block that leaves scopes of its function (break/continue): the function that owns the `try` leaves them, after the unwinding
                     else if (st.Scopes.Count - 1 >= (st.Region?.ScopeBase ?? 0))
                     {
-                        if (f.NeedsList.Contains(id)) E($"leave(&{ListName(id)});");
+                        EmitLeave(f, id, E);
                         ReleaseScopeVariables(id, reset: true);
                     }
                     st.Scopes.RemoveAt(st.Scopes.Count - 1);
@@ -4491,6 +4532,46 @@ namespace fire.Native
                     SetR(d - 2, R(d - 1));
                     d--; return Next();
                 }
+                case OpCode.SetFieldClaim:
+                {
+                    // `obj.name = v` that claims (SPEC 2.1): an unclaimed value (in the temporaries) - or, at a claim site of a setter (bit 1), the setter's value
+                    // that the setter call still owns (MYAL) - goes to the object after the store, or to the setter when `name` is a property (in the argument
+                    // list AL, which the setter finds in g_acc.handOff)
+                    Need(2);
+                    string field = Str(ins.A[0]);
+                    _fieldNames.Add(field);
+                    bool setterValue = (ins.A[1] & 2) != 0 && IsSetterFunc(f);
+                    string obj = S(d - 2), v = S(d - 1);
+                    string temp = OwnerList();
+                    string listsDecl = setterValue ? "" : $"OwnList* KL_[1] = {{&{temp}}}; ";
+                    string lists = setterValue ? "NULL, 0" : "KL_, 1";
+                    string mine = setterValue ? "MYAL" : "NULL";
+                    string keep = setterValue ? $"claimKeep({obj}, {v}, MYAL);" : $"claimToHolder({obj}, {v}, &{temp});";
+                    string? direct = ObjSlot(d - 2) ? DirectSetField(ObjClass(Ty(d - 2)), field, obj, v, Ty(d - 1), f, IsNullable(Ty(d - 2))) : null;
+                    var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
+                    string store = direct ?? (setter != null
+                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
+                        : $"{FieldFn("sf", field)}({obj}, {v}{FieldTail(field, f, () => "&" + OwnerList())});");
+                    if (direct != null || setter == null && !HasProperty(field))
+                    {
+                        E(store);
+                        Check();
+                        E(keep);
+                    }
+                    else
+                    {
+                        // a property (or a name that is a field of some classes and a property of others: no setter took it - it goes back, then the field rule)
+                        f.NeedsArgList = true;
+                        bool giveBack = setter == null && (Modular || _openWorld || LibraryRole || _classList.Any(c => c.Rc.FieldIndex.ContainsKey(field)));
+                        E($"{{ {listsDecl}OwnList* W_ = accHandOver({v}, {lists}, {mine}, &{temp}, &AL);");
+                        E("  " + store);
+                        E($"  accHandEnd({v}, W_, &AL, {(giveBack ? "true" : "false")});{(giveBack ? " " + keep : "")} finishArgs(Undef(), &AL); }}");
+                        Check();
+                    }
+                    E($"{obj} = {v};");
+                    SetR(d - 2, R(d - 1));
+                    d--; return Next();
+                }
                 case OpCode.SetFieldOnThis:
                 {
                     Need(1); RequireSelf();
@@ -4623,7 +4704,7 @@ namespace fire.Native
                     }
                     if (OwnMethodId(method, argc) is { } ownMethodId && !AnyClassHasMethod(method, argc))
                     {
-                        string owner = OwnerList();
+                        string owner = ScopeList();
                         // the built-in ownership methods of objects, arrays and buffers (a class that declares one itself takes precedence)
                         if (ownMethodId == "OM_TakeUpwards" && !_usesTakeUpwards) { _usesTakeUpwards = true; _usesGlobalOwn = true; _version++; }
                         if (ownMethodId == "OM_TakeGlobal" && !_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
@@ -4635,7 +4716,7 @@ namespace fire.Native
                         else
                         {
                             // with a `Takes` mode (the scopes of the running call tell what is "local") or with `try` (only the owner moves it)
-                            var scopeLists = st.Scopes.Where(sc => f.NeedsList.Contains(sc.Id)).Select(sc => "&" + ListName(sc.Id)).ToList();
+                            var scopeLists = CallLists(f, st);
                             string localsDecl = scopeLists.Count == 0 ? "" : CArray("OwnList*", "L_", scopeLists.ToList());
                             string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Int(0)";
                             if (argc > baseArgs && !_usesTakeEnumerate) { _usesTakeEnumerate = true; _version++; }
@@ -4726,7 +4807,7 @@ namespace fire.Native
                     if (OwnMethodId(method, argc) is { } dispatchedOwn && argc > OwnMethodBaseArgs(dispatchedOwn))
                     {
                         // an ownership method with a `Takes` mode that goes through the dispatcher (some class declares a method of this name): the built-in fallback there needs the scopes of this call
-                        var dispatchScopes = st.Scopes.Where(sc => f.NeedsList.Contains(sc.Id)).Select(sc => "&" + ListName(sc.Id)).ToList();
+                        var dispatchScopes = CallLists(f, st);
                         if (dispatchScopes.Count > 0)
                             E($"{{ {CArray("OwnList*", "L_", dispatchScopes.ToList())}g_scopeLists = L_; g_scopeCount = {dispatchScopes.Count};");
                         E($"{S(slot)} = {CallFn(method, argc)}({S(slot)}{Args(d - argc, argc)}{extra});");
@@ -5003,7 +5084,7 @@ namespace fire.Native
                     int first = d - count;
                     var sbItems = new StringBuilder();
                     for (int i = 0; i < count; i++) sbItems.Append($" arrItems(a)[{i}] = {S(first + i)}; retain({S(first + i)});");
-                    E($"{{ Arr* a = allocArr({count}, &{OwnerList()});{sbItems} {S(first)} = ArrV(a); }}");
+                    E($"{{ Arr* a = allocArr({count}, &{OwnerList()});{sbItems} {S(first)} = ArrV(a); claimElements({S(first)}, &{OwnerList()}); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.MakeArrayLiteralParts:
@@ -5018,7 +5099,7 @@ namespace fire.Native
                     var parts = new StringBuilder();
                     for (int i = 0; i < count; i++)
                         if ((mask >> i & 1) != 0) parts.Append($" attachPart(ArrV(a), arrItems(a)[{i}]);");
-                    E($"{{ Arr* a = allocArr({count}, &{OwnerList()});{sbItems}{parts} {S(first)} = ArrV(a); }}");
+                    E($"{{ Arr* a = allocArr({count}, &{OwnerList()});{sbItems}{parts} {S(first)} = ArrV(a); claimElements({S(first)}, &{OwnerList()}); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.NewJagged:
@@ -5063,6 +5144,53 @@ namespace fire.Native
                 }
                 case OpCode.TakeCheck:
                     return Next();   // the check is part of `takeArg` in the argument list of the call
+
+                // ---- The first slot owns an unclaimed value (SPEC 2.1): the statement temporaries of the innermost scope hold it until a slot claims it ----
+                case OpCode.ReleaseTemps:
+                {
+                    int temp = TempOf(st.Scopes[^1].Id);
+                    if (f.NeedsList.Contains(temp)) E($"leave(&{ListName(temp)});");
+                    return Next();
+                }
+                case OpCode.ClaimToScope:
+                {
+                    Need(1);
+                    _kindsKept = true;
+                    if (IsPlainType(Ty(d - 1))) return Next();   // a number or a bool belongs to no scope
+                    int depth = ins.A[0], flags = ins.A[1];
+                    int targetIndex = depth == 0xFFFF ? (f.IsTop ? 0 : -1) : Math.Max(0, st.Scopes.Count - 1 - depth);
+                    string target;
+                    if (targetIndex < 0)
+                    {
+                        if (!_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
+                        target = "g_globalOwn";
+                    }
+                    else
+                    {
+                        f.NeedsList.Add(st.Scopes[targetIndex].Id);
+                        target = "&" + ListName(st.Scopes[targetIndex].Id);
+                    }
+                    if ((flags & 1) != 0) E($"claimToList({S(d - 1)}, &{OwnerList()}, {target});");
+                    if ((flags & 2) != 0 && targetIndex >= 0)
+                    {
+                        // a value of a block between the current one and the variable's moves up to the variable's (only a list that exists can own it)
+                        var sources = st.Scopes.Skip(targetIndex + 1).SelectMany(sc => new[] { sc.Id, TempOf(sc.Id) }).ToArray();
+                        if (sb == null) f.Hoists.Add((st.Scopes[targetIndex].Id, sources));
+                        foreach (int src in sources)
+                            if (f.NeedsList.Contains(src)) E($"hoistFrom({S(d - 1)}, &{ListName(src)}, {target});");
+                    }
+                    return Next();
+                }
+                case OpCode.ClaimToObject:
+                    // [obj, value] -> [value]: a field initializer - the object claims the unclaimed value
+                    Need(2);
+                    E($"claimToHolder({S(d - 2)}, {S(d - 1)}, &{OwnerList()}); {S(d - 2)} = {S(d - 1)};");
+                    SetR(d - 2, R(d - 1)); SetT(d - 2, Ty(d - 1)); _kindsKept = true;
+                    d--; return Next();
+                case OpCode.ClaimToArray:
+                    Need(3);
+                    E($"claimToHolder({S(d - 3)}, {S(d - 1)}, &{OwnerList()});");
+                    return Next();
                 case OpCode.TakeToObject:
                     Need(2);
                     E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 2)}, {S(d - 1)});");
