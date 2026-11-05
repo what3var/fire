@@ -6253,6 +6253,7 @@ FIRE_FN void writeUtf16(const fire_char16* s, uint32_t n, FILE* f) {
 FIRE_FN int64_t externInt(Value v) {
     switch (v.kind) {
         case K_Int: case K_Bool: case K_Char: return v.i;
+        case K_Word: return (int64_t)v.w;   /* (a machine word: its bits) */
         case K_Float: return (int64_t)v.f;
         default: fatal("An extern function was called with an argument that is not a number.");
     }
@@ -6260,6 +6261,7 @@ FIRE_FN int64_t externInt(Value v) {
 FIRE_FN double externFloat(Value v) {
     if (v.kind == K_Float) return (double)v.f;
     if (v.kind == K_Int) return (double)v.i;
+    if (v.kind == K_Word) return (double)v.w;
     fatal("An extern function was called with an argument that is not a number.");
 }
 /* A string that a C function returned (UTF-8), as a value of `list` (`undefined` for a null pointer). */

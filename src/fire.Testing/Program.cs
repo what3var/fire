@@ -20225,7 +20225,10 @@ else
             extern int toupper(int c)
             extern float atof(string s)
             extern int sscanf(string text, string format, int* out)
+            extern int labs(int n)
             print(abs(-5))
+            word w = 7
+            print(abs(w) + " " + labs(18446744073709551615!word))
             print(atoi("1234") + 1)
             print(strlen("hello"))
             print(strlen("äö"))

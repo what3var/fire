@@ -479,7 +479,8 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
      **Offen:** echte `uint8_t`/`uintN_t`-C-Variablen für `byte`/`word`-Locals und -Parameter (die Locals bleiben 16-Byte-Werte); ein Puffer als Parameter oder aus einem
      Feld ist dem Generator nicht bekannt (allgemeiner Zugriff); Überladung nach `word` (`f(int)`/`f(word)`) gibt es nicht;
      ein Wortpuffer der VM mit 16/32-Bit-Wörtern (nur ein Bau der VM für ein fremdes Ziel, in Tests) geht nicht an eine Paket-Bibliothek; 16 Bit über ein Ziel mit
-     `wordWidth` 16 getestet (VM und nativ auf dem Rechner, kein echtes 16-Bit-Ziel); ein Wort an `extern`-Funktionen und an einen `int`-Parameter einer Native ist ein Fehler (`w!int`).
+     `wordWidth` 16 getestet (VM und nativ auf dem Rechner, kein echtes 16-Bit-Ziel); ein Wort an einen `int`-Parameter (auch der Methoden eines Preludes) will `w!int` (TC001, so gewollt).
+     (Umgesetzt: ein Wort an `extern`-Funktionen und `Library.Get` geht als seine Bits, VM und nativ.)
    * PCM und andere vorzeichenbehaftete Daten bleiben bei `int[16]`-Arrays (gepackt, mit Einheit); kein weiterer Typ.
 2. ~~**Inline-C**~~ **Umgesetzt** (Branch `targets`; SPEC 8.1.1a, docs/language/18-native-code.md) - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
 

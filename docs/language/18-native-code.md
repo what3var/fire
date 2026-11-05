@@ -18,6 +18,7 @@ print(strlen("hello"))  // 5
 
 - On Windows the library is e.g. `"kernel32.dll"` or `"user32.dll"`, on Linux `"libc.so.6"`, on macOS `"libSystem.dylib"`.
 - Parameter and return types: `bool`, `int` (with widths: `int[32]`), `float`, `char`, `string` and pointers. A function without a return type returns `undefined`.
+  A `word` can be passed to an `int` parameter: its bits (as C sees an unsigned number).
 - The library is loaded at the first call; a function that cannot be found is an error at the call, not when compiling.
 - A host program that embeds fire can also provide `extern` functions itself (see the help page "Embedding").
 

@@ -5082,6 +5082,9 @@ namespace fire.Runtime
                     case ValueKind.Int:
                         nativeArgs[i] = v.AsInt();
                         break;
+                    case ValueKind.Word:
+                        nativeArgs[i] = unchecked((long)v.AsWord());   // (a machine word: its bits, as C sees an unsigned long - ROADMAP 13.1c)
+                        break;
                     case ValueKind.Float:
                         nativeArgs[i] = v.AsFloat();
                         break;
