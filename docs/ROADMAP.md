@@ -435,6 +435,19 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `{Adresse, Slot, Generation, Zähler}` (16 Byte pro lebendem Zeiger, nicht pro
    Array oder Element), gezählt wie Strings, wiederverwendet über eine Freiliste. Mit `#performance` (keine Tabelle) tragen alle direkt ihren Zeiger. Bleibt: 65535 Einheiten.
    Später, wenn eine Messung es zeigt: einen Kasten mit Zähler 1 bei `p + 1` weiterschieben statt einen neuen zu holen.
+1b. **Köpfe der Werte getrennt und schmal speichern** (Vorschlag des Benutzers, nach Punkt 1). Ein Wert besteht aus Kopf (Art, Einheit bzw. Enum, Generation)
+   und Nutzlast. Auf 64 Bit sind das heute 8 + 8 Byte, obwohl der Kopf mit 32 Bit (oder weniger) auskäme - die andere Hälfte ist Füllung für die Ausrichtung.
+   * **Idee:** wo Werte im Speicher hintereinander stehen (Elemente eines Arrays ohne Elementtyp, Felder eines Objekts, Globals, `List`/`Dictionary`), stehen
+     erst X Köpfe und dann X Nutzlasten, X so gewählt, dass die Gruppe auf die Ausrichtung aufgeht: 64 Bit mit 4-Byte-Köpfen in Zweiergruppen (8 + 16 Byte)
+     = 12 statt 16 Byte pro Wert (-25 %), mit 2-Byte-Köpfen in Vierergruppen (8 + 32) = 10 Byte; das kompakte 32-Bit-Format mit 2-Byte-Köpfen = 6 statt 8 Byte.
+     Die Breite des Kopfes richtet sich nach der Wortbreite (16-Bit-Ziele heute nach der Breite von `int`). Keine echte Kompression - nur die Füllung fällt weg.
+   * **Voraussetzung:** die Generation wandert aus dem Kopf in die Nutzlast (Punkt 1: Slot und Generation der Objekte; auf x86-64/ARM64 hätten auch die
+     oberen 16 Bit eines Zeigers Platz), dann bleiben im Kopf nur Art (4 Bit), ein paar Merker und Einheit/Enum (16 Bit).
+   * **Gilt nur im Speicher:** ein Wert in einer C-Variablen, als Argument oder Rückgabe bleibt das `Value`-Struct (Register); Lesen/Schreiben eines Elements
+     oder Feldes sind zwei Zugriffe, in der Gruppe meist in derselben Cache-Zeile.
+   * **Zu klären:** Zeiger auf Elemente und Felder (`ref a[i]`, `K_PtrElem`) zeigen dann auf zwei Stellen (der Kasten aus Punkt 1 hilft); Natives, die heute
+     `Value*` eines Arrays sehen (`arrItems`), brauchen Zugriffsfunktionen; der Debugger und JSON lesen über dieselben Funktionen; Messung vorher (ein `ui`-Programm,
+     ein Programm mit vielen Objekten) - typisierte Arrays und Puffer sind schon ohne Köpfe gepackt, der Gewinn liegt bei Objekten und gemischten Arrays.
 2. **Rohdaten ohne Einheit: `byte` und `word`** (Entscheidung des Benutzers). `byte` und `word` sind Datentypen für rohe Daten **ohne Einheit**; Einheiten
    bleiben bei `int`, `int[N]`, `float` und `float[N]` (dort ändert sich nichts). Ab hier unterscheiden sich die beiden Formate.
    * **Umgesetzt:** Byte-Argumente der Natives sicher - lesende Natives nehmen einen Puffer oder ein Array aus Zahlen 0..255 (auch ein typisiertes; kopiert, bis der
