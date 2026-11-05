@@ -1504,7 +1504,8 @@ namespace fire.Compiler
                 case "char": return "k:char";
                 case "string": return "k:string";
                 case "class": return "k:class";
-                case "any": case "word": return "";   // (`word`: no overload by it - it takes what it gets, the store converts)
+                case "word": return "k:word";   // (a word, or an int that the store converts)
+                case "any": return "";
             }
             if (_refParams.EnumNames.Contains(t.BaseName)) return "k:int";
             if (_knownClassNames == null) return "";

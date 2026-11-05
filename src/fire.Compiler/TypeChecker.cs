@@ -800,6 +800,8 @@ namespace fire.Compiler
                     return arg.Kind == declared.Kind ? Bytecode.Overloads.ExactKind : NoMatch;
                 case StaticKind.Float:
                     return arg.Kind == StaticKind.Float ? Bytecode.Overloads.ExactKind : arg.Kind == StaticKind.Int ? Bytecode.Overloads.IntToFloat : NoMatch;
+                case StaticKind.Word:
+                    return arg.Kind == StaticKind.Word ? Bytecode.Overloads.ExactKind : arg.Kind == StaticKind.Int ? Bytecode.Overloads.IntToWord : NoMatch;
                 case StaticKind.Object:
                     return arg.Kind is StaticKind.Class or StaticKind.Object ? Bytecode.Overloads.ObjectScore : NoMatch;
                 case StaticKind.Class:
@@ -925,6 +927,7 @@ namespace fire.Compiler
                     StaticKind.Lambda => "k:lambda",
                     StaticKind.Array => "k:array",
                     StaticKind.Object => "k:class",
+                    StaticKind.Word => "k:word",
                     StaticKind.Class when a.Class != null => (_interfaces.ContainsKey(a.Class) ? "i:" : "c:") + a.Class,
                     _ => allLoose ? "" : null!,
                 };
@@ -1203,7 +1206,8 @@ namespace fire.Compiler
                 case "char": return "k:char";
                 case "string": return "k:string";
                 case "class": return "k:class";
-                case "any": case "word": return "";   // (`word`: no overload by it - it takes what it gets, the store converts)
+                case "word": return "k:word";   // (a word, or an int that the store converts)
+                case "any": return "";
             }
             if (_enumNames.ContainsKey(t.BaseName)) return "k:int";
             bool Known(string n) => _classes.ContainsKey(n) || _interfaces.ContainsKey(n);

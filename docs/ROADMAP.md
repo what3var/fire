@@ -476,8 +476,9 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
      Bytepuffer in einer Methode (2 x 200 x 1.000.000, gcc -O2): 4,45 s -> 0,41 s.
      Die Puffer-Methoden für Bytes (`ToString()`, `ToUnicode()`, `ToUnicodeChar()`) sehen bei einem Wortpuffer alle seine Bytes; `ToLittleEndian()`/`ToBigEndian()`
      geben einen Bytepuffer, jedes Wort in dieser Reihenfolge (VM und nativ gleich).
+     Überladung nach `word` (`f(int)`/`f(word)`/`f(float)`): ein Wort passt genau, ein int besser in `word` als in `float`, ein float nie (Typprüfer, VM, nativ).
      **Offen:** echte `uint8_t`/`uintN_t`-C-Variablen für `byte`/`word`-Locals und -Parameter (die Locals bleiben 16-Byte-Werte); ein Puffer als Parameter oder aus einem
-     Feld ist dem Generator nicht bekannt (allgemeiner Zugriff); Überladung nach `word` (`f(int)`/`f(word)`) gibt es nicht;
+     Feld ist dem Generator nicht bekannt (allgemeiner Zugriff);
      ein Wortpuffer der VM mit 16/32-Bit-Wörtern (nur ein Bau der VM für ein fremdes Ziel, in Tests) geht nicht an eine Paket-Bibliothek; 16 Bit über ein Ziel mit
      `wordWidth` 16 getestet (VM und nativ auf dem Rechner, kein echtes 16-Bit-Ziel); ein Wort an einen `int`-Parameter (auch der Methoden eines Preludes) will `w!int` (TC001, so gewollt).
      (Umgesetzt: ein Wort an `extern`-Funktionen und `Library.Get` geht als seine Bits, VM und nativ.)

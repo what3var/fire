@@ -275,7 +275,8 @@ print(Show.Of<int>(1))          // generic - written type arguments mean the gen
 
 - The values decide at run time: a variable of type `any` picks the overload of what it holds then. Where the type checker knows the argument types,
   it makes the same choice and knows the return type of that overload.
-- An `int` goes into a `float` parameter, but an exact `int` overload wins.
+- An `int` goes into a `float` parameter, but an exact `int` overload wins. An `int` goes into a `word` parameter too, and rather there than into
+  a `float` one; a `float` never goes into a `word` parameter.
 - Two methods with the same parameter types in one class are an error.
 - In a derived class, a method with the same parameter types (or untyped ones) **overrides** the inherited one (mark it `override`); with other types it is one more
   overload next to it.

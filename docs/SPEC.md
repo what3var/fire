@@ -744,11 +744,12 @@ Show.Of<string>("x")    // generic - written type arguments mean the generic met
 
 Per argument the closeness is, from the closest:
 
-1. the exact basic type (`int`, `float`, `bool`, `char`, `string`, a lambda,
+1. the exact basic type (`int`, `float`, `bool`, `char`, `string`, `word`, a lambda,
    an array) or the exact class of the object,
 2. a base class of the object – the closer in the chain, the better,
-3. an `int` for a `float` parameter (ranks with a distant base class: below the
-   exact type, above everything that follows),
+3. an `int` for a `word` parameter (the store converts it), then an `int` for a
+   `float` parameter (both rank with a distant base class: below the exact type,
+   above everything that follows); a `float` never goes into a `word` parameter,
 4. an interface the object implements,
 5. a type parameter (of the method or the class; its `where` conditions and a
    known type argument must fit),

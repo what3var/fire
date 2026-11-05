@@ -22372,6 +22372,24 @@ else
             var r = b.ToBigEndian()
             print(r[0] + " " + r[2])
             """),
+        ("Word: Ueberladung nach word (f(int)/f(word)/f(float); ein int geht lieber in word als in float, ein float nie in word) - statisch und zur Laufzeit", """
+            class F {
+              static string K(int x) { return "int " + x }
+              static string K(word x) { return "word " + x }
+              static string K(float x) { return "float " + x }
+              static string N(word x) { return "word " + x }
+              static string N(float x) { return "float " + x }
+              string P(word a, int b) { return "wi" }
+              string P(int a, word b) { return "iw" }
+            }
+            word w = 5
+            any f = 2.5
+            any i = 3
+            print(F.K(3) + ", " + F.K(w) + ", " + F.K(2.5) + ", " + F.K(3!word) + ", " + F.K(f) + ", " + F.K(i))
+            print(F.N(3) + ", " + F.N(i) + ", " + F.N(f))
+            var o = new F()
+            print(o.P(w, 1) + " " + o.P(1, w))
+            """),
         ("Word: Felder, Parameter, Rueckgabe, static, Json, Dictionary-Schluessel; word w = 5m ist zur Laufzeit ohne Einheit", """
             #import "json"
             class C { word w
@@ -26817,6 +26835,8 @@ else
                 Console.WriteLine("SKIP: 8-Byte-Value - der C-Compiler baut keine 32-Bit-Programme (gcc-multilib)");
             else
             {
+                // (a target of 32-bit words: an 8-byte value needs a machine word of at most 32 bits)
+                var compactTarget = TargetProfile.Host with { WordWidth = 32 };
                 const string compactSource = """
                     #intwidth 32
                     #floatwidth 32
@@ -26848,7 +26868,7 @@ else
                 string expectedCompact = vmOutput(compactSource);
                 Value.SingleFloats = false; Value.Ints32 = false;
                 string compactC = Path.Combine(workDir, "compact.c");
-                File.WriteAllText(compactC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { compactSource }), TargetProfile.Host)
+                File.WriteAllText(compactC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { compactSource }, null, null, null, null, compactTarget), compactTarget)
                     + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
                 Value.SingleFloats = false; Value.Ints32 = false;
                 string compactBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{compactC}\" -I\"{workDir}\" -o \"{compactC}.bin\" -lm", workDir, out int compactExit);
@@ -26921,7 +26941,7 @@ else
                     string expected = vmOutput(source);
                     Value.SingleFloats = false; Value.Ints32 = false;
                     string slotC = Path.Combine(workDir, perf ? "compactslotsperf.c" : "compactslots.c");
-                    File.WriteAllText(slotC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { source }), TargetProfile.Host)
+                    File.WriteAllText(slotC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { source }, null, null, null, null, compactTarget), compactTarget)
                         + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
                     Value.SingleFloats = false; Value.Ints32 = false;
                     string slotBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{slotC}\" -I\"{workDir}\" -o \"{slotC}.bin\" -lm", workDir, out int slotExit);
