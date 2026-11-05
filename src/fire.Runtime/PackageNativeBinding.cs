@@ -171,11 +171,12 @@ namespace fire.Runtime
             var blocks = CallBlocks.For(args.Length);
             List<IntPtr>? allocs = null;
             List<GCHandle>? pins = null;
+            List<Action>? after = null;   // (what goes back into the program after the call: the words of a buffer of narrower words)
             IntPtr argBlock = blocks.Args, result = blocks.Result, error = blocks.Error;
             try
             {
                 Marshal.WriteByte(error, 0);
-                for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, ref allocs, ref pins, name);
+                for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, ref allocs, ref pins, ref after, name);
                 int rc = lib.Call(fn.Index, argBlock, args.Length, result, error, 512);
                 if (rc == 2)
                 {
@@ -191,6 +192,7 @@ namespace fire.Runtime
             }
             finally
             {
+                if (after != null) foreach (var back in after) back();
                 if (allocs != null) foreach (var p in allocs) Marshal.FreeHGlobal(p);
                 if (pins != null) foreach (var pin in pins) pin.Free();
                 CallBlocks.Release();
@@ -260,7 +262,7 @@ namespace fire.Runtime
             }
         }
 
-        private static void ToNative(Value v, IntPtr dest, ref List<IntPtr>? allocs, ref List<GCHandle>? pins, string function)
+        private static void ToNative(Value v, IntPtr dest, ref List<IntPtr>? allocs, ref List<GCHandle>? pins, ref List<Action>? after, string function)
         {
             var fv = new FireVal();
             switch (v.Kind)
@@ -284,7 +286,7 @@ namespace fire.Runtime
                     var arr = v.AsArray();
                     IntPtr items = Marshal.AllocHGlobal(Math.Max(1, arr.Length) * ValSize);
                     (allocs ??= new List<IntPtr>()).Add(items);
-                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, ref allocs, ref pins, function);
+                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, ref allocs, ref pins, ref after, function);
                     fv.Kind = KindArray; fv.Length = arr.Length; fv.Bits = items.ToInt64();
                     break;
                 }
@@ -292,8 +294,18 @@ namespace fire.Runtime
                 {
                     // by reference: pinned for the call, the native reads and writes the bytes in place
                     var buf = v.AsBuffer();
-                    // (a buffer of machine words: its words - the library is built for this machine, 64-bit words)
-                    if (buf.IsWords && buf.ElementSize != 8) throw new InvalidOperationException($"An argument of the native function '{function}' is a buffer of {buf.ElementSize * 8}-bit words: a package library takes 64-bit words (the machine the VM runs on).");
+                    // (a buffer of machine words: its words - the library is built for this machine, 64-bit words; narrower words of a VM built for another
+                    // target go as a copy in 64-bit words and come back cut to their width when the call returns - ROADMAP 13.1c)
+                    if (buf.IsWords && buf.ElementSize != 8)
+                    {
+                        int count = buf.Count;
+                        IntPtr wide = Marshal.AllocHGlobal(Math.Max(1, count) * 8);
+                        (allocs ??= new List<IntPtr>()).Add(wide);
+                        for (int i = 0; i < count; i++) Marshal.WriteInt64(wide, i * 8, unchecked((long)buf.GetWord(i)));
+                        (after ??= new List<Action>()).Add(() => { for (int i = 0; i < count; i++) buf.SetWord(i, unchecked((ulong)Marshal.ReadInt64(wide, i * 8))); });
+                        fv.Kind = KindWords; fv.Length = count; fv.Bits = wide.ToInt64();
+                        break;
+                    }
                     var pin = GCHandle.Alloc(buf.Bytes, GCHandleType.Pinned);
                     (pins ??= new List<GCHandle>()).Add(pin);
                     fv.Kind = buf.IsWords ? KindWords : KindBuffer; fv.Length = buf.Count; fv.Bits = pin.AddrOfPinnedObject().ToInt64();

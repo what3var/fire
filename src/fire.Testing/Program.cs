@@ -28779,6 +28779,23 @@ else
                 CheckNat("Paket: wordsArg - ein Wortpuffer ohne Kopie (in place beschrieben), ein Array kopiert, ein Bytepuffer abgelehnt; VM (C-ABI) und nativ gleich",
                     wordsVm == "2 11 True\n3 2 0\nPkWords.Sum expects words (a word buffer or an array of ints), not a byte buffer.\nPkWords.Sum: element 1 of the array is a String, not an int or a word.\n" && wordsNat == wordsVm,
                     $"  VM:\n{wordsVm}\n  nativ:\n{wordsNat}");
+                {
+                    // a VM built for a target of 16-bit words: its word buffer goes to the library (64-bit words) as a copy and comes back cut to 16 bits
+                    var words16Lines = new List<string>();
+                    string words16Script = "#import \"pkwords\"\nword w[] = [1, 2, 65535]\nprint(PkWords.Sum(w) + \" \" + PkWords.Inc(w) + \" \" + w[0] + \" \" + w[2] + \" \" + Word.Bits)\n";
+                    string words16;
+                    try
+                    {
+                        var session16w = fire.Runtime.Session.Build(new Linker().CompileAndLink(new[] { words16Script }, null, null, VmExecutionMode.Release, null, TargetProfile.Host with { WordWidth = 16 }),
+                            VmExecutionMode.Release, a => { words16Lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+                        session16w.Run();
+                        words16 = string.Concat(words16Lines.Select(l => l + "\n"));
+                    }
+                    catch (Exception ex) { words16 = ex.Message; }
+                    finally { Value.WordBits = 64; }
+                    CheckNat("Paket: ein Wortpuffer mit 16-Bit-Woertern (VM fuer ein 16-Bit-Ziel) geht an die Bibliothek als Kopie in 64 Bit und kommt auf 16 Bit gekuerzt zurueck",
+                        words16 == "2 3 2 0 16\n", words16);
+                }
 
                 // per platform: sources of the target are added; the VM uses those of this machine
                 string whichFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwhich", "1.0.0", "pkwhich", "class PkWhich { static Which() { return __pk_which() } }", "namespace fire { }\n", m =>
