@@ -56,6 +56,11 @@ fire MethodA() taking player handover conn
   `ArgumentException` am `fire`, der Thread startet nicht): ein Lambda oder Pointer in einem Feld/Element ("'handover' rejected: lambda values
   cannot be handed to a thread."), und in einem Fire-Thread ein Teil der Globals des Hauptprogramms; eine Variable des Hauptprogramms im Thread
   ist schon beim Übersetzen ein Fehler. Actors und zerstörte Objekte bleiben geteilte Verweise. Nicht bei `fire global`.
+- **Argumente von `fire M(args)`** (SPEC 2.1, "erster Slot"): ein Argument, das **direkt ein frisches `new`** ist (`fire M(new Job(3))`), geht ohne
+  Kopie an den Thread - ein **Handover** wie `fire M(j) handover j`: das Objekt und alles, was es besitzt, gehört danach dem Methodenscope im neuen Thread
+  (die Prüfungen von `handover` gelten: Lambdas und Pointer in Feldern lehnen das `fire` ab). Jedes andere Argument - eine Variable, ein Feld, ein
+  Aufrufergebnis, ein Array-Literal, `copy x` - wird wie bei `taking` kopiert (alles Erreichbare); die Kopie gehört dem Methodenscope im Thread, das
+  Original bleibt, wo es ist (ein unbeanspruchtes Original - ein Aufrufergebnis, ein Literal - stirbt am Ende der Anweisung des Senders).
 - `with actorA` (siehe Abschnitt 2): bindet eine Actor-Referenz (Handle,
   keine Kopie) in den Fire-Block ein.
 - Beide Bindungen sind unabhängig voneinander kombinierbar.
@@ -99,6 +104,12 @@ Stattdessen:
   gelegentlichem Nachsehen mischen
   (`while (running) { try process actorA; doOtherWork() }`) - die Sprache
   erzwingt keine feste Event-Loop-Struktur.
+- **Argumente einer Nachricht** (SPEC 2.1, 2.4): ein **unbeanspruchtes** Argument (`copy x`, ein Aufrufergebnis, ein Array-Literal) gehört der
+  **Nachricht**, solange sie in der Mailbox liegt; sie gibt es an den Methodenscope weiter, wenn der Heimat-Thread sie ausführt (dort gelten die Regeln
+  eines Aufrufs: die Methode behält es mit `TakeTo`/`take`, sonst stirbt es am Ende des Aufrufs). Ein Argument, das **direkt ein frisches `new`** ist
+  (`a.Add(new Item(1))`), geht als **Handover** in den Heimat-Thread (es und alles von ihm Erreichbare; Verweise von vorher sind tot, wie bei
+  `fire handover`). Ein Argument, das nicht unbeansprucht ist (eine Variable, ein Feld), wird wie bisher als Verweis übergeben und bleibt bei seinem
+  Besitzer. Eine Nachricht, die nie ausgeführt wird (das Programm endet), zerstört, was sie besitzt.
 - Actor-**Referenzen** (Handles) dürfen frei zwischen Threads herumgereicht
   werden - sie sind leichtgewichtig (keine Kopie des tatsächlichen
   Actor-Zustands), das ist der einzige bewusste, kontrollierte Bruch mit

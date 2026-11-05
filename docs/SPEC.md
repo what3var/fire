@@ -140,23 +140,63 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 **Arrays and byte buffers** (`new int[n]`, `[1, 2]`, `new byte[n]`) are part of the model as well (2.5): they also have exactly one owner, but they own nothing themselves
 (the elements of an array do not change their owner). Strings and the basic types are plain values and have no owner.
 
-### 2.1 Initial owner on creation (`new Foo()`)
+### 2.1 Initial owner: the first slot a value lands in
 
-- If the new object is **assigned directly to a field of another object** (`obj1.Foo = new Bar()`), the owner is immediately `obj1`.
-- In all other cases (local variable, parameter value, expression) the owner is the **current scope**.
-- This also applies to the initializer of an instance field (`Item it = new Item(1)` in the class body) and to a bare field name in a class (`field = new X()` instead of `this.field = new X()`): the object belongs to the instance. (It used to belong to the initializer/method scope there and was destroyed when that scope was left, although the field still pointed to it.)
-- Arrays and buffers follow the same rule: `obj.items = new int[8]`, `obj.items = [1, 2]`, `obj.data = new byte[4]`, a bare `items = ...` in a class and a field initializer give the array to the
-  object; everywhere else (a variable, an argument, a return value, the result of a native function such as `text.Split(",")`) it belongs to the **current scope**. An array that is made **in one
-  expression together with inner arrays** (`new int[3][4]`, `[[1, 2], [3]]`) owns them: the inner arrays live and die with the outer one. An array that is only assigned to an element later
-  (`a[i] = new int[2]`) does not change its owner.
-- **Direct assignment of any call result to a field** (`this.child = Make()`, `this.data = Util.Make(5)`) gives the value to the object as well, not only a `new`: a value that is still in the hands of the
-  current function (freshly returned, or belonging to one of its scopes) becomes the object's. A value that belongs to someone else (an object, the caller, the global scope seen from a function) stays where it is.
-- **Assignment moves ownership up to the function scope.** `x = value` where `x` is a variable of an *outer* block scope moves a value that belongs to an inner block (loop body, `if`, bare block) into the scope of the
-  enclosing **function** (top-level code: the global scope) - never out of the function. `keep = b` inside a loop therefore keeps `b` alive after the loop and until the function ends; without the assignment it
-  would die with the loop body. (Objects and arrays assigned in a loop accumulate until the function ends: use `delete` or `TakeLocal`/`TakeTo` for something that should not.)
-- **A call result or a fresh `new` passed on as an argument belongs to the called function, not to the caller:** `f(new X())` - the caller holds no reference to it, so `f` may keep it with `try x.TakeTo(this)` (e.g. `list.Add(new Person())`). A constructor that stores such a parameter in a field must keep it the same way (`this.address = a; try a.TakeTo(this)`), or the argument dies with the call. In `f(g())` the value that `g` returns belongs to the call of `f`: it dies when the call is over - after everything `f` created
-  itself - unless `f` keeps it (`TakeTo`, `try x.TakeTo(this)` (2.2), returns it). Only values that are fresh at the caller move; `f(g())` where `g` returns something that belongs to an object does not change that owner.
-- The same rule applies to lambda values: direct field assignment → owner is the object; otherwise → current scope. The `on` binding (this context, see 4.2) is independent of this and does not change the owner.
+**One rule for everything that is created:** an **unclaimed** value belongs to the owner of the **first slot it lands in**. Unclaimed - recognizable at the
+expression itself, before it runs - are:
+
+- `new X(...)`, an array literal (`[1, 2]`), `new int[n]`, `new byte[n]`, `copy x` / `flat x`;
+- the **result of a call** (a method, a function, a property getter, a native) - when it arrives by the return rule (2.3), i.e. the callee handed it over;
+  a value the callee returns that belongs to somebody else (an object, the caller, the global scope) is not unclaimed and stays where it is;
+- `c ? E1 : E2` and `(E)` pass on whatever the chosen operand is.
+
+Until a slot claims it, an unclaimed value belongs to the **statement temporaries** of the current scope. The slot that claims it, and so its owner:
+
+| Slot | Owner |
+| --- | --- |
+| `var v = E` | the current scope (the block that declares `v`) |
+| `v = E`, `v` a variable of an outer block | the scope that **declares** `v` (not the current block, not the function scope) |
+| `g = E`, `g` a global variable | the global scope |
+| `obj.f = E`, a field (also `this.f`, a bare field name in a class, a field initializer) | the object `obj` |
+| `arr[i] = E` | the **array** `arr` (an array can own objects and arrays, 2.5) |
+| `f(E)`, `obj.M(E)`, `new X(E)`, `base(E)`, a lambda call; a default value of a parameter | the scope of the **called** method (the call); it dies when the call ends, after the callee's own locals, unless the callee keeps it (`TakeTo`, `take`, a field of an object it keeps, `return`) |
+| `obj.Prop = E`, a property | the **setter call**, see "Setters" below |
+| `return E` | the target of the call expression at the caller: ownership is handed on, `var v = F()` gives it to the scope of `v`, `obj.f = F()` to `obj`, `arr[i] = F()` to the array, `f(F())` to the call of `f`, `return F()` on to the next caller |
+| `fire M(E)`, a message to an actor `a.M(E)` | see 2.4 and THREADING_DESIGN.md: the message (a thread) |
+| no slot: `F();`, `print(new X())` (a native has no call scope), an object made only to call a method on it | the statement temporaries: it is **destroyed at the end of the statement** |
+
+- **Chains:** in `a = b = E` the inner assignment claims: `b` owns, `a` only refers to it (the value of an assignment expression is not unclaimed).
+- **Values held by the statement temporaries count as unclaimed.** `var b = new Builder().With(1).With(2)` - `With` returns `this`: the builder belongs to
+  the temporaries (it was made in this statement, nobody claimed it yet), so the result of the last `With` is unclaimed and `b` claims it. The same holds for
+  a getter or method that returns an object of the temporaries.
+- **Inner arrays:** an array made in one expression together with inner arrays (`new int[3][4]`, `[[1, 2], [3]]`) owns them: they live and die with the
+  outer one.
+- **Lambda values** follow the same rule (a field: the object, otherwise as above). The `on` binding (4.2) does not change the owner.
+- **The end of a statement:** an expression statement, a declaration, an assignment, `return`/`throw` (their value goes on first), `delete`; the condition of
+  `if`/`while`/`do`/`for` and the subject of `switch` after they are evaluated; the collection of `foreach` and the value of `with` at the end of the loop / the
+  block. A thrown object is claimed by the throw (it travels with the exception) and belongs to the `catch` variable when it is caught.
+
+**Assignment moves ownership up - inside the method.** `v = x` where `v` is a variable of an *outer* block and `x` is **not** unclaimed (a variable, a field
+read, an element): if `x` belongs to a block between the current one and the block that declares `v` (a loop body, an `if`), it moves to the scope that
+declares `v`. `keep = b` inside a loop keeps `b` alive after the loop, as long as `keep`'s block lives. It moves only upwards and never over the boundary of
+the method (in the top-level code a global variable takes it into the global scope; in a method a global variable does not); over the boundary of a method a
+value goes only by `return` or `take`. (Objects assigned in a loop accumulate in that scope: use `delete` or `take` for something that should not.)
+
+**A value that is not unclaimed keeps its owner** wherever it is assigned or passed: `obj.f = tmp`, `arr[i] = tmp`, `f(tmp)` only refer to `tmp`; it still
+belongs to its scope and dies with it - `take tmp` / `tmp.TakeTo(obj)` move it (2.2).
+
+**Setters.** `obj.Prop = E` with an unclaimed `E` gives the value to the **setter call** first. The compiler decides statically, for every control-flow
+path through the setter, where the setter passes it on - its **claim site**:
+
+1. the first assignment of `value` to a **field or a property** on that path: a field gives it to that field's object (`this.f = value`,
+   `this.node.child = value`), a property to the next setter call (which applies the same rule, recursively);
+2. if the path has no such assignment, the first call with `value` as an argument: the value goes to that call (`Store(value)`, `list.Add(value)`), like `f(E)`.
+
+Only the name `value` is followed (no aliases: `var v = value; this.f = v` claims nothing). A claim site that does not run on the path taken (a branch not
+taken, a loop that runs zero times) claims nothing: the value is destroyed when the setter returns - there is no fallback at run time. In a loop the first pass
+claims. A call is a claim site only where every path through it has no field or property assignment of `value` (a call followed, on some path, by
+`this.f = value` claims nothing - the assignment does). A value that is not unclaimed (`obj.Prop = tmp`) keeps its owner, as before; the setter only refers to it
+(it can still `take value`).
 
 ### 2.2 Ownership transfer (member functions on object instances)
 
@@ -197,8 +237,10 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   - **`return` wins in a getter:** a value that the getter's `this` took over in this call and that the getter returns (`this.cache = it; return it`, also
     `return this.cache`) goes to the caller by the return rule (2.3), not to `this`. Only the returned value itself; other values the call gave to `this` stay there.
   - An exception after the assignment does not undo it: the field keeps the object.
-  - Unchanged: what an accessor gets from outside (the setter's `value` passed by ordinary code, an object of the caller) stays with its owner and still needs
-    `take`/`TakeTo`; methods keep the rules above. An auto-property (`{ get; set; }`) behaves as before - its setter keeps a value that an accessor hands to it.
+  - The setter's `value`: an **unclaimed** value (2.1, `obj.Prop = new X()`) belongs to the setter call and goes to its claim site - a field or a
+    property of **any** object (not only of `this`), or a call (2.1, "Setters"). A value that is **not** unclaimed (an object of the caller, `obj.Prop = tmp`)
+    stays with its owner and needs `take`/`TakeTo`; methods keep the rules above. An auto-property (`{ get; set; }`) is a field: its setter claims the value
+    like `this.f = value`.
 
 ### 2.3 Lifetime / cascade deletion
 
@@ -214,9 +256,13 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   shared handle. An unhandled exception unwinds the open scopes but does not release the global scope. As a
   safety net the host additionally closes all streams that are still open at the end (the host session of the io package: `PackageHost.Begin(...).Dispose()`). A destructor should never
   throw: an unhandled error in it ends the program (the `IO` destructors therefore swallow IO errors).
-- **`return`:** If a value that belongs to one of the scopes being left (directly, or through objects that belong to them) is returned - an object, an array or a buffer -, it does not die with them: the
-  ownership passes to the calling scope, **together with everything that hangs on it and also belongs to those scopes** (that is `Takes.Locals`, 2.2): the elements of a returned list, the objects a returned
-  object points to. What is taken along belongs to the object that points to it, so it lives and dies with it. A value that belongs to someone else (an object that stays, the caller, the global scope) is not touched.
+- **`return`:** If a value that belongs to one of the scopes being left (directly, or through objects that belong to them, also to their statement
+  temporaries) is returned - an object, an array or a buffer -, it does not die with them: the ownership passes on **to the target of the call expression**
+  at the caller (2.1: the scope of `v` in `var v = F()`, the object in `obj.f = F()`, the array in `arr[i] = F()`, the call of `f` in `f(F())`; without a
+  target the caller's statement temporaries - it dies at the end of that statement), **together with everything that hangs on it and also belongs to those
+  scopes** (that is `Takes.Locals`, 2.2): the elements of a returned list, the objects a returned object points to. What is taken along belongs to the object
+  that points to it, so it lives and dies with it. A value that belongs to someone else (an object that stays, the caller, the global scope) is not touched -
+  and is not unclaimed at the caller.
 - **Destroyed objects.** A destroyed object is **dead** when the destruction that destroyed it is over (the scope is left, `delete` returned): using it - a field, a method, a property - throws a catchable
   `DestroyedException`, like an array (2.5). While the destruction is still running (the destructors of one scope), the objects of that scope can still be used, also those that were destroyed before - the destructor of a
   writer can flush a stream that was destroyed before it. A reference does not keep anything alive: what a function wants to hand out has to be returned, taken (`Take...`) or stored in an owner that lives on.
@@ -224,7 +270,9 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 ### 2.5 Arrays and buffers in the ownership model, `delete`
 
 - An **array or buffer is destroyed** when its owner is destroyed or left (a scope is left, an object is deleted) and when `delete` is applied to it. Destroying it releases its memory; nothing runs
-  (there is no destructor), the inner arrays it owns (2.1) are destroyed with it.
+  (there is no destructor), what it owns is destroyed with it: the inner arrays made with it (2.1) and every unclaimed value stored into one of its
+  elements (`arr[i] = new X()`, `arr[i] = Make()`, `arr[i] = [1, 2]`: the array claims it, 2.1) or taken (`arr[i] = take x`). Overwriting or clearing the
+  element does not destroy what the array owns - it lives as long as the array.
 - **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
   nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** is treated the same way (2.3): dead objects throw `DestroyedException` (a shallow copy, 2.4, may point to one).
 - **References from before a `fire handover`** (THREADING_DESIGN.md section 1) are dead the same way: the handed-over value and everything reachable from it
@@ -237,8 +285,9 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 - **Debug warning for references that outlive their object**: in Debug mode the VM notes when a field or an array element is given an object that belongs to a scope (a local, an
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
-- A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` still belongs to the scope and dies with it. The owner has to be changed explicitly:
-  `tmp.TakeTo(this)` (in a property accessor the assignment does that itself, 2.2). The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
+- A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` is not unclaimed (2.1), it still belongs to the
+  scope and dies with it. The owner has to be changed explicitly: `this.items = take tmp`, `tmp.TakeTo(this)`. An assignment to a variable of an outer block moves
+  it up to the block that declares the variable (2.1).
 - **`delete expression`** destroys an object, an array or a buffer at once and detaches it from its owner: for an object the destructor runs and everything it owns is destroyed (2.3), exactly as if its owner
   had been left. Variables that still refer to it see a destroyed object (see above). `delete` on anything else is a run-time error. `delete` is a word only in front of a name on the same line.
 
@@ -274,16 +323,18 @@ If the same instance (or the same array) occurs again - shared or cyclic -, the 
 copy already made: the structure of the original (sharing, cycles) is preserved.
 
 **Owner.** The copy is a new object and gets an owner, depending on where it goes:
+- A copy is **unclaimed** (2.1): it belongs to the first slot it lands in.
 - **As an argument** of a call (`f(copy a)`, `obj.M(flat a)`, `new X(copy a)`, `base(copy a)`, lambda call): the copy belongs to the **scope of the
-  called function** and is destroyed when it ends - unless the function returns it (then it goes to the caller, 2.3) or
+  called function** and is destroyed when it ends - unless the function returns it (then it goes on to the target of the call, 2.3) or
   keeps it with `param.TakeTo(...)`/`TakeGlobal()` (2.2). This also applies to constructors: `construct(i) { this.held = i }` alone is not enough,
-  `i.TakeTo(this)` is part of it. For a **native** function (`print(copy a)`) and for messages to an actor there is no such scope - there the
-  copy belongs to the current scope. The copy is only created **at the call**, after all arguments have been evaluated (`f(copy a, a.Inc())` thus copies the
+  `i.TakeTo(this)` is part of it. A **native** function (`print(copy a)`) has no such scope - the copy dies at the end of the statement. A **message to an
+  actor** (`a.M(copy x)`) owns the copy and hands it on to the method when it runs in the actor's thread (THREADING_DESIGN.md section 2). The copy is only created **at the call**, after all arguments have been evaluated (`f(copy a, a.Inc())` thus copies the
   state after `Inc()`); `flat`/`copy` as an argument is possible for the first 16 arguments.
 - **Assigned to an object** (`obj.field = copy x`, `this.field = ...`, bare `field = ...` in a class, field initializer `Item i = copy x`): the
   object becomes the owner, as with `copy.TakeTo(obj)` (2.2) - the special rule applies as well: if the target object is already in cascade deletion, the copy
   is destroyed along with it immediately.
-- **Otherwise** (local variable, index assignment, expression): the current scope.
+- **Otherwise** as everywhere (2.1): a variable - the scope that declares it, `arr[i] = copy x` - the array, an expression without a slot - the
+  end of the statement.
 
 For `copy`, the following applies to the instances below: if a copied instance was owned in the original by an instance that is also copied, its copy belongs to that
 instance's copy (the ownership tree is reproduced); everything else - in particular instances that belong to someone else in the original (a scope, an object outside
