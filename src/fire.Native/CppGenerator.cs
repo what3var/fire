@@ -5590,7 +5590,7 @@ namespace fire.Native
                 if (ka == KindBool && kb == KindBool) fast = op is "==" or "!=" ? $"{a}.i {op} {b}.i" : null;
                 else if (!IsNum(ka) || !IsNum(kb) || U(ia) != U(ib)) fast = null;
                 else if (ka == KindInt && kb == KindInt) fast = $"{a}.i {op} {b}.i";
-                else if (op is "==" or "!=") fast = $"{Num(ia)} {op} {Num(ib)}";
+                else if (op is "==" or "!=") fast = $"{(op == "!=" ? "!" : "")}FIRE_CC_FEQ({Num(ia)}, {Num(ib)})";   // (false with a NaN on every compiler: fire_cc.h)
                 else fast = $"compareNumeric({a}, {b}) {op} 0";
                 if (fast == null) return null;
                 string guard = KindGuard(ia, ib);

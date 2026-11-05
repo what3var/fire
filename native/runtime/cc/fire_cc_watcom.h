@@ -15,6 +15,28 @@
 #define FIRE_STATIC_ASSERT_C(c, m) typedef char FIRE_CC_CAT(fire_static_assert_, __LINE__)[(c) ? 1 : -1]
 #define FIRE_CC_RUNTIME_BEGIN
 #define FIRE_CC_RUNTIME_END
+
+/* The C library of Open Watcom rounds a half away from zero in nearbyint(); C (and the VM, .NET) round it to the even number in the default rounding mode. */
+#include <math.h>
+static double fire_cc_nearbyint(double x) {
+    double f = floor(x), d = x - f;
+    if (d > 0.5) return f + 1.0;
+    if (d < 0.5) return f;
+    return fmod(f, 2.0) == 0.0 ? f : f + 1.0;   /* (a half: to the even neighbour; NaN and the infinities fall through unchanged) */
+}
+#define nearbyint(x) fire_cc_nearbyint(x)
+/* ... and so does its printf("%.*f") with a number that lies exactly on a half (0.125 to 2 places): such a number is moved to the even neighbour first. */
+static double fire_cc_fixedHalfEven(double d, int places) {
+    double p = 1.0, s;
+    int i;
+    for (i = 0; i < places && i < 18; i++) p *= 10.0;
+    s = d * p;
+    if (fabs(s) < 4503599627370496.0 && s / p == d && fabs(s - floor(s) - 0.5) == 0.0) return fire_cc_nearbyint(s) / p;
+    return d;
+}
+#define FIRE_CC_FIXED(d, places) fire_cc_fixedHalfEven(d, places)
+/* A comparison with NaN on the 8087 (and its emulation) sets "less" and "equal" at once: == checks for NaN first. */
+#define FIRE_CC_FEQ(x, y) (!isnan(x) && !isnan(y) && (x) == (y))
 #if defined(_M_I86)
 /* 16-bit x86 (wcc): the large model has far pointers already; the data of arrays and buffers may pass 64 KB (FIRE_HUGE: the compiler normalizes the segment) */
 #define FIRE_FAR __far

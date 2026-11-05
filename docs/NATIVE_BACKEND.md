@@ -648,7 +648,9 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
   `fire_cc_msvc.h`, `fire_cc_watcom.h` (Open Watcom), `fire_cc_generic.h` (TinyCC und jeder andere C99-Compiler). Sie definiert, was C nicht überall
   gleich sagt: `FIRE_COLD`, `FIRE_LIKELY`, `FIRE_NORETURN`, `FIRE_NOT_REACHED(r)` (nach einem Aufruf, dessen Nicht-Rückkehr der Compiler nicht kennt),
   `FIRE_TLS_KEYWORD`, `FIRE_STATIC_ASSERT_C` (ohne `_Static_assert`: ein Array negativer Größe), `FIRE_CC_RUNTIME_BEGIN/END` (Warnungen um die Runtime),
-  `FIRE_FAR`/`FIRE_HUGE` (16-Bit-x86). `fire_rt.h` enthält keine Abfrage eines Compilers mehr. Ein neuer Compiler: eine Datei hier und eine Zeile in `fire_cc.h`.
+  `FIRE_FAR`/`FIRE_HUGE` (16-Bit-x86) und, wo die C-Bibliothek oder die FPU anders rechnet, `FIRE_CC_FEQ` (`==` mit NaN: die 8087-Emulation von
+  Open Watcom meldet "gleich") und `FIRE_CC_FIXED` (`printf("%.*f")` rundet dort eine Hälfte weg von null), dazu ein `nearbyint`, das zur geraden Zahl rundet.
+  `fire_rt.h` enthält keine Abfrage eines Compilers mehr. Ein neuer Compiler: eine Datei hier und eine Zeile in `fire_cc.h`.
 * **Toolchain** (`src/fire.Native/Toolchains/`): eine Art von Toolchain mit eigenem Treiber implementiert `IToolchainDriver` (Kommandozeile aus einer
   `CompileRequest`, Suche des Compilers, Umgebung seiner Programme) und steht in `ToolchainDrivers`; ihr Standard (`Default`) wird ein eingebauter Name
   (`"toolchain": "watcom"`). `NativeBuilder.CompilerCommand` fragt zuerst die Treiber - gcc, clang, msvc, tcc und emscripten stehen (noch) dort selbst.
@@ -660,7 +662,8 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
   `fire_env_dos.h`, `fire_*_none.h`); eine neue Umsetzung eines Teils ist eine neue Datei in `std/`, ein neues Ziel ein neuer Ordner.
 
 **`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in
-DOSBox-X. Large Model: Zeiger 32 Bit, also mit `int`/`float` von 32 Bit (Standard des Ziels) ein 8-Byte-Wert; `word` 16 Bit. Keine fire-Threads. Die Runtime rechnet
+DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer denen mit fire-Threads (beim Bauen abgelehnt), `#performance`
+(weicht gewollt ab) und zwei Benchmarks mit Arrays über 64 KB. Large Model: Zeiger 32 Bit, also mit `int`/`float` von 32 Bit (Standard des Ziels) ein 8-Byte-Wert; `word` 16 Bit. Keine fire-Threads. Die Runtime rechnet
 die Größe jedes Blocks breit (`blockSize`): ein Block über 64 KB ist ein Fehler, nie ein kleinerer Block (die Daten großer Arrays über `__huge` folgen).
 Offen: `io`/`filesystem`, Konsole/Tastatur, Grafik, die Packages `dos`/`machine`, `#intwidth 16`.
 

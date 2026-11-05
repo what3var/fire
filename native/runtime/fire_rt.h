@@ -547,8 +547,10 @@ FIRE_FN void fire_shortestE(double v, bool single, char* sci, size_t cap) {
     while (lo < hi) {
         int mid = (lo + hi) / 2;
         snprintf(sci, cap, "%.*e", mid, v);
-        double back = strtod(sci, NULL);
-        if (single ? (float)back == (float)v : back == v) hi = mid; else lo = mid + 1;
+        /* (stored through volatile: a compiler that keeps the x87 registers - Open Watcom - would compare with more bits than a float or a double has) */
+        volatile double back = strtod(sci, NULL);
+        volatile float backF = (float)back, vF = (float)v;
+        if (single ? backF == vF : back == v) hi = mid; else lo = mid + 1;
     }
     snprintf(sci, cap, "%.*e", lo, v);
 }
@@ -2215,11 +2217,11 @@ FIRE_FN int compareNumeric(Value a, Value b) {
     Real x, y;
     if (a.kind == K_Int && b.kind == K_Int) return a.i < b.i ? -1 : (a.i > b.i ? 1 : 0);
     x = toR(a); y = toR(b);
+    /* (NaN first: on the 8087 of Open Watcom a comparison with NaN says "less" and "equal" at once) */
+    if (FIRE_UNLIKELY(isnan(x) || isnan(y))) return isnan(x) ? (isnan(y) ? 0 : -1) : 1;
     if (x < y) return -1;
     if (x > y) return 1;
-    if (x == y) return 0;
-    if (isnan(x)) return isnan(y) ? 0 : -1;
-    return 1;
+    return 0;
 }
 /* Two texts by their UTF-16 code units (string.CompareOrdinal): -1, 0 or 1. */
 FIRE_FN int compareText(Value a, Value b) {
@@ -2280,7 +2282,7 @@ FIRE_FN bool eq(Value a, Value b) {
     switch (a.kind) {
         case K_Int: case K_Bool: case K_Char: return a.i == b.i;
         case K_Word: return a.w == b.w;
-        case K_Float: return a.f == b.f || (isnan(a.f) && isnan(b.f));
+        case K_Float: return isnan(a.f) ? isnan(b.f) : FIRE_CC_FEQ(a.f, b.f);
         case K_Undefined: return true;
         case K_String: {
             const Str* x = strOf(a);
@@ -2297,13 +2299,13 @@ FIRE_FN bool eq(Value a, Value b) {
 FIRE_FN bool opEq(Value a, Value b) {
     if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word) && (isNumeric(a) || a.kind == K_Word) && (isNumeric(b) || b.kind == K_Word)) {
         /* a word and a number by value: an int taken as a word (`w == -1` for the largest word), a float by its value */
-        if (a.kind == K_Float || b.kind == K_Float) return (a.kind == K_Word ? wordReal(a) : toR(a)) == (b.kind == K_Word ? wordReal(b) : toR(b));
+        if (a.kind == K_Float || b.kind == K_Float) return FIRE_CC_FEQ((a.kind == K_Word ? wordReal(a) : toR(a)), (b.kind == K_Word ? wordReal(b) : toR(b)));
         return ((uint64_t)(a.kind == K_Word ? a.w : (uint64_t)(int64_t)a.i) & FIRE_WORD_MASK) == ((uint64_t)(b.kind == K_Word ? b.w : (uint64_t)(int64_t)b.i) & FIRE_WORD_MASK);
     }
     if (!isNumeric(a) || !isNumeric(b)) return eq(a, b);
     if (a.unit != b.unit && !unitEq(a.unit, b.unit) && unitCompatible(a.unit, b.unit)) { VPair p = alignUnits(a, b); a = p.a; b = p.b; }
     if (a.kind == K_Int && b.kind == K_Int) return a.i == b.i;
-    return toR(a) == toR(b);
+    return FIRE_CC_FEQ(toR(a), toR(b));
 }
 FIRE_FN bool truthy(Value v) {
     if (FIRE_UNLIKELY(v.kind != K_Bool)) {
@@ -3758,7 +3760,7 @@ FIRE_FN Value formatValue(Value v, Value specV, OwnList* list) {
         if (prec < 0) fatal("Unknown format specifier.");
         if (isnan(d)) n = snprintf(text, sizeof text, "NaN");
         else if (isinf(d)) n = snprintf(text, sizeof text, "%s", d < 0 ? "-Infinity" : "Infinity");
-        else n = snprintf(text, sizeof text, "%.*f", prec, d);
+        else n = snprintf(text, sizeof text, "%.*f", prec, FIRE_CC_FIXED(d, prec));
         if (n < 0 || n >= (int)sizeof text) fatal("The formatted number is too long.");
         wn = widenAscii(text, (uint32_t)n, wide);
         return newStrFrom(wide, wn, list);
