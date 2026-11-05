@@ -597,6 +597,19 @@ static void jsWriteValue(JsWriter* w, Value v, const char* type, const void* con
             const char* b64;
             if (!leafAlive(v)) { jsAscii(J, &w->out, "null"); return; }
             b = bufOf(v);
+            if (b->elem != 1) {
+                /* a buffer of machine words (SPEC 8.10): an array of numbers (unsigned) */
+                uint32_t k;
+                char t[24];
+                jsPush16(J, &w->out, '[');
+                for (k = 0; k < b->length; k++) {
+                    if (k) jsPush16(J, &w->out, ',');
+                    snprintf(t, sizeof t, "%llu", (unsigned long long)bufWords(b)[k]);
+                    jsAscii(J, &w->out, t);
+                }
+                jsPush16(J, &w->out, ']');
+                return;
+            }
             id = jsIdOf(w, b);
             e = jsSeenFind(&w->map, b);
             if (id && e && e->written) { jsRef(w, id); return; }
@@ -1018,6 +1031,21 @@ static Value jsBuildArray(JsReader* r, JsNode* a, const char* type, OwnList* own
             buf->little = 1;
             if (a->nitems) memcpy(bufBytes(buf), bytes, a->nitems);
             bv = BufV(buf);
+            if (hasId) jsIdSet(r, id, bv);
+            return bv;
+        }
+        if (jsEq(element, "word") && !r->plain) {
+            /* a word array (`word data[]`): a buffer of machine words (SPEC 8.10) */
+            Buf* buf = allocBufOf((uint32_t)a->nitems, (uint8_t)sizeof(FireWord), owner);
+            Value bv = BufV(buf);
+            for (i = 0; i < a->nitems; i++) {
+                JsNode* item = a->items[i];
+                Value wv;
+                if (item->kind != JN_NUMBER) return jsReadFail(r, jsCat(J, jsIndexPath(J, path, i), ": expected a whole number."));
+                wv = jsReadNumber(r, item->num, true, "word", 0, jsIndexPath(J, path, i));
+                if (J->failed) return bv;
+                bufWords(buf)[i] = (FireWord)wv.w;
+            }
             if (hasId) jsIdSet(r, id, bv);
             return bv;
         }

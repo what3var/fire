@@ -1157,6 +1157,8 @@ namespace fire.Compiler
                 // (it belongs to the object - [this] -> [this, array] -> [array], as for `int data[] = new int[16]`; a static field's to the program)
                 if (!isStatic) inner._chunk.EmitOp(OpCode.LoadThis);
                 inner.CompileArrayAlloc(arrayRanks, 0, IsByteBuffer(type, arrayRanks.Count));
+                // (`word data[4]`: the array becomes a buffer of words - TypeArray, as for a variable)
+                if (IsWordBuffer(type, arrayRanks.Count)) EmitWidthIfNeeded(inner, type!.ArrayWidthCode(arrayRanks.Count));
                 if (!isStatic) inner._chunk.EmitOp(OpCode.OwnValue);
             }
             else inner.EmitLoadConst(Value.MakeUndefined());
@@ -1298,6 +1300,8 @@ namespace fire.Compiler
         /// <summary>A declaration with the element type `byte` and array brackets (`byte data[]`, `byte data[16]`): it holds a byte buffer, not a typed array
         /// (SPEC 8.4.2) - the array stored in it becomes a buffer (OpCode.TypeArray with ArrayElem.U8, VM.BufferFromArrayValue / fire_rt.h bufFromArray).</summary>
         private static bool IsByteBuffer(TypeRef? type, int rank) => ((type?.ArrayWidthCode(rank) ?? 0) & 0x100FF) == (0x10000 | fire.Values.ArrayElem.U8);
+        /// <summary>`word data[]`, `word data[16]`: a buffer of machine words (SPEC 8.10) - OpCode.TypeArray with ArrayElem.Word makes it from the array.</summary>
+        private static bool IsWordBuffer(TypeRef? type, int rank) => ((type?.ArrayWidthCode(rank) ?? 0) & 0x100FF) == (0x10000 | fire.Values.ArrayElem.Word);
 
         private static void EmitWidthIfNeeded(Compiler target, int widthCode, string? unit = null)
         {
@@ -2557,6 +2561,13 @@ namespace fire.Compiler
 
                 case NewArrayExpr na:
                     CompileArrayAlloc(na.SizeExprs, 0);
+                    break;
+
+                case NewBufferExpr { Words: true } nw:
+                    // `new word[n]` (SPEC 8.10): n zero words - an array of n that TypeArray turns into a buffer of words (natively at once: newWordBuffer)
+                    CompileExpr(nw.SizeExpr);
+                    _chunk.EmitOp(OpCode.NewArray);
+                    EmitWidthIfNeeded(this, 0x10000 | (1 << 8) | fire.Values.ArrayElem.Word);
                     break;
 
                 case NewBufferExpr nb:

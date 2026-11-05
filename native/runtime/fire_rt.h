@@ -1356,14 +1356,19 @@ FIRE_FN Value* arrValues(Arr* a) {
 /* Byte buffer (`byte[]`). */
 typedef struct Buf {
     Owned h;
-    uint32_t length;
+    uint32_t length;   /* the number of elements: bytes, or the words of a buffer of machine words */
     uint8_t little;    /* the byte order the buffer is tagged with (metadata only: the bytes never change by themselves) */
+    uint8_t elem;      /* the bytes of an element: 1, or sizeof(FireWord) for `word a[]` (SPEC 8.10; the words in the byte order of the machine) */
     uint8_t* data;     /* the bytes: right behind the header - or, in a package library, the memory of the buffer of the VM (see allocBufExternal) */
 #ifdef __cplusplus
     uint8_t* bytes() { return data; }
 #endif
 } Buf;
 FIRE_FN uint8_t* bufBytes(Buf* b) { return b->data; }
+/* The size of a buffer in bytes (elements times their size). */
+FIRE_FN size_t bufSize(const Buf* b) { return (size_t)b->length * b->elem; }
+/* The words of a buffer of machine words. */
+FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
 
 /* ---- Handles. A destroyed array or buffer must not be used any more (SPEC 2.5): in the checked modes a Value of an array or buffer carries the slot of its
  * header in a table of generations (`unit` = slot, `reserved` = generation); the slot of a destroyed value gets a new generation, so a stale Value is
@@ -2759,18 +2764,29 @@ FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat
 /* The byte order of the machine, found out at run time (a 16-bit 1 starts with its low byte in little-endian memory). */
 FIRE_FN bool hostLittle(void) { uint16_t one = 1; return *(uint8_t*)&one == 1; }
 
-FIRE_FN Buf* allocBuf(uint32_t length, OwnList* list) {
-    Buf* b = (Buf*)malloc(sizeof(Buf) + length);
+/* A buffer of `length` elements of `elem` bytes (1: a byte buffer; sizeof(FireWord): a buffer of machine words), all 0. The data is aligned for a word. */
+FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
+    size_t head = (sizeof(Buf) + 7u) & ~(size_t)7u;
+    Buf* b = (Buf*)malloc(head + (size_t)length * elem);
     if (FIRE_UNLIKELY(!b)) allocFailed();
     b->h.okind = O_Buffer;
     b->h.flags = 0;
     b->length = length;
     b->little = hostLittle() ? 1 : 0;
-    b->data = (uint8_t*)(b + 1);
-    memset(b->data, 0, length);
+    b->elem = elem;
+    b->data = (uint8_t*)b + head;
+    memset(b->data, 0, (size_t)length * elem);
     slotAcquire(&b->h);
     ownLink(list, &b->h);
     return b;
+}
+FIRE_FN Buf* allocBuf(uint32_t length, OwnList* list) { return allocBufOf(length, 1, list); }
+/* A copy of a buffer (its elements, its byte order) owned by `list`. */
+FIRE_FN Buf* bufCopy(const Buf* src, OwnList* list) {
+    Buf* c = allocBufOf(src->length, src->elem, list);
+    if (src->length) memcpy(c->data, src->data, bufSize(src));
+    c->little = src->little;
+    return c;
 }
 
 #ifdef FIRE_LIBRARY
@@ -2783,6 +2799,7 @@ FIRE_FN Buf* allocBufExternal(uint8_t* data, uint32_t length, OwnList* list) {
     b->h.flags = 0;
     b->length = length;
     b->little = hostLittle() ? 1 : 0;
+    b->elem = 1;
     b->data = data;
     slotAcquire(&b->h);
     ownLink(list, &b->h);
@@ -2896,7 +2913,7 @@ FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
         case K_PtrVar: case K_PtrByte: case K_PtrElem: setPiece(out, "<pointer>"); return;
         case K_Array: setPiece(out, "<array>"); return;
         case K_Buffer: {
-            int n = snprintf(tmp, sizeof tmp, "<buffer %u bytes>", (unsigned)bufOf(v)->length);
+            int n = snprintf(tmp, sizeof tmp, bufOf(v)->elem != 1 ? "<buffer %u words>" : "<buffer %u bytes>", (unsigned)bufOf(v)->length);
             out->n = widenAscii(tmp, (uint32_t)n, out->buf);
             break;
         }
@@ -4681,7 +4698,7 @@ FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t f
  * THE conversion of an array into a buffer (an int is cut to 8 bits like `buffer[i] = 300`, `undefined` is 0, anything else an ArgumentException: then false
  * and *out stays). The buffer gets the owner of the array (an inner one's: the outer array), `list` when the array has none (it travels). At depth `rank` the
  * inner arrays are converted. A buffer and every other value stay as they are. */
-FIRE_FN bool bufFromArray(Value v, int rank, int depth, OwnList* list, Value* out) {
+FIRE_FN bool bufFromArray(Value v, int rank, int depth, OwnList* list, Value* out, bool words) {
     Arr* a;
     Buf* b;
     uint32_t i;
@@ -4692,16 +4709,24 @@ FIRE_FN bool bufFromArray(Value v, int rank, int depth, OwnList* list, Value* ou
     if (depth < rank) {
         Value* items = arrValues(a);
         if (!items) return true;
-        for (i = 0; i < a->length; i++) { Value r; if (!bufFromArray(items[i], rank, depth + 1, a->parts ? a->parts : list, &r)) return false; items[i] = r; }
+        for (i = 0; i < a->length; i++) { Value r; if (!bufFromArray(items[i], rank, depth + 1, a->parts ? a->parts : list, &r, words)) return false; items[i] = r; }
         return true;
     }
     for (i = 0; i < a->length; i++) {
         Value e = arrElemGet(a, i);
-        if (e.kind != K_Int && e.kind != K_Undefined) {
-            snprintf(text, sizeof text, "An element of a byte buffer must be an int, not %s.", coerceKindName(e.kind));
+        if (e.kind != K_Int && e.kind != K_Undefined && !(words && e.kind == K_Word)) {
+            if (words) snprintf(text, sizeof text, "An element of a word buffer must be an int or a word, not %s.", coerceKindName(e.kind));
+            else snprintf(text, sizeof text, "An element of a byte buffer must be an int, not %s.", coerceKindName(e.kind));
             fireError("ArgumentException", text);
             return false;
         }
+    }
+    if (words) {
+        /* a buffer of machine words (SPEC 8.10; the VM: BufferFromArrayValue): an int or a word cut to the width, `undefined` 0 */
+        b = allocBufOf(a->length, (uint8_t)sizeof(FireWord), a->h.owner ? a->h.owner : list);
+        for (i = 0; i < a->length; i++) { Value e = arrElemGet(a, i); bufWords(b)[i] = e.kind == K_Int ? (FireWord)(uint64_t)(int64_t)e.i : e.kind == K_Word ? (FireWord)e.w : 0; }
+        *out = BufV(b);
+        return true;
     }
     b = allocBuf(a->length, a->h.owner ? a->h.owner : list);
     for (i = 0; i < a->length; i++) { Value e = arrElemGet(a, i); b->data[i] = e.kind == K_Int ? (uint8_t)e.i : 0; }
@@ -4712,8 +4737,19 @@ FIRE_FN bool bufFromArray(Value v, int rank, int depth, OwnList* list, Value* ou
  * unwinding flag). */
 FIRE_FN Value typeBuffer(Value v, int rank, OwnList* list) {
     Value r;
-    if (!bufFromArray(v, rank, 1, list, &r)) return v;
+    if (!bufFromArray(v, rank, 1, list, &r, false)) return v;
     return r;
+}
+/* The same for a `word` declaration: a buffer of machine words (SPEC 8.10). */
+FIRE_FN Value typeWordBuffer(Value v, int rank, OwnList* list) {
+    Value r;
+    if (!bufFromArray(v, rank, 1, list, &r, true)) return v;
+    return r;
+}
+/* `word a[] = new int[n]`, `new word[n]`, `word a[n]` (NewArray right before TypeArray): n zero words at once. */
+FIRE_FN Value newWordBuffer(Value size, OwnList* list) {
+    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
+    return BufV(allocBufOf((uint32_t)size.i, (uint8_t)sizeof(FireWord), list));
 }
 
 /* `int[8] a[] = new int[n]` (NewArray right before TypeArray): the packed array made at once - header, ArrTyped and the numbers in one block. */
@@ -4787,6 +4823,7 @@ FIRE_FN Value arrayGet(Value a, Value i) {
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         b = bufOf(a);
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
+        if (FIRE_UNLIKELY(b->elem != 1)) return WordV((uint64_t)bufWords(b)[i.i]);   /* (a buffer of machine words) */
         return Int(b->data[i.i]);
     }
     if (a.kind == K_String) {
@@ -4827,13 +4864,27 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Buffer) {
         Buf* b;
+        if (FIRE_UNLIKELY(!leafAlive(a))) { destroyedError(a); return v; }
+        b = bufOf(a);
+        if (FIRE_UNLIKELY(b->elem != 1)) {
+            /* a buffer of machine words (SPEC 8.10): an int or a word, cut to the width */
+            Value stored;
+            if (v.kind != K_Int && v.kind != K_Word) {
+                snprintf(text, sizeof text, "An element of a word buffer must be an int or a word, not %s.", coerceKindName(v.kind));   /* (the same text in the VM) */
+                fireError("ArgumentException", text);
+                return v;
+            }
+            if ((uint64_t)i.i >= b->length) { indexError("Array index", i.i, b->length); return v; }
+            stored = wordOf(v, true);
+            bufWords(b)[i.i] = (FireWord)stored.w;
+            return stored;
+        }
+        if (v.kind == K_Word) v = Int((int64_t)(uint64_t)v.w);   /* (a word into a byte buffer: cut like an int) */
         if (v.kind != K_Int) {
             snprintf(text, sizeof text, "An element of a byte buffer must be an int, not %s.", coerceKindName(v.kind));   /* (the same text in the VM) */
             fireError("ArgumentException", text);
             return v;
         }
-        if (FIRE_UNLIKELY(!leafAlive(a))) { destroyedError(a); return v; }
-        b = bufOf(a);
         if ((uint64_t)i.i >= b->length) { indexError("Array index", i.i, b->length); return v; }
         b->data[i.i] = (uint8_t)v.i;
         return v;
@@ -4952,6 +5003,7 @@ FIRE_FN Value addressOfIndex(Value a, Value i) {
         Buf* b;
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         b = bufOf(a);
+        if (FIRE_UNLIKELY(b->elem != 1)) return fireError("ArgumentException", "A 'ref' argument 'x[i]' of a word buffer is not possible (only of an array or a byte buffer).");
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
         return BytePtrV(&b->data[i.i], &b->h);
     }
@@ -4988,6 +5040,12 @@ FIRE_FN bool bytesArg(Value v, const char* what, FireBytes* out) {
         Buf* b;
         if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return false; }
         b = bufOf(v);
+        if (FIRE_UNLIKELY(b->elem != 1)) {
+            /* a buffer of machine words is no bytes (its size depends on the target): the program says what it means (SPEC 8.10) */
+            snprintf(text, sizeof text, "%s expects bytes (a byte buffer or an array of ints from 0 to 255), not a word buffer.", what);
+            fireError("ArgumentException", text);
+            return false;
+        }
         out->data = b->data;
         out->length = b->length;
         return true;
@@ -5033,12 +5091,77 @@ FIRE_FN Buf* bufferArg(Value v, const char* what) {
     char text[240];
     if (FIRE_LIKELY(v.kind == K_Buffer)) {
         if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return NULL; }
+        if (FIRE_UNLIKELY(bufOf(v)->elem != 1)) {
+            snprintf(text, sizeof text, "%s expects a byte buffer (new byte[n]), not a word buffer.", what);
+            fireError("ArgumentException", text);
+            return NULL;
+        }
         return bufOf(v);
     }
     if (v.kind == K_Array) snprintf(text, sizeof text, "%s expects a byte buffer (new byte[n]), not an array.", what);
     else snprintf(text, sizeof text, "%s expects a byte buffer (new byte[n]), not %s.", what, v.kind == K_Undefined ? "undefined" : coerceKindName(v.kind));
     fireError("ArgumentException", text);
     return NULL;
+}
+
+/* The machine words that a native READS from an argument (SPEC 8.10, docs/PACKAGE_NATIVES.md): a buffer of words (`word a[]`, `new word[n]`: its own memory,
+ * FIRE_WORD_BITS wide, no copy), or an array of ints and words (each cut to the width; a copy that stays valid until the scope that called the native is
+ * left). Anything else - a byte buffer too - is the ArgumentException (an element that is no int or word as well), a destroyed one the DestroyedException:
+ * then false, and the native returns at once:
+ *     FireWords w;
+ *     if (!wordsArg(data, "Pkg.Sum", &w)) return Undef();
+ *     for (i = 0; i < w.length; i++) total += w.data[i];
+ * The words of a buffer can also be written in place (`(FireWord*)w.data`) when the argument is a buffer - an array's copy goes nowhere. */
+typedef struct FireWords { const FireWord* data; uint32_t length; } FireWords;
+FIRE_FN bool wordsArg(Value v, const char* what, FireWords* out) {
+    char text[240];
+    out->data = NULL;
+    out->length = 0;
+    if (FIRE_LIKELY(v.kind == K_Buffer)) {
+        Buf* b;
+        if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return false; }
+        b = bufOf(v);
+        if (FIRE_UNLIKELY(b->elem != sizeof(FireWord))) {
+            snprintf(text, sizeof text, "%s expects words (a word buffer or an array of ints), not a byte buffer.", what);
+            fireError("ArgumentException", text);
+            return false;
+        }
+        out->data = bufWords(b);
+        out->length = b->length;
+        return true;
+    }
+    if (v.kind == K_Array) {
+        Arr* a;
+        TempBytes* t;
+        FireWord* words;
+        size_t head = (sizeof(TempBytes) + 7u) & ~(size_t)7u;
+        uint32_t i;
+        if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return false; }
+        a = arrOf(v);
+        t = (TempBytes*)malloc(head + (size_t)a->length * sizeof(FireWord) + 1);
+        if (FIRE_UNLIKELY(!t)) allocFailed();
+        words = (FireWord*)(void*)((uint8_t*)t + head);
+        for (i = 0; i < a->length; i++) {
+            Value e = arrElemGet(a, i);
+            if (FIRE_UNLIKELY(e.kind != K_Int && e.kind != K_Word)) {
+                free(t);
+                if (e.kind == K_Undefined) snprintf(text, sizeof text, "%s: element %u of the array is undefined, not an int or a word.", what, (unsigned)i);
+                else snprintf(text, sizeof text, "%s: element %u of the array is a %s, not an int or a word.", what, (unsigned)i, coerceKindName(e.kind));
+                fireError("ArgumentException", text);
+                return false;
+            }
+            words[i] = e.kind == K_Word ? (FireWord)e.w : (FireWord)(uint64_t)(int64_t)e.i;
+        }
+        t->h.type = R_Bytes;
+        t->length = a->length;
+        registerTemp(&t->h, NULL);
+        out->data = words;
+        out->length = a->length;
+        return true;
+    }
+    snprintf(text, sizeof text, "%s expects words (a word buffer or an array of ints), not %s.", what, v.kind == K_Undefined ? "undefined" : coerceKindName(v.kind));
+    fireError("ArgumentException", text);
+    return false;
 }
 
 FIRE_FN Value newArray(Value size, OwnList* list) {
@@ -5628,8 +5751,7 @@ FIRE_FN Value flatCopy(Value v, OwnList* owner) {
             Buf* dst;
             if (!ownedOf(v)) return destroyedError(v);
             src = bufOf(v);
-            dst = allocBuf(src->length, owner);
-            memcpy(dst->data, src->data, src->length);
+            dst = bufCopy(src, owner);
             return BufV(dst);
         }
         default: return v;
@@ -5812,8 +5934,7 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
             src = bufOf(v);
             m = copyMapFind(&c->containers, src);
             if (m) return *m;
-            dst = allocBuf(src->length, c->owner);
-            memcpy(dst->data, src->data, src->length);
+            dst = bufCopy(src, c->owner);
             r = BufV(dst);
             copyMapPut(&c->containers, src, r);
             return r;
@@ -6968,8 +7089,7 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
         Buf* nb;
         if (!ownedOf(src)) return destroyedError(src);
         sb = bufOf(src);
-        nb = allocBuf(sb->length, &container->owned);
-        memcpy(nb->data, sb->data, sb->length);
+        nb = bufCopy(sb, &container->owned);
         if (tgt.kind == K_Buffer && ownedOf(tgt) && bufOf(tgt)->h.owner == &container->owned) destroyLeaf(&bufOf(tgt)->h);
         return BufV(nb);
     }

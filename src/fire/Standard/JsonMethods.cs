@@ -298,6 +298,15 @@ namespace fire.Standard
                         if (type == "char") WriteString(v.AsChar().ToString());
                         else { _sb.Append("{\"$char\":"); WriteString(v.AsChar().ToString()); _sb.Append('}'); }
                         return;
+                    case ValueKind.Buffer when v.AsBuffer().IsWords:
+                    {
+                        // a buffer of machine words (SPEC 8.10): an array of numbers (unsigned)
+                        var words = v.AsBuffer();
+                        _sb.Append('[');
+                        for (int k = 0; k < words.Count; k++) { if (k > 0) _sb.Append(','); _sb.Append(words.GetWord(k).ToString(CultureInfo.InvariantCulture)); }
+                        _sb.Append(']');
+                        return;
+                    }
                     case ValueKind.Buffer:
                     {
                         var buffer = v.AsBuffer();
@@ -739,6 +748,17 @@ namespace fire.Standard
                         var bv = Value.MakeBuffer(buffer);
                         if (id is { } bid) _byId[bid] = bv;
                         return bv;
+                    }
+                    if (element == "word" && !_plain)
+                    {
+                        // a word array (`word data[]`): a buffer of machine words (SPEC 8.10)
+                        var words = ByteBuffer.Words(a.Items.Count, Value.WordBits / 8);
+                        for (int i = 0; i < a.Items.Count; i++)
+                            words.SetWord(i, a.Items[i] is NumberNode wn ? Number(wn.Text, true, "word", null, $"{path}[{i}]").AsWord() : throw new JsonError($"{path}[{i}]: expected a whole number."));
+                        LeafOwnership.Adopt(words, owner);
+                        var wv = Value.MakeBuffer(words);
+                        if (id is { } wid) _byId[wid] = wv;
+                        return wv;
                     }
                     var array = new ScriptArray(a.Items.Count);
                     LeafOwnership.Adopt(array, owner);

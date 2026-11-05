@@ -1462,7 +1462,7 @@ namespace fire.Compiler
                         for (int i = 0; i < na.SizeExprs.Count; i++) element = StaticType.ArrayOf(element);
                         return element;
                     }
-                case NewBufferExpr nb: Infer(nb.SizeExpr); return StaticType.Dynamic;
+                case NewBufferExpr nb: Infer(nb.SizeExpr); return nb.Words ? StaticType.ArrayOf(StaticType.Word) : StaticType.Dynamic;
                 case ThrowExpr th: Infer(th.Value); return StaticType.Dynamic;
                 case SyncExpr sy: Infer(sy.Target); return StaticType.Dynamic;
                 case ProbeExpr pr:
