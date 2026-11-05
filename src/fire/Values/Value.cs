@@ -1096,7 +1096,7 @@ namespace fire.Values
             ValueKind.Lambda => "<lambda>",
             ValueKind.Pointer => "<pointer>",
             ValueKind.Array => "<array>",
-            ValueKind.Buffer => $"<buffer {AsBuffer().Length} bytes>",
+            ValueKind.Buffer => AsBuffer() is { IsWords: true } words ? $"<buffer {words.Count} words>" : $"<buffer {AsBuffer().Length} bytes>",
             ValueKind.Undefined => Unit is { IsUnitless: false } u3 ? $"undefined:{u3}" : "undefined",
             ValueKind.Word => unchecked((ulong)_bits).ToString(CultureInfo.InvariantCulture),   // (unsigned)
             _ => "?",

@@ -459,18 +459,25 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
      **Offen:** ein Objekt (oder ein Lambda) als Byte-Argument ist in der VM weiter der Fehler der Paket-Grenze ("only numbers, bool, char, text, ... can be passed",
      PackageNativeBinding) statt der `ArgumentException` von `bytesArg` - nativ ist es die `ArgumentException`; meist scheitert der Prelude-Code vorher (`data.length`).
      (Behoben: die Bibliothek eines Pakets für die VM wird jetzt auch neu gebaut, wenn sich nur die Runtime ändert - `PackageLibrary.NewestSource` zählt den Stand von fire.Native mit.)
-     Für `word`-Puffer (unten): ein Puffer mit einer Elementbreite (`Buf`/`ByteBuffer` heute nur Bytes), `bufFromArray`/`BufferFromArrayValue` mit der Breite,
-     `bytesArg` mit einer Variante für Wörter.
-   * **`word`** = das Maschinenwort des **Ziels**, vorzeichenlos: 16 Bit (AVR, DOS Real Mode, Win16), 32 Bit (ESP32, Cortex-M, RISC-V 32, wasm, DPMI, Win9x),
-     64 Bit (x86-64, ARM64) - `wordWidth` in der Konfiguration des Ziels, `#if word16|word32|word64`, `Word.Bits`. Die VM folgt dem Ziel des Baus
-     (`forge run`: der Rechner selbst). Mit 64 Bit **echt vorzeichenlos** (die VM behält die Bits; Ausgabe, Vergleich, Division, Schieben vorzeichenlos).
-     `word op word` rechnet in der Breite von `word`, gespeichert wird abgeschnitten.
-   * **`word a[] = [...]`** ist ein Puffer aus Maschinenwörtern (nativ `uintN_t*`, an Natives ohne Umpacken); seine Größe in Bytes hängt vom Ziel ab
-     (in eine Datei oder ins Netz geschrieben: plattformabhängig wie in C, dokumentieren). Byte-Reihenfolge der Elemente: die der Maschine.
-   * **`byte` ohne Einheit:** heute ist `byte` Zucker für ein vorzeichenloses `int[8]` und kann eine Einheit tragen; danach ist `byte b = 5m` ein Fehler des
-     Typprüfers (vorher die Packages und Beispiele durchsuchen).
-   * **Schmal und schnell:** der Generator legt `byte`/`word`-Locals und -Parameter als `uint8_t`/`uintN_t` an (keine Einheit, kein 16-Byte-Wert) - der erste Schritt
-     zu Ebene 2 (Punkt 9), für Prüfsummen, Protokolle und Schleifen über Puffer auf kleinen Zielen.
+   * **Umgesetzt: `byte` ohne Einheit** - eine Einheit an einem `byte` (ein Wert mit Einheit, `byte b : m`, Feld, Parameter, Array) ist `TC017` des Typprüfers (auch lax ein
+     Fehler, docs/ERRORS.md); ein gespeicherter Wert verliert seine Einheit (auch `x!byte`), VM und nativ. In Packages, Beispielen und Vorlagen gab es keinen `byte` mit Einheit.
+   * **Umgesetzt: `word`** = das Maschinenwort des **Ziels**, vorzeichenlos, ohne Einheit (SPEC 8.10a): eine eigene Art von Wert (`ValueKind.Word`/`K_Word`, die Bits
+     oberhalb der Breite 0) - die int-Schnellwege bleiben unberührt, ein Wort nimmt immer den langsamen Weg der allgemeinen Operationen (Value.WordOp, fire_rt.h `wordOp`).
+     `TargetProfile.WordWidth` (64 auf windows/linux/macos, 32 auf esp32/freertos/wasm), `wordWidth` (16/32/64) eines Ziels in fire.native.json, `#if word16|word32|word64`,
+     `Word.Bits`, `FIRE_WORD_BITS`; die VM folgt dem Ziel des Baus (`Value.WordBits`, `forge run`: 64). Mit 64 Bit **echt vorzeichenlos** (Ausgabe, Vergleich, Division,
+     Modulo, `>>`, nach float). Regel: ein Wort auf einer Seite macht eine Wort-Operation (das int als Wort, Ergebnis abgeschnitten), ein float eine float-Operation; `x!word`,
+     `w!int` (dieselben Bits), `w!float`; `word w = i` wandelt, `int i = w` will `w!int` (TC001). Dezimal-Literale bis 2^64-1. `$"{w:X}"`, JSON, `is of word`,
+     Dictionary-Schlüssel, die C-ABI der VM (`FIRE_WORD`).
+   * **Umgesetzt: `word a[] = [...]`, `word a[n]`, `new word[n]`** sind Puffer aus Maschinenwörtern (`ByteBuffer.ElementSize`/`Buf.elem`, Byte-Reihenfolge der Maschine; die
+     Größe in Bytes hängt vom Ziel ab, dokumentiert): Index, `length` in Wörtern, `foreach`, `copy`, `++`, JSON als Zahlen-Array; `bytesArg`/`bufferArg` lehnen einen
+     Wortpuffer ab, `wordsArg` nimmt Wörter (ein Wortpuffer ohne Kopie, ein Array kopiert; C-ABI `FIRE_WORDS`). Ein Test-Paket prüft es in VM und nativ.
+   * **Umgesetzt (zum Teil): schmal und schnell** - der Generator kennt Wörter und Puffer, die er selbst gemacht hat (`KindWord`, `KindBuf`): Wort-Arithmetik und
+     -Vergleiche, die Speicherung in `byte`/`word`, Elemente und `length` bekannter Puffer und `& | # << >>` zweier ints stehen als C da. Prüfsummen-Schleife über einen
+     Bytepuffer in einer Methode (2 x 200 x 1.000.000, gcc -O2): 4,45 s -> 0,41 s.
+     **Offen:** echte `uint8_t`/`uintN_t`-C-Variablen für `byte`/`word`-Locals und -Parameter (die Locals bleiben 16-Byte-Werte); ein Puffer als Parameter oder aus einem
+     Feld ist dem Generator nicht bekannt (allgemeiner Zugriff); Überladung nach `word` (`f(int)`/`f(word)`) gibt es nicht; die Puffer-Methoden für Bytes (`ToString()`, `ToUnicode()`, `ToLittleEndian()`, ...) sehen einen Wortpuffer als seine ersten `length` Bytes;
+     ein Wortpuffer der VM mit 16/32-Bit-Wörtern (nur ein Bau der VM für ein fremdes Ziel, in Tests) geht nicht an eine Paket-Bibliothek; 16 Bit über ein Ziel mit
+     `wordWidth` 16 getestet (VM und nativ auf dem Rechner, kein echtes 16-Bit-Ziel); ein Wort an `extern`-Funktionen und an einen `int`-Parameter einer Native ist ein Fehler (`w!int`).
    * PCM und andere vorzeichenbehaftete Daten bleiben bei `int[16]`-Arrays (gepackt, mit Einheit); kein weiterer Typ.
 2. ~~**Inline-C**~~ **Umgesetzt** (Branch `targets`; SPEC 8.1.1a, docs/language/18-native-code.md) - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
 

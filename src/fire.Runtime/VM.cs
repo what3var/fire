@@ -2122,6 +2122,7 @@ namespace fire.Runtime
             bool isPrefix = ReadByte() != 0;
             var indexVal = Pop();
             var target = Pop();
+            if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             long idx = indexVal.AsInt();
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
 
@@ -2141,6 +2142,15 @@ namespace fire.Runtime
                 if (!ConvertArrayElement(arr, ref newVal)) return;   // (a typed array: 127 + 1 in an int[8] array is -128)
                 if (arr.IsShared) TrySetSharedElement(arr, idx, newVal); else arr.TrySet(idx, newVal);
                 Push(isPrefix ? newVal : oldVal);
+            }
+            else if (target.Kind == ValueKind.Buffer && target.AsBuffer().IsWords)
+            {
+                var words = target.AsBuffer();
+                if (idx < 0 || idx >= words.Count) { ThrowIndexOutOfBounds(idx, words.Count); return; }
+                var oldWord = Value.MakeWord(words.GetWord(idx));
+                var newWord = isIncrement ? Value.Add(oldWord, Value.MakeInt(1)) : Value.Subtract(oldWord, Value.MakeInt(1));
+                words.SetWord(idx, newWord.AsWord());
+                Push(isPrefix ? newWord : oldWord);
             }
             else if (target.Kind == ValueKind.Buffer)
             {
@@ -2724,7 +2734,7 @@ namespace fire.Runtime
                 if (fieldName is "Length" or "length")
                 {
                     if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return false; }
-                    Push(Value.MakeInt(buf.Length));
+                    Push(Value.MakeInt(buf.Count));   // (elements: bytes, or the words of a word buffer)
                     return true;
                 }
                 if (fieldName == "littleEndian")
@@ -3168,7 +3178,7 @@ namespace fire.Runtime
                     long itemCount = target.Kind switch
                     {
                         ValueKind.Array => target.AsArray().Length,
-                        ValueKind.Buffer => target.AsBuffer().Length,
+                        ValueKind.Buffer => target.AsBuffer().Count,
                         _ => target.AsString().Length,
                     };
                     var enumerator = ConstructNested(enumeratorClass, new[] { target, Value.MakeInt(itemCount) });
@@ -3761,6 +3771,7 @@ namespace fire.Runtime
         {
             var indexVal = Pop();
             var target = Pop();
+            if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
@@ -3796,6 +3807,14 @@ namespace fire.Runtime
                         // has already redirected _currentChunk/_ip.
                         ThrowIndexOutOfBounds(idx, target.AsArray().Length);
                 }
+            }
+            else if (target.Kind == ValueKind.Buffer && target.AsBuffer().IsWords)
+            {
+                // a buffer of machine words (`word a[]`, SPEC 8.10): the element is a word
+                var words = target.AsBuffer();
+                long idx = indexVal.AsInt();
+                if (idx >= 0 && idx < words.Count) Push(Value.MakeWord(words.GetWord(idx)));
+                else ThrowIndexOutOfBounds(idx, words.Count);
             }
             else if (target.Kind == ValueKind.Buffer)
             {
@@ -3881,6 +3900,7 @@ namespace fire.Runtime
             var value = Pop();
             var indexVal = Pop();
             var target = Pop();
+            if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
             // a typed array (`int[8] a[]`): the value is converted (the assignment yields the stored value), or it is the exception - before the index is checked, as natively
             if (target.Kind == ValueKind.Array && !ConvertArrayElement(target.AsArray(), ref value)) return;
@@ -3914,8 +3934,24 @@ namespace fire.Runtime
                         ThrowIndexOutOfBounds(idx, target.AsArray().Length);
                 }
             }
+            else if (target.Kind == ValueKind.Buffer && target.AsBuffer().IsWords)
+            {
+                // a buffer of machine words (`word a[]`, SPEC 8.10): an int or a word, cut to the width
+                if (value.Kind is not (ValueKind.Int or ValueKind.Word))
+                {
+                    ThrowArgumentError($"An element of a word buffer must be an int or a word, not {value.Kind}.");   // (the same text natively)
+                    return;
+                }
+                var words = target.AsBuffer();
+                long idx = indexVal.AsInt();
+                if (idx < 0 || idx >= words.Count) { ThrowIndexOutOfBounds(idx, words.Count); return; }
+                var stored = value.ToWord();
+                words.SetWord(idx, stored.AsWord());
+                Push(stored);
+            }
             else if (target.Kind == ValueKind.Buffer)
             {
+                if (value.Kind == ValueKind.Word) value = value.CoerceType(ValueKind.Int);   // (a word into a byte buffer: cut like an int)
                 if (value.Kind != ValueKind.Int)
                 {
                     // (no push: the exception has redirected _ip already)
@@ -4154,11 +4190,11 @@ namespace fire.Runtime
                     byte elemType = ReadByte();
                     int rank = ReadByte();
                     int unitIdx = ReadU16();
-                    if (elemType == ArrayElem.U8)
+                    if (elemType is ArrayElem.U8 or ArrayElem.Word)
                     {
-                        // `byte a[]` holds a byte buffer (SPEC 8.4.2): an array stored there becomes one
+                        // `byte a[]` holds a byte buffer (SPEC 8.4.2), `word a[]` a buffer of machine words (SPEC 8.10): an array stored there becomes one
                         var top = Peek();
-                        if (BufferFromArrayValue(ref top, null, rank, 1)) _stack[_sp - 1] = top;
+                        if (BufferFromArrayValue(ref top, null, rank, 1, elemType == ArrayElem.Word)) _stack[_sp - 1] = top;
                         break;
                     }
                     TypeArrayValue(Peek(), elemType, rank, unitIdx == 0xFFFF ? null : _constants[unitIdx].AsString(), 1);
@@ -4591,7 +4627,8 @@ namespace fire.Runtime
 
                 case OpCode.AddressOfIndex:
                 {
-                    long idx = Pop().AsInt();
+                    var refIndex = Pop();
+                    long idx = (refIndex.Kind == ValueKind.Word ? refIndex.CoerceType(ValueKind.Int) : refIndex).AsInt();
                     var target = Pop();
                     if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); break; }
                     if (target.Kind == ValueKind.Array)
@@ -4603,6 +4640,7 @@ namespace fire.Runtime
                     else if (target.Kind == ValueKind.Buffer)
                     {
                         var buf = target.AsBuffer();
+                        if (buf.IsWords) { ThrowArgumentError("A 'ref' argument 'x[i]' of a word buffer is not possible (only of an array or a byte buffer)."); break; }   // (the same text natively)
                         if (!buf.TryGet(idx, out _)) { ThrowIndexOutOfBounds(idx, buf.Length); break; }
                         Push(Value.MakePointer(new ElementPointerTarget(buf, idx)));
                     }
@@ -6636,7 +6674,7 @@ namespace fire.Runtime
         /// with its elements - THE conversion of an array into a buffer (the native runtime: bufFromArray). A buffer stays as it is, anything else too. The
         /// buffer gets the owner of the array (an inner array's: the outer one). False when that is the exception (an element that is no int; the array
         /// stays) - `value` is unchanged then.</summary>
-        private bool BufferFromArrayValue(ref Value value, ScriptArray? outer, int rank, int depth)
+        private bool BufferFromArrayValue(ref Value value, ScriptArray? outer, int rank, int depth, bool words = false)
         {
             if (value.Kind != ValueKind.Array) return true;
             var array = value.AsArray();
@@ -6646,9 +6684,27 @@ namespace fire.Runtime
                 for (int i = 0; i < array.Items.Length; i++)
                 {
                     var inner = array.Items[i];
-                    if (!BufferFromArrayValue(ref inner, array, rank, depth + 1)) return false;
+                    if (!BufferFromArrayValue(ref inner, array, rank, depth + 1, words)) return false;
                     array.Items[i] = inner;
                 }
+                return true;
+            }
+            if (words)
+            {
+                // a buffer of machine words (SPEC 8.10): an int or a word cut to the width, `undefined` 0 (the native runtime: bufFromArray with E_WORD)
+                var wordBuffer = ByteBuffer.Words(array.Length, Value.WordBits / 8);
+                for (int i = 0; i < array.Length; i++)
+                {
+                    var e = array.Items[i];
+                    if (e.Kind is ValueKind.Int or ValueKind.Word) wordBuffer.SetWord(i, e.ToWord().AsWord());
+                    else if (e.Kind != ValueKind.Undefined)
+                    {
+                        ThrowArgumentError($"An element of a word buffer must be an int or a word, not {e.Kind}.");   // (the same text natively)
+                        return false;
+                    }
+                }
+                AdoptConverted(wordBuffer, array, outer);
+                value = Value.MakeBuffer(wordBuffer);
                 return true;
             }
             var bytes = new byte[array.Length];
@@ -6664,11 +6720,17 @@ namespace fire.Runtime
             }
             var buffer = new ByteBuffer(bytes.Length, ByteConversions.HostByteOrder);
             System.Array.Copy(bytes, buffer.Bytes, bytes.Length);
+            AdoptConverted(buffer, array, outer);
+            value = Value.MakeBuffer(buffer);
+            return true;
+        }
+
+        /// <summary>The buffer made from `array` gets its owner (an inner array's: the outer one; none: the running scope).</summary>
+        private void AdoptConverted(ByteBuffer buffer, ScriptArray array, ScriptArray? outer)
+        {
             if (array.LeafOwner is { } owner) LeafOwnership.Adopt(buffer, owner);
             else if (outer != null && outer.Parts != null && outer.Parts.Contains(array)) LeafOwnership.AttachPart(outer, buffer);
             else LeafOwnership.Adopt(buffer, _currentScope);
-            value = Value.MakeBuffer(buffer);
-            return true;
         }
 
         /// <summary>`array[i] = value` on a typed array (SPEC 8.4.2): the value converted to the element type. A value that does not fit is the exception

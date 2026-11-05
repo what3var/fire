@@ -671,7 +671,15 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
 ```
 
 Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines` (`NAME` oder `NAME=WERT`), `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`,
-`supportsThreads`, `floatWidth`, `intWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+`supportsThreads`, `floatWidth`, `intWidth`, `wordWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+`wordWidth` (16, 32 oder 64) ist die Breite von `word`, dem vorzeichenlosen Maschinenwort des Ziels (SPEC 8.10a); ohne Angabe die des Ziels, von dem es erbt: 64 Bit auf `windows`,
+`linux`, `macos`, 32 auf `esp32`, `freertos`, `wasm`. Das generierte C bekommt `#define FIRE_WORD_BITS N` (`#if word16|word32|word64`, `Word.Bits`); ein Wort ist ein Wert der Art
+`K_Word` (die Bits in `v.w`, oberhalb der Breite 0), ein Wortpuffer ein `Buf` mit `elem = sizeof(FireWord)` (`bufWords`, `allocBufOf`). Ein 8-Byte-Wert (`FIRE_COMPACT`) nur mit
+höchstens 32 Bit breiten Wörtern. **Schmales C:** wo der Generator ein Wort oder einen Puffer selbst gemacht hat (eine Umwandlung nach `word`, `byte a[n]`/`new byte[n]`, `word a[n]`/
+`new word[n]`, ein Element davon), schreibt er Wort-Arithmetik und -Vergleiche, die Speicherung in `byte`/`word` und die Elemente und `length` des Puffers als C aus (`WordV(x + y)`,
+`bufOf(b)->data[i]` mit Prüfung von Lebendigkeit und Bereich, sonst der allgemeine Zugriff), dazu `& | # << >>` zweier ints. Eine Prüfsummen-Schleife über einen Bytepuffer
+(2 x 200 x 1.000.000 Elemente, `word`-Summe und `byte`-xor, gcc -O2): 4,45 s vorher, 0,41 s nachher. Die Locals bleiben 16-Byte-Werte (gcc hält die Zahlen in Registern);
+eigene `uint8_t`/`uintN_t`-Variablen für `byte`/`word`-Locals sind offen (ROADMAP 13, Punkt 2).
 **ESP32:** `build -t esp32 -o <projekt>/main` schreibt den Komponenten `main` eines ESP-IDF-Projekts (dazu eine `CMakeLists.txt` mit `include($ENV{IDF_PATH}/tools/cmake/project.cmake)`,
 dann `idf.py build`). `app_main` startet das Programm auf einem eigenen Task, weil der Main-Task von ESP-IDF nur 3,5 KB Stack hat: `FIRE_MAIN_STACK_BYTES` (Standard 16384, als `defines`
 des Ziels). Geprüft mit ESP-IDF 5.5 im Emulator (`qemu-system-xtensa`, Testfall "ESP32 (ESP-IDF, QEMU)", läuft, wenn `IDF_PATH` gesetzt ist).

@@ -18,7 +18,7 @@ namespace fire.Runtime
         [StructLayout(LayoutKind.Sequential)]
         private struct FireVal { public int Kind; public int Length; public long Bits; }
 
-        private const int KindUndefined = 0, KindBool = 1, KindInt = 2, KindFloat = 3, KindChar = 4, KindString = 5, KindArray = 6, KindBuffer = 7, KindLambda = 8;
+        private const int KindUndefined = 0, KindBool = 1, KindInt = 2, KindFloat = 3, KindChar = 4, KindString = 5, KindArray = 6, KindBuffer = 7, KindLambda = 8, KindWords = 9, KindWord = 10;
         internal static readonly int ValSize = Marshal.SizeOf<FireVal>();
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CallFn(int index, IntPtr args, int argc, IntPtr result, IntPtr error, int errorSize);
@@ -270,6 +270,7 @@ namespace fire.Runtime
                 case ValueKind.Int: fv.Kind = KindInt; fv.Bits = v.AsInt(); break;
                 case ValueKind.Float: fv.Kind = KindFloat; fv.Bits = BitConverter.DoubleToInt64Bits(v.AsFloat()); break;
                 case ValueKind.Char: fv.Kind = KindChar; fv.Bits = v.AsChar(); break;
+                case ValueKind.Word: fv.Kind = KindWord; fv.Bits = unchecked((long)v.AsWord()); break;
                 case ValueKind.String:
                 {
                     string s = v.AsString();
@@ -291,9 +292,11 @@ namespace fire.Runtime
                 {
                     // by reference: pinned for the call, the native reads and writes the bytes in place
                     var buf = v.AsBuffer();
+                    // (a buffer of machine words: its words - the library is built for this machine, 64-bit words)
+                    if (buf.IsWords && buf.ElementSize != 8) throw new InvalidOperationException($"An argument of the native function '{function}' is a buffer of {buf.ElementSize * 8}-bit words: a package library takes 64-bit words (the machine the VM runs on).");
                     var pin = GCHandle.Alloc(buf.Bytes, GCHandleType.Pinned);
                     (pins ??= new List<GCHandle>()).Add(pin);
-                    fv.Kind = KindBuffer; fv.Length = buf.Length; fv.Bits = pin.AddrOfPinnedObject().ToInt64();
+                    fv.Kind = buf.IsWords ? KindWords : KindBuffer; fv.Length = buf.Count; fv.Bits = pin.AddrOfPinnedObject().ToInt64();
                     break;
                 }
                 case ValueKind.Lambda when v.AsLambda() is LambdaValue lambda:
@@ -331,6 +334,13 @@ namespace fire.Runtime
                     if (fv.Length > 0) Marshal.Copy(new IntPtr(fv.Bits), bytes, 0, fv.Length);
                     return Value.MakeBuffer(new ByteBuffer(bytes, BitConverter.IsLittleEndian ? ByteOrder.Little : ByteOrder.Big));
                 }
+                case KindWords:
+                {
+                    var words = ByteBuffer.Words(fv.Length, 8);
+                    if (fv.Length > 0) Marshal.Copy(new IntPtr(fv.Bits), words.Bytes, 0, fv.Length * 8);
+                    return Value.MakeBuffer(words);
+                }
+                case KindWord: return Value.MakeWord(unchecked((ulong)fv.Bits));
                 default: throw new InvalidOperationException("A native function of a package returned a value of an unknown kind.");
             }
         }

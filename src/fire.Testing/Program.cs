@@ -22256,6 +22256,103 @@ else
             any dyn = m
             print(f + " " + b + " " + s16 + " " + (dyn + 1) + " " + ("w" + m))
             """),
+        ("Word: Puffer aus Maschinenwoertern (word a[] = [..], word a[n], new word[n], Felder, static, mehrdimensional, Index, length, foreach, copy, ++, Json, an Natives abgelehnt)", """
+            #import "hash"
+            #import "json"
+            #import "io"
+            word a[] = [1, 2, -1, 18446744073709551615]
+            print(a + " " + a.length + " " + a[2] + " " + a[0] + " " + (a[3] is of word))
+            word z[4]
+            z[1] = 9
+            z[2] = -1
+            z[3]++
+            ++z[3]
+            var sum = 0!word
+            foreach (x in z) { sum += x }
+            print(z + " " + sum + " " + z[0] + " " + z[3])
+            var c = copy a
+            c[0] = 5
+            print(a[0] + " " + c[0] + " " + c.length)
+            var n = new word[3]
+            n[0] = 7
+            print(n + " " + n[0] + " " + n.length)
+            var plain = [10, 20]
+            a = plain
+            a[0] = 11
+            print(a + " " + plain[0] + " " + a[0])
+            try { a[0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = 2.5 } catch (ArgumentException e) { print("A: " + e.message) }
+            try { word bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+            try { WRef.Set(a[0], 5) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { print(a[5]) } catch (IndexOutOfBoundsException e) { print("I: " + e.message) }
+            word u[] = [undefined, 7]
+            print(u[0] + " " + u[1])
+            class WRef { static undefined Set(ref int x, int v) { x = v } }
+            class Holder {
+                word data[3]
+                word more[]
+                static word table[2]
+            }
+            var h = new Holder()
+            h.more = [4, 5]
+            h.data[2] = 255
+            print(h.data + " " + h.data[2] + " " + h.more[1] + " " + Holder.table.length)
+            word m[2][3]
+            m[1][2] = 6
+            print(m[1] + " " + m[1][2] + " " + m.length)
+            try { Hash.Crc32.HexOf(h.more) } catch (ArgumentException e) { print("A: " + e.message) }
+            print(Json.Serialize(h))
+            var back = Json.Deserialize<Holder>("{\"data\":[1,18446744073709551615,3],\"more\":[9]}")
+            print(back.data + " " + back.data[1] + " " + back.more[0])
+            byte b[] = [1, 2]
+            b[0] = 513!word
+            print(b[0])
+            var tot = 0!word
+            for (word k = 0; k < 4; k++) { tot = tot + z[k] }
+            var arr = [5, 6]
+            arr[1!word] = 7
+            print(tot + " " + z[1!word] + " " + arr[1!word] + " " + "abc"[2!word])
+            var ms = new IO.MemoryStream([1, 2])
+            try { ms.Read(n, 0, 1) } catch (ArgumentException e) { print("A: " + e.message) }
+            """),
+        ("Word: schmales C - bekannte Puffer, word- und byte-Schleifen, Bit-Operationen auf int (auch Flag-Enums), zerstoerter Puffer und Index ausserhalb im schnellen Weg", """
+            flag enum Fl { a = 1, b = 2, c = 4 }
+            class Narrow {
+                static string Run(int n) {
+                    byte data[n]
+                    for (var i = 0; i < data.length; i++) { data[i] = i * 7 + (i >> 3) }
+                    word sum = 0
+                    byte x = 0
+                    word w[8]
+                    for (var i = 0; i < data.length; i++) {
+                        sum = sum + data[i]
+                        x = x # data[i]
+                        w[i % 8] = w[i % 8] * 31 + data[i]
+                    }
+                    word acc = 1
+                    for (word k = 0; k < 70; k++) { acc = (acc << 1) | (acc >> 63) }
+                    var bits = (n << 3) | (n >> 1) & 255
+                    var flags = Fl.a | Fl.c
+                    return sum + " " + x + " " + w[3] + " " + (w[7] > w[0]) + " " + acc + " " + bits + " " + flags + " " + (sum / 7) + " " + (sum % 7)
+                }
+                static string Errors() {
+                    byte data[4]
+                    word w[2]
+                    var out = ""
+                    try { data[9] = 1 } catch (IndexOutOfBoundsException e) { out = out + "I1 " }
+                    try { var v = w[5] } catch (IndexOutOfBoundsException e) { out = out + "I2 " }
+                    try { word z = 0
+                     var q = w[0] / z } catch (DivideByZeroException e) { out = out + "D " }
+                    delete data
+                    try { print(data.length) } catch (DestroyedException e) { out = out + "X1 " }
+                    try { print(data[0]) } catch (DestroyedException e) { out = out + "X2" }
+                    return out
+                }
+            }
+            print(Narrow.Run(1000))
+            print(Narrow.Run(37))
+            print(Narrow.Errors())
+            """),
         ("Word: Felder, Parameter, Rueckgabe, static, Json, Dictionary-Schluessel; word w = 5m ist zur Laufzeit ohne Einheit", """
             #import "json"
             class C { word w
@@ -26647,6 +26744,9 @@ else
                     word a = 4000000000
                     print(m + " " + Word.Bits + " " + (m + 1) + " " + (a + a) + " " + a * 3 + " " + (m >> 31) + " " + (m << 31) + " " + (m << 32))
                     print((a * 2) / 7 + " " + (a > 5) + " " + (m == -1) + " " + m!int + " " + (-a) + " " + ~a + " " + 5000000000!word)
+                    word wb[] = [4294967301, -1]
+                    wb[1]++
+                    print(wb[0] + " " + wb[1] + " " + wb.length + " " + wb)
                     #if word32
                     print("word32")
                     #endif
@@ -26662,8 +26762,31 @@ else
                 string exe32 = Path.Combine(workDir, "word32.bin");
                 string build32 = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated32, workDir, "word32", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe32, out int build32Exit);
                 string nat32 = build32Exit == 0 && !build32.Contains("warning:") ? RunProc(exe32, "", workDir, out _) : "C-Compiler: " + build32;
+                // 16 bits (no such target yet: a target with wordWidth 16 - the VM and natively)
+                const string word16Source = """
+                    word m = -1
+                    word a = 40000
+                    word wb[] = [65541, -1]
+                    print(m + " " + Word.Bits + " " + (a + a) + " " + a * 3 + " " + (m >> 15) + " " + (m << 15) + " " + (m << 16) + " " + (a / 7) + " " + (-a) + " " + 70000!word + " " + wb[0] + " " + wb[1] + " " + (a > 30000))
+                    #if word16
+                    print("word16")
+                    #endif
+                    """;
+                var target16 = TargetProfile.Host with { WordWidth = 16 };
+                var vm16Lines = new List<string>();
+                var session16 = fire.Runtime.Session.Build(new Linker().CompileAndLink(new[] { word16Source }, null, null, VmExecutionMode.Release, null, target16), VmExecutionMode.Release, a => { vm16Lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+                session16.Run();
+                Value.WordBits = 64;
+                string vm16 = string.Concat(vm16Lines.Select(l => l + "\n"));
+                var generated16 = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { word16Source }, null, null, VmExecutionMode.Release, null, target16), target16);
+                Value.WordBits = 64;
+                string exe16 = Path.Combine(workDir, "word16.bin");
+                string build16 = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated16, workDir, "word16", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe16, out int build16Exit);
+                string nat16 = build16Exit == 0 && !build16.Contains("warning:") ? RunProc(exe16, "", workDir, out _) : "C-Compiler: " + build16;
+                CheckNat("word: 16 Bit (ein Ziel mit wordWidth 16) - VM und nativ wie ein 16-Bit-Rechner",
+                    vm16 == "65535 16 14464 54464 1 32768 0 5714 25536 4464 5 65535 True\nword16\n" && nat16 == vm16, $"  VM:\n{vm16}\n  nativ:\n{nat16}");
                 CheckNat("word: 32 Bit (esp32 in der VM, ein Ziel mit wordWidth 32 nativ) rechnet mit 32 Bit: Wrap, Schieben, vorzeichenlos, wie die VM",
-                    vm32 == "4294967295 32 0 3705032704 3410065408 1 2147483648 0\n529290386 True True 4294967295 294967296 294967295 705032704\nword32\n" && nat32 == vm32,
+                    vm32 == "4294967295 32 0 3705032704 3410065408 1 2147483648 0\n529290386 True True 4294967295 294967296 294967295 705032704\n5 0 2 <buffer 2 words>\nword32\n" && nat32 == vm32,
                     $"  VM (esp32):\n{vm32}\n  nativ:\n{nat32}");
             }
 
@@ -28596,6 +28719,27 @@ else
                 try { fillVm = vmOutput("#import \"pkabi\"\nvar big = new byte[1000000]\nprint(PkAbi.Fill(big, 7))\nprint(big[0] + \" \" + big[500000] + \" \" + big[999999])\nvar small = new byte[4]\nPkAbi.Fill(small, 9)\nprint(small[3])"); } catch (Exception ex) { fillVm = ex.Message; }
                 CheckNat("Paket: ein Byte-Puffer geht ohne Kopie an die Native (in place beschrieben, auch ein grosser wie ein Framebuffer)", fillVm == "1000000\n7 7 7\n9\n", fillVm);
                 CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) wird eine abfangbare Ausnahme seiner Klasse mit seinem Text", abiFail.StartsWith("caught: ") && abiFail.Contains("Array index 7 out of range"), abiFail);
+
+                // machine words as arguments (fire_rt.h wordsArg, SPEC 8.10): a word buffer without a copy (written in place), an array copied, a byte buffer refused
+                string wordsCpp = "#include <cstdint>\nnamespace fire {\n"
+                    + "inline Value pw_sum(Value v) { FireWords w; if (!wordsArg(v, \"PkWords.Sum\", &w)) return Undef(); FireWord t = 0; for (uint32_t i = 0; i < w.length; i++) t = (FireWord)(t + w.data[i]); return WordV(t); }\n"
+                    + "inline Value pw_inc(Value v) { FireWords w; if (!wordsArg(v, \"PkWords.Inc\", &w)) return Undef(); for (uint32_t i = 0; i < w.length; i++) ((FireWord*)w.data)[i]++; return Int(w.length); }\n}\n";
+                string wordsFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwords", "1.0.0", "pkwords", "class PkWords { static Sum(w) { return __pw_sum(w) }\n static Inc(w) { return __pw_inc(w) } }", wordsCpp, m =>
+                {
+                    m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pw_sum", Arguments = 1, Cpp = "pw_sum" });
+                    m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pw_inc", Arguments = 1, Cpp = "pw_inc" });
+                }), Path.Combine(pkgDir, "out")).PackagePath;
+                fire.Package.Manager.PackageStore.Default.Install(wordsFpk);
+                string wordsScript = "#import \"pkwords\"\nword w[] = [1, 2, 18446744073709551615]\nprint(PkWords.Sum(w) + \" \" + PkWords.Sum([5, 6]) + \" \" + (PkWords.Sum(w) is of word))\n"
+                    + "print(PkWords.Inc(w) + \" \" + w[0] + \" \" + w[2])\ntry { PkWords.Sum(new byte[2]) } catch (ArgumentException e) { print(e.message) }\ntry { PkWords.Sum([1, \"x\"]) } catch (ArgumentException e) { print(e.message) }\n";
+                string wordsVm;
+                try { wordsVm = vmOutput(wordsScript); } catch (Exception ex) { wordsVm = ex.Message; }
+                var wordsSources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wordsScript }, null, null, VmExecutionMode.Release));
+                string wordsBuild = NativeTestBuild.Build(NativeTestBuild.In(run), pkgCxx, wordsSources, run, "pkwords", "-pthread -O1 -Wall -Wextra", Path.Combine(run, "pkwords.bin"), out int wordsExit);
+                string wordsNat = wordsExit == 0 ? RunTool(Path.Combine(run, "pkwords.bin"), "") : "C/C++-Compiler: " + wordsBuild;
+                CheckNat("Paket: wordsArg - ein Wortpuffer ohne Kopie (in place beschrieben), ein Array kopiert, ein Bytepuffer abgelehnt; VM (C-ABI) und nativ gleich",
+                    wordsVm == "2 11 True\n3 2 0\nPkWords.Sum expects words (a word buffer or an array of ints), not a byte buffer.\nPkWords.Sum: element 1 of the array is a String, not an int or a word.\n" && wordsNat == wordsVm,
+                    $"  VM:\n{wordsVm}\n  nativ:\n{wordsNat}");
 
                 // per platform: sources of the target are added; the VM uses those of this machine
                 string whichFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwhich", "1.0.0", "pkwhich", "class PkWhich { static Which() { return __pk_which() } }", "namespace fire { }\n", m =>

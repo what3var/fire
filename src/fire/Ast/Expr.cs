@@ -118,7 +118,7 @@ namespace fire.Ast
     /// order). Deliberately ONE-dimensional only (no analogue to NewArrayExpr's
     /// several SizeExprs) - a "nested byte buffer" makes no
     /// sensible use case for raw binary data.</summary>
-    public sealed record NewBufferExpr(int Line, Expr SizeExpr) : Expr(Line);
+    public sealed record NewBufferExpr(int Line, Expr SizeExpr, bool Words = false) : Expr(Line);   // Words: `new word[n]`, a buffer of machine words (SPEC 8.10)
 
     /// <summary>`[e1, e2, ...]` - array literal. An element that is itself
     /// an array literal naturally yields a nested

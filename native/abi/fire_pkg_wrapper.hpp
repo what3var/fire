@@ -69,6 +69,14 @@ inline Value toRt(const fire_val& in, OwnList* list) {
             Buf* b = allocBufExternal(const_cast<uint8_t*>(static_cast<const uint8_t*>(in.v.p)), (uint32_t)in.length, list);
             return BufV(b);
         }
+        case FIRE_WORDS: {
+            // a buffer of machine words, by reference like a byte buffer (the library is built for the machine the VM runs on: 64-bit words)
+            Buf* b = allocBufExternal(const_cast<uint8_t*>(static_cast<const uint8_t*>(in.v.p)), (uint32_t)in.length, list);
+            if (sizeof(FireWord) != 8) fatal("A word buffer of the virtual machine needs a package library with 64-bit words.");
+            b->elem = (uint8_t)sizeof(FireWord);
+            return BufV(b);
+        }
+        case FIRE_WORD: return WordV((uint64_t)in.v.i);
     }
     fatal("An argument of a package function has an unknown kind.");
 }
@@ -100,11 +108,12 @@ inline void fromRt(Value v, fire_val* out) {
         case K_Buffer: {
             if (!ownedOf(v)) fatal("A package function returned a buffer that is destroyed.");
             Buf* b = bufOf(v);
-            uint8_t* copy = static_cast<uint8_t*>(arena().alloc(b->length));
-            if (b->length > 0) std::memcpy(copy, b->bytes(), b->length);
-            out->kind = FIRE_BUFFER; out->length = (int32_t)b->length; out->v.p = copy;
+            uint8_t* copy = static_cast<uint8_t*>(arena().alloc(bufSize(b)));
+            if (b->length > 0) std::memcpy(copy, b->bytes(), bufSize(b));
+            out->kind = b->elem != 1 ? FIRE_WORDS : FIRE_BUFFER; out->length = (int32_t)b->length; out->v.p = copy;
             return;
         }
+        case K_Word: out->kind = FIRE_WORD; out->v.i = (int64_t)(uint64_t)v.w; return;
         default: break;
     }
     fatal("A package function returned a value that cannot go to the virtual machine (an object, lambda or pointer): numbers, text, buffers and arrays can.");

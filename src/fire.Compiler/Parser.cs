@@ -3962,15 +3962,15 @@ namespace fire.Compiler
                         // NewBufferExpr documentation), deliberately only one-dimensional -
                         // 'new byte[n][m]' (several ranks) is therefore an
                         // error instead of an "array of buffers".
-                        if (Check(TokenType.KwByte))
+                        if (Check(TokenType.KwByte) || Check(TokenType.KwWord))
                         {
-                            Advance(); // 'byte'
+                            bool words = Advance().Type == TokenType.KwWord; // 'byte' or 'word'
                             var bufSizeExprs = ParseArrayRanks();
                             if (bufSizeExprs.Count == 0)
                                 throw Error("Expected '[' after 'byte' in 'new'", Peek());
                             if (bufSizeExprs.Count > 1 || bufSizeExprs[0] == null)
                                 throw Error("'new byte[...]' expects exactly ONE size (no multidimensional byte buffer, no unspecified size)", Peek());
-                            return new NewBufferExpr(tok.Line, bufSizeExprs[0]!);
+                            return new NewBufferExpr(tok.Line, bufSizeExprs[0]!, words);
                         }
 
                         string elementTypeName = ParseTypeAnnotationName();

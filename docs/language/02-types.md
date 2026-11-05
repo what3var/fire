@@ -13,7 +13,8 @@ cannot know stay dynamic.
 | `char` | one 16-bit character | `'a'` |
 | `string` | an immutable text | see [Strings](06-strings.md) |
 | `undefined` | the value `undefined` | "nothing"; fits every type |
-| `byte` | a whole number of 8 bits | the same as `int[8]` |
+| `byte` | a whole number of 8 bits, 0 ... 255 | an unsigned `int[8]` without a unit (raw data) |
+| `word` | the machine word of the target, unsigned | 64 bits on the desktop, 32 on the ESP32; no unit (see [below](#the-machine-word-word)) |
 | `any` | every value | the type that accepts everything |
 | `class` | every object | not a number, text, array or lambda |
 | a class name | objects of that class or a class derived from it | `Circle c` |
@@ -254,6 +255,39 @@ print(0.1!float[32])        // 0.10000000149011612
 ```
 
 `-1!byte` is `-(1!byte)`: the `!` binds tighter than the minus sign, so write `(-1)!byte`.
+
+`byte` is raw data and has **no unit**: `byte b = 5m` (or a unit at a `byte` declaration) is the type checker's error TC017 - in every mode.
+A value whose unit the checker cannot see loses it when it is stored. `int[8]` keeps units like every `int`.
+
+## The machine word (`word`)
+
+`word` is the machine word of the **target** the program is built for - **unsigned** and, like `byte`, without a unit: 64 bits on the
+desktop (`windows`, `linux`, `macos`), 32 bits on the ESP32, FreeRTOS boards and wasm, 16 bits on old 16-bit machines. `Word.Bits` tells the
+width, `#if word16`, `#if word32`, `#if word64` test it, a target in `fire.native.json` sets it with `"wordWidth"`.
+
+```fire
+word w = -1                 // the largest word: 18446744073709551615 (64 bits)
+print(w + 1)                // 0 - a word wraps at its width
+word h = w / 2 + 1
+print(h)                    // 9223372036854775808: all 64 bits, unsigned
+print(h > 5)                // True - comparisons are unsigned
+print(h >> 63)              // 1 - shifting right fills with zeros
+print(h!int)                // -9223372036854775808: the same bits as an int
+print(h!float)              // 9.223372036854776E+18
+print(Word.Bits)            // 64
+```
+
+- **A word on one side makes it a word operation**: `word + int`, `int * word`, `word & int` ... give a word; the int is taken as a word
+  (`-1` is the largest word). The result is cut to the width. `/`, `%`, comparisons and `>>` are unsigned; a shift by the width or more
+  gives 0. With a float on the other side it is a float operation.
+- **Conversions**: `x!word` (an int cut, a float rounded), `w!int` (the same bits as a signed int), `w!float` (the unsigned value). An `int`
+  goes into a `word` declaration by itself; a `word` goes into a `float` or a `byte`, but into an `int` only with `w!int` (the type checker
+  says TC001 otherwise).
+- An int with a unit and a word in one operation is a `UnitMismatchException`; `word w = 3s` is TC017.
+- `word data[16]` is a buffer of machine words (see [Arrays](07-arrays-and-lists.md#word-declarations-are-buffers-of-machine-words)).
+
+Use `word` for raw data the size of the machine - checksums, hash values, registers, bit masks; use `int` for quantities and counters
+(it has the same 64 bits everywhere and can carry a unit).
 
 A whole program can use 32-bit floats with `#floatwidth 32` (see [Preprocessor](17-preprocessor.md)) - useful for small targets like the ESP32; the VM then
 rounds exactly like a 32-bit CPU.

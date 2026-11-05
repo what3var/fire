@@ -29,7 +29,9 @@ enum {
     FIRE_STRING = 5,    /* v.p: UTF-16 (length UTF-16 code units, not zero terminated) */
     FIRE_ARRAY = 6,     /* v.p: `length` fire_val */
     FIRE_BUFFER = 7,    /* v.p: `length` bytes; an argument: the caller's memory (writable); a result: copied */
-    FIRE_LAMBDA = 8     /* v.i: a handle of the host; `length`: its number of parameters (an argument only) */
+    FIRE_LAMBDA = 8,    /* v.i: a handle of the host; `length`: its number of parameters (an argument only) */
+    FIRE_WORDS = 9,     /* v.p: `length` machine words of 64 bits (`word a[]` of the VM, SPEC 8.10); an argument: the caller's memory (writable); a result: copied */
+    FIRE_WORD = 10      /* v.i: the 64 bits of a `word` */
 };
 
 typedef struct fire_val {

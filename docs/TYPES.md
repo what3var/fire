@@ -62,6 +62,9 @@ run time); `any` and reflection are checked at run time. A method, property or o
 through a value of an interface type has nothing to report. A property of an interface has its declared type and unit through a value of the interface; writing
 one the interface declares without `set` (or reading one without `get`) is `TC016` (an error in lax mode too). An interface that extends others (`interface
 IConnection : IO.IStream`) is assignable to each of them without a cast, and its members include theirs (SPEC 8.5).
+`byte` and `word` are raw data without a unit (SPEC 8.10/8.10a): a value with a unit stored there, or a unit at such a declaration, is `TC017` (an error in
+lax mode too). `word` is a static type of its own: an `int` goes into a `word`, a `word` into a `float` or a `byte`; a `word` into an `int` wants `w!int`
+(`TC001`); `word op int` and `int op word` are `word`, with a float `float`.
 
 Known gaps: `SelectMany` and the selector projections (`SelectMember`, ...) are `Query` of `any`.
 
@@ -69,7 +72,11 @@ Step 3 (backend use), first part: the native generator (`src/fire.Native/CppGene
 the ownership analysis (`VarRef`): every stack slot carries a static type (an `int`, `float` or `bool` without a bit width, and the static unit of a number),
 joined where paths meet; every variable (local, global, parameter) joins the types of everything stored into it, and a variable written through a pointer,
 a parameter or a value of unknown type is unknown. Instructions that are not taught about types forget the types of the slots they write, so an
-unknown instruction can never make the generator believe a wrong type. Globals are trusted only in the main program (a method can run before their declaration).
+unknown instruction can never make the generator believe a wrong type. Globals are trusted only in the main program (a method can run before their declaration). Two more kinds are
+known where the generator made the value itself: a machine word (`KindWord`: a conversion into a `word`, an element of a word buffer, word arithmetic) and a buffer
+(`KindBuf`: `byte a[n]`, `new byte[n]`, `word a[n]`, `new word[n]`; bytes or words) - word arithmetic and comparisons, `byte`/`word` stores of a known int and the
+elements and `length` of a known buffer are written out in C (a checksum loop over a byte buffer: about ten times faster). The locals themselves stay 16-byte values;
+`uint8_t`/`uintN_t` C variables for `byte`/`word` locals are not done (ROADMAP 13, item 2).
 With the types known the C++ is the operation itself: `+ - * / %` (ints wrap; `/` and `%` by 0 throw), the comparisons and the conditional jumps (no
 `truthy`), `-x`, `!b`, `x++`/`x += k`, no ownership bookkeeping for numbers (`HoistValue`, `adopt` after a call). Units: `+ - %` and the comparisons
 of two numbers of the same unit keep it, `* /` with a number without a unit keep the other one, a float plus a number of another unit of the same dimension
