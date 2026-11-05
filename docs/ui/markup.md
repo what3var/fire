@@ -242,6 +242,8 @@ or, with `ElementName`, to a property of another named element. It is built on `
 
 ## The editor
 
+![The markup designer of spark](../images/spark-designer.png)
+
 `.fxml` files open in a markup editor (File > New > Script... > FXML Window or FXML View): XML with colours, next to it the **design view** - the picture of the interface drawn by the library `ui` itself (the same code that runs in your program, so sizes,
 layout, styles and templates are exact; the markup is translated into a script that only draws and is run in the background - no handler and none of your own code runs, `{Enum ...}` and `{Expr ...}` values are left out and a bound text
 is shown as `‹Path›`). A click on an element in the picture puts the caret into it; nothing else in it reacts to the mouse. The element at the caret is outlined and mistakes of the markup are listed under the picture and underlined in the text (the last good picture stays

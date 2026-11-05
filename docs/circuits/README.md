@@ -832,6 +832,8 @@ spectrum the strongest line and the width of a bin. `InfoLines(element)` gives t
 
 ## The circuit editor of spark
 
+![The circuit editor of spark](../images/spark-circuit.png)
+
 spark opens `.biscuit` files in its circuit editor (Add > New > Circuit makes one). In the middle is the CircuitView itself, running live in a fire program of its own,
 so the editor draws and simulates exactly like a program does; around it are the palette of parts (from `Circuits.Symbols.Catalog()`, each with a small picture of its
 symbol) and the tools. The palette is the tool window **Toolbox**, docked at the left edge: it appears while a circuit is the active document and hides
