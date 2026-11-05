@@ -25,8 +25,9 @@ namespace fire.Compiler
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
-        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null)
+        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false)
     {
+        // (Raw: a declaration `byte` or `word` - raw data without a unit, SPEC 8.10: a value with a unit does not go in, TC017)
         // (TypeParam: an `any` that is a type parameter of the running code - `$k@` of the method, `$k@Class` of the class - passed on as a type argument)
         /// <summary>The same type with the unit `unit` (null: not known); `dimensionOnly`: a declaration `: any m` that takes every unit of that dimension.</summary>
         public StaticType WithUnit(Unit? unit, bool dimensionOnly = false) => this with { Unit = unit, UnitIsDimension = dimensionOnly };
@@ -63,6 +64,7 @@ namespace fire.Compiler
             StaticKind.Enum => Class!,
             StaticKind.Dynamic => "any",
             StaticKind.Array => Element + "[]",
+            StaticKind.Int when Raw => "byte",
             StaticKind.Lambda => (Return != null ? Return + " " : "") + "lambda" + (ParamCount > 0 ? "<" + string.Join(", ", Params ?? Enumerable.Repeat(Dynamic, ParamCount)) + ">" : ""),
             _ => Kind.ToString().ToLowerInvariant() + (Unit != null && !Unit.IsUnitless ? (UnitIsDimension ? " : any " : " : ") + Unit : ""),
         };
@@ -102,6 +104,8 @@ namespace fire.Compiler
         /// <summary>Through a value of an interface type: writing a property the interface declares without `set` (or reading one without `get`) - the interface
         /// does not promise it (an error in lax mode too).</summary>
         public const string InterfaceAccessorCode = "TC016";
+        /// <summary>A unit at `byte` or `word` (raw data without a unit, SPEC 8.10): `byte b = 5m`, `word w : s`, `byte data[] = [1m]` - an error in lax mode too.</summary>
+        public const string RawUnitCode = "TC017";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -230,6 +234,13 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Array && target.Kind == StaticKind.Array && value.Element is { } valueElement && target.Element is { } targetElement)
             {
                 CheckUnitAssignable(valueElement, targetElement, line, what == "an element" ? what : $"an element of {what}");
+                return;
+            }
+            // `byte`/`word`: raw data without a unit (SPEC 8.10) - a value with a unit is TC017 (also lax); at runtime a stored value loses its unit
+            if (target.Raw)
+            {
+                if (value.IsNumber && value.Unit is { IsUnitless: false } rawFrom)
+                    ReportError(RawUnitCode, $"A value in '{UnitText(rawFrom)}' cannot be stored in {what} of type '{target}': 'byte' and 'word' are raw data without a unit (take the number with '::unitless')", line);
                 return;
             }
             // a float holds a float: a whole number (or a value not known here) is converted at runtime (`float f = 3` holds 3.0)
@@ -428,8 +439,21 @@ namespace fire.Compiler
                     { } u when u.StartsWith("any ", StringComparison.Ordinal) => result.WithUnit(Unit.Parse(u.Substring(4)), dimensionOnly: true),
                     { } u => result.WithUnit(Unit.Parse(u)),
                 };
+            // `byte` and `word` are raw data: never a unit (a unit written at them is TC017, see CheckRawUnit)
+            if (IsRawType(type)) result = result with { Unit = Unit.Unitless, UnitIsDimension = false, Raw = true };
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
             return result;
+        }
+
+        /// <summary>`byte` (an unsigned `int[8]`) and `word`: the raw-data types without a unit (SPEC 8.10).</summary>
+        internal static bool IsRawType(TypeRef? type) => type != null && type.PointerDepth == 0 && type.LambdaSignature == null
+            && (type.BaseName == "int" && type.BitWidth == 8 && type.Unsigned || type.BaseName == "word");
+
+        /// <summary>A unit written at a `byte` or `word` declaration (`byte b : m`, `word w : s`): TC017, an error in lax mode too.</summary>
+        private void CheckRawUnit(TypeRef? type, string name, int line)
+        {
+            if (IsRawType(type) && type!.Unit != null)
+                ReportError(RawUnitCode, $"'{name}' is a '{(type.BaseName == "word" ? "word" : "byte")}': raw data without a unit - it cannot be declared in '{type.Unit}' (use an int or a float for a quantity)", line);
         }
 
         /// <summary>`[Return] lambda<P1, ..., Pn>`: the number of parameters and the return type (a selector `lambda member<T>` takes one parameter).</summary>
@@ -563,7 +587,7 @@ namespace fire.Compiler
         /// <summary>A number declared without a unit takes the unit of its initializer for good (SPEC 3.5: `int a = 5mm` is in mm from then on); an initializer
         /// whose unit is not known leaves the unit free. Without an initializer (or with a unitless one) the declaration stays unitless.</summary>
         private static StaticType WithInitializerUnit(StaticType declared, TypeRef? type, int arrayRanks, StaticType init) =>
-            declared.IsNumber && arrayRanks == 0 && type is { Unit: null } && !declared.UnitIsDimension
+            declared.IsNumber && !declared.Raw && arrayRanks == 0 && type is { Unit: null } && !declared.UnitIsDimension
                 ? init.IsNumber && init.Unit is { } unit ? declared.WithUnit(unit) : init.IsDynamic || init.IsNumber ? declared.WithUnit(null) : declared
                 : declared;
 
@@ -1086,6 +1110,7 @@ namespace fire.Compiler
             if (init.Kind == StaticKind.Enum && Parser.Switches.TryGetValue(v, out var caseValues)) CheckSwitchOverEnum(init.Class!, caseValues, v.Line);
             if (declared is { } target)
             {
+                CheckRawUnit(v.Type, v.Name, v.Line);
                 if (v.Initializer != null)
                 {
                     target = WithInitializerUnit(target, v.Type, v.ArrayRanks.Count, init);
@@ -1248,8 +1273,12 @@ namespace fire.Compiler
             {
                 switch (member)
                 {
+                    case FieldDecl rawField when rawField.Initializer == null:
+                        CheckRawUnit(rawField.Type, rawField.Name, rawField.Line);
+                        break;
                     case FieldDecl f when f.Initializer != null:
                         {
+                            CheckRawUnit(f.Type, f.Name, f.Line);
                             var declaredField = Declared(f.Type, f.ArrayRanks.Count);
                             var init = Infer(f.Initializer, declaredField);
                             if (declaredField != null) declaredField = WithInitializerUnit(declaredField, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
@@ -1291,6 +1320,7 @@ namespace fire.Compiler
         /// <summary>A parameter without a type is taken as `any`: said so (a warning in lax mode, an error in strict mode), because a declared type tells the user of the class what it expects.</summary>
         private void CheckParametersTyped(IReadOnlyList<LambdaParam> parameters, string owner, int line)
         {
+            foreach (var p in parameters) CheckRawUnit(p.Type, p.Name, line);
             foreach (var p in parameters)
                 if (p.Type == null || p.Type.IsInferred)
                     Report(UntypedCode, $"Parameter '{p.Name}' of '{owner}' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", line);

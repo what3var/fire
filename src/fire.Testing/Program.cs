@@ -22144,6 +22144,19 @@ else
             byte t[] = "Hi".ToBytes()
             print(t.ToString())
             """),
+        ("Bytes: byte ist ohne Einheit - ein gespeicherter Wert verliert sie (Deklaration, Zuweisung, Parameter, Feld, !byte); int[8] behaelt sie", """
+            any x = 5m
+            byte c = x
+            byte d = 7
+            d = x
+            int[8] i8 = x
+            print(c + " " + d + " " + x!byte + " " + i8 + " " + (c + 1))
+            class R { byte v
+             static string Show(byte p) { return "" + p } }
+            var r = new R()
+            r.v = x
+            print(r.v + " " + R.Show(x))
+            """),
     }).ToArray();
 
     // Compression (#import "compression", docs/COMPRESSION.md): the same bytes in the VM and natively (the Deflate is the package's own C)

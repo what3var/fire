@@ -1843,7 +1843,7 @@ FIRE_FN Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
     raw = (uint64_t)n.i & mask;
     r = (int64_t)raw;
     if (!isUnsigned && (raw & (1ull << (bits - 1)))) r -= (int64_t)(1ull << bits);
-    return Int(r, n.unit);
+    return Int(r, isUnsigned ? 0 : n.unit);   /* (`byte`, the unsigned width, is raw data without a unit: SPEC 8.10, like the VM) */
 }
 
 FIRE_FN Value negate(Value v) {

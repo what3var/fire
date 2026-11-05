@@ -714,7 +714,8 @@ namespace fire.Values
             if (bits >= 64) return MakeInt(number._intValue, number.Unit);
             long mask = (1L << bits) - 1, raw = number._intValue & mask;
             if (!unsigned && (raw & (1L << (bits - 1))) != 0) raw -= 1L << bits;
-            return MakeInt(raw, number.Unit, (NumericWidth)bits);
+            // (`byte` - the unsigned width - is raw data without a unit, SPEC 8.10: the number stored there loses its unit)
+            return MakeInt(raw, unsigned ? Values.Unit.Unitless : number.Unit, (NumericWidth)bits);
         }
 
         public Value TruncateTo(NumericWidth width)

@@ -865,6 +865,31 @@ static class TypeTests
             Check("override im Namespace: die Meldung nennt Klasse und Basis voll", CompileTextStrict(nsBase + "namespace Zoo { class Dog : Animal { string Speak() { return \"Woof\" } } }") is var nsText && nsText.Contains("The method 'Speak' of 'Zoo.Dog' replaces the one of its base class 'Zoo.Animal' - mark it 'override' (override string Speak())"), nsText);
         }
 
+        // `byte` (and `word`) are raw data without a unit (SPEC 8.10): a unit there is TC017 - an error in lax mode too; at run time the stored value has none
+        {
+            Check("byte ohne Einheit: Wert mit Einheit, Einheit an der Deklaration, Array, Feld, Parameter sind TC017 (auch lax)", Run("""
+                byte c = 5m
+                byte d : m = 5
+                byte e[] = [1m, 2m]
+                class K { byte f : s
+                 byte g = 3s
+                 undefined Set(byte v : mm) { } }
+                byte h = 1
+                h = 4s
+                """) is var rawUnits && rawUnits == "|ERROR TC017 TC017 TC017 TC017 TC017 TC017 TC017", rawUnits);
+            Check("byte ohne Einheit: die Meldung nennt den Typ", CompileText("byte c = 5m") is var rawText && rawText.Contains("A value in 'm' cannot be stored in 'c' of type 'byte'"), rawText);
+            Check("byte ohne Einheit: zur Laufzeit verliert der gespeicherte Wert die Einheit; int[8] behaelt sie", Run("""
+                any x = 5m
+                byte c = x
+                byte d = 7
+                d = x
+                int[8] i8 = x
+                print(c + " " + d + " " + x!byte + " " + i8)
+                byte ok = 5m::unitless
+                print(ok)
+                """) is var rawRun && rawRun == "|5 5 5 5m\n5", rawRun);
+        }
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "json", "circuits", "circuits.ui", "net", "process", "hash", "compression", "http", "tls", "audio", "usb", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {
