@@ -51,9 +51,14 @@ namespace fire.Compiler
             yield return Path.Combine(Path.GetTempPath(), "fire-packages", Safe(import.Package.Name) + "-" + Safe(import.Package.Version), Rid);
         }
 
+        /// <summary>When the runtime that libraries are built against last changed (the fire.Native assembly; MinValue in a single-file build without a location).</summary>
+        private static DateTime RuntimeStamp() => typeof(NativeRuntimeFiles).Assembly.Location is { Length: > 0 } location && File.Exists(location) ? File.GetLastWriteTimeUtc(location) : DateTime.MinValue;
+
         private static DateTime NewestSource(InstalledImport import) =>
             import.Import.Native!.SourcesFor(HostPlatformKeys).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s)))
-                .Concat(import.Package.DescriptionFile is { } d && File.Exists(d) ? new[] { File.GetLastWriteTimeUtc(d) } : Array.Empty<DateTime>()).DefaultIfEmpty(DateTime.MinValue).Max();
+                .Concat(import.Package.DescriptionFile is { } d && File.Exists(d) ? new[] { File.GetLastWriteTimeUtc(d) } : Array.Empty<DateTime>())
+                // the runtime the library is built against (fire_rt.h, the ABI wrapper - inside fire.Native): a new runtime rebuilds the library like a new source
+                .Append(RuntimeStamp()).DefaultIfEmpty(DateTime.MinValue).Max();
 
         /// <summary>The library of an import on this machine if there is one (prebuilt, or built earlier and not older than the sources); otherwise null.</summary>
         public static string? Locate(InstalledImport import)

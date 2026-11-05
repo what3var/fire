@@ -444,7 +444,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
      gekürzt, `undefined` 0); ein Pufferelement ist nie `undefined`, ein Nicht-int dort ist eine `ArgumentException` (vorher ein Laufzeitfehler).
      **Offen:** ein Objekt (oder ein Lambda) als Byte-Argument ist in der VM weiter der Fehler der Paket-Grenze ("only numbers, bool, char, text, ... can be passed",
      PackageNativeBinding) statt der `ArgumentException` von `bytesArg` - nativ ist es die `ArgumentException`; meist scheitert der Prelude-Code vorher (`data.length`).
-     Die Bibliothek eines Pakets für die VM wird nur neu gebaut, wenn sich seine Quellen ändern, nicht bei einer Änderung von fire_rt.h allein (PackageLibrary.NewestSource).
+     (Behoben: die Bibliothek eines Pakets für die VM wird jetzt auch neu gebaut, wenn sich nur die Runtime ändert - `PackageLibrary.NewestSource` zählt den Stand von fire.Native mit.)
      Für `word`-Puffer (unten): ein Puffer mit einer Elementbreite (`Buf`/`ByteBuffer` heute nur Bytes), `bufFromArray`/`BufferFromArrayValue` mit der Breite,
      `bytesArg` mit einer Variante für Wörter.
    * **`word`** = das Maschinenwort des **Ziels**, vorzeichenlos: 16 Bit (AVR, DOS Real Mode, Win16), 32 Bit (ESP32, Cortex-M, RISC-V 32, wasm, DPMI, Win9x),
