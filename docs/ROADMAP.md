@@ -435,7 +435,23 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `{Adresse, Slot, Generation, Zähler}` (16 Byte pro lebendem Zeiger, nicht pro
    Array oder Element), gezählt wie Strings, wiederverwendet über eine Freiliste. Mit `#performance` (keine Tabelle) tragen alle direkt ihren Zeiger. Bleibt: 65535 Einheiten.
    Später, wenn eine Messung es zeigt: einen Kasten mit Zähler 1 bei `p + 1` weiterschieben statt einen neuen zu holen.
-2. **Inline-C** - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
+2. **Rohdaten ohne Einheit: `byte` und `word`** (Entscheidung des Benutzers). `byte` und `word` sind Datentypen für rohe Daten **ohne Einheit**; Einheiten
+   bleiben bei `int`, `int[N]`, `float` und `float[N]` (dort ändert sich nichts). Ab hier unterscheiden sich die beiden Formate.
+   * **Vorher (in Arbeit):** Byte-Argumente der Natives sicher - lesende Natives nehmen einen Puffer, ein `byte`-Array oder ein Array aus Zahlen 0..255 (kopiert),
+     füllende verlangen einen Puffer, alles andere ist eine `ArgumentException` statt eines Absturzes (VM und nativ: `bufOf` prüfte die Art nicht).
+     `byte x[] = [...]` und `byte x[n]` (auch Felder, Globals) deklarieren einen **Puffer**.
+   * **`word`** = das Maschinenwort des **Ziels**, vorzeichenlos: 16 Bit (AVR, DOS Real Mode, Win16), 32 Bit (ESP32, Cortex-M, RISC-V 32, wasm, DPMI, Win9x),
+     64 Bit (x86-64, ARM64) - `wordWidth` in der Konfiguration des Ziels, `#if word16|word32|word64`, `Word.Bits`. Die VM folgt dem Ziel des Baus
+     (`forge run`: der Rechner selbst). Mit 64 Bit **echt vorzeichenlos** (die VM behält die Bits; Ausgabe, Vergleich, Division, Schieben vorzeichenlos).
+     `word op word` rechnet in der Breite von `word`, gespeichert wird abgeschnitten.
+   * **`word a[] = [...]`** ist ein Puffer aus Maschinenwörtern (nativ `uintN_t*`, an Natives ohne Umpacken); seine Größe in Bytes hängt vom Ziel ab
+     (in eine Datei oder ins Netz geschrieben: plattformabhängig wie in C, dokumentieren). Byte-Reihenfolge der Elemente: die der Maschine.
+   * **`byte` ohne Einheit:** heute ist `byte` Zucker für ein vorzeichenloses `int[8]` und kann eine Einheit tragen; danach ist `byte b = 5m` ein Fehler des
+     Typprüfers (vorher die Packages und Beispiele durchsuchen).
+   * **Schmal und schnell:** der Generator legt `byte`/`word`-Locals und -Parameter als `uint8_t`/`uintN_t` an (keine Einheit, kein 16-Byte-Wert) - der erste Schritt
+     zu Ebene 2 (Punkt 8), für Prüfsummen, Protokolle und Schleifen über Puffer auf kleinen Zielen.
+   * PCM und andere vorzeichenbehaftete Daten bleiben bei `int[16]`-Arrays (gepackt, mit Einheit); kein weiterer Typ.
+3. **Inline-C** - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
 
    ```fire
    inline c int Add(int a, int b) { return a + b; }
@@ -445,17 +461,17 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 
    Parameter und Ergebnis sind C-Typen (`int` -> `FireInt`, `float` -> `Real`, `byte[]` -> die Bytes, `any` -> `Value`); der Generator baut den Wrapper wie bei
    den Natives der Packages. In der VM ist ein Aufruf ein Fehler (oder eine Alternative mit `#if native`); der Editor hebt den Rumpf als C hervor.
-3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
+4. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
    keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
    paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).
-   Dazu **`#intwidth 16`** (native Breite des 8086/286) und **`word`** (vorzeichenlos in Maschinenbreite, `word[8|16|32]`; die VM bekommt die Wortbreite des Ziels).
-4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
+   Dazu **`#intwidth 16`** (native Breite des 8086/286); `word` ist dort 16 Bit (Punkt 2).
+5. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
-5. **`win16`** - Win 3.x: `wcc`, Large Model, GDI, kooperative Nachrichtenschleife (`Sleep` gibt ab), keine fire-Threads.
-6. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
+6. **`win16`** - Win 3.x: `wcc`, Large Model, GDI, kooperative Nachrichtenschleife (`Sleep` gibt ab), keine fire-Threads.
+7. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
    `CONDITION_VARIABLE`), `GetTickCount` statt `GetTickCount64`, ANSI/Unicode-Schicht für 9x, `inet_addr` statt `inet_pton` (NT 3.51: Winsock 1.1), TLS über
    mbedTLS statt Schannel, kein USB, GDI aus dem laufenden Umbau.
-7. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
+8. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
    gepackt pro Klasse später.
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht pro Familie; Tests mit DOSBox-X / dosemu2 ohne Fenster (`dos16`, `dos32`, Win 3.11),
