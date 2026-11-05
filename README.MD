@@ -21,11 +21,13 @@ Alongside with *fire* and its compiler *forge* comes *spark*, a cute, little VS-
 
 The package manager *ember* follows its own philosophies. Packages may only contain source code. Everything will be built at once. No precompiled natives and no hidden spyware. The online package source isnt set up yet, but the offline source works.
 
-Compiling native fire binaries works by translating the bytecode to C++. Current targets are Windows, Linux, OSX, ESP32, and pure FreeRTOS without any devicebindings. Your installed toolchain is used, as long as you have one. If youre on Windows and you arent prepared, spark will install a compiler for you, all local and portable.
+Compiling native fire binaries works by translating the bytecode to C. Current targets are Windows, Linux, OSX, ESP32, and pure FreeRTOS without any devicebindings. Your installed toolchain is used, as long as you have one. If youre on Windows and you arent prepared, spark will install a compiler for you, all local and portable.
 
 You should study the other documentation available if youre interested in details. This things went farther than i planned.
 
 Or just download it, compile it and have a look.
+
+[The documentation](docs/README.md) - the language, the libraries (UI, graphics, networking, audio, circuits, devices), packages, libraries and targets
 
 [First Steps](https://github.com/what3var/fire/blob/master/src/fire.Editor/Help/First%20Steps.md)
 
