@@ -157,7 +157,7 @@ FIRE_NORETURN FIRE_FN void exitNow(int code) {
 
 /* The kinds of a value. A pointer has one kind per target (see "`ref` parameters"): a variable or a field, an element of a byte buffer, an element of an
  * array. They follow one another, so that `isPtr` is a single comparison. */
-enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_PtrByte, K_PtrElem, K_Array, K_Buffer, K_Undefined };
+enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_PtrByte, K_PtrElem, K_Array, K_Buffer, K_Undefined, K_Word };
 #define FIRE_IS_PTR_KIND(k) ((unsigned)(k) - (unsigned)K_PtrVar <= (unsigned)(K_PtrElem - K_PtrVar))
 
 /* The width of `int`: 64 bits, 32 when the program is generated with `#intwidth 32` (FIRE_INT32; SPEC 8.2.1). An operation computes in 64 bits (the
@@ -168,11 +168,34 @@ typedef int32_t FireInt;
 typedef int64_t FireInt;
 #endif
 
+/* `word` (SPEC 8.10): the machine word of the target, unsigned, without a unit - K_Word, its bits in `w` (zero above the width). The generator defines
+ * FIRE_WORD_BITS from the target (`wordWidth`); without it (a package library for the VM) the width of a pointer. An operation on words wraps at the
+ * width (wordOp). */
+#ifndef FIRE_WORD_BITS
+#if UINTPTR_MAX > 0xFFFFFFFFu
+#define FIRE_WORD_BITS 64
+#else
+#define FIRE_WORD_BITS 32
+#endif
+#endif
+#if FIRE_WORD_BITS == 16
+typedef uint16_t FireWord;
+#define FIRE_WORD_MASK 0xFFFFull
+#elif FIRE_WORD_BITS == 32
+typedef uint32_t FireWord;
+#define FIRE_WORD_MASK 0xFFFFFFFFull
+#elif FIRE_WORD_BITS == 64
+typedef uint64_t FireWord;
+#define FIRE_WORD_MASK 0xFFFFFFFFFFFFFFFFull
+#else
+#error "FIRE_WORD_BITS must be 16, 32 or 64"
+#endif
+
 /* A runtime value, trivially copyable. `kind` says what it is; `unit` indexes the program's unit table (0 = unitless) - for an object, array or buffer it
  * is the slot of its handle and `reserved` the generation (for an enum value `reserved` is its enum). Usually 16 bytes; with `#intwidth 32`,
  * `#floatwidth 32` and 32-bit pointers (FIRE_COMPACT: a microcontroller) 8 bytes - the head is packed into 32 bits (kind 4, reserved 12, unit 16 bits:
  * up to 65535 units and live objects/arrays/buffers, 4095 enums, generations wrap at 4096) and the payload has 32 bits. */
-#if defined(FIRE_INT32) && defined(FIRE_FLOAT32) && UINTPTR_MAX == 0xFFFFFFFFu && !defined(FIRE_WIDE_VALUE)
+#if defined(FIRE_INT32) && defined(FIRE_FLOAT32) && UINTPTR_MAX == 0xFFFFFFFFu && !defined(FIRE_WIDE_VALUE) && FIRE_WORD_BITS <= 32
 #define FIRE_COMPACT 1
 #endif
 #ifdef FIRE_COMPACT
@@ -184,6 +207,7 @@ typedef struct Value {
         FireInt i;
         Real f;
         const void* p;
+        uint32_t w;     /* K_Word */
     };
 } Value;
 FIRE_STATIC_ASSERT(sizeof(Value) == 8, "A compact Value takes 8 bytes");
@@ -202,6 +226,7 @@ typedef struct Value {
         FireInt i;
         Real f;
         const void* p;
+        uint64_t w;     /* K_Word */
     };
 } Value;
 FIRE_STATIC_ASSERT(sizeof(Value) == 16, "Value must stay 16 bytes");
@@ -227,6 +252,8 @@ FIRE_FN Value Bool(bool v) { Value r; r.kind = K_Bool; FIRE_PAD0(r) r.reserved =
 FIRE_FN Value Char(uint32_t c) { Value r; r.kind = K_Char; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.i = c; return r; }
 FIRE_FN Value UndefU(uint32_t unit) { Value r; r.kind = K_Undefined; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.i = 0; return r; }
 FIRE_FN Value Undef(void) { return UndefU(0); }
+/* A machine word (SPEC 8.10): the bits cut to FIRE_WORD_BITS. */
+FIRE_FN Value WordV(uint64_t v) { Value r; r.kind = K_Word; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.i = 0; r.w = (FireWord)(v & FIRE_WORD_MASK); return r; }
 
 /* ---- Enums (docs/language/10-enums-and-namespaces.md): a value of an enum is an Int that carries the number of its enum (1-based) in `reserved`; the generated
  * program sets the table (fire_init). Every operation on whole numbers works on it as before (and gives a plain int: Int() clears `reserved`). */
@@ -1687,12 +1714,110 @@ FIRE_FN Value ptrOffset(Value p, int64_t n) {
     return r;
 }
 
+/* ---- Words (SPEC 8.10; the VM: Value.WordOp): when one operand is a word, the operation is one on words - the other operand (an int, a char) is taken as a
+ * word (cut to the width, two's complement), the result is a word cut to the width (it wraps); division, modulo, comparison and `>>` are unsigned; a shift
+ * by the width or more gives 0. A float operand makes it a float operation (the word as its unsigned value). An int with a unit does not go with a word (raw
+ * data): a UnitMismatchException. */
+enum { W_ADD, W_SUB, W_MUL, W_DIV, W_MOD, W_POW, W_AND, W_OR, W_XOR, W_SHL, W_SHR };
+FIRE_FN uint64_t wordBits(Value v) { return (uint64_t)v.w; }
+/* The unsigned value of a word as a number of the program (a float32 with `#floatwidth 32`). */
+FIRE_FN Real wordReal(Value v) { return (Real)(uint64_t)v.w; }
+/* An operand of a word operation as a word; false when it is none (thrown). */
+FIRE_COLD FIRE_FN bool wordOperand(Value v, int op, uint64_t* out) {
+    char text[80];
+    switch (v.kind) {
+        case K_Word: *out = (uint64_t)v.w; return true;
+        case K_Int:
+            if (FIRE_UNLIKELY(!unitIsUnitless(v.unit))) { unitConflict(0, v.unit); return false; }
+            *out = (uint64_t)(int64_t)v.i & FIRE_WORD_MASK; return true;
+        case K_Char: *out = (uint64_t)v.i & FIRE_WORD_MASK; return true;
+        default:
+            if (op <= W_POW || op < 0) snprintf(text, sizeof text, "Type %s is not numeric.", coerceKindName(v.kind));
+            else {
+                static const char* const syms[] = {"+", "-", "*", "/", "%", "^", "&", "|", "#", "<<", ">>"};
+                snprintf(text, sizeof text, "'%s' expects int, not %s.", syms[op], coerceKindName(v.kind));
+            }
+            fireError("ArgumentException", text);
+            return false;
+    }
+}
+FIRE_FN Value add(Value a, Value b);
+FIRE_FN Value sub(Value a, Value b);
+FIRE_FN Value mul(Value a, Value b);
+FIRE_FN Value divide(Value a, Value b);
+FIRE_FN Value modulo(Value a, Value b);
+FIRE_FN Value power(Value a, Value b);
+FIRE_COLD FIRE_FN Value wordOp(int op, Value a, Value b) {
+    uint64_t x, y, r;
+    if ((a.kind == K_Float || b.kind == K_Float) && op <= W_POW) {
+        /* with a float: a float operation (the word as its unsigned value, without a unit) */
+        if (a.kind == K_Word) a = Float(wordReal(a));
+        if (b.kind == K_Word) b = Float(wordReal(b));
+        switch (op) {
+            case W_ADD: return add(a, b);
+            case W_SUB: return sub(a, b);
+            case W_MUL: return mul(a, b);
+            case W_DIV: return divide(a, b);
+            case W_MOD: return modulo(a, b);
+            default: return power(a, b);
+        }
+    }
+    if (op == W_POW && b.kind == K_Int && b.i < 0 && a.kind == K_Word) return Float((Real)pow((double)(uint64_t)a.w, (double)b.i));   /* (a negative exponent: like int ^ int) */
+    if (!wordOperand(a, op, &x) || !wordOperand(b, op, &y)) return Undef();
+    switch (op) {
+        case W_ADD: r = x + y; break;
+        case W_SUB: r = x - y; break;
+        case W_MUL: r = x * y; break;
+        case W_DIV: if (FIRE_UNLIKELY(y == 0)) return divideByZero(); r = x / y; break;
+        case W_MOD: if (FIRE_UNLIKELY(y == 0)) return divideByZero(); r = x % y; break;
+        case W_POW: {
+            uint64_t e = y, f = x;
+            r = 1;
+            for (; e != 0; e >>= 1) { if (e & 1) r *= f; f *= f; }
+            break;
+        }
+        case W_AND: r = x & y; break;
+        case W_OR: r = x | y; break;
+        case W_XOR: r = x ^ y; break;
+        case W_SHL: r = y >= FIRE_WORD_BITS ? 0 : x << y; break;
+        default: r = y >= FIRE_WORD_BITS ? 0 : x >> y; break;
+    }
+    return WordV(r);
+}
+/* A comparison with a word on one side: unsigned (an int taken as a word), with a float by value; -1, 0, 1 (2: thrown). */
+FIRE_COLD FIRE_FN int wordCompare(Value a, Value b) {
+    uint64_t x, y;
+    if (a.kind == K_Float || b.kind == K_Float) {
+        Real p = a.kind == K_Word ? wordReal(a) : toR(a), q = b.kind == K_Word ? wordReal(b) : toR(b);
+        if (b.kind == K_Float && !unitIsUnitless(b.unit)) { unitConflict(0, b.unit); return 2; }
+        if (a.kind == K_Float && !unitIsUnitless(a.unit)) { unitConflict(0, a.unit); return 2; }
+        if (p < q) return -1;
+        if (p > q) return 1;
+        if (p == q) return 0;
+        if (isnan(p)) return isnan(q) ? 0 : -1;
+        return 1;
+    }
+    if (!wordOperand(a, -1, &x) || !wordOperand(b, -1, &y)) return 2;
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+/* A float as the bits of a word (Value.DoubleToWordBits): rounded half to even; NaN is 0; below -2^63 it is -2^63, from 2^64 on all ones. */
+FIRE_FN uint64_t wordOfReal(double f) {
+    double r;
+    if (isnan(f)) return 0;
+    r = nearbyint(f);
+    if (r >= 18446744073709551616.0) return ~0ull;
+    if (r >= 9223372036854775808.0) return (uint64_t)r;
+    if (r <= -9223372036854775808.0) return 0x8000000000000000ull;
+    return (uint64_t)(int64_t)r;
+}
+
 FIRE_FN Value add(Value a, Value b) {
     if (isPtr(a) && b.kind == K_Int) return ptrOffset(a, b.i);
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) + toR(b), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
+    if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_ADD, a, b);
     return opFailed(a, b);
 }
 FIRE_FN Value ptrDiff(Value a, Value b);
@@ -1703,6 +1828,7 @@ FIRE_FN Value sub(Value a, Value b) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i - (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) - toR(b), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return subUnits(a, b);
+    if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_SUB, a, b);
     return opFailed(a, b);
 }
 FIRE_FN Value mul(Value a, Value b) {
@@ -1710,6 +1836,7 @@ FIRE_FN Value mul(Value a, Value b) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i));
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) * toR(b));
     } else if (isNumeric(a) && isNumeric(b)) return mulUnits(a, b);
+    if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_MUL, a, b);
     return opFailed(a, b);
 }
 FIRE_FN Value divide(Value a, Value b) {
@@ -1721,6 +1848,7 @@ FIRE_FN Value divide(Value a, Value b) {
         }
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) / toR(b));
     } else if (isNumeric(a) && isNumeric(b)) return divUnits(a, b);
+    if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_DIV, a, b);
     return opFailed(a, b);
 }
 FIRE_FN Value modulo(Value a, Value b) {
@@ -1732,6 +1860,7 @@ FIRE_FN Value modulo(Value a, Value b) {
         }
         if (isNumeric(a) && isNumeric(b)) return Float(fmod(toR(a), toR(b)), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return modUnits(a, b);
+    if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_MOD, a, b);
     return opFailed(a, b);
 }
 /* `a ^ b` (power; `#` is the bitwise xor): ints multiply, a float or a negative exponent uses pow. The units must be equal. */
@@ -1739,6 +1868,7 @@ FIRE_FN Value power(Value a, Value b) {
     bool useFloat;
     uint64_t result = 1, base;
     int64_t i;
+    if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_POW, a, b);
     if (FIRE_UNLIKELY(!isNumeric(a) || !isNumeric(b))) return opFailed(a, b);
     if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); }
     useFloat = a.kind == K_Float || b.kind == K_Float || (b.kind == K_Int && b.i < 0);
@@ -1787,6 +1917,7 @@ FIRE_FN const char* coerceKindName(uint8_t kind) {
     switch (kind) {
         case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
         case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_PtrVar: case K_PtrByte: case K_PtrElem: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        case K_Word: return "Word";
         default: return "Undefined";
     }
 }
@@ -1794,6 +1925,10 @@ FIRE_FN const char* coerceKindName(uint8_t kind) {
 FIRE_FN Value coerceType(Value v, uint8_t target) {
     char text[96];
     if (v.kind == target) { if (target == K_Int) v.reserved = 0; return v; }   /* (`c!int`: the number of an enum value) */
+    /* a word as an int: the same bits as a signed number (like a cast in C); as a float its unsigned value. Into a word: wordOf */
+    if (v.kind == K_Word && target == K_Int) return Int((int64_t)(uint64_t)v.w);
+    if (v.kind == K_Word && target == K_Float) return Float(wordReal(v));
+    if (v.kind == K_Word && target == K_Char) return Char((uint16_t)v.w);
     if (v.kind == K_Int && target == K_Float) return Float((Real)v.i, v.unit);
     if (v.kind == K_Float && target == K_Int) return Int((int64_t)nearbyint((double)v.f), v.unit);
     if (v.kind == K_Undefined && target == K_Int) return Int(0, v.unit);
@@ -1846,8 +1981,30 @@ FIRE_FN Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
     return Int(r, isUnsigned ? 0 : n.unit);   /* (`byte`, the unsigned width, is raw data without a unit: SPEC 8.10, like the VM) */
 }
 
+/* `x!word` and a store into a `word` (OpCode.ConvertWidth with the word flag, Value.ToWord): an int cut to the width (two's complement), a float rounded
+ * (wordOfReal), a char its code, `undefined` 0, a unit dropped (raw data); anything else is an ArgumentException. `implicit` (a store): only an int is
+ * converted, every other value stays as it is. */
+FIRE_FN Value wordOf(Value v, bool implicit) {
+    char text[96];
+    switch (v.kind) {
+        case K_Word: return v;
+        case K_Int: return WordV((uint64_t)(int64_t)v.i);
+        default: break;
+    }
+    if (implicit) return v;
+    switch (v.kind) {
+        case K_Char: return WordV((uint64_t)v.i);
+        case K_Float: return WordV(wordOfReal((double)v.f));
+        case K_Undefined: return WordV(0);
+        default: break;
+    }
+    snprintf(text, sizeof text, "Cannot coerce type %s to Word.", coerceKindName(v.kind));
+    return fireError("ArgumentException", text);
+}
+
 FIRE_FN Value negate(Value v) {
     if (v.kind == K_Int) return Int((int64_t)(0 - (uint64_t)v.i), v.unit);
+    if (v.kind == K_Word) return WordV(0 - (uint64_t)v.w);   /* (wraps: -1 as a word is the largest one) */
     if (v.kind == K_Float) return Float(-v.f, v.unit);
     return opFailed(v, v);
 }
@@ -1861,26 +2018,30 @@ FIRE_FN Value lnot(Value v) {
     return Bool(v.i == 0);
 }
 
-#define FIRE_BITOP(NAME, OP, SYM)                                                              \
+#define FIRE_BITOP(NAME, OP, SYM, WOP)                                                         \
     FIRE_FN Value NAME(Value a, Value b) {                                                     \
+        if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(WOP, a, b);     \
         if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(SYM, a, b);   \
         if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); } \
         if (FIRE_UNLIKELY(a.reserved != 0) && a.reserved == b.reserved && enumOf(a) && enumOf(a)->flags) return EnumV(a.i OP b.i, a.reserved); \
         return Int(a.i OP b.i, a.unit);                                                        \
     }
-FIRE_BITOP(bitAnd, &, "&")
-FIRE_BITOP(bitOr, |, "|")
-FIRE_BITOP(bitXor, ^, "#")
+FIRE_BITOP(bitAnd, &, "&", W_AND)
+FIRE_BITOP(bitOr, |, "|", W_OR)
+FIRE_BITOP(bitXor, ^, "#", W_XOR)
 #undef FIRE_BITOP
 FIRE_FN Value shl(Value a, Value b) {
+    if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_SHL, a, b);
     if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed("<<", a, b);
     return Int((int64_t)((uint64_t)a.i << (b.i & 63)), a.unit);
 }
 FIRE_FN Value shr(Value a, Value b) {
+    if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_SHR, a, b);
     if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(">>", a, b);
     return Int(a.i >> (b.i & 63), a.unit);
 }
 FIRE_FN Value bitNot(Value v) {
+    if (FIRE_UNLIKELY(v.kind == K_Word)) return WordV(~(uint64_t)v.w);
     if (FIRE_UNLIKELY(v.kind != K_Int)) return intOpFailed("~", v, v);
     if (FIRE_UNLIKELY(v.reserved != 0) && enumOf(v) && enumOf(v)->flags) return EnumV(~v.i, v.reserved);   /* (the complement of a flag value is one too) */
     return Int(~v.i, v.unit);
@@ -1916,6 +2077,7 @@ FIRE_FN int compare(Value a, Value b) {
     } else if (isNumeric(a) && isNumeric(b)) { VPair p = alignUnits(a, b); if (FIRE_UNLIKELY(p.a.kind == K_Undefined)) return 2; return compareNumeric(p.a, p.b); }
     if (a.kind == K_Char && b.kind == K_Char) return a.i < b.i ? -1 : (a.i > b.i ? 1 : 0);
     if (a.kind == K_String && b.kind == K_String) return compareText(a, b);   /* texts by their codes (ordinal) */
+    if (a.kind == K_Word || b.kind == K_Word) return wordCompare(a, b);
     snprintf(msg, sizeof msg, "Type %s is not numeric.", coerceKindName(isNumeric(a) ? b.kind : a.kind));
     fireError("ArgumentException", msg);
     return 2;   /* failed (thrown): <, <=, > and >= are all false, the generated code then looks at the unwinding flag */
@@ -1957,6 +2119,7 @@ FIRE_FN bool eq(Value a, Value b) {
     if (a.kind != b.kind) return false;
     switch (a.kind) {
         case K_Int: case K_Bool: case K_Char: return a.i == b.i;
+        case K_Word: return a.w == b.w;
         case K_Float: return a.f == b.f || (isnan(a.f) && isnan(b.f));
         case K_Undefined: return true;
         case K_String: {
@@ -1970,6 +2133,11 @@ FIRE_FN bool eq(Value a, Value b) {
 }
 /* Value.OperatorEquals - the `==` of the language: numbers compare by value (`1 == 1.0`), compatible units are converted (`1m == 100cm`). */
 FIRE_FN bool opEq(Value a, Value b) {
+    if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word) && (isNumeric(a) || a.kind == K_Word) && (isNumeric(b) || b.kind == K_Word)) {
+        /* a word and a number by value: an int taken as a word (`w == -1` for the largest word), a float by its value */
+        if (a.kind == K_Float || b.kind == K_Float) return (a.kind == K_Word ? wordReal(a) : toR(a)) == (b.kind == K_Word ? wordReal(b) : toR(b));
+        return ((uint64_t)(a.kind == K_Word ? a.w : (uint64_t)(int64_t)a.i) & FIRE_WORD_MASK) == ((uint64_t)(b.kind == K_Word ? b.w : (uint64_t)(int64_t)b.i) & FIRE_WORD_MASK);
+    }
     if (!isNumeric(a) || !isNumeric(b)) return eq(a, b);
     if (a.unit != b.unit && !unitEq(a.unit, b.unit) && unitCompatible(a.unit, b.unit)) { VPair p = alignUnits(a, b); a = p.a; b = p.b; }
     if (a.kind == K_Int && b.kind == K_Int) return a.i == b.i;
@@ -2514,6 +2682,7 @@ FIRE_COLD FIRE_FN Value guardKindSlow(Value v, uint8_t kind, bool unitless, cons
     }
     if (v.kind == kind) return v;
     if (kind == K_Float && v.kind == K_Int) return Float((Real)v.i, v.unit);
+    if (kind == K_Float && v.kind == K_Word) return Float(wordReal(v));   /* (a word as its unsigned value) */
     snprintf(text, sizeof text, "%s is %s, not %s.", what, kind == K_Int ? "an int" : kind == K_Float ? "a float" : "a bool", coerceKindName(v.kind));
     fireError("ArgumentException", text);
     return Undef();
@@ -2524,7 +2693,7 @@ FIRE_FN Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, 
 }
 
 /* A float declaration that takes every unit (`#any`): a whole number becomes a float, the unit stays. */
-FIRE_FN Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.unit) : v; }
+FIRE_FN Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.unit) : v.kind == K_Word ? Float(wordReal(v)) : v; }
 
 /* CheckUnit (Value.AdaptToUnit): a declaration with a unit takes `v` - a value of the same dimension is converted into `unit`, `undefined` takes it; with
  * `dimensionOnly` (`: any m`) every unit of that dimension is taken as it is; with `toFloat` (a float declaration) a whole number is converted as a float.
@@ -2552,6 +2721,7 @@ FIRE_COLD FIRE_FN void adaptArrayUnit(Value v, uint32_t unit, bool dimensionOnly
 FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText) {
     double converted;
     if (FIRE_UNLIKELY(v.kind == K_Array)) { adaptArrayUnit(v, unit, dimensionOnly, toFloat, expectedText, 0); return v; }
+    if (toFloat && v.kind == K_Word) v = Float(wordReal(v));   /* a word into a float declaration: its unsigned value (without a unit) */
     if (!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined)) return v;
     if (toFloat && v.kind == K_Int) v = Float((Real)v.i, v.unit);   /* a float declaration: a whole number becomes one (`float f = 3` holds 3.0) */
     if (unitEq(v.unit, unit)) { if (!dimensionOnly && !unitSameLabel(v.unit, unit)) v.unit = unit; return v; }   /* (printed with the unit of the declaration) */
@@ -2703,6 +2873,7 @@ FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
             break;
         }
         case K_Float: out->n = widenAscii(tmp, (uint32_t)formatReal(v.f, tmp), out->buf); break;
+        case K_Word: out->n = widenAscii(tmp, (uint32_t)snprintf(tmp, sizeof tmp, "%llu", (unsigned long long)v.w), out->buf); break;   /* (unsigned) */
         case K_Undefined: setPiece(out, "undefined"); if (v.unit && !unitIsUnitless(v.unit)) { out->buf[out->n++] = (fire_char16)':'; } break;
         case K_Class: {
             Value text;
@@ -2765,6 +2936,7 @@ FIRE_COLD FIRE_FN Value addSlow(Value a, Value b, OwnList* list) {
     if (isPtr(a) && b.kind == K_Int) return ptrOffset(a, b.i);
     if (a.kind == K_String || b.kind == K_String) return concat(a, b, list);
     if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
+    if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_ADD, a, b);
     return opFailed(a, b);
 }
 
@@ -3364,15 +3536,15 @@ FIRE_FN Value formatValue(Value v, Value specV, OwnList* list) {
         bool negative = false;
         fire_char16 wide[400];
         uint32_t wn;
-        if (v.kind != K_Int) fatal("The format specifier expects an int.");
-        u = (uint64_t)v.i;
+        if (v.kind != K_Int && v.kind != K_Word) fatal("The format specifier expects an int.");
+        u = v.kind == K_Word ? (uint64_t)v.w : (uint64_t)v.i;
         if (letter == 'X') {
             const char* hex = first == 'X' ? "0123456789ABCDEF" : "0123456789abcdef";
             do { digits[dn++] = hex[u & 15]; u >>= 4; } while (u);
         } else if (letter == 'B') {
             do { digits[dn++] = (char)('0' + (u & 1)); u >>= 1; } while (u);
         } else {
-            negative = v.i < 0;
+            negative = v.kind == K_Int && v.i < 0;
             if (negative) u = 0 - u;
             do { digits[dn++] = (char)('0' + u % 10); u /= 10; } while (u);
         }
@@ -3388,8 +3560,8 @@ FIRE_FN Value formatValue(Value v, Value specV, OwnList* list) {
         int prec;
         fire_char16 wide[400];
         uint32_t wn;
-        if (v.kind != K_Int && v.kind != K_Float) fatal("The format specifier expects a number.");
-        d = (double)toR(v);
+        if (v.kind != K_Int && v.kind != K_Float && v.kind != K_Word) fatal("The format specifier expects a number.");
+        d = v.kind == K_Word ? (double)wordReal(v) : (double)toR(v);
         prec = hasNumber ? (int)number : (spec->length == 1 ? 2 : -1);
         if (prec < 0) fatal("Unknown format specifier.");
         if (isnan(d)) n = snprintf(text, sizeof text, "NaN");
@@ -3486,6 +3658,7 @@ FIRE_FN const char* kindName(Value v) {
     switch (v.kind) {
         case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
         case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_PtrVar: case K_PtrByte: case K_PtrElem: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        case K_Word: return "Word";
         default: return "Undefined";
     }
 }
@@ -3541,6 +3714,7 @@ FIRE_FN int64_t keyHash(Value x) {
             return (int64_t)h;
         }
         case K_Undefined: return 0;
+        case K_Word: return (int64_t)fire_mixHash((uint64_t)x.w);   /* (like an int with the same bits: `==` takes them as equal) */
         case K_Char: case K_Bool: return (int64_t)fire_mixHash((uint64_t)x.i ^ ((uint64_t)x.kind << 56));
         default: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)x.p);
     }

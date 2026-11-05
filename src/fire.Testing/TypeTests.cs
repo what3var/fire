@@ -888,6 +888,28 @@ static class TypeTests
                 byte ok = 5m::unitless
                 print(ok)
                 """) is var rawRun && rawRun == "|5 5 5 5m\n5", rawRun);
+            Check("word ohne Einheit: Wert mit Einheit, Einheit an der Deklaration, Feld, Parameter sind TC017 (auch lax)", Run("""
+                word a = 5m
+                word b : s = 1
+                class W { word f : kg
+                 undefined Set(word v : mm) { } }
+                word c = 1
+                c = 2s
+                """) is var wordUnits && wordUnits == "|ERROR TC017 TC017 TC017 TC017 TC017", wordUnits);
+            Check("word: int geht in word, word in float und byte; word in int will !int (TC001), float in word auch; word op int ist word", Run("""
+                word w = 5
+                int i = 3
+                w = i
+                float f = w
+                byte b = w
+                int j = w!int
+                var x = w + i
+                word y = x * 2
+                print(w + " " + f + " " + b + " " + j + " " + y + " " + (x is of word) + " " + (-x is of word) + " " + (~x is of word) + " " + ((x + 0.5) is of float))
+                """) is var wordOk && wordOk == "|3 3 3 3 12 True True True True", wordOk);
+            Check("word: int i = w und word v = 2.5 sind TC001; strikt ein Fehler", Run("word w = 5\nint i = w\nword v = 2.5\nprint(1)") is var wordBad && wordBad == "TC001 TC001|1"
+                && Run("word w = 5\nint i = w\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC001", wordBad);
+            Check("word: 'word' mit Breite ist ein Syntaxfehler", CompileText("word[16] w = 1") is var wordWidth && wordWidth.Contains("'word' has the width of the target's machine word"), wordWidth);
         }
 
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode

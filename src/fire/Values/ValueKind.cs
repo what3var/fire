@@ -13,5 +13,6 @@ namespace fire.Values
         Array,      // Reference to an array (Values.ScriptArray)
         Buffer,     // Reference to a raw byte buffer (Values.ByteBuffer)
         Undefined,
+        Word,       // A machine word of the target (SPEC 8.10): unsigned, Value.WordBits wide, no unit (the bits in _bits)
     }
 }

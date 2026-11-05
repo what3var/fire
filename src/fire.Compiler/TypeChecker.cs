@@ -21,7 +21,7 @@ namespace fire.Compiler
     /// <summary>
     /// The static types the checker knows. `Dynamic` is "not known": it is compatible with everything, so code that does not state its types is never reported.
     /// </summary>
-    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum }
+    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum, Word }
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
@@ -42,6 +42,8 @@ namespace fire.Compiler
         public static readonly StaticType Dynamic = new(StaticKind.Dynamic);
         public static readonly StaticType Bool = new(StaticKind.Bool);
         public static readonly StaticType Int = new(StaticKind.Int);
+        /// <summary>`word`: the machine word of the target (SPEC 8.10) - unsigned, raw data without a unit.</summary>
+        public static readonly StaticType Word = new(StaticKind.Word, Unit: Unit.Unitless, Raw: true);
         public static readonly StaticType Float = new(StaticKind.Float);
         public static readonly StaticType Char = new(StaticKind.Char);
         public static readonly StaticType String = new(StaticKind.String);
@@ -244,7 +246,7 @@ namespace fire.Compiler
                 return;
             }
             // a float holds a float: a whole number (or a value not known here) is converted at runtime (`float f = 3` holds 3.0)
-            if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind == StaticKind.Int))
+            if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind is StaticKind.Int or StaticKind.Word))
                 _unitChecks[valueExpr] = "#any";
             // a number declared without a unit takes unitless numbers only: a value whose unit is not known here (or is another one) is checked at runtime
             if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: true } && !target.UnitIsDimension
@@ -294,6 +296,9 @@ namespace fire.Compiler
                 return value.Return == null || target.Return == null || target.Return.Kind == StaticKind.Undefined || Assignable(value.Return, target.Return);
             }
             if (value.Kind == StaticKind.Int && target.Kind == StaticKind.Float) return true;
+            // `word` (SPEC 8.10): an int goes into a word (cut to its width), a word into a float and into a `byte` (cut); a word into an `int` wants `w!int`
+            if (target.Kind == StaticKind.Word) return value.Kind is StaticKind.Int or StaticKind.Word;
+            if (value.Kind == StaticKind.Word) return target.Kind == StaticKind.Float || target.Kind == StaticKind.Int && target.Raw;
             if (target.Kind == StaticKind.Object) return value.Kind is StaticKind.Class or StaticKind.Object;   // `class` holds objects only
             if (value.Kind == StaticKind.Object) return target.Kind is StaticKind.Class;                          // (an object may be the class the code expects)
             if (value.Kind == StaticKind.Class && target.Kind == StaticKind.Class)
@@ -554,6 +559,7 @@ namespace fire.Compiler
             switch (name)
             {
                 case "int": case "byte": return StaticType.Int;
+                case "word": return StaticType.Word;
                 case "float": return StaticType.Float;
                 case "bool": return StaticType.Bool;
                 case "char": return StaticType.Char;
@@ -643,7 +649,7 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Undefined || !Assignable(value, target)) return;
             bool needed = target.Kind switch
             {
-                StaticKind.Int => value.Kind != StaticKind.Int,
+                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
@@ -659,7 +665,7 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Undefined || !Assignable(value, target)) return;
             bool needed = target.Kind switch
             {
-                StaticKind.Int => value.Kind != StaticKind.Int,
+                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
@@ -1197,7 +1203,7 @@ namespace fire.Compiler
                 case "char": return "k:char";
                 case "string": return "k:string";
                 case "class": return "k:class";
-                case "any": return "";
+                case "any": case "word": return "";   // (`word`: no overload by it - it takes what it gets, the store converts)
             }
             if (_enumNames.ContainsKey(t.BaseName)) return "k:int";
             bool Known(string n) => _classes.ContainsKey(n) || _interfaces.ContainsKey(n);
@@ -1436,6 +1442,8 @@ namespace fire.Compiler
                         }
                         return tc.TargetTypeKeyword switch
                         {
+                            TokenType.KwWord => StaticType.Word,
+                            TokenType.KwInt when tc.Unsigned => StaticType.Int.WithUnit(Unit.Unitless),   // (`!byte`: raw data, the unit is dropped)
                             TokenType.KwInt => StaticType.Int.WithUnit(operandUnit),
                             TokenType.KwFloat => StaticType.Float.WithUnit(operandUnit),
                             TokenType.KwBool => StaticType.Bool,
@@ -1474,9 +1482,9 @@ namespace fire.Compiler
             if (u.Op == UnaryOp.LogicalNot) CheckLogicalOperand(operand, "!", u.Line);
             return u.Op switch
             {
-                UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : StaticType.Dynamic,
+                UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Dynamic,
                 UnaryOp.LogicalNot => StaticType.Bool,
-                UnaryOp.BitNot => StaticType.Int,
+                UnaryOp.BitNot => operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Int,
                 UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take => operand,
                 _ => StaticType.Dynamic,
             };
@@ -1534,6 +1542,15 @@ namespace fire.Compiler
             if (b.Op is BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq && (left.Kind == StaticKind.Enum || right.Kind == StaticKind.Enum)) return StaticType.Bool;
             if (left.Kind == StaticKind.Enum) left = StaticType.Int;
             if (right.Kind == StaticKind.Enum) right = StaticType.Int;
+            // a word on one side (SPEC 8.10): an operation on words - with an int (or a word) a word, with a float a float (not `+` of a string)
+            if ((left.Kind == StaticKind.Word || right.Kind == StaticKind.Word) && b.Op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt
+                or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq) && left.Kind != StaticKind.String && right.Kind != StaticKind.String)
+            {
+                var other = left.Kind == StaticKind.Word ? right : left;
+                if (other.Kind is StaticKind.Int or StaticKind.Word) return StaticType.Word;
+                if (other.Kind == StaticKind.Float && b.Op is not (BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight)) return StaticType.Float;
+                return StaticType.Dynamic;
+            }
             switch (b.Op)
             {
                 case BinaryOp.And or BinaryOp.Or: return StaticType.Bool;

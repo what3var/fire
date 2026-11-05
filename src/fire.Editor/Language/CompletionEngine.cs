@@ -52,7 +52,7 @@ namespace fire.Editor
             "unit", "prefixed", "unprefixed", "coerce",
         };
 
-        private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte", "any" };
+        private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte", "word", "any" };
 
         public static string? GetCurrentKeyword(string source, int offset)
         {

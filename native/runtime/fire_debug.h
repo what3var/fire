@@ -766,6 +766,7 @@ static const char* dbgKindName(Value v) {
     switch (v.kind) {
         case K_Bool: return "bool";
         case K_Int: return "int";
+        case K_Word: return "word";
         case K_Float: return "float";
         case K_Char: return "char";
         case K_String: return "string";

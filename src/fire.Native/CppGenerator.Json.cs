@@ -86,7 +86,7 @@ namespace fire.Native
 
         private static readonly HashSet<string> JsonPlainTypes = new(StringComparer.Ordinal)
         {
-            "int", "float", "bool", "string", "char", "byte", "long", "short", "double", "buffer", "undefined",
+            "int", "float", "bool", "string", "char", "byte", "word", "long", "short", "double", "buffer", "undefined",
             "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float32", "float64",
         };
 

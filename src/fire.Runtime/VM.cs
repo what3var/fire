@@ -4168,8 +4168,15 @@ namespace fire.Runtime
                 {
                     int bits = ReadByte();
                     int flags = ReadByte();
-                    // implicit (an assignment to a declared width): only a number of the declared kind is cut
-                    if ((flags & 4) != 0 && Peek().Kind != ((flags & 1) != 0 ? ValueKind.Float : ValueKind.Int)) break;
+                    if ((flags & 8) != 0)
+                    {
+                        // `word` (SPEC 8.10): implicit - a store into a word - converts an int (and a word: nothing to do), `x!word` every number
+                        if ((flags & 4) != 0) { if (Peek().Kind == ValueKind.Int) _stack[_sp - 1] = Peek().ToWord(); break; }
+                        Push(CoerceTypeChecked(Pop(), ValueKind.Word));
+                        break;
+                    }
+                    // implicit (an assignment to a declared width): only a number of the declared kind is cut (a word counts as an int)
+                    if ((flags & 4) != 0 && Peek().Kind != ((flags & 1) != 0 ? ValueKind.Float : ValueKind.Int) && !((flags & 1) == 0 && Peek().Kind == ValueKind.Word)) break;
                     Push(CoerceWidthChecked(Pop(), bits, (flags & 1) != 0, (flags & 2) != 0));
                     break;
                 }
@@ -5553,7 +5560,7 @@ namespace fire.Runtime
         private bool ReadsDeadClass(Value v, string typeName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ObjectInstance? dead)
         {
             dead = v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)
-                && typeName is not ("bool" or "int" or "float" or "char" or "string" or "undefined" or "class") ? obj : null;
+                && typeName is not ("bool" or "int" or "float" or "char" or "word" or "string" or "undefined" or "class") ? obj : null;
             return dead != null;
         }
 
@@ -5568,6 +5575,7 @@ namespace fire.Runtime
                 case "int": return v.Kind == ValueKind.Int && !v.IsEnum;   // (an enum is not an int, like in C#)
                 case "float": return v.Kind == ValueKind.Float;
                 case "char": return v.Kind == ValueKind.Char;
+                case "word": return v.Kind == ValueKind.Word;
                 case "string": return v.Kind == ValueKind.String;
                 case "undefined": return v.Kind == ValueKind.Undefined;
                 case "class": return v.Kind == ValueKind.Class;

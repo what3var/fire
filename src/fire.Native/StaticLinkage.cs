@@ -215,7 +215,7 @@ namespace fire.Native
             sb.Append("fire-static ").Append(InterfaceFormat).Append(' ').Append(typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId).Append('\n');
             sb.Append("toolchain ").Append(toolchainStamp).Append('\n');
             sb.Append("target ").Append(target.Name).Append(' ').Append(JsonSerializer.Serialize(target.Native)).Append(' ').Append(target.FloatWidth).Append('\n');
-            sb.Append("mode ").Append(program.ExecutionMode).Append(" float ").Append(program.FloatWidth).Append(" int ").Append(program.IntWidth).Append(" sdl ").Append(sdl).Append('\n');
+            sb.Append("mode ").Append(program.ExecutionMode).Append(" float ").Append(program.FloatWidth).Append(" int ").Append(program.IntWidth).Append(" word ").Append(program.WordWidth).Append(" sdl ").Append(sdl).Append('\n');
             sb.Append("module ").Append(spec.Name).Append('\n');
             foreach (int s in spec.Sources.OrderBy(s => s)) sb.Append(" source ").Append(program.SourceTextHashes?[s]).Append('\n');
             foreach (var dep in spec.Deps) sb.Append(" needs ").Append(dep.Name).Append(' ').Append(abi[dep]).Append('\n');

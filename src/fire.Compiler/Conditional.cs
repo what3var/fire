@@ -9,7 +9,7 @@ namespace fire.Compiler
     /// Conditional compilation for the preprocessor (SPEC 8.1.6): `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#define`, `#undef`, `#error`.
     /// A line of a branch that is not taken is replaced by an empty line (line numbers stay), so what it contains - also `#import` and `#include` - is never read.
     /// The symbols are plain names (case-insensitive): the target (`windows`, `linux`, `macos`, `posix`, `esp32`, `freertos`), the engine (`vm`, `native`),
-    /// `float32`, `int32`, whatever `-D name` / `#define name` adds. An unknown name is false.
+    /// `float32`, `int32`, `word16`/`word32`/`word64`, whatever `-D name` / `#define name` adds. An unknown name is false.
     /// </summary>
     public static class ConditionalSymbols
     {
@@ -26,6 +26,7 @@ namespace fire.Compiler
             set.Add(string.IsNullOrWhiteSpace(engine) ? DefaultEngine : engine);
             if ((floatWidth ?? target.FloatWidth) == 32) set.Add("float32");
             if ((intWidth ?? target.IntWidth) == 32) set.Add("int32");
+            set.Add("word" + target.WordWidth);   // (the machine word of the target: word16, word32 or word64, SPEC 8.10)
             if (defines != null) foreach (var d in defines) if (!string.IsNullOrWhiteSpace(d)) set.Add(d.Trim());
             return set;
         }

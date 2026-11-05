@@ -22159,6 +22159,73 @@ else
             """),
     }).ToArray();
 
+    // `word` (SPEC 8.10): the machine word of the target, unsigned and without a unit - 64 bits here (the VM is the machine itself); the VM and natively the same
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Word: 64 Bit echt vorzeichenlos (Werte ueber 2^63: print, Vergleich, Division, Modulo, Schieben), Wrap, gemischt mit int und float, Umwandlungen", """
+            word m = -1
+            word h = 9223372036854775808
+            print(m + " " + h + " " + Word.Bits)
+            print((m + 1) + " " + (h + h) + " " + (h * 2 + 3) + " " + (h - 1) + " " + (0!word - 1))
+            print(m / 3 + " " + m % 10 + " " + h / 7 + " " + h % 1000 + " " + (m / h))
+            print((m >> 60) + " " + (m >> 64) + " " + (h >> 63) + " " + (h << 1) + " " + (m << 63) + " " + (1 << (63!word)))
+            print((m > h) + " " + (h > 5) + " " + (h < 1) + " " + (m == -1) + " " + (h != 0) + " " + (h >= h) + " " + (-1 < h) + " " + (h == 9223372036854775808))
+            print((h & 12345) + " " + (h | 1) + " " + (h # m) + " " + ~h + " " + -h + " " + -(1!word))
+            word p = 3
+            print((p ^ 40) + " " + (p ^ 41) + " " + (p ^ -1))
+            print(m!int + " " + h!int + " " + m!float + " " + h!float + " " + m!byte + " " + 300!word + " " + (-2)!word)
+            print(2.5!word + " " + 3.5!word + " " + (-1.0)!word + " " + 1e30!word + " " + 'A'!word + " " + undefined!word)
+            print((h + 0.5) + " " + (p * 1.5) + " " + (p < 3.5) + " " + (p == 3.0))
+            var x = h - 1
+            x++
+            x += 5
+            print(x + " " + (x is of word) + " " + (5 is of word))
+            var n = 0
+            for (word i = m - 2; i != 0; i++) { n++ }
+            print(n)
+            print($"{m:X} {h:x} {p:D4} {p:B4} {h:F1}")
+            try { print(m / 0) } catch (DivideByZeroException e) { print("D: " + e.message) }
+            try { print(m % (0!word)) } catch (DivideByZeroException e) { print("D: " + e.message) }
+            try { any u = 5m
+             print(m + u) } catch (UnitMismatchException e) { print("U") }
+            try { any s = true
+             print(m - s) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { any t = 2.5
+             print(m & t) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { any o = [1]
+             print(o!word) } catch (ArgumentException e) { print("A: " + e.message) }
+            float f = h
+            byte b = m
+            int[16] s16 = m!int
+            any dyn = m
+            print(f + " " + b + " " + s16 + " " + (dyn + 1) + " " + ("w" + m))
+            """),
+        ("Word: Felder, Parameter, Rueckgabe, static, Json, Dictionary-Schluessel; word w = 5m ist zur Laufzeit ohne Einheit", """
+            #import "json"
+            class C { word w
+             static word count
+             static word Twice(word x) { return x * 2 }
+             static float Half(float v) { return v / 2 } }
+            var c = new C()
+            c.w = -1
+            print(c.w + " " + C.Twice(9223372036854775809) + " " + C.Twice(3) + " " + C.Half(c.w))
+            c.w = 7
+            C.count = c.w + 1
+            print(c.w + 1 + " " + C.count)
+            any wm = 5m
+            word u = wm
+            c.w = wm
+            print(u + " " + c.w + " " + (u + 1))
+            print(Json.Serialize(c))
+            var back = Json.Deserialize<C>("{\"w\":18446744073709551615}")
+            print(back.w + " " + (back.w == -1) + " " + (back.w is of word))
+            var d = new Dictionary<any, string>()
+            d[5!word] = "five"
+            d[18446744073709551615!word] = "max"
+            print(d[5!word] + " " + d[-1!word] + " " + d.ContainsKey(6!word))
+            """),
+    }).ToArray();
+
     // Compression (#import "compression", docs/COMPRESSION.md): the same bytes in the VM and natively (the Deflate is the package's own C)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
@@ -26477,6 +26544,45 @@ else
                 && intLinked.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Int && c.AsInt() == -1294967296)
                 && fire.Native.CppGenerator.Generate(intLinked, TargetProfile.Host).Contains("#define FIRE_INT32 1"));
             Value.SingleFloats = false; Value.Ints32 = false;
+
+            // `word` (SPEC 8.10): the target's machine word - 64 bits on the desktop, 32 on the esp32 (the VM follows the target of the build), `wordWidth` in a target
+            {
+                var hostWord = new Linker().CompileAndLink(new[] { "print(Word.Bits)" });
+                var espWord = new Linker().CompileAndLink(new[] { "#if word32\nprint(Word.Bits)\n#endif" }, null, null, null, null, TargetProfile.Esp32);
+                CheckNat("word: 64 Bit auf dem Rechner, 32 auf esp32/freertos/wasm; #if word32/word64, FIRE_WORD_BITS im C", hostWord.WordWidth == 64 && espWord.WordWidth == 32
+                    && TargetProfile.FreeRtos.WordWidth == 32 && TargetProfile.Wasm.WordWidth == 32 && TargetProfile.Linux.WordWidth == 64
+                    && fire.Native.CppGenerator.Generate(espWord, TargetProfile.Esp32).Contains("#define FIRE_WORD_BITS 32")
+                    && fire.Native.CppGenerator.Generate(hostWord, TargetProfile.Host).Contains("#define FIRE_WORD_BITS 64")
+                    && fire.Compiler.ConditionalSymbols.For(TargetProfile.Esp32).Contains("word32") && fire.Compiler.ConditionalSymbols.For(TargetProfile.Linux).Contains("word64"));
+                var wordConfig = fire.Native.NativeConfig.Parse("""{ "targets": { "avr": { "extends": "freertos", "wordWidth": 16 } } }""");
+                bool badRejected = false;
+                try { fire.Native.NativeConfig.Parse("""{ "targets": { "x": { "extends": "linux", "wordWidth": 8 } } }""").ResolveTarget("x"); }
+                catch (fire.Native.NativeConfigException) { badRejected = true; }
+                CheckNat("word: wordWidth in fire.native.json (16), 8 wird abgelehnt", wordConfig.ResolveTarget("avr").WordWidth == 16 && badRejected);
+                const string word32Source = """
+                    word m = -1
+                    word a = 4000000000
+                    print(m + " " + Word.Bits + " " + (m + 1) + " " + (a + a) + " " + a * 3 + " " + (m >> 31) + " " + (m << 31) + " " + (m << 32))
+                    print((a * 2) / 7 + " " + (a > 5) + " " + (m == -1) + " " + m!int + " " + (-a) + " " + ~a + " " + 5000000000!word)
+                    #if word32
+                    print("word32")
+                    #endif
+                    """;
+                var vmLines = new List<string>();
+                var espSession = fire.Runtime.Session.Build(new Linker().CompileAndLink(new[] { word32Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Esp32), VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+                espSession.Run();
+                Value.WordBits = 64;
+                string vm32 = string.Concat(vmLines.Select(l => l + "\n"));
+                var target32 = TargetProfile.Host with { WordWidth = 32 };
+                var generated32 = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { word32Source }, null, null, VmExecutionMode.Release, null, target32), target32);
+                Value.WordBits = 64;
+                string exe32 = Path.Combine(workDir, "word32.bin");
+                string build32 = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated32, workDir, "word32", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe32, out int build32Exit);
+                string nat32 = build32Exit == 0 && !build32.Contains("warning:") ? RunProc(exe32, "", workDir, out _) : "C-Compiler: " + build32;
+                CheckNat("word: 32 Bit (esp32 in der VM, ein Ziel mit wordWidth 32 nativ) rechnet mit 32 Bit: Wrap, Schieben, vorzeichenlos, wie die VM",
+                    vm32 == "4294967295 32 0 3705032704 3410065408 1 2147483648 0\n529290386 True True 4294967295 294967296 294967295 705032704\nword32\n" && nat32 == vm32,
+                    $"  VM (esp32):\n{vm32}\n  nativ:\n{nat32}");
+            }
 
             // a value of 8 bytes (FIRE_COMPACT: int32, float32, 32-bit pointers): the same program as a 32-bit build, when the compiler can make one
             string probe = Path.Combine(workDir, "m32probe.c");

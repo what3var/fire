@@ -201,7 +201,7 @@ namespace fire.Bytecode
         // `x!Type` with a class or interface: the same value, checked (`undefined` passes, anything that is not `is of Type` is an ArgumentException)
         CastTo,              // u16 typeNameIdx      : peek v; error unless v is undefined or `is of` Typname
         // `x!int[8]`, `x!byte`, `x!float[32]`: the number cut to a bit width (int: two's complement, `byte` unsigned 0..255; float: rounded to float32)
-        ConvertWidth,        // u8 bits, u8 flags    : pop v; push it converted (flags: 1 = float, 2 = unsigned)
+        ConvertWidth,        // u8 bits, u8 flags    : pop v; push it converted (flags: 1 = float, 2 = unsigned, 4 = implicit: only a number of the declared kind, 8 = a machine word `word`: bits 0, the width is the target's)
         RebindLambda,        //                      : pop target, pop lambda; push a new lambda with `target` as `this` (`a on obj`)
         // The end of the prologue of a method: a parameter declared `int`/`float`/`bool` holds a value of that kind or `undefined` (a whole number
         // becomes a float for a `float`), anything else is an ArgumentException (DeclaredKind). The unit has been checked before (CheckUnit):

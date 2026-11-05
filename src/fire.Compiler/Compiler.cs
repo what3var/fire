@@ -674,7 +674,7 @@ namespace fire.Compiler
             if (type.TypeArgs == null && owner?.TypeParams is { } typeParams && typeParams.ToList().FindIndex(tp => tp.Name == b) is var k and >= 0) return "$" + k + arrays;
             switch (b)
             {
-                case "int": case "float": case "bool": case "char": case "string": case "byte": case "class":
+                case "int": case "float": case "bool": case "char": case "string": case "byte": case "word": case "class":
                 case "int8": case "int16": case "int32": case "int64": case "uint8": case "uint16": case "uint32": case "uint64": case "float32": case "float64":
                     return b + arrays;
                 case "any": return arrays.Length > 0 ? "any" + arrays : "";
@@ -1312,6 +1312,13 @@ namespace fire.Compiler
                 return;
             }
             target._chunk.EmitOp(OpCode.ConvertWidth);
+            if (widthCode == TypeRef.WordWidthCode)
+            {
+                // `word`: into a machine word (flag 8; the width is the target's, the VM's Value.WordBits / FIRE_WORD_BITS)
+                target._chunk.EmitByte(0);
+                target._chunk.EmitByte(8 | 4);
+                return;
+            }
             target._chunk.EmitByte((byte)(widthCode & 0xFF));
             target._chunk.EmitByte((byte)(((widthCode & 0x100) != 0 ? 1 : 0) | ((widthCode & 0x200) != 0 ? 2 : 0) | 4));
         }
@@ -1488,7 +1495,7 @@ namespace fire.Compiler
                 case "char": return "k:char";
                 case "string": return "k:string";
                 case "class": return "k:class";
-                case "any": return "";
+                case "any": case "word": return "";   // (`word`: no overload by it - it takes what it gets, the store converts)
             }
             if (_refParams.EnumNames.Contains(t.BaseName)) return "k:int";
             if (_knownClassNames == null) return "";
@@ -2469,6 +2476,14 @@ namespace fire.Compiler
                     CompileExpr(cast.Operand);
                     _chunk.EmitOp(OpCode.CastTo);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(cast.TargetClass))));
+                    break;
+
+                case TypeCoerceExpr { TargetTypeKeyword: TokenType.KwWord } wordCast:
+                    // `x!word`: the value as a machine word (SPEC 8.10)
+                    CompileExpr(wordCast.Operand);
+                    _chunk.EmitOp(OpCode.ConvertWidth);
+                    _chunk.EmitByte(0);
+                    _chunk.EmitByte(8);
                     break;
 
                 case TypeCoerceExpr { Width: > 0 } widthCast:
@@ -3828,7 +3843,7 @@ namespace fire.Compiler
                     if (uc.Relabel) relabelAuto = true;
                     current = uc.Operand;
                 }
-                else if (current is TypeCoerceExpr { TargetClass: null, Width: 0 } tc)
+                else if (current is TypeCoerceExpr { TargetClass: null, Width: 0, TargetTypeKeyword: not TokenType.KwWord } tc)
                 {
                     wantsType = true;
                     explicitType = tc.TargetTypeKeyword;

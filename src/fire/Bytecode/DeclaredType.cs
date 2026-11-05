@@ -183,6 +183,7 @@ namespace fire.Bytecode
                 case "float": return value.Kind == ValueKind.Float;
                 case "bool": return value.Kind == ValueKind.Bool;
                 case "char": return value.Kind == ValueKind.Char;
+                case "word": return value.Kind == ValueKind.Word;
                 case "string": return value.Kind == ValueKind.String;
                 case "class": case "Exception": return value.Kind == ValueKind.Class;
             }
