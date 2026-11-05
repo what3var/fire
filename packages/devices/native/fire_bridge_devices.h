@@ -764,12 +764,11 @@ static Value fire_devices_WriteString(Value handle, Value text) {
 }
 static Value fire_devices_Write(Value handle, Value buffer) {
     FireDevbSlot* s;
-    Buf* b;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    FireBytes b;
+    if (!bytesArg(buffer, "Device.Write", &b)) return Undef();
     s = fire_devb_resolve(handle);
     if (!s) return Bool(false);
-    b = bufOf(buffer);
-    return Bool(fire_devb_write(s->device, b->data, b->length));
+    return Bool(fire_devb_write(s->device, b.data, b.length));
 }
 
 #ifndef FIRE_LIBRARY
@@ -798,12 +797,11 @@ static Value fire_devices_WaitForString(Value handle, Value text, Value timeout)
 }
 static Value fire_devices_WaitFor(Value handle, Value buffer, Value timeout) {
     FireDevbBytes pattern;
-    Buf* b;
+    FireBytes b;
     Value result;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    b = bufOf(buffer);
+    if (!bytesArg(buffer, "Device.WaitFor", &b)) return Undef();
     /* (a copy: the buffer of the program may change while the wait serves the other threads) */
-    if (!fire_devb_bytesOf(&pattern, b->data, b->length)) return Int(0);
+    if (!fire_devb_bytesOf(&pattern, b.data, b.length)) return Int(0);
     result = fire_devb_waitFor(handle, pattern.data, pattern.n, timeout);
     free(pattern.data);
     return result;
@@ -814,12 +812,11 @@ static Value fire_devices_WaitFor(Value handle, Value buffer, Value timeout) {
  * `pattern` if it is there. 1: found, 0: not yet, 2: not there and the device is disconnected (nothing more will come). */
 static Value fire_devices_WaitStep(Value handle, Value buffer) {
     FireDevbSlot* s;
-    Buf* b;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    FireBytes b;
+    if (!bytesArg(buffer, "Device.WaitFor", &b)) return Undef();
     s = fire_devb_resolve(handle);
     if (!s) return Int(2);
-    b = bufOf(buffer);
-    if (fire_devb_consumeThrough(&s->buffer, b->data, b->length)) return Int(1);
+    if (fire_devb_consumeThrough(&s->buffer, b.data, b.length)) return Int(1);
     return Int(fire_devb_connected(s->device) ? 0 : 2);
 }
 

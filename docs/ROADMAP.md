@@ -437,9 +437,16 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Später, wenn eine Messung es zeigt: einen Kasten mit Zähler 1 bei `p + 1` weiterschieben statt einen neuen zu holen.
 2. **Rohdaten ohne Einheit: `byte` und `word`** (Entscheidung des Benutzers). `byte` und `word` sind Datentypen für rohe Daten **ohne Einheit**; Einheiten
    bleiben bei `int`, `int[N]`, `float` und `float[N]` (dort ändert sich nichts). Ab hier unterscheiden sich die beiden Formate.
-   * **Vorher (in Arbeit):** Byte-Argumente der Natives sicher - lesende Natives nehmen einen Puffer, ein `byte`-Array oder ein Array aus Zahlen 0..255 (kopiert),
-     füllende verlangen einen Puffer, alles andere ist eine `ArgumentException` statt eines Absturzes (VM und nativ: `bufOf` prüfte die Art nicht).
-     `byte x[] = [...]` und `byte x[n]` (auch Felder, Globals) deklarieren einen **Puffer**.
+   * **Umgesetzt:** Byte-Argumente der Natives sicher - lesende Natives nehmen einen Puffer oder ein Array aus Zahlen 0..255 (auch ein typisiertes; kopiert, bis der
+     aufrufende Scope endet), füllende verlangen einen Puffer, alles andere ist eine `ArgumentException` statt eines Absturzes (VM und nativ: `bufOf` prüfte die Art
+     nicht) - `bytesArg`/`bufferArg` in fire_rt.h (docs/PACKAGE_NATIVES.md), alle Bridges umgestellt. `byte x[] = [...]` und `byte x[n]` (auch Felder, statische
+     Felder, Globals; mehrdimensional: die inneren) deklarieren einen **Puffer** (SPEC 8.4.2): ein zugewiesenes Array wird ein neuer Puffer (int auf 8 Bit
+     gekürzt, `undefined` 0); ein Pufferelement ist nie `undefined`, ein Nicht-int dort ist eine `ArgumentException` (vorher ein Laufzeitfehler).
+     **Offen:** ein Objekt (oder ein Lambda) als Byte-Argument ist in der VM weiter der Fehler der Paket-Grenze ("only numbers, bool, char, text, ... can be passed",
+     PackageNativeBinding) statt der `ArgumentException` von `bytesArg` - nativ ist es die `ArgumentException`; meist scheitert der Prelude-Code vorher (`data.length`).
+     Die Bibliothek eines Pakets für die VM wird nur neu gebaut, wenn sich seine Quellen ändern, nicht bei einer Änderung von fire_rt.h allein (PackageLibrary.NewestSource).
+     Für `word`-Puffer (unten): ein Puffer mit einer Elementbreite (`Buf`/`ByteBuffer` heute nur Bytes), `bufFromArray`/`BufferFromArrayValue` mit der Breite,
+     `bytesArg` mit einer Variante für Wörter.
    * **`word`** = das Maschinenwort des **Ziels**, vorzeichenlos: 16 Bit (AVR, DOS Real Mode, Win16), 32 Bit (ESP32, Cortex-M, RISC-V 32, wasm, DPMI, Win9x),
      64 Bit (x86-64, ARM64) - `wordWidth` in der Konfiguration des Ziels, `#if word16|word32|word64`, `Word.Bits`. Die VM folgt dem Ziel des Baus
      (`forge run`: der Rechner selbst). Mit 64 Bit **echt vorzeichenlos** (die VM behält die Bits; Ausgabe, Vergleich, Division, Schieben vorzeichenlos).

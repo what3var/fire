@@ -233,8 +233,21 @@ static FireUsbbDevice* fire_usbb_find(Value h) {
     fire_usbb_error(FIRE_USB_E_INVALID_HANDLE, "Invalid or already closed USB device handle.");
     return NULL;
 }
-static int fire_usbb_checkRange(Value bufferValue, int64_t offset, int64_t count) {
-    int64_t length = bufOf(bufferValue)->length;
+/* The bytes of a transfer: of a byte buffer that is filled (`in`: bufferArg - an array is an ArgumentException), or of everything that is bytes that are sent
+ * (bytesArg: also an array of bytes, copied for the call; the copy is writable memory, but nothing writes into what is sent). NULL: the exception is thrown. */
+static uint8_t* fire_usbb_bytes(Value buffer, int in, const char* what, int64_t* length) {
+    FireBytes b;
+    if (in) {
+        Buf* buf = bufferArg(buffer, what);
+        if (buf == NULL) return NULL;
+        *length = buf->length;
+        return buf->data;
+    }
+    if (!bytesArg(buffer, what, &b)) return NULL;
+    *length = b.length;
+    return (uint8_t*)(uintptr_t)b.data;
+}
+static int fire_usbb_checkRange(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         char text[176];
         snprintf(text, sizeof text, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
@@ -368,13 +381,14 @@ static Value fire_usb_Control(Value h, Value requestType, Value request, Value v
     FireUsbbDevice* d;
     FireUsbStatus st;
     uint8_t* data;
+    int64_t size = 0;
     int done = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_usbb_checkRange(buffer, offset.i, length.i)) return Int(-1);
+    if ((data = fire_usbb_bytes(buffer, (requestType.i & 0x80) != 0, "Usb.Device.Control", &size)) == NULL) return Undef();
+    if (!fire_usbb_checkRange(size, offset.i, length.i)) return Int(-1);
     if (length.i > 65535) return Int(fire_usbb_error(FIRE_USB_E_INVALID_ARGUMENT, "A control transfer moves at most 65535 bytes."));
     d = fire_usbb_find(h);
     if (!d) return Int(-1);
-    data = bufOf(buffer)->data + offset.i;
+    data += offset.i;
     if (d->isSim) {
         int n = fire_usbb_simControl((int)requestType.i, (int)request.i, (int)value.i, data, (int)length.i);
         if (n < 0) return Int(-1);
@@ -392,13 +406,14 @@ static Value fire_usb_Transfer(Value h, Value type, Value endpoint, Value buffer
     FireUsbbDevice* d;
     FireUsbStatus st;
     uint8_t* data;
+    int64_t size = 0;
     int done = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_usbb_checkRange(buffer, offset.i, length.i)) return Int(-1);
+    if ((data = fire_usbb_bytes(buffer, (endpoint.i & 0x80) != 0, "Usb.Device.Transfer", &size)) == NULL) return Undef();
+    if (!fire_usbb_checkRange(size, offset.i, length.i)) return Int(-1);
     if (type.i != 2 && type.i != 3) return Int(fire_usbb_error(FIRE_USB_E_INVALID_ARGUMENT, "The transfer type is 2 (bulk) or 3 (interrupt)."));
     d = fire_usbb_find(h);
     if (!d) return Int(-1);
-    data = bufOf(buffer)->data + offset.i;
+    data += offset.i;
     if (d->isSim) {
         int n = fire_usbb_simTransfer((int)type.i, (int)endpoint.i, data, (int)length.i);
         if (n < 0) return Int(-1);

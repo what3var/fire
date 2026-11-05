@@ -1156,7 +1156,7 @@ namespace fire.Compiler
                 if (line > 0) inner._chunk.MarkLine(inner.CurrentSourceIndex, line);
                 // (it belongs to the object - [this] -> [this, array] -> [array], as for `int data[] = new int[16]`; a static field's to the program)
                 if (!isStatic) inner._chunk.EmitOp(OpCode.LoadThis);
-                inner.CompileArrayAlloc(arrayRanks, 0);
+                inner.CompileArrayAlloc(arrayRanks, 0, IsByteBuffer(type, arrayRanks.Count));
                 if (!isStatic) inner._chunk.EmitOp(OpCode.OwnValue);
             }
             else inner.EmitLoadConst(Value.MakeUndefined());
@@ -1295,6 +1295,10 @@ namespace fire.Compiler
         /// still needs the value afterwards or pops it.</summary>
         /// <summary>A variable, parameter or field declared with a bit width (`int[8]`, `byte`, `float[32]`, see TypeRef.WidthCode): the value on top of
         /// the stack is cut to it (SPEC 8.2). Implicit (flag 4): only a number of the declared kind is cut, every other value stays as it is.</summary>
+        /// <summary>A declaration with the element type `byte` and array brackets (`byte data[]`, `byte data[16]`): it holds a byte buffer, not a typed array
+        /// (SPEC 8.4.2) - the array stored in it becomes a buffer (OpCode.TypeArray with ArrayElem.U8, VM.BufferFromArrayValue / fire_rt.h bufFromArray).</summary>
+        private static bool IsByteBuffer(TypeRef? type, int rank) => ((type?.ArrayWidthCode(rank) ?? 0) & 0x100FF) == (0x10000 | fire.Values.ArrayElem.U8);
+
         private static void EmitWidthIfNeeded(Compiler target, int widthCode, string? unit = null)
         {
             if (widthCode == 0) return;
@@ -1657,7 +1661,7 @@ namespace fire.Compiler
                         // size (e.g. `int arr[3][]`) ends the recursion -
                         // from there on the slots stay 'undefined', as before with
                         // a completely undetermined-size declarator.
-                        CompileArrayAlloc(vd.ArrayRanks, 0);
+                        CompileArrayAlloc(vd.ArrayRanks, 0, IsByteBuffer(vd.Type, vd.ArrayRanks.Count));
                     else
                         EmitLoadConst(Value.MakeUndefined());
 
@@ -2218,8 +2222,15 @@ namespace fire.Compiler
         /// (unlike class instances) on the ownership system, `Release()`
         /// at `ExitScope` therefore only concerns the temporary slots themselves,
         /// not the array VALUE that they had just pointed to.</summary>
-        private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex)
+        private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex, bool byteBuffer = false)
         {
+            // `byte data[16]` is `new byte[16]`: a `byte` declaration holds a byte buffer (SPEC 8.4.2; several dimensions: TypeArray converts the inner arrays)
+            if (byteBuffer && ranks.Count == 1 && rankIndex == 0 && ranks[0] != null)
+            {
+                CompileExpr(ranks[0]!);
+                _chunk.EmitOp(OpCode.MakeBuffer);
+                return;
+            }
             // All ranks with a size (up to the first one without): every size is evaluated ONCE, NewJagged creates the whole structure.
             // The inner arrays belong to the outer one (SPEC 2.5) - they live and die with it.
             int sized = 0;

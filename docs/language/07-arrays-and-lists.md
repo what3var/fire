@@ -259,6 +259,47 @@ print(text.ToString())      // Hi
 | `littleEndian` | the byte order of the buffer |
 | `ToLittleEndian()`, `ToBigEndian()` | a copy in that byte order (the whole buffer is reversed if needed) |
 
+### `byte` declarations are buffers
+
+A variable, a field or a global declared with the element type `byte` holds a byte buffer, not an array:
+
+```fire
+byte header[4]              // the same as new byte[4]: four zeros
+byte magic[] = [0x89, 80, 78, 71]
+print(magic)                // <buffer 4 bytes>
+print(magic.length)         // 4
+print(magic[1])             // 80
+foreach (b in header) { print(b) }
+var numbers = [1, 2, 300]
+magic = numbers             // a new buffer with the elements: 1, 2, 44 (numbers stays an array)
+class Packet {
+    byte data[16]           // made with the object
+    byte extra[]            // undefined until something is assigned
+}
+```
+
+- An array stored in a `byte` declaration (the initializer, a later assignment) becomes a **new buffer** with its elements: an `int` is cut to
+  8 bits (`300` becomes 44), `undefined` becomes 0, anything else is an `ArgumentException`. `byte grid[3][4]` is an array of three buffers.
+- An element of a buffer is always an `int` from 0 to 255: it is never `undefined`, and assigning something else (`magic[0] = "a"`,
+  `magic[0] = undefined`) is an `ArgumentException`.
+- `length`, `[i]`, `foreach`, `copy`/`flat` and `is of IEnumerable` work as for arrays; `print` shows `<buffer n bytes>`, JSON writes a buffer as
+  base64 text.
+- A parameter `byte data[]` takes what it is given (an array stays an array).
+
+### Bytes for functions of the packages
+
+The functions of the packages that **read** bytes - writing a file (`IO.File.WriteAllBytes`), a stream or a socket, hashing, compressing,
+sending to a device - take a buffer and also a plain array of ints from 0 to 255:
+
+```fire
+#import "filesystem"
+IO.File.WriteAllBytes("out.bin", [0x46, 0x49, 0x52, 0x45])
+```
+
+A function that **fills** the buffer you give it (`stream.Read(buffer, 0, n)`, receiving) needs a real buffer (`new byte[n]` or a `byte`
+declaration): an array there is an `ArgumentException` ("... expects a byte buffer (new byte[n]), not an array."), so is an element outside
+0 .. 255 or a value that is no bytes at all (a string, an object).
+
 ## Exercises
 
 1. Fill an array with the first 10 square numbers and print them backwards.

@@ -277,21 +277,20 @@ static Value fire_gfx_FbToPng(Value id, OwnList* list) {
 }
 static Value fire_gfx_FbWriteBytes(Value id, Value data) {
     FireGfxFramebuffer* fb;
-    Buf* b;
+    FireBytes b;
     size_t expected, i, count;
     const uint8_t* bytes;
-    if (!leafAlive(data)) return destroyedError(data);
+    if (!bytesArg(data, "Framebuffer.WriteBytes", &b)) return Undef();
     fire_gfxb_clearError();
     fb = fire_gfxb_fbOf(id);
-    b = bufOf(data);
     expected = fire_gfx_fbByteCount(fb);
-    if (b->length != expected) {
+    if (b.length != expected) {
         char text[128];
-        snprintf(text, sizeof text, "Expected exactly %llu bytes, got %lu.", (unsigned long long)expected, (unsigned long)b->length);
+        snprintf(text, sizeof text, "Expected exactly %llu bytes, got %lu.", (unsigned long long)expected, (unsigned long)b.length);
         fire_gfxb_setError(text);
         return Bool(false);
     }
-    bytes = bufBytes(b);
+    bytes = b.data;
     fire_gfx_fbCpu(fb, 1);
     if (fb->indices) { if (expected) memcpy(fb->indices, bytes, expected); }
     else for (i = 0, count = fire_gfx_fbPixelCount(fb); i < count; i++)
@@ -349,12 +348,11 @@ static int fire_gfxb_writePalette(FireGfxFramebuffer* fb, const uint8_t* data, s
 }
 static Value fire_gfx_FbWritePalette(Value id, Value data) {
     FireGfxFramebuffer* fb;
-    Buf* b;
-    if (!leafAlive(data)) return destroyedError(data);
+    FireBytes b;
+    if (!bytesArg(data, "Framebuffer.WritePalette", &b)) return Undef();
     fire_gfxb_clearError();
     fb = fire_gfxb_fbOf(id);
-    b = bufOf(data);
-    return Bool(fire_gfxb_writePalette(fb, bufBytes(b), b->length) != 0);
+    return Bool(fire_gfxb_writePalette(fb, b.data, b.length) != 0);
 }
 
 /* A new framebuffer from decoded image data: the id, or -1 with the message in LastError. */
@@ -371,11 +369,10 @@ static Value fire_gfxb_fromImage(const uint8_t* data, size_t n, int mode) {
     return Int(fire_gfxb_addFramebuffer(fb));
 }
 static Value fire_gfx_FbLoadImage(Value data, Value mode) {
-    Buf* b;
-    if (!leafAlive(data)) return destroyedError(data);
+    FireBytes b;
+    if (!bytesArg(data, "Framebuffer.FromImage", &b)) return Undef();
     fire_gfxb_clearError();
-    b = bufOf(data);
-    return fire_gfxb_fromImage(bufBytes(b), b->length, mode.i < 0 ? -1 : fire_gfxb_I(mode));
+    return fire_gfxb_fromImage(b.data, b.length, mode.i < 0 ? -1 : fire_gfxb_I(mode));
 }
 static Value fire_gfx_FbLoadFile(Value path, Value mode) {
     const Str* s;
@@ -453,10 +450,12 @@ static Value fire_gfx_FbLoadFile(Value path, Value mode) {
 static Value fire_gfx_FbFromPixels(Value w, Value h, Value pixels, Value mode, Value palette) {
     int width, height, m;
     FireGfxFramebuffer* fb;
-    Buf* b;
+    FireBytes b, pb;
     size_t expected, i, count;
     const uint8_t* bytes;
-    if (!leafAlive(pixels)) return destroyedError(pixels);
+    /* (both are taken before the framebuffer is made: an exception does not come back here in the library for the VM) */
+    if (!bytesArg(pixels, "Framebuffer.FromPixels", &b)) return Undef();
+    if ((palette.kind == K_Buffer || palette.kind == K_Array) && !bytesArg(palette, "Framebuffer.FromPixels", &pb)) return Undef();
     fire_gfxb_clearError();
     width = fire_gfxb_I(w); height = fire_gfxb_I(h); m = fire_gfxb_I(mode);
     fb = fire_gfx_fbNew();
@@ -464,25 +463,21 @@ static Value fire_gfx_FbFromPixels(Value w, Value h, Value pixels, Value mode, V
     if (width <= 0 || height <= 0) { fire_gfx_fbDelete(fb); fire_gfxb_setError("The framebuffer size must be positive. (Parameter 'width')"); return Int(-1); }
     if (m != FIRE_GFX_RGBA && m != FIRE_GFX_INDEXED) { fire_gfx_fbDelete(fb); fire_gfxb_setError("Unknown color mode. (Parameter 'mode')"); return Int(-1); }
     if (!fire_gfx_fbCreate(fb, width, height, m)) { fire_gfx_fbDelete(fb); fire_gfxb_setError("Not enough memory for the image."); return Int(-1); }
-    b = bufOf(pixels);
     expected = fire_gfx_fbByteCount(fb);
-    if (b->length != expected) {
+    if (b.length != expected) {
         char text[256];
         fire_gfx_fbDelete(fb);
         snprintf(text, sizeof text, "Expected exactly %llu bytes (%dx%d, %s per pixel), got %lu. (Parameter 'pixels')",
-                 (unsigned long long)expected, width, height, m == FIRE_GFX_INDEXED ? "1 byte" : "4 bytes", (unsigned long)b->length);
+                 (unsigned long long)expected, width, height, m == FIRE_GFX_INDEXED ? "1 byte" : "4 bytes", (unsigned long)b.length);
         fire_gfxb_setError(text);
         return Int(-1);
     }
-    bytes = bufBytes(b);
+    bytes = b.data;
     if (fb->indices) memcpy(fb->indices, bytes, expected);
     else for (i = 0, count = fire_gfx_fbPixelCount(fb); i < count; i++)
         fb->pixels[i] = bytes[i * 4] | ((uint32_t)bytes[i * 4 + 1] << 8) | ((uint32_t)bytes[i * 4 + 2] << 16) | ((uint32_t)bytes[i * 4 + 3] << 24);
-    if (palette.kind == K_Buffer) {
-        Buf* pb;
-        if (!leafAlive(palette)) { fire_gfx_fbDelete(fb); return destroyedError(palette); }
-        pb = bufOf(palette);
-        if (!fire_gfxb_writePalette(fb, bufBytes(pb), pb->length)) {
+    if (palette.kind == K_Buffer || palette.kind == K_Array) {
+        if (!fire_gfxb_writePalette(fb, pb.data, pb.length)) {
             char text[sizeof g_gfxError.message + 32];
             fire_gfx_fbDelete(fb);
             g_gfxError.message[sizeof g_gfxError.message - 1] = 0;
@@ -832,19 +827,17 @@ static FireGfxTextFont* fire_gfxb_fontOf(Value id) {
     return f;
 }
 static Value fire_gfx_FntLoad(Value data) {
-    Buf* b;
-    if (!leafAlive(data)) return destroyedError(data);
-    b = bufOf(data);
-    return Int(fire_gfx_fontTableLoad(&fire_gfxb_tables()->fonts, bufBytes(b), b->length));
+    FireBytes b;
+    if (!bytesArg(data, "Font.Load", &b)) return Undef();
+    return Int(fire_gfx_fontTableLoad(&fire_gfxb_tables()->fonts, b.data, b.length));
 }
 static Value fire_gfx_FntAdd(Value data, Value alias) {
-    Buf* b;
+    FireBytes b;
     char* name;
     int id;
-    if (!leafAlive(data)) return destroyedError(data);
-    b = bufOf(data);
+    if (!bytesArg(data, "Font.Add", &b)) return Undef();
     name = fire_gfxb_utf8Of(alias);
-    id = fire_gfx_fontTableAdd(&fire_gfxb_tables()->fonts, bufBytes(b), b->length, name);
+    id = fire_gfx_fontTableAdd(&fire_gfxb_tables()->fonts, b.data, b.length, name);
     free(name);
     return Int(id);
 }

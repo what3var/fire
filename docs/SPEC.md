@@ -1763,12 +1763,12 @@ int[8] samples[256]          // only ints, cut to 8 bits like an int[8] variable
 float[32] coeffs[] = [1, 2.5] // floats, rounded to 32 bits; the int 1 becomes 1.0
 bool flags[8]
 char text[16]
-byte raw[64]                 // 0..255
 float:cm sizes[] = [1cm, 2m] // the elements are converted into cm
+byte raw[64]                 // NOT a typed array: a byte buffer (new byte[64]), see below
 ```
 
 An array stored in a variable or a field declared with the element type `int`, `int[8|16|32|64]`, `float`,
-`float[8|16|32|64]`, `bool`, `char` or `byte` becomes a **typed array**: the array itself knows its element type, so
+`float[8|16|32|64]`, `bool` or `char` becomes a **typed array**: the array itself knows its element type, so
 every write through any reference to it (`var d = a; d[0] = 300`, `ref a[i]`, `a[i]++`) keeps it:
 
 * an `int` element is cut to the width (two's complement, `byte`: 0..255), a `float` element is rounded to it, an
@@ -1786,10 +1786,35 @@ Parameters do not type what they receive. A copy (`copy`, `flat`, `taking`, `syn
 Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, strings, classes and pointers
 declare no element type - such an array takes any value, as before.
 
+**`byte` declarations hold byte buffers** (8.10), not typed arrays: `byte x[16]` (variable, field, static field, global) is
+`new byte[16]` (16 zeros), and an array stored in a `byte` declaration - the initializer (`byte x[] = [1, 2, 3]`), a later
+assignment to the variable or field (`x = [4, 5]`, `obj.data = list.ToArray()`) - is replaced by a **new buffer with its
+elements** (a copy: the array itself stays an array; `var p = [1]; byte x[] = p` makes `x` a buffer and leaves `p` alone).
+An `int` element is cut to 8 bits (`300` becomes 44, as `buffer[i] = 300` does), `undefined` becomes 0, any other value is
+an `ArgumentException` (`An element of a byte buffer must be an int, not String.`). A buffer stored there stays as it is.
+Multidimensional `byte` declarations (`byte m[3][4]`, `byte m[][] = [[1], [2, 3]]`) make the innermost arrays buffers (an
+array of buffers). The buffer belongs to the owner of the array it replaces (the scope of a literal, the object of a field,
+the outer array for an inner one). Parameters do not convert (`byte data[]` as a parameter takes whatever is passed - the
+natives of the packages accept arrays of bytes themselves, see below). What a buffer can do differently from an array:
+`length`/`Length`, `[i]`, `foreach`, `copy`/`flat` (byte by byte), `is of IEnumerable` and passing it to natives work the
+same; an element is always an `int` 0..255 - it cannot be `undefined` (a new buffer holds zeros), writing a non-int
+(`x[0] = "a"`, `x[0] = undefined`) is an `ArgumentException`, and a too large int is cut. `print(x)` shows `<buffer 3 bytes>`
+(an array: `<array>`), JSON writes a buffer as base64 (`{"$buffer":"..."}`, a field declared `byte data[]`: the base64
+string), and the buffer has the methods of 8.10 (`ToString()`, `littleEndian`, ...). `ref x[i]` gives a pointer to a byte.
+The VM and the native backend behave the same (VM.BufferFromArrayValue, fire_rt.h bufFromArray).
+
+**Bytes as arguments of natives.** A native of a package that **reads** bytes (writing a file or a stream, sending over
+the network or a bus, hashing, compressing, a queued `Spi.Sim.Reply`, ...) accepts everything that is bytes: a byte
+buffer, and an array of ints from 0 to 255 (copied for the call). A native that **fills** a buffer the caller passes
+(`stream.Read(buffer, ...)`, receiving, `TransferInto`) needs a real buffer: an array is an `ArgumentException` (`IO.Stream.Read
+expects a byte buffer (new byte[n]), not an array.`). Any other value (a string, an object, a number, `undefined`) and an
+element that is no int from 0 to 255 is an `ArgumentException` (`IO.Stream.Write: element 1 of the array is 256 - a byte is
+an int from 0 to 255.`) - the same text in the VM and natively (docs/PACKAGE_NATIVES.md, `bytesArg`/`bufferArg`).
+
 The native backend stores a typed array **packed**: one C number per element (`int8_t` ... `int64_t`, `float`,
 `double`, a byte for `bool`, two bytes for `char`) instead of a 16-byte value - an `int[8] a[100000]` needs 100 KB
 instead of 1.6 MB. `undefined` is kept as a rarely used value of the type (`INT8_MIN` ..., a NaN with a fixed payload,
-`0xFF` for `byte`, `0xFFFF` for `char`): only when that value is stored as a real number is a bit set in a mask of
+`0xFFFF` for `char`): only when that value is stored as a real number is a bit set in a mask of
 the array, which is allocated then - so a read looks at the mask only when it finds that value. When a native function
 of a package asks for the elements as values, the array is unpacked once (its type stays).
 

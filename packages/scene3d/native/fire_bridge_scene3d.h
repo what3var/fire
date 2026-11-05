@@ -164,16 +164,17 @@ static Value fire_s3d_texHandle(S3dTexture* t) {
 static Value fire_s3d_TexNew(Value width, Value height, Value buffer) {
     size_t n;
     S3dTexture* tex;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    FireBytes in;
+    if (!bytesArg(buffer, "Scene3D.Texture", &in)) return Undef();
     if (width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(0);
     n = (size_t)width.i * (size_t)height.i * 4;
-    if ((size_t)bufOf(buffer)->length < n) return Int(0);
+    if ((size_t)in.length < n) return Int(0);
     tex = (S3dTexture*)calloc(1, sizeof(S3dTexture));
     if (tex == NULL) return Int(0);
     tex->rgba = (uint8_t*)malloc(n);
     if (tex->rgba == NULL) { free(tex); return Int(0); }
     tex->w = (int)width.i; tex->h = (int)height.i;
-    memcpy(tex->rgba, bufBytes(bufOf(buffer)), n);
+    memcpy(tex->rgba, in.data, n);
     return fire_s3d_texHandle(tex);
 }
 
@@ -206,11 +207,12 @@ static Value fire_s3d_TexBumpAuto(Value h) {
 /* Gives a texture a bump map from a picture: `channels` bytes per pixel (1: heights; 3 or 4: colours, whose brightness is the height); the picture is scaled to the texture. */
 static Value fire_s3d_TexBump(Value h, Value width, Value height, Value channels, Value buffer) {
     S3dTexture* t;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    FireBytes in;
+    if (!bytesArg(buffer, "Scene3D.Texture.SetBump", &in)) return Undef();
     t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
     if (!t || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384 || (channels.i != 1 && channels.i != 3 && channels.i != 4)) return Bool(false);
-    if ((size_t)bufOf(buffer)->length < (size_t)width.i * (size_t)height.i * (size_t)channels.i) return Bool(false);
-    return Bool(s3d_texSetBump(t, bufBytes(bufOf(buffer)), (int)width.i, (int)height.i, (int)channels.i) != 0);
+    if ((size_t)in.length < (size_t)width.i * (size_t)height.i * (size_t)channels.i) return Bool(false);
+    return Bool(s3d_texSetBump(t, in.data, (int)width.i, (int)height.i, (int)channels.i) != 0);
 }
 
 /* Takes the bump map away again. */
@@ -246,14 +248,15 @@ static Value fire_s3d_FrameFree(Value h) {
 /* Fills the pixels with `color` (0xAABBGGRR) and clears the depth buffer; `width`/`height` give the new size of the frame (the buffer must hold width * height * 4 bytes). */
 static Value fire_s3d_FrameClear(Value h, Value buffer, Value width, Value height, Value color) {
     S3dFrame* f;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Buf* b = bufferArg(buffer, "Scene3D.Camera.Render");
+    if (b == NULL) return Undef();
     f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, h);
     if (!f || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Bool(false);
-    if ((size_t)bufOf(buffer)->length < (size_t)width.i * (size_t)height.i * 4) return Bool(false);
+    if ((size_t)b->length < (size_t)width.i * (size_t)height.i * 4) return Bool(false);
     if (f->w != width.i || f->h != height.i) { if (!s3d_frameResize(f, (int)width.i, (int)height.i)) return Bool(false); }
     else s3d_frameClearDepth(f);
     f->clearColor = (uint32_t)color.i;
-    s3d_clearPixels(bufBytes(bufOf(buffer)), (int)width.i, (int)height.i, (uint32_t)color.i);
+    s3d_clearPixels(b->data, (int)width.i, (int)height.i, (uint32_t)color.i);
     return Bool(true);
 }
 
@@ -321,12 +324,13 @@ static Value fire_s3d_Flush(Value frame, Value buffer, Value camera, Value light
     uint32_t i;
     S3dFlushSettings fs;
     S3dCamera cam;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Buf* b = bufferArg(buffer, "Scene3D.Camera.Render");
+    if (b == NULL) return Undef();
     f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, frame);
     if (!f || camera.kind != K_Array || lights.kind != K_Array || settings.kind != K_Array) return Bool(false);
     c = arrOf(camera); l = arrOf(lights); st = arrOf(settings);
     if (c->length < (uint32_t)FIRE_S3D_CAMERA_PARAMS || l->length % FIRE_S3D_LIGHT_PARAMS != 0 || st->length < (uint32_t)FIRE_S3D_SETTING_PARAMS) return Bool(false);
-    if ((size_t)bufOf(buffer)->length < (size_t)f->w * (size_t)f->h * 4) return Bool(false);
+    if ((size_t)b->length < (size_t)f->w * (size_t)f->h * 4) return Bool(false);
     ls = (S3dLight*)malloc(sizeof(S3dLight) * (l->length / FIRE_S3D_LIGHT_PARAMS + 1));
     if (ls == NULL) return Bool(false);
     for (i = 0; i < l->length; i += FIRE_S3D_LIGHT_PARAMS) {
@@ -346,7 +350,7 @@ static Value fire_s3d_Flush(Value frame, Value buffer, Value camera, Value light
     fs.threads = (int)fire_s3d_F(arrItems(st)[2]);
     fs.backend = st->length > 3 && (int)fire_s3d_F(arrItems(st)[3]) == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
     cam = fire_s3d_cameraOf(c);
-    s3d_flush(bufBytes(bufOf(buffer)), f, &cam, ls, n, &fs);
+    s3d_flush(b->data, f, &cam, ls, n, &fs);
     free(ls);
     return Bool(true);
 }

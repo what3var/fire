@@ -1209,11 +1209,11 @@ FIRE_FN bool unitOfText(const fire_char16* s, uint32_t n, uint32_t* out) {
  * Every heap value starts with its header (`h`): a pointer to the value is a pointer to its header.
  * --------------------------------------------------------------------------------------------------------------------- */
 #define IMMORTAL 0xFFFFFFFFu
-enum { R_Str, R_Lam };
+enum { R_Str, R_Lam, R_Bytes };
 
 struct Ref {
     uint32_t rc;     /* number of holders; IMMORTAL for constants */
-    uint8_t type;    /* R_Str / R_Lam */
+    uint8_t type;    /* R_Str / R_Lam / R_Bytes (the temporary copy of bytesArg) */
 };
 
 /* Immutable UTF-16 string. A heap string stores its characters right behind the header. */
@@ -4503,6 +4503,45 @@ FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t f
     return arrMakeTyped(a, elem, unit, flags, unitText);
 }
 
+/* A `byte` declaration holds a byte buffer (SPEC 8.4.2; the VM: BufferFromArrayValue): the array `v` stored there is replaced by a buffer with its elements -
+ * THE conversion of an array into a buffer (an int is cut to 8 bits like `buffer[i] = 300`, `undefined` is 0, anything else an ArgumentException: then false
+ * and *out stays). The buffer gets the owner of the array (an inner one's: the outer array), `list` when the array has none (it travels). At depth `rank` the
+ * inner arrays are converted. A buffer and every other value stay as they are. */
+FIRE_FN bool bufFromArray(Value v, int rank, int depth, OwnList* list, Value* out) {
+    Arr* a;
+    Buf* b;
+    uint32_t i;
+    char text[120];
+    *out = v;
+    if (v.kind != K_Array || !leafAlive(v) || depth > 64) return true;
+    a = arrOf(v);
+    if (depth < rank) {
+        Value* items = arrValues(a);
+        if (!items) return true;
+        for (i = 0; i < a->length; i++) { Value r; if (!bufFromArray(items[i], rank, depth + 1, a->parts ? a->parts : list, &r)) return false; items[i] = r; }
+        return true;
+    }
+    for (i = 0; i < a->length; i++) {
+        Value e = arrElemGet(a, i);
+        if (e.kind != K_Int && e.kind != K_Undefined) {
+            snprintf(text, sizeof text, "An element of a byte buffer must be an int, not %s.", coerceKindName(e.kind));
+            fireError("ArgumentException", text);
+            return false;
+        }
+    }
+    b = allocBuf(a->length, a->h.owner ? a->h.owner : list);
+    for (i = 0; i < a->length; i++) { Value e = arrElemGet(a, i); b->data[i] = e.kind == K_Int ? (uint8_t)e.i : 0; }
+    *out = BufV(b);
+    return true;
+}
+/* OpCode.TypeArray of a `byte` declaration: the value converted (bufFromArray); of an exception the value as it was (the generated code looks at the
+ * unwinding flag). */
+FIRE_FN Value typeBuffer(Value v, int rank, OwnList* list) {
+    Value r;
+    if (!bufFromArray(v, rank, 1, list, &r)) return v;
+    return r;
+}
+
 /* `int[8] a[] = new int[n]` (NewArray right before TypeArray): the packed array made at once - header, ArrTyped and the numbers in one block. */
 FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t flags, Value unitText, OwnList* list) {
     size_t head = FIRE_HDR(Arr) + ((sizeof(ArrTyped) + 7u) & ~(size_t)7u);
@@ -4614,7 +4653,11 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Buffer) {
         Buf* b;
-        if (v.kind != K_Int) fatal("Assigning to a byte buffer expects an int value.");
+        if (v.kind != K_Int) {
+            snprintf(text, sizeof text, "An element of a byte buffer must be an int, not %s.", coerceKindName(v.kind));   /* (the same text in the VM) */
+            fireError("ArgumentException", text);
+            return v;
+        }
         if (FIRE_UNLIKELY(!leafAlive(a))) { destroyedError(a); return v; }
         b = bufOf(a);
         if ((uint64_t)i.i >= b->length) { indexError("Array index", i.i, b->length); return v; }
@@ -4748,6 +4791,80 @@ FIRE_FN Value lengthOf(Value v, bool* ok) {
     if (v.kind == K_Buffer) { if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v); return Int(bufOf(v)->length); }
     *ok = false;
     return Undef();
+}
+
+/* ---- The bytes of an argument of a native (docs/PACKAGE_NATIVES.md, "Bytes as arguments") ------------------------------------------------------
+ * A native of a package never takes `bufOf(v)` of an argument unchecked: an array, a string or a number there would be read as a buffer (a crash). */
+typedef struct FireBytes { const uint8_t* data; uint32_t length; } FireBytes;
+/* (the copy of an array: a temporary of the pool, freed when the scope that called the native is left - like a string it made) */
+typedef struct TempBytes { Ref h; uint32_t length; } TempBytes;
+
+/* The bytes that a native READS from an argument (what it sends, writes, hashes, compresses, queues): everything that is bytes - a byte buffer (its own memory,
+ * no copy), and an array of ints from 0 to 255 (a plain one or a typed one: a copy made for the call; it stays valid until the scope that called the native is
+ * left - a native that keeps the bytes beyond the call copies them, as it does for a buffer). Anything else is the exception: another kind, an element that is
+ * no int from 0 to 255 (ArgumentException), a destroyed buffer or array (DestroyedException) - then false, and the native returns at once:
+ *     FireBytes b;
+ *     if (!bytesArg(data, "Hash.Sha256.Of", &b)) return Undef();
+ * `what` names the function in the message ("Hash.Sha256.Of expects bytes ..."). The VM passes the same values (fire_pkg_abi.h), so its texts are the same. */
+FIRE_FN bool bytesArg(Value v, const char* what, FireBytes* out) {
+    char text[240];
+    out->data = NULL;
+    out->length = 0;
+    if (FIRE_LIKELY(v.kind == K_Buffer)) {
+        Buf* b;
+        if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return false; }
+        b = bufOf(v);
+        out->data = b->data;
+        out->length = b->length;
+        return true;
+    }
+    if (v.kind == K_Array) {
+        Arr* a;
+        TempBytes* t;
+        uint8_t* bytes;
+        uint32_t i;
+        if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return false; }
+        a = arrOf(v);
+        t = (TempBytes*)malloc(sizeof(TempBytes) + (size_t)a->length + 1);
+        if (FIRE_UNLIKELY(!t)) allocFailed();
+        bytes = (uint8_t*)(t + 1);
+        for (i = 0; i < a->length; i++) {
+            Value e = arrElemGet(a, i);
+            if (FIRE_UNLIKELY(e.kind != K_Int || e.i < 0 || e.i > 255)) {
+                free(t);
+                if (e.kind == K_Int) snprintf(text, sizeof text, "%s: element %u of the array is %lld - a byte is an int from 0 to 255.", what, (unsigned)i, (long long)e.i);
+                else if (e.kind == K_Undefined) snprintf(text, sizeof text, "%s: element %u of the array is undefined, not an int from 0 to 255.", what, (unsigned)i);
+                else snprintf(text, sizeof text, "%s: element %u of the array is a %s, not an int from 0 to 255.", what, (unsigned)i, coerceKindName(e.kind));
+                fireError("ArgumentException", text);
+                return false;
+            }
+            bytes[i] = (uint8_t)e.i;
+        }
+        t->h.type = R_Bytes;
+        t->length = a->length;
+        registerTemp(&t->h, NULL);
+        out->data = bytes;
+        out->length = a->length;
+        return true;
+    }
+    snprintf(text, sizeof text, "%s expects bytes (a byte buffer or an array of ints from 0 to 255), not %s.", what, v.kind == K_Undefined ? "undefined" : coerceKindName(v.kind));
+    fireError("ArgumentException", text);
+    return false;
+}
+
+/* The byte buffer that a native FILLS (what it reads, receives, decodes into - or changes in place): only a real buffer (`new byte[n]`); an array is an
+ * ArgumentException (it would be filled in a copy that nobody sees), so is every other kind, a destroyed buffer a DestroyedException - then NULL, and the
+ * native returns at once. */
+FIRE_FN Buf* bufferArg(Value v, const char* what) {
+    char text[240];
+    if (FIRE_LIKELY(v.kind == K_Buffer)) {
+        if (FIRE_UNLIKELY(!leafAlive(v))) { destroyedError(v); return NULL; }
+        return bufOf(v);
+    }
+    if (v.kind == K_Array) snprintf(text, sizeof text, "%s expects a byte buffer (new byte[n]), not an array.", what);
+    else snprintf(text, sizeof text, "%s expects a byte buffer (new byte[n]), not %s.", what, v.kind == K_Undefined ? "undefined" : coerceKindName(v.kind));
+    fireError("ArgumentException", text);
+    return NULL;
 }
 
 FIRE_FN Value newArray(Value size, OwnList* list) {

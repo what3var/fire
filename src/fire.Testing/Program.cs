@@ -22056,6 +22056,96 @@ else
             """),
     }).ToArray();
 
+    // Bytes as arguments of natives (fire_rt.h bytesArg/bufferArg, docs/PACKAGE_NATIVES.md) and `byte` declarations as buffers (SPEC 8.4.2): the VM and natively the same
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Bytes: WriteAllBytes/ReadAllBytes mit Puffer, byte-Deklaration und Array; falsches Element, String, Fuell-Native mit Array", """
+            #import "io"
+            #import "filesystem"
+            var p = IO.Path.Combine(IO.Path.GetTempPath(), "fire_bytes_args_1.bin")
+            var b = new byte[2]
+            b[0] = 65
+            b[1] = 66
+            IO.File.WriteAllBytes(p, b)
+            print(IO.File.ReadAllText(p))
+            byte r[] = [67, 68, 69]
+            IO.File.WriteAllBytes(p, r)
+            print(IO.File.ReadAllText(p))
+            IO.File.WriteAllBytes(p, [70, 71, 0, 255])
+            var back = IO.File.ReadAllBytes(p)
+            print(back.length + " " + back[0] + " " + back[3])
+            IO.File.AppendAllBytes(p, [])
+            print(IO.File.Size(p))
+            try { IO.File.WriteAllBytes(p, [1, 256]) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { IO.File.WriteAllBytes(p, [1, -1]) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { IO.File.WriteAllBytes(p, [1, undefined]) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { IO.File.WriteAllBytes(p, [1, 2.5]) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { IO.File.WriteAllBytes(p, "abc") } catch (ArgumentException e) { print("A: " + e.message) }
+            var m = new IO.MemoryStream([1, 2, 3])
+            print(m.Length)
+            try { m.Read([0, 0], 0, 2) } catch (ArgumentException e) { print("A: " + e.message) }
+            var into = new byte[3]
+            print(m.Read(into, 0, 3) + " " + into[2])
+            print(IO.Utf8.GetString([72, 105]))
+            IO.File.Delete(p)
+            """),
+        ("Bytes: Hash, Compression und Spi.Sim.Reply mit Arrays", """
+            #import "hash"
+            #import "compression"
+            #import "spi"
+            print(Hash.Sha256.HexOf([97, 98, 99]) == Hash.Sha256.HexOf("abc"))
+            byte d[] = [97, 98, 99]
+            print(Hash.Crc32.HexOf(d) + " " + Hash.Hex.Encode([1, 171]) + " " + Hash.Bytes.Equal([97, 98, 99], d))
+            try { Hash.Md5.Of([1, 300]) } catch (ArgumentException e) { print("A: " + e.message) }
+            var z = Compression.GZip.Compress([1, 2, 3, 3, 3, 3, 3, 3])
+            print(Compression.GZip.Decompress(z).length)
+            try { Compression.GZip.Decompress([1, "x"]) } catch (ArgumentException e) { print("A: " + e.message) }
+            Spi.Sim.Reply([7, 8, 9])
+            var dev = new Spi.Device("sim")
+            var got = dev.Transfer([1, 2, 3])
+            print(got[0] + " " + got[1] + " " + got[2])
+            try { Spi.Sim.Reply([1, 999]) } catch (ArgumentException e) { print("A: " + e.message) }
+            dev.Close()
+            """),
+        ("Bytes: byte x[] = [..] und byte x[4] sind Puffer (print, length, Index, foreach, copy, Felder, mehrdimensional, Zuweisung, an Natives)", """
+            #import "hash"
+            byte a[] = [1, 2, 300]
+            print(a + " " + a.length + " " + a[2] + " " + (a is of IEnumerable))
+            byte z[4]
+            z[1] = 9
+            var sum = 0
+            foreach (x in z) { sum += x }
+            print(z + " " + sum + " " + z[0])
+            var c = copy a
+            c[0] = 5
+            print(a[0] + " " + c[0])
+            var plain = [10, 20]
+            a = plain
+            a[0] = 11
+            print(a + " " + plain[0] + " " + a[0])
+            try { a[0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = undefined } catch (ArgumentException e) { print("A: " + e.message) }
+            try { byte bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+            byte n[] = [undefined, 7]
+            print(n[0] + " " + n[1])
+            class Holder {
+                byte data[3]
+                byte more[]
+                static byte table[2]
+            }
+            var h = new Holder()
+            h.more = [4, 5]
+            h.data[2] = 255
+            print(h.data + " " + h.data[2] + " " + h.more[1] + " " + Holder.table.length)
+            byte m[2][3]
+            m[1][2] = 6
+            print(m[1] + " " + m[1][2] + " " + m.length)
+            print(Hash.Crc32.HexOf(h.more) == Hash.Crc32.HexOf([4, 5]))
+            byte t[] = "Hi".ToBytes()
+            print(t.ToString())
+            """),
+    }).ToArray();
+
     // Compression (#import "compression", docs/COMPRESSION.md): the same bytes in the VM and natively (the Deflate is the package's own C)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

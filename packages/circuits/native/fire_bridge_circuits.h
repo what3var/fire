@@ -3101,8 +3101,8 @@ static double cir_pcmSample(const uint8_t* src, int64_t count, int ch, int64_t i
  * `in` drive the source `source` (a sample of 1.0 is `amplitude` volts, linear in between), `oversample` steps per sample (the time step of the plan must be
  * 1 / (rate * oversample)); after each sample the voltage between the nodes `out` and `ref`, divided by `scale`, goes as a 16 bit sample into the buffer `outBuf`
  * from `outOffset` (clipped at full scale). Returns the number of samples clipped, -1 on an error. */
-static Value cir_Process(Value h, Value source, Value in, Value inOffset, Value frames, Value channels, Value amplitude, Value oversample, Value out, Value ref,
-                         Value scale, Value outBuf, Value outOffset) {
+static Value cir_Process(Value h, Value source, FireBytes in, Value inOffset, Value frames, Value channels, Value amplitude, Value oversample, Value out, Value ref,
+                         Value scale, Buf* outBuf, Value outOffset) {
     CirPlan* p = cir_plan(h);
     int ch, n, outNode, refNode;
     int64_t count, clipped = 0, i;
@@ -3111,16 +3111,15 @@ static Value cir_Process(Value h, Value source, Value in, Value inOffset, Value 
     CirSource* s;
     double amp, k, previous;
     if (!p || !p->compiled || source.i < 0 || (size_t)source.i >= p->sources.n) { cir_error("The circuit is not compiled or the input is not in it."); return Int(-1); }
-    if (!leafAlive(in) || !leafAlive(outBuf)) return destroyedError(in);
     ch = (int)channels.i; n = (int)oversample.i;
     count = frames.i;
     if (ch < 1 || ch > 2 || n < 1 || count < 0) { cir_error("channels 1 or 2, oversample 1 or more."); return Int(-1); }
-    if (inOffset.i < 0 || inOffset.i + count * ch * 2 > (int64_t)bufOf(in)->length || outOffset.i < 0 || outOffset.i + count * 2 > (int64_t)bufOf(outBuf)->length) {
+    if (inOffset.i < 0 || inOffset.i + count * ch * 2 > (int64_t)in.length || outOffset.i < 0 || outOffset.i + count * 2 > (int64_t)outBuf->length) {
         cir_error("The frames do not fit into the buffers.");
         return Int(-1);
     }
-    src = bufBytes(bufOf(in)) + inOffset.i;
-    dst = bufBytes(bufOf(outBuf)) + outOffset.i;
+    src = in.data + inOffset.i;
+    dst = outBuf->data + outOffset.i;
     s = &p->sources.d[source.i];
     amp = cir_D(amplitude); k = cir_D(scale) != 0 ? 1.0 / cir_D(scale) : 1.0;
     outNode = (int)out.i; refNode = (int)ref.i;
@@ -3147,7 +3146,11 @@ static Value cir_Process(Value h, Value source, Value in, Value inOffset, Value 
 }
 static Value fire_cir_Process(Value h, Value source, Value in, Value inOffset, Value frames, Value channels, Value amplitude, Value oversample, Value out, Value ref,
                               Value scale, Value outBuf, Value outOffset) {
-    CIR_LOCKED(cir_Process(h, source, in, inOffset, frames, channels, amplitude, oversample, out, ref, scale, outBuf, outOffset));
+    /* (the arguments are checked before the lock is taken: an exception does not come back - in the library for the VM it jumps to the wrapper) */
+    FireBytes bytes;
+    Buf* target;
+    if (!bytesArg(in, "Circuits.Plan.Process", &bytes) || (target = bufferArg(outBuf, "Circuits.Plan.Process")) == NULL) return Undef();
+    CIR_LOCKED(cir_Process(h, source, bytes, inOffset, frames, channels, amplitude, oversample, out, ref, scale, target, outOffset));
 }
 
 /* `steps` time steps of a plan without parts written in fire. */
@@ -3405,18 +3408,17 @@ static Value fire_cir_StreamRead(Value h, Value max, OwnList* list) { CIR_LOCKED
 
 /* Writes 16 bit samples (little endian, `channels` interleaved and mixed to one) from `offset` of a buffer into a stream: a full-scale sample is `fullScale` volts.
  * How many frames were taken (as many as fit). */
-static Value cir_StreamWritePcm(Value h, Value buf, Value offset, Value frames, Value channels, Value fullScale) {
+static Value cir_StreamWritePcm(Value h, FireBytes buf, Value offset, Value frames, Value channels, Value fullScale) {
     CirStream* st = cir_stream(h.i);
     int ch;
     int64_t n, done;
     const uint8_t* src;
     double k;
     if (!st) return Int(0);
-    if (!leafAlive(buf)) return destroyedError(buf);
     ch = (int)cir_maxL(1, channels.i);
     n = frames.i;
-    if (offset.i < 0 || n < 0 || offset.i + n * ch * 2 > (int64_t)bufOf(buf)->length) { cir_error("The frames do not fit into the buffer."); return Int(-1); }
-    src = bufBytes(bufOf(buf)) + offset.i;
+    if (offset.i < 0 || n < 0 || offset.i + n * ch * 2 > (int64_t)buf.length) { cir_error("The frames do not fit into the buffer."); return Int(-1); }
+    src = buf.data + offset.i;
     k = cir_D(fullScale) / 32768.0;
     for (done = 0; done < n && st->count < st->ringSize; done++) {
         double sum = 0;
@@ -3427,22 +3429,23 @@ static Value cir_StreamWritePcm(Value h, Value buf, Value offset, Value frames, 
     return Int(done);
 }
 static Value fire_cir_StreamWritePcm(Value h, Value buf, Value offset, Value frames, Value channels, Value fullScale) {
-    CIR_LOCKED(cir_StreamWritePcm(h, buf, offset, frames, channels, fullScale));
+    FireBytes bytes;
+    if (!bytesArg(buf, "Circuits.Stream.WritePcm", &bytes)) return Undef();
+    CIR_LOCKED(cir_StreamWritePcm(h, bytes, offset, frames, channels, fullScale));
 }
 
 /* Takes up to `maxFrames` samples out of a stream as 16 bit mono samples into a buffer from `offset` (full scale at `fullScale` volts, clipped there); how many
  * frames were written. */
-static Value cir_StreamReadPcm(Value h, Value buf, Value offset, Value maxFrames, Value fullScale) {
+static Value cir_StreamReadPcm(Value h, Buf* buf, Value offset, Value maxFrames, Value fullScale) {
     CirStream* st = cir_stream(h.i);
     int64_t room, n, i;
     uint8_t* dst;
     double k;
     if (!st) return Int(0);
-    if (!leafAlive(buf)) return destroyedError(buf);
-    room = ((int64_t)bufOf(buf)->length - offset.i) / 2;
+    room = ((int64_t)buf->length - offset.i) / 2;
     n = cir_minL(cir_minL(maxFrames.i, room), (int64_t)st->count);
     if (offset.i < 0 || n < 0) return Int(0);
-    dst = bufBytes(bufOf(buf)) + offset.i;
+    dst = buf->data + offset.i;
     k = cir_D(fullScale) != 0 ? 32767.0 / cir_D(fullScale) : 32767.0;
     for (i = 0; i < n; i++) {
         float v = 0;
@@ -3458,7 +3461,9 @@ static Value cir_StreamReadPcm(Value h, Value buf, Value offset, Value maxFrames
     return Int(n);
 }
 static Value fire_cir_StreamReadPcm(Value h, Value buf, Value offset, Value maxFrames, Value fullScale) {
-    CIR_LOCKED(cir_StreamReadPcm(h, buf, offset, maxFrames, fullScale));
+    Buf* target = bufferArg(buf, "Circuits.Stream.ReadPcm");
+    if (target == NULL) return Undef();
+    CIR_LOCKED(cir_StreamReadPcm(h, target, offset, maxFrames, fullScale));
 }
 
 /* A stream: 0 samples in it, 1 capacity, 2 samples lost because it was full, 3 samples missing when a source needed one, 4 rate. */
@@ -3622,20 +3627,23 @@ static Value cir_StreamSimPlayed(Value h, OwnList* list) {
 static Value fire_cir_StreamSimPlayed(Value h, OwnList* list) { CIR_LOCKED(cir_StreamSimPlayed(h, list)); }
 
 /* Gives the simulated input of a stream sound to record: `count` bytes of 16 bit samples (its channels: mono) from `offset` of a buffer. */
-static Value cir_StreamSimInput(Value h, Value buf, Value offset, Value count) {
+static Value cir_StreamSimInput(Value h, FireBytes buf, Value offset, Value count) {
     CirStream* st = cir_stream(h.i);
     CirDevice* d = st ? st->recordFrom : NULL;
     const uint8_t* src;
     if (!d || !d->sim) { cir_error("The stream does not record from \"sim\"."); return Int(-1); }
-    if (!leafAlive(buf)) return destroyedError(buf);
-    if (offset.i < 0 || count.i < 0 || offset.i + count.i > (int64_t)bufOf(buf)->length) { cir_error("offset/count are outside of the buffer."); return Int(-1); }
-    src = bufBytes(bufOf(buf)) + offset.i;
+    if (offset.i < 0 || count.i < 0 || offset.i + count.i > (int64_t)buf.length) { cir_error("offset/count are outside of the buffer."); return Int(-1); }
+    src = buf.data + offset.i;
     CIR_RESERVE(d->simInput, d->simInput.n + (size_t)count.i);
     if (count.i > 0) memcpy(d->simInput.d + d->simInput.n, src, (size_t)count.i);
     d->simInput.n += (size_t)count.i;
     return Int(count.i);
 }
-static Value fire_cir_StreamSimInput(Value h, Value buf, Value offset, Value count) { CIR_LOCKED(cir_StreamSimInput(h, buf, offset, count)); }
+static Value fire_cir_StreamSimInput(Value h, Value buf, Value offset, Value count) {
+    FireBytes bytes;
+    if (!bytesArg(buf, "Circuits.Stream.SimInput", &bytes)) return Undef();
+    CIR_LOCKED(cir_StreamSimInput(h, bytes, offset, count));
+}
 
 /* ---- recorders ---- */
 

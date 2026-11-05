@@ -4804,12 +4804,18 @@ namespace fire.Native
                     Need(1);
                     // `int[8] a[] = new int[n]` (TypeArray right after): the packed array is made at once (its TypeArray then finds it typed already)
                     int at = f.IndexOf[ins.Addr] + 1;
-                    if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
+                    if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } bytes && bytes.A[1] == 1 && bytes.A[0] == ArrayElem.U8)
+                        // `byte a[] = new int[n]`: a `byte` declaration holds a buffer (SPEC 8.4.2) - of n zeros, as the conversion of n undefined elements gives
+                        E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});");
+                    else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
                         E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {typed.A[0]}, {TypeArrayUnitArgs(chunk, typed.A[2])}, &{OwnerList()});");
                     else
                         E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});");
                     SetR(d - 1, true); return Next();
                 }
+                case OpCode.TypeArray when ins.A[0] == ArrayElem.U8:
+                    // a `byte` declaration holds a byte buffer (SPEC 8.4.2): an array stored there becomes one (fire_rt.h bufFromArray)
+                    Need(1); E($"{S(d - 1)} = typeBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
                 case OpCode.TypeArray:
                     Need(1); E($"typeArray({S(d - 1)}, {ins.A[0]}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2])}, 1);"); Check(); return Next();
                 case OpCode.MakeBuffer:

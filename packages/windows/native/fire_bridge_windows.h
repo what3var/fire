@@ -1010,18 +1010,16 @@ static Value fire_win_WinClipboardGetImage(OwnList* list) {
 }
 /* Puts a picture there (`png`: the PNG file that Framebuffer.ToPng made); the desktops that want a BMP (Windows: CF_DIB) get one made from it too. */
 static Value fire_win_WinClipboardSetImage(Value png) {
-    Buf* b;
+    FireBytes b;
     FireGfxImage image;
     char err[FIRE_GFX_ERR_SIZE];
     uint8_t* bmp = NULL;
     size_t bmpSize = 0;
     int ok;
-    if (png.kind != K_Buffer) return Bool(false);
-    if (!leafAlive(png)) return destroyedError(png);
-    b = bufOf(png);
+    if (!bytesArg(png, "Clipboard.SetImage", &b)) return Undef();
     fire_gfx_imageInit(&image);
     err[0] = 0;
-    if (!fire_gfx_decodeImage(bufBytes(b), b->length, &image, err)) { fire_gfx_imageFree(&image); return Bool(false); }
+    if (!fire_gfx_decodeImage(b.data, b.length, &image, err)) { fire_gfx_imageFree(&image); return Bool(false); }
     {
         size_t n = fire_gfx_imageCount(&image), i;
         uint32_t* rgba = (uint32_t*)calloc(n + 1, sizeof(uint32_t));
@@ -1032,7 +1030,7 @@ static Value fire_win_WinClipboardSetImage(Value png) {
         free(rgba);
     }
     fire_gfx_imageFree(&image);
-    ok = fire_display_clipboardSetImage(bufBytes(b), b->length, bmp, bmpSize);
+    ok = fire_display_clipboardSetImage(b.data, b.length, bmp, bmpSize);
     free(bmp);
     return Bool(ok != 0);
 }
