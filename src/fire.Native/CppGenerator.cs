@@ -624,6 +624,11 @@ namespace fire.Native
         // declared int/float/bool, DeclaredKind); TypeUndefined is `undefined` only; TypeUnknown (0) is everything else.
         // KindObj: an object of a class or of a class derived from it (the class is an index into _objTypeNames, where a number has its unit)
         private const byte KindInt = 1, KindFloat = 2, KindBool = 3, KindObj = 4, KindUnknown = 0;
+        // KindWord: a machine word (K_Word, SPEC 8.10; unit 0). KindBuf: a buffer (K_Buffer) - its "unit" is the element: 1 bytes, 2 machine words. Both are only
+        // known where the generator made the value itself (a conversion into a word, newBuffer, an element of a known buffer) - word arithmetic, comparisons and
+        // element accesses of known buffers are then written out in C (TypedWord, the ArrayGet/ArraySet cases).
+        private const byte KindWord = 5, KindBuf = 6;
+        private const int BufBytes = 1, BufWords = 2;
         // TypeNone: nothing yet - the result of a call of a function none of whose `return`s was seen yet (in the last round: one that never returns,
         // the code after the call does not run); it joins to the other side, and whatever is computed from it is TypeNone, too.
         private const int TypeUnknown = 0, NullableBit = 0x10, TypeUndefined = NullableBit, TypeNone = 0x20;
@@ -635,7 +640,7 @@ namespace fire.Native
         private static bool IsNullable(int type) => (type & NullableBit) != 0;
         private static int UnitOfType(int type) => type >> 8;
         /// <summary>A number, a bool, undefined or nothing yet: a value that belongs to no scope (no ownership bookkeeping).</summary>
-        private static bool IsPlainType(int type) => type is TypeNone or TypeUndefined || BaseKindOfType(type) is KindInt or KindFloat or KindBool;
+        private static bool IsPlainType(int type) => type is TypeNone or TypeUndefined || BaseKindOfType(type) is KindInt or KindFloat or KindBool or KindWord;
 
         private readonly List<string> _objTypeNames = new();
         private readonly Dictionary<string, int> _objTypeIndex = new();
@@ -3694,6 +3699,14 @@ namespace fire.Native
                     int varUnit = UnitOfType(varType);
                     // `x++` (step mode) counts in the unit of the variable (stepOf)
                     int constUnit = stepMode && varUnit != 0 ? varUnit : UnitOfType(constType);
+                    if (varKind == KindWord && constKind == KindInt && UnitOfType(constType) == 0)
+                    {
+                        // a word and a whole number: written out, it wraps (SPEC 8.10)
+                        string sec = SectionFor(v);
+                        E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = WordV((uint64_t){v}.w {(subtract ? "-" : "+")} (uint64_t)(int64_t){Constant(constant)}.i);{(sec.Length > 0 ? " " + SectionEnd(v) + "}" : "")}");
+                        JoinVarType(key, TypeOf(KindWord, 0));
+                        return Next();
+                    }
                     if (IsNum(varKind) && IsNum(constKind) && varUnit == constUnit)
                     {
                         string op = subtract ? "-" : "+";
@@ -3731,7 +3744,7 @@ namespace fire.Native
                 case OpCode.Add:
                 {
                     Need(2);
-                    if (TypedArith("+")) return Next();
+                    if (TypedWord("+") || TypedArith("+")) return Next();
                     if (ins.Op == OpCode.StepAdd) E($"{S(d - 1)} = stepOf({S(d - 2)}, {S(d - 1)});");
                     if (UseOperator("operator+"))
                     {
@@ -3752,18 +3765,18 @@ namespace fire.Native
                 case OpCode.StepSub:
                 case OpCode.Sub:
                     Need(2);
-                    if (TypedArith("-")) return Next();
+                    if (TypedWord("-") || TypedArith("-")) return Next();
                     if (ins.Op == OpCode.StepSub) { Need(2); E($"{S(d - 1)} = stepOf({S(d - 2)}, {S(d - 1)});"); }
                     return Binary("sub", "operator-");
 
-                case OpCode.Mul: Need(2); return TypedArith("*") ? Next() : Binary("mul", "operator*");
-                case OpCode.Div: Need(2); return TypedArith("/") ? Next() : Binary("divide", "operator/");
-                case OpCode.Mod: Need(2); return TypedArith("%") ? Next() : Binary("modulo", "operator%");
-                case OpCode.BitAnd: return Binary("bitAnd", "operator&");
-                case OpCode.BitOr: return Binary("bitOr", "operator|");
-                case OpCode.BitXor: return Binary("bitXor", "operator#");
-                case OpCode.ShiftLeft: return Binary("shl", "operator<<");
-                case OpCode.ShiftRight: return Binary("shr", "operator>>");
+                case OpCode.Mul: Need(2); return TypedWord("*") || TypedArith("*") ? Next() : Binary("mul", "operator*");
+                case OpCode.Div: Need(2); return TypedWord("/") || TypedArith("/") ? Next() : Binary("divide", "operator/");
+                case OpCode.Mod: Need(2); return TypedWord("%") || TypedArith("%") ? Next() : Binary("modulo", "operator%");
+                case OpCode.BitAnd: Need(2); return TypedWord("&") || TypedIntBits("&") ? Next() : Binary("bitAnd", "operator&");
+                case OpCode.BitOr: Need(2); return TypedWord("|") || TypedIntBits("|") ? Next() : Binary("bitOr", "operator|");
+                case OpCode.BitXor: Need(2); return TypedWord("^") || TypedIntBits("^") ? Next() : Binary("bitXor", "operator#");
+                case OpCode.ShiftLeft: Need(2); return TypedWord("<<") || TypedIntBits("<<") ? Next() : Binary("shl", "operator<<");
+                case OpCode.ShiftRight: Need(2); return TypedWord(">>") || TypedIntBits(">>") ? Next() : Binary("shr", "operator>>");
                 case OpCode.RotateUnderTop:
                 {
                     Need(3);
@@ -3835,6 +3848,20 @@ namespace fire.Native
                     d--; SetR(d - 1, true); return Next();
                 case OpCode.ConvertWidth:
                     Need(1);
+                    if ((ins.A[1] & 8) != 0 && K(d - 1) is KindWord or KindInt)
+                    {
+                        // a word or an int of known kind into a word: written out (an int cut to the width, its unit dropped)
+                        if (K(d - 1) == KindInt) E($"{S(d - 1)} = WordV((uint64_t)(int64_t){S(d - 1)}.i);");
+                        SetR(d - 1, false); SetT(d - 1, TypeOf(KindWord, 0)); _kindsKept = true;
+                        return Next();
+                    }
+                    if ((ins.A[1] & 0x0F) == (2 | 4) && ins.A[0] == 8 && K(d - 1) is KindWord or KindInt)
+                    {
+                        // a store into a `byte` of a number of known kind: its lowest 8 bits, without a unit (SPEC 8.10)
+                        E($"{S(d - 1)} = Int((uint8_t)({(K(d - 1) == KindWord ? $"{S(d - 1)}.w" : $"{S(d - 1)}.i")}));");
+                        SetR(d - 1, false); SetT(d - 1, TypeOf(KindInt, 0)); _kindsKept = true;
+                        return Next();
+                    }
                     if ((ins.A[1] & 8) != 0)
                     {
                         // `word` (SPEC 8.10): a store into a word converts an int (fire_rt.h wordOf; it cannot fail then), `x!word` every number
@@ -4264,6 +4291,17 @@ namespace fire.Native
                     SetR(d, IsExtensionMethod(f.Proto));
                     if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } thisClass) { SetT(d, ObjType(thisClass)); _kindsKept = true; }
                     d++; return Next();
+                case OpCode.GetField when K(d - 1) == KindBuf && Str(ins.A[0]) is "length" or "Length":
+                {
+                    // the length of a buffer the generator knows (elements: bytes or words); a destroyed one throws
+                    Need(1);
+                    string field = Str(ins.A[0]);
+                    _fieldNames.Add(field);
+                    E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? Int(bufOf({S(d - 1)})->length) : destroyedError({S(d - 1)});");
+                    Check();
+                    SetR(d - 1, false); SetT(d - 1, TypeOf(KindInt, 0)); _kindsKept = true;
+                    return Next();
+                }
                 case OpCode.GetField:
                 {
                     Need(1);
@@ -4820,16 +4858,25 @@ namespace fire.Native
                     int at = f.IndexOf[ins.Addr] + 1;
                     if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } bytes && bytes.A[1] == 1 && bytes.A[0] == ArrayElem.U8)
                         // `byte a[] = new int[n]`: a `byte` declaration holds a buffer (SPEC 8.4.2) - of n zeros, as the conversion of n undefined elements gives
+                    {
                         E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});");
+                        SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufBytes)); _kindsKept = true; return Next();
+                    }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } words && words.A[1] == 1 && words.A[0] == ArrayElem.Word)
+                    {
                         // `word a[n]`, `new word[n]`: a buffer of n zero words (SPEC 8.10)
                         E($"{S(d - 1)} = newWordBuffer({S(d - 1)}, &{OwnerList()});");
+                        SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufWords)); _kindsKept = true; return Next();
+                    }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
                         E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {typed.A[0]}, {TypeArrayUnitArgs(chunk, typed.A[2])}, &{OwnerList()});");
                     else
                         E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});");
                     SetR(d - 1, true); return Next();
                 }
+                case OpCode.TypeArray when ins.A[0] is ArrayElem.U8 or ArrayElem.Word && ins.A[1] == 1 && K(d - 1) == KindBuf && U(d - 1) == (ins.A[0] == ArrayElem.U8 ? BufBytes : BufWords):
+                    // (a buffer of that element made right before: nothing to convert)
+                    Need(1); _kindsKept = true; return Next();
                 case OpCode.TypeArray when ins.A[0] == ArrayElem.U8:
                     // a `byte` declaration holds a byte buffer (SPEC 8.4.2): an array stored there becomes one (fire_rt.h bufFromArray)
                     Need(1); E($"{S(d - 1)} = typeBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
@@ -4839,7 +4886,7 @@ namespace fire.Native
                 case OpCode.TypeArray:
                     Need(1); E($"typeArray({S(d - 1)}, {ins.A[0]}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2])}, 1);"); Check(); return Next();
                 case OpCode.MakeBuffer:
-                    Need(1); E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});"); SetR(d - 1, true); return Next();
+                    Need(1); E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});"); SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufBytes)); _kindsKept = true; return Next();
                 case OpCode.MakeArrayLiteral:
                 {
                     int count = ins.A[0];
@@ -4928,6 +4975,34 @@ namespace fire.Native
                     Need(1);
                     E($"deleteValue({S(d - 1)});");
                     d--; return Next();
+                case OpCode.ArrayGet when K(d - 2) == KindBuf && K(d - 1) == KindInt:
+                {
+                    // an element of a buffer the generator knows (a byte, or a machine word): read in place - the generic access for a destroyed buffer or
+                    // an index out of range (it throws there)
+                    Need(2);
+                    bool wordsGet = U(d - 2) == BufWords;
+                    string a = S(d - 2), i = S(d - 1);
+                    E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, &{OwnerList()});");
+                    Check();
+                    d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0)); _kindsKept = true; return Next();
+                }
+                case OpCode.ArraySet when K(d - 3) == KindBuf && K(d - 2) == KindInt && (K(d - 1) == KindWord && U(d - 3) == BufWords || K(d - 1) == KindInt && (U(d - 3) == BufBytes || U(d - 1) == 0)):
+                {
+                    // a store into an element of a known buffer: in place (the generic access for a destroyed buffer or an index out of range); a word buffer
+                    // stores the word (an int cut to the width) and gives it back, a byte buffer the byte of the number and gives the number back
+                    Need(3);
+                    bool wordsSet = U(d - 3) == BufWords;
+                    string a = S(d - 3), i = S(d - 2), v = S(d - 1);
+                    string bits = K(d - 1) == KindWord ? $"{v}.w" : $"(uint64_t)(int64_t){v}.i";
+                    if (wordsSet)
+                        E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()});");
+                    else
+                        E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()});");
+                    Check();
+                    int storedType = wordsSet ? TypeOf(KindWord, 0) : Ty(d - 1);
+                    E($"{a} = {v};");
+                    d -= 2; SetR(d - 1, false); SetT(d - 1, storedType); _kindsKept = true; return Next();
+                }
                 case OpCode.ArrayGet:
                     Need(2); E($"{S(d - 2)} = {Px}aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true); return Next();
                 case OpCode.ArraySet:
@@ -5290,6 +5365,51 @@ namespace fire.Native
             // a number without a unit keep the other unit; a float plus a number of another unit of the same dimension converts the right one by the
             // factor of alignUnits). An operand that may be undefined (a parameter or field, DeclaredKind) is tested at run time: when it is undefined
             // the generic function runs (and throws). Leaves the result in S(d - 2) and pops one slot; false: not known well enough, the generic code is used.
+            // A word operand of known kind as the C expression of its 64 bits (an int without a unit: taken as a word, cut to the width); null otherwise.
+            string? WordBits(int k) => K(k) == KindWord ? $"(uint64_t){S(k)}.w" : K(k) == KindInt && U(k) == 0 ? $"((uint64_t)(int64_t){S(k)}.i & FIRE_WORD_MASK)" : null;
+            // `a op b` with a word of known kind on one side and a word or a unitless int on the other (SPEC 8.10, fire_rt.h wordOp): written out in C - it
+            // wraps at the width (WordV cuts), / and % unsigned (by 0: the generic one, which throws), a shift by the width or more is 0. Not with an
+            // operator of a class (no object here) or a float (generic).
+            bool TypedWord(string op)
+            {
+                if (K(d - 2) != KindWord && K(d - 1) != KindWord) return false;
+                string? x = WordBits(d - 2), y = WordBits(d - 1);
+                if (x == null || y == null) return false;
+                string a = S(d - 2), b = S(d - 1);
+                switch (op)
+                {
+                    case "/" or "%":
+                        E($"{a} = FIRE_LIKELY({y} != 0) ? WordV({x} {op} {y}) : {(op == "/" ? "divide" : "modulo")}({a}, {b});");
+                        CheckIf($"{a}.kind == K_Undefined");
+                        break;
+                    case "<<" or ">>": E($"{a} = WordV({y} >= FIRE_WORD_BITS ? 0 : {x} {op} {y});"); break;
+                    default: E($"{a} = WordV({x} {op} {y});"); break;
+                }
+                d--;
+                SetR(d - 1, false); SetT(d - 1, TypeOf(KindWord, 0)); _kindsKept = true;
+                return true;
+            }
+            // `& | # << >>` of two ints of known kind (fire_rt.h FIRE_BITOP, shl, shr): written out; `& | #` need the same unit and fall back to the
+            // generic one for an enum value (a flag enum gives one of its values again).
+            bool TypedIntBits(string op)
+            {
+                if (K(d - 2) != KindInt || K(d - 1) != KindInt) return false;
+                string a = S(d - 2), b = S(d - 1);
+                int unit = U(d - 2);
+                string unitArg = unit == 0 ? "" : $", {UnitC(unit)}";
+                switch (op)
+                {
+                    case "<<": E($"{a} = Int((int64_t)((uint64_t){a}.i << ({b}.i & 63)){unitArg});"); break;
+                    case ">>": E($"{a} = Int({a}.i >> ({b}.i & 63){unitArg});"); break;
+                    default:
+                        if (U(d - 1) != unit) return false;
+                        E($"{a} = FIRE_LIKELY(({a}.reserved | {b}.reserved) == 0) ? Int({a}.i {op} {b}.i{unitArg}) : {(op == "&" ? "bitAnd" : op == "|" ? "bitOr" : "bitXor")}({a}, {b});");
+                        break;
+                }
+                d--;
+                SetR(d - 1, false); SetT(d - 1, TypeOf(KindInt, unit)); _kindsKept = true;
+                return true;
+            }
             bool TypedArith(string op)
             {
                 byte ka = BK(d - 2), kb = BK(d - 1);
@@ -5341,7 +5461,7 @@ namespace fire.Native
             }
             // The run-time test that the operands that may be undefined are not ("" when none may be).
             string KindGuard(params int[] slots) => string.Join(" && ", slots.Where(k => IsNullable(Ty(k)))
-                .Select(k => $"{S(k)}.kind == {(BK(k) switch { KindInt => "K_Int", KindFloat => "K_Float", _ => "K_Bool" })}"));
+                .Select(k => $"{S(k)}.kind == {(BK(k) switch { KindInt => "K_Int", KindFloat => "K_Float", KindWord => "K_Word", KindBuf => "K_Buffer", _ => "K_Bool" })}"));
             // The C++ condition of `a op b` for two slots of known kind (numbers of the same unit, or two bools for == and !=), null when the kinds
             // are not known. With a float they compare like compareNumeric (NaN sorts below everything, like double.CompareTo in the VM). An operand
             // that may be undefined is tested; when it is, the generic comparison decides (`==` is false, `<` throws). `mayThrow`: the generic one can throw.
@@ -5356,6 +5476,8 @@ namespace fire.Native
                     && !_classList.Any(c => c.Rc.FindMethodWithAccess("operator" + op, 1).Proto != null))
                     return $"{(Ty(ia) == TypeUndefined ? b : a)}.kind {op} K_Undefined";
                 string? fast;
+                // a word of known kind and a word or a unitless int: unsigned (SPEC 8.10)
+                if ((K(ia) == KindWord || K(ib) == KindWord) && WordBits(ia) is { } wa && WordBits(ib) is { } wb) return $"{wa} {op} {wb}";
                 if (ka == KindBool && kb == KindBool) fast = op is "==" or "!=" ? $"{a}.i {op} {b}.i" : null;
                 else if (!IsNum(ka) || !IsNum(kb) || U(ia) != U(ib)) fast = null;
                 else if (ka == KindInt && kb == KindInt) fast = $"{a}.i {op} {b}.i";

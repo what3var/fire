@@ -22254,6 +22254,44 @@ else
             var ms = new IO.MemoryStream([1, 2])
             try { ms.Read(n, 0, 1) } catch (ArgumentException e) { print("A: " + e.message) }
             """),
+        ("Word: schmales C - bekannte Puffer, word- und byte-Schleifen, Bit-Operationen auf int (auch Flag-Enums), zerstoerter Puffer und Index ausserhalb im schnellen Weg", """
+            flag enum Fl { a = 1, b = 2, c = 4 }
+            class Narrow {
+                static string Run(int n) {
+                    byte data[n]
+                    for (var i = 0; i < data.length; i++) { data[i] = i * 7 + (i >> 3) }
+                    word sum = 0
+                    byte x = 0
+                    word w[8]
+                    for (var i = 0; i < data.length; i++) {
+                        sum = sum + data[i]
+                        x = x # data[i]
+                        w[i % 8] = w[i % 8] * 31 + data[i]
+                    }
+                    word acc = 1
+                    for (word k = 0; k < 70; k++) { acc = (acc << 1) | (acc >> 63) }
+                    var bits = (n << 3) | (n >> 1) & 255
+                    var flags = Fl.a | Fl.c
+                    return sum + " " + x + " " + w[3] + " " + (w[7] > w[0]) + " " + acc + " " + bits + " " + flags + " " + (sum / 7) + " " + (sum % 7)
+                }
+                static string Errors() {
+                    byte data[4]
+                    word w[2]
+                    var out = ""
+                    try { data[9] = 1 } catch (IndexOutOfBoundsException e) { out = out + "I1 " }
+                    try { var v = w[5] } catch (IndexOutOfBoundsException e) { out = out + "I2 " }
+                    try { word z = 0
+                     var q = w[0] / z } catch (DivideByZeroException e) { out = out + "D " }
+                    delete data
+                    try { print(data.length) } catch (DestroyedException e) { out = out + "X1 " }
+                    try { print(data[0]) } catch (DestroyedException e) { out = out + "X2" }
+                    return out
+                }
+            }
+            print(Narrow.Run(1000))
+            print(Narrow.Run(37))
+            print(Narrow.Errors())
+            """),
         ("Word: Felder, Parameter, Rueckgabe, static, Json, Dictionary-Schluessel; word w = 5m ist zur Laufzeit ohne Einheit", """
             #import "json"
             class C { word w
