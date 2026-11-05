@@ -449,6 +449,11 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    * **Zu klären:** Zeiger auf Elemente und Felder (`ref a[i]`, `K_PtrElem`) zeigen dann auf zwei Stellen (der Kasten aus Punkt 1 hilft); Natives, die heute
      `Value*` eines Arrays sehen (`arrItems`), brauchen Zugriffsfunktionen; der Debugger und JSON lesen über dieselben Funktionen; Messung vorher (ein `ui`-Programm,
      ein Programm mit vielen Objekten) - typisierte Arrays und Puffer sind schon ohne Köpfe gepackt, der Gewinn liegt bei Objekten und gemischten Arrays.
+   * **Gemessen** (Branch `targets`, 218 native Testprogramme, 64 Bit, alle Allokationen gezählt): Heap 50,9 MB, davon Strings 25,7 MB, Felder der Objekte 4,6 MB,
+     Elemente gemischter Arrays 8,0 MB (zusammen 25 %), **Köpfe der Objekte 9,6 MB** (108.759 Objekte zu je 88 Byte: `Owned` 32, `cls`/`nfields` 8, die eingebettete
+     `OwnList` 40, `targs` 8). Die getrennten Köpfe sparten 6 % (12/16) bis 9 % (10/16) des Heaps, bei Programmen über 100 KB im Median 37 % Wertanteil, also 9-14 %.
+     Ein schmalerer Objektkopf (die `OwnList` eines Objekts braucht nur `head`/`tail`; `mark`, `depth`, `parent` gehören den Scopes, `holder` ist das Objekt selbst;
+     `targs` nur bei generischen Klassen) spart 32-40 Byte pro Objekt = 7-8 % des Heaps - bei viel kleinerem Umbau. Vorschlag: erst den Objektkopf, dann neu messen.
 1c. **Rohdaten ohne Einheit: `byte` und `word`** (Entscheidung des Benutzers). `byte` und `word` sind Datentypen für rohe Daten **ohne Einheit**; Einheiten
    bleiben bei `int`, `int[N]`, `float` und `float[N]` (dort ändert sich nichts). Ab hier unterscheiden sich die beiden Formate.
    * **Umgesetzt:** Byte-Argumente der Natives sicher - lesende Natives nehmen einen Puffer oder ein Array aus Zahlen 0..255 (auch ein typisiertes; kopiert, bis der
