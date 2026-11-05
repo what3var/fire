@@ -907,7 +907,8 @@ static class TypeTests
                 word y = x * 2
                 print(w + " " + f + " " + b + " " + j + " " + y + " " + (x is of word) + " " + (-x is of word) + " " + (~x is of word) + " " + ((x + 0.5) is of float))
                 """) is var wordOk && wordOk == "|3 3 3 3 12 True True True True", wordOk);
-            Check("word: int i = w und word v = 2.5 sind TC001; strikt ein Fehler", Run("word w = 5\nint i = w\nword v = 2.5\nprint(1)") is var wordBad && wordBad == "TC001 TC001|1"
+            Check("word: int i = w und word v = 2.5 sind TC001 (lax: zur Laufzeit eine ArgumentException); strikt ein Fehler",
+                Run("word w = 5\nint i = w\nword v = 1\ntry { v = 2.5\nprint(0) } catch (ArgumentException e) { print(1) }") is var wordBad && wordBad == "TC001 TC001|1"
                 && Run("word w = 5\nint i = w\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC001", wordBad);
             Check("word: 'word' mit Breite ist ein Syntaxfehler", CompileText("word[16] w = 1") is var wordWidth && wordWidth.Contains("'word' has the width of the target's machine word"), wordWidth);
         }
