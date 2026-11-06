@@ -548,16 +548,28 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    **`machine`** (Hardware-Paket, siehe unten; [The hardware of the PC](stdlib/machine.md)): Ports 8/16/32 Bit, physischer Speicher, CPU-Stufe und CPUID,
    CLI/STI, IRQ 0..15 (gezählt, verkettet oder selbst quittiert; fire-Code läuft nie im Interrupt - `Irq.Wait` in einem fire-Thread), CMOS-Uhr, Lautsprecher, PCI;
    ein neuer Teil der Plattformschicht (`fire_machine.h`: `std/fire_machine_x86_16.h`, sonst `none` - dort eine `MachineException`). Test in DOSBox-X.
-   **Grafik:** die `graphics`-Bibliothek baut für dos16 (das Plattformpaket setzt `FIRE_GFX_NO_GPU`), rechnet aber Pixelindizes in `int` - auf 16 Bit
-   läuft schon 320x200 über; ein RGBA-Framebuffer 320x200 (256 000 Bytes) rechnet zudem seine Größen in `size_t`. Offen, Frage an den Benutzer (die
-   Bibliothek 16-Bit-fest machen, oder Grafik ab `dos32` und auf dos16 nur ein kleines eigenes Render-Target).
+   **Grafik** (Entscheidung des Benutzers: die `graphics`-Bibliothek läuft auch unter DOS): die Bibliothek rechnet mit eigenen Typen - `fire_gfx_int` (mindestens
+   32 Bit: auf dos16 `int32_t`, sonst `int`), `fire_gfx_size` (Pixel und Bytes; auf dos16 `uint32_t`, sonst `size_t`) und `fire_gfx_malloc/calloc/realloc/free/
+   copy/set/move` (`fire_gfx_mem.h`: auf dos16 die Blöcke der Runtime, sonst die C-Bibliothek - auf den anderen Zielen ändert sich nichts). Dazu die Stellen, die
+   im 16-Bit-`int` überliefen (Clip-Grenzen `0x7FFFFFFF`, `byte << 8` in den Bildformaten, Konstantenprodukte, `(unsigned)`-Grenzprüfungen). Blöcke ab 16 KB kommen
+   unter Watcom/Huge direkt von DOS (`FIRE_CC_BIG_FROM`: ein Puffer von 64000 Bytes kostete im Heap der C-Bibliothek 118 KB), der PNG-Kodierer nimmt dort
+   kleinere Tabellen (32 statt 256 KB). Das Plattformpaket setzt `FIRE_GFX_NO_GPU`. Vergleich mit gcc bei denselben Breiten (Prüfsummen der Pixel): Linien,
+   Kreise, Ellipsen, Polygone, Füllen, Text, Blits (auch gespiegelt/skaliert), `Resize`, Schatten/Unschärfe, PNG hin und zurück, Masken - gleich.
+   Grenze: ein Programm mit der Grafikbibliothek hat rund 450 KB Code (je ~115 KB Grafik-C und übersetztes Prelude), daneben bleiben ~150 KB Daten
+   (ein Palettenpuffer 320x200 und kleinere; ein RGBA-Puffer 320x200 nicht). Mehr Platz erst mit Overlays oder dos32.
+   **Offen:** die Anzeige (VGA Mode 13h/12h, VESA; die Palette in die Register der Karte), Tastatur/Maus als Ereignisse eines Fensters.
    **`dos`** und **`xms`** ([DOS and XMS](stdlib/dos.md)): Interrupts mit den Registern des 8086 (`Dos.Interrupt`, `DosRegisters`), DOS-Speicher, Vektoren,
    die Adresse eines Puffers als Segment:Offset; Blöcke im Speicher über 1 MB über den XMS-Treiber (`XmsBlock`, Kopien beliebiger Länge, am Ende freigegeben).
    Ein Teil der Plattformschicht `fire_dos.h` (`std/fire_dos_real.h`; dos32 später über DPMI). Test in DOSBox-X.
    **Geräte:** `devices` auf dos16 - `COM1`..`COM4` (UART direkt, 115200 8N1, FIFO; Empfang über den IRQ in einen Ringpuffer, Vektor und Maske am Ende zurück)
    und `LPT1`..`LPT3` (nur Ausgabe, BUSY/STROBE) als serielle Geräte (`std/fire_dev_dos.h`). Test in DOSBox-X (Dateien für COM1/LPT1, Empfang über den
    Loopback des UART).
-   **Offen:** `#intwidth 16`, Grafik (s.o.).
+   **Offen:** `#intwidth 16`, die Anzeige der Grafik (s.o.).
+3b. **Die Natives eines Packages gehören in das Package** (Entscheidung des Benutzers, nach der Grafik auf DOS): der C-Code der Natives - auch die
+   plattformabhängigen Teile, die heute in `native/platform/<platform>/` und `native/platform/std/` liegen (`fire_console_*`, `fire_machine_*`, `fire_dos_*`,
+   `fire_dev_*`, `fire_fs_*`, ...) - liegt im Package und wird mit dem Package aktualisiert (ein neues Package bringt seine Umsetzungen je Plattform mit, ohne
+   neue Runtime). Die Auswahl je Plattform über die Quellen des Packages (`ReadNativeSources` mit den Schlüsseln der Plattform und des Ziels); in der Runtime
+   bleibt nur, was sie selbst braucht (Uhr, Threads, Speicher, der Kern der Plattform).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste

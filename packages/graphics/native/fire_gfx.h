@@ -13,14 +13,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include "fire_gfx_font.h"
+#include "fire_gfx_mem.h"
 
 enum { FIRE_GFX_RGBA = 0, FIRE_GFX_INDEXED = 1 };
 
 static uint32_t fire_gfx_rgb(uint32_t r, uint32_t g, uint32_t b) { return r | (g << 8) | (b << 16) | 0xFF000000u; }
 
 /* the small helpers of the C++ standard library, with its exact semantics (std::min(a, b) is `b < a ? b : a`, std::max(a, b) is `a < b ? b : a`) */
-static int fire_gfx_imin(int a, int b) { return b < a ? b : a; }
-static int fire_gfx_imax(int a, int b) { return a < b ? b : a; }
+static fire_gfx_int fire_gfx_imin(fire_gfx_int a, fire_gfx_int b) { return b < a ? b : a; }
+static fire_gfx_int fire_gfx_imax(fire_gfx_int a, fire_gfx_int b) { return a < b ? b : a; }
 static int64_t fire_gfx_lmin(int64_t a, int64_t b) { return b < a ? b : a; }
 static int64_t fire_gfx_lmax(int64_t a, int64_t b) { return a < b ? b : a; }
 static double fire_gfx_dmin(double a, double b) { return b < a ? b : a; }
@@ -30,7 +31,7 @@ typedef struct FireGfxPaint {
     uint32_t rgba;
     int16_t index;   /* -1: a direct value */
 } FireGfxPaint;
-static int fire_gfx_paintIsIndex(FireGfxPaint p) { return p.index >= 0; }
+static fire_gfx_int fire_gfx_paintIsIndex(FireGfxPaint p) { return p.index >= 0; }
 static FireGfxPaint fire_gfx_paintIndex(uint8_t i) { FireGfxPaint p; p.rgba = 0; p.index = i; return p; }
 static FireGfxPaint fire_gfx_paintRgba(uint32_t packed) { FireGfxPaint p; p.rgba = packed; p.index = -1; return p; }
 /* An argument of a script: a number without bits above the lowest byte is a palette index. */
@@ -45,14 +46,14 @@ static FireGfxPixel fire_gfx_pixelNone(void) { FireGfxPixel p; p.rgba = 0; p.ind
 
 typedef struct FireGfxPalette {
     uint32_t entries[256];
-    int version;
+    fire_gfx_int version;
 } FireGfxPalette;
 
 /* The 16 colors of QBasic, the 6x6x6 color cube, 24 grays. */
 static void fire_gfx_paletteDefaults(FireGfxPalette* p) {
-    static const int levels[6] = {0, 51, 102, 153, 204, 255};
+    static const fire_gfx_int levels[6] = {0, 51, 102, 153, 204, 255};
     uint32_t qbasic[16];
-    int i, r, g, b, idx = 16;
+    fire_gfx_int i, r, g, b, idx = 16;
     qbasic[0] = fire_gfx_rgb(0, 0, 0); qbasic[1] = fire_gfx_rgb(0, 0, 170); qbasic[2] = fire_gfx_rgb(0, 170, 0); qbasic[3] = fire_gfx_rgb(0, 170, 170);
     qbasic[4] = fire_gfx_rgb(170, 0, 0); qbasic[5] = fire_gfx_rgb(170, 0, 170); qbasic[6] = fire_gfx_rgb(170, 85, 0); qbasic[7] = fire_gfx_rgb(170, 170, 170);
     qbasic[8] = fire_gfx_rgb(85, 85, 85); qbasic[9] = fire_gfx_rgb(85, 85, 255); qbasic[10] = fire_gfx_rgb(85, 255, 85); qbasic[11] = fire_gfx_rgb(85, 255, 255);
@@ -64,20 +65,20 @@ static void fire_gfx_paletteDefaults(FireGfxPalette* p) {
 static void fire_gfx_paletteInit(FireGfxPalette* p) { p->version = 0; fire_gfx_paletteDefaults(p); }
 static void fire_gfx_paletteSet(FireGfxPalette* p, uint8_t i, uint32_t color) { p->entries[i] = color; p->version++; }
 static uint32_t fire_gfx_paletteGet(const FireGfxPalette* p, uint8_t i) { return p->entries[i]; }
-static void fire_gfx_paletteSetAll(FireGfxPalette* p, const uint32_t* colors, int n) {
-    int i;
+static void fire_gfx_paletteSetAll(FireGfxPalette* p, const uint32_t* colors, fire_gfx_int n) {
+    fire_gfx_int i;
     if (n > 256) n = 256;
     for (i = 0; i < n; i++) p->entries[i] = colors[i];
     p->version++;
 }
 /* The entry that is closest to a color (the squared distance in R, G, B; the first one wins). */
 static uint8_t fire_gfx_paletteNearest(const FireGfxPalette* p, uint32_t color) {
-    int r = (int)(color & 0xFF), g = (int)((color >> 8) & 0xFF), b = (int)((color >> 16) & 0xFF);
-    int best = 0, bestDistance = 0x7FFFFFFF, i;
+    fire_gfx_int r = (fire_gfx_int)(color & 0xFF), g = (fire_gfx_int)((color >> 8) & 0xFF), b = (fire_gfx_int)((color >> 16) & 0xFF);
+    fire_gfx_int best = 0, bestDistance = 0x7FFFFFFF, i;
     for (i = 0; i < 256; i++) {
         uint32_t e = p->entries[i];
-        int dr = (int)(e & 0xFF) - r, dg = (int)((e >> 8) & 0xFF) - g, db = (int)((e >> 16) & 0xFF) - b;
-        int distance = dr * dr + dg * dg + db * db;
+        fire_gfx_int dr = (fire_gfx_int)(e & 0xFF) - r, dg = (fire_gfx_int)((e >> 8) & 0xFF) - g, db = (fire_gfx_int)((e >> 16) & 0xFF) - b;
+        fire_gfx_int distance = dr * dr + dg * dg + db * db;
         if (distance < bestDistance) {
             bestDistance = distance;
             best = i;
@@ -86,15 +87,15 @@ static uint8_t fire_gfx_paletteNearest(const FireGfxPalette* p, uint32_t color) 
     }
     return (uint8_t)best;
 }
-static int fire_gfx_paletteSame(const FireGfxPalette* a, const FireGfxPalette* b) { return a == b || memcmp(a->entries, b->entries, sizeof a->entries) == 0; }
+static fire_gfx_int fire_gfx_paletteSame(const FireGfxPalette* a, const FireGfxPalette* b) { return a == b || memcmp(a->entries, b->entries, sizeof a->entries) == 0; }
 
 typedef struct FireGfxFramebuffer {
-    int width, height, mode;
+    fire_gfx_int width, height, mode;
     uint32_t* pixels;   /* RGBA: width*height */
     uint8_t* indices;   /* palette mode: width*height */
     FireGfxPalette palette;
-    int transparentIndex;
-    int refs;   /* the table of the bridge, every canvas and every window that shows it: it lives as long as one of them does */
+    fire_gfx_int transparentIndex;
+    fire_gfx_int refs;   /* the table of the bridge, every canvas and every window that shows it: it lives as long as one of them does */
     void (*presentFn)(void);   /* a presenter of a package that the windows showing it call instead (a fire_present_fn, fire_display_c.h; scene3d DirectDrawing), or NULL */
     void* presentCtx;
     void* gpu;   /* its twin on the GPU (fire_gfx_gpu.h), or NULL */
@@ -102,9 +103,9 @@ typedef struct FireGfxFramebuffer {
 
 /* The GPU backend (fire_gfx_gpu.h) is asked before the CPU reads (`writes` 0) or draws (1) the pixels of a framebuffer that has a twin there - it fetches them back
  * when the GPU drew since - and when a framebuffer goes. NULL without it. */
-static void (*g_fireGfxCpuHook)(FireGfxFramebuffer* fb, int writes);
+static void (*g_fireGfxCpuHook)(FireGfxFramebuffer* fb, fire_gfx_int writes);
 static void (*g_fireGfxFreeHook)(FireGfxFramebuffer* fb);
-static void fire_gfx_fbCpu(const FireGfxFramebuffer* fb, int writes) { if (fb->gpu != NULL && g_fireGfxCpuHook != NULL) g_fireGfxCpuHook((FireGfxFramebuffer*)fb, writes); }
+static void fire_gfx_fbCpu(const FireGfxFramebuffer* fb, fire_gfx_int writes) { if (fb->gpu != NULL && g_fireGfxCpuHook != NULL) g_fireGfxCpuHook((FireGfxFramebuffer*)fb, writes); }
 
 #define FIRE_GFX_MAX_SIDE ((int64_t)16384)
 #define FIRE_GFX_MAX_PIXELS ((int64_t)64 * 1024 * 1024)
@@ -121,80 +122,80 @@ static void fire_gfx_fbInit(FireGfxFramebuffer* fb) {
 }
 /* A new empty framebuffer (malloc), NULL without memory. */
 static FireGfxFramebuffer* fire_gfx_fbNew(void) {
-    FireGfxFramebuffer* fb = (FireGfxFramebuffer*)malloc(sizeof(FireGfxFramebuffer));
+    FireGfxFramebuffer* fb = (FireGfxFramebuffer*)fire_gfx_malloc(sizeof(FireGfxFramebuffer));
     if (fb != NULL) fire_gfx_fbInit(fb);
     return fb;
 }
-static void fire_gfx_fbFreePixels(FireGfxFramebuffer* fb) { free(fb->pixels); free(fb->indices); fb->pixels = NULL; fb->indices = NULL; }
-static void fire_gfx_fbDelete(FireGfxFramebuffer* fb) { if (fb == NULL) return; if (fb->gpu != NULL && g_fireGfxFreeHook != NULL) g_fireGfxFreeHook(fb); fire_gfx_fbFreePixels(fb); free(fb); }
+static void fire_gfx_fbFreePixels(FireGfxFramebuffer* fb) { fire_gfx_free(fb->pixels); fire_gfx_free(fb->indices); fb->pixels = NULL; fb->indices = NULL; }
+static void fire_gfx_fbDelete(FireGfxFramebuffer* fb) { if (fb == NULL) return; if (fb->gpu != NULL && g_fireGfxFreeHook != NULL) g_fireGfxFreeHook(fb); fire_gfx_fbFreePixels(fb); fire_gfx_free(fb); }
 
 /* Allocates the pixels; 0 when the size is invalid or does not fit in memory. */
-static int fire_gfx_fbCreate(FireGfxFramebuffer* fb, int64_t w, int64_t h, int m) {
-    size_t n;
+static fire_gfx_int fire_gfx_fbCreate(FireGfxFramebuffer* fb, int64_t w, int64_t h, fire_gfx_int m) {
+    fire_gfx_size n;
     if (w <= 0 || h <= 0 || w > 0x7FFFFFFF || h > 0x7FFFFFFF || w * h > 0x7FFFFFFF || (m != FIRE_GFX_RGBA && m != FIRE_GFX_INDEXED)) return 0;
-    fb->width = (int)w; fb->height = (int)h; fb->mode = m;
-    n = (size_t)(w * h);
-    if (m == FIRE_GFX_INDEXED) { fb->indices = (uint8_t*)calloc(n, 1); return fb->indices != NULL; }
-    fb->pixels = (uint32_t*)calloc(n, 4);
+    fb->width = (fire_gfx_int)w; fb->height = (fire_gfx_int)h; fb->mode = m;
+    n = (fire_gfx_size)(w * h);
+    if (m == FIRE_GFX_INDEXED) { fb->indices = (uint8_t*)fire_gfx_calloc(n, 1); return fb->indices != NULL; }
+    fb->pixels = (uint32_t*)fire_gfx_calloc(n, 4);
     return fb->pixels != NULL;
 }
 
-static int fire_gfx_validSize(int64_t w, int64_t h) { return w >= 1 && h >= 1 && w <= FIRE_GFX_MAX_SIDE && h <= FIRE_GFX_MAX_SIDE && w * h <= FIRE_GFX_MAX_PIXELS; }
+static fire_gfx_int fire_gfx_validSize(int64_t w, int64_t h) { return w >= 1 && h >= 1 && w <= FIRE_GFX_MAX_SIDE && h <= FIRE_GFX_MAX_SIDE && w * h <= FIRE_GFX_MAX_PIXELS; }
 
 /* A new size (see fire_gfx_validSize; an invalid size leaves it as it is, 0): the content stays at the upper left, the new area is transparent (RGBA) or index 0. The pixel arrays are new ones. */
-static int fire_gfx_fbResize(FireGfxFramebuffer* fb, int64_t w, int64_t h) {
-    size_t n;
-    int copyW, copyH, y;
+static fire_gfx_int fire_gfx_fbResize(FireGfxFramebuffer* fb, int64_t w, int64_t h) {
+    fire_gfx_size n;
+    fire_gfx_int copyW, copyH, y;
     uint8_t* newIndices = NULL;
     uint32_t* newPixels = NULL;
     if (!fire_gfx_validSize(w, h)) return 0;
     if (w == fb->width && h == fb->height) return 1;
     fire_gfx_fbCpu(fb, 1);
-    n = (size_t)(w * h);
-    copyW = (int)fire_gfx_lmin(w, fb->width); copyH = (int)fire_gfx_lmin(h, fb->height);
-    if (fb->indices) { newIndices = (uint8_t*)calloc(n, 1); if (!newIndices) return 0; }
-    else { newPixels = (uint32_t*)calloc(n, 4); if (!newPixels) return 0; }
+    n = (fire_gfx_size)(w * h);
+    copyW = (fire_gfx_int)fire_gfx_lmin(w, fb->width); copyH = (fire_gfx_int)fire_gfx_lmin(h, fb->height);
+    if (fb->indices) { newIndices = (uint8_t*)fire_gfx_calloc(n, 1); if (!newIndices) return 0; }
+    else { newPixels = (uint32_t*)fire_gfx_calloc(n, 4); if (!newPixels) return 0; }
     for (y = 0; y < copyH; y++) {
-        if (fb->indices) memcpy(newIndices + (size_t)y * (size_t)w, fb->indices + (size_t)y * (size_t)fb->width, (size_t)copyW);
-        else memcpy(newPixels + (size_t)y * (size_t)w, fb->pixels + (size_t)y * (size_t)fb->width, (size_t)copyW * 4);
+        if (fb->indices) fire_gfx_copy(newIndices + (fire_gfx_size)y * (fire_gfx_size)w, fb->indices + (fire_gfx_size)y * (fire_gfx_size)fb->width, (fire_gfx_size)copyW);
+        else fire_gfx_copy(newPixels + (fire_gfx_size)y * (fire_gfx_size)w, fb->pixels + (fire_gfx_size)y * (fire_gfx_size)fb->width, (fire_gfx_size)copyW * 4);
     }
-    free(fb->pixels); free(fb->indices);
+    fire_gfx_free(fb->pixels); fire_gfx_free(fb->indices);
     fb->pixels = newPixels; fb->indices = newIndices;
-    fb->width = (int)w; fb->height = (int)h;
+    fb->width = (fire_gfx_int)w; fb->height = (fire_gfx_int)h;
     return 1;
 }
 
-static int fire_gfx_fbIsIndexed(const FireGfxFramebuffer* fb) { return fb->indices != NULL; }
-static size_t fire_gfx_fbPixelCount(const FireGfxFramebuffer* fb) { return (size_t)fb->width * (size_t)fb->height; }
-static size_t fire_gfx_fbByteCount(const FireGfxFramebuffer* fb) { return fb->indices ? fire_gfx_fbPixelCount(fb) : fire_gfx_fbPixelCount(fb) * 4; }
+static fire_gfx_int fire_gfx_fbIsIndexed(const FireGfxFramebuffer* fb) { return fb->indices != NULL; }
+static fire_gfx_size fire_gfx_fbPixelCount(const FireGfxFramebuffer* fb) { return (fire_gfx_size)fb->width * (fire_gfx_size)fb->height; }
+static fire_gfx_size fire_gfx_fbByteCount(const FireGfxFramebuffer* fb) { return fb->indices ? fire_gfx_fbPixelCount(fb) : fire_gfx_fbPixelCount(fb) * 4; }
 
 /* The pixels as colors, also for a palette framebuffer (for a window that shows the framebuffer). */
 static void fire_gfx_fbResolveTo(const FireGfxFramebuffer* fb, uint32_t* out) {
-    size_t i, n = fire_gfx_fbPixelCount(fb);
+    fire_gfx_size i, n = fire_gfx_fbPixelCount(fb);
     fire_gfx_fbCpu(fb, 0);
-    if (!fb->indices) { if (n) memcpy(out, fb->pixels, n * 4); return; }
+    if (!fb->indices) { if (n) fire_gfx_copy(out, fb->pixels, n * 4); return; }
     for (i = 0; i < n; i++) out[i] = fb->palette.entries[fb->indices[i]];
 }
 
-static uint32_t fire_gfx_fbGetRaw(const FireGfxFramebuffer* fb, int x, int y) {
-    size_t i;
+static uint32_t fire_gfx_fbGetRaw(const FireGfxFramebuffer* fb, fire_gfx_int x, fire_gfx_int y) {
+    fire_gfx_size i;
     fire_gfx_fbCpu(fb, 0);
-    if ((unsigned)x >= (unsigned)fb->width || (unsigned)y >= (unsigned)fb->height) return 0;
-    i = (size_t)y * fb->width + x;
+    if ((uint32_t)x >= (uint32_t)fb->width || (uint32_t)y >= (uint32_t)fb->height) return 0;
+    i = (fire_gfx_size)y * fb->width + x;
     return fb->indices ? fb->indices[i] : fb->pixels[i];
 }
-static uint8_t fire_gfx_fbGetIndex(const FireGfxFramebuffer* fb, int x, int y) {
-    size_t i;
+static uint8_t fire_gfx_fbGetIndex(const FireGfxFramebuffer* fb, fire_gfx_int x, fire_gfx_int y) {
+    fire_gfx_size i;
     fire_gfx_fbCpu(fb, 0);
-    if ((unsigned)x >= (unsigned)fb->width || (unsigned)y >= (unsigned)fb->height) return 0;
-    i = (size_t)y * fb->width + x;
+    if ((uint32_t)x >= (uint32_t)fb->width || (uint32_t)y >= (uint32_t)fb->height) return 0;
+    i = (fire_gfx_size)y * fb->width + x;
     return fb->indices ? fb->indices[i] : fire_gfx_paletteNearest(&fb->palette, fb->pixels[i]);
 }
-static uint32_t fire_gfx_fbGetPixel(const FireGfxFramebuffer* fb, int x, int y) {
-    size_t i;
+static uint32_t fire_gfx_fbGetPixel(const FireGfxFramebuffer* fb, fire_gfx_int x, fire_gfx_int y) {
+    fire_gfx_size i;
     fire_gfx_fbCpu(fb, 0);
-    if ((unsigned)x >= (unsigned)fb->width || (unsigned)y >= (unsigned)fb->height) return 0;
-    i = (size_t)y * fb->width + x;
+    if ((uint32_t)x >= (uint32_t)fb->width || (uint32_t)y >= (uint32_t)fb->height) return 0;
+    i = (fire_gfx_size)y * fb->width + x;
     return fb->indices ? fire_gfx_paletteGet(&fb->palette, fb->indices[i]) : fb->pixels[i];
 }
 
@@ -202,17 +203,17 @@ static void fire_gfx_fbRetain(FireGfxFramebuffer* fb) { fb->refs++; }
 static void fire_gfx_fbRelease(FireGfxFramebuffer* fb) { if (--fb->refs == 0) fire_gfx_fbDelete(fb); }
 
 /* (the decision of fire_gfx_makeMask for one color) */
-static uint8_t fire_gfx_maskDecide(uint32_t packed, uint8_t threshold, int darkIsRemoved, uint8_t alphaThreshold) {
+static uint8_t fire_gfx_maskDecide(uint32_t packed, uint8_t threshold, fire_gfx_int darkIsRemoved, uint8_t alphaThreshold) {
     double lum;
-    int dark;
+    fire_gfx_int dark;
     if ((packed >> 24) < alphaThreshold) return 0;
     lum = 0.299 * (packed & 0xFF) + 0.587 * ((packed >> 8) & 0xFF) + 0.114 * ((packed >> 16) & 0xFF);
     dark = lum < threshold;
     return (darkIsRemoved ? dark : !dark) ? 1 : 0;
 }
 /* A palette framebuffer of the same size that marks the pixels to cut out: index 1 (white) = set, index 0 (black) = not (see the slicer). */
-static int fire_gfx_makeMask(const FireGfxFramebuffer* src, uint8_t threshold, int darkIsRemoved, uint8_t alphaThreshold, FireGfxFramebuffer* mask) {
-    size_t i, n;
+static fire_gfx_int fire_gfx_makeMask(const FireGfxFramebuffer* src, uint8_t threshold, fire_gfx_int darkIsRemoved, uint8_t alphaThreshold, FireGfxFramebuffer* mask) {
+    fire_gfx_size i, n;
     fire_gfx_fbCpu(src, 0);
     if (!fire_gfx_fbCreate(mask, src->width, src->height, FIRE_GFX_INDEXED)) return 0;
     fire_gfx_paletteSet(&mask->palette, 0, fire_gfx_rgb(0, 0, 0));
@@ -221,7 +222,7 @@ static int fire_gfx_makeMask(const FireGfxFramebuffer* src, uint8_t threshold, i
     n = fire_gfx_fbPixelCount(src);
     if (src->indices) {
         uint8_t table[256];
-        int k;
+        fire_gfx_int k;
         for (k = 0; k < 256; k++) table[k] = fire_gfx_maskDecide(fire_gfx_paletteGet(&src->palette, (uint8_t)k), threshold, darkIsRemoved, alphaThreshold);
         for (i = 0; i < n; i++) mask->indices[i] = table[src->indices[i]];
     } else
@@ -247,9 +248,9 @@ static uint32_t fire_gfx_mix(uint32_t dst, uint32_t src) {
 #define FIRE_GFX_DIV255_2(x) ((((x) + 0x00010001u + (((x) >> 8) & 0x00FF00FFu)) >> 8) & 0x00FF00FFu)
 
 /* Mixes `src` over each of the `n` pixels - the same result as fire_gfx_mix for every pixel, red and blue in one multiplication. */
-static void fire_gfx_blendRow(uint32_t* p, size_t n, uint32_t src) {
+static void fire_gfx_blendRow(uint32_t* p, fire_gfx_size n, uint32_t src) {
     uint32_t a = src >> 24, inv, rb, g;
-    size_t k;
+    fire_gfx_size k;
     if (a == 0) { for (k = 0; k < n; k++) if ((p[k] >> 24) == 0) p[k] = src; return; }   /* (as fire_gfx_mix: over nothing it is the color) */
     if (a == 255) { for (k = 0; k < n; k++) p[k] = src; return; }
     inv = 255 - a;
@@ -272,12 +273,12 @@ typedef struct FireGfxSurface {
     FireGfxFramebuffer* fb;
     uint32_t* pixels;
     uint8_t* indices;
-    int width, height;
-    int blend;
-    int clipLeft, clipTop, clipRight, clipBottom;   /* drawing is limited to x in [clipLeft, clipRight) and y in [clipTop, clipBottom), inside the target */
+    fire_gfx_int width, height;
+    fire_gfx_int blend;
+    fire_gfx_int clipLeft, clipTop, clipRight, clipBottom;   /* drawing is limited to x in [clipLeft, clipRight) and y in [clipTop, clipBottom), inside the target */
 } FireGfxSurface;
 
-static FireGfxSurface fire_gfx_surface(FireGfxFramebuffer* f, int b, int cl, int ct, int cr, int cb) {
+static FireGfxSurface fire_gfx_surface(FireGfxFramebuffer* f, fire_gfx_int b, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb) {
     FireGfxSurface s;
     fire_gfx_fbCpu(f, 1);   /* (the CPU draws: the pixels are fetched from the GPU first, where it drew since) */
     s.fb = f; s.pixels = f->pixels; s.indices = f->indices; s.width = f->width; s.height = f->height; s.blend = b;
@@ -285,7 +286,7 @@ static FireGfxSurface fire_gfx_surface(FireGfxFramebuffer* f, int b, int cl, int
     return s;
 }
 
-static int fire_gfx_surfaceIsIndexed(const FireGfxSurface* s) { return s->indices != NULL; }
+static fire_gfx_int fire_gfx_surfaceIsIndexed(const FireGfxSurface* s) { return s->indices != NULL; }
 
 static FireGfxPixel fire_gfx_resolve(const FireGfxSurface* s, FireGfxPaint paint) {
     FireGfxPixel p;
@@ -301,71 +302,71 @@ static FireGfxPixel fire_gfx_resolve(const FireGfxSurface* s, FireGfxPaint paint
     return p;
 }
 
-static int fire_gfx_visible(const FireGfxSurface* s, const FireGfxPixel* p) {
+static fire_gfx_int fire_gfx_visible(const FireGfxSurface* s, const FireGfxPixel* p) {
     uint32_t a;
     if (!s->blend) return 1;
     a = p->rgba >> 24;
     return s->indices ? a >= 128 : a != 0;
 }
-static int fire_gfx_isCopy(const FireGfxSurface* s, const FireGfxPixel* p) { return !s->blend || s->indices || (p->rgba >> 24) == 255; }
+static fire_gfx_int fire_gfx_isCopy(const FireGfxSurface* s, const FireGfxPixel* p) { return !s->blend || s->indices || (p->rgba >> 24) == 255; }
 
-static void fire_gfx_put(FireGfxSurface* s, int x, int y, const FireGfxPixel* p) {
-    size_t i;
+static void fire_gfx_put(FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y, const FireGfxPixel* p) {
+    fire_gfx_size i;
     if (x < s->clipLeft || x >= s->clipRight || y < s->clipTop || y >= s->clipBottom) return;
     if (!fire_gfx_visible(s, p)) return;
-    i = (size_t)y * s->width + x;
+    i = (fire_gfx_size)y * s->width + x;
     if (s->indices) s->indices[i] = p->index;
     else if (!s->blend || (p->rgba >> 24) == 255) s->pixels[i] = p->rgba;
     else s->pixels[i] = fire_gfx_mix(s->pixels[i], p->rgba);
 }
 
 /* A horizontal line from x0 to x1 (both included, any order) in row y, clipped. */
-static void fire_gfx_span(FireGfxSurface* s, int y, int x0, int x1, const FireGfxPixel* p) {
-    size_t at, n, k;
+static void fire_gfx_span(FireGfxSurface* s, fire_gfx_int y, fire_gfx_int x0, fire_gfx_int x1, const FireGfxPixel* p) {
+    fire_gfx_size at, n, k;
     if (y < s->clipTop || y >= s->clipBottom) return;
-    if (x1 < x0) { int t = x0; x0 = x1; x1 = t; }
+    if (x1 < x0) { fire_gfx_int t = x0; x0 = x1; x1 = t; }
     x0 = fire_gfx_imax(s->clipLeft, x0);
     x1 = fire_gfx_imin(s->clipRight - 1, x1);
     if (x1 < x0 || !fire_gfx_visible(s, p)) return;
-    at = (size_t)y * s->width + x0; n = (size_t)(x1 - x0 + 1);
-    if (s->indices) memset(s->indices + at, p->index, n);
+    at = (fire_gfx_size)y * s->width + x0; n = (fire_gfx_size)(x1 - x0 + 1);
+    if (s->indices) fire_gfx_set(s->indices + at, p->index, n);
     else if (!s->blend || (p->rgba >> 24) == 255) for (k = 0; k < n; k++) s->pixels[at + k] = p->rgba;
     else fire_gfx_blendRow(s->pixels + at, n, p->rgba);
 }
 
-static void fire_gfx_rect(FireGfxSurface* s, int x, int y, int w, int h, const FireGfxPixel* p) {
-    int y0, y1, xr, yy;
+static void fire_gfx_rect(FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, const FireGfxPixel* p) {
+    fire_gfx_int y0, y1, xr, yy;
     if (w <= 0 || h <= 0) return;
-    y0 = fire_gfx_imax(s->clipTop, y); y1 = (int)fire_gfx_lmin(s->clipBottom, (int64_t)y + h);
-    xr = (int)fire_gfx_lmin((int64_t)x + w - 1, 0x7FFFFFFF);
+    y0 = fire_gfx_imax(s->clipTop, y); y1 = (fire_gfx_int)fire_gfx_lmin(s->clipBottom, (int64_t)y + h);
+    xr = (fire_gfx_int)fire_gfx_lmin((int64_t)x + w - 1, 0x7FFFFFFF);
     for (yy = y0; yy < y1; yy++) fire_gfx_span(s, yy, x, xr, p);
 }
 
 /* The raw value of the pixel: the index in a palette target, else the color; 0 outside. */
-static uint32_t fire_gfx_raw(const FireGfxSurface* s, int x, int y) {
-    size_t i;
-    if ((unsigned)x >= (unsigned)s->width || (unsigned)y >= (unsigned)s->height) return 0;
-    i = (size_t)y * s->width + x;
+static uint32_t fire_gfx_raw(const FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y) {
+    fire_gfx_size i;
+    if ((uint32_t)x >= (uint32_t)s->width || (uint32_t)y >= (uint32_t)s->height) return 0;
+    i = (fire_gfx_size)y * s->width + x;
     return s->indices ? s->indices[i] : s->pixels[i];
 }
 
 /* ---- shapes: they hand pixels and spans to a sink (a brush fills them, a pen stamps them) --------------------------------------------------------------------- */
 typedef struct FireGfxSink FireGfxSink;
 struct FireGfxSink {
-    void (*point)(FireGfxSink* self, int x, int y);
-    void (*span)(FireGfxSink* self, int y, int x0, int x1);
+    void (*point)(FireGfxSink* self, fire_gfx_int x, fire_gfx_int y);
+    void (*span)(FireGfxSink* self, fire_gfx_int y, fire_gfx_int x0, fire_gfx_int x1);
 };
 
-static void fire_gfx_shapeLine(FireGfxSink* sink, int x0, int y0, int x1, int y1) {
+static void fire_gfx_shapeLine(FireGfxSink* sink, fire_gfx_int x0, fire_gfx_int y0, fire_gfx_int x1, fire_gfx_int y1) {
     int64_t dxl = llabs((int64_t)x1 - x0), dyl = llabs((int64_t)y1 - y0);
-    int dx, sx, dy, sy, err;
+    fire_gfx_int dx, sx, dy, sy, err;
     if (y0 == y1) { sink->span(sink, y0, x0, x1); return; }
     if (dxl > 0x7FFFFFFF / 2 || dyl > 0x7FFFFFFF / 2) return;   /* absurd coordinates: draw nothing instead of overflowing */
-    dx = (int)dxl; sx = x0 < x1 ? 1 : -1;
-    dy = -(int)dyl; sy = y0 < y1 ? 1 : -1;
+    dx = (fire_gfx_int)dxl; sx = x0 < x1 ? 1 : -1;
+    dy = -(fire_gfx_int)dyl; sy = y0 < y1 ? 1 : -1;
     err = dx + dy;
     for (;;) {
-        int e2;
+        fire_gfx_int e2;
         sink->point(sink, x0, y0);
         if (x0 == x1 && y0 == y1) break;
         e2 = 2 * err;
@@ -374,8 +375,8 @@ static void fire_gfx_shapeLine(FireGfxSink* sink, int x0, int y0, int x1, int y1
     }
 }
 
-static void fire_gfx_shapeRect(FireGfxSink* sink, int x, int y, int w, int h) {
-    int yy;
+static void fire_gfx_shapeRect(FireGfxSink* sink, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h) {
+    fire_gfx_int yy;
     if (w <= 0 || h <= 0) return;
     sink->span(sink, y, x, x + w - 1);
     if (h > 1) sink->span(sink, y + h - 1, x, x + w - 1);
@@ -388,111 +389,111 @@ static void fire_gfx_shapeRect(FireGfxSink* sink, int x, int y, int w, int h) {
 #define FIRE_GFX_MAX_RADIUS (1 << 14)
 
 /* The half widths of the rows of an ellipse: the pixels (dx, dy) with (2dx)^2/a^2 + (2dy)^2/b^2 <= 1, a = 2rx+1, b = 2ry+1. malloc'd (ry + 1 entries), NULL without memory. */
-static int* fire_gfx_ellipseSpans(int rx, int ry) {
+static fire_gfx_int* fire_gfx_ellipseSpans(fire_gfx_int rx, fire_gfx_int ry) {
     int64_t a = 2LL * rx + 1, b = 2LL * ry + 1;
     int64_t a2 = a * a, b2 = b * b;
-    int* spans = (int*)malloc(sizeof(int) * ((size_t)ry + 1));
-    int dy;
+    fire_gfx_int* spans = (fire_gfx_int*)fire_gfx_malloc(sizeof(fire_gfx_int) * ((fire_gfx_size)ry + 1));
+    fire_gfx_int dy;
     if (spans == NULL) return NULL;
     for (dy = 0; dy <= ry; dy++) {
         int64_t rhs = a2 * (b2 - 4LL * dy * dy);
         int64_t dx = (int64_t)sqrt((double)rhs / (4.0 * (double)b2));
         while (dx > 0 && 4 * dx * dx * b2 > rhs) dx--;
         while (4 * (dx + 1) * (dx + 1) * b2 <= rhs) dx++;
-        spans[(size_t)dy] = (int)fire_gfx_lmin(dx, rx);
+        spans[(fire_gfx_size)dy] = (fire_gfx_int)fire_gfx_lmin(dx, rx);
     }
     return spans;
 }
 
-static void fire_gfx_shapeEllipse(FireGfxSink* sink, int cx, int cy, int rx, int ry) {
-    int* spans;
-    int dy;
+static void fire_gfx_shapeEllipse(FireGfxSink* sink, fire_gfx_int cx, fire_gfx_int cy, fire_gfx_int rx, fire_gfx_int ry) {
+    fire_gfx_int* spans;
+    fire_gfx_int dy;
     if (rx < 0 || ry < 0) return;
     rx = fire_gfx_imin(rx, FIRE_GFX_MAX_RADIUS);
     ry = fire_gfx_imin(ry, FIRE_GFX_MAX_RADIUS);
     spans = fire_gfx_ellipseSpans(rx, ry);
     if (spans == NULL) return;
     for (dy = 0; dy <= ry; dy++) {
-        int dx = spans[(size_t)dy];
-        int neighbor = dy < ry ? spans[(size_t)dy + 1] : -1;
-        int from, sign, rowSign;
+        fire_gfx_int dx = spans[(fire_gfx_size)dy];
+        fire_gfx_int neighbor = dy < ry ? spans[(fire_gfx_size)dy + 1] : -1;
+        fire_gfx_int from, sign, rowSign;
         if (dy == 0) neighbor = ry >= 1 ? fire_gfx_imin(neighbor, spans[1]) : -1;
         from = fire_gfx_imin(neighbor + 1, dx);
         for (sign = -1; sign <= 1; sign += 2)
             for (rowSign = -1; rowSign <= 1; rowSign += 2) {
-                int y;
+                fire_gfx_int y;
                 if (dy == 0 && rowSign == 1) continue;
                 y = cy + rowSign * dy;
                 sink->span(sink, y, cx + sign * from, cx + sign * dx);
             }
     }
-    free(spans);
+    fire_gfx_free(spans);
 }
 
-static void fire_gfx_shapeFillEllipse(FireGfxSink* sink, int cx, int cy, int rx, int ry) {
-    int* spans;
-    int dy;
+static void fire_gfx_shapeFillEllipse(FireGfxSink* sink, fire_gfx_int cx, fire_gfx_int cy, fire_gfx_int rx, fire_gfx_int ry) {
+    fire_gfx_int* spans;
+    fire_gfx_int dy;
     if (rx < 0 || ry < 0) return;
     rx = fire_gfx_imin(rx, FIRE_GFX_MAX_RADIUS);
     ry = fire_gfx_imin(ry, FIRE_GFX_MAX_RADIUS);
     spans = fire_gfx_ellipseSpans(rx, ry);
     if (spans == NULL) return;
     for (dy = 0; dy <= ry; dy++) {
-        sink->span(sink, cy + dy, cx - spans[(size_t)dy], cx + spans[(size_t)dy]);
-        if (dy != 0) sink->span(sink, cy - dy, cx - spans[(size_t)dy], cx + spans[(size_t)dy]);
+        sink->span(sink, cy + dy, cx - spans[(fire_gfx_size)dy], cx + spans[(fire_gfx_size)dy]);
+        if (dy != 0) sink->span(sink, cy - dy, cx - spans[(fire_gfx_size)dy], cx + spans[(fire_gfx_size)dy]);
     }
-    free(spans);
+    fire_gfx_free(spans);
 }
 
-static void fire_gfx_shapeTriangle(FireGfxSink* sink, int x0, int y0, int x1, int y1, int x2, int y2) {
+static void fire_gfx_shapeTriangle(FireGfxSink* sink, fire_gfx_int x0, fire_gfx_int y0, fire_gfx_int x1, fire_gfx_int y1, fire_gfx_int x2, fire_gfx_int y2) {
     fire_gfx_shapeLine(sink, x0, y0, x1, y1);
     fire_gfx_shapeLine(sink, x1, y1, x2, y2);
     fire_gfx_shapeLine(sink, x2, y2, x0, y0);
 }
 
 /* `points`: x0, y0, x1, y1, ... (`count` numbers). */
-static void fire_gfx_shapePolygon(FireGfxSink* sink, const int* points, size_t count, int closed) {
-    int n = (int)(count / 2), i;
+static void fire_gfx_shapePolygon(FireGfxSink* sink, const fire_gfx_int* points, fire_gfx_size count, fire_gfx_int closed) {
+    fire_gfx_int n = (fire_gfx_int)(count / 2), i;
     if (n < 2) return;
     for (i = 0; i + 1 < n; i++) fire_gfx_shapeLine(sink, points[2 * i], points[2 * i + 1], points[2 * i + 2], points[2 * i + 3]);
     if (closed && n > 2) fire_gfx_shapeLine(sink, points[2 * (n - 1)], points[2 * (n - 1) + 1], points[0], points[1]);
 }
 
-static int fire_gfx_byInt(const void* a, const void* b) { int x = *(const int*)a, y = *(const int*)b; return (x > y) - (x < y); }
+static int fire_gfx_byInt(const void* a, const void* b) { fire_gfx_int x = *(const fire_gfx_int*)a, y = *(const fire_gfx_int*)b; return (x > y) - (x < y); }   /* (qsort wants an int) */
 
 /* Even-odd fill: the rows between the crossings of the edges (half open, so a vertex counts once), then the outline. */
-static void fire_gfx_shapeFillPolygon(FireGfxSink* sink, const int* points, size_t count, int clipHeight) {
-    int n = (int)(count / 2), i, y, yFrom, yTo;
+static void fire_gfx_shapeFillPolygon(FireGfxSink* sink, const fire_gfx_int* points, fire_gfx_size count, fire_gfx_int clipHeight) {
+    fire_gfx_int n = (fire_gfx_int)(count / 2), i, y, yFrom, yTo;
     int64_t minY = INT64_MAX, maxY = INT64_MIN;
-    int* crossings;
+    fire_gfx_int* crossings;
     if (n < 3) { fire_gfx_shapePolygon(sink, points, count, 0); return; }
     for (i = 0; i < n; i++) { minY = fire_gfx_lmin(minY, points[2 * i + 1]); maxY = fire_gfx_lmax(maxY, points[2 * i + 1]); }
-    yFrom = (int)fire_gfx_lmax(minY, 0); yTo = (int)fire_gfx_lmin(maxY, (int64_t)clipHeight - 1);
-    crossings = (int*)malloc(sizeof(int) * (size_t)n);
+    yFrom = (fire_gfx_int)fire_gfx_lmax(minY, 0); yTo = (fire_gfx_int)fire_gfx_lmin(maxY, (int64_t)clipHeight - 1);
+    crossings = (fire_gfx_int*)fire_gfx_malloc(sizeof(fire_gfx_int) * (fire_gfx_size)n);
     if (crossings == NULL) return;
     for (y = yFrom; y <= yTo; y++) {
-        size_t c = 0, k;
+        fire_gfx_size c = 0, k;
         for (i = 0; i < n; i++) {
-            int ax = points[2 * i], ay = points[2 * i + 1];
-            int bx = points[2 * ((i + 1) % n)], by = points[2 * ((i + 1) % n) + 1];
+            fire_gfx_int ax = points[2 * i], ay = points[2 * i + 1];
+            fire_gfx_int bx = points[2 * ((i + 1) % n)], by = points[2 * ((i + 1) % n) + 1];
             int64_t num, den, x;
             if (ay == by) continue;
-            if (ay > by) { int t = ax; ax = bx; bx = t; t = ay; ay = by; by = t; }
+            if (ay > by) { fire_gfx_int t = ax; ax = bx; bx = t; t = ay; ay = by; by = t; }
             if (y < ay || y >= by) continue;
             num = (int64_t)(bx - ax) * (y - ay);
             den = by - ay;
             x = ax + (num >= 0 ? (2 * num + den) / (2 * den) : -((2 * -num + den) / (2 * den)));
-            crossings[c++] = (int)fire_gfx_lmax(fire_gfx_lmin(x, 0x7FFFFFFF / 2), INT32_MIN / 2);
+            crossings[c++] = (fire_gfx_int)fire_gfx_lmax(fire_gfx_lmin(x, 0x7FFFFFFF / 2), INT32_MIN / 2);
         }
-        qsort(crossings, c, sizeof(int), fire_gfx_byInt);
+        qsort(crossings, c, sizeof(fire_gfx_int), fire_gfx_byInt);
         for (k = 0; k + 1 < c; k += 2) sink->span(sink, y, crossings[k], crossings[k + 1]);
     }
-    free(crossings);
+    fire_gfx_free(crossings);
     fire_gfx_shapePolygon(sink, points, count, 1);   /* the outline belongs to the area (and closes gaps left by the rounding) */
 }
 
-static void fire_gfx_shapeFillTriangle(FireGfxSink* sink, int x0, int y0, int x1, int y1, int x2, int y2, int clipHeight) {
-    int points[6];
+static void fire_gfx_shapeFillTriangle(FireGfxSink* sink, fire_gfx_int x0, fire_gfx_int y0, fire_gfx_int x1, fire_gfx_int y1, fire_gfx_int x2, fire_gfx_int y2, fire_gfx_int clipHeight) {
+    fire_gfx_int points[6];
     points[0] = x0; points[1] = y0; points[2] = x1; points[3] = y1; points[4] = x2; points[5] = y2;
     fire_gfx_shapeFillPolygon(sink, points, 6, clipHeight);
 }
@@ -506,8 +507,8 @@ typedef struct FireGfxFillSink {
     FireGfxSurface* surface;
     FireGfxPixel pixel;
 } FireGfxFillSink;
-static void fire_gfx_fillPoint(FireGfxSink* self, int x, int y) { FireGfxFillSink* k = (FireGfxFillSink*)self; fire_gfx_put(k->surface, x, y, &k->pixel); }
-static void fire_gfx_fillSpan(FireGfxSink* self, int y, int x0, int x1) { FireGfxFillSink* k = (FireGfxFillSink*)self; fire_gfx_span(k->surface, y, x0, x1, &k->pixel); }
+static void fire_gfx_fillPoint(FireGfxSink* self, fire_gfx_int x, fire_gfx_int y) { FireGfxFillSink* k = (FireGfxFillSink*)self; fire_gfx_put(k->surface, x, y, &k->pixel); }
+static void fire_gfx_fillSpan(FireGfxSink* self, fire_gfx_int y, fire_gfx_int x0, fire_gfx_int x1) { FireGfxFillSink* k = (FireGfxFillSink*)self; fire_gfx_span(k->surface, y, x0, x1, &k->pixel); }
 static FireGfxFillSink fire_gfx_fillSink(FireGfxSurface* s, FireGfxPixel pixel) {
     FireGfxFillSink k;
     k.base.point = fire_gfx_fillPoint; k.base.span = fire_gfx_fillSpan;
@@ -515,47 +516,47 @@ static FireGfxFillSink fire_gfx_fillSink(FireGfxSurface* s, FireGfxPixel pixel) 
     return k;
 }
 
-static void fire_gfx_brushFillRect(const FireGfxBrush* b, FireGfxSurface* s, int x, int y, int w, int h) {
+static void fire_gfx_brushFillRect(const FireGfxBrush* b, FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h) {
     FireGfxFillSink k;
-    int y0, y1, xr, yy;
+    fire_gfx_int y0, y1, xr, yy;
     if (w <= 0 || h <= 0) return;
     k = fire_gfx_fillSink(s, fire_gfx_resolve(s, b->color));
-    y0 = fire_gfx_imax(s->clipTop, y); y1 = (int)fire_gfx_lmin(s->clipBottom, (int64_t)y + h);
-    xr = (int)fire_gfx_lmin((int64_t)x + w - 1, 0x7FFFFFFF);
+    y0 = fire_gfx_imax(s->clipTop, y); y1 = (fire_gfx_int)fire_gfx_lmin(s->clipBottom, (int64_t)y + h);
+    xr = (fire_gfx_int)fire_gfx_lmin((int64_t)x + w - 1, 0x7FFFFFFF);
     for (yy = y0; yy < y1; yy++) k.base.span(&k.base, yy, x, xr);
 }
-static void fire_gfx_brushFillCircle(const FireGfxBrush* b, FireGfxSurface* s, int cx, int cy, int r) { FireGfxFillSink k = fire_gfx_fillSink(s, fire_gfx_resolve(s, b->color)); fire_gfx_shapeFillEllipse(&k.base, cx, cy, r, r); }
-static void fire_gfx_brushFillEllipse(const FireGfxBrush* b, FireGfxSurface* s, int cx, int cy, int rx, int ry) { FireGfxFillSink k = fire_gfx_fillSink(s, fire_gfx_resolve(s, b->color)); fire_gfx_shapeFillEllipse(&k.base, cx, cy, rx, ry); }
-static void fire_gfx_brushFillTriangle(const FireGfxBrush* b, FireGfxSurface* s, int x0, int y0, int x1, int y1, int x2, int y2) {
+static void fire_gfx_brushFillCircle(const FireGfxBrush* b, FireGfxSurface* s, fire_gfx_int cx, fire_gfx_int cy, fire_gfx_int r) { FireGfxFillSink k = fire_gfx_fillSink(s, fire_gfx_resolve(s, b->color)); fire_gfx_shapeFillEllipse(&k.base, cx, cy, r, r); }
+static void fire_gfx_brushFillEllipse(const FireGfxBrush* b, FireGfxSurface* s, fire_gfx_int cx, fire_gfx_int cy, fire_gfx_int rx, fire_gfx_int ry) { FireGfxFillSink k = fire_gfx_fillSink(s, fire_gfx_resolve(s, b->color)); fire_gfx_shapeFillEllipse(&k.base, cx, cy, rx, ry); }
+static void fire_gfx_brushFillTriangle(const FireGfxBrush* b, FireGfxSurface* s, fire_gfx_int x0, fire_gfx_int y0, fire_gfx_int x1, fire_gfx_int y1, fire_gfx_int x2, fire_gfx_int y2) {
     FireGfxFillSink k = fire_gfx_fillSink(s, fire_gfx_resolve(s, b->color));
     fire_gfx_shapeFillTriangle(&k.base, x0, y0, x1, y1, x2, y2, s->height);
 }
-static void fire_gfx_brushFillPolygon(const FireGfxBrush* b, FireGfxSurface* s, const int* points, size_t count) {
+static void fire_gfx_brushFillPolygon(const FireGfxBrush* b, FireGfxSurface* s, const fire_gfx_int* points, fire_gfx_size count) {
     FireGfxFillSink k = fire_gfx_fillSink(s, fire_gfx_resolve(s, b->color));
     fire_gfx_shapeFillPolygon(&k.base, points, count, s->height);
 }
 
 /* (the flood fill) */
-typedef struct FireGfxRun { int y, x0, x1; } FireGfxRun;
+typedef struct FireGfxRun { fire_gfx_int y, x0, x1; } FireGfxRun;
 typedef struct FireGfxFlood {
     FireGfxSurface* s;
     uint8_t* seen;
-    int w, hasBorder, copy;
+    fire_gfx_int w, hasBorder, copy;
     uint32_t borderRaw, fill, target;
 } FireGfxFlood;
-static int fire_gfx_fillable(const FireGfxFlood* f, int px, int py) {
+static fire_gfx_int fire_gfx_fillable(const FireGfxFlood* f, fire_gfx_int px, fire_gfx_int py) {
     uint32_t v;
-    if (f->seen[(size_t)py * f->w + px]) return 0;
+    if (f->seen[(fire_gfx_size)py * f->w + px]) return 0;
     v = fire_gfx_raw(f->s, px, py);
     return f->hasBorder ? (v != f->borderRaw && !(f->copy && v == f->fill)) : v == f->target;
 }
 /* Appends to a growing array (`*items` of `*count`, room for `*cap`): 0 without memory. */
-static int fire_gfx_grow(void** items, size_t* cap, size_t count, size_t size) {
-    size_t n;
+static fire_gfx_int fire_gfx_grow(void** items, fire_gfx_size* cap, fire_gfx_size count, fire_gfx_size size) {
+    fire_gfx_size n;
     void* grown;
     if (count < *cap) return 1;
     n = *cap ? *cap * 2 : 64;
-    grown = realloc(*items, n * size);
+    grown = fire_gfx_realloc(*items, *cap * size, n * size);
     if (grown == NULL) return 0;
     *items = grown;
     *cap = n;
@@ -564,16 +565,16 @@ static int fire_gfx_grow(void** items, size_t* cap, size_t count, size_t size) {
 
 /* Fills the 4-connected area around (x, y) that has the pixel value of the start; with a border: everything except border and fill color. The area is determined
  * first (the pixels stay untouched), then filled - so mixing a half transparent color does not change what belongs to the area. */
-static void fire_gfx_brushFlood(const FireGfxBrush* b, FireGfxSurface* s, int x, int y, int hasBorder, FireGfxPixel border) {
-    int indexed, h;
+static void fire_gfx_brushFlood(const FireGfxBrush* b, FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y, fire_gfx_int hasBorder, FireGfxPixel border) {
+    fire_gfx_int indexed, h;
     FireGfxPixel fillPixel;
     FireGfxFlood f;
     FireGfxRun* runs = NULL;
-    size_t runCount = 0, runCap = 0, k;
-    int* stack = NULL;   /* pairs x, y */
-    size_t stackCount = 0, stackCap = 0;
+    fire_gfx_size runCount = 0, runCap = 0, k;
+    fire_gfx_int* stack = NULL;   /* pairs x, y */
+    fire_gfx_size stackCount = 0, stackCap = 0;
     FireGfxFillSink sink;
-    if ((unsigned)x >= (unsigned)s->width || (unsigned)y >= (unsigned)s->height) return;
+    if ((uint32_t)x >= (uint32_t)s->width || (uint32_t)y >= (uint32_t)s->height) return;
     indexed = fire_gfx_surfaceIsIndexed(s);
     fillPixel = fire_gfx_resolve(s, b->color);
     f.s = s;
@@ -587,29 +588,29 @@ static void fire_gfx_brushFlood(const FireGfxBrush* b, FireGfxSurface* s, int x,
     if (hasBorder && (f.target == f.borderRaw || (f.target == f.fill && f.copy))) return;
 
     f.w = s->width; h = s->height;
-    f.seen = (uint8_t*)calloc((size_t)f.w * h, 1);
+    f.seen = (uint8_t*)fire_gfx_calloc((fire_gfx_size)f.w * h, 1);
     if (f.seen == NULL) return;
 
-    if (!fire_gfx_grow((void**)&stack, &stackCap, stackCount, sizeof(int) * 2)) goto done;
+    if (!fire_gfx_grow((void**)&stack, &stackCap, stackCount, sizeof(fire_gfx_int) * 2)) goto done;
     stack[2 * stackCount] = x; stack[2 * stackCount + 1] = y; stackCount++;
     while (stackCount > 0) {
-        int sx, sy, left, right, px, ny;
+        fire_gfx_int sx, sy, left, right, px, ny;
         stackCount--;
         sx = stack[2 * stackCount]; sy = stack[2 * stackCount + 1];
         if (!fire_gfx_fillable(&f, sx, sy)) continue;
         left = sx; right = sx;
         while (left > 0 && fire_gfx_fillable(&f, left - 1, sy)) left--;
         while (right < f.w - 1 && fire_gfx_fillable(&f, right + 1, sy)) right++;
-        for (px = left; px <= right; px++) f.seen[(size_t)sy * f.w + px] = 1;
+        for (px = left; px <= right; px++) f.seen[(fire_gfx_size)sy * f.w + px] = 1;
         if (!fire_gfx_grow((void**)&runs, &runCap, runCount, sizeof(FireGfxRun))) goto done;
         runs[runCount].y = sy; runs[runCount].x0 = left; runs[runCount].x1 = right; runCount++;
         for (ny = sy - 1; ny <= sy + 1; ny += 2) {
-            int inRun = 0;
-            if ((unsigned)ny >= (unsigned)h) continue;
+            fire_gfx_int inRun = 0;
+            if ((uint32_t)ny >= (uint32_t)h) continue;
             for (px = left; px <= right; px++) {
-                int ok = fire_gfx_fillable(&f, px, ny);
+                fire_gfx_int ok = fire_gfx_fillable(&f, px, ny);
                 if (ok && !inRun) {
-                    if (!fire_gfx_grow((void**)&stack, &stackCap, stackCount, sizeof(int) * 2)) goto done;
+                    if (!fire_gfx_grow((void**)&stack, &stackCap, stackCount, sizeof(fire_gfx_int) * 2)) goto done;
                     stack[2 * stackCount] = px; stack[2 * stackCount + 1] = ny; stackCount++;
                 }
                 inRun = ok;
@@ -619,12 +620,12 @@ static void fire_gfx_brushFlood(const FireGfxBrush* b, FireGfxSurface* s, int x,
     sink = fire_gfx_fillSink(s, fillPixel);
     for (k = 0; k < runCount; k++) sink.base.span(&sink.base, runs[k].y, runs[k].x0, runs[k].x1);
 done:
-    free(f.seen);
-    free(runs);
-    free(stack);
+    fire_gfx_free(f.seen);
+    fire_gfx_free(runs);
+    fire_gfx_free(stack);
 }
-static void fire_gfx_brushFloodFill(const FireGfxBrush* b, FireGfxSurface* s, int x, int y) { fire_gfx_brushFlood(b, s, x, y, 0, fire_gfx_pixelNone()); }
-static void fire_gfx_brushFloodFillBorder(const FireGfxBrush* b, FireGfxSurface* s, int x, int y, FireGfxPaint border) { fire_gfx_brushFlood(b, s, x, y, 1, fire_gfx_resolve(s, border)); }
+static void fire_gfx_brushFloodFill(const FireGfxBrush* b, FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y) { fire_gfx_brushFlood(b, s, x, y, 0, fire_gfx_pixelNone()); }
+static void fire_gfx_brushFloodFillBorder(const FireGfxBrush* b, FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y, FireGfxPaint border) { fire_gfx_brushFlood(b, s, x, y, 1, fire_gfx_resolve(s, border)); }
 
 /* ---- pen: points, lines, paths --------------------------------------------------------------------------------------------------------------------------- */
 enum { FIRE_GFX_PEN_ROUND = 0, FIRE_GFX_PEN_SQUARE = 1 };
@@ -632,22 +633,22 @@ enum { FIRE_GFX_PEN_ROUND = 0, FIRE_GFX_PEN_SQUARE = 1 };
 
 /* A pen draws with a tip of `width` pixels. The tip is rendered once (the rows of its stamp) and copied to every pixel of a line - mixed when the color is half transparent
  * (the union of all stamps is mixed once, so overlaps do not mix twice). */
-typedef struct FireGfxStampRow { int dy, dx0, dx1; } FireGfxStampRow;
+typedef struct FireGfxStampRow { fire_gfx_int dy, dx0, dx1; } FireGfxStampRow;
 typedef struct FireGfxPen {
     FireGfxPaint color;
-    int width;
-    int shape;
+    fire_gfx_int width;
+    fire_gfx_int shape;
     FireGfxStampRow stamp[FIRE_GFX_PEN_MAX_WIDTH];
-    int stampCount;
+    fire_gfx_int stampCount;
 } FireGfxPen;
 
 static void fire_gfx_penRender(FireGfxPen* pen) {
-    int w = pen->width, half = (w - 1) / 2, i, j;
+    fire_gfx_int w = pen->width, half = (w - 1) / 2, i, j;
     pen->stampCount = 0;
     for (j = 0; j < w; j++) {
-        int first = -1, last = -1;
+        fire_gfx_int first = -1, last = -1;
         for (i = 0; i < w; i++) {
-            int inside = pen->shape == FIRE_GFX_PEN_SQUARE
+            fire_gfx_int inside = pen->shape == FIRE_GFX_PEN_SQUARE
                 || (int64_t)(2 * i - (w - 1)) * (2 * i - (w - 1)) + (int64_t)(2 * j - (w - 1)) * (2 * j - (w - 1)) <= (int64_t)w * w - 1;
             if (!inside) continue;
             if (first < 0) first = i;
@@ -659,14 +660,14 @@ static void fire_gfx_penRender(FireGfxPen* pen) {
         }
     }
 }
-static void fire_gfx_penInit(FireGfxPen* pen, FireGfxPaint c, int w, int s) {
+static void fire_gfx_penInit(FireGfxPen* pen, FireGfxPaint c, fire_gfx_int w, fire_gfx_int s) {
     pen->color = c;
     pen->width = fire_gfx_imax(1, fire_gfx_imin(w, FIRE_GFX_PEN_MAX_WIDTH));
     pen->shape = s;
     fire_gfx_penRender(pen);
 }
-static void fire_gfx_penSetWidth(FireGfxPen* pen, int w) { pen->width = fire_gfx_imax(1, fire_gfx_imin(w, FIRE_GFX_PEN_MAX_WIDTH)); fire_gfx_penRender(pen); }
-static void fire_gfx_penSetShape(FireGfxPen* pen, int s) { pen->shape = s; fire_gfx_penRender(pen); }
+static void fire_gfx_penSetWidth(FireGfxPen* pen, fire_gfx_int w) { pen->width = fire_gfx_imax(1, fire_gfx_imin(w, FIRE_GFX_PEN_MAX_WIDTH)); fire_gfx_penRender(pen); }
+static void fire_gfx_penSetShape(FireGfxPen* pen, fire_gfx_int s) { pen->shape = s; fire_gfx_penRender(pen); }
 
 typedef struct FireGfxStampSink {
     FireGfxSink base;
@@ -674,15 +675,15 @@ typedef struct FireGfxStampSink {
     FireGfxPixel pixel;
     const FireGfxPen* pen;
 } FireGfxStampSink;
-static void fire_gfx_stampPoint(FireGfxSink* self, int x, int y) {
+static void fire_gfx_stampPoint(FireGfxSink* self, fire_gfx_int x, fire_gfx_int y) {
     FireGfxStampSink* k = (FireGfxStampSink*)self;
-    int i;
+    fire_gfx_int i;
     for (i = 0; i < k->pen->stampCount; i++) { const FireGfxStampRow* r = &k->pen->stamp[i]; fire_gfx_span(k->surface, y + r->dy, x + r->dx0, x + r->dx1, &k->pixel); }
 }
-static void fire_gfx_stampSpan(FireGfxSink* self, int y, int x0, int x1) {
+static void fire_gfx_stampSpan(FireGfxSink* self, fire_gfx_int y, fire_gfx_int x0, fire_gfx_int x1) {
     FireGfxStampSink* k = (FireGfxStampSink*)self;
-    int i;
-    if (x1 < x0) { int t = x0; x0 = x1; x1 = t; }
+    fire_gfx_int i;
+    if (x1 < x0) { fire_gfx_int t = x0; x0 = x1; x1 = t; }
     for (i = 0; i < k->pen->stampCount; i++) { const FireGfxStampRow* r = &k->pen->stamp[i]; fire_gfx_span(k->surface, y + r->dy, x0 + r->dx0, x1 + r->dx1, &k->pixel); }
 }
 
@@ -692,21 +693,21 @@ typedef struct FireGfxUnionSink {
     FireGfxPixel pixel;
     const FireGfxPen* pen;
     FireGfxRun* runs;
-    size_t count, cap;
+    fire_gfx_size count, cap;
 } FireGfxUnionSink;
-static void fire_gfx_unionAdd(FireGfxUnionSink* k, int y, int x0, int x1) {
+static void fire_gfx_unionAdd(FireGfxUnionSink* k, fire_gfx_int y, fire_gfx_int x0, fire_gfx_int x1) {
     if (!fire_gfx_grow((void**)&k->runs, &k->cap, k->count, sizeof(FireGfxRun))) return;
     k->runs[k->count].y = y; k->runs[k->count].x0 = x0; k->runs[k->count].x1 = x1; k->count++;
 }
-static void fire_gfx_unionPoint(FireGfxSink* self, int x, int y) {
+static void fire_gfx_unionPoint(FireGfxSink* self, fire_gfx_int x, fire_gfx_int y) {
     FireGfxUnionSink* k = (FireGfxUnionSink*)self;
-    int i;
+    fire_gfx_int i;
     for (i = 0; i < k->pen->stampCount; i++) { const FireGfxStampRow* r = &k->pen->stamp[i]; fire_gfx_unionAdd(k, y + r->dy, x + r->dx0, x + r->dx1); }
 }
-static void fire_gfx_unionSpan(FireGfxSink* self, int y, int x0, int x1) {
+static void fire_gfx_unionSpan(FireGfxSink* self, fire_gfx_int y, fire_gfx_int x0, fire_gfx_int x1) {
     FireGfxUnionSink* k = (FireGfxUnionSink*)self;
-    int i;
-    if (x1 < x0) { int t = x0; x0 = x1; x1 = t; }
+    fire_gfx_int i;
+    if (x1 < x0) { fire_gfx_int t = x0; x0 = x1; x1 = t; }
     for (i = 0; i < k->pen->stampCount; i++) { const FireGfxStampRow* r = &k->pen->stamp[i]; fire_gfx_unionAdd(k, y + r->dy, x0 + r->dx0, x1 + r->dx1); }
 }
 static int fire_gfx_byRow(const void* pa, const void* pb) {
@@ -716,10 +717,10 @@ static int fire_gfx_byRow(const void* pa, const void* pb) {
     return (a->x0 > b->x0) - (a->x0 < b->x0);
 }
 static void fire_gfx_unionFlush(FireGfxUnionSink* k) {
-    size_t i = 0;
+    fire_gfx_size i = 0;
     if (k->count > 1) qsort(k->runs, k->count, sizeof(FireGfxRun), fire_gfx_byRow);
     while (i < k->count) {
-        int y = k->runs[i].y, x0 = k->runs[i].x0, x1 = k->runs[i].x1;
+        fire_gfx_int y = k->runs[i].y, x0 = k->runs[i].x0, x1 = k->runs[i].x1;
         i++;
         while (i < k->count && k->runs[i].y == y && k->runs[i].x0 <= x1 + 1) { x1 = fire_gfx_imax(x1, k->runs[i].x1); i++; }
         fire_gfx_span(k->surface, y, x0, x1, &k->pixel);
@@ -729,11 +730,11 @@ static void fire_gfx_unionFlush(FireGfxUnionSink* k) {
 /* What a stroke draws: one of the shapes with its numbers. */
 enum { FIRE_GFX_STROKE_POINT, FIRE_GFX_STROKE_LINE, FIRE_GFX_STROKE_PATH, FIRE_GFX_STROKE_RECT, FIRE_GFX_STROKE_ELLIPSE, FIRE_GFX_STROKE_TRIANGLE };
 typedef struct FireGfxStroke {
-    int kind;
-    int v[6];
-    const int* points;
-    size_t count;
-    int closed;
+    fire_gfx_int kind;
+    fire_gfx_int v[6];
+    const fire_gfx_int* points;
+    fire_gfx_size count;
+    fire_gfx_int closed;
 } FireGfxStroke;
 static void fire_gfx_strokeEmit(FireGfxSink* k, const FireGfxStroke* st) {
     switch (st->kind) {
@@ -761,28 +762,28 @@ static void fire_gfx_penStroke(const FireGfxPen* pen, FireGfxSurface* s, const F
         sink.runs = NULL; sink.count = 0; sink.cap = 0;
         fire_gfx_strokeEmit(&sink.base, st);
         fire_gfx_unionFlush(&sink);
-        free(sink.runs);
+        fire_gfx_free(sink.runs);
     }
 }
-static FireGfxStroke fire_gfx_stroke(int kind, int a, int b, int c, int d, int e, int f) {
+static FireGfxStroke fire_gfx_stroke(fire_gfx_int kind, fire_gfx_int a, fire_gfx_int b, fire_gfx_int c, fire_gfx_int d, fire_gfx_int e, fire_gfx_int f) {
     FireGfxStroke st;
     st.kind = kind; st.v[0] = a; st.v[1] = b; st.v[2] = c; st.v[3] = d; st.v[4] = e; st.v[5] = f;
     st.points = NULL; st.count = 0; st.closed = 0;
     return st;
 }
 
-static void fire_gfx_penDrawPoint(const FireGfxPen* p, FireGfxSurface* s, int x, int y) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_POINT, x, y, 0, 0, 0, 0); fire_gfx_penStroke(p, s, &st); }
-static void fire_gfx_penDrawLine(const FireGfxPen* p, FireGfxSurface* s, int x0, int y0, int x1, int y1) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_LINE, x0, y0, x1, y1, 0, 0); fire_gfx_penStroke(p, s, &st); }
-static void fire_gfx_penDrawPath(const FireGfxPen* p, FireGfxSurface* s, const int* points, size_t count, int closed) {
+static void fire_gfx_penDrawPoint(const FireGfxPen* p, FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_POINT, x, y, 0, 0, 0, 0); fire_gfx_penStroke(p, s, &st); }
+static void fire_gfx_penDrawLine(const FireGfxPen* p, FireGfxSurface* s, fire_gfx_int x0, fire_gfx_int y0, fire_gfx_int x1, fire_gfx_int y1) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_LINE, x0, y0, x1, y1, 0, 0); fire_gfx_penStroke(p, s, &st); }
+static void fire_gfx_penDrawPath(const FireGfxPen* p, FireGfxSurface* s, const fire_gfx_int* points, fire_gfx_size count, fire_gfx_int closed) {
     FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_PATH, 0, 0, 0, 0, 0, 0);
     st.points = points; st.count = count; st.closed = closed;
     fire_gfx_penStroke(p, s, &st);
 }
-static void fire_gfx_penDrawRect(const FireGfxPen* p, FireGfxSurface* s, int x, int y, int w, int h) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_RECT, x, y, w, h, 0, 0); fire_gfx_penStroke(p, s, &st); }
-static void fire_gfx_penDrawCircle(const FireGfxPen* p, FireGfxSurface* s, int cx, int cy, int r) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_ELLIPSE, cx, cy, r, r, 0, 0); fire_gfx_penStroke(p, s, &st); }
-static void fire_gfx_penDrawEllipse(const FireGfxPen* p, FireGfxSurface* s, int cx, int cy, int rx, int ry) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_ELLIPSE, cx, cy, rx, ry, 0, 0); fire_gfx_penStroke(p, s, &st); }
-static void fire_gfx_penDrawTriangle(const FireGfxPen* p, FireGfxSurface* s, int x0, int y0, int x1, int y1, int x2, int y2) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_TRIANGLE, x0, y0, x1, y1, x2, y2); fire_gfx_penStroke(p, s, &st); }
-static void fire_gfx_penDrawPolygon(const FireGfxPen* p, FireGfxSurface* s, const int* points, size_t count, int closed) { fire_gfx_penDrawPath(p, s, points, count, closed); }
+static void fire_gfx_penDrawRect(const FireGfxPen* p, FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_RECT, x, y, w, h, 0, 0); fire_gfx_penStroke(p, s, &st); }
+static void fire_gfx_penDrawCircle(const FireGfxPen* p, FireGfxSurface* s, fire_gfx_int cx, fire_gfx_int cy, fire_gfx_int r) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_ELLIPSE, cx, cy, r, r, 0, 0); fire_gfx_penStroke(p, s, &st); }
+static void fire_gfx_penDrawEllipse(const FireGfxPen* p, FireGfxSurface* s, fire_gfx_int cx, fire_gfx_int cy, fire_gfx_int rx, fire_gfx_int ry) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_ELLIPSE, cx, cy, rx, ry, 0, 0); fire_gfx_penStroke(p, s, &st); }
+static void fire_gfx_penDrawTriangle(const FireGfxPen* p, FireGfxSurface* s, fire_gfx_int x0, fire_gfx_int y0, fire_gfx_int x1, fire_gfx_int y1, fire_gfx_int x2, fire_gfx_int y2) { FireGfxStroke st = fire_gfx_stroke(FIRE_GFX_STROKE_TRIANGLE, x0, y0, x1, y1, x2, y2); fire_gfx_penStroke(p, s, &st); }
+static void fire_gfx_penDrawPolygon(const FireGfxPen* p, FireGfxSurface* s, const fire_gfx_int* points, fire_gfx_size count, fire_gfx_int closed) { fire_gfx_penDrawPath(p, s, points, count, closed); }
 
 /* ---- blitting --------------------------------------------------------------------------------------------------------------------------------- */
 enum { FIRE_GFX_BLIT_COPY = 0, FIRE_GFX_BLIT_TRANSPARENT = 1, FIRE_GFX_BLIT_BLEND = 2 };
@@ -792,10 +793,10 @@ typedef struct FireGfxCachedIndex { uint32_t color; uint8_t index; uint8_t valid
 
 /* Copies a region (scaled with nearest neighbor, flipped for a negative size) between framebuffers of any color mode. Without alpha blending the mode Blend acts like Transparent.
  * (The C++ had the clip rectangle as defaulted parameters: 0, 0, 0x7FFFFFFF, 0x7FFFFFFF for none.) */
-static void fire_gfx_blit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* srcIn, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int colorKey, int blend,
-                          int clipLeft, int clipTop, int clipRight, int clipBottom) {
+static void fire_gfx_blit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* srcIn, fire_gfx_int sx, fire_gfx_int sy, fire_gfx_int sw, fire_gfx_int sh, fire_gfx_int dx, fire_gfx_int dy, fire_gfx_int dw, fire_gfx_int dh, fire_gfx_int mode, fire_gfx_int colorKey, fire_gfx_int blend,
+                          fire_gfx_int clipLeft, fire_gfx_int clipTop, fire_gfx_int clipRight, fire_gfx_int clipBottom) {
     int64_t absDw, absDh, dxStart, dxEnd, dyStart, dyEnd, i, j;
-    int flipX, flipY, directIndices, key, srcIndexed, dstIndexed;
+    fire_gfx_int flipX, flipY, directIndices, key, srcIndexed, dstIndexed;
     FireGfxFramebuffer snapshot;
     const FireGfxFramebuffer* src = srcIn;
     uint32_t srcTable[256];
@@ -811,21 +812,21 @@ static void fire_gfx_blit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* src
     /* the same buffer: read from a copy so that overlapping regions do not overwrite themselves */
     fire_gfx_fbInit(&snapshot);
     if (dst == srcIn) {
-        size_t n = fire_gfx_fbPixelCount(srcIn);
+        fire_gfx_size n = fire_gfx_fbPixelCount(srcIn);
         snapshot.width = srcIn->width; snapshot.height = srcIn->height; snapshot.mode = srcIn->mode;
         snapshot.transparentIndex = srcIn->transparentIndex;
-        if (srcIn->indices) { snapshot.indices = (uint8_t*)malloc(n); if (!snapshot.indices) return; memcpy(snapshot.indices, srcIn->indices, n); }
-        else { snapshot.pixels = (uint32_t*)malloc(n * 4); if (!snapshot.pixels) return; memcpy(snapshot.pixels, srcIn->pixels, n * 4); }
+        if (srcIn->indices) { snapshot.indices = (uint8_t*)fire_gfx_malloc(n); if (!snapshot.indices) return; fire_gfx_copy(snapshot.indices, srcIn->indices, n); }
+        else { snapshot.pixels = (uint32_t*)fire_gfx_malloc(n * 4); if (!snapshot.pixels) return; fire_gfx_copy(snapshot.pixels, srcIn->pixels, n * 4); }
         snapshot.palette = srcIn->palette;
         src = &snapshot;
     }
     srcIndexed = fire_gfx_fbIsIndexed(src);
     dstIndexed = fire_gfx_fbIsIndexed(dst);
 
-    if (srcIndexed) memcpy(srcTable, src->palette.entries, sizeof srcTable);
+    if (srcIndexed) fire_gfx_copy(srcTable, src->palette.entries, sizeof srcTable);
     directIndices = srcIndexed && dstIndexed && fire_gfx_paletteSame(&src->palette, &dst->palette);
     if (srcIndexed && dstIndexed && !directIndices) {
-        int k;
+        fire_gfx_int k;
         for (k = 0; k < 256; k++) map[k] = fire_gfx_paletteNearest(&dst->palette, srcTable[k]);
     }
     key = srcIndexed ? (colorKey >= 0 ? colorKey : src->transparentIndex) : -1;
@@ -840,10 +841,10 @@ static void fire_gfx_blit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* src
         int64_t j0 = fire_gfx_lmax(dyStart, -(int64_t)sy), j1 = fire_gfx_lmin(dyEnd, (int64_t)src->height - sy);
         if (i1 <= i0 || j1 <= j0) goto done;
         for (j = j0; j < j1; j++) {
-            const uint32_t* from = src->pixels + (size_t)(sy + j) * src->width + (size_t)(sx + i0);
-            uint32_t* to = dst->pixels + (size_t)(dy + j) * dst->width + (size_t)(dx + i0);
-            size_t n = (size_t)(i1 - i0), k;
-            if (mode == FIRE_GFX_BLIT_COPY) { memmove(to, from, n * 4); continue; }
+            const uint32_t* from = src->pixels + (fire_gfx_size)(sy + j) * src->width + (fire_gfx_size)(sx + i0);
+            uint32_t* to = dst->pixels + (fire_gfx_size)(dy + j) * dst->width + (fire_gfx_size)(dx + i0);
+            fire_gfx_size n = (fire_gfx_size)(i1 - i0), k;
+            if (mode == FIRE_GFX_BLIT_COPY) { fire_gfx_move(to, from, n * 4); continue; }
             for (k = 0; k < n; k++) {
                 uint32_t c = from[k];
                 if ((c >> 24) == 0) continue;
@@ -855,25 +856,25 @@ static void fire_gfx_blit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* src
 
     /* a small cache for the palette lookup of RGBA sources (many equal colors, and a search costs 256 comparisons) */
     if (!srcIndexed && dstIndexed) {
-        cache = (FireGfxCachedIndex*)calloc(1024, sizeof(FireGfxCachedIndex));
+        cache = (FireGfxCachedIndex*)fire_gfx_calloc(1024, sizeof(FireGfxCachedIndex));
         if (cache == NULL) goto done;
     }
 
     for (j = dyStart; j < dyEnd; j++) {
         int64_t fy = flipY ? absDh - 1 - j : j;
         int64_t srcY = sy + (2 * fy + 1) * sh / (2 * absDh);
-        int dstY;
+        fire_gfx_int dstY;
         if (srcY < 0 || srcY >= src->height) continue;
-        dstY = (int)(dy + j);
+        dstY = (fire_gfx_int)(dy + j);
         for (i = dxStart; i < dxEnd; i++) {
             int64_t fx = flipX ? absDw - 1 - i : i;
             int64_t srcX = sx + (2 * fx + 1) * sw / (2 * absDw);
-            int dstX;
-            size_t srcPos, dstPos;
+            fire_gfx_int dstX;
+            fire_gfx_size srcPos, dstPos;
             if (srcX < 0 || srcX >= src->width) continue;
-            dstX = (int)(dx + i);
-            srcPos = (size_t)(srcY * src->width + srcX);
-            dstPos = (size_t)dstY * dst->width + dstX;
+            dstX = (fire_gfx_int)(dx + i);
+            srcPos = (fire_gfx_size)(srcY * src->width + srcX);
+            dstPos = (fire_gfx_size)dstY * dst->width + dstX;
             if (srcIndexed) {
                 uint8_t idx = src->indices[srcPos];
                 if (mode != FIRE_GFX_BLIT_COPY && idx == key) continue;
@@ -898,25 +899,25 @@ static void fire_gfx_blit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* src
         }
     }
 done:
-    free(cache);
+    fire_gfx_free(cache);
     fire_gfx_fbFreePixels(&snapshot);
 }
 
 /* ---- the renderer: terminal text and the drawing functions of a framebuffer ---------------------------------------------------------------------------------- */
 typedef struct FireGfxRenderer {
     FireGfxFramebuffer* target;
-    int smallFont;      /* the built-in font is 8x14 (the default) or 8x8 */
-    int alphaBlending;
-    int cellWidth, cellHeight, cursorRow, cursorColumn;
+    fire_gfx_int smallFont;      /* the built-in font is 8x14 (the default) or 8x8 */
+    fire_gfx_int alphaBlending;
+    fire_gfx_int cellWidth, cellHeight, cursorRow, cursorColumn;
     FireGfxPaint foreground;
     FireGfxPaint background;
-    int hasBackground;
-    int clipLeft, clipTop, clipRight, clipBottom;
+    fire_gfx_int hasBackground;
+    fire_gfx_int clipLeft, clipTop, clipRight, clipBottom;
 } FireGfxRenderer;
 
 /* A new renderer on `fb` (it holds a reference of the framebuffer), NULL without memory. */
-static FireGfxRenderer* fire_gfx_rendererNew(FireGfxFramebuffer* fb, int small) {
-    FireGfxRenderer* r = (FireGfxRenderer*)malloc(sizeof(FireGfxRenderer));
+static FireGfxRenderer* fire_gfx_rendererNew(FireGfxFramebuffer* fb, fire_gfx_int small) {
+    FireGfxRenderer* r = (FireGfxRenderer*)fire_gfx_malloc(sizeof(FireGfxRenderer));
     if (r == NULL) return NULL;
     r->target = fb;
     r->smallFont = small;
@@ -929,25 +930,25 @@ static FireGfxRenderer* fire_gfx_rendererNew(FireGfxFramebuffer* fb, int small) 
     fire_gfx_fbRetain(fb);
     return r;
 }
-static void fire_gfx_rendererDelete(FireGfxRenderer* r) { if (r == NULL) return; fire_gfx_fbRelease(r->target); free(r); }
+static void fire_gfx_rendererDelete(FireGfxRenderer* r) { if (r == NULL) return; fire_gfx_fbRelease(r->target); fire_gfx_free(r); }
 
 static FireGfxSurface fire_gfx_rendererSurface(const FireGfxRenderer* r) { return fire_gfx_surface(r->target, r->alphaBlending, r->clipLeft, r->clipTop, r->clipRight, r->clipBottom); }
-static void fire_gfx_rendererSetClip(FireGfxRenderer* r, int x, int y, int w, int h) {
+static void fire_gfx_rendererSetClip(FireGfxRenderer* r, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h) {
     r->clipLeft = x; r->clipTop = y;
-    r->clipRight = (int)fire_gfx_lmin((int64_t)x + fire_gfx_imax(0, w), 0x7FFFFFFF);
-    r->clipBottom = (int)fire_gfx_lmin((int64_t)y + fire_gfx_imax(0, h), 0x7FFFFFFF);
+    r->clipRight = (fire_gfx_int)fire_gfx_lmin((int64_t)x + fire_gfx_imax(0, w), 0x7FFFFFFF);
+    r->clipBottom = (fire_gfx_int)fire_gfx_lmin((int64_t)y + fire_gfx_imax(0, h), 0x7FFFFFFF);
 }
 static void fire_gfx_rendererResetClip(FireGfxRenderer* r) { r->clipLeft = 0; r->clipTop = 0; r->clipRight = 0x7FFFFFFF; r->clipBottom = 0x7FFFFFFF; }
 /* the grid follows the size of the target (a framebuffer may change its size, see fire_gfx_fbResize); the cursor is kept inside it */
-static int fire_gfx_rendererColumns(const FireGfxRenderer* r) { return r->target->width / r->cellWidth; }
-static int fire_gfx_rendererRows(const FireGfxRenderer* r) { return r->target->height / r->cellHeight; }
+static fire_gfx_int fire_gfx_rendererColumns(const FireGfxRenderer* r) { return r->target->width / r->cellWidth; }
+static fire_gfx_int fire_gfx_rendererRows(const FireGfxRenderer* r) { return r->target->height / r->cellHeight; }
 static void fire_gfx_rendererClampCursor(FireGfxRenderer* r) {
     r->cursorRow = fire_gfx_imax(0, fire_gfx_imin(r->cursorRow, fire_gfx_imax(0, fire_gfx_rendererRows(r) - 1)));
     r->cursorColumn = fire_gfx_imax(0, fire_gfx_imin(r->cursorColumn, fire_gfx_imax(0, fire_gfx_rendererColumns(r) - 1)));
 }
 static const uint8_t* fire_gfx_rendererGlyph(const FireGfxRenderer* r, uint32_t c) { uint32_t i = c < 256 ? c : '?'; return r->smallFont ? g_fireGfxGlyphs8x8[i] : g_fireGfxGlyphs8x14[i]; }
 
-static void fire_gfx_rendererLocate(FireGfxRenderer* r, int row, int column) {
+static void fire_gfx_rendererLocate(FireGfxRenderer* r, fire_gfx_int row, fire_gfx_int column) {
     r->cursorRow = fire_gfx_imax(0, fire_gfx_imin(row, fire_gfx_imax(0, fire_gfx_rendererRows(r) - 1)));
     r->cursorColumn = fire_gfx_imax(0, fire_gfx_imin(column, fire_gfx_imax(0, fire_gfx_rendererColumns(r) - 1)));
 }
@@ -958,30 +959,30 @@ static FireGfxPixel fire_gfx_rendererClearPixel(const FireGfxRenderer* r) {
     return fire_gfx_resolve(&s, r->hasBackground ? r->background : fire_gfx_paintRgba(fire_gfx_rgb(0, 0, 0)));
 }
 static void fire_gfx_rendererClearAll(FireGfxRenderer* r, const FireGfxPixel* p) {
-    size_t n = fire_gfx_fbPixelCount(r->target), k;
+    fire_gfx_size n = fire_gfx_fbPixelCount(r->target), k;
     fire_gfx_fbCpu(r->target, 1);
-    if (r->target->indices) memset(r->target->indices, p->index, n);
+    if (r->target->indices) fire_gfx_set(r->target->indices, p->index, n);
     else for (k = 0; k < n; k++) r->target->pixels[k] = p->rgba;
 }
 static void fire_gfx_rendererClear(FireGfxRenderer* r) { FireGfxPixel p = fire_gfx_rendererClearPixel(r); fire_gfx_rendererClearAll(r, &p); r->cursorRow = 0; r->cursorColumn = 0; }
 static void fire_gfx_rendererClearTo(FireGfxRenderer* r, FireGfxPaint paint) { FireGfxSurface s = fire_gfx_rendererSurface(r); FireGfxPixel p = fire_gfx_resolve(&s, paint); fire_gfx_rendererClearAll(r, &p); }
 static void fire_gfx_rendererSetColor(FireGfxRenderer* r, FireGfxPaint fg, FireGfxPaint bg) { r->foreground = fg; r->background = bg; r->hasBackground = 1; }
 
-static void fire_gfx_rendererScrollUp(FireGfxRenderer* r, int pixelRows, const FireGfxPixel* fill) {
-    int w = r->target->width, h = r->target->height;
-    size_t keep, moved, k;
+static void fire_gfx_rendererScrollUp(FireGfxRenderer* r, fire_gfx_int pixelRows, const FireGfxPixel* fill) {
+    fire_gfx_int w = r->target->width, h = r->target->height;
+    fire_gfx_size keep, moved, k;
     if (pixelRows <= 0) return;
     fire_gfx_fbCpu(r->target, 1);
     if (pixelRows >= h) { fire_gfx_rendererClearAll(r, fill); return; }
-    keep = (size_t)(h - pixelRows) * w; moved = (size_t)pixelRows * w;
-    if (r->target->indices) { memmove(r->target->indices, r->target->indices + moved, keep); memset(r->target->indices + keep, fill->index, moved); return; }
-    memmove(r->target->pixels, r->target->pixels + moved, keep * 4);
+    keep = (fire_gfx_size)(h - pixelRows) * w; moved = (fire_gfx_size)pixelRows * w;
+    if (r->target->indices) { fire_gfx_move(r->target->indices, r->target->indices + moved, keep); fire_gfx_set(r->target->indices + keep, fill->index, moved); return; }
+    fire_gfx_move(r->target->pixels, r->target->pixels + moved, keep * 4);
     for (k = 0; k < moved; k++) r->target->pixels[keep + k] = fill->rgba;
 }
 
 /* One character with its upper left corner at (x, y): a background that is not visible is none, a foreground that is not visible draws no glyph pixels. */
-static void fire_gfx_rendererDrawGlyph(FireGfxRenderer* r, FireGfxSurface* s, int x, int y, uint32_t c, const FireGfxPixel* fg, int hasBg, const FireGfxPixel* bg) {
-    int fgVisible, gx, gy;
+static void fire_gfx_rendererDrawGlyph(FireGfxRenderer* r, FireGfxSurface* s, fire_gfx_int x, fire_gfx_int y, uint32_t c, const FireGfxPixel* fg, fire_gfx_int hasBg, const FireGfxPixel* bg) {
+    fire_gfx_int fgVisible, gx, gy;
     const uint8_t* rowsBits;
     if (hasBg && !fire_gfx_visible(s, bg)) hasBg = 0;
     fgVisible = fire_gfx_visible(s, fg);
@@ -990,7 +991,7 @@ static void fire_gfx_rendererDrawGlyph(FireGfxRenderer* r, FireGfxSurface* s, in
     if (!fgVisible) return;
     rowsBits = fire_gfx_rendererGlyph(r, c);
     for (gy = 0; gy < r->cellHeight; gy++) {
-        unsigned bits = rowsBits[gy];
+        uint32_t bits = rowsBits[gy];
         if (bits == 0) continue;
         for (gx = 0; gx < r->cellWidth; gx++)
             if ((bits >> (7 - gx)) & 1u) fire_gfx_put(s, x + gx, y + gy, fg);
@@ -1023,7 +1024,7 @@ static void fire_gfx_rendererPrint(FireGfxRenderer* r, const uint16_t* text, uin
 }
 
 /* Text at pixel coordinates: the glyph pixels in the color of `fg`, with `bg` (NULL = none) the whole cell below. */
-static void fire_gfx_rendererDrawText(FireGfxRenderer* r, int x, int y, const uint16_t* text, uint32_t n, const FireGfxBrush* fg, const FireGfxBrush* bg) {
+static void fire_gfx_rendererDrawText(FireGfxRenderer* r, fire_gfx_int x, fire_gfx_int y, const uint16_t* text, uint32_t n, const FireGfxBrush* fg, const FireGfxBrush* bg) {
     FireGfxSurface s = fire_gfx_rendererSurface(r);
     FireGfxPixel f = fire_gfx_resolve(&s, fg->color);
     FireGfxPixel b = bg ? fire_gfx_resolve(&s, bg->color) : fire_gfx_pixelNone();

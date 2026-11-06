@@ -2551,9 +2551,14 @@ FIRE_FN size_t blockSize(size_t head, uint32_t count, size_t elem) {
 FIRE_FN void* dataAlloc(size_t head, uint32_t count, size_t elem) {
 #ifdef FIRE_CC_BIG_ALLOC
     uint64_t n = (uint64_t)head + (uint64_t)count * (uint64_t)elem;
-    if (n > (uint64_t)SIZE_MAX - 8) {
+#ifndef FIRE_CC_BIG_FROM
+#define FIRE_CC_BIG_FROM ((uint64_t)SIZE_MAX - 8)
+#endif
+    if (n > (uint64_t)FIRE_CC_BIG_FROM) {   /* (a block the C library cannot hold - or, where the dialect says so, one it holds badly) */
+        void* p;
         if (FIRE_UNLIKELY(n > 0x7FFFFFF0u)) fatal("Out of memory: a block larger than 2 GB.");
-        return FIRE_CC_BIG_ALLOC((uint32_t)n);
+        p = FIRE_CC_BIG_ALLOC((uint32_t)n);
+        if (p != NULL || n > (uint64_t)SIZE_MAX - 8) return p;
     }
 #endif
     return malloc(blockSize(head, count, elem));

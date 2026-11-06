@@ -27547,6 +27547,101 @@ else
                     serRun.Ok && serRun.Text == dosSerialExpected && serOut == "Hallo COM1" && parOut == "Drucker",
                     $"  erwartet:\n{dosSerialExpected}\n  DOS:\n{serRun.Text}\n  COM1: {serOut}\n  LPT1: {parOut}");
 
+                // the graphics library in 16 bits (#import "graphics"): the same pixels as natively with the same widths (checksums of the framebuffers - lines, circles,
+                // polygons, fills, text, blits, resize, shadow/blur, masks; PNG there and back). Two programs: with the library the code is about 450 KB, beside it
+                // there is room for one palette framebuffer of 320x200 and smaller ones
+                const string dosGfxDraw = """
+                    #import "graphics"
+                    class T {
+                        static int Sum(Framebuffer fb) {
+                            var data = fb.ReadBytes()
+                            var s = 0
+                            for (var i = 0; i < data.length; i++) { s = (s * 31 + data[i]) & 16777215 }
+                            return s
+                        }
+                        static undefined Show(string what, Framebuffer fb) { print(what + " " + T.Sum(fb)) }
+                    }
+                    var big = new Framebuffer(320, 200, 1)
+                    var r = new Renderer(big)
+                    r.ClearTo(1)
+                    T.Show("pal clear", big)
+                    r.DrawLine(0, 0, 319, 199, new Pen(4))
+                    r.DrawLine(319, 0, 0, 199, new Pen(5, 3))
+                    T.Show("pal lines", big)
+                    r.FillCircle(160, 100, 90, new SolidBrush(9))
+                    r.DrawCircle(160, 100, 95, new Pen(10, 2))
+                    r.FillEllipse(60, 150, 50, 30, new SolidBrush(11))
+                    r.DrawEllipse(260, 50, 55, 35, new Pen(12))
+                    T.Show("pal circles", big)
+                    r.FillTriangle(10, 10, 300, 20, 150, 190, new SolidBrush(13))
+                    r.FillPolygon([5.0, 5.0, 100.0, 30.0, 60.0, 120.0, 20.0, 80.0], new SolidBrush(14))
+                    r.DrawPolygon([200.0, 150.0, 310.0, 160.0, 250.0, 195.0], new Pen(15, 2))
+                    T.Show("pal polygons", big)
+                    r.FillRoundRect(20, 20, 280, 160, 25, new SolidBrush(2))
+                    r.DrawRoundRect(30, 30, 260, 140, 20, new Pen(3, 2))
+                    r.FloodFill(160, 100, new SolidBrush(7))
+                    T.Show("pal round flood", big)
+                    r.DrawText(40, 60, "Hallo DOS 16 Bit", new SolidBrush(15))
+                    r.Locate(2, 3)
+                    r.Print("Konsole")
+                    T.Show("pal text", big)
+                    var small = new Framebuffer(64, 48, 1)
+                    var rs = new Renderer(small)
+                    rs.ClearTo(6)
+                    rs.FillCircle(32, 24, 20, new SolidBrush(12))
+                    r.Blit(small, 10, 10)
+                    r.BlitScaled(small, 0, 0, 64, 48, 100, 20, 200, 150)
+                    r.BlitScaled(small, 0, 0, 64, 48, 300, 190, -150, -120)
+                    T.Show("pal blits", big)
+                    big.Resize(330, 190)
+                    T.Show("pal resize", big)
+                    var rgba = new Framebuffer(120, 80)
+                    var q = new Renderer(rgba)
+                    q.ClearTo(0xFF102030)
+                    q.FillRect(10, 10, 100, 60, new SolidBrush(0x80FF8040))
+                    q.FillCircle(60, 40, 30, new SolidBrush(0xC000FF00))
+                    q.DrawLine(0, 0, 119, 79, new Pen(0xFFFFFFFF, 4))
+                    T.Show("rgba draw", rgba)
+                    q.DrawShadow(20, 20, 60, 30, 10, 8, 0x80000000, 4)
+                    q.Blur(10, 10, 90, 50, 6, 5)
+                    T.Show("rgba fx", rgba)
+                    q.DrawText(5, 60, "RGBA Text", new SolidBrush(0xFFFFFF00))
+                    T.Show("rgba text", rgba)
+                    var mask = small.ToMask()
+                    T.Show("mask", mask)
+                    """;
+                const string dosGfxImages = """
+                    #import "graphics"
+                    class T {
+                        static int Sum(Framebuffer fb) {
+                            var data = fb.ReadBytes()
+                            var s = 0
+                            for (var i = 0; i < data.length; i++) { s = (s * 31 + data[i]) & 16777215 }
+                            return s
+                        }
+                        static undefined Show(string what, Framebuffer fb) { print(what + " " + T.Sum(fb)) }
+                    }
+                    var rgba = new Framebuffer(120, 80)
+                    var q = new Renderer(rgba)
+                    q.ClearTo(0xFF102030)
+                    q.FillCircle(60, 40, 30, new SolidBrush(0xC000FF00))
+                    q.DrawText(5, 60, "PNG", new SolidBrush(0xFFFFFF00))
+                    var png = rgba.ToPng()
+                    var back = Framebuffer.FromImage(png)
+                    print("png " + back.Width() + "x" + back.Height() + " " + (T.Sum(back) == T.Sum(rgba)))
+                    var small = new Framebuffer(64, 48, 1)
+                    var rs = new Renderer(small)
+                    rs.ClearTo(6)
+                    rs.FillCircle(32, 24, 20, new SolidBrush(12))
+                    var palPng = Framebuffer.FromImage(small.ToPng())
+                    print("pal png " + palPng.Width() + " " + T.Sum(palPng))
+                    """;
+                var gfxDraw = BuildAndRunDos(dosGfxDraw, "dos16gfx");
+                CheckNat("dos16: graphics - Zeichnen wie nativ (Palette 320x200 und RGBA: Linien, Kreise, Polygone, Fuellen, Text, Blits, Resize, Schatten/Unschaerfe, Maske)",
+                    gfxDraw.Ok && gfxDraw.Text == "pal clear 12820480\npal lines 14068416\npal circles 9446186\npal polygons 715367\npal round flood 11109143\npal text 4903732\npal blits 1318769\npal resize 2394223\nrgba draw 7557237\nrgba fx 12353285\nrgba text 11443732\nmask 8222753\n", $"  erwartet:\npal clear 12820480\npal lines 14068416\npal circles 9446186\npal polygons 715367\npal round flood 11109143\npal text 4903732\npal blits 1318769\npal resize 2394223\nrgba draw 7557237\nrgba fx 12353285\nrgba text 11443732\nmask 8222753\n\n  DOS:\n{gfxDraw.Text}");
+                var gfxImages = BuildAndRunDos(dosGfxImages, "dos16gfximg");
+                CheckNat("dos16: graphics - PNG schreiben und lesen (RGBA, Palette)", gfxImages.Ok && gfxImages.Text == "png 120x80 True\npal png 64 4434326\n", $"  erwartet:\npng 120x80 True\npal png 64 4434326\n\n  DOS:\n{gfxImages.Text}");
+
                 // the console of DOS (#import "console"): the screen through the BIOS (code page 437, attributes - read back from the video memory) and keys from the
                 // keyboard buffer of the BIOS (INT 16h AH=05h puts them there, as if typed)
                 const string dosCon = """

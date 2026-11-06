@@ -22,17 +22,17 @@
 
 /* The framebuffers, renderers, brushes and pens by id (ids start at 1 and are not used again, like the VM's IdManager). */
 typedef struct FireGfxTables {
-    int ready;
-    FireGfxFramebuffer** framebuffers; size_t fbCount, fbCap;
-    FireGfxRenderer** renderers; size_t rndCount, rndCap;
-    FireGfxBrush** brushes; size_t bshCount, bshCap;
-    FireGfxPen** pens; size_t penCount, penCap;
+    fire_gfx_int ready;
+    FireGfxFramebuffer** framebuffers; fire_gfx_size fbCount, fbCap;
+    FireGfxRenderer** renderers; fire_gfx_size rndCount, rndCap;
+    FireGfxBrush** brushes; fire_gfx_size bshCount, bshCap;
+    FireGfxPen** pens; fire_gfx_size penCount, penCap;
     FireGfxFontTable fonts;
 } FireGfxTables;
 static FireGfxTables g_fireGfxTables;
 
 /* Appends a pointer to a table: its id, -1 without memory. */
-static int64_t fire_gfxb_push(void*** items, size_t* count, size_t* cap, void* item) {
+static int64_t fire_gfxb_push(void*** items, fire_gfx_size* count, fire_gfx_size* cap, void* item) {
     if (!fire_gfx_grow((void**)items, cap, *count, sizeof(void*))) return -1;
     (*items)[(*count)++] = item;
     return (int64_t)*count - 1;
@@ -61,67 +61,67 @@ static void fire_gfxb_outOfMemory(void) { fatal("Out of memory."); }
 static FireGfxFramebuffer* fire_gfxb_fbOf(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
-    if (i > 0 && (size_t)i < t->fbCount && t->framebuffers[(size_t)i]) return t->framebuffers[(size_t)i];
+    if (i > 0 && (fire_gfx_size)i < t->fbCount && t->framebuffers[(fire_gfx_size)i]) return t->framebuffers[(fire_gfx_size)i];
     fire_gfxb_noResource(i);
     return NULL;
 }
 /* A package draws the pictures of the windows that show the framebuffer `fbId` itself (scene3d DirectDrawing): the windows bridge calls `fn` (a fire_present_fn, see
  * fire_display_c.h) instead of showing the framebuffer. 1: attached; 0: there is no such framebuffer. Detaching takes only the presenter of the same ctx away. */
-static int fire_gfx_attachPresenter(int64_t fbId, void (*fn)(void), void* ctx) {
+static fire_gfx_int fire_gfx_attachPresenter(int64_t fbId, void (*fn)(void), void* ctx) {
     FireGfxTables* t = fire_gfxb_tables();
-    if (fbId <= 0 || (size_t)fbId >= t->fbCount || !t->framebuffers[(size_t)fbId]) return 0;
-    t->framebuffers[(size_t)fbId]->presentFn = fn;
-    t->framebuffers[(size_t)fbId]->presentCtx = ctx;
+    if (fbId <= 0 || (fire_gfx_size)fbId >= t->fbCount || !t->framebuffers[(fire_gfx_size)fbId]) return 0;
+    t->framebuffers[(fire_gfx_size)fbId]->presentFn = fn;
+    t->framebuffers[(fire_gfx_size)fbId]->presentCtx = ctx;
     return 1;
 }
 static void fire_gfx_detachPresenter(int64_t fbId, void* ctx) {
     FireGfxTables* t = fire_gfxb_tables();
-    if (fbId <= 0 || (size_t)fbId >= t->fbCount || !t->framebuffers[(size_t)fbId] || t->framebuffers[(size_t)fbId]->presentCtx != ctx) return;
-    t->framebuffers[(size_t)fbId]->presentFn = NULL;
-    t->framebuffers[(size_t)fbId]->presentCtx = NULL;
+    if (fbId <= 0 || (fire_gfx_size)fbId >= t->fbCount || !t->framebuffers[(fire_gfx_size)fbId] || t->framebuffers[(fire_gfx_size)fbId]->presentCtx != ctx) return;
+    t->framebuffers[(fire_gfx_size)fbId]->presentFn = NULL;
+    t->framebuffers[(fire_gfx_size)fbId]->presentCtx = NULL;
 }
 static FireGfxRenderer* fire_gfxb_rendererOf(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
-    if (i > 0 && (size_t)i < t->rndCount && t->renderers[(size_t)i]) return t->renderers[(size_t)i];
+    if (i > 0 && (fire_gfx_size)i < t->rndCount && t->renderers[(fire_gfx_size)i]) return t->renderers[(fire_gfx_size)i];
     fire_gfxb_noResource(i);
     return NULL;
 }
 static FireGfxBrush* fire_gfxb_brushOf(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
-    if (i > 0 && (size_t)i < t->bshCount && t->brushes[(size_t)i]) return t->brushes[(size_t)i];
+    if (i > 0 && (fire_gfx_size)i < t->bshCount && t->brushes[(fire_gfx_size)i]) return t->brushes[(fire_gfx_size)i];
     fire_gfxb_noResource(i);
     return NULL;
 }
 static FireGfxPen* fire_gfxb_penOf(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
-    if (i > 0 && (size_t)i < t->penCount && t->pens[(size_t)i]) return t->pens[(size_t)i];
+    if (i > 0 && (fire_gfx_size)i < t->penCount && t->pens[(fire_gfx_size)i]) return t->pens[(fire_gfx_size)i];
     fire_gfxb_noResource(i);
     return NULL;
 }
-static int fire_gfxb_addFramebuffer(FireGfxFramebuffer* fb) {
+static fire_gfx_int fire_gfxb_addFramebuffer(FireGfxFramebuffer* fb) {
     FireGfxTables* t = fire_gfxb_tables();
     int64_t id = fire_gfxb_push((void***)&t->framebuffers, &t->fbCount, &t->fbCap, fb);
     if (id < 0) fire_gfxb_outOfMemory();
-    return (int)id;
+    return (fire_gfx_int)id;
 }
 
-static int fire_gfxb_I(Value v) { return (int32_t)v.i; }
+static fire_gfx_int fire_gfxb_I(Value v) { return (int32_t)v.i; }
 static double fire_gfxb_D(Value v) { return v.kind == K_Float ? (double)v.f : (double)v.i; }
 
 static void fire_gfxb_setError(const char* message) {
-    size_t n = strlen(message);
+    fire_gfx_size n = strlen(message);
     if (n > sizeof g_gfxError.message - 1) n = sizeof g_gfxError.message - 1;
-    memcpy(g_gfxError.message, message, n);
+    fire_gfx_copy(g_gfxError.message, message, n);
     g_gfxError.message[n] = 0;
     g_gfxError.code = 1;
 }
 static void fire_gfxb_clearError(void) { g_gfxError.code = 0; g_gfxError.message[0] = 0; }
 
 static Value fire_gfxb_strOf8(const char* text, OwnList* list) {
-    size_t n = strlen(text), i;
+    fire_gfx_size n = strlen(text), i;
     Str* s = allocStr((uint32_t)n, list);
     /* UTF-8 messages are plain ASCII here except for paths: widen what is ASCII, the rest as is */
     fire_char16* out = strChars(s);
@@ -132,8 +132,8 @@ static Value fire_gfxb_strOf8(const char* text, OwnList* list) {
 /* A script string (UTF-16) as UTF-8 (malloc; the caller frees it). */
 static char* fire_gfxb_utf8Of(Value text) {
     const Str* s = strOf(text);
-    char* out = (char*)malloc((size_t)s->length * 3 + 1);
-    size_t n = 0;
+    char* out = (char*)fire_gfx_malloc((fire_gfx_size)s->length * 3 + 1);
+    fire_gfx_size n = 0;
     uint32_t i;
     if (out == NULL) fire_gfxb_outOfMemory();
     for (i = 0; i < s->length; i++) {
@@ -153,14 +153,14 @@ static char* fire_gfxb_utf8Of(Value text) {
 
 /* A UTF-8 text as a script string (UTF-16). */
 static Value fire_gfxb_strFromUtf8(const char* text, OwnList* list) {
-    size_t len = strlen(text), i = 0, count = 0;
-    fire_char16* units = (fire_char16*)malloc(sizeof(fire_char16) * (len * 2 + 1));
+    fire_gfx_size len = strlen(text), i = 0, count = 0;
+    fire_char16* units = (fire_char16*)fire_gfx_malloc(sizeof(fire_char16) * (len * 2 + 1));
     Str* r;
     if (units == NULL) fire_gfxb_outOfMemory();
     while (i < len) {
         unsigned char b = (unsigned char)text[i];
         uint32_t c = b;
-        size_t extra = 0, k;
+        fire_gfx_size extra = 0, k;
         if (b >= 0xF0 && b < 0xF8) { c = b & 0x07; extra = 3; }
         else if (b >= 0xE0) { c = b & 0x0F; extra = 2; }
         else if (b >= 0xC0) { c = b & 0x1F; extra = 1; }
@@ -170,8 +170,8 @@ static Value fire_gfxb_strFromUtf8(const char* text, OwnList* list) {
         else units[count++] = (fire_char16)c;
     }
     r = allocStr((uint32_t)count, list);
-    if (count) memcpy(strChars(r), units, count * sizeof(fire_char16));
-    free(units);
+    if (count) fire_gfx_copy(strChars(r), units, count * sizeof(fire_char16));
+    fire_gfx_free(units);
     return StrV(r);
 }
 
@@ -195,9 +195,9 @@ static Value fire_gfx_FbGpuReadbacks(void) { return Int((int64_t)fire_gfx_gpuRea
 static Value fire_gfx_FbDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
-    if (i > 0 && (size_t)i < t->fbCount && t->framebuffers[(size_t)i]) {
-        fire_gfx_fbRelease(t->framebuffers[(size_t)i]);
-        t->framebuffers[(size_t)i] = NULL;
+    if (i > 0 && (fire_gfx_size)i < t->fbCount && t->framebuffers[(fire_gfx_size)i]) {
+        fire_gfx_fbRelease(t->framebuffers[(fire_gfx_size)i]);
+        t->framebuffers[(fire_gfx_size)i] = NULL;
         return Bool(true);
     }
     return Bool(false);
@@ -218,7 +218,7 @@ static void fire_gfxb_checkByteOffset(const FireGfxFramebuffer* fb, int64_t offs
 }
 static Value fire_gfx_FbReadByte(Value id, Value offset) {
     FireGfxFramebuffer* fb = fire_gfxb_fbOf(id);
-    int off = fire_gfxb_I(offset);
+    fire_gfx_int off = fire_gfxb_I(offset);
     fire_gfxb_checkByteOffset(fb, off);
     fire_gfx_fbCpu(fb, 0);
     if (fb->indices) return Int(fb->indices[off]);
@@ -226,7 +226,7 @@ static Value fire_gfx_FbReadByte(Value id, Value offset) {
 }
 static Value fire_gfx_FbWriteByte(Value id, Value offset, Value value) {
     FireGfxFramebuffer* fb = fire_gfxb_fbOf(id);
-    int off = fire_gfxb_I(offset), shift;
+    fire_gfx_int off = fire_gfxb_I(offset), shift;
     uint8_t b = (uint8_t)value.i;
     uint32_t* px;
     fire_gfxb_checkByteOffset(fb, off);
@@ -240,11 +240,11 @@ static Value fire_gfx_FbWriteByte(Value id, Value offset, Value value) {
 /* R, G, B, A bytes per pixel, whatever the byte order of the machine is. */
 static Value fire_gfx_FbReadBytes(Value id, OwnList* list) {
     FireGfxFramebuffer* fb = fire_gfxb_fbOf(id);
-    size_t n = fire_gfx_fbByteCount(fb), i, count;
+    fire_gfx_size n = fire_gfx_fbByteCount(fb), i, count;
     Buf* b = allocBuf((uint32_t)n, list);
     uint8_t* bytes = bufBytes(b);
     fire_gfx_fbCpu(fb, 0);
-    if (fb->indices) { if (n) memcpy(bytes, fb->indices, n); }
+    if (fb->indices) { if (n) fire_gfx_copy(bytes, fb->indices, n); }
     else for (i = 0, count = fire_gfx_fbPixelCount(fb); i < count; i++) {
         uint32_t px = fb->pixels[i];
         bytes[i * 4] = (uint8_t)px; bytes[i * 4 + 1] = (uint8_t)(px >> 8); bytes[i * 4 + 2] = (uint8_t)(px >> 16); bytes[i * 4 + 3] = (uint8_t)(px >> 24);
@@ -254,8 +254,8 @@ static Value fire_gfx_FbReadBytes(Value id, OwnList* list) {
 /* The framebuffer as a PNG file (RGBA, 8 bits): Framebuffer.ToPng - to save it, or to put it on the clipboard. A palette framebuffer is resolved through its palette;
  * its transparent index becomes transparent. */
 static uint32_t* fire_gfxb_rgbaOf(const FireGfxFramebuffer* fb) {
-    size_t n = fire_gfx_fbPixelCount(fb), i;
-    uint32_t* rgba = (uint32_t*)malloc(n * 4 + 4);
+    fire_gfx_size n = fire_gfx_fbPixelCount(fb), i;
+    uint32_t* rgba = (uint32_t*)fire_gfx_malloc(n * 4 + 4);
     if (rgba == NULL) fire_gfxb_outOfMemory();
     fire_gfx_fbResolveTo(fb, rgba);
     if (fb->indices && fb->transparentIndex >= 0)
@@ -265,20 +265,20 @@ static uint32_t* fire_gfxb_rgbaOf(const FireGfxFramebuffer* fb) {
 static Value fire_gfx_FbToPng(Value id, OwnList* list) {
     FireGfxFramebuffer* fb = fire_gfxb_fbOf(id);
     uint32_t* rgba = fire_gfxb_rgbaOf(fb);
-    size_t size = 0;
+    fire_gfx_size size = 0;
     uint8_t* png = fire_gfx_encodePng(rgba, fb->width, fb->height, &size);
     Buf* b;
-    free(rgba);
-    if (png == NULL || size > 0x7FFFFFFFu) { free(png); fire_gfxb_outOfMemory(); }
+    fire_gfx_free(rgba);
+    if (png == NULL || size > 0x7FFFFFFFu) { fire_gfx_free(png); fire_gfxb_outOfMemory(); }
     b = allocBuf((uint32_t)size, list);
-    memcpy(bufBytes(b), png, size);
-    free(png);
+    fire_gfx_copy(bufBytes(b), png, size);
+    fire_gfx_free(png);
     return BufV(b);
 }
 static Value fire_gfx_FbWriteBytes(Value id, Value data) {
     FireGfxFramebuffer* fb;
     FireBytes b;
-    size_t expected, i, count;
+    fire_gfx_size expected, i, count;
     const uint8_t* bytes;
     if (!bytesArg(data, "Framebuffer.WriteBytes", &b)) return Undef();
     fire_gfxb_clearError();
@@ -292,13 +292,13 @@ static Value fire_gfx_FbWriteBytes(Value id, Value data) {
     }
     bytes = b.data;
     fire_gfx_fbCpu(fb, 1);
-    if (fb->indices) { if (expected) memcpy(fb->indices, bytes, expected); }
+    if (fb->indices) { if (expected) fire_gfx_copy(fb->indices, bytes, expected); }
     else for (i = 0, count = fire_gfx_fbPixelCount(fb); i < count; i++)
         fb->pixels[i] = bytes[i * 4] | ((uint32_t)bytes[i * 4 + 1] << 8) | ((uint32_t)bytes[i * 4 + 2] << 16) | ((uint32_t)bytes[i * 4 + 3] << 24);
     return Bool(true);
 }
 
-static int fire_gfxb_checkPaletteIndex(int64_t index) {
+static fire_gfx_int fire_gfxb_checkPaletteIndex(int64_t index) {
     if ((uint64_t)index > 255) {
         char text[96];
         snprintf(text, sizeof text, "Palette index %lld outside of 0-255.", (long long)index);
@@ -307,7 +307,7 @@ static int fire_gfxb_checkPaletteIndex(int64_t index) {
     }
     return 1;
 }
-/* The colors of the palette are unsigned values (r + g*256 + b*65536 + a*16777216); -1 for an invalid index. */
+/* The colors of the palette are uint32_t values (r + g*256 + b*65536 + a*16777216); -1 for an invalid index. */
 static Value fire_gfx_FbGetPaletteColor(Value id, Value index) {
     fire_gfxb_clearError();
     if (!fire_gfxb_checkPaletteIndex(fire_gfxb_I(index))) return Int(-1);
@@ -321,7 +321,7 @@ static Value fire_gfx_FbSetPaletteColor(Value id, Value index, Value color) {
 }
 static Value fire_gfx_FbReadPalette(Value id, Value withAlpha, OwnList* list) {
     const FireGfxPalette* p = &fire_gfxb_fbOf(id)->palette;
-    int stride = withAlpha.i ? 4 : 3, i;
+    fire_gfx_int stride = withAlpha.i ? 4 : 3, i;
     Buf* b = allocBuf((uint32_t)(256 * stride), list);
     uint8_t* bytes = bufBytes(b);
     for (i = 0; i < 256; i++) {
@@ -331,8 +331,8 @@ static Value fire_gfx_FbReadPalette(Value id, Value withAlpha, OwnList* list) {
     }
     return BufV(b);
 }
-static int fire_gfxb_writePalette(FireGfxFramebuffer* fb, const uint8_t* data, size_t n) {
-    int stride, i;
+static fire_gfx_int fire_gfxb_writePalette(FireGfxFramebuffer* fb, const uint8_t* data, fire_gfx_size n) {
+    fire_gfx_int stride, i;
     uint32_t colors[256];
     if (n != 768 && n != 1024) {
         char text[96];
@@ -356,7 +356,7 @@ static Value fire_gfx_FbWritePalette(Value id, Value data) {
 }
 
 /* A new framebuffer from decoded image data: the id, or -1 with the message in LastError. */
-static Value fire_gfxb_fromImage(const uint8_t* data, size_t n, int mode) {
+static Value fire_gfxb_fromImage(const uint8_t* data, fire_gfx_size n, fire_gfx_int mode) {
     FireGfxImage image;
     char err[FIRE_GFX_ERR_SIZE];
     FireGfxFramebuffer* fb;
@@ -378,17 +378,17 @@ static Value fire_gfx_FbLoadFile(Value path, Value mode) {
     const Str* s;
     char* raw;
     char* full;
-    size_t n = 0;
+    fire_gfx_size n = 0;
     uint32_t i;
     FireFsStatus status;
     FILE* f;
     uint8_t* bytes = NULL;
-    size_t size = 0, cap = 0, got;
+    fire_gfx_size size = 0, cap = 0, got;
     uint8_t chunk[4096];
     Value result;
     fire_gfxb_clearError();
     s = strOf(path);
-    raw = (char*)malloc((size_t)s->length * 3 + 1);
+    raw = (char*)fire_gfx_malloc((fire_gfx_size)s->length * 3 + 1);
     if (raw == NULL) fire_gfxb_outOfMemory();
     for (i = 0; i < s->length; i++) {
         uint32_t c = s->data[i];
@@ -398,12 +398,12 @@ static Value fire_gfx_FbLoadFile(Value path, Value mode) {
     }
     raw[n] = 0;
     full = fire_fs_fullPath(raw);
-    free(raw);
+    fire_gfx_free(raw);
     if (full == NULL) fire_gfxb_outOfMemory();
 #if defined(FIRE_LIBRARY) || defined(FIRE_IO_POLICY)
     {
         char reason[256];
-        int allowed;
+        fire_gfx_int allowed;
         reason[0] = 0;
 #ifdef FIRE_LIBRARY
         /* the library for the VM: the host decides what a program may read (its IoPolicy), as for IO.File */
@@ -419,39 +419,39 @@ static Value fire_gfx_FbLoadFile(Value path, Value mode) {
             if (reason[0]) snprintf(text, sizeof text, "%s", reason);
             else snprintf(text, sizeof text, "Access to '%s' is not allowed.", full);
             fire_gfxb_setError(text);
-            free(full);
+            fire_gfx_free(full);
             return Int(-1);
         }
     }
 #endif
-    memset(&status, 0, sizeof status);
+    fire_gfx_set(&status, 0, sizeof status);
     f = fire_fs_open(full, 0, 0, &status);
-    free(full);
+    fire_gfx_free(full);
     if (!f) { fire_gfxb_setError(status.message); return Int(-1); }
     while ((got = fread(chunk, 1, sizeof chunk, f)) > 0) {
         if (size + got > cap) {
-            size_t c = cap ? cap * 2 : 65536;
+            fire_gfx_size c = cap ? cap * 2 : 65536;
             uint8_t* grown;
             while (c < size + got) c *= 2;
-            grown = (uint8_t*)realloc(bytes, c);
-            if (grown == NULL) { free(bytes); fclose(f); fire_gfxb_outOfMemory(); }
+            grown = (uint8_t*)fire_gfx_realloc(bytes, cap, c);
+            if (grown == NULL) { fire_gfx_free(bytes); fclose(f); fire_gfxb_outOfMemory(); }
             bytes = grown;
             cap = c;
         }
-        memcpy(bytes + size, chunk, got);
+        fire_gfx_copy(bytes + size, chunk, got);
         size += got;
     }
     fclose(f);
     result = fire_gfxb_fromImage(bytes, size, mode.i < 0 ? -1 : fire_gfxb_I(mode));
-    free(bytes);
+    fire_gfx_free(bytes);
     return result;
 }
 /* Raw pixels, top to bottom: RGBA 4 bytes (R, G, B, A) or one palette index per pixel, optionally with a palette (768 or 1024 bytes). */
 static Value fire_gfx_FbFromPixels(Value w, Value h, Value pixels, Value mode, Value palette) {
-    int width, height, m;
+    fire_gfx_int width, height, m;
     FireGfxFramebuffer* fb;
     FireBytes b, pb;
-    size_t expected, i, count;
+    fire_gfx_size expected, i, count;
     const uint8_t* bytes;
     /* (both are taken before the framebuffer is made: an exception does not come back here in the library for the VM) */
     if (!bytesArg(pixels, "Framebuffer.FromPixels", &b)) return Undef();
@@ -467,13 +467,13 @@ static Value fire_gfx_FbFromPixels(Value w, Value h, Value pixels, Value mode, V
     if (b.length != expected) {
         char text[256];
         fire_gfx_fbDelete(fb);
-        snprintf(text, sizeof text, "Expected exactly %llu bytes (%dx%d, %s per pixel), got %lu. (Parameter 'pixels')",
-                 (unsigned long long)expected, width, height, m == FIRE_GFX_INDEXED ? "1 byte" : "4 bytes", (unsigned long)b.length);
+        snprintf(text, sizeof text, "Expected exactly %llu bytes (%ldx%ld, %s per pixel), got %lu. (Parameter 'pixels')",
+                 (unsigned long long)expected, (long)width, (long)height, m == FIRE_GFX_INDEXED ? "1 byte" : "4 bytes", (unsigned long)b.length);
         fire_gfxb_setError(text);
         return Int(-1);
     }
     bytes = b.data;
-    if (fb->indices) memcpy(fb->indices, bytes, expected);
+    if (fb->indices) fire_gfx_copy(fb->indices, bytes, expected);
     else for (i = 0, count = fire_gfx_fbPixelCount(fb); i < count; i++)
         fb->pixels[i] = bytes[i * 4] | ((uint32_t)bytes[i * 4 + 1] << 8) | ((uint32_t)bytes[i * 4 + 2] << 16) | ((uint32_t)bytes[i * 4 + 3] << 24);
     if (palette.kind == K_Buffer || palette.kind == K_Array) {
@@ -491,7 +491,7 @@ static Value fire_gfx_FbFromPixels(Value w, Value h, Value pixels, Value mode, V
 static Value fire_gfx_FbLastError(OwnList* list) { return fire_gfxb_strOf8(g_gfxError.message, list); }
 static Value fire_gfx_FbGetTransparentIndex(Value id) { return Int(fire_gfxb_fbOf(id)->transparentIndex); }
 static Value fire_gfx_FbSetTransparentIndex(Value id, Value index) {
-    fire_gfxb_fbOf(id)->transparentIndex = (int)fire_gfx_lmax(-1, fire_gfx_lmin(255, fire_gfxb_I(index)));
+    fire_gfxb_fbOf(id)->transparentIndex = (fire_gfx_int)fire_gfx_lmax(-1, fire_gfx_lmin(255, fire_gfxb_I(index)));
     return Undef();
 }
 static Value fire_gfx_FbToMask(Value id, Value threshold, Value darkIsRemoved, Value alphaThreshold) {
@@ -515,9 +515,9 @@ static Value fire_gfx_SlcSlice(Value id, Value lineWidth, Value pixelSize, Value
     FireGfxToolPaths paths = {NULL, 0, 0, 0};
     double tolerance_;
     Arr* outer;
-    size_t k, j;
+    fire_gfx_size k, j;
     fire_gfxb_clearError();
-    if (!(i > 0 && (size_t)i < t->fbCount && t->framebuffers[(size_t)i])) {
+    if (!(i > 0 && (fire_gfx_size)i < t->fbCount && t->framebuffers[(fire_gfx_size)i])) {
         char text[96];
         snprintf(text, sizeof text, "No resource with ID %lld (unknown or already destroyed).", (long long)i);
         fire_gfxb_setError(text);
@@ -528,7 +528,7 @@ static Value fire_gfx_SlcSlice(Value id, Value lineWidth, Value pixelSize, Value
     tolerance_ = fire_gfxb_D(tolerance);
     s.simplifyTolerance = tolerance_ < 0 ? NAN : tolerance_;
     if (s.lineWidth <= 0) { fire_gfxb_setError("Specified argument was out of the range of valid values."); return Int(-1); }
-    fire_gfx_slice(&s, t->framebuffers[(size_t)i], &paths);
+    fire_gfx_slice(&s, t->framebuffers[(fire_gfx_size)i], &paths);
     if (paths.failed) { fire_gfx_pathsFree(&paths); fire_gfxb_outOfMemory(); }
     outer = allocArr((uint32_t)paths.count, list);
     /* the VM hands out plain arrays that live as long as something refers to them (the prelude puts the points into objects that outlive the call): here they
@@ -551,8 +551,8 @@ static Value fire_gfx_RndCreate(Value fbId) {
     int64_t i = (int32_t)fbId.i, id;
     FireGfxTables* t = fire_gfxb_tables();
     FireGfxRenderer* r;
-    if (!(i > 0 && (size_t)i < t->fbCount && t->framebuffers[(size_t)i])) return Int(-1);
-    r = fire_gfx_rendererNew(t->framebuffers[(size_t)i], 0);
+    if (!(i > 0 && (fire_gfx_size)i < t->fbCount && t->framebuffers[(fire_gfx_size)i])) return Int(-1);
+    r = fire_gfx_rendererNew(t->framebuffers[(fire_gfx_size)i], 0);
     if (r == NULL) fire_gfxb_outOfMemory();
     id = fire_gfxb_push((void***)&t->renderers, &t->rndCount, &t->rndCap, r);
     if (id < 0) fire_gfxb_outOfMemory();
@@ -561,7 +561,7 @@ static Value fire_gfx_RndCreate(Value fbId) {
 static Value fire_gfx_RndDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
-    if (i > 0 && (size_t)i < t->rndCount && t->renderers[(size_t)i]) { fire_gfx_rendererDelete(t->renderers[(size_t)i]); t->renderers[(size_t)i] = NULL; return Bool(true); }
+    if (i > 0 && (fire_gfx_size)i < t->rndCount && t->renderers[(fire_gfx_size)i]) { fire_gfx_rendererDelete(t->renderers[(fire_gfx_size)i]); t->renderers[(fire_gfx_size)i] = NULL; return Bool(true); }
     return Bool(false);
 }
 static Value fire_gfx_RndPrint(Value id, Value text) { const Str* s = strOf(text); fire_gfx_rendererPrint(fire_gfxb_rendererOf(id), s->data, s->length); return Undef(); }
@@ -592,8 +592,8 @@ static uint32_t fire_gfxb_rgbaOfPaint(const FireGfxFramebuffer* fb, FireGfxPaint
     return fire_gfx_paintIsIndex(paint) ? fire_gfx_paletteGet(&fb->palette, (uint8_t)paint.index) : paint.rgba;
 }
 /* Text on the GPU when the framebuffer has a twin there (1: drawn; 0: the software draws it). */
-static int fire_gfxb_gpuText(FireGfxRenderer* r, FireGfxTextFont* font, int size, int x, int y, const Str* s, const FireGfxBrush* fg, const FireGfxBrush* bg) {
-    int clip[4];
+static fire_gfx_int fire_gfxb_gpuText(FireGfxRenderer* r, FireGfxTextFont* font, fire_gfx_int size, fire_gfx_int x, fire_gfx_int y, const Str* s, const FireGfxBrush* fg, const FireGfxBrush* bg) {
+    fire_gfx_int clip[4];
     if (r->target->gpu == NULL) return 0;
     clip[0] = r->clipLeft; clip[1] = r->clipTop; clip[2] = r->clipRight; clip[3] = r->clipBottom;
     return fire_gfx_gpuText(r->target, clip, !r->alphaBlending, font, r->smallFont, r->cellWidth, r->cellHeight, size, x, y, s->data, s->length,
@@ -620,25 +620,25 @@ static Value fire_gfx_RndDrawTextFont(Value id, Value x, Value y, Value text, Va
 }
 
 /* The points of a polygon from a script array `[x0, y0, x1, y1, ...]`: floats are cut off, an odd last element does not count. malloc'd (*count numbers). */
-static int* fire_gfxb_readPoints(Value array, size_t* count) {
+static fire_gfx_int* fire_gfxb_readPoints(Value array, fire_gfx_size* count) {
     Arr* a;
     uint32_t n, i;
-    int* points;
+    fire_gfx_int* points;
     if (array.kind != K_Array) fatal("A polygon needs an array of coordinates.");
     a = arrOf(array);
     n = a->length - a->length % 2;
-    points = (int*)malloc(sizeof(int) * (n ? n : 1));
+    points = (fire_gfx_int*)fire_gfx_malloc(sizeof(fire_gfx_int) * (n ? n : 1));
     if (points == NULL) fire_gfxb_outOfMemory();
     for (i = 0; i < n; i++) {
         Value v = arrItems(a)[i];
-        points[i] = v.kind == K_Float ? (int)v.f : (int)v.i;
+        points[i] = v.kind == K_Float ? (fire_gfx_int)v.f : (fire_gfx_int)v.i;
     }
     *count = n;
     return points;
 }
 
 /* A shape on the GPU when the framebuffer has a twin there (1: drawn - or nothing to draw; 0: the software draws it). */
-static int fire_gfxb_gpuShape(FireGfxRenderer* r, int x, int y, int w, int h, int radius, int stroke, FireGfxPaint paint) {
+static fire_gfx_int fire_gfxb_gpuShape(FireGfxRenderer* r, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int radius, fire_gfx_int stroke, FireGfxPaint paint) {
     uint32_t rgba;
     if (r->target->gpu == NULL) return 0;
     rgba = fire_gfx_paintIsIndex(paint) ? fire_gfx_paletteGet(&r->target->palette, (uint8_t)paint.index) : paint.rgba;
@@ -728,13 +728,13 @@ static Value fire_gfx_RndFillTriangle(Value id, Value x0, Value y0, Value x1, Va
 }
 static Value fire_gfx_RndFillPolygon(Value id, Value points, Value brush) {
     FireGfxSurface s;
-    int* p;
-    size_t n;
+    fire_gfx_int* p;
+    fire_gfx_size n;
     if (!leafAlive(points)) return destroyedError(points);
     s = fire_gfx_rendererSurface(fire_gfxb_rendererOf(id));
     p = fire_gfxb_readPoints(points, &n);
     fire_gfx_brushFillPolygon(fire_gfxb_brushOf(brush), &s, p, n);
-    free(p);
+    fire_gfx_free(p);
     return Undef();
 }
 static Value fire_gfx_RndFloodFill(Value id, Value x, Value y, Value brush) {
@@ -761,13 +761,13 @@ static Value fire_gfx_RndDrawLine(Value id, Value x0, Value y0, Value x1, Value 
 }
 static Value fire_gfx_RndDrawPath(Value id, Value points, Value pen, Value closed) {
     FireGfxSurface s;
-    int* p;
-    size_t n;
+    fire_gfx_int* p;
+    fire_gfx_size n;
     if (!leafAlive(points)) return destroyedError(points);
     s = fire_gfx_rendererSurface(fire_gfxb_rendererOf(id));
     p = fire_gfxb_readPoints(points, &n);
     fire_gfx_penDrawPath(fire_gfxb_penOf(pen), &s, p, n, closed.i != 0);
-    free(p);
+    fire_gfx_free(p);
     return Undef();
 }
 static Value fire_gfx_RndDrawRect(Value id, Value x, Value y, Value w, Value h, Value pen) {
@@ -797,13 +797,13 @@ static Value fire_gfx_RndDrawTriangle(Value id, Value x0, Value y0, Value x1, Va
 }
 static Value fire_gfx_RndDrawPolygon(Value id, Value points, Value pen, Value closed) {
     FireGfxSurface s;
-    int* p;
-    size_t n;
+    fire_gfx_int* p;
+    fire_gfx_size n;
     if (!leafAlive(points)) return destroyedError(points);
     s = fire_gfx_rendererSurface(fire_gfxb_rendererOf(id));
     p = fire_gfxb_readPoints(points, &n);
     fire_gfx_penDrawPolygon(fire_gfxb_penOf(pen), &s, p, n, closed.i != 0);
-    free(p);
+    fire_gfx_free(p);
     return Undef();
 }
 static Value fire_gfx_RndBlit(Value id, Value src, Value sx, Value sy, Value sw, Value sh, Value dx, Value dy, Value dw, Value dh, Value mode, Value key) {
@@ -816,7 +816,7 @@ static Value fire_gfx_RndBlit(Value id, Value src, Value sx, Value sy, Value sw,
 }
 
 /* The colour as a script gives it: a palette index 0-255 or the direct value. */
-/* (a color as the script set it: unsigned, 0xAABBGGRR - as UI.Color.Rgb makes it) */
+/* (a color as the script set it: uint32_t, 0xAABBGGRR - as UI.Color.Rgb makes it) */
 static Value fire_gfxb_colorNumber(FireGfxPaint p) { return Int(fire_gfx_paintIsIndex(p) ? (int64_t)p.index : (int64_t)p.rgba); }
 
 /* fonts (ID 0 = the font of the renderer, 1 and 2 = the built-in bitmap fonts, -1 = none) */
@@ -834,17 +834,17 @@ static Value fire_gfx_FntLoad(Value data) {
 static Value fire_gfx_FntAdd(Value data, Value alias) {
     FireBytes b;
     char* name;
-    int id;
+    fire_gfx_int id;
     if (!bytesArg(data, "Font.Add", &b)) return Undef();
     name = fire_gfxb_utf8Of(alias);
     id = fire_gfx_fontTableAdd(&fire_gfxb_tables()->fonts, b.data, b.length, name);
-    free(name);
+    fire_gfx_free(name);
     return Int(id);
 }
 static Value fire_gfx_FntOpen(Value name) {
     char* text = fire_gfxb_utf8Of(name);
-    int id = fire_gfx_fontTableOpen(&fire_gfxb_tables()->fonts, text);
-    free(text);
+    fire_gfx_int id = fire_gfx_fontTableOpen(&fire_gfxb_tables()->fonts, text);
+    fire_gfx_free(text);
     return Int(id);
 }
 static Value fire_gfx_FntDestroy(Value id) { return Bool(fire_gfx_fontTableDestroy(&fire_gfxb_tables()->fonts, (int32_t)id.i) != 0); }
@@ -857,7 +857,7 @@ static Value fire_gfx_FntMeasure(Value id, Value size, Value text) { const Str* 
 /* brushes */
 static Value fire_gfx_BshCreateSolid(Value color) {
     FireGfxTables* t = fire_gfxb_tables();
-    FireGfxBrush* b = (FireGfxBrush*)malloc(sizeof(FireGfxBrush));
+    FireGfxBrush* b = (FireGfxBrush*)fire_gfx_malloc(sizeof(FireGfxBrush));
     int64_t id;
     if (b == NULL) fire_gfxb_outOfMemory();
     b->color = fire_gfx_paintArgument(fire_gfxb_I(color));
@@ -868,7 +868,7 @@ static Value fire_gfx_BshCreateSolid(Value color) {
 static Value fire_gfx_BshDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
-    if (i > 0 && (size_t)i < t->bshCount && t->brushes[(size_t)i]) { free(t->brushes[(size_t)i]); t->brushes[(size_t)i] = NULL; return Bool(true); }
+    if (i > 0 && (fire_gfx_size)i < t->bshCount && t->brushes[(fire_gfx_size)i]) { fire_gfx_free(t->brushes[(fire_gfx_size)i]); t->brushes[(fire_gfx_size)i] = NULL; return Bool(true); }
     return Bool(false);
 }
 static Value fire_gfx_BshGetColor(Value id) { return fire_gfxb_colorNumber(fire_gfxb_brushOf(id)->color); }
@@ -877,7 +877,7 @@ static Value fire_gfx_BshSetColor(Value id, Value color) { fire_gfxb_brushOf(id)
 /* pens */
 static Value fire_gfx_PenCreate(Value color, Value width, Value shape) {
     FireGfxTables* t = fire_gfxb_tables();
-    FireGfxPen* p = (FireGfxPen*)malloc(sizeof(FireGfxPen));
+    FireGfxPen* p = (FireGfxPen*)fire_gfx_malloc(sizeof(FireGfxPen));
     int64_t id;
     if (p == NULL) fire_gfxb_outOfMemory();
     fire_gfx_penInit(p, fire_gfx_paintArgument(fire_gfxb_I(color)), fire_gfxb_I(width), fire_gfxb_I(shape));
@@ -888,7 +888,7 @@ static Value fire_gfx_PenCreate(Value color, Value width, Value shape) {
 static Value fire_gfx_PenDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
-    if (i > 0 && (size_t)i < t->penCount && t->pens[(size_t)i]) { free(t->pens[(size_t)i]); t->pens[(size_t)i] = NULL; return Bool(true); }
+    if (i > 0 && (fire_gfx_size)i < t->penCount && t->pens[(fire_gfx_size)i]) { fire_gfx_free(t->pens[(fire_gfx_size)i]); t->pens[(fire_gfx_size)i] = NULL; return Bool(true); }
     return Bool(false);
 }
 static Value fire_gfx_PenGetColor(Value id) { return fire_gfxb_colorNumber(fire_gfxb_penOf(id)->color); }

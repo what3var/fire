@@ -19,38 +19,38 @@
 
 #if defined(ESP_PLATFORM) || defined(__EMSCRIPTEN__) || defined(FIRE_GFX_NO_GPU) || defined(FIRE_PLATFORM_FREERTOS_H)
 
-static int fire_gfx_gpuAttach(FireGfxFramebuffer* fb) { (void)fb; return 0; }
+static fire_gfx_int fire_gfx_gpuAttach(FireGfxFramebuffer* fb) { (void)fb; return 0; }
 static void fire_gfx_gpuDetach(FireGfxFramebuffer* fb) { (void)fb; }
-static int fire_gfx_gpuShape(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int x, int y, int w, int h, int radius, int stroke, uint32_t rgba, int copy) {
+static fire_gfx_int fire_gfx_gpuShape(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int radius, fire_gfx_int stroke, uint32_t rgba, fire_gfx_int copy) {
     (void)fb; (void)cl; (void)ct; (void)cr; (void)cb; (void)x; (void)y; (void)w; (void)h; (void)radius; (void)stroke; (void)rgba; (void)copy;
     return 0;
 }
 static const char* fire_gfx_gpuError(void) { return "There is no GPU backend in this build."; }
-static int fire_gfx_gpuWanted(void) { return 0; }
-static int fire_gfx_gpuText(FireGfxFramebuffer* fb, const int* clip, int copy, FireGfxTextFont* font, int small, int cellW, int cellH, int size, int x, int y,
-                            const uint16_t* text, uint32_t n, uint32_t fg, int hasBg, uint32_t bg) {
+static fire_gfx_int fire_gfx_gpuWanted(void) { return 0; }
+static fire_gfx_int fire_gfx_gpuText(FireGfxFramebuffer* fb, const fire_gfx_int* clip, fire_gfx_int copy, FireGfxTextFont* font, fire_gfx_int small, fire_gfx_int cellW, fire_gfx_int cellH, fire_gfx_int size, fire_gfx_int x, fire_gfx_int y,
+                            const uint16_t* text, uint32_t n, uint32_t fg, fire_gfx_int hasBg, uint32_t bg) {
     (void)fb; (void)clip; (void)copy; (void)font; (void)small; (void)cellW; (void)cellH; (void)size; (void)x; (void)y; (void)text; (void)n; (void)fg; (void)hasBg; (void)bg;
     return 0;
 }
-static int fire_gfx_gpuBlit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* src, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int blend,
-                            int cl, int ct, int cr, int cb) {
+static fire_gfx_int fire_gfx_gpuBlit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* src, fire_gfx_int sx, fire_gfx_int sy, fire_gfx_int sw, fire_gfx_int sh, fire_gfx_int dx, fire_gfx_int dy, fire_gfx_int dw, fire_gfx_int dh, fire_gfx_int mode, fire_gfx_int blend,
+                            fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb) {
     (void)dst; (void)src; (void)sx; (void)sy; (void)sw; (void)sh; (void)dx; (void)dy; (void)dw; (void)dh; (void)mode; (void)blend; (void)cl; (void)ct; (void)cr; (void)cb;
     return 0;
 }
-static int fire_gfx_gpuShadow(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int blend, int x, int y, int w, int h, int radius, int soft, uint32_t color, int dy) {
+static fire_gfx_int fire_gfx_gpuShadow(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int blend, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int radius, fire_gfx_int soft, uint32_t color, fire_gfx_int dy) {
     (void)fb; (void)cl; (void)ct; (void)cr; (void)cb; (void)blend; (void)x; (void)y; (void)w; (void)h; (void)radius; (void)soft; (void)color; (void)dy;
     return 0;
 }
-static int fire_gfx_gpuBlur(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int x, int y, int w, int h, int corner, int radius) {
+static fire_gfx_int fire_gfx_gpuBlur(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int corner, fire_gfx_int radius) {
     (void)fb; (void)cl; (void)ct; (void)cr; (void)cb; (void)x; (void)y; (void)w; (void)h; (void)corner; (void)radius;
     return 0;
 }
-static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int blend, int x, int y, int w, int h, int corner, int kind, uint32_t tint, uint32_t base, int flags) {
+static fire_gfx_int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int blend, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int corner, fire_gfx_int kind, uint32_t tint, uint32_t base, fire_gfx_int flags) {
     (void)fb; (void)cl; (void)ct; (void)cr; (void)cb; (void)blend; (void)x; (void)y; (void)w; (void)h; (void)corner; (void)kind; (void)tint; (void)base; (void)flags;
     return 0;
 }
-static int fire_gfx_gpuPublish(FireGfxFramebuffer* fb, int transparent, void (**fn)(void), void** ctx) { (void)fb; (void)transparent; *fn = NULL; *ctx = NULL; return 1; }
-static unsigned fire_gfx_gpuReadbacks(void) { return 0; }
+static fire_gfx_int fire_gfx_gpuPublish(FireGfxFramebuffer* fb, fire_gfx_int transparent, void (**fn)(void), void** ctx) { (void)fb; (void)transparent; *fn = NULL; *ctx = NULL; return 1; }
+static uint32_t fire_gfx_gpuReadbacks(void) { return 0; }
 
 #else
 
@@ -141,39 +141,39 @@ typedef struct FireGfxGpuShape { float quad[4], box[4], param[4]; uint32_t color
 typedef struct FireGfxGpuImage { float quad[4]; int32_t dst[4], src[4], mode[4]; uint32_t color; } FireGfxGpuImage;
 enum { FIRE_GFX_GPU_GLYPH = 0, FIRE_GFX_GPU_COPY = 1, FIRE_GFX_GPU_TRANSPARENT = 2, FIRE_GFX_GPU_BLEND = 3 };
 /* A blur or a material in a rounded rectangle (fire_gfx_fxBlurMaterial): its passes run between the other drawing (kind 2 of a batch). */
-typedef struct FireGfxGpuEffect { int clip[4]; int x, y, w, h, corner, radius, kind, rim; uint32_t tint; } FireGfxGpuEffect;
+typedef struct FireGfxGpuEffect { fire_gfx_int clip[4]; fire_gfx_int x, y, w, h, corner, radius, kind, rim; uint32_t tint; } FireGfxGpuEffect;
 /* The push constants of shaders/gfx_effect.* (96 bytes). */
 typedef struct FireGfxGpuPass { float size[2]; int32_t mode, f; int32_t rect[4], region[4], box[4], p[4], q[4]; } FireGfxGpuPass;
 /* A temporary picture of the effects (the smaller picture and its blur). */
-typedef struct FireGfxGpuTemp { int width, height, ready; VkImage image; VkDeviceMemory memory; VkImageView view; VkFramebuffer framebuffer; VkDescriptorSet set; } FireGfxGpuTemp;
+typedef struct FireGfxGpuTemp { fire_gfx_int width, height, ready; VkImage image; VkDeviceMemory memory; VkImageView view; VkFramebuffer framebuffer; VkDescriptorSet set; } FireGfxGpuTemp;
 /* A run of shapes (kind 0), pictures (kind 1, from the texture of `set`) or one effect (kind 2) with the same clip and pipeline - in the order they were drawn. */
-typedef struct FireGfxGpuBatch { int kind; int clip[4]; int copy; VkDescriptorSet set; uint32_t first, count; } FireGfxGpuBatch;
+typedef struct FireGfxGpuBatch { fire_gfx_int kind; fire_gfx_int clip[4]; fire_gfx_int copy; VkDescriptorSet set; uint32_t first, count; } FireGfxGpuBatch;
 
 typedef struct FireGfxVkBuffer { VkBuffer buffer; VkDeviceMemory memory; void* mapped; VkDeviceSize size; } FireGfxVkBuffer;
 
 /* The twin of a framebuffer on the GPU. */
 typedef struct FireGfxGpuTwin {
-    int width, height;
+    fire_gfx_int width, height;
     VkImage image; VkDeviceMemory memory; VkImageView view; VkFramebuffer framebuffer;
     FireGfxVkBuffer staging;          /* host memory of the size of the picture: uploads and readbacks */
-    int cpuValid, gpuValid;           /* who holds the current pixels (both: the same) */
-    int dirty[4];                     /* x0, y0, x1, y1: what the GPU drew since the pixels of the CPU were last the same (x1 <= x0: nothing) - only that comes back */
+    fire_gfx_int cpuValid, gpuValid;           /* who holds the current pixels (both: the same) */
+    fire_gfx_int dirty[4];                     /* x0, y0, x1, y1: what the GPU drew since the pixels of the CPU were last the same (x1 <= x0: nothing) - only that comes back */
     FireGfxGpuShape* shapes; uint32_t shapeCount, shapeCap;
     FireGfxGpuImage* images; uint32_t imageCount, imageCap;
     FireGfxGpuEffect* effects; uint32_t effectCount, effectCap;
     FireGfxGpuBatch* batches; uint32_t batchCount, batchCap;
     VkDescriptorSet set;              /* the picture as a texture (a blit from this framebuffer into another) */
     FireGfxFramebuffer* fb;           /* whose twin it is */
-    struct FireGfxGpuTwin* nextPending; int listed;   /* in the list of the twins with drawing to do (in the order of their first command) */
+    struct FireGfxGpuTwin* nextPending; fire_gfx_int listed;   /* in the list of the twins with drawing to do (in the order of their first command) */
 } FireGfxGpuTwin;
 
 /* The glyphs on the GPU: one texture (one byte of coverage per pixel), filled in shelves; a copy in host memory (`mirror`) goes up where it changed. */
 #define FIRE_GFX_ATLAS_SIZE 2048
 #define FIRE_GFX_ATLAS_SLOTS 8192
-typedef struct FireGfxAtlasSlot { uint64_t key; int x, y, w, h; } FireGfxAtlasSlot;
+typedef struct FireGfxAtlasSlot { uint64_t key; fire_gfx_int x, y, w, h; } FireGfxAtlasSlot;
 
 static struct {
-    int state;                 /* 0: not tried yet, 1: ready, -1: there is none (error says why) */
+    fire_gfx_int state;                 /* 0: not tried yet, 1: ready, -1: there is none (error says why) */
     char error[256];
     char deviceName[256];
     void* lib;
@@ -187,11 +187,11 @@ static struct {
     FIRE_GFX_VK_WSI_DEVICE_FUNCTIONS(FIRE_GFX_VK_DECLARE)
     FIRE_GFX_VK_INTEROP_FUNCTIONS(FIRE_GFX_VK_DECLARE)
 #undef FIRE_GFX_VK_DECLARE
-    int interop;               /* Windows: the device can import textures of D3D11 (DirectComposition gets the frames without a readback) */
-    uint8_t luid[8]; int luidValid;
+    fire_gfx_int interop;               /* Windows: the device can import textures of D3D11 (DirectComposition gets the frames without a readback) */
+    uint8_t luid[8]; fire_gfx_int luidValid;
     PFN_fireGfxWin32HandleProps getWin32HandleProps;
-    unsigned readbacks;        /* how often pictures came back to the CPU (Framebuffer.GpuReadbacks: the tests) */
-    int wsi;                   /* the instance has VK_KHR_surface (and a surface of a window system), the device VK_KHR_swapchain: pictures can go into windows */
+    uint32_t readbacks;        /* how often pictures came back to the CPU (Framebuffer.GpuReadbacks: the tests) */
+    fire_gfx_int wsi;                   /* the instance has VK_KHR_surface (and a surface of a window system), the device VK_KHR_swapchain: pictures can go into windows */
     PFN_fireGfxCreateSurface createWin32Surface, createXlibSurface, createWaylandSurface, createMetalSurface;
     struct FireGfxGpuTarget* targets;   /* the presenters of the framebuffers (part 4.4); never freed while the backend lives - a window may hold one */
     VkInstance instance;
@@ -219,10 +219,10 @@ static struct {
     /* the atlas of the glyphs */
     VkImage atlas; VkDeviceMemory atlasMemory; VkImageView atlasView; VkDescriptorSet atlasSet;
     FireGfxVkBuffer atlasMirror;
-    int atlasReady;            /* its layout is GENERAL (set by its first upload) */
-    int shelfX, shelfY, shelfH;
-    int dirty[4];              /* x0, y0, x1, y1 of what changed in the mirror (x1 <= x0: nothing) */
-    FireGfxAtlasSlot* slots; int slotCount;
+    fire_gfx_int atlasReady;            /* its layout is GENERAL (set by its first upload) */
+    fire_gfx_int shelfX, shelfY, shelfH;
+    fire_gfx_int dirty[4];              /* x0, y0, x1, y1 of what changed in the mirror (x1 <= x0: nothing) */
+    FireGfxAtlasSlot* slots; fire_gfx_int slotCount;
     FireGfxGpuTwin* pending;   /* the twins with drawing to do, the oldest first */
     /* blur and materials */
     VkShaderModule effectVert, effectFrag;
@@ -233,21 +233,21 @@ static struct {
 
 static const char* fire_gfx_gpuError(void) { return g_fireGfxVk.state > 0 ? "" : g_fireGfxVk.error[0] ? g_fireGfxVk.error : "There is no GPU (not tried yet: set Accelerated first)."; }
 static void fire_gfx_gpuFail(const char* text) { snprintf(g_fireGfxVk.error, sizeof g_fireGfxVk.error, "%s", text); }
-static int fire_gfx_gpuCheck(VkResult r, const char* what) {
+static fire_gfx_int fire_gfx_gpuCheck(VkResult r, const char* what) {
     if (r == VK_SUCCESS) return 1;
-    snprintf(g_fireGfxVk.error, sizeof g_fireGfxVk.error, "%s failed (VkResult %d).", what, (int)r);
+    snprintf(g_fireGfxVk.error, sizeof g_fireGfxVk.error, "%s failed (VkResult %d).", what, (fire_gfx_int)r);
     return 0;
 }
 
 /* FIRE_GFX_GPU=1 (or cpu): every RGBA framebuffer is accelerated. */
-static int fire_gfx_gpuWanted(void) {
+static fire_gfx_int fire_gfx_gpuWanted(void) {
     const char* v = getenv("FIRE_GFX_GPU");
     return v != NULL && (strcmp(v, "1") == 0 || strcmp(v, "cpu") == 0);
 }
 
 /* ---- Vulkan ---- */
 
-static int fire_gfx_gpuLoad(void) {
+static fire_gfx_int fire_gfx_gpuLoad(void) {
 #ifdef _WIN32
     HMODULE lib = LoadLibraryA("vulkan-1.dll");
     if (lib == NULL) { fire_gfx_gpuFail("There is no Vulkan on this machine (vulkan-1.dll was not found)."); return 0; }
@@ -259,7 +259,7 @@ static int fire_gfx_gpuLoad(void) {
 #else
     static const char* names[] = {"libvulkan.so.1", "libvulkan.so", NULL};
 #endif
-    int i;
+    fire_gfx_int i;
     void* sym;
     for (i = 0; names[i] != NULL && g_fireGfxVk.lib == NULL; i++) g_fireGfxVk.lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
     if (g_fireGfxVk.lib == NULL) { fire_gfx_gpuFail("There is no Vulkan on this machine (the Vulkan loader was not found)."); return 0; }
@@ -273,20 +273,20 @@ static int fire_gfx_gpuLoad(void) {
     return 1;
 }
 
-static int fire_gfx_gpuHasExtension(const VkExtensionProperties* list, uint32_t count, const char* name) {
+static fire_gfx_int fire_gfx_gpuHasExtension(const VkExtensionProperties* list, uint32_t count, const char* name) {
     uint32_t i;
     for (i = 0; i < count; i++) if (strcmp(list[i].extensionName, name) == 0) return 1;
     return 0;
 }
 
-static int fire_gfx_gpuInstance(void) {
+static fire_gfx_int fire_gfx_gpuInstance(void) {
     VkApplicationInfo app;
     VkInstanceCreateInfo ci;
     VkResult r;
     VkExtensionProperties* exts;
     const char* enabled[12];
     uint32_t n = 0, count = 0;
-    int surface = 0;
+    fire_gfx_int surface = 0;
     memset(&app, 0, sizeof app);
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.pApplicationName = "fire graphics";
@@ -299,7 +299,7 @@ static int fire_gfx_gpuInstance(void) {
         exts = (VkExtensionProperties*)malloc(sizeof(VkExtensionProperties) * count);
         if (exts && g_fireGfxVk.vkEnumerateInstanceExtensionProperties(NULL, &count, exts) == VK_SUCCESS) {
             static const char* const surfaces[4] = {"VK_KHR_win32_surface", "VK_KHR_xlib_surface", "VK_KHR_wayland_surface", "VK_EXT_metal_surface"};
-            int k;
+            fire_gfx_int k;
             /* MoltenVK (macOS) is a "portability" implementation: it is only listed when the program says it can take one */
             if (fire_gfx_gpuHasExtension(exts, count, "VK_KHR_portability_enumeration")) {
                 enabled[n++] = "VK_KHR_portability_enumeration";
@@ -351,12 +351,12 @@ static int fire_gfx_gpuInstance(void) {
 }
 
 /* A GPU (discrete before integrated before virtual) with a queue that draws; a CPU device only when asked for (FIRE_GFX_GPU=cpu). */
-static int fire_gfx_gpuPick(void) {
+static fire_gfx_int fire_gfx_gpuPick(void) {
     uint32_t count = 0, i, best = 0, bestFamily = 0;
-    int bestScore = 0;
+    fire_gfx_int bestScore = 0;
     VkPhysicalDevice* list;
     const char* env = getenv("FIRE_GFX_GPU");
-    int allowCpu = env != NULL && strcmp(env, "cpu") == 0;
+    fire_gfx_int allowCpu = env != NULL && strcmp(env, "cpu") == 0;
     if (!fire_gfx_gpuCheck(g_fireGfxVk.vkEnumeratePhysicalDevices(g_fireGfxVk.instance, &count, NULL), "vkEnumeratePhysicalDevices")) return 0;
     if (count == 0) { fire_gfx_gpuFail("Vulkan finds no GPU on this machine."); return 0; }
     list = (VkPhysicalDevice*)malloc(sizeof(VkPhysicalDevice) * count);
@@ -366,7 +366,7 @@ static int fire_gfx_gpuPick(void) {
         VkPhysicalDeviceProperties props;
         VkQueueFamilyProperties* fams;
         uint32_t famCount = 0, k;
-        int score;
+        fire_gfx_int score;
         g_fireGfxVk.vkGetPhysicalDeviceProperties(list[i], &props);
         switch (props.deviceType) {
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: score = 5; break;
@@ -401,7 +401,7 @@ static int fire_gfx_gpuPick(void) {
     return 1;
 }
 
-static int fire_gfx_gpuDevice(void) {
+static fire_gfx_int fire_gfx_gpuDevice(void) {
     float priority = 1.0f;
     VkDeviceQueueCreateInfo qi;
     VkDeviceCreateInfo di;
@@ -411,7 +411,7 @@ static int fire_gfx_gpuDevice(void) {
     VkExtensionProperties* exts;
     const char* enabled[10];
     uint32_t n = 0, count = 0;
-    int swapchain = 0, interop = 0;
+    fire_gfx_int swapchain = 0, interop = 0;
     memset(&qi, 0, sizeof qi);
     qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     qi.queueFamilyIndex = g_fireGfxVk.family;
@@ -485,19 +485,19 @@ static int fire_gfx_gpuDevice(void) {
     return fire_gfx_gpuCheck(g_fireGfxVk.vkCreateFence(g_fireGfxVk.device, &fi, NULL, &g_fireGfxVk.fence), "vkCreateFence");
 }
 
-static int fire_gfx_gpuMemoryType(uint32_t bits, VkMemoryPropertyFlags want) {
+static fire_gfx_int fire_gfx_gpuMemoryType(uint32_t bits, VkMemoryPropertyFlags want) {
     uint32_t i;
     for (i = 0; i < g_fireGfxVk.memProps.memoryTypeCount; i++)
-        if ((bits & (1u << i)) && (g_fireGfxVk.memProps.memoryTypes[i].propertyFlags & want) == want) return (int)i;
+        if ((bits & (1u << i)) && (g_fireGfxVk.memProps.memoryTypes[i].propertyFlags & want) == want) return (fire_gfx_int)i;
     return -1;
 }
 
 /* A buffer in host memory that the GPU reads and writes (mapped). */
-static int fire_gfx_gpuBuffer(FireGfxVkBuffer* b, VkDeviceSize size, VkBufferUsageFlags usage) {
+static fire_gfx_int fire_gfx_gpuBuffer(FireGfxVkBuffer* b, VkDeviceSize size, VkBufferUsageFlags usage) {
     VkBufferCreateInfo bi;
     VkMemoryRequirements req;
     VkMemoryAllocateInfo ai;
-    int type;
+    fire_gfx_int type;
     memset(b, 0, sizeof *b);
     memset(&bi, 0, sizeof bi);
     bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -525,7 +525,7 @@ static void fire_gfx_gpuFreeBuffer(FireGfxVkBuffer* b) {
     memset(b, 0, sizeof *b);
 }
 
-static int fire_gfx_gpuModule(const uint32_t* code, size_t size, VkShaderModule* out) {
+static fire_gfx_int fire_gfx_gpuModule(const uint32_t* code, size_t size, VkShaderModule* out) {
     VkShaderModuleCreateInfo ci;
     memset(&ci, 0, sizeof ci);
     ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -535,7 +535,7 @@ static int fire_gfx_gpuModule(const uint32_t* code, size_t size, VkShaderModule*
 }
 
 /* The render pass (the picture stays: load and store, in the GENERAL layout throughout) and the two pipelines of the shapes: blending and copying. */
-static int fire_gfx_gpuPipelines(void) {
+static fire_gfx_int fire_gfx_gpuPipelines(void) {
     VkAttachmentDescription att;
     VkAttachmentReference ref;
     VkSubpassDescription sub;
@@ -555,7 +555,7 @@ static int fire_gfx_gpuPipelines(void) {
     VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo ds;
     VkGraphicsPipelineCreateInfo gi;
-    int k;
+    fire_gfx_int k;
     memset(&att, 0, sizeof att);
     att.format = VK_FORMAT_R8G8B8A8_UNORM;
     att.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -682,7 +682,7 @@ static VkDescriptorSet fire_gfx_gpuSetFor(VkImageView view) {
 }
 
 /* The pipelines of the pictures (shaders/gfx_image.*): a texture through a descriptor set, blending or copying; the sampler, the pool of the sets and the atlas. */
-static int fire_gfx_gpuImagePipelines(void) {
+static fire_gfx_int fire_gfx_gpuImagePipelines(void) {
     VkDescriptorSetLayoutBinding binding;
     VkDescriptorSetLayoutCreateInfo sl;
     VkDescriptorPoolSize poolSize;
@@ -707,7 +707,7 @@ static int fire_gfx_gpuImagePipelines(void) {
     VkMemoryRequirements req;
     VkMemoryAllocateInfo ai;
     VkImageViewCreateInfo vw;
-    int k, type;
+    fire_gfx_int k, type;
     memset(&binding, 0, sizeof binding);
     binding.binding = 0;
     binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -856,7 +856,7 @@ static int fire_gfx_gpuImagePipelines(void) {
 
 /* The pipelines of blur and materials (shaders/gfx_effect.*): no vertex input (the rectangle comes as a push constant), a texture; copying (into the temporary pictures)
  * and blending (into the framebuffer: alpha is the coverage). */
-static int fire_gfx_gpuEffectPipelines(void) {
+static fire_gfx_int fire_gfx_gpuEffectPipelines(void) {
     VkPushConstantRange push;
     VkPipelineLayoutCreateInfo li;
     VkPipelineShaderStageCreateInfo stages[2];
@@ -870,7 +870,7 @@ static int fire_gfx_gpuEffectPipelines(void) {
     VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo ds;
     VkGraphicsPipelineCreateInfo gi;
-    int k;
+    fire_gfx_int k;
     if (!fire_gfx_gpuModule(fire_gfx_spv_effect_vert, sizeof fire_gfx_spv_effect_vert, &g_fireGfxVk.effectVert)) return 0;
     if (!fire_gfx_gpuModule(fire_gfx_spv_effect_frag, sizeof fire_gfx_spv_effect_frag, &g_fireGfxVk.effectFrag)) return 0;
     memset(&push, 0, sizeof push);
@@ -949,13 +949,13 @@ static void fire_gfx_gpuFreeTemp(FireGfxGpuTemp* t) {
 }
 
 /* A temporary picture of width x height (RGBA, drawn into and sampled). 0: it failed. */
-static int fire_gfx_gpuMakeTemp(FireGfxGpuTemp* t, int width, int height) {
+static fire_gfx_int fire_gfx_gpuMakeTemp(FireGfxGpuTemp* t, fire_gfx_int width, fire_gfx_int height) {
     VkImageCreateInfo ii;
     VkMemoryRequirements req;
     VkMemoryAllocateInfo ai;
     VkImageViewCreateInfo vi;
     VkFramebufferCreateInfo fi;
-    int type;
+    fire_gfx_int type;
     fire_gfx_gpuFreeTemp(t);
     memset(&ii, 0, sizeof ii);
     ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -1003,8 +1003,8 @@ static int fire_gfx_gpuMakeTemp(FireGfxGpuTemp* t, int width, int height) {
 }
 
 /* The temporary pictures hold at least width x height (they grow, they never shrink). */
-static int fire_gfx_gpuTemps(int width, int height) {
-    int k;
+static fire_gfx_int fire_gfx_gpuTemps(fire_gfx_int width, fire_gfx_int height) {
+    fire_gfx_int k;
     for (k = 0; k < 2; k++) {
         FireGfxGpuTemp* t = &g_fireGfxVk.temps[k];
         if (t->width >= width && t->height >= height) continue;
@@ -1025,7 +1025,7 @@ static void fire_gfx_gpuPassBarrier(VkCommandBuffer cmd) {
 }
 
 /* Begins the render pass into `framebuffer` (width x height), its viewport. */
-static void fire_gfx_gpuBeginPass(VkCommandBuffer cmd, VkFramebuffer framebuffer, int width, int height) {
+static void fire_gfx_gpuBeginPass(VkCommandBuffer cmd, VkFramebuffer framebuffer, fire_gfx_int width, fire_gfx_int height) {
     VkRenderPassBeginInfo rb;
     VkViewport viewport;
     memset(&rb, 0, sizeof rb);
@@ -1040,8 +1040,8 @@ static void fire_gfx_gpuBeginPass(VkCommandBuffer cmd, VkFramebuffer framebuffer
 }
 
 /* The parameters of the effect as fire_gfx_fxBlurMaterial takes them: the factor of the smaller picture, the area around the rectangle, its size, the blur radius. */
-static void fire_gfx_gpuEffectSizes(const FireGfxGpuTwin* t, const FireGfxGpuEffect* e, int* f, int* region, int* tw, int* th, int* rb) {
-    int pad;
+static void fire_gfx_gpuEffectSizes(const FireGfxGpuTwin* t, const FireGfxGpuEffect* e, fire_gfx_int* f, fire_gfx_int* region, fire_gfx_int* tw, fire_gfx_int* th, fire_gfx_int* rb) {
+    fire_gfx_int pad;
     *f = e->radius >= 10 ? 4 : e->radius >= 2 ? 2 : 1;
     pad = e->radius + *f;
     region[0] = e->x - pad < 0 ? 0 : e->x - pad; region[1] = e->y - pad < 0 ? 0 : e->y - pad;
@@ -1054,9 +1054,9 @@ static void fire_gfx_gpuEffectSizes(const FireGfxGpuTwin* t, const FireGfxGpuEff
 static void fire_gfx_gpuBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from);
 
 /* One pass of an effect: `mode` into the temporary picture `to` (or, `to` NULL, into the framebuffer of the twin, blending) from the texture of `from`. */
-static void fire_gfx_gpuEffectPass(VkCommandBuffer cmd, FireGfxGpuTwin* t, FireGfxGpuTemp* to, VkDescriptorSet from, FireGfxGpuPass* pc, const int* scissorRect) {
+static void fire_gfx_gpuEffectPass(VkCommandBuffer cmd, FireGfxGpuTwin* t, FireGfxGpuTemp* to, VkDescriptorSet from, FireGfxGpuPass* pc, const fire_gfx_int* scissorRect) {
     VkRect2D scissor;
-    int w = to ? to->width : t->width, h = to ? to->height : t->height;
+    fire_gfx_int w = to ? to->width : t->width, h = to ? to->height : t->height;
     if (to != NULL && !to->ready) { fire_gfx_gpuBarrier(cmd, to->image, VK_IMAGE_LAYOUT_UNDEFINED); to->ready = 1; }
     fire_gfx_gpuBeginPass(cmd, to ? to->framebuffer : t->framebuffer, w, h);
     g_fireGfxVk.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, to ? g_fireGfxVk.effectCopy : g_fireGfxVk.effectBlend);
@@ -1074,7 +1074,7 @@ static void fire_gfx_gpuEffectPass(VkCommandBuffer cmd, FireGfxGpuTwin* t, FireG
 /* An effect (outside a render pass): smaller into temps[0], the box blur (along x twice, along y twice) back and forth, then into the framebuffer. */
 static void fire_gfx_gpuRecordEffect(VkCommandBuffer cmd, FireGfxGpuTwin* t, const FireGfxGpuEffect* e) {
     FireGfxGpuPass pc;
-    int f, region[4], tw, th, rb, k, rect[4], x0, y0, x1, y1;
+    fire_gfx_int f, region[4], tw, th, rb, k, rect[4], x0, y0, x1, y1;
     FireGfxGpuTemp* a = &g_fireGfxVk.temps[0];
     FireGfxGpuTemp* b = &g_fireGfxVk.temps[1];
     fire_gfx_gpuEffectSizes(t, e, &f, region, &tw, &th, &rb);
@@ -1104,7 +1104,7 @@ static void fire_gfx_gpuRecordEffect(VkCommandBuffer cmd, FireGfxGpuTwin* t, con
 }
 
 /* Vulkan once (1: ready). */
-static int fire_gfx_gpuReady(void) {
+static fire_gfx_int fire_gfx_gpuReady(void) {
     if (g_fireGfxVk.state != 0) return g_fireGfxVk.state > 0;
     g_fireGfxVk.state = -1;
     if (!fire_gfx_gpuLoad() || !fire_gfx_gpuInstance() || !fire_gfx_gpuPick() || !fire_gfx_gpuDevice() || !fire_gfx_gpuPipelines() || !fire_gfx_gpuImagePipelines() || !fire_gfx_gpuEffectPipelines()) return 0;
@@ -1148,14 +1148,14 @@ static void fire_gfx_gpuFreeTwin(FireGfxGpuTwin* t) {
     free(t);
 }
 
-static FireGfxGpuTwin* fire_gfx_gpuMakeTwin(int width, int height) {
+static FireGfxGpuTwin* fire_gfx_gpuMakeTwin(fire_gfx_int width, fire_gfx_int height) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)calloc(1, sizeof(FireGfxGpuTwin));
     VkImageCreateInfo ii;
     VkMemoryRequirements req;
     VkMemoryAllocateInfo ai;
     VkImageViewCreateInfo vi;
     VkFramebufferCreateInfo fi;
-    int type;
+    fire_gfx_int type;
     if (t == NULL) return NULL;
     t->width = width; t->height = height;
     memset(&ii, 0, sizeof ii);
@@ -1222,7 +1222,7 @@ static void fire_gfx_gpuBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayou
 }
 
 /* Puts `data` (a run of `count` items of `size` bytes) into the host buffer `b`, which grows when needed. */
-static int fire_gfx_gpuFill(FireGfxVkBuffer* b, const void* data, size_t size, uint32_t count, VkBufferUsageFlags usage) {
+static fire_gfx_int fire_gfx_gpuFill(FireGfxVkBuffer* b, const void* data, size_t size, uint32_t count, VkBufferUsageFlags usage) {
     VkDeviceSize need = (VkDeviceSize)size * count;
     if (need == 0) return 1;
     if (b->size < need) {
@@ -1235,12 +1235,12 @@ static int fire_gfx_gpuFill(FireGfxVkBuffer* b, const void* data, size_t size, u
     return 1;
 }
 
-static int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch);
+static fire_gfx_int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, fire_gfx_int fetch);
 
 /* Runs the drawing of the twins that came into the list before `until` (all of them: NULL), the oldest first. One that blits from `until` came before its newer drawing
  * and must draw from the picture before it; one that came after may hold drawing newer than `until`'s (a source drawn over after the blit) and waits. (A blit runs
  * its source when it is queued: a twin never waits for a source that is still in the list.) */
-static int fire_gfx_gpuRunOthers(FireGfxGpuTwin* until) {
+static fire_gfx_int fire_gfx_gpuRunOthers(FireGfxGpuTwin* until) {
     FireGfxGpuTwin* t = g_fireGfxVk.pending;
     while (t != NULL && t != until) {
         FireGfxGpuTwin* next = t->nextPending;
@@ -1252,34 +1252,34 @@ static int fire_gfx_gpuRunOthers(FireGfxGpuTwin* until) {
 
 /* Runs what the twin has queued (the drawing of the twins listed before it first): the upload of the CPU's picture first (when the CPU drew last), the new glyphs of the atlas,
  * the shapes and pictures in the order they were drawn, and - with `fetch` - the picture back to the CPU. 0: it failed. */
-static int fire_gfx_gpuRun(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch) {
+static fire_gfx_int fire_gfx_gpuRun(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, fire_gfx_int fetch) {
     if (!fire_gfx_gpuRunOthers(t)) return 0;
     return fire_gfx_gpuRunOne(fb, t, fetch);
 }
 
-static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch);
-static int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch) {
-    int ok;
+static fire_gfx_int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, fire_gfx_int fetch);
+static fire_gfx_int fire_gfx_gpuRunOne(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, fire_gfx_int fetch) {
+    fire_gfx_int ok;
     fire_gfx_gpuLock();
     ok = fire_gfx_gpuRunOneLocked(fb, t, fetch);
     fire_gfx_gpuUnlock();
     return ok;
 }
-static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, int fetch) {
+static fire_gfx_int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, fire_gfx_int fetch) {
     VkCommandBuffer cmd = g_fireGfxVk.cmd;
     VkCommandBufferBeginInfo bi;
     VkSubmitInfo si;
     VkBufferImageCopy region;
     VkMemoryBarrier mb;
     size_t bytes = (size_t)t->width * (size_t)t->height * 4;
-    int upload = !t->gpuValid, draw = t->batchCount > 0, atlas = g_fireGfxVk.dirty[2] > g_fireGfxVk.dirty[0];
+    fire_gfx_int upload = !t->gpuValid, draw = t->batchCount > 0, atlas = g_fireGfxVk.dirty[2] > g_fireGfxVk.dirty[0];
     fire_gfx_gpuUnlist(t);
     if (!upload && !draw && !(fetch && !t->cpuValid)) return 1;
     if (!fire_gfx_gpuFill(&g_fireGfxVk.shapes, t->shapes, sizeof(FireGfxGpuShape), t->shapeCount, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
         || !fire_gfx_gpuFill(&g_fireGfxVk.images, t->images, sizeof(FireGfxGpuImage), t->imageCount, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)) return 0;
     {
         /* (the temporary pictures of the effects are big enough before anything is recorded: none is made anew while commands use it) */
-        int needW = 0, needH = 0, f, region[4], tw, th, rb;
+        fire_gfx_int needW = 0, needH = 0, f, region[4], tw, th, rb;
         uint32_t k;
         for (k = 0; k < t->effectCount; k++) {
             fire_gfx_gpuEffectSizes(t, &t->effects[k], &f, region, &tw, &th, &rb);
@@ -1303,7 +1303,7 @@ static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, i
                                      VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
     if (atlas) {
         VkBufferImageCopy ar;
-        int* d = g_fireGfxVk.dirty;
+        fire_gfx_int* d = g_fireGfxVk.dirty;
         memset(&ar, 0, sizeof ar);
         ar.bufferOffset = (VkDeviceSize)d[1] * FIRE_GFX_ATLAS_SIZE + (VkDeviceSize)d[0];
         ar.bufferRowLength = FIRE_GFX_ATLAS_SIZE;
@@ -1330,7 +1330,7 @@ static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, i
         VkDeviceSize offset = 0;
         float size[2];
         uint32_t k;
-        int inPass = 0;
+        fire_gfx_int inPass = 0;
         size[0] = (float)t->width; size[1] = (float)t->height;
         for (k = 0; k < t->batchCount; k++) {
             const FireGfxGpuBatch* b = &t->batches[k];
@@ -1383,7 +1383,7 @@ static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, i
     if (draw) t->cpuValid = 0;
     if (fetch) {
         if (t->dirty[2] > t->dirty[0]) {
-            int y, x0 = t->dirty[0], n = (t->dirty[2] - t->dirty[0]) * 4;
+            fire_gfx_int y, x0 = t->dirty[0], n = (t->dirty[2] - t->dirty[0]) * 4;
             for (y = t->dirty[1]; y < t->dirty[3]; y++) {
                 size_t at = ((size_t)y * (size_t)t->width + (size_t)x0) * 4;
                 memcpy((uint8_t*)fb->pixels + at, (const uint8_t*)t->staging.mapped + at, (size_t)n);
@@ -1397,7 +1397,7 @@ static int fire_gfx_gpuRunOneLocked(FireGfxFramebuffer* fb, FireGfxGpuTwin* t, i
 }
 
 /* The CPU is about to read (`writes` 0) or draw (1) the framebuffer: it gets the current pixels first; after a drawing of the CPU the GPU's picture is old. */
-static void fire_gfx_gpuCpu(FireGfxFramebuffer* fb, int writes) {
+static void fire_gfx_gpuCpu(FireGfxFramebuffer* fb, fire_gfx_int writes) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
     if (t == NULL) return;
     if (t->width != fb->width || t->height != fb->height || fb->pixels == NULL) {
@@ -1417,12 +1417,12 @@ static void fire_gfx_gpuCpu(FireGfxFramebuffer* fb, int writes) {
 }
 
 /* (fire_gfx.h asks through these: it knows nothing of the GPU) */
-static void fire_gfx_gpuSyncHook(FireGfxFramebuffer* fb, int writes) { fire_gfx_gpuCpu(fb, writes); }
+static void fire_gfx_gpuSyncHook(FireGfxFramebuffer* fb, fire_gfx_int writes) { fire_gfx_gpuCpu(fb, writes); }
 /* (a framebuffer goes: what others still draw from it is drawn first) */
 static void fire_gfx_gpuForget(FireGfxFramebuffer* fb);
 static void fire_gfx_gpuFreeHook(FireGfxFramebuffer* fb) { FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu; fb->gpu = NULL; fire_gfx_gpuForget(fb); fire_gfx_gpuUnlist(t); fire_gfx_gpuRunOthers(NULL); fire_gfx_gpuFreeTwin(t); }
 
-static int fire_gfx_gpuAttach(FireGfxFramebuffer* fb) {
+static fire_gfx_int fire_gfx_gpuAttach(FireGfxFramebuffer* fb) {
     if (fb->gpu != NULL) return 1;
     if (fb->indices != NULL || fb->pixels == NULL || !fire_gfx_gpuReady()) return 0;
     g_fireGfxCpuHook = fire_gfx_gpuSyncHook;
@@ -1444,7 +1444,7 @@ static void fire_gfx_gpuDetach(FireGfxFramebuffer* fb) {
 }
 
 /* The clip of the renderer within the picture. */
-static int fire_gfx_gpuClip(const FireGfxGpuTwin* t, int* cl, int* ct, int* cr, int* cb) {
+static fire_gfx_int fire_gfx_gpuClip(const FireGfxGpuTwin* t, fire_gfx_int* cl, fire_gfx_int* ct, fire_gfx_int* cr, fire_gfx_int* cb) {
     if (*cl < 0) *cl = 0;
     if (*ct < 0) *ct = 0;
     if (*cr > t->width) *cr = t->width;
@@ -1453,8 +1453,8 @@ static int fire_gfx_gpuClip(const FireGfxGpuTwin* t, int* cl, int* ct, int* cr, 
 }
 
 /* What the GPU draws (x0, y0)-(x1, y1) is no longer the same in the pixels of the CPU: it comes back with the next readback. */
-static void fire_gfx_gpuDirty(FireGfxGpuTwin* t, int x0, int y0, int x1, int y1) {
-    int* d = t->dirty;
+static void fire_gfx_gpuDirty(FireGfxGpuTwin* t, fire_gfx_int x0, fire_gfx_int y0, fire_gfx_int x1, fire_gfx_int y1) {
+    fire_gfx_int* d = t->dirty;
     if (x1 <= x0 || y1 <= y0) return;
     if (d[2] <= d[0]) { d[0] = x0; d[1] = y0; d[2] = x1; d[3] = y1; return; }
     if (x0 < d[0]) d[0] = x0;
@@ -1464,7 +1464,7 @@ static void fire_gfx_gpuDirty(FireGfxGpuTwin* t, int x0, int y0, int x1, int y1)
 }
 
 /* The batch the next command of `kind` goes into: the last one when it fits, else a new one. NULL without memory. The twin has drawing to do from now on. */
-static FireGfxGpuBatch* fire_gfx_gpuBatch(FireGfxGpuTwin* t, int kind, int cl, int ct, int cr, int cb, int copy, VkDescriptorSet set) {
+static FireGfxGpuBatch* fire_gfx_gpuBatch(FireGfxGpuTwin* t, fire_gfx_int kind, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int copy, VkDescriptorSet set) {
     FireGfxGpuBatch* b = t->batchCount > 0 ? &t->batches[t->batchCount - 1] : NULL;
     if (b == NULL || b->kind != kind || b->copy != copy || b->set != set || b->clip[0] != cl || b->clip[1] != ct || b->clip[2] != cr || b->clip[3] != cb) {
         if (t->batchCount == t->batchCap) {
@@ -1487,11 +1487,11 @@ static FireGfxGpuBatch* fire_gfx_gpuBatch(FireGfxGpuTwin* t, int kind, int cl, i
 
 /* A rounded rectangle (x, y, w, h; radius; `stroke` > 0: its outline that wide) in `rgba`, clipped to (cl, ct)-(cr, cb), blended - or copied (`copy`: from half
  * coverage on, the colour with its alpha). 0: the GPU does not draw it (no twin): the caller draws it in software. */
-static int fire_gfx_gpuShape(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int x, int y, int w, int h, int radius, int stroke, uint32_t rgba, int copy) {
+static fire_gfx_int fire_gfx_gpuShape(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int radius, fire_gfx_int stroke, uint32_t rgba, fire_gfx_int copy) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
     FireGfxGpuShape* s;
     FireGfxGpuBatch* b;
-    int x0, y0, x1, y1;
+    fire_gfx_int x0, y0, x1, y1;
     if (t == NULL || t->width != fb->width || t->height != fb->height) return 0;
     if (w <= 0 || h <= 0) return 1;
     if (stroke > 0 && (2 * stroke >= w || 2 * stroke >= h)) stroke = 0;   /* (as the software: an outline that fills it is a filling) */
@@ -1519,11 +1519,11 @@ static int fire_gfx_gpuShape(FireGfxFramebuffer* fb, int cl, int ct, int cr, int
 
 /* A picture from the texture of `set` (a glyph of the atlas, or a framebuffer): the rectangle (dx, dy, dw, dh; negative: mirrored) gets (sx, sy, sw, sh) of it, nearest,
  * clipped to (cl, ct)-(cr, cb). `mode` FIRE_GFX_GPU_*; a glyph has the colour `rgba` and blends unless `copy`. 0 without memory. */
-static int fire_gfx_gpuPicture(FireGfxGpuTwin* t, VkDescriptorSet set, int cl, int ct, int cr, int cb, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
-                               int mode, uint32_t rgba, int copy) {
+static fire_gfx_int fire_gfx_gpuPicture(FireGfxGpuTwin* t, VkDescriptorSet set, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int sx, fire_gfx_int sy, fire_gfx_int sw, fire_gfx_int sh, fire_gfx_int dx, fire_gfx_int dy, fire_gfx_int dw, fire_gfx_int dh,
+                               fire_gfx_int mode, uint32_t rgba, fire_gfx_int copy) {
     FireGfxGpuImage* im;
     FireGfxGpuBatch* b;
-    int aw = dw < 0 ? -dw : dw, ah = dh < 0 ? -dh : dh, x0, y0, x1, y1;
+    fire_gfx_int aw = dw < 0 ? -dw : dw, ah = dh < 0 ? -dh : dh, x0, y0, x1, y1;
     if (sw <= 0 || sh <= 0 || aw == 0 || ah == 0) return 1;
     if (!fire_gfx_gpuClip(t, &cl, &ct, &cr, &cb)) return 1;
     x0 = dx > cl ? dx : cl; y0 = dy > ct ? dy : ct;
@@ -1553,7 +1553,7 @@ static int fire_gfx_gpuPicture(FireGfxGpuTwin* t, VkDescriptorSet set, int cl, i
 static uint64_t fire_gfx_gpuHash(uint64_t k) { k ^= k >> 33; k *= 0xff51afd7ed558ccdULL; k ^= k >> 33; k *= 0xc4ceb9fe1a85ec53ULL; k ^= k >> 33; return k; }
 
 /* Starts the atlas afresh (it is full): what is queued still draws from it first. */
-static int fire_gfx_gpuAtlasReset(void) {
+static fire_gfx_int fire_gfx_gpuAtlasReset(void) {
     if (!fire_gfx_gpuRunOthers(NULL)) return 0;
     memset(g_fireGfxVk.slots, 0, sizeof(FireGfxAtlasSlot) * FIRE_GFX_ATLAS_SLOTS);
     g_fireGfxVk.slotCount = 0;
@@ -1562,10 +1562,10 @@ static int fire_gfx_gpuAtlasReset(void) {
 }
 
 /* The place of glyph `key` (w x h) in the atlas: found, or made from `coverage` (w*h bytes; NULL: from the 8 bits of each row of `rows`). 0: it does not fit at all. */
-static int fire_gfx_gpuAtlasPlace(uint64_t key, int w, int h, int maxH, const uint8_t* coverage, const uint8_t* rows, int* ax, int* ay) {
+static fire_gfx_int fire_gfx_gpuAtlasPlace(uint64_t key, fire_gfx_int w, fire_gfx_int h, fire_gfx_int maxH, const uint8_t* coverage, const uint8_t* rows, fire_gfx_int* ax, fire_gfx_int* ay) {
     uint64_t probe;
     FireGfxAtlasSlot* slot;
-    int tries, gy, gx;
+    fire_gfx_int tries, gy, gx;
     if (w <= 0 || h <= 0 || w > FIRE_GFX_ATLAS_SIZE || h > maxH) return 0;
     key = (key << 1) | 1;   /* (0 marks a free slot; the shift keeps neighbouring keys apart) */
     for (tries = 0; tries < 2; tries++) {
@@ -1605,13 +1605,13 @@ static int fire_gfx_gpuAtlasPlace(uint64_t key, int w, int h, int maxH, const ui
     return 0;
 }
 /* (a glyph: at most 256 high) */
-static int fire_gfx_gpuAtlasGlyph(uint64_t key, int w, int h, const uint8_t* coverage, const uint8_t* rows, int* ax, int* ay) {
+static fire_gfx_int fire_gfx_gpuAtlasGlyph(uint64_t key, fire_gfx_int w, fire_gfx_int h, const uint8_t* coverage, const uint8_t* rows, fire_gfx_int* ax, fire_gfx_int* ay) {
     return fire_gfx_gpuAtlasPlace(key, w, h, 256, coverage, rows, ax, ay);
 }
 
 /* A glyph at (x, y): its coverage times `rgba` (blended; `copy`: copied where it covers - as fire_gfx_put without blending). 0: the GPU cannot. */
-static int fire_gfx_gpuGlyph(FireGfxGpuTwin* t, const int* clip, uint64_t key, int x, int y, int w, int h, const uint8_t* coverage, const uint8_t* rows, uint32_t rgba, int copy) {
-    int ax, ay;
+static fire_gfx_int fire_gfx_gpuGlyph(FireGfxGpuTwin* t, const fire_gfx_int* clip, uint64_t key, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, const uint8_t* coverage, const uint8_t* rows, uint32_t rgba, fire_gfx_int copy) {
+    fire_gfx_int ax, ay;
     if (!fire_gfx_gpuAtlasGlyph(key, w, h, coverage, rows, &ax, &ay)) return 0;
     return fire_gfx_gpuPicture(t, g_fireGfxVk.atlasSet, clip[0], clip[1], clip[2], clip[3], ax, ay, w, h, x, y, w, h, FIRE_GFX_GPU_GLYPH, rgba, copy);
 }
@@ -1619,8 +1619,8 @@ static int fire_gfx_gpuGlyph(FireGfxGpuTwin* t, const int* clip, uint64_t key, i
 /* ---- text ---- */
 
 /* (what the glyphs of a TrueType text go to the GPU with) */
-typedef struct FireGfxGpuText { FireGfxGpuTwin* t; const int* clip; uint64_t font; int x, base; uint32_t rgba; int copy, ok; } FireGfxGpuText;
-static void fire_gfx_gpuTtfGlyph(void* ctx, const FireGfxGlyph* g, int penX) {
+typedef struct FireGfxGpuText { FireGfxGpuTwin* t; const fire_gfx_int* clip; uint64_t font; fire_gfx_int x, base; uint32_t rgba; fire_gfx_int copy, ok; } FireGfxGpuText;
+static void fire_gfx_gpuTtfGlyph(void* ctx, const FireGfxGlyph* g, fire_gfx_int penX) {
     FireGfxGpuText* d = (FireGfxGpuText*)ctx;
     if (!d->ok || !g->hasImage || g->m.minWidth <= 0 || g->m.minHeight <= 0) return;
     if (!fire_gfx_gpuGlyph(d->t, d->clip, fire_gfx_gpuHash(d->font ^ (uint64_t)g->key * 0x9E3779B97F4A7C15ULL), d->x + penX + g->m.xOffset, d->base + g->m.yOffset,
@@ -1630,10 +1630,10 @@ static void fire_gfx_gpuTtfGlyph(void* ctx, const FireGfxGlyph* g, int penX) {
 /* Text on the GPU, as fire_gfx_drawTextIn and fire_gfx_rendererDrawText draw it: `font` NULL - the bitmap font of the renderer in its cells -, a built-in bitmap font or
  * TrueType at `size`; the colours already resolved (blended unless `copy`), `hasBg`: the cells / the line below in `bg`. 0: the GPU cannot (the caller draws it in software;
  * nothing was drawn when it says so before the first glyph - a glyph that does not fit in the atlas at all leaves the rest to the software as well). */
-static int fire_gfx_gpuText(FireGfxFramebuffer* fb, const int* clipIn, int copy, FireGfxTextFont* font, int small, int cellW, int cellH, int size, int x, int y,
-                            const uint16_t* text, uint32_t n, uint32_t fg, int hasBg, uint32_t bg) {
+static fire_gfx_int fire_gfx_gpuText(FireGfxFramebuffer* fb, const fire_gfx_int* clipIn, fire_gfx_int copy, FireGfxTextFont* font, fire_gfx_int small, fire_gfx_int cellW, fire_gfx_int cellH, fire_gfx_int size, fire_gfx_int x, fire_gfx_int y,
+                            const uint16_t* text, uint32_t n, uint32_t fg, fire_gfx_int hasBg, uint32_t bg) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
-    int clip[4], fgVisible;
+    fire_gfx_int clip[4], fgVisible;
     uint32_t i;
     if (t == NULL || t->width != fb->width || t->height != fb->height) return 0;
     clip[0] = clipIn[0]; clip[1] = clipIn[1]; clip[2] = clipIn[2]; clip[3] = clipIn[3];
@@ -1642,8 +1642,8 @@ static int fire_gfx_gpuText(FireGfxFramebuffer* fb, const int* clipIn, int copy,
     if (!fgVisible && !hasBg) return 1;
     if (font == NULL || font->bitmap) {
         /* a bitmap font: per character its cell (the background) and its bits */
-        int sm = font == NULL ? small : font->smallBitmap;
-        int cw = font == NULL ? cellW : fire_gfx_fontCellWidth(font), ch = font == NULL ? cellH : fire_gfx_fontCellHeight(font);
+        fire_gfx_int sm = font == NULL ? small : font->smallBitmap;
+        fire_gfx_int cw = font == NULL ? cellW : fire_gfx_fontCellWidth(font), ch = font == NULL ? cellH : fire_gfx_fontCellHeight(font);
         for (i = 0; i < n; i++) {
             uint32_t c = text[i] < 256 ? text[i] : '?';
             const uint8_t* rows = sm ? g_fireGfxGlyphs8x8[c] : g_fireGfxGlyphs8x14[c];
@@ -1668,12 +1668,12 @@ static int fire_gfx_gpuText(FireGfxFramebuffer* fb, const int* clipIn, int copy,
 
 /* fire_gfx_blit on the GPU: an RGBA source (its own twin - made now, its picture uploaded now: the blit draws what it is now) into the twin of `dst`. Not: a palette source,
  * the same framebuffer, no twin - 0, the caller blits in software. */
-static int fire_gfx_gpuBlit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* srcIn, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int blend,
-                            int cl, int ct, int cr, int cb) {
+static fire_gfx_int fire_gfx_gpuBlit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* srcIn, fire_gfx_int sx, fire_gfx_int sy, fire_gfx_int sw, fire_gfx_int sh, fire_gfx_int dx, fire_gfx_int dy, fire_gfx_int dw, fire_gfx_int dh, fire_gfx_int mode, fire_gfx_int blend,
+                            fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)dst->gpu;
     FireGfxFramebuffer* src = (FireGfxFramebuffer*)srcIn;
     FireGfxGpuTwin* st;
-    int gpuMode;
+    fire_gfx_int gpuMode;
     if (t == NULL || t->width != dst->width || t->height != dst->height || src == dst || src->pixels == NULL || src->indices != NULL) return 0;
     if (sw <= 0 || sh <= 0 || dw == 0 || dh == 0) return 1;
     if (src->gpu == NULL && !fire_gfx_gpuAttach(src)) return 0;
@@ -1692,12 +1692,12 @@ static int fire_gfx_gpuBlit(FireGfxFramebuffer* dst, const FireGfxFramebuffer* s
 
 /* fire_gfx_fxShadow on the GPU: the blurred mask (the software makes it once, fire_gfx_fxShadowMask) in the atlas, stretched and coloured by the shader. Blending only
  * (without it there is no shadow - 1). 0: the GPU cannot (no twin, a mask too big for the atlas): the caller draws it in software. */
-static int fire_gfx_gpuShadow(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int blend, int x, int y, int w, int h, int radius, int soft, uint32_t color, int dy) {
+static fire_gfx_int fire_gfx_gpuShadow(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int blend, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int radius, fire_gfx_int soft, uint32_t color, fire_gfx_int dy) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
     FireGfxShadowMask* m;
     FireGfxGpuImage* im;
     FireGfxGpuBatch* b;
-    int ax, ay, ox, oy, x0, y0, x1, y1;
+    fire_gfx_int ax, ay, ox, oy, x0, y0, x1, y1;
     uint64_t key;
     if (t == NULL || t->width != fb->width || t->height != fb->height) return 0;
     if (w <= 0 || h <= 0 || (color >> 24) == 0 || soft <= 0 || !blend) return 1;
@@ -1735,7 +1735,7 @@ static int fire_gfx_gpuShadow(FireGfxFramebuffer* fb, int cl, int ct, int cr, in
 }
 
 /* A blur or a material (fire_gfx_fxBlurMaterial) into the twin: its passes run in the order of the drawing. 0: no twin, or without memory. */
-static int fire_gfx_gpuEffect(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int x, int y, int w, int h, int corner, int radius, int kind, uint32_t tint, int rim) {
+static fire_gfx_int fire_gfx_gpuEffect(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int corner, fire_gfx_int radius, fire_gfx_int kind, uint32_t tint, fire_gfx_int rim) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
     FireGfxGpuEffect* e;
     FireGfxGpuBatch* b;
@@ -1761,7 +1761,7 @@ static int fire_gfx_gpuEffect(FireGfxFramebuffer* fb, int cl, int ct, int cr, in
 }
 
 /* fire_gfx_fxBlur on the GPU. 0: the caller blurs in software. */
-static int fire_gfx_gpuBlur(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int x, int y, int w, int h, int corner, int radius) {
+static fire_gfx_int fire_gfx_gpuBlur(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int corner, fire_gfx_int radius) {
     if (fb->gpu == NULL) return 0;
     if (radius <= 0) return 1;
     if (radius > 64) radius = 64;
@@ -1770,9 +1770,9 @@ static int fire_gfx_gpuBlur(FireGfxFramebuffer* fb, int cl, int ct, int cr, int 
 
 /* fire_gfx_fxMaterial on the GPU (an RGBA framebuffer with a twin): the same branches - opaque, a translucent tint, the blurred material - and the hairline. 0: the caller
  * draws it in software (nothing was drawn then). */
-static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, int cb, int blend, int x, int y, int w, int h, int corner, int kind, uint32_t tint, uint32_t base, int flags) {
+static fire_gfx_int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, fire_gfx_int cl, fire_gfx_int ct, fire_gfx_int cr, fire_gfx_int cb, fire_gfx_int blend, fire_gfx_int x, fire_gfx_int y, fire_gfx_int w, fire_gfx_int h, fire_gfx_int corner, fire_gfx_int kind, uint32_t tint, uint32_t base, fire_gfx_int flags) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
-    int dark = (flags & FIRE_GFX_FX_DARK) != 0;
+    fire_gfx_int dark = (flags & FIRE_GFX_FX_DARK) != 0;
     if (t == NULL || t->width != fb->width || t->height != fb->height || t->set == FIRE_GFX_NO_SET) return 0;
     if (w <= 0 || h <= 0) return 1;
     if (!(flags & FIRE_GFX_FX_TRANSPARENCY)) {
@@ -1805,28 +1805,28 @@ static int fire_gfx_gpuMaterial(FireGfxFramebuffer* fb, int cl, int ct, int cr, 
 
 typedef struct FireGfxGpuTarget {
     FireGfxFramebuffer* fb;           /* whose frames (NULL: the framebuffer is gone or no longer accelerated) */
-    volatile int works;               /* 0: not known yet (the frames are read back as well), 1: a window shows them, -1: it failed */
-    volatile int others;              /* another window shows the framebuffer too: it needs the pixels */
-    FireGfxGpuTemp pic; int hasPicture;   /* the picture of the last frame (premultiplied when `transparent`) */
-    volatile int transparent;         /* the window shows what lies behind it (its backdrop): the frame goes premultiplied into a swap chain that mixes */
-    int alpha;                        /* the swap chain was made for that */
-    volatile int noAlpha;             /* the window's surface cannot mix by alpha: such frames go as pixels */
+    volatile fire_gfx_int works;               /* 0: not known yet (the frames are read back as well), 1: a window shows them, -1: it failed */
+    volatile fire_gfx_int others;              /* another window shows the framebuffer too: it needs the pixels */
+    FireGfxGpuTemp pic; fire_gfx_int hasPicture;   /* the picture of the last frame (premultiplied when `transparent`) */
+    volatile fire_gfx_int transparent;         /* the window shows what lies behind it (its backdrop): the frame goes premultiplied into a swap chain that mixes */
+    fire_gfx_int alpha;                        /* the swap chain was made for that */
+    volatile fire_gfx_int noAlpha;             /* the window's surface cannot mix by alpha: such frames go as pixels */
     fire_native_window win;           /* the window of the surface */
-    VkSurfaceKHR surface; VkSwapchainKHR swapchain; VkExtent2D extent; int vsync, stale;
+    VkSurfaceKHR surface; VkSwapchainKHR swapchain; VkExtent2D extent; fire_gfx_int vsync, stale;
     VkImage* images; VkSemaphore* rendered; uint32_t imageCount;
     VkSemaphore acquired;
-    VkCommandPool pool; VkCommandBuffer cmd; VkFence fence; int fencePending;
+    VkCommandPool pool; VkCommandBuffer cmd; VkFence fence; fire_gfx_int fencePending;
     /* DirectComposition (FIRE_NATIVE_DCOMP): the window's picture, imported */
-    int dcomp;                        /* the window of `win` is one of DirectComposition */
-    void* dcHandle; int dcW, dcH, dcReady;
+    fire_gfx_int dcomp;                        /* the window of `win` is one of DirectComposition */
+    void* dcHandle; fire_gfx_int dcW, dcH, dcReady;
     VkImage dcImage; VkDeviceMemory dcMemory;
     struct FireGfxGpuTarget* next;
 } FireGfxGpuTarget;
 
-static int fire_gfx_gpuHolds(const FireGfxGpuTarget* g);
-static unsigned fire_gfx_gpuReadbacks(void) { return g_fireGfxVk.readbacks; }
+static fire_gfx_int fire_gfx_gpuHolds(const FireGfxGpuTarget* g);
+static uint32_t fire_gfx_gpuReadbacks(void) { return g_fireGfxVk.readbacks; }
 
-static FireGfxGpuTarget* fire_gfx_gpuTargetOf(FireGfxFramebuffer* fb, int make) {
+static FireGfxGpuTarget* fire_gfx_gpuTargetOf(FireGfxFramebuffer* fb, fire_gfx_int make) {
     FireGfxGpuTarget* g;
     for (g = g_fireGfxVk.targets; g != NULL; g = g->next) if (g->fb == fb) return g;
     if (!make) return NULL;
@@ -1861,7 +1861,7 @@ static void fire_gfx_gpuFreeTargetPicture(FireGfxGpuTarget* g) {
 }
 
 /* The picture of the presenter, w x h (made anew for another size). */
-static int fire_gfx_gpuTargetPicture(FireGfxGpuTarget* g, int width, int height) {
+static fire_gfx_int fire_gfx_gpuTargetPicture(FireGfxGpuTarget* g, fire_gfx_int width, fire_gfx_int height) {
     if (g->pic.image && g->pic.width == width && g->pic.height == height) return 1;
     fire_gfx_gpuFreeTargetPicture(g);
     if (!fire_gfx_gpuMakeTemp(&g->pic, width, height)) { fire_gfx_gpuFreeTemp(&g->pic); return 0; }
@@ -1869,7 +1869,7 @@ static int fire_gfx_gpuTargetPicture(FireGfxGpuTarget* g, int width, int height)
 }
 
 /* The twin's picture into the presenter's (the lock is held). */
-static int fire_gfx_gpuSnapshotLocked(FireGfxGpuTarget* g, FireGfxGpuTwin* t) {
+static fire_gfx_int fire_gfx_gpuSnapshotLocked(FireGfxGpuTarget* g, FireGfxGpuTwin* t) {
     VkCommandBuffer cmd = g_fireGfxVk.cmd;
     VkCommandBufferBeginInfo bi;
     VkSubmitInfo si;
@@ -1885,7 +1885,7 @@ static int fire_gfx_gpuSnapshotLocked(FireGfxGpuTarget* g, FireGfxGpuTwin* t) {
     if (g->transparent) {
         /* premultiplied (a pass of the effect shader: mode 4) */
         FireGfxGpuPass pc;
-        int rect[4];
+        fire_gfx_int rect[4];
         memset(&pc, 0, sizeof pc);
         pc.mode = 4;
         rect[0] = 0; rect[1] = 0; rect[2] = t->width; rect[3] = t->height;
@@ -1917,10 +1917,10 @@ static int32_t fire_gfx_gpuPresent(void* ctx, int32_t op, const fire_native_wind
 
 /* A frame of the framebuffer is published (on the program's thread): with a twin and windows the GPU can draw into, its picture goes to the presenter, and `fn`/`ctx` are
  * the presenter for the windows. Returns 1 when the frame needs the pixels as well (no presenter, or none of the windows showed one yet), 0 when it does not. */
-static int fire_gfx_gpuPublish(FireGfxFramebuffer* fb, int transparent, void (**fn)(void), void** ctx) {
+static fire_gfx_int fire_gfx_gpuPublish(FireGfxFramebuffer* fb, fire_gfx_int transparent, void (**fn)(void), void** ctx) {
     FireGfxGpuTwin* t = (FireGfxGpuTwin*)fb->gpu;
     FireGfxGpuTarget* g;
-    int ok;
+    fire_gfx_int ok;
     *fn = NULL; *ctx = NULL;
     if (t == NULL || g_fireGfxVk.state != 1 || !(g_fireGfxVk.wsi || g_fireGfxVk.interop) || t->width != fb->width || t->height != fb->height || fb->pixels == NULL) return 1;
     fire_gfx_gpuLock();
@@ -1940,7 +1940,7 @@ static int fire_gfx_gpuPublish(FireGfxFramebuffer* fb, int transparent, void (**
 
 /* ---- on the window's thread ---- */
 
-static int fire_gfx_gpuSameWindow(const fire_native_window* a, const fire_native_window* b) { return a->kind == b->kind && a->a == b->a && a->b == b->b && a->id == b->id; }
+static fire_gfx_int fire_gfx_gpuSameWindow(const fire_native_window* a, const fire_native_window* b) { return a->kind == b->kind && a->a == b->a && a->b == b->b && a->id == b->id; }
 
 static void fire_gfx_gpuFreeSwapchainImages(FireGfxGpuTarget* g) {
     uint32_t i;
@@ -1958,7 +1958,7 @@ static void fire_gfx_gpuFreeImport(FireGfxGpuTarget* g) {
 }
 
 /* (the target holds a window: a surface, or one of DirectComposition) */
-static int fire_gfx_gpuHolds(const FireGfxGpuTarget* g) { return g->surface != 0 || g->dcomp; }
+static fire_gfx_int fire_gfx_gpuHolds(const FireGfxGpuTarget* g) { return g->surface != 0 || g->dcomp; }
 
 static void fire_gfx_gpuFreeSurface(FireGfxGpuTarget* g) {
     if (g->dcomp) { fire_gfx_gpuFreeImport(g); g->dcomp = 0; memset(&g->win, 0, sizeof g->win); if (g->fb == NULL) fire_gfx_gpuFreeTargetPicture(g); }
@@ -1972,7 +1972,7 @@ static void fire_gfx_gpuFreeSurface(FireGfxGpuTarget* g) {
     if (g->fb == NULL) fire_gfx_gpuFreeTargetPicture(g);   /* (nobody publishes into it any more) */
 }
 
-static int fire_gfx_gpuMakeSurface(FireGfxGpuTarget* g, const fire_native_window* w) {
+static fire_gfx_int fire_gfx_gpuMakeSurface(FireGfxGpuTarget* g, const fire_native_window* w) {
     VkResult r = VK_ERROR_EXTENSION_NOT_PRESENT;
     VkBool32 supported = VK_FALSE;
     switch (w->kind) {
@@ -2010,7 +2010,7 @@ static int fire_gfx_gpuMakeSurface(FireGfxGpuTarget* g, const fire_native_window
 
 /* The swap chain, as big as the window (made again when it changes): 1 ready, 2 the window has no size (minimized), 0 it cannot. The frame goes in by a blit: the
  * images must take one (TRANSFER_DST, a UNORM format that can be blitted to - the bytes as they are, not sRGB). */
-static int fire_gfx_gpuMakeSwapchain(FireGfxGpuTarget* g, const fire_native_window* w) {
+static fire_gfx_int fire_gfx_gpuMakeSwapchain(FireGfxGpuTarget* g, const fire_native_window* w) {
     VkSurfaceCapabilitiesKHR caps;
     VkSurfaceFormatKHR* formats = NULL;
     VkPresentModeKHR modes[16];
@@ -2095,7 +2095,7 @@ static int fire_gfx_gpuMakeSwapchain(FireGfxGpuTarget* g, const fire_native_wind
 }
 
 /* What the presenter needs of its own: commands (a pool of its own - the program's thread records into the other one meanwhile), a fence, the semaphore of the acquire. */
-static int fire_gfx_gpuTargetCommands(FireGfxGpuTarget* g) {
+static fire_gfx_int fire_gfx_gpuTargetCommands(FireGfxGpuTarget* g) {
     VkCommandPoolCreateInfo pi;
     VkCommandBufferAllocateInfo ai;
     VkFenceCreateInfo fi;
@@ -2155,7 +2155,7 @@ static void fire_gfx_gpuShareBarrier(VkCommandBuffer cmd, VkImage image, VkImage
 }
 
 /* The D3D11 texture `handle` (a handle of the kind D3D11_TEXTURE_KMT, width x height, R8G8B8A8) as an image of Vulkan. */
-static int fire_gfx_gpuImport(FireGfxGpuTarget* g, void* handle, int width, int height) {
+static fire_gfx_int fire_gfx_gpuImport(FireGfxGpuTarget* g, void* handle, fire_gfx_int width, fire_gfx_int height) {
     VkImageCreateInfo ii;
     VkExternalMemoryImageCreateInfo ext;
     VkMemoryRequirements req;
@@ -2163,7 +2163,7 @@ static int fire_gfx_gpuImport(FireGfxGpuTarget* g, void* handle, int width, int 
     VkMemoryDedicatedAllocateInfo ded;
     FireGfxVkImportWin32 imp;
     FireGfxVkWin32Props props;
-    int type = -1, k;
+    fire_gfx_int type = -1, k;
     fire_gfx_gpuFreeImport(g);
     memset(&ext, 0, sizeof ext);
     ext.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
@@ -2185,9 +2185,9 @@ static int fire_gfx_gpuImport(FireGfxGpuTarget* g, void* handle, int width, int 
     memset(&props, 0, sizeof props);
     props.sType = (VkStructureType)1000073002;   /* VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR */
     if (g_fireGfxVk.getWin32HandleProps(g_fireGfxVk.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT, handle, &props) != VK_SUCCESS) props.memoryTypeBits = req.memoryTypeBits;
-    for (k = 0; k < (int)g_fireGfxVk.memProps.memoryTypeCount && type < 0; k++)
+    for (k = 0; k < (fire_gfx_int)g_fireGfxVk.memProps.memoryTypeCount && type < 0; k++)
         if ((req.memoryTypeBits & props.memoryTypeBits & (1u << k)) && (g_fireGfxVk.memProps.memoryTypes[k].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) type = k;
-    for (k = 0; k < (int)g_fireGfxVk.memProps.memoryTypeCount && type < 0; k++)
+    for (k = 0; k < (fire_gfx_int)g_fireGfxVk.memProps.memoryTypeCount && type < 0; k++)
         if (req.memoryTypeBits & props.memoryTypeBits & (1u << k)) type = k;
     if (type < 0) { fire_gfx_gpuFreeImport(g); return 0; }
     memset(&ded, 0, sizeof ded);
@@ -2210,7 +2210,7 @@ static int fire_gfx_gpuImport(FireGfxGpuTarget* g, void* handle, int width, int 
 }
 
 /* The last frame into a window of DirectComposition (the lock is held): copied into the window's picture (imported), then the bridge presents it. 1: shown. */
-static int fire_gfx_gpuPresentDcompLocked(FireGfxGpuTarget* g, const fire_native_window* w) {
+static fire_gfx_int fire_gfx_gpuPresentDcompLocked(FireGfxGpuTarget* g, const fire_native_window* w) {
     fire_dcomp_bridge* b = (fire_dcomp_bridge*)w->a;
     VkCommandBufferBeginInfo bi;
     VkSubmitInfo si;
@@ -2254,9 +2254,9 @@ static int fire_gfx_gpuPresentDcompLocked(FireGfxGpuTarget* g, const fire_native
     return b->present(b) != 0;
 }
 
-static int fire_gfx_gpuPresentLocked(FireGfxGpuTarget* g, const fire_native_window* w) {
+static fire_gfx_int fire_gfx_gpuPresentLocked(FireGfxGpuTarget* g, const fire_native_window* w) {
     uint32_t index = 0;
-    int made, attempt;
+    fire_gfx_int made, attempt;
     VkResult r = VK_SUCCESS;
     VkCommandBufferBeginInfo bi;
     VkImageBlit blit;
@@ -2318,7 +2318,7 @@ static int fire_gfx_gpuPresentLocked(FireGfxGpuTarget* g, const fire_native_wind
  * lets go of the window. */
 static int32_t fire_gfx_gpuPresent(void* ctx, int32_t op, const fire_native_window* w, const uint32_t* pixels, int32_t width, int32_t height) {
     FireGfxGpuTarget* g = (FireGfxGpuTarget*)ctx;
-    int ok = 0;
+    fire_gfx_int ok = 0;
     (void)pixels; (void)width; (void)height;
     fire_gfx_gpuLock();
     if (op == 0) {
@@ -2330,7 +2330,7 @@ static int32_t fire_gfx_gpuPresent(void* ctx, int32_t op, const fire_native_wind
         return 1;
     }
     if (g_fireGfxVk.state == 1 && w != NULL && (w->kind == FIRE_NATIVE_DCOMP ? g_fireGfxVk.interop : g_fireGfxVk.wsi)) {
-        int noAlpha = g->noAlpha;
+        fire_gfx_int noAlpha = g->noAlpha;
         ok = fire_gfx_gpuPresentLocked(g, w);
         if (ok) g->works = 1;
         else if (g->noAlpha && !noAlpha) { fire_gfx_gpuFreeSurface(g); g->works = 0; }   /* (only the frames that mix go as pixels; this window takes pixels from now on) */

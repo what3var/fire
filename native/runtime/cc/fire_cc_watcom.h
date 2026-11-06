@@ -64,6 +64,9 @@ static int fire_cc_bigFree(void* p) {
     return 0;
 }
 #define FIRE_CC_BIG_ALLOC(bytes) fire_cc_bigAlloc(bytes)
+/* from 16 KB on a block comes from DOS itself (to the paragraph, and back to DOS when it is freed): the heap of the C library grows in big pieces that a
+ * freed block of this size cannot give back - a framebuffer of 64000 bytes cost it 118 KB */
+#define FIRE_CC_BIG_FROM 0x4000u
 #define FIRE_CC_BIG_FREE(p) fire_cc_bigFree(p)
 /* memset/memcpy of the C library compute with the offset of a far pointer: a step must not pass the end of the segment of either pointer */
 #include <i86.h>

@@ -16,6 +16,7 @@
  *   FIRE_CC_FEQ(x, y)         optional: `==` of two floating-point numbers that is false with a NaN (the 8087 code of Open Watcom says "equal")
  *   FIRE_CC_FIXED(d, places)  optional: the number given to printf("%.*f") (where the C library rounds a half the other way)
  *   FIRE_CC_BIG_ALLOC(bytes) / FIRE_CC_BIG_FREE(p)   optional: a block larger than a size_t says (16-bit x86, the huge model); FREE: 1 if it was one of them
+ *   FIRE_CC_BIG_FROM          optional: from how many bytes on a block of an array, a buffer or the graphics goes to FIRE_CC_BIG_ALLOC (default: what a size_t cannot say)
  *   FIRE_CC_ZERO(p, bytes) / FIRE_CC_COPY(to, from, bytes)   optional: memset/memcpy of a block of 32-bit size (where the C library's wrap at a segment end)
  *   FIRE_CC_IO_STEP(p, n)     optional: how many of the n bytes at p one call of fread/fwrite/memcpy may take (16-bit x86: up to the end of the segment)
  *   FIRE_CC_NAME              the name of the family ("gcc", "clang", "msvc", "watcom", "tcc", "generic") */

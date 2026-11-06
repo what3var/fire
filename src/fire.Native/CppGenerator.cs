@@ -4544,7 +4544,7 @@ namespace fire.Native
                     bool setterValue = (ins.A[1] & 2) != 0 && IsSetterFunc(f);
                     string obj = S(d - 2), v = S(d - 1);
                     string temp = OwnerList();
-                    string listsDecl = setterValue ? "" : $"OwnList* KL_[1] = {{&{temp}}}; ";
+                    string listsDecl = setterValue ? "" : CArray("OwnList*", "KL_", new[] { "&" + temp });
                     string lists = setterValue ? "NULL, 0" : "KL_, 1";
                     string mine = setterValue ? "MYAL" : "NULL";
                     string keep = setterValue ? $"claimKeep({obj}, {v}, MYAL);" : $"claimToHolder({obj}, {v}, &{temp});";

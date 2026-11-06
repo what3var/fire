@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "fire_gfx_mem.h"
 
 #if defined(__clang__)
 #pragma clang fp contract(off)
@@ -43,48 +44,48 @@
 #pragma GCC optimize("fp-contract=off")
 #endif
 
-typedef struct FireTtfGMetrics { double advanceWidth, leftSideBearing; int yOffset, minWidth, minHeight, xOffset; } FireTtfGMetrics;   /* xOffset: the left edge of the glyph image from the pen position */
+typedef struct FireTtfGMetrics { double advanceWidth, leftSideBearing; fire_gfx_int yOffset, minWidth, minHeight, xOffset; } FireTtfGMetrics;   /* xOffset: the left edge of the glyph image from the pen position */
 typedef struct FireTtfLMetrics { double ascender, descender, lineGap; } FireTtfLMetrics;
 
 typedef struct FireTtfFont {
     uint8_t* mem;
-    size_t size;
+    fire_gfx_size size;
     uint32_t unitsPerEm, numLongHmtx;
-    int locaFormat;
+    fire_gfx_int locaFormat;
 } FireTtfFont;
 
 typedef struct FireTtfPoint { double x, y; } FireTtfPoint;
 typedef struct FireTtfLine { uint16_t beg, end; } FireTtfLine;
 typedef struct FireTtfCurve { uint16_t beg, end, ctrl; } FireTtfCurve;
 typedef struct FireTtfOutline {
-    FireTtfPoint* points; size_t numPoints, capPoints;
-    FireTtfCurve* curves; size_t numCurves, capCurves;
-    FireTtfLine* lines; size_t numLines, capLines;
+    FireTtfPoint* points; fire_gfx_size numPoints, capPoints;
+    FireTtfCurve* curves; fire_gfx_size numCurves, capCurves;
+    FireTtfLine* lines; fire_gfx_size numLines, capLines;
 } FireTtfOutline;
 typedef struct FireTtfCell { double area, cover; } FireTtfCell;
 
 static void fire_ttf_init(FireTtfFont* f) { f->mem = NULL; f->size = 0; f->unitsPerEm = 0; f->numLongHmtx = 0; f->locaFormat = 0; }
-static void fire_ttf_free(FireTtfFont* f) { free(f->mem); fire_ttf_init(f); }
+static void fire_ttf_free(FireTtfFont* f) { fire_gfx_free(f->mem); fire_ttf_init(f); }
 
-static int fire_ttf_safe(const FireTtfFont* f, uint32_t offset, uint32_t margin) {
+static fire_gfx_int fire_ttf_safe(const FireTtfFont* f, uint32_t offset, uint32_t margin) {
     uint32_t size = (uint32_t)f->size;
     if (offset > size) return 0;
     return size - offset >= margin;
 }
 static uint8_t fire_ttf_getu8(const FireTtfFont* f, uint32_t o) { return o < f->size ? f->mem[o] : 0; }
-static int fire_ttf_getu8s(const FireTtfFont* f, uint32_t o) { return (int8_t)fire_ttf_getu8(f, o); }
+static fire_gfx_int fire_ttf_getu8s(const FireTtfFont* f, uint32_t o) { return (int8_t)fire_ttf_getu8(f, o); }
 static uint16_t fire_ttf_getu16(const FireTtfFont* f, uint32_t o) { return (uint16_t)((fire_ttf_getu8(f, o) << 8) | fire_ttf_getu8(f, o + 1)); }
-static int fire_ttf_geti16(const FireTtfFont* f, uint32_t o) { return (int16_t)fire_ttf_getu16(f, o); }
+static fire_gfx_int fire_ttf_geti16(const FireTtfFont* f, uint32_t o) { return (int16_t)fire_ttf_getu16(f, o); }
 static uint32_t fire_ttf_getu32(const FireTtfFont* f, uint32_t o) {
     return ((uint32_t)fire_ttf_getu8(f, o) << 24) | ((uint32_t)fire_ttf_getu8(f, o + 1) << 16) | ((uint32_t)fire_ttf_getu8(f, o + 2) << 8) | fire_ttf_getu8(f, o + 3);
 }
 
 /* (a text that grows: the UTF-8 of a name) */
-typedef struct FireTtfText { char* s; size_t n, cap; } FireTtfText;
+typedef struct FireTtfText { char* s; fire_gfx_size n, cap; } FireTtfText;
 static void fire_ttf_textPush(FireTtfText* t, char c) {
     if (t->n + 2 > t->cap) {
-        size_t cap = t->cap ? t->cap * 2 : 32;
-        char* grown = (char*)realloc(t->s, cap);
+        fire_gfx_size cap = t->cap ? t->cap * 2 : 32;
+        char* grown = (char*)fire_gfx_realloc(t->s, t->cap, cap);
         if (grown == NULL) return;
         t->s = grown;
         t->cap = cap;
@@ -93,8 +94,8 @@ static void fire_ttf_textPush(FireTtfText* t, char c) {
     t->s[t->n] = 0;
 }
 
-static void fire_ttf_utf16be(const FireTtfFont* f, uint32_t o, unsigned length, FireTtfText* s) {
-    unsigned i;
+static void fire_ttf_utf16be(const FireTtfFont* f, uint32_t o, uint32_t length, FireTtfText* s) {
+    uint32_t i;
     for (i = 0; i + 1 < length; i += 2) {
         uint32_t c = fire_ttf_getu16(f, o + i);
         if (c >= 0xD800 && c <= 0xDBFF && i + 3 < length) { uint32_t d = fire_ttf_getu16(f, o + i + 2); if (d >= 0xDC00 && d <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (d - 0xDC00); i += 2; } }
@@ -105,15 +106,15 @@ static void fire_ttf_utf16be(const FireTtfFont* f, uint32_t o, unsigned length, 
     }
 }
 
-static int fire_ttf_gettable(const FireTtfFont* f, const char* tag, uint32_t* offset) {
-    unsigned numTables = fire_ttf_getu16(f, 4);
+static fire_gfx_int fire_ttf_gettable(const FireTtfFont* f, const char* tag, uint32_t* offset) {
+    uint32_t numTables = fire_ttf_getu16(f, 4);
     uint32_t key;
-    size_t lo = 0, hi = numTables;
+    fire_gfx_size lo = 0, hi = numTables;
     if (!fire_ttf_safe(f, 12, (uint32_t)numTables * 16)) return 0;
     /* the table directory is sorted by tag: binary search */
     key = ((uint32_t)(uint8_t)tag[0] << 24) | ((uint32_t)(uint8_t)tag[1] << 16) | ((uint32_t)(uint8_t)tag[2] << 8) | (uint8_t)tag[3];
     while (lo < hi) {
-        size_t mid = lo + (hi - lo) / 2;
+        fire_gfx_size mid = lo + (hi - lo) / 2;
         uint32_t k = fire_ttf_getu32(f, 12 + (uint32_t)mid * 16);
         if (k < key) lo = mid + 1;
         else if (k > key) hi = mid;
@@ -122,7 +123,7 @@ static int fire_ttf_gettable(const FireTtfFont* f, const char* tag, uint32_t* of
     return 0;
 }
 
-static int fire_ttf_initTables(FireTtfFont* f) {
+static fire_gfx_int fire_ttf_initTables(FireTtfFont* f) {
     uint32_t scalerType, head, hhea;
     if (!fire_ttf_safe(f, 0, 12)) return 0;
     scalerType = fire_ttf_getu32(f, 0);
@@ -137,13 +138,13 @@ static int fire_ttf_initTables(FireTtfFont* f) {
 }
 
 /* Takes a copy of the font file. 0: it is not a TrueType font (or too damaged to read the tables we need). */
-static int fire_ttf_load(FireTtfFont* f, const uint8_t* data, size_t size) {
+static fire_gfx_int fire_ttf_load(FireTtfFont* f, const uint8_t* data, fire_gfx_size size) {
     if (size > 0xFFFFFFFFu) return 0;
-    free(f->mem);
-    f->mem = (uint8_t*)malloc(size ? size : 1);
+    fire_gfx_free(f->mem);
+    f->mem = (uint8_t*)fire_gfx_malloc(size ? size : 1);
     f->size = 0;
     if (f->mem == NULL) return 0;
-    if (size) memcpy(f->mem, data, size);
+    if (size) fire_gfx_copy(f->mem, data, size);
     f->size = size;
     return fire_ttf_initTables(f);
 }
@@ -151,7 +152,7 @@ static int fire_ttf_load(FireTtfFont* f, const uint8_t* data, size_t size) {
 static uint32_t fire_ttf_unitsPerEm(const FireTtfFont* f) { return f->unitsPerEm; }
 
 /* The ascent, descent (negative) and line gap for a size in pixels (the size is the em: units per em map to `size` pixels). */
-static int fire_ttf_lmetrics(const FireTtfFont* f, double size, FireTtfLMetrics* m) {
+static fire_gfx_int fire_ttf_lmetrics(const FireTtfFont* f, double size, FireTtfLMetrics* m) {
     uint32_t hhea;
     double factor;
     m->ascender = 0; m->descender = 0; m->lineGap = 0;
@@ -165,9 +166,9 @@ static int fire_ttf_lmetrics(const FireTtfFont* f, double size, FireTtfLMetrics*
 }
 
 /* ---- cmap --------------------------------------------------------------------------------------------------------------------------------- */
-static int fire_ttf_cmapFmt4(const FireTtfFont* f, uint32_t table, uint32_t charCode, uint32_t* glyph) {
+static fire_gfx_int fire_ttf_cmapFmt4(const FireTtfFont* f, uint32_t table, uint32_t charCode, uint32_t* glyph) {
     uint32_t shortCode = charCode, segCountX2, endCodes, startCodes, idDeltas, idRangeOffsets, segIdxX2, startCode, idDelta, idRangeOffset, idOffset, id;
-    size_t low, high;
+    fire_gfx_size low, high;
     if (charCode > 0xFFFF) { *glyph = 0; return 1; }
     if (!fire_ttf_safe(f, table, 8)) return 0;
     segCountX2 = fire_ttf_getu16(f, table);
@@ -177,7 +178,7 @@ static int fire_ttf_cmapFmt4(const FireTtfFont* f, uint32_t table, uint32_t char
     /* the segment that contains the code: the first whose end code is not lower (binary search over the end codes) */
     low = 0; high = segCountX2 / 2 - 1;
     while (low != high) {
-        size_t mid = low + (high - low) / 2;
+        fire_gfx_size mid = low + (high - low) / 2;
         if (fire_ttf_getu16(f, endCodes + (uint32_t)mid * 2) < shortCode) low = mid + 1; else high = mid;
     }
     segIdxX2 = (uint32_t)low * 2;
@@ -192,8 +193,8 @@ static int fire_ttf_cmapFmt4(const FireTtfFont* f, uint32_t table, uint32_t char
     *glyph = id ? (id + idDelta) & 0xFFFF : 0;
     return 1;
 }
-static int fire_ttf_cmapFmt6(const FireTtfFont* f, uint32_t table, uint32_t charCode, uint32_t* glyph) {
-    unsigned firstCode, entryCount;
+static fire_gfx_int fire_ttf_cmapFmt6(const FireTtfFont* f, uint32_t table, uint32_t charCode, uint32_t* glyph) {
+    uint32_t firstCode, entryCount;
     if (charCode > 0xFFFF) { *glyph = 0; return 1; }
     if (!fire_ttf_safe(f, table, 4)) return 0;
     firstCode = fire_ttf_getu16(f, table); entryCount = fire_ttf_getu16(f, table + 2);
@@ -204,7 +205,7 @@ static int fire_ttf_cmapFmt6(const FireTtfFont* f, uint32_t table, uint32_t char
     *glyph = fire_ttf_getu16(f, table + 4 + 2 * charCode);
     return 1;
 }
-static int fire_ttf_cmapFmt12(const FireTtfFont* f, uint32_t table, uint32_t charCode, uint32_t* glyph) {
+static fire_gfx_int fire_ttf_cmapFmt12(const FireTtfFont* f, uint32_t table, uint32_t charCode, uint32_t* glyph) {
     uint32_t len, numEntries, i;
     *glyph = 0;
     if (!fire_ttf_safe(f, table, 16)) return 0;
@@ -221,9 +222,9 @@ static int fire_ttf_cmapFmt12(const FireTtfFont* f, uint32_t table, uint32_t cha
     }
     return 1;
 }
-static int fire_ttf_glyphId(const FireTtfFont* f, uint32_t charCode, uint32_t* glyph) {
+static fire_gfx_int fire_ttf_glyphId(const FireTtfFont* f, uint32_t charCode, uint32_t* glyph) {
     uint32_t cmap;
-    unsigned numEntries, idx;
+    uint32_t numEntries, idx;
     *glyph = 0;
     if (!fire_ttf_gettable(f, "cmap", &cmap)) return 0;
     if (!fire_ttf_safe(f, cmap, 4)) return 0;
@@ -231,7 +232,7 @@ static int fire_ttf_glyphId(const FireTtfFont* f, uint32_t charCode, uint32_t* g
     if (!fire_ttf_safe(f, cmap, 4 + numEntries * 8)) return 0;
     for (idx = 0; idx < numEntries; ++idx) {   /* a map of the whole repertoire first */
         uint32_t entry = cmap + 4 + idx * 8;
-        int type = fire_ttf_getu16(f, entry) * 0100 + fire_ttf_getu16(f, entry + 2);
+        fire_gfx_int type = fire_ttf_getu16(f, entry) * 0100 + fire_ttf_getu16(f, entry + 2);
         if (type == 0004 || type == 0312) {
             uint32_t table = cmap + fire_ttf_getu32(f, entry + 4);
             if (!fire_ttf_safe(f, table, 8)) return 0;
@@ -241,7 +242,7 @@ static int fire_ttf_glyphId(const FireTtfFont* f, uint32_t charCode, uint32_t* g
     }
     for (idx = 0; idx < numEntries; ++idx) {   /* then one of the BMP */
         uint32_t entry = cmap + 4 + idx * 8;
-        int type = fire_ttf_getu16(f, entry) * 0100 + fire_ttf_getu16(f, entry + 2);
+        fire_gfx_int type = fire_ttf_getu16(f, entry) * 0100 + fire_ttf_getu16(f, entry + 2);
         if (type == 0003 || type == 0301) {
             uint32_t table = cmap + fire_ttf_getu32(f, entry + 4);
             if (!fire_ttf_safe(f, table, 6)) return 0;
@@ -256,10 +257,10 @@ static int fire_ttf_glyphId(const FireTtfFont* f, uint32_t charCode, uint32_t* g
 }
 
 /* The glyph for a code point (0 if the font has none; 0 as the result if the cmap could not be read). */
-static int fire_ttf_lookup(const FireTtfFont* f, uint32_t codepoint, uint32_t* glyph) { return fire_ttf_glyphId(f, codepoint, glyph); }
+static fire_gfx_int fire_ttf_lookup(const FireTtfFont* f, uint32_t codepoint, uint32_t* glyph) { return fire_ttf_glyphId(f, codepoint, glyph); }
 
 /* ---- metrics and outlines ----------------------------------------------------------------------------------------------------------------- */
-static int fire_ttf_horMetrics(const FireTtfFont* f, uint32_t glyph, int* advanceWidth, int* leftSideBearing) {
+static fire_gfx_int fire_ttf_horMetrics(const FireTtfFont* f, uint32_t glyph, fire_gfx_int* advanceWidth, fire_gfx_int* leftSideBearing) {
     uint32_t hmtx, boundary, offset;
     if (!fire_ttf_gettable(f, "hmtx", &hmtx)) return 0;
     if (glyph < f->numLongHmtx) {
@@ -279,19 +280,19 @@ static int fire_ttf_horMetrics(const FireTtfFont* f, uint32_t glyph, int* advanc
     *leftSideBearing = fire_ttf_geti16(f, offset);
     return 1;
 }
-static int fire_ttf_glyphBbox(const FireTtfFont* f, double size, uint32_t outline, int box[4]) {
+static fire_gfx_int fire_ttf_glyphBbox(const FireTtfFont* f, double size, uint32_t outline, fire_gfx_int box[4]) {
     double xScale, yScale;
     if (!fire_ttf_safe(f, outline, 10)) return 0;
     box[0] = fire_ttf_geti16(f, outline + 2); box[1] = fire_ttf_geti16(f, outline + 4); box[2] = fire_ttf_geti16(f, outline + 6); box[3] = fire_ttf_geti16(f, outline + 8);
     if (box[2] <= box[0] || box[3] <= box[1]) return 0;
     xScale = size / f->unitsPerEm; yScale = size / f->unitsPerEm;
-    box[0] = (int)floor(box[0] * xScale + 0.0);
-    box[1] = (int)floor(box[1] * yScale + 0.0);
-    box[2] = (int)ceil(box[2] * xScale + 0.0);
-    box[3] = (int)ceil(box[3] * yScale + 0.0);
+    box[0] = (fire_gfx_int)floor(box[0] * xScale + 0.0);
+    box[1] = (fire_gfx_int)floor(box[1] * yScale + 0.0);
+    box[2] = (fire_gfx_int)ceil(box[2] * xScale + 0.0);
+    box[3] = (fire_gfx_int)ceil(box[3] * yScale + 0.0);
     return 1;
 }
-static int fire_ttf_outlineOffset(const FireTtfFont* f, uint32_t glyph, uint32_t* offset) {
+static fire_gfx_int fire_ttf_outlineOffset(const FireTtfFont* f, uint32_t glyph, uint32_t* offset) {
     uint32_t loca, glyf, base, thisOff, next;
     if (!fire_ttf_gettable(f, "loca", &loca) || !fire_ttf_gettable(f, "glyf", &glyf)) return 0;
     if (f->locaFormat == 0) {
@@ -309,9 +310,9 @@ static int fire_ttf_outlineOffset(const FireTtfFont* f, uint32_t glyph, uint32_t
     return 1;
 }
 
-static int fire_ttf_gmetrics(const FireTtfFont* f, double size, uint32_t glyph, FireTtfGMetrics* m) {
+static fire_gfx_int fire_ttf_gmetrics(const FireTtfFont* f, double size, uint32_t glyph, FireTtfGMetrics* m) {
     double xScale = size / f->unitsPerEm;
-    int adv, lsb, bbox[4];
+    fire_gfx_int adv, lsb, bbox[4];
     uint32_t outline;
     m->advanceWidth = 0; m->leftSideBearing = 0; m->yOffset = 0; m->minWidth = 0; m->minHeight = 0; m->xOffset = 0;
     if (!fire_ttf_horMetrics(f, glyph, &adv, &lsb)) return 0;
@@ -328,9 +329,9 @@ static int fire_ttf_gmetrics(const FireTtfFont* f, double size, uint32_t glyph, 
 }
 
 /* The horizontal kerning between two glyphs in pixels (the 'kern' table; 0 if there is none). */
-static int fire_ttf_kerning(const FireTtfFont* f, double size, uint32_t left, uint32_t right, double* xShift) {
+static fire_gfx_int fire_ttf_kerning(const FireTtfFont* f, double size, uint32_t left, uint32_t right, double* xShift) {
     uint32_t offset;
-    unsigned numTables;
+    uint32_t numTables;
     double xs = 0;
     *xShift = 0;
     if (!fire_ttf_gettable(f, "kern", &offset)) return 1;
@@ -339,14 +340,14 @@ static int fire_ttf_kerning(const FireTtfFont* f, double size, uint32_t left, ui
     numTables = fire_ttf_getu16(f, offset + 2);
     offset += 4;
     while (numTables > 0) {
-        unsigned length, format, flags;
+        uint32_t length, format, flags;
         if (!fire_ttf_safe(f, offset, 6)) return 0;
         length = fire_ttf_getu16(f, offset + 2); format = fire_ttf_getu8(f, offset + 4); flags = fire_ttf_getu8(f, offset + 5);
         offset += 6;
         if (format == 0 && (flags & 1) && !(flags & 2)) {
-            unsigned numPairs;
+            uint32_t numPairs;
             uint32_t key;
-            size_t lo, hi;
+            fire_gfx_size lo, hi;
             if (!fire_ttf_safe(f, offset, 8)) return 0;
             numPairs = fire_ttf_getu16(f, offset);
             offset += 8;
@@ -355,12 +356,12 @@ static int fire_ttf_kerning(const FireTtfFont* f, double size, uint32_t left, ui
             key = (left << 16) | (right & 0xFFFF);
             lo = 0; hi = numPairs;
             while (lo < hi) {
-                size_t mid = lo + (hi - lo) / 2;
+                fire_gfx_size mid = lo + (hi - lo) / 2;
                 uint32_t k = fire_ttf_getu32(f, offset + (uint32_t)mid * 6);
                 if (k < key) lo = mid + 1;
                 else if (k > key) hi = mid;
                 else {
-                    int value = fire_ttf_geti16(f, offset + (uint32_t)mid * 6 + 4);
+                    fire_gfx_int value = fire_ttf_geti16(f, offset + (uint32_t)mid * 6 + 4);
                     if (!(flags & 4)) xs += value;   /* (cross stream kerning moves the glyph up or down: not used) */
                     break;
                 }
@@ -374,27 +375,27 @@ static int fire_ttf_kerning(const FireTtfFont* f, double size, uint32_t left, ui
 }
 
 /* A name from the 'name' table in UTF-8 (nameId 1 family, 2 style, 4 full name, 6 PostScript name), malloc'd; "" if there is none (NULL only without memory). */
-static char* fire_ttf_name(const FireTtfFont* f, int nameId) {
+static char* fire_ttf_name(const FireTtfFont* f, fire_gfx_int nameId) {
     uint32_t table, strings;
-    unsigned count, i;
+    uint32_t count, i;
     FireTtfText best = {NULL, 0, 0};
-    int bestScore = -1;
+    fire_gfx_int bestScore = -1;
     if (fire_ttf_gettable(f, "name", &table) && fire_ttf_safe(f, table, 6)) {
         count = fire_ttf_getu16(f, table + 2);
         strings = table + fire_ttf_getu16(f, table + 4);
         for (i = 0; i < count; i++) {
             uint32_t rec = table + 6 + i * 12;
-            unsigned platform, encoding, language, id, length, offset;
-            int score = -1;
+            uint32_t platform, encoding, language, id, length, offset;
+            fire_gfx_int score = -1;
             FireTtfText text = {NULL, 0, 0};
             if (!fire_ttf_safe(f, rec, 12)) break;
             platform = fire_ttf_getu16(f, rec); encoding = fire_ttf_getu16(f, rec + 2); language = fire_ttf_getu16(f, rec + 4); id = fire_ttf_getu16(f, rec + 6);
             length = fire_ttf_getu16(f, rec + 8); offset = fire_ttf_getu16(f, rec + 10);
-            if ((int)id != nameId || !fire_ttf_safe(f, strings + offset, length)) continue;
+            if ((fire_gfx_int)id != nameId || !fire_ttf_safe(f, strings + offset, length)) continue;
             if (platform == 3 && (encoding == 1 || encoding == 10)) { score = language == 0x409 ? 3 : 2; fire_ttf_utf16be(f, strings + offset, length, &text); }
             else if (platform == 0) { score = 1; fire_ttf_utf16be(f, strings + offset, length, &text); }
             else if (platform == 1 && encoding == 0) {
-                unsigned k;
+                uint32_t k;
                 score = 0;
                 for (k = 0; k < length; k++) {
                     uint8_t c = fire_ttf_getu8(f, strings + offset + k);
@@ -402,53 +403,53 @@ static char* fire_ttf_name(const FireTtfFont* f, int nameId) {
                     else { fire_ttf_textPush(&text, (char)(0xC0 | (c >> 6))); fire_ttf_textPush(&text, (char)(0x80 | (c & 0x3F))); }
                 }
             }
-            if (score > bestScore && text.n > 0) { bestScore = score; free(best.s); best = text; }
-            else free(text.s);
+            if (score > bestScore && text.n > 0) { bestScore = score; fire_gfx_free(best.s); best = text; }
+            else fire_gfx_free(text.s);
         }
     }
-    if (best.s == NULL) { best.s = (char*)malloc(1); if (best.s) best.s[0] = 0; }
+    if (best.s == NULL) { best.s = (char*)fire_gfx_malloc(1); if (best.s) best.s[0] = 0; }
     return best.s;
 }
 
 static FireTtfPoint fire_ttf_midpoint(FireTtfPoint a, FireTtfPoint b) { FireTtfPoint p; p.x = 0.5 * (a.x + b.x); p.y = 0.5 * (a.y + b.y); return p; }
-static int fire_ttf_growOk(const FireTtfOutline* o) { return o->numPoints < 0xFFFF && o->numCurves < 0xFFFF && o->numLines < 0xFFFF; }
+static fire_gfx_int fire_ttf_growOk(const FireTtfOutline* o) { return o->numPoints < 0xFFFF && o->numCurves < 0xFFFF && o->numLines < 0xFFFF; }
 
 /* (the arrays of an outline: 0 without memory) */
-static int fire_ttf_reserve(void** items, size_t* cap, size_t need, size_t size) {
-    size_t n;
+static fire_gfx_int fire_ttf_reserve(void** items, fire_gfx_size* cap, fire_gfx_size need, fire_gfx_size size) {
+    fire_gfx_size n;
     void* grown;
     if (need <= *cap) return 1;
     n = *cap ? *cap : 64;
     while (n < need) n *= 2;
-    grown = realloc(*items, n * size);
+    grown = fire_gfx_realloc(*items, *cap * size, n * size);
     if (grown == NULL) return 0;
     *items = grown;
     *cap = n;
     return 1;
 }
-static int fire_ttf_pushPoint(FireTtfOutline* o, FireTtfPoint p) {
+static fire_gfx_int fire_ttf_pushPoint(FireTtfOutline* o, FireTtfPoint p) {
     if (!fire_ttf_reserve((void**)&o->points, &o->capPoints, o->numPoints + 1, sizeof(FireTtfPoint))) return 0;
     o->points[o->numPoints++] = p;
     return 1;
 }
-static int fire_ttf_pushCurve(FireTtfOutline* o, uint16_t beg, uint16_t end, uint16_t ctrl) {
+static fire_gfx_int fire_ttf_pushCurve(FireTtfOutline* o, uint16_t beg, uint16_t end, uint16_t ctrl) {
     if (!fire_ttf_reserve((void**)&o->curves, &o->capCurves, o->numCurves + 1, sizeof(FireTtfCurve))) return 0;
     o->curves[o->numCurves].beg = beg; o->curves[o->numCurves].end = end; o->curves[o->numCurves].ctrl = ctrl;
     o->numCurves++;
     return 1;
 }
-static int fire_ttf_pushLine(FireTtfOutline* o, uint16_t beg, uint16_t end) {
+static fire_gfx_int fire_ttf_pushLine(FireTtfOutline* o, uint16_t beg, uint16_t end) {
     if (!fire_ttf_reserve((void**)&o->lines, &o->capLines, o->numLines + 1, sizeof(FireTtfLine))) return 0;
     o->lines[o->numLines].beg = beg; o->lines[o->numLines].end = end;
     o->numLines++;
     return 1;
 }
-static void fire_ttf_outlineFree(FireTtfOutline* o) { free(o->points); free(o->curves); free(o->lines); memset(o, 0, sizeof *o); }
+static void fire_ttf_outlineFree(FireTtfOutline* o) { fire_gfx_free(o->points); fire_gfx_free(o->curves); fire_gfx_free(o->lines); fire_gfx_set(o, 0, sizeof *o); }
 
-static int fire_ttf_simpleFlags(const FireTtfFont* f, uint32_t* offset, unsigned numPts, uint8_t* flags) {
+static fire_gfx_int fire_ttf_simpleFlags(const FireTtfFont* f, uint32_t* offset, uint32_t numPts, uint8_t* flags) {
     uint32_t off = *offset;
     uint8_t value = 0, repeat = 0;
-    unsigned i;
+    uint32_t i;
     for (i = 0; i < numPts; ++i) {
         if (repeat) --repeat;
         else {
@@ -464,9 +465,9 @@ static int fire_ttf_simpleFlags(const FireTtfFont* f, uint32_t* offset, unsigned
     *offset = off;
     return 1;
 }
-static int fire_ttf_simplePoints(const FireTtfFont* f, uint32_t offset, unsigned numPts, const uint8_t* flags, FireTtfPoint* points) {
+static fire_gfx_int fire_ttf_simplePoints(const FireTtfFont* f, uint32_t offset, uint32_t numPts, const uint8_t* flags, FireTtfPoint* points) {
     long accum = 0;
-    unsigned i;
+    uint32_t i;
     for (i = 0; i < numPts; ++i) {
         if (flags[i] & 0x02) {
             long value, bit;
@@ -498,9 +499,9 @@ static int fire_ttf_simplePoints(const FireTtfFont* f, uint32_t offset, unsigned
     }
     return 1;
 }
-static int fire_ttf_decodeContour(const uint8_t* flags, unsigned basePoint, unsigned count, FireTtfOutline* outl) {
-    unsigned looseEnd, beg, ctrl = 0, i;
-    int gotCtrl = 0;
+static fire_gfx_int fire_ttf_decodeContour(const uint8_t* flags, uint32_t basePoint, uint32_t count, FireTtfOutline* outl) {
+    uint32_t looseEnd, beg, ctrl = 0, i;
+    fire_gfx_int gotCtrl = 0;
     if (count < 2) return 1;
     if (flags[0] & 0x01) {
         looseEnd = basePoint++;
@@ -511,13 +512,13 @@ static int fire_ttf_decodeContour(const uint8_t* flags, unsigned basePoint, unsi
     } else {
         FireTtfPoint mid;
         if (!fire_ttf_growOk(outl)) return 0;
-        looseEnd = (unsigned)outl->numPoints;
+        looseEnd = (uint32_t)outl->numPoints;
         mid = fire_ttf_midpoint(outl->points[basePoint], outl->points[basePoint + count - 1]);
         if (!fire_ttf_pushPoint(outl, mid)) return 0;
     }
     beg = looseEnd;
     for (i = 0; i < count; ++i) {
-        unsigned cur = basePoint + i;
+        uint32_t cur = basePoint + i;
         if (flags[i] & 0x01) {
             if (!fire_ttf_growOk(outl)) return 0;
             if (gotCtrl) { if (!fire_ttf_pushCurve(outl, (uint16_t)beg, (uint16_t)cur, (uint16_t)ctrl)) return 0; }
@@ -526,10 +527,10 @@ static int fire_ttf_decodeContour(const uint8_t* flags, unsigned basePoint, unsi
             gotCtrl = 0;
         } else {
             if (gotCtrl) {
-                unsigned center;
+                uint32_t center;
                 FireTtfPoint mid;
                 if (!fire_ttf_growOk(outl)) return 0;
-                center = (unsigned)outl->numPoints;
+                center = (uint32_t)outl->numPoints;
                 mid = fire_ttf_midpoint(outl->points[ctrl], outl->points[cur]);
                 if (!fire_ttf_pushPoint(outl, mid)) return 0;
                 if (!fire_ttf_pushCurve(outl, (uint16_t)beg, (uint16_t)center, (uint16_t)ctrl)) return 0;
@@ -543,30 +544,30 @@ static int fire_ttf_decodeContour(const uint8_t* flags, unsigned basePoint, unsi
     if (gotCtrl) return fire_ttf_pushCurve(outl, (uint16_t)beg, (uint16_t)looseEnd, (uint16_t)ctrl);
     return fire_ttf_pushLine(outl, (uint16_t)beg, (uint16_t)looseEnd);
 }
-static int fire_ttf_simpleOutline(const FireTtfFont* f, uint32_t offset, unsigned numContours, FireTtfOutline* outl) {
-    unsigned basePoint = (unsigned)outl->numPoints, numPts, i, beg;
-    unsigned* endPts;
+static fire_gfx_int fire_ttf_simpleOutline(const FireTtfFont* f, uint32_t offset, uint32_t numContours, FireTtfOutline* outl) {
+    uint32_t basePoint = (uint32_t)outl->numPoints, numPts, i, beg;
+    uint32_t* endPts;
     uint8_t* flags;
-    int ok = 0;
+    fire_gfx_int ok = 0;
     if (!fire_ttf_safe(f, offset, numContours * 2 + 2)) return 0;
     numPts = fire_ttf_getu16(f, offset + (numContours - 1) * 2);
     if (numPts >= 0xFFFF) return 0;
     numPts++;
     if (outl->numPoints > 0xFFFFu - numPts) return 0;
-    endPts = (unsigned*)malloc(sizeof(unsigned) * numContours);
-    flags = (uint8_t*)calloc(numPts, 1);
+    endPts = (uint32_t*)fire_gfx_malloc(sizeof(uint32_t) * numContours);
+    flags = (uint8_t*)fire_gfx_calloc(numPts, 1);
     if (endPts == NULL || flags == NULL) goto done;
     for (i = 0; i < numContours; ++i) { endPts[i] = fire_ttf_getu16(f, offset); offset += 2; }
     for (i = 0; i + 1 < numContours; ++i) if (endPts[i + 1] < endPts[i] + 1) goto done;   /* (falling end points: damaged or malicious) */
     offset += 2U + fire_ttf_getu16(f, offset);
     if (!fire_ttf_simpleFlags(f, &offset, numPts, flags)) goto done;
-    if (!fire_ttf_reserve((void**)&outl->points, &outl->capPoints, (size_t)basePoint + numPts, sizeof(FireTtfPoint))) goto done;
-    memset(outl->points + basePoint, 0, sizeof(FireTtfPoint) * numPts);
-    outl->numPoints = (size_t)basePoint + numPts;
+    if (!fire_ttf_reserve((void**)&outl->points, &outl->capPoints, (fire_gfx_size)basePoint + numPts, sizeof(FireTtfPoint))) goto done;
+    fire_gfx_set(outl->points + basePoint, 0, sizeof(FireTtfPoint) * numPts);
+    outl->numPoints = (fire_gfx_size)basePoint + numPts;
     if (!fire_ttf_simplePoints(f, offset, numPts, flags, outl->points + basePoint)) goto done;
     beg = 0;
     for (i = 0; i < numContours; ++i) {
-        unsigned count;
+        uint32_t count;
         if (endPts[i] < beg || endPts[i] >= numPts) goto done;
         count = endPts[i] - beg + 1;
         if (!fire_ttf_decodeContour(flags + beg, basePoint + beg, count, outl)) goto done;
@@ -574,13 +575,13 @@ static int fire_ttf_simpleOutline(const FireTtfFont* f, uint32_t offset, unsigne
     }
     ok = 1;
 done:
-    free(endPts);
-    free(flags);
+    fire_gfx_free(endPts);
+    fire_gfx_free(flags);
     return ok;
 }
 
-static void fire_ttf_transformPoints(FireTtfPoint* points, size_t n, const double trf[6]) {
-    size_t i;
+static void fire_ttf_transformPoints(FireTtfPoint* points, fire_gfx_size n, const double trf[6]) {
+    fire_gfx_size i;
     for (i = 0; i < n; ++i) {
         FireTtfPoint pt = points[i];
         points[i].x = pt.x * trf[0] + pt.y * trf[2] + trf[4];
@@ -588,14 +589,14 @@ static void fire_ttf_transformPoints(FireTtfPoint* points, size_t n, const doubl
     }
 }
 
-static int fire_ttf_decodeOutline(const FireTtfFont* f, uint32_t offset, int recDepth, FireTtfOutline* outl);
+static fire_gfx_int fire_ttf_decodeOutline(const FireTtfFont* f, uint32_t offset, fire_gfx_int recDepth, FireTtfOutline* outl);
 
-static int fire_ttf_compoundOutline(const FireTtfFont* f, uint32_t offset, int recDepth, FireTtfOutline* outl) {
-    unsigned flags;
+static fire_gfx_int fire_ttf_compoundOutline(const FireTtfFont* f, uint32_t offset, fire_gfx_int recDepth, FireTtfOutline* outl) {
+    uint32_t flags;
     if (recDepth >= 4) return 0;
     do {
         double local[6] = {0, 0, 0, 0, 0, 0};
-        unsigned glyph;
+        uint32_t glyph;
         uint32_t outline;
         if (!fire_ttf_safe(f, offset, 4)) return 0;
         flags = fire_ttf_getu16(f, offset);
@@ -636,25 +637,25 @@ static int fire_ttf_compoundOutline(const FireTtfFont* f, uint32_t offset, int r
         }
         if (!fire_ttf_outlineOffset(f, glyph, &outline)) return 0;
         if (outline) {
-            size_t basePoint = outl->numPoints;
+            fire_gfx_size basePoint = outl->numPoints;
             if (!fire_ttf_decodeOutline(f, outline, recDepth + 1, outl)) return 0;
             fire_ttf_transformPoints(outl->points + basePoint, outl->numPoints - basePoint, local);
         }
     } while (flags & 0x020);
     return 1;
 }
-static int fire_ttf_decodeOutline(const FireTtfFont* f, uint32_t offset, int recDepth, FireTtfOutline* outl) {
-    int numContours;
+static fire_gfx_int fire_ttf_decodeOutline(const FireTtfFont* f, uint32_t offset, fire_gfx_int recDepth, FireTtfOutline* outl) {
+    fire_gfx_int numContours;
     if (!fire_ttf_safe(f, offset, 10)) return 0;
     numContours = fire_ttf_geti16(f, offset);
-    if (numContours > 0) return fire_ttf_simpleOutline(f, offset + 10, (unsigned)numContours, outl);
+    if (numContours > 0) return fire_ttf_simpleOutline(f, offset + 10, (uint32_t)numContours, outl);
     if (numContours < 0) return fire_ttf_compoundOutline(f, offset + 10, recDepth, outl);
     return 1;
 }
 
 /* ---- rasterising ---------------------------------------------------------------------------------------------------------------------------- */
-static void fire_ttf_clipPoints(FireTtfOutline* o, int width, int height) {
-    size_t i;
+static void fire_ttf_clipPoints(FireTtfOutline* o, fire_gfx_int width, fire_gfx_int height) {
+    fire_gfx_size i;
     for (i = 0; i < o->numPoints; i++) {
         FireTtfPoint pt = o->points[i];
         if (pt.x < 0.0) o->points[i].x = 0.0;
@@ -663,7 +664,7 @@ static void fire_ttf_clipPoints(FireTtfOutline* o, int width, int height) {
         if (pt.y >= height) o->points[i].y = nextafter((double)height, 0.0);
     }
 }
-static int fire_ttf_isFlat(const FireTtfOutline* outl, FireTtfCurve curve) {
+static fire_gfx_int fire_ttf_isFlat(const FireTtfOutline* outl, FireTtfCurve curve) {
     const double maxArea2 = 2.0;
     FireTtfPoint a = outl->points[curve.beg], b = outl->points[curve.ctrl], c = outl->points[curve.end];
     FireTtfPoint g, h;
@@ -673,10 +674,10 @@ static int fire_ttf_isFlat(const FireTtfOutline* outl, FireTtfCurve curve) {
     area2 = fabs(g.x * h.y - h.x * g.y);
     return area2 <= maxArea2;
 }
-static int fire_ttf_tesselateCurve(FireTtfCurve curve, FireTtfOutline* outl) {
+static fire_gfx_int fire_ttf_tesselateCurve(FireTtfCurve curve, FireTtfOutline* outl) {
     enum { stackSize = 10 };
     FireTtfCurve stack[stackSize];
-    unsigned top = 0;
+    uint32_t top = 0;
     for (;;) {
         if (fire_ttf_isFlat(outl, curve) || top >= stackSize) {
             if (outl->numLines >= 0xFFFF) return 0;
@@ -703,15 +704,15 @@ static int fire_ttf_tesselateCurve(FireTtfCurve curve, FireTtfOutline* outl) {
     }
     return 1;
 }
-static int fire_ttf_fastFloor(double x) { int i = (int)x; return i - (i > x); }
-static int fire_ttf_fastCeil(double x) { int i = (int)x; return i + (i < x); }
-static int fire_ttf_sign(double x) { return (x > 0) - (x < 0); }
+static fire_gfx_int fire_ttf_fastFloor(double x) { fire_gfx_int i = (fire_gfx_int)x; return i - (i > x); }
+static fire_gfx_int fire_ttf_fastCeil(double x) { fire_gfx_int i = (fire_gfx_int)x; return i + (i < x); }
+static fire_gfx_int fire_ttf_sign(double x) { return (x > 0) - (x < 0); }
 /* std::min of the original (`b < a ? b : a`) */
 static double fire_ttf_min(double a, double b) { return b < a ? b : a; }
 
-static void fire_ttf_drawLine(FireTtfCell* cells, size_t numCells, int width, FireTtfPoint origin, FireTtfPoint goal) {
+static void fire_ttf_drawLine(FireTtfCell* cells, fire_gfx_size numCells, fire_gfx_int width, FireTtfPoint origin, FireTtfPoint goal) {
     FireTtfPoint delta, crossingIncr, nextCrossing;
-    int dirX, dirY, pixelX, pixelY, numSteps = 0, step;
+    fire_gfx_int dirX, dirY, pixelX, pixelY, numSteps = 0, step;
     double nextDistance, halfDeltaX, prevDistance, xAverage, yDifference;
     long long at;
     FireTtfCell* cell;
@@ -748,7 +749,7 @@ static void fire_ttf_drawLine(FireTtfCell* cells, size_t numCells, int width, Fi
     halfDeltaX = 0.5 * delta.x;
     prevDistance = 0.0;
     for (step = 0; step < numSteps; ++step) {
-        int alongX;
+        fire_gfx_int alongX;
         xAverage = origin.x + (prevDistance + nextDistance) * halfDeltaX;
         yDifference = (nextDistance - prevDistance) * delta.y;
         at = (long long)pixelY * width + pixelX;
@@ -774,19 +775,19 @@ static void fire_ttf_drawLine(FireTtfCell* cells, size_t numCells, int width, Fi
     xAverage -= (double)pixelX;
     cell->area += (1.0 - xAverage) * yDifference;
 }
-static int fire_ttf_renderOutline(FireTtfOutline* outl, const double transform[6], uint8_t* pixels, int width, int height) {
-    size_t numPixels, i, numCurves;
+static fire_gfx_int fire_ttf_renderOutline(FireTtfOutline* outl, const double transform[6], uint8_t* pixels, fire_gfx_int width, fire_gfx_int height) {
+    fire_gfx_size numPixels, i, numCurves;
     FireTtfCell* cells;
     double accum = 0.0;
     if (width <= 0 || height <= 0) return 1;
-    numPixels = (size_t)width * (size_t)height;
-    cells = (FireTtfCell*)calloc(numPixels, sizeof(FireTtfCell));
+    numPixels = (fire_gfx_size)width * (fire_gfx_size)height;
+    cells = (FireTtfCell*)fire_gfx_calloc(numPixels, sizeof(FireTtfCell));
     if (cells == NULL) return 0;
     fire_ttf_transformPoints(outl->points, outl->numPoints, transform);
     fire_ttf_clipPoints(outl, width, height);
     numCurves = outl->numCurves;
     for (i = 0; i < numCurves; ++i)   /* (the tesselation adds lines and points, not curves) */
-        if (!fire_ttf_tesselateCurve(outl->curves[i], outl)) { free(cells); return 0; }
+        if (!fire_ttf_tesselateCurve(outl->curves[i], outl)) { fire_gfx_free(cells); return 0; }
     for (i = 0; i < outl->numLines; i++) fire_ttf_drawLine(cells, numPixels, width, outl->points[outl->lines[i].beg], outl->points[outl->lines[i].end]);
     for (i = 0; i < numPixels; ++i) {
         double value = fabs(accum + cells[i].area);
@@ -795,15 +796,15 @@ static int fire_ttf_renderOutline(FireTtfOutline* outl, const double transform[6
         pixels[i] = (uint8_t)value;
         accum += cells[i].cover;
     }
-    free(cells);
+    fire_gfx_free(cells);
     return 1;
 }
 
 /* Renders the glyph into `pixels` (width * height bytes, coverage 0..255): width and height are those of fire_ttf_gmetrics (the width rounded up to a multiple of 4 is fine).
  * 1: drawn (or the glyph has no outline). */
-static int fire_ttf_render(const FireTtfFont* f, double size, uint32_t glyph, uint8_t* pixels, int width, int height) {
+static fire_gfx_int fire_ttf_render(const FireTtfFont* f, double size, uint32_t glyph, uint8_t* pixels, fire_gfx_int width, fire_gfx_int height) {
     uint32_t outline;
-    int bbox[4], ok;
+    fire_gfx_int bbox[4], ok;
     double transform[6];
     FireTtfOutline outl;
     if (!fire_ttf_outlineOffset(f, glyph, &outline)) return 0;
@@ -815,7 +816,7 @@ static int fire_ttf_render(const FireTtfFont* f, double size, uint32_t glyph, ui
     transform[4] = 0.0 - bbox[0];
     transform[3] = -size / f->unitsPerEm;
     transform[5] = bbox[3] - 0.0;
-    memset(&outl, 0, sizeof outl);
+    fire_gfx_set(&outl, 0, sizeof outl);
     ok = fire_ttf_decodeOutline(f, outline, 0, &outl) && fire_ttf_renderOutline(&outl, transform, pixels, width, height);
     fire_ttf_outlineFree(&outl);
     return ok;
