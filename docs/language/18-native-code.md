@@ -172,7 +172,9 @@ print(40 + 2)           // the virtual machine cannot run C
   `bool` a `bool`, `char` a `uint32_t`, `string` UTF-8 (`const char*`; a returned text is copied), `any` the `Value` itself (`fire_rt.h`), a pointer a `void*`.
   `byte name[]` gives the bytes of the buffer, `uint8_t* name`, and their number as a second parameter `uint32_t name_length`. A result `undefined` (or none)
   is `void`. Other types are an error when compiling; `ref` parameters are not possible (take a pointer).
-- In C a function is called `fire_inl_<Name>` (one inline function can call another: `fire_inl_Add(a, 1)`). The runtime (`fire_rt.h`) and the C library
+- In a class, `inline c` declares a **static method** (`[public|private] [static] inline c int Add(...) { ... }`; C has no `this`). It is called like
+  any static method (`M.Add(1, 2)`); the virtual machine gets its alternative as a normal method in `#if native ... #else ... #endif`.
+- In C a function is called `fire_inl_<Name>`, a method `fire_inl_<Class>_<Name>` (one inline function can call another: `fire_inl_Add(a, 1)`). The runtime (`fire_rt.h`) and the C library
   are included.
 - `#if gcc`, `#if clang`, `#if msvc`, `#if tcc`, `#if watcom`, ...: a native build knows the kind of its toolchain as a symbol, so a program can choose the
   C (or the assembler) for its compiler. A message of the C compiler names the line in the fire source.

@@ -134,7 +134,7 @@ namespace fire.Compiler
     /// the lines are C - braces in C strings, character literals and comments do not count (the same rules as Lexer.ReadInlineCode).</summary>
     public sealed class InlineCScan
     {
-        private static readonly Regex Start = new(@"^\s*inline\s+c\s+[A-Za-z_]", RegexOptions.Compiled);
+        private static readonly Regex Start = new(@"^\s*(?:(?:public|private|protected|static)\s+)*inline\s+c\s+[A-Za-z_]", RegexOptions.Compiled);
         private bool _armed, _blockComment;
         private int _parens, _depth, _waitLines;
 

@@ -696,8 +696,12 @@ namespace fire.Compiler
                     statements.Add(ParseStatement());
             }
             foreach (var ed in _enumDecls) statements.AddRange(EnumHelperClass(ed));
+            statements.AddRange(_hoistedInlineC);
             return statements;
         }
+
+        /// <summary>The C functions of `inline c` methods of classes (ParseInlineCMethod): declared at the top level, where `extern` functions are.</summary>
+        private readonly List<Stmt> _hoistedInlineC = new();
 
         /// <summary>The enums of this source: each gets a hidden class with `Name(value)`, `Parse(text)` and `IsDefined(value)` (see EnumHelperClass).</summary>
         private readonly List<EnumDecl> _enumDecls = new();
@@ -1688,6 +1692,26 @@ namespace fire.Compiler
             var parms = ParseParamList();
             var body = Expect(TokenType.InlineCode, "Expected the C body '{ ... }' of the 'inline c' function");
             return new ExternDecl(_sourceIndex, line, returnType, name, parms, null, (string)body.LiteralValue!, body.Line);
+        }
+
+        /// <summary>`[access] [static] inline c [ReturnType] Name(params) { C }` in a class (ROADMAP 13.2): a static method (C has no `this`) whose body calls
+        /// the C function `<Class>_<Name>` - declared at the top level like an `inline c` function there (C name `fire_inl_<Class>_<Name>`). The method takes part in
+        /// everything a static method does (access, overloading by type is not possible: one name, one C function); in the VM its call is the error of an `inline c`
+        /// function, the alternative goes in `#if native ... #else`.</summary>
+        private Stmt ParseInlineCMethod(AccessModifier access)
+        {
+            int line = Peek().Line;
+            if (_currentClassName == null) throw Error("An 'inline c' method belongs to a class", Peek());
+            var decl = (ExternDecl)ParseInlineCDecl();
+            string cName = _currentClassName.Replace('.', '_') + "_" + decl.Name;
+            _hoistedInlineC.Add(decl with { Name = cName, DisplayName = _currentClassName + "." + decl.Name });
+            var args = decl.Params.Select(p => (Expr)new IdentifierExpr(line, p.Name)).ToList();
+            var call = new CallExpr(line, new IdentifierExpr(line, cName), args);
+            bool none = decl.ReturnType == null || decl.ReturnType is { BaseName: "undefined", PointerDepth: 0 };
+            Stmt bodyStmt = none ? new ExprStmt(_sourceIndex, line, call) : new ReturnStmt(_sourceIndex, line, call);
+            var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { bodyStmt });
+            // (an array parameter `byte data[]`: the method declares it as written)
+            return new MethodDecl(_sourceIndex, line, decl.ReturnType, decl.Name, decl.Params, body, null, access, IsStatic: true);
         }
 
         /// <summary>Preprocessor directives, currently `#extern "libName"` and
@@ -2995,6 +3019,12 @@ namespace fire.Compiler
             // notation ('public static readonly'), no other
             // orders specially supported (simplicity).
             bool isStatic = Match(TokenType.Static);
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "inline" && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "c" && !PeekAt(1).NewlineBefore
+                && PeekAt(2).Type != TokenType.Assign)
+            {
+                if (isOverride) throw Error("An 'inline c' method is static - it cannot be 'override'", overrideToken!.Value);
+                return new List<Stmt> { ParseInlineCMethod(access) };
+            }
             if (isOverride && isStatic) throw Error("A static member belongs to its class and is not inherited - it cannot be 'override'", overrideToken!.Value);
             if (!isOverride && Check(TokenType.Override))
                 throw Error("'static' and 'override' do not go together: a static member belongs to its class and is not inherited", Peek());

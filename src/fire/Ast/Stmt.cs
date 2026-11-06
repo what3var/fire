@@ -356,7 +356,7 @@ namespace fire.Ast
     /// `inline c [ReturnType] Name(params) { C }` (ROADMAP 13.2) is an ExternDecl with a body: <paramref name="InlineC"/> is the C text between the braces (unchanged),
     /// <paramref name="InlineLine"/> the line of its `{` - the native generator puts it into the program, the VM cannot run it.</summary>
     public sealed record ExternDecl(
-        int Source, int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName, string? InlineC = null, int InlineLine = 0) : Stmt(Source, Line);
+        int Source, int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName, string? InlineC = null, int InlineLine = 0, string? DisplayName = null) : Stmt(Source, Line);
 
     /// <summary>`unsafe { ... }` - only inside such a block are
     /// dereference ('*expression') and address-of ('&expression') allowed.</summary>

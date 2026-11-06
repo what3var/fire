@@ -25,5 +25,7 @@ namespace fire.Bytecode
         public IReadOnlyList<string>? ParamNames { get; init; }
         public int InlineSource { get; init; }
         public int InlineLine { get; init; }
+        /// <summary>How the program calls it (`M.Add` for an `inline c` method of a class; null: by its name).</summary>
+        public string? DisplayName { get; init; }
     }
 }

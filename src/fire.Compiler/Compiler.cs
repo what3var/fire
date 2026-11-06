@@ -620,6 +620,7 @@ namespace fire.Compiler
                     ParamNames = ed.InlineC != null ? ed.Params.Select(p => p.Name).ToList() : null,
                     InlineSource = ed.Source,
                     InlineLine = ed.InlineLine,
+                    DisplayName = ed.DisplayName,
                 };
             }
 

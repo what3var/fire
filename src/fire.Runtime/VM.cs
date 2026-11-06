@@ -4314,7 +4314,7 @@ namespace fire.Runtime
                     // `inline c` (ROADMAP 13.2): its body is C - only a native build has it (a host may still register the name)
                     if (_externSignatures.TryGetValue(externName, out var inlineSig) && inlineSig.InlineC != null && !_externs.TryGet(externName, out _))
                         throw new InvalidOperationException(
-                            $"'{externName}' is an inline C function: it runs only in a native build " +
+                            $"'{inlineSig.DisplayName ?? externName}' is an inline C function: it runs only in a native build " +
                             "(give the virtual machine an alternative with '#if native ... #else ... #endif').");
 
                     var (nativeArgs, cleanups) = MarshalArgsOut(scriptArgs);

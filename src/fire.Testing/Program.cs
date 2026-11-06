@@ -20243,6 +20243,25 @@ else
             }
             """)).ToArray();
 
+    // inline c as static methods of a class (C name fire_inl_<Class>_<Name>)
+    natCases = natCases.Append(("inline c: statische Methoden einer Klasse (public/private/static, byte[], undefined), Aufruf aus einer fire-Methode", """
+            class M {
+              inline c int Add(int a, int b) { return a + b; }
+              public static inline c float Half(float x) { return x / 2; }
+              private static inline c int Secret(int x) { return x * 7; }
+              static int UseSecret(int x) { return M.Secret(x) }
+              inline c undefined Nothing(byte data[]) { data[0] = (uint8_t)data_length; }
+              static string Hi() { return "hi" }
+            }
+            print(M.Hi())
+            #if native
+            var b = new byte[3]
+            M.Nothing(b)
+            print(M.Add(2, 3) + " " + M.Half(5.0) + " " + M.UseSecret(6) + " " + b[0])
+            #else
+            print("5 2.5 42 3")
+            #endif
+            """)).ToArray();
     // inline c (ROADMAP 13.2): functions with a C body - natively the C, in the VM the fire branch of `#if native` gives the same lines
     natCases = natCases.Append(("inline c: Zahlen, bool, char, string, byte[] (Bytes + Laenge), any, undefined, int[16], #if im C-Rumpf, Klammern in Strings und Kommentaren", """
             inline c int Add(int a, int b) { return a + b; }
@@ -20281,6 +20300,8 @@ else
     {
         // in the VM a call is an error (a catchable one); the `#if` of a C body is C's (the preprocessor of fire leaves it); the types are checked
         string vmInline = vmOutput("inline c int Add(int a, int b) {\n#if defined(X)\n  return 0;\n#endif\n  return a + b; }\nprint(1)\ntry { print(Add(1, 2)) } catch (e) { print(e.message) }\nvar inline = 3\nprint(inline)");
+        string vmInlineMethod = vmOutput("class M {\n  static inline c int Add(int a, int b) { return a + b; }\n}\ntry { print(M.Add(1, 2)) } catch (e) { print(e.message) }");
+        CheckNat("inline c als Methode in der VM: der Aufruf ist ein Fehler, der die Methode nennt (M.Add)", vmInlineMethod.StartsWith("'M.Add' is an inline C function"), vmInlineMethod);
         CheckNat("inline c in der VM: der Aufruf ist ein Fehler, #if im C-Rumpf gehoert C, 'inline' bleibt ein Name",
             vmInline.StartsWith("1\n'Add' is an inline C function: it runs only in a native build") && vmInline.EndsWith("\n3\n"), vmInline);
         string InlineError(string source) { try { new Linker().CompileAndLink(new[] { source }); return ""; } catch (Exception ex) { return ex.Message; } }

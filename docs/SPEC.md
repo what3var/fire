@@ -1296,7 +1296,8 @@ into the program as `static <C type> fire_inl_<Name>(...)` with a `#line` to the
 the arguments converted by their declared types: `int` -> `FireInt` (`int[N]`: `intN_t`), `float` -> `Real`, `bool`, `char` -> `uint32_t`,
 `string` -> UTF-8, `byte name[]` -> `uint8_t* name` + `uint32_t name_length`, `any` -> `Value`, pointers -> `void*`; the result likewise
 (`undefined`: none). The VM cannot run it: a call throws (an alternative goes in `#if native ... #else`). A native build adds the kind of its toolchain
-as a symbol of `#if` (`gcc`, `clang`, `msvc`, `tcc`, `watcom`, ...).
+as a symbol of `#if` (`gcc`, `clang`, `msvc`, `tcc`, `watcom`, ...). In a class, `[access] [static] inline c ...` is a static method whose body calls
+the C function `<Class>_<Name>` (C: `fire_inl_<Class>_<Name>`); the error of the VM names it `Class.Name`.
 
 ### 8.1.2 `#include "fileName"`
 

@@ -178,7 +178,8 @@ namespace fire.Compiler
             if (tokens.Count < 2 || t.Type != TokenType.Identifier || t.Lexeme != "c" || t.NewlineBefore) return;
             var inl = tokens[^2];
             if (inl.Type != TokenType.Identifier || inl.Lexeme != "inline") return;
-            if (!(inl.NewlineBefore || tokens.Count == 2 || tokens[^3].Type is TokenType.Semicolon or TokenType.RBrace or TokenType.RBracket)) return;
+            if (!(inl.NewlineBefore || tokens.Count == 2 || tokens[^3].Type is TokenType.Semicolon or TokenType.RBrace or TokenType.RBracket or TokenType.LBrace
+                  or TokenType.Static or TokenType.Public or TokenType.Private or TokenType.Protected)) return;   // (a method of a class: `public static inline c ...`)
             _inlineC = true;
             _inlineParens = 0;
         }
