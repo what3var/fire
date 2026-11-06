@@ -3021,42 +3021,6 @@ namespace fire.Compiler
             for (int part = 0; part < 4; part++) _chunk.EmitU16((int)((mask >> (16 * part)) & 0xFFFF));
         }
 
-        /// <summary>Compiles `new X(...)` or `flat x`/`copy x` for the case that the future OWNER (an object) already
-        /// lies on the stack (SPEC 2.1/2.4: assigned directly to a field). Returns false if `value` is neither of the two
-        /// (then nothing was emitted).</summary>
-        private static bool IsOwnedCreation(Expr value) =>
-            value is NewExpr or NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
-
-        private bool TryCompileOwnedCreation(Expr value)
-        {
-            if (value is NewExpr ne)
-            {
-                ulong mask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
-                EmitTypeArgs(ne);
-                EmitCopyArgsPrefix(mask);
-                EmitArgNames(ne.ArgNames);
-                _chunk.EmitOp(OpCode.NewObjectOwned);
-                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
-                _chunk.EmitByte((byte)ne.Args.Count);
-                return true;
-            }
-            if (value is NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr)
-            {
-                // [owner] -> [owner, array] -> [array]: an array/a buffer assigned directly to a field belongs to the object (SPEC 2.1)
-                CompileExpr(value);
-                _chunk.EmitOp(OpCode.OwnValue);
-                return true;
-            }
-            if (value is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyExpr)
-            {
-                CompileExpr(copyExpr.Operand);
-                _chunk.EmitOp(OpCode.CopyValueOwned);
-                _chunk.EmitByte(copyExpr.Op == UnaryOp.DeepCopy ? (byte)1 : (byte)0);
-                return true;
-            }
-            return false;
-        }
-
         /// <summary>`f(1, size: 2)`: the names of the named arguments for the call that follows (OpCode.ArgNames; nothing without).</summary>
         private void EmitArgNames(IReadOnlyList<string?>? names)
         {
