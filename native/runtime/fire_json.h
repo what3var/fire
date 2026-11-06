@@ -351,7 +351,7 @@ typedef struct JsPending { Value v; const void* container; uint8_t containerKind
 /* Does the container (an object or an array) own the item? */
 static bool jsOwns(const void* container, uint8_t containerKind, const Owned* item) {
     if (!item->owner) return false;
-    if (containerKind == K_Class) return item->owner == &((Obj*)container)->owned;
+    if (containerKind == K_Class) return objOwns((const Obj*)container, item);
     if (containerKind == K_Array) { const Arr* a = (const Arr*)container; return a->parts && item->owner == a->parts; }
     return false;
 }
@@ -874,7 +874,7 @@ static Value jsReadFail(JsReader* r, const char* text) { jsFail(r->J, text, "Jso
 /* The list that owns what is made inside a container: an object's own list, an array's parts. */
 static OwnList* jsOwnerIn(Value container) {
     Arr* a;
-    if (container.kind == K_Class) return &objAt(container)->owned;
+    if (container.kind == K_Class) return objOwned(objAt(container));
     a = arrOf(container);
     if (!a->parts) a->parts = newPartsList(&a->h);
     return a->parts;
@@ -995,7 +995,7 @@ static Value jsBuildList(JsReader* r, JsNode* a, const char* type, OwnList* owne
     if (element[0]) objAt(list)->targs = jsTypeArgsFor(r->J, &element, 1);
     if (hasId) jsIdSet(r, id, list);
     n = a->nitems;
-    items = allocArr((uint32_t)(n > 8 ? n : 8), &objAt(list)->owned);
+    items = allocArr((uint32_t)(n > 8 ? n : 8), objOwned(objAt(list)));
     itemsV = ArrV(items);
     for (i = 0; i < n && !r->J->failed; i++) {
         JsSlot s;
@@ -1142,7 +1142,7 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         for (i = 0; i < c->njson && !field; i++) if (jsSameIgnoreCase(key, c->fields[i].name)) field = &c->fields[i];
         if (!field) continue;   /* (a member the class does not have: left out) */
         s.container = obj; s.index = field->slot; s.has = true;
-        v = jsBuild(r, member->node, jsSubstitute(J, field->type, o2, c), &o2->owned, jsCat3(J, path, ".", key), field->unit, s);
+        v = jsBuild(r, member->node, jsSubstitute(J, field->type, o2, c), objOwned(o2), jsCat3(J, path, ".", key), field->unit, s);
         jsStore(obj, field->slot, v);
     }
     if (c->flags & JSON_FLAG_HOOK) {
@@ -1168,7 +1168,7 @@ static Value jsBuildJsonObject(JsReader* r, JsNode* o, OwnList* owner, const cha
     members = (JsMember**)jsAlloc(J, (o->nmembers ? o->nmembers : 1) * sizeof(JsMember*));
     for (i = 0; i < o->nmembers; i++) if (r->plain || o->members[i].klen == 0 || o->members[i].key[0] != '$') members[n++] = &o->members[i];
     size = (uint32_t)(n > 4 ? n : 4);
-    own = &objAt(obj)->owned;
+    own = objOwned(objAt(obj));
     keys = ArrV(allocArr(size, own));
     values = ArrV(allocArr(size, own));
     for (i = 0; i < n && !J->failed; i++) {

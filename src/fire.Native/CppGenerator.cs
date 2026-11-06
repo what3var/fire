@@ -3507,7 +3507,7 @@ namespace fire.Native
                 string args = Args(first, argc);
                 if (newClass != null)
                 {
-                    string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
+                    string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
                     string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
                     _pendingNewTArgs = null;
                     E($"{{ Value o = newObject({ClassIdExpr(newClass)}, {newClass.Fields.Count}, {ownerExpr}); {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{selector.Name}(o{args}, &{OwnerList()}); {S(slot)} = o; }}");
@@ -4607,7 +4607,7 @@ namespace fire.Native
                     AccessCheck(cls.Rc, ctor.Access ?? AccessModifier.Public, $"Constructor of '{cls.Rc.Name}' is {DescribeAccess(ctor.Access ?? AccessModifier.Public)} and cannot be called from here.");
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     int slot = d - argc - (owned ? 1 : 0);
-                    string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
+                    string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = newNames != null ? NamedCallArgsOrFail(ctor, d - argc, argc, newNames, mask, "o", "new " + cls.Rc.Name) : DefaultArgs(ctor, argc, "o", "&" + OwnerList());

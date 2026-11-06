@@ -2335,13 +2335,26 @@ typedef struct Obj {
     Owned h;
     uint32_t cls;      /* class id (assigned by the generator) */
     uint32_t nfields;
-    OwnList owned;     /* what this object owns */
+    OwnList* owned;    /* what this object owns: made when it first owns something (objOwned; most objects never do), NULL until then */
     TArgs targs;       /* the type arguments it was created with (null: none known) */
 #ifdef __cplusplus
     Value* fields() { return (Value*)((char*)this + FIRE_HDR(Obj)); }
 #endif
 } Obj;
 FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
+/* The list of what the object owns - made now if it has none yet (8 % of the objects of the test programs own something: 40 bytes saved on the others). */
+FIRE_FN OwnList* objOwned(Obj* o) {
+    if (FIRE_UNLIKELY(!o->owned)) {
+        o->owned = (OwnList*)malloc(sizeof(OwnList));
+        if (FIRE_UNLIKELY(!o->owned)) fatal("Out of memory.");
+        ownListInit(o->owned, 0, &o->h);
+    }
+    return o->owned;
+}
+/* Does the object own `x` (directly)? */
+FIRE_FN bool objOwns(const Obj* o, const Owned* x) { return o->owned != NULL && x->owner == o->owned; }
+/* The first value the object owns (NULL: none). */
+FIRE_FN Owned* objOwnedHead(const Obj* o) { return o->owned ? o->owned->head : NULL; }
 
 /* A class of the program as the runtime sees it (ROADMAP 9, A0): the generated program fills a table of these (one row per class id, `g_classDescs`) instead of a
  * function with a switch over the class ids for each question. Its name, the number of fields, the field `message` (an exception that nothing catches) and the
@@ -2542,7 +2555,7 @@ FIRE_FN Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
     slotAcquire(&o->h);   /* the handle: a destroyed object is recognized by it (SPEC 2.3, 2.5) */
     o->cls = cls;
     o->h.flags = 0;
-    ownListInit(&o->owned, 0, &o->h);
+    o->owned = NULL;
     o->nfields = fieldCount;
     o->targs = NULL;
     f = objFields(o);
@@ -2576,6 +2589,7 @@ FIRE_FN void batchEnd(void) {
         for (i = 0; i < obj->nfields; i++) release(f[i]);
         slotRelease(&obj->h);   /* from now on a Value of this object is dead: using it is a DestroyedException */
 #ifndef FIRE_KEEP_DESTROYED
+        free(obj->owned);
         free(obj);
 #endif
         o = next;
@@ -2595,7 +2609,7 @@ FIRE_FN void destroy(Obj* o) {
         runDestructors(o);
         g_unwind = saved;
     } else runDestructors(o);
-    destroyList(&o->owned);
+    if (o->owned) destroyList(o->owned);
 #ifdef FIRE_REFLECTION
     if (FIRE_UNLIKELY(o->h.flags & 2)) probeFree(o);
 #endif
@@ -5556,7 +5570,7 @@ FIRE_FN void takeToObject(Owned* o, Obj* target) {
         }
     }
     if (o->owner) ownUnlink(o);
-    ownLink(&target->owned, o);
+    ownLink(objOwned(target), o);
 }
 
 /* `object is from owner` / `object is under owner` (SPEC 6): the owner of the object is that object - directly, or anywhere up the chain. */
@@ -5672,7 +5686,7 @@ FIRE_FN void accKeep(Value self, Value obj, Value v, OwnList* const* lists, int 
     o = accMine(v, lists, n, mine);
     if (!o || o == &asObj(self)->h) return;
     takeToObject(o, asObj(self));
-    if (!track || o->owner != &asObj(self)->owned) return;
+    if (!track || !objOwns(asObj(self), o)) return;
     if (g_acc.top == g_acc.cap) {
         g_acc.cap = g_acc.cap ? g_acc.cap * 2 : 16;
         g_acc.items = (AccEntry*)realloc(g_acc.items, g_acc.cap * sizeof(AccEntry));
@@ -5688,7 +5702,7 @@ FIRE_FN void accKeep(Value self, Value obj, Value v, OwnList* const* lists, int 
 FIRE_FN void accReturn(Value r, Value self, uint32_t base, OwnList* to, bool done) {
     Owned* o = ownedOf(r);
     uint32_t i;
-    if (o && self.kind == K_Class && leafAlive(self) && o->owner == &asObj(self)->owned)
+    if (o && self.kind == K_Class && leafAlive(self) && objOwns(asObj(self), o))
         for (i = base; i < g_acc.top; i++)
             if (g_acc.items[i].o == o && g_acc.items[i].slot == o->slot && g_acc.items[i].gen == o->gen) { ownUnlink(o); ownLink(to, o); break; }
     if (done && g_acc.top > base) g_acc.top = base;
@@ -5765,7 +5779,7 @@ FIRE_FN void ownedStackFree(OwnedStack* s) { free(s->items); s->items = NULL; s-
 /* The list that what `node` points to joins when it moves: the object that points to it - for an array the object that owns the array, else the array itself
  * (an array can own). */
 FIRE_FN OwnList* carrierOf(Owned* node) {
-    if (node->okind == O_Object) return &((Obj*)node)->owned;
+    if (node->okind == O_Object) return objOwned((Obj*)node);
     if (node->okind == O_Array) {
         Arr* a;
         if (node->owner && node->owner->holder) return node->owner;
@@ -6017,7 +6031,7 @@ FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList
     /* the result of a call that was passed on (`f(g())`, `f(take x)`) belongs to the called function: natively it travels in the argument list of the call,
      * which the caller made one call level up */
     if (!mine && o->owner && !o->owner->holder && o->owner->mark == AL_MARK && o->owner->depth + 1 == g_callDepth) mine = true;
-    if (!mine && thisValue.kind == K_Class && leafAlive(thisValue)) mine = o->owner == &objAt(thisValue)->owned;
+    if (!mine && thisValue.kind == K_Class && leafAlive(thisValue)) mine = objOwns(objAt(thisValue), o);
     if (!mine || (o->flags & 1)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
     return true;
@@ -6221,7 +6235,7 @@ FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
     if (done && done->kind == K_Class) return *done;
     if (o->h.owner && o->h.owner->holder && copyMapFind(&c->objects, o->h.owner->holder)) {
         Value holderCopy = copierMaterialize(c, (Obj*)o->h.owner->holder);
-        target = &asObj(holderCopy)->owned;
+        target = objOwned(asObj(holderCopy));
     }
     copy = newObject(o->cls, o->nfields, target);
     asObj(copy)->targs = o->targs;
@@ -6324,7 +6338,7 @@ FIRE_FN Value copyOwned(Value target, Value v, bool deep) {
         destroyList(&scratch);
         return r;
     }
-    return copyValue(v, deep, &t->owned);
+    return copyValue(v, deep, objOwned(t));
 }
 
 /* A copy-prefixed argument (`f(copy x)`): the copy travels in the argument list of the call and dies with it unless the callee keeps it. */
@@ -7008,7 +7022,7 @@ FIRE_FN void markOwnedShared(Owned* c) {
         uint32_t i;
         if (o->h.flags & F_SHARED) return;
         o->h.flags |= F_SHARED;
-        for (k = o->owned.head; k; k = k->next) markOwnedShared(k);
+        for (k = objOwnedHead(o); k; k = k->next) markOwnedShared(k);
         for (i = 0; i < o->nfields; i++) if (objFields(o)[i].kind == K_Array && ownedOf(objFields(o)[i])) markArrayShared(arrOf(objFields(o)[i]));
     } else if (c->okind == O_Array) markArrayShared((Arr*)c);
 }
@@ -7299,7 +7313,7 @@ FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* 
                 pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
                 pending[pn++] = objFields(o)[i];
             }
-            for (k = o->owned.head; k; k = k->next) {
+            for (k = objOwnedHead(o); k; k = k->next) {
                 pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
                 pending[pn++] = ownedValue(k);
             }
@@ -7407,14 +7421,14 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
     if (srcObj) {
         DeepCopier c;
         Value r;
-        copierInit(&c, &container->owned);
+        copierInit(&c, objOwned(container));
         r = copierRun(&c, src);
         copierFree(&c);
         return r;
     }
     if (tgtObj) {
         Obj* t = asObj(tgt);
-        if (t->h.owner == &container->owned) { ownUnlink(&t->h); destroy(t); }
+        if (objOwns(container, &t->h)) { ownUnlink(&t->h); destroy(t); }
         return src;
     }
     if (src.kind == K_Array) {
@@ -7425,7 +7439,7 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
         if (!ownedOf(src)) return destroyedError(src);
         sa = arrOf(src);
         oldArr = (tgt.kind == K_Array && ownedOf(tgt)) ? arrOf(tgt) : NULL;
-        na = allocArr(sa->length, &container->owned);
+        na = allocArr(sa->length, objOwned(container));
         result = ArrV(na);
         if (!arrCopyTyped(na, sa))   /* (a copy of a typed array is typed; a packed one copies its numbers) */
         for (i = 0; i < sa->length; i++) {
@@ -7433,7 +7447,7 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
             arrItems(na)[i] = syncSingle(arrItems(sa)[i], oldElem, container, flat);
             retain(arrItems(na)[i]);
         }
-        if (oldArr && oldArr->h.owner == &container->owned) destroyLeaf(&oldArr->h);
+        if (oldArr && objOwns(container, &oldArr->h)) destroyLeaf(&oldArr->h);
         return result;
     }
     if (src.kind == K_Buffer) {
@@ -7441,8 +7455,8 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
         Buf* nb;
         if (!ownedOf(src)) return destroyedError(src);
         sb = bufOf(src);
-        nb = bufCopy(sb, &container->owned);
-        if (tgt.kind == K_Buffer && ownedOf(tgt) && bufOf(tgt)->h.owner == &container->owned) destroyLeaf(&bufOf(tgt)->h);
+        nb = bufCopy(sb, objOwned(container));
+        if (tgt.kind == K_Buffer && ownedOf(tgt) && objOwns(container, &bufOf(tgt)->h)) destroyLeaf(&bufOf(tgt)->h);
         return BufV(nb);
     }
     if (src.kind == K_Lambda || isPtr(src)) takingViolation("'sync' does not support lambda or pointer values.");
