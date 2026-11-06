@@ -459,7 +459,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    * **Umgesetzt: schmaler Objektkopf** (Branch `targets`, Entscheidung des Benutzers: erst der Kopf, dann neu messen). Die Besitzliste eines Objekts entsteht erst,
      wenn es etwas besitzt (`objOwned`; `objOwns`/`objOwnedHead` lesen): der Kopf hat 56 statt 88 Byte. `moveReachable` legt die Liste erst an, wenn wirklich etwas
      umzieht. **Neu gemessen:** nur 3,6 % der Objekte bekommen eine Liste; die Köpfe der Objekte kosten 3,87 statt 5,93 MB - **7,9 % weniger Heap**. Die getrennten
-     Köpfe brächten auf demselben Stand weitere 8,6 % (12/16) bis 12,9 % (10/16): offen, zur Entscheidung.
+     Köpfe brächten auf demselben Stand weitere 8,6 % (12/16) bis 12,9 % (10/16). **Entscheidung des Benutzers:** die getrennten Köpfe höchstens später.
 1c. **Rohdaten ohne Einheit: `byte` und `word`** (Entscheidung des Benutzers). `byte` und `word` sind Datentypen für rohe Daten **ohne Einheit**; Einheiten
    bleiben bei `int`, `int[N]`, `float` und `float[N]` (dort ändert sich nichts). Ab hier unterscheiden sich die beiden Formate.
    * **Umgesetzt:** Byte-Argumente der Natives sicher - lesende Natives nehmen einen Puffer oder ein Array aus Zahlen 0..255 (auch ein typisiertes; kopiert, bis der
