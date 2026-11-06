@@ -4,7 +4,7 @@
  * A window that shows a framebuffer is the `windows` bridge.
  *
  * C99, part of the generated program (after the runtime) when the program imports "graphics"; in the virtual machine these natives are C#. Image files are read through the file
- * system of the platform (FIRE_PLATFORM_FS_C_HEADER: fire_fs_*, restricted by FIRE_IO_POLICY like the IO bridge). Differences to the VM: an unknown or destroyed resource id ends
+ * system of the platform (fire_fs_* of the io package - "uses": [ "io" ] -, restricted by FIRE_IO_POLICY like the IO bridge). Differences to the VM: an unknown or destroyed resource id ends
  * the program with an error (the VM throws a .NET exception); the renderer uses the 8x14 font. The message of the last failed function is g_gfxError (per thread). */
 #ifndef FIRE_BRIDGE_GRAPHICS_H
 #define FIRE_BRIDGE_GRAPHICS_H
@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_FS_C_HEADER
+#include "fire_fs_c.h"   /* (the file system of io: "uses": [ "io" ] in graphics.fireproj) */
 #include "fire_gfx.h"
 #include "fire_gfx_text.h"
 #include "fire_gfx_images.h"

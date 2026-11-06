@@ -1,7 +1,8 @@
-/* fire native platform layer, file system part in C for a board without a file system: every file operation fails with "not supported" (the console - IO.Stdio -
+/* fire io package: the file system in C for a board without a file system: every file operation fails with "not supported" (the console - IO.Stdio -
  * and memory streams still work). Select it with FIRE_NO_FS in the target configuration (`defines`). The interface: fire_fs_c.h. */
 #ifndef FIRE_FS_NONE_H
 #define FIRE_FS_NONE_H
+#if !defined(FIRE_FS_BOARD_H) || defined(FIRE_NO_FS)   /* (a board without FIRE_NO_FS has fire_fs_posix.h) */
 
 #include "fire_fs_c.h"
 
@@ -32,4 +33,5 @@ static char* fire_fs_currentDir(void) { return fire_fs_dup("/"); }
 static char* fire_fs_tempDir(void) { return fire_fs_dup("/tmp/"); }
 static char* fire_fs_fullPath(const char* path) { return fire_fs_dup(path); }
 
+#endif
 #endif

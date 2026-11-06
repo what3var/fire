@@ -1,4 +1,4 @@
-/* fire native platform layer, file system part in C on DOS (ROADMAP 13.3: dos16, dos32) - the C library of Open Watcom (stat, opendir, mkdir, _fullpath). The
+/* fire io package: the file system in C on DOS (ROADMAP 13.3: dos16, dos32) - the C library of Open Watcom (stat, opendir, mkdir, _fullpath). The
  * interface: fire_fs_c.h. Paths as DOS has them: "C:\FOLDER\FILE.TXT" ("/" separates too), names in 8.3, upper or lower case alike; what comes back from the
  * system (full paths, the current directory, listings) is in upper case. Long names (LFN) go through as far as the DOS below has them. */
 #ifndef FIRE_FS_DOS_H

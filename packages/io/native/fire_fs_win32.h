@@ -1,4 +1,4 @@
-/* fire native platform layer, file system part in C for Windows: the wide functions of Win32 (paths are UTF-8 for the bridge, UTF-16 for the system), C stdio for
+/* fire io package: the file system in C for Windows: the wide functions of Win32 (paths are UTF-8 for the bridge, UTF-16 for the system), C stdio for
  * the open files (_wfopen). The interface: fire_fs_c.h. */
 #ifndef FIRE_FS_WIN32_H
 #define FIRE_FS_WIN32_H

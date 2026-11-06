@@ -1471,7 +1471,7 @@ namespace fire.Native
             sb.AppendLine("#endif");
 
             // The natives in C of the packages ("language": "c") and the bridges of graphics and windows: part of this file, after the runtime - a C compiler is enough
-            // (TinyCC, a board without C++). The platform layers in C for them (FIRE_PLATFORM_FS_C_HEADER, ...).
+            // (TinyCC, a board without C++). The platform layers in C for them (FIRE_PLATFORM_NET_C_HEADER, ...; the file system comes with the io package).
             if (_usesGraphics || _packageImports.Any(p => p.Import.Import.Native is { IsC: true }))
                 foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) sb.AppendLine(line);
             // (linkage "static": the natives of an import that is a library module live in the file of that module)
@@ -2735,7 +2735,7 @@ namespace fire.Native
         }
 
         /// <summary>The parts of the platform layer in C that the packages in C include (`#include FIRE_PLATFORM_NET_C_HEADER`): the file system (io), the sockets (net), TLS (tls), the devices (dev, gpio, i2c, spi, usb, wifi), sound (audio), the window (display). (The packages of fire's own bring their platform parts themselves: console, machine, dos, xms - ROADMAP 13.3b.)</summary>
-        public static readonly string[] CPlatformLayers = { "fs", "net", "tls", "dev", "gpio", "i2c", "spi", "usb", "wifi", "audio", "display" };
+        public static readonly string[] CPlatformLayers = { "net", "tls", "dev", "gpio", "i2c", "spi", "usb", "wifi", "audio", "display" };
 
         /// <summary>`#define FIRE_PLATFORM_<PART>_C_HEADER "platform/<platform>/fire_<part>.h"` for every part of <see cref="CPlatformLayers"/>.</summary>
         public static IEnumerable<string> CPlatformHeaderDefines(string platform) =>

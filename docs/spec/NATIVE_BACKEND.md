@@ -519,11 +519,11 @@ Betriebssystem-Header direkt. **`time`** (`fire_bridge_time.hpp`): `Sleep`, `Dat
 * Abweichung: `DateTime.Parse` liest eine Teilmenge der .NET-Formate (ISO-Datum und -Zeit mit `Z`/`+hh:mm`, `yyyy-MM`, `M/d/yyyy`, Monatsnamen (auch `March 2024`), `3:45 PM`, `GMT`); sonst `undefined` bzw. `TimeException`.
 
 **`io`** (`fire_bridge_io.h`, C - auch mit TinyCC): Streams (Datei, Speicher, Konsole), Dateien, Verzeichnisse, Pfade, UTF-8 (der Decoder ersetzt ungültige Folgen wie .NET). Die
-Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread: `g_ioError` in den Thread-Variablen) sind in der Brücke, das Dateisystem kommt aus dem Plattformpaket:
-`platform/<name>/fire_fs.h` (der Generator setzt `FIRE_PLATFORM_FS_C_HEADER`) mit `fire_fs_open/tell/seek/truncate/fileSize/fileTime/removeFile/copyFile/moveFile/makeDirs/removeDir/list/
-fullPath/...` (die Schnittstelle und das Gemeinsame: `std/fire_fs_c.h`). Mitgeliefert: `std/fire_fs_posix.h` (POSIX-Aufrufe; für `posix`, `wasm` und - mit `FIRE_FS_ROOT` für relative Pfade und
-32-Bit-Positionen - `esp32` und `freertos`: SPIFFS/FAT/LittleFS über das virtuelle Dateisystem von ESP-IDF), `std/fire_fs_win32.h` (die Wide-API von Windows) und `std/fire_fs_none.h`
-(`FIRE_NO_FS`: ein Board ohne Dateisystem - Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein eigenes Paket liefert eine eigene `fire_fs.h`. (`graphics` liest Bilder und
+Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread: `g_ioError` in den Thread-Variablen) sind in der Brücke, das Dateisystem bringt das Paket selbst mit
+(`platformSources` von `io.fireproj`, je Plattform eine Datei in `packages/io/native/`): `fire_fs_open/tell/seek/truncate/fileSize/fileTime/removeFile/copyFile/moveFile/makeDirs/removeDir/list/
+fullPath/...` (die Schnittstelle und das Gemeinsame: `fire_fs_c.h`). Mitgeliefert: `fire_fs_posix.h` (POSIX-Aufrufe; für `posix`, `wasm` und - über `fire_fs_board.h` mit `FIRE_FS_ROOT` für relative Pfade und
+32-Bit-Positionen - `esp32` und `freertos`: SPIFFS/FAT/LittleFS über das virtuelle Dateisystem von ESP-IDF), `fire_fs_win32.h` (die Wide-API von Windows), `fire_fs_dos.h` und `fire_fs_none.h`
+(`default`, und auf einem Board mit `FIRE_NO_FS`: Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein neues System ist eine neue Datei im Paket. (`graphics` liest Bilder und
 Systemschriften über dieselbe Schicht; eine C++-Schicht für Dateien gibt es nicht mehr.)
 Die Richtlinie des Hosts (`IoPolicy`) ist ein Übersetzungsschalter: `FIRE_IO_POLICY(vollerPfad, zugriff, grund, größe)` (eine Funktion `int(const char*, int, char*, size_t)`, 1 erlaubt; vor den
 Includes in der Zielkonfiguration), Standard: alles erlaubt.
@@ -542,7 +542,7 @@ benutzen `#timeout` (`SetTimeout` setzt `g_defaultTimeoutTicks`), warten mit fre
 
 **`graphics`** (`fire_bridge_graphics.h`, C - auch mit TinyCC; Zeichencode in `fire_gfx.h`, `fire_gfx_ttf.h`, `fire_gfx_text.h`, `fire_gfx_images.h`, `fire_gfx_slicer.h` daneben in `packages/graphics/native/`;
 die Funktion `__GRPHName` heißt im Programm `fire_gfx_Name`): `Framebuffer` (RGBA und Palette, Palette, Transparenz), `Renderer` (Text mit der 8x14-Schrift, Alpha-Blending schaltbar), `Brush` (Füllungen: Rechtecke, Kreise, Ellipsen, Dreiecke, Polygone, Flood-Fill) und `Pen` (Punkt, Linie, Pfad, Umrisse; vorgerenderte Spitze), `Blit` zwischen den Farbmodi, Bilder (PNG, BMP, GIF aus Bytes und aus Dateien) und der `Slicer`. Das ist ein Port von `src/fire.Terminal` ohne
-Betriebssystem und ohne Ausnahmen - dieselben Pixel kommen heraus (die Tests vergleichen Prüfsummen mit der VM). Dateien liest das Plattformpaket (`FIRE_PLATFORM_FS_C_HEADER`: `fire_fs_*`, begrenzt durch
+Betriebssystem und ohne Ausnahmen - dieselben Pixel kommen heraus (die Tests vergleichen Prüfsummen mit der VM). Dateien liest es über das Dateisystem von `io` (`"uses": [ "io" ]` in `graphics.fireproj`: `fire_fs_*`, begrenzt durch
 `FIRE_IO_POLICY` wie bei IO; Systemschriften ebenso). Die Meldung der letzten fehlgeschlagenen Funktion steht in `g_gfxError` (je Thread). Abweichungen: eine unbekannte oder zerstörte Ressourcen-ID beendet das Programm mit einer Meldung (die VM wirft eine .NET-Ausnahme); die verschachtelten Arrays,
 die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Arrays, die ein `ToolPath` behält).
 
@@ -658,7 +658,7 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
   gefunden auf dem PATH, unter `%WATCOM%`, `Toolchain/watcom` oder `/opt/watcom`; es setzt `WATCOM` und `INCLUDE` für seine Programme.
 * **Ziel und Plattform**: das Zielprofil (`TargetProfile`; die alten PCs in `TargetProfile.Pc.cs`, eine Familie je Datei) nennt Plattformpaket, Toolchain,
   Breiten und die Schalter des Ziels für den Compiler (`dos16`: `-bdos -mcmodel=h -march=i86 -mstack-size=...`). Das Plattformpaket ist ein Ordner aus kleinen
-  Auswahl-Headern je Teil (`fire_platform.h`, `fire_fs.h`, `fire_net.h`, ...), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,
+  Auswahl-Headern je Teil (`fire_platform.h`, `fire_net.h`, ...), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,
   `fire_env_dos.h`, `fire_*_none.h`); eine neue Umsetzung eines Teils ist eine neue Datei in `std/`, ein neues Ziel ein neuer Ordner.
 
 **`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in

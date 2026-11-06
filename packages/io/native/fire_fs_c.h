@@ -1,7 +1,9 @@
-/* fire native platform layer, file system part in C (the HAL of the io bridge): what the implementations share - the error codes of the language, the status of
+/* fire io package: the file system in C (the HAL of the io bridge): what the implementations share - the error codes of the language, the status of
  * an operation, a list of paths, glob matching, the lexical normalisation of a path.
  *
- * A platform package offers `fire_fs.h` (FIRE_PLATFORM_FS_C_HEADER points to it) with, all paths in UTF-8:
+ * The io package brings the file system of each platform (`platformSources` of io.fireproj: fire_fs_posix.h, _win32.h, _dos.h, the boards fire_fs_board.h
+ * with posix or none; `default`: fire_fs_none.h) - another package that reads files takes it with `"uses": [ "io" ]` (graphics, for its fonts). Each has, all paths
+ * in UTF-8:
  *   int   fire_fs_exists(path, int* isDir)                     a file or directory is there
  *   FILE* fire_fs_open(path, mode, access, FireFsStatus*)     FileMode 0 Open, 1 Create, 2 CreateNew, 3 OpenOrCreate, 4 Append; FileAccess 0 Read, 1 Write, 2 ReadWrite
  *   int64_t fire_fs_tell(FILE*) / int fire_fs_seek(FILE*, int64_t, whence) / int fire_fs_truncate(FILE*, int64_t)    64-bit positions
@@ -9,7 +11,7 @@
  *         / list(path, pattern, recursive, directories, FireFsList*) / entryTime / moveDir / setCurrentDir     1: done, 0: the status says why
  *   void  fire_fs_roots(FireFsList*)                           the drives ("C:\", "D:\") or "/"
  *   char* fire_fs_currentDir / tempDir / homeDir / fullPath(path)    malloc'd (the caller frees them)
- * A board without a file system (or with its own) provides its own `fire_fs.h` - the bridge only uses these functions. */
+ * A board without a file system defines FIRE_NO_FS (the target's `defines`); one with a file system of its own gets a file of its own in the package. */
 #ifndef FIRE_FS_C_H
 #define FIRE_FS_C_H
 
@@ -93,7 +95,7 @@ static int fire_fs_globMatch(const char* pattern, const char* name) {
 }
 
 /* FIRE_FS_DRIVES: paths with drives and "\" (Windows, DOS: "C:\DIR\FILE.TXT", "/" is accepted too) - else POSIX paths. */
-#if defined(_WIN32) && !defined(FIRE_FS_DRIVES)
+#if (defined(_WIN32) || defined(__DOS__) || defined(FIRE_HAL_DOS16)) && !defined(FIRE_FS_DRIVES)   /* (here: the platform file comes after this one) */
 #define FIRE_FS_DRIVES 1
 #endif
 static const char* fire_fs_separator(void) {

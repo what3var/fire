@@ -869,6 +869,9 @@ static class ProjectTests
             Layer("vm", "posix", "linux") == "none,bridge" && Layer("posix", "linux") == "term,bridge" && Layer("dos16", "dos16") == "real,bridge" && Layer("esp32", "esp32") == "none,bridge"
             && withoutVm == posix && fire.Package.Manager.PackageNativeExtensions.SupportsAny(layered, new[] { "wasm" }),
             $"{Layer("vm", "posix", "linux")} | {Layer("posix", "linux")} | {Layer("esp32", "esp32")} | {withoutVm}");
+        string used(params string[] keys) => string.Join(",", fire.Package.Manager.PackageNativeExtensions.PlatformLayerFor(layered, keys));
+        Check("native.uses: ein anderes Package bekommt nur die Plattformschicht (ohne die eigenen Quellen)", used("dos16") == "real" && used("esp32") == "none" && used("vm", "posix") == "none",
+            $"{used("dos16")} | {used("esp32")} | {used("vm", "posix")}");
         var problems = fire.Package.Manager.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
         Check("Bau-Reihenfolge: die Pruefung nennt Datei und Zeile des #include, das auf eine spaetere Quelle zeigt", problems.Count == 2
             && problems[0].StartsWith("native/top.h:2: #include \"mid.h\"") && problems[0].Contains("give 'native/mid.h' a smaller build order") && problems[1].StartsWith("native/mid.h:2: #include \"base.h\""), string.Join("\n", problems));

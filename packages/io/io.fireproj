@@ -336,6 +336,40 @@
       "DestroyedException"
     ],
     "reset": "fire_io_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "posix": [
+        "native/fire_fs_c.h",
+        "native/fire_fs_posix.h"
+      ],
+      "windows": [
+        "native/fire_fs_c.h",
+        "native/fire_fs_win32.h"
+      ],
+      "dos16": [
+        "native/fire_fs_c.h",
+        "native/fire_fs_dos.h"
+      ],
+      "esp32": [
+        "native/fire_fs_board.h",
+        "native/fire_fs_c.h",
+        "native/fire_fs_posix.h",
+        "native/fire_fs_none.h"
+      ],
+      "freertos": [
+        "native/fire_fs_board.h",
+        "native/fire_fs_c.h",
+        "native/fire_fs_posix.h",
+        "native/fire_fs_none.h"
+      ],
+      "wasm": [
+        "native/fire_fs_c.h",
+        "native/fire_fs_posix.h"
+      ],
+      "default": [
+        "native/fire_fs_c.h",
+        "native/fire_fs_none.h"
+      ]
+    }
   }
 }

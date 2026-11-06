@@ -38,7 +38,13 @@ namespace fire.Package.Manager
         public IEnumerable<(string Name, string Text)> ReadNativeSources(IEnumerable<string> platformKeys)
         {
             if (Import.Native == null) return Array.Empty<(string, string)>();
-            var sources = Import.Native.SourcesFor(platformKeys);
+            var keys = platformKeys.ToList();
+            // the platform layers of the imports this one uses (`native.uses`): before its own sources, each file once, named as the other package names it
+            var used = new List<(string Name, string Text)>();
+            foreach (var other in UsedImports())
+                foreach (var src in other.Import.Native!.PlatformLayerFor(keys))
+                    if (!used.Any(u => u.Name == other.Name + "/" + src)) used.Add((other.Name + "/" + src, File.ReadAllText(other.PathOf(src))));
+            var sources = Import.Native.SourcesFor(keys);
             var texts = sources.Select(src => (Name: src, Text: File.ReadAllText(PathOf(src)))).ToList();
             // (shown relative to the package - or the project - when the path is in its folder)
             string Display(string name)
@@ -49,8 +55,18 @@ namespace fire.Package.Manager
             }
             var problems = NativeSourceOrder.CheckIncludes(texts, Display);
             if (problems.Count > 0) throw new PackageException($"The build order of the natives of '{Import.Name}' is wrong:\n  " + string.Join("\n  ", problems));
-            var names = new HashSet<string>(sources.Select(NativeSourceOrder.FileNameOf), StringComparer.Ordinal);
-            return texts.Select(t => (t.Name, StripLocalIncludes(StripPragmaOnce(t.Text), names))).ToList();
+            var names = new HashSet<string>(sources.Select(NativeSourceOrder.FileNameOf).Concat(used.Select(u => NativeSourceOrder.FileNameOf(u.Name))), StringComparer.Ordinal);
+            return used.Concat(texts).Select(t => (t.Name, StripLocalIncludes(StripPragmaOnce(t.Text), names))).ToList();
+        }
+
+        /// <summary>The installed imports named by `native.uses` (an import that is not installed is a <see cref="PackageException"/>).</summary>
+        public IEnumerable<InstalledImport> UsedImports()
+        {
+            if (Import.Native == null || Import.Native.Uses.Count == 0) yield break;
+            var installed = PackageStore.Default.Installed().SelectMany(p => p.Manifest.Imports.Select(i => new InstalledImport(p, i))).ToList();
+            foreach (var name in Import.Native.Uses)
+                yield return installed.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase) && i.Import.Native != null)
+                    ?? throw new PackageException($"The natives of '{Import.Name}' use the platform layer of '{name}', which is not installed.");
         }
 
         /// <summary>The sources go into one file in the order of the package (what a file includes comes before it): an `#include "x.hpp"` of another source of the package is

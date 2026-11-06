@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_FS_C_HEADER   /* (system fonts are read from the file system of the platform) */
+#include "fire_fs_c.h"   /* (the file system of io: "uses": [ "io" ] in graphics.fireproj) */
 #include "fire_gfx.h"
 #include "fire_gfx_ttf.h"
 

@@ -26,6 +26,9 @@
       "native/fire_bridge_graphics.h"
     ],
     "discover": false,
-    "language": "c"
+    "language": "c",
+    "uses": [
+      "io"
+    ]
   }
 }
