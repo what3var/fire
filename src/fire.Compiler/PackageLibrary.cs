@@ -56,7 +56,7 @@ namespace fire.Compiler
         private static DateTime RuntimeStamp() => typeof(NativeRuntimeFiles).Assembly.Location is { Length: > 0 } location && File.Exists(location) ? File.GetLastWriteTimeUtc(location) : DateTime.MinValue;
 
         private static DateTime NewestSource(InstalledImport import) =>
-            import.Import.Native!.SourcesFor(HostPlatformKeys).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s)))
+            import.Import.Native!.SourcesFor(HostPlatformKeys).Concat(import.Import.Native.Headers).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s)))
                 .Concat(import.Package.DescriptionFile is { } d && File.Exists(d) ? new[] { File.GetLastWriteTimeUtc(d) } : Array.Empty<DateTime>())
                 // the runtime the library is built against (fire_rt.h, the ABI wrapper - inside fire.Native): a new runtime rebuilds the library like a new source
                 .Append(RuntimeStamp()).DefaultIfEmpty(DateTime.MinValue).Max();
@@ -222,7 +222,6 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
-            foreach (string line in CppGenerator.CPlatformHeaderDefines(target.Native.Platform)) sb.AppendLine(line);
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   /* the library has a runtime of its own (its state lives here) */");
             sb.AppendLine("#include \"fire_rt.h\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
@@ -321,7 +320,6 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
-            foreach (string line in CppGenerator.CPlatformHeaderDefines(target.Native.Platform)) sb.AppendLine(line);
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   /* the library has a runtime of its own (its state lives here) */");
             sb.AppendLine("#include \"fire_rt.h\"");
             foreach (var import in new[] { graphics, windows })
@@ -373,7 +371,6 @@ namespace fire.Compiler
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
             sb.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{target.Native.Platform}/fire_platform.hpp\"");
-            foreach (string line in CppGenerator.CPlatformHeaderDefines(target.Native.Platform)) sb.AppendLine(line);   // (the platform layers in C: packages in C++ use them as well)
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the library has a runtime of its own (its state lives here)");
             sb.AppendLine("#include \"fire_rt_cpp.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))

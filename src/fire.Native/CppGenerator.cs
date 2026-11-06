@@ -1471,9 +1471,7 @@ namespace fire.Native
             sb.AppendLine("#endif");
 
             // The natives in C of the packages ("language": "c") and the bridges of graphics and windows: part of this file, after the runtime - a C compiler is enough
-            // (TinyCC, a board without C++). The display layer in C for the windows bridge (FIRE_PLATFORM_DISPLAY_C_HEADER; the other parts come with their packages).
-            if (_usesGraphics || _packageImports.Any(p => p.Import.Import.Native is { IsC: true }))
-                foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) sb.AppendLine(line);
+            // (TinyCC, a board without C++). Their platform layers come with them (platformSources, ROADMAP 13.3b).
             // (linkage "static": the natives of an import that is a library module live in the file of that module)
             if (_usesGraphics && NativesOwner(NativeImports.Graphics) == null) AppendStandardNatives(sb, "graphics");
             if (_usesWindows && NativesOwner(NativeImports.Windows) == null) AppendStandardNatives(sb, "windows");
@@ -1500,8 +1498,6 @@ namespace fire.Native
             nat.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
             nat.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
             nat.AppendLine("#include \"fire_rt_cpp.hpp\"   // the runtime (fire_rt.h, the program has its state) and what C++ code expects of it");
-            // the display layer in C (FIRE_PLATFORM_DISPLAY_C_HEADER): packages in C++ may use it as well
-            if (_packageImports.Count > 0) foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) nat.AppendLine(line);
             bool natSources = false;
             // the C++ source of the packages the program imports: after the runtime, at the top level (the files include what they need and put their functions into namespace fire)
             foreach (var (import, _) in _packageImports.Where(p => p.Import.Import.Native is not { IsC: true } && !_standardNativesWritten.Contains(p.Import.Name)))
@@ -1823,7 +1819,6 @@ namespace fire.Native
             if (_dll) head.Append(DllHead());
             head.AppendLine("#include \"fire_rt.h\"");
             head.AppendLine("#if defined(__GNUC__) || defined(__clang__)\n#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif");
-            foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) head.AppendLine(line);
             if (_usesJson) head.AppendLine("#include \"fire_json.h\"");
             return head.ToString();
         }
@@ -2733,13 +2728,6 @@ namespace fire.Native
             _usesGlobalOwn = true;
             _version++;
         }
-
-        /// <summary>The parts of the platform layer in C that stay in native/platform (`#include FIRE_PLATFORM_DISPLAY_C_HEADER` of the windows bridge). The others come with the package whose core they are (ROADMAP 13.3b: io - the file system, net, tls, devices, gpio, i2c, spi, usb, wifi, audio, console, machine, dos, xms; `native.uses` for a package that needs the layer of another).</summary>
-        public static readonly string[] CPlatformLayers = { "display" };
-
-        /// <summary>`#define FIRE_PLATFORM_<PART>_C_HEADER "platform/<platform>/fire_<part>.h"` for every part of <see cref="CPlatformLayers"/>.</summary>
-        public static IEnumerable<string> CPlatformHeaderDefines(string platform) =>
-            CPlatformLayers.Select(part => $"#define FIRE_PLATFORM_{part.ToUpperInvariant()}_C_HEADER \"platform/{platform}/fire_{part}.h\"");
 
         private void NeedTimeObj()
         {

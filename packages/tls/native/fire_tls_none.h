@@ -2,7 +2,6 @@
  * FIRE_NO_TLS in the target configuration (`defines`). The interface: fire_tls_c.h. */
 #ifndef FIRE_TLS_NONE_H
 #define FIRE_TLS_NONE_H
-#if !defined(FIRE_TLS_DESKTOP_H) || defined(FIRE_TLS_USE_NONE)   /* (with fire_tls_desktop.h in the build: when it chose this one) */
 
 #include "fire_tls_c.h"
 
@@ -27,5 +26,4 @@ static int fire_tls_pending(FireTlsSession* s) { (void)s; return 0; }
 static void fire_tls_info(FireTlsSession* s, char* protocol, size_t psize, char* cipher, size_t csize) { (void)s; (void)psize; (void)csize; protocol[0] = 0; cipher[0] = 0; }
 static void fire_tls_closeSession(FireTlsSession* s) { (void)s; }
 
-#endif
 #endif

@@ -2,7 +2,6 @@
  * "not supported". The simulated device "sim" of the bridge works everywhere. The interface is described in fire_usb_c.h. */
 #ifndef FIRE_USB_NONE_H
 #define FIRE_USB_NONE_H
-#if !defined(FIRE_USB_DESKTOP_H) || defined(FIRE_USB_USE_NONE)   /* (with fire_usb_desktop.h in the build: when it chose this one) */
 
 #include "fire_usb_c.h"
 
@@ -35,5 +34,4 @@ static int fire_usb_transfer(FireUsbDevice* d, int type, int endpoint, uint8_t* 
 static int fire_usb_clearHalt(FireUsbDevice* d, int endpoint, FireUsbStatus* st) { (void)d; (void)endpoint; return fire_usb_none(st); }
 static void fire_usb_closeDevice(FireUsbDevice* d) { (void)d; }
 
-#endif
 #endif

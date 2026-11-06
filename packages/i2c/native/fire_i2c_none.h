@@ -1,9 +1,7 @@
 /* fire i2c package: I2C part in C for a platform without I2C buses (Windows, macOS, a board without a package of its own, a Linux without the i2c-dev
- * headers): the list of buses is empty and every call fails with "not supported". The simulated bus `sim` of the bridge works everywhere. A platform package
- * is in platformSources of i2c.fireproj with the functions listed in fire_i2c_c.h. */
+ * headers): the list of buses is empty and every call fails with "not supported". The simulated bus `sim` of the bridge works everywhere. Every platform file of the package (platformSources of i2c.fireproj) has the functions listed in fire_i2c_c.h. */
 #ifndef FIRE_I2C_NONE_H
 #define FIRE_I2C_NONE_H
-#if !defined(FIRE_I2C_DESKTOP_H) || defined(FIRE_I2C_USE_NONE)   /* (with fire_i2c_desktop.h in the build: when it chose this one) */
 
 #include "fire_i2c_c.h"
 
@@ -27,5 +25,4 @@ static int fire_i2c_writeRead(FireI2cBus* b, int address, const uint8_t* out, in
 static int fire_i2c_probe(FireI2cBus* b, int address, int* present, FireI2cStatus* st) { (void)b; (void)address; *present = 0; return fire_i2c_none(st); }
 static void fire_i2c_closeBus(FireI2cBus* b) { (void)b; }
 
-#endif
 #endif

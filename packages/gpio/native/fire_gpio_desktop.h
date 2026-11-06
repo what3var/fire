@@ -15,12 +15,12 @@
 #if defined(FIRE_GPIO_KERNEL_HEADER)
 #include <linux/gpio.h>
 #if defined(GPIO_V2_GET_LINE_IOCTL)
-#define FIRE_GPIO_USE_LINUX 1
+#include "fire_gpio_linux.h"
 #define FIRE_GPIO_HAVE_BACKEND 1
 #endif
 #endif
 #ifndef FIRE_GPIO_HAVE_BACKEND
-#define FIRE_GPIO_USE_NONE 1
+#include "fire_gpio_none.h"
 #endif
 
 #endif

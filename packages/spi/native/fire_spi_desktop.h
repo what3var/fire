@@ -15,12 +15,12 @@
 #if defined(FIRE_SPI_KERNEL_HEADER)
 #include <linux/spi/spidev.h>
 #if defined(SPI_IOC_MESSAGE)
-#define FIRE_SPI_USE_LINUX 1
+#include "fire_spi_linux.h"
 #define FIRE_SPI_HAVE_BACKEND 1
 #endif
 #endif
 #ifndef FIRE_SPI_HAVE_BACKEND
-#define FIRE_SPI_USE_NONE 1
+#include "fire_spi_none.h"
 #endif
 
 #endif

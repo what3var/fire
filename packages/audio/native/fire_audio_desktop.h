@@ -4,17 +4,17 @@
 #define FIRE_AUDIO_DESKTOP_H
 
 #if defined(FIRE_AUDIO_SDL) && !defined(FIRE_NO_AUDIO)
-#define FIRE_AUDIO_USE_SDL 1
+#include "fire_audio_sdl.h"
 #elif defined(__EMSCRIPTEN__) && !defined(FIRE_NO_AUDIO)
-#define FIRE_AUDIO_USE_WEB 1
+#include "fire_audio_web.h"
 #elif defined(__APPLE__) && !defined(FIRE_NO_AUDIO)
-#define FIRE_AUDIO_USE_COREAUDIO 1
+#include "fire_audio_coreaudio.h"
 #elif defined(_WIN32) && !defined(FIRE_NO_AUDIO)
-#define FIRE_AUDIO_USE_WIN32 1
+#include "fire_audio_win32.h"
 #elif defined(__linux__) && !defined(FIRE_NO_AUDIO)
-#define FIRE_AUDIO_USE_LINUX 1
+#include "fire_audio_linux.h"
 #else
-#define FIRE_AUDIO_USE_NONE 1
+#include "fire_audio_none.h"
 #endif
 
 #endif

@@ -7828,7 +7828,7 @@ packerTests:
                     }
                     finally { Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", cacheBefore); }
                 }
-                // a window (fire's own display: native/platform/std/fire_display_web.h, the canvas of the page without SDL):
+                // a window (fire's own display: packages/windows/native/fire_display_web.h, the canvas of the page without SDL):
                 // it draws into the canvas of the page; with Playwright (the Chromium of this machine) the page runs headless and says what it printed and drew
                 const string winSource = "#import \"windows\"\n#import \"time\"\nvar fb = new Framebuffer(40, 30)\nvar win = new Window(fb, \"wasm\")\nvar r = new Renderer(fb)\nr.Clear()\nfor (var y = 0; y < 30; y++) { for (var x = 0; x < 40; x++) { r.SetPixel(x, y, 0xFFF08020) } }\nfor (var i = 0; i < 3; i++) { win.Tick(); Sleep(10ms) }\nvar px = fb.ReadBytes()\nprint(\"pixel \" + px[0] + \" \" + px[1] + \" \" + px[2])\nprint(\"done\")\nfor (var i = 0; i < 300; i++) { win.Tick(); Sleep(10ms) }\n";
                 string winHtml = EmBuild(winSource, "win", out string winLog);
@@ -28101,16 +28101,16 @@ else
                 {
                     var said = new List<Action>();
                     Action Replay() => () => { foreach (var say in said) say(); };
-                    // (version 0: fire's own display - native/platform/std/fire_display_desktop.h; headless for "dummy", X11 under Xvfb)
+                    // (version 0: fire's own display - packages/windows/native/fire_display_desktop.h; headless for "dummy", X11 under Xvfb)
                     string label = version == 3 ? $"{title} [SDL3]" : version == 0 ? $"{title} [fire]" : title;
                     var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version == 0 ? null : version } };
                     fire.Native.NativeSources Generate(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target), target);
                     var generated = Generate(script);
                     string cpp = generated.Program;
                     bool asks = version == 3 ? cpp.Contains("// fire-link: SDL3") && cpp.Contains("#define FIRE_SDL3 1") && !cpp.Contains("// fire-link: SDL2")
-                              : version == 2 ? cpp.Contains("// fire-link: SDL2") && !cpp.Contains("FIRE_SDL3")
-                              : !cpp.Contains("// fire-link: SDL") && !cpp.Contains("FIRE_DISPLAY_SDL") && cpp.Contains("// fire-link: dl");
-                    said.Add(() => CheckNat(version == 0 ? $"Fenster: {label}: das Programm braucht kein SDL" : $"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, ""));
+                              : version == 2 ? cpp.Contains("// fire-link: SDL2") && !cpp.Contains("#define FIRE_SDL3")
+                              : !cpp.Contains("// fire-link: SDL") && !cpp.Contains("#define FIRE_DISPLAY_SDL") && cpp.Contains("// fire-link: dl");
+                    said.Add(() => CheckNat(version == 0 ? $"Fenster: {label}: das Programm braucht kein SDL" : $"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("fire_display_c.h") && generated.Natives == null, ""));
                     if (version != 0 && (version == 2 ? sdlExit : sdl3Exit) != 0) { said.Add(() => Console.WriteLine($"(SDL{version} nicht verfuegbar: {label} wird nicht ausgefuehrt)")); return Replay(); }
                     if (display == "wayland" && FindProgram("weston") == null) { said.Add(() => Console.WriteLine($"(weston nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
                     if (display != "dummy" && display != "wayland" && xvfbRun == null) { said.Add(() => Console.WriteLine($"(xvfb-run nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
@@ -28343,9 +28343,9 @@ else
                     fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, auto), auto, Choose);
                     string wasm = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Wasm), TargetProfile.Wasm, Choose).Program;
                     CheckNat("Fenster: ohne \"sdl\" die eigene Anzeige (kein SDL, keine Frage); \"sdl\": 0 fragt den Build nur bei einem Fenster (3 -> `// fire-link: SDL3` und FIRE_SDL3), das Ziel (sdl 2) geht vor, wasm zeichnet ohne SDL ins Canvas",
-                        !own.Contains("// fire-link: SDL") && !own.Contains("FIRE_DISPLAY_SDL") && own.Contains("// fire-link: dl")
-                        && chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("FIRE_SDL3")
-                        && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3") && !wasm.Contains("// fire-link: SDL"), $"asked {asked}");
+                        !own.Contains("// fire-link: SDL") && !own.Contains("#define FIRE_DISPLAY_SDL") && own.Contains("// fire-link: dl")
+                        && chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("#define FIRE_SDL3")
+                        && askedForWindows == 1 && asked == 1 && !wasm.Contains("#define FIRE_SDL3") && !wasm.Contains("// fire-link: SDL"), $"asked {asked}");
                     var config3 = fire.Native.NativeConfig.Parse("{ \"targets\": { \"pc\": { \"extends\": \"linux\", \"sdl\": 3 } }, \"toolchains\": { \"old\": { \"extends\": \"gcc\", \"sdl\": 2 } } }");
                     var pc = config3.ResolveTarget("pc");
                     var old = config3.ResolveToolchain(pc, "old");
@@ -29080,13 +29080,13 @@ else
                                     string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
                                     CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
                                 }
-                                // DirectComposition in C (native/platform/std/fire_display_dcomp.h): the places of the COM methods, the GUIDs and the structures as in the SDK of MinGW
+                                // DirectComposition in C (packages/windows/native/fire_display_dcomp.h): the places of the COM methods, the GUIDs and the structures as in the SDK of MinGW
                                 {
                                     string check = Path.Combine(winDir, "check_dcomp.exe");
                                     // (the source is in the repository: the first folder above the program that has it)
                                     string? cpp = null;
                                     for (var dirInfo = new DirectoryInfo(AppContext.BaseDirectory); dirInfo != null && cpp == null; dirInfo = dirInfo.Parent)
-                                        if (File.Exists(Path.Combine(dirInfo.FullName, "native", "platform", "std", "tools", "check_dcomp.cpp"))) cpp = Path.Combine(dirInfo.FullName, "native", "platform", "std", "tools", "check_dcomp.cpp");
+                                        if (File.Exists(Path.Combine(dirInfo.FullName, "packages", "windows", "native", "tools", "check_dcomp.cpp"))) cpp = Path.Combine(dirInfo.FullName, "packages", "windows", "native", "tools", "check_dcomp.cpp");
                                     if (cpp == null) Console.WriteLine("(DirectComposition gegen das SDK: uebersprungen - tools/check_dcomp.cpp fehlt)");
                                     else
                                     {

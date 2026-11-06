@@ -404,7 +404,6 @@ namespace fire.Native
             nat.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
             nat.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
             nat.AppendLine("#include \"fire_rt_cpp.hpp\"   // the runtime (fire_rt.h, the program has its state) and what C++ code expects of it");
-            foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) nat.AppendLine(line);
             foreach (var (import, _) in _packageImports.Where(p => p.Import.Import.Native is { IsC: false } n && n.Functions.Any(f => called.Contains(f.Symbol))))
                 foreach (var (file, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {

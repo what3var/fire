@@ -56,7 +56,31 @@ namespace fire.Package.Manager
             var problems = NativeSourceOrder.CheckIncludes(texts, Display);
             if (problems.Count > 0) throw new PackageException($"The build order of the natives of '{Import.Name}' is wrong:\n  " + string.Join("\n  ", problems));
             var names = new HashSet<string>(sources.Select(NativeSourceOrder.FileNameOf).Concat(used.Select(u => NativeSourceOrder.FileNameOf(u.Name))), StringComparer.Ordinal);
-            return used.Concat(texts).Select(t => (t.Name, StripLocalIncludes(StripPragmaOnce(t.Text), names))).ToList();
+            // the headers (own ones first, then those of the used imports), unless they are sources of this build: an installed package's are files next to the
+            // runtime of the build (`pkg/<import>/`, NativeRuntimeFiles writes them), the include names that file; a project's are put in where they are included
+            var inStore = new Dictionary<string, string>(StringComparer.Ordinal);
+            var inline = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var imp in new[] { this }.Concat(UsedImports(keys)))
+                foreach (var h in imp.Import.Native!.Headers)
+                {
+                    string name = NativeSourceOrder.FileNameOf(h);
+                    if (inStore.ContainsKey(name) || inline.ContainsKey(name)) continue;
+                    if (imp.IsInStore) inStore[name] = NativeHeaders.BuildPath(imp.Name, name);
+                    else inline[name] = imp.PathOf(h);
+                }
+            var placed = new HashSet<string>(StringComparer.Ordinal);
+            return used.Concat(texts)
+                .Select(t => (t.Name, StripLocalIncludes(StripPragmaOnce(NativeHeaders.Inline(NativeHeaders.Point(t.Text, inStore, names), inline, names, File.ReadAllText, placed)), names))).ToList();
+        }
+
+        /// <summary>Is the import one of an installed package (its headers are written next to the runtime of every build), not the natives of a project?</summary>
+        public bool IsInStore
+        {
+            get
+            {
+                string root = PackageStore.Default.Root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                return Path.GetFullPath(Package.Directory).StartsWith(root, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            }
         }
 
         /// <summary>The installed imports named by `native.uses` for a build with these keys (an import that is not installed is a <see cref="PackageException"/>).</summary>
@@ -82,6 +106,42 @@ namespace fire.Package.Manager
 
         /// <summary>The full path of a file of the package.</summary>
         public string FullPath(string relative) => PathOf(relative);
+    }
+
+    /// <summary>The headers of the installed imports (`native.headers`) as files of a build: `pkg/<import>/<file>` in the folder of the generated program. An include
+    /// of the header of a used import becomes `../<import>/<file>`, one of the runtime (`platform/...`) `../../platform/...`.</summary>
+    public static class PackageHeaders
+    {
+        public static void WriteTo(string directory)
+        {
+            List<InstalledImport> imports;
+            try { imports = PackageStore.Default.Installed().SelectMany(p => p.Manifest.Imports.Select(i => new InstalledImport(p, i))).Where(i => i.Import.Native is { Headers.Count: > 0 }).ToList(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+            var byImport = imports.GroupBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            foreach (var imp in byImport.Values)
+            {
+                var own = new HashSet<string>(imp.Import.Native!.Headers.Select(NativeSourceOrder.FileNameOf), StringComparer.Ordinal);
+                var others = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var use in imp.Import.Native.Uses)
+                    if (byImport.TryGetValue(use.Import, out var other))
+                        foreach (var h in other.Import.Native!.Headers) others.TryAdd(NativeSourceOrder.FileNameOf(h), "../" + other.Name + "/" + NativeSourceOrder.FileNameOf(h));
+                string dir = Path.Combine(directory, NativeHeaders.Folder, imp.Name);
+                Directory.CreateDirectory(dir);
+                foreach (var h in imp.Import.Native.Headers)
+                {
+                    string text = File.ReadAllText(imp.FullPath(h));
+                    text = System.Text.RegularExpressions.Regex.Replace(text, @"^([ \t]*#[ \t]*include[ \t]+"")([^""\r\n]+)("")", m =>
+                    {
+                        string inc = m.Groups[2].Value, name = NativeSourceOrder.FileNameOf(inc);
+                        if (own.Contains(name)) return m.Value;
+                        if (others.TryGetValue(name, out var path)) return m.Groups[1].Value + path + m.Groups[3].Value;
+                        if (inc.StartsWith("platform/", StringComparison.Ordinal)) return m.Groups[1].Value + "../../" + inc + m.Groups[3].Value;
+                        return m.Value;
+                    }, System.Text.RegularExpressions.RegexOptions.Multiline);
+                    File.WriteAllText(Path.Combine(dir, NativeSourceOrder.FileNameOf(h)), text);
+                }
+            }
+        }
     }
 
     /// <summary>The installed packages: below `Packages` in the folder of the compiler, one folder per package with the unpacked files and the `package.json`. Global for the machine -

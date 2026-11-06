@@ -5,11 +5,11 @@ betreibt, wie Glas und Acryl hineinkommen und in welcher Reihenfolge das gebaut 
 
 Inspiration: [Raven](https://github.com/oscar-soirey/Raven) (Apache-2.0) - wir haben uns dort die Aufteilung der Plattformschichten,
 das Laden optionaler Bibliotheken zur Laufzeit und die Blur-Pyramide angesehen. **Code wird nicht übernommen**; die Umsetzung ist eigene
-und folgt unserer Struktur (die HAL `fire_display_c.h`, Plattformpakete unter `native/platform/`). Raven wird in der About-Box genannt.
+und folgt unserer Struktur (die HAL `fire_display_c.h`, die Anzeigen je Plattform im Paket `windows`). Raven wird in der About-Box genannt.
 
 ## Ausgangslage
 
-* **Nativ (C):** `packages/windows/native/fire_bridge_windows.h` spricht nur mit der HAL `native/platform/std/fire_display_c.h`
+* **Nativ (C):** `packages/windows/native/fire_bridge_windows.h` spricht nur mit der HAL `packages/windows/native/fire_display_c.h`
   (~25 Funktionen, ein Ereignis-Struct mit 24 Typen). Dahinter steht heute SDL2 oder SDL3 (`fire_display_sdl.h`, `fire_display_sdl3.h`),
   gelinkt beim Bau (`// fire-link: SDL2|SDL3`), auf wasm Emscriptens SDL2. Ohne Bildschirm: `fire_display_none.h`.
 * **VM (C#):** eine zweite Implementierung - `WindowsBridge` -> `WindowManager` -> `ConsoleWindow` -> `SdlFramebufferRenderer`
@@ -35,7 +35,7 @@ und folgt unserer Struktur (die HAL `fire_display_c.h`, Plattformpakete unter `n
 
 ## Die Plattformschicht
 
-Die HAL `fire_display_c.h` bleibt die Grenze. Neue Backends in `native/platform/std/`:
+Die HAL `fire_display_c.h` bleibt die Grenze. Neue Backends in `packages/windows/native/`:
 
 | Datei | Ziel | Fenster und Eingabe | Framebuffer zeigen | GPU-Oberfläche | Gelinkt / zur Laufzeit |
 |---|---|---|---|---|---|
@@ -47,7 +47,7 @@ Die HAL `fire_display_c.h` bleibt die Grenze. Neue Backends in `native/platform/
 | `fire_display_headless.h` | Tests, Server | Fenster sind nur Größen, Ereignisse werden eingespeist | Pixel bleiben abrufbar | - | - |
 | `fire_display_none.h` | ESP32 ohne Bildschirm | wie heute | | | |
 
-* **Linux:** `fire_display_posix.h` wählt zur Laufzeit: Wayland, wenn `WAYLAND_DISPLAY` gesetzt ist und die Bibliothek lädt, sonst X11.
+* **Linux:** `fire_display_desktop.h` wählt zur Laufzeit: Wayland, wenn `WAYLAND_DISPLAY` gesetzt ist und die Bibliothek lädt, sonst X11.
   Die Wayland-Protokolle (xdg-shell, xdg-decoration, ...) liegen als kleine, selbst geschriebene Tabellen vor (keine Abhängigkeit von
   wayland-scanner beim Bau). Ohne serverseitige Dekoration (GNOME) zeichnen wir eine eigene, schlichte Titelleiste.
 * **macOS:** Cocoa will den Hauptthread. In spark gehört er Avalonia; das Backend reicht seine Aufrufe deshalb per `dispatch_sync` an die

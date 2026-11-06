@@ -177,34 +177,32 @@
     "reset": "fire_wifi_reset",
     "language": "c",
     "platformSources": {
-      "dos16": [
-        "native/fire_wifi_c.h",
-        "native/fire_wifi_none.h"
-      ],
-      "esp32": [
-        "native/fire_wifi_c.h",
-        "native/fire_wifi_esp32.h"
-      ],
-      "freertos": [
-        "native/fire_wifi_c.h",
-        "native/fire_wifi_none.h"
-      ],
       "posix": [
-        "native/fire_wifi_c.h",
-        "native/fire_wifi_none.h"
-      ],
-      "wasm": [
-        "native/fire_wifi_c.h",
         "native/fire_wifi_none.h"
       ],
       "windows": [
-        "native/fire_wifi_c.h",
+        "native/fire_wifi_none.h"
+      ],
+      "wasm": [
+        "native/fire_wifi_none.h"
+      ],
+      "dos16": [
+        "native/fire_wifi_none.h"
+      ],
+      "esp32": [
+        "native/fire_wifi_esp32.h"
+      ],
+      "freertos": [
         "native/fire_wifi_none.h"
       ],
       "default": [
-        "native/fire_wifi_c.h",
         "native/fire_wifi_none.h"
       ]
-    }
+    },
+    "headers": [
+      "native/fire_wifi_c.h",
+      "native/fire_wifi_esp32.h",
+      "native/fire_wifi_none.h"
+    ]
   }
 }

@@ -548,24 +548,24 @@ die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Ar
 
 **`windows`** (`fire_bridge_windows.h`, C - auch mit TinyCC; `__GRPHWinName` heißt im Programm `fire_win_WinName`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
 Callbacks aus (auf dem aufrufenden Thread mit den echten Globals; eine nicht gefangene Ausnahme beendet nur den Callback und wird gemeldet); `EnableEvents`/`NextEvent` liefern sie als Warteschlange.
-Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.h`, als `FIRE_PLATFORM_DISPLAY_C_HEADER` eingebunden; die Schnittstelle, die Ereignisse und das
-Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`.
+Das Fenster selbst ist die **Anzeige**, die das Paket `windows` je Plattform mitbringt (`platformSources` von `windows.fireproj`: `fire_display_select.h` für `posix` und `windows`, `fire_display_wasm.h`, `fire_display_dos.h`, sonst `fire_display_none.h`; die Dateien liegen in `packages/windows/native/`; die Schnittstelle, die Ereignisse und das
+Systemaussehen: `fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`.
 
-**Die eigene Anzeige (Standard, ohne SDL).** `std/fire_display_desktop.h` wählt beim ersten Fenster, mit welchem Fenstersystem es spricht: Wayland (`std/fire_display_wayland.h`, wenn
-`WAYLAND_DISPLAY` gesetzt ist und libwayland-client lädt), sonst X11 (`std/fire_display_x11.h`), Win32 (`std/fire_display_win32.h`), Cocoa (`std/fire_display_cocoa.h`, aus C über die
-Objective-C-Runtime), das Canvas der Seite (`std/fire_display_web.h`), oder ohne Bildschirm (`std/fire_display_headless.h`, `FIRE_DISPLAY=headless`; `SDL_VIDEODRIVER=dummy` wird
+**Die eigene Anzeige (Standard, ohne SDL).** `fire_display_desktop.h` wählt beim ersten Fenster, mit welchem Fenstersystem es spricht: Wayland (`fire_display_wayland.h`, wenn
+`WAYLAND_DISPLAY` gesetzt ist und libwayland-client lädt), sonst X11 (`fire_display_x11.h`), Win32 (`fire_display_win32.h`), Cocoa (`fire_display_cocoa.h`, aus C über die
+Objective-C-Runtime), das Canvas der Seite (`fire_display_web.h`), oder ohne Bildschirm (`fire_display_headless.h`, `FIRE_DISPLAY=headless`; `SDL_VIDEODRIVER=dummy` wird
 ebenso verstanden). `FIRE_DISPLAY=x11|wayland|win32|cocoa|web|headless` fragt nach einer. Gelinkt wird nur, was das Betriebssystem immer hat: Linux lädt libX11/libwayland-client/libxkbcommon
 zur Laufzeit (`-ldl -lpthread`), Windows linkt user32 und gdi32 (imm32, dwmapi, ole32 werden geladen), macOS die Frameworks Cocoa, QuartzCore und GameController; der Browser nichts.
-Gemeinsam: `std/fire_display_keys.h` (die Nummern der Tasten, Modifier, Maustasten, Cursor - die von SDL3, die Programme kennen sie), `std/fire_display_common.h` (die Warteschlange
-eines Fensters, Drops, Kompositionen, die Ereignisse der Tests), `std/fire_display_joystick.h` (Joysticks: `/dev/input/js*`, XInput, GameController, Gamepad-API). Neu gegenüber den
+Gemeinsam: `fire_display_keys.h` (die Nummern der Tasten, Modifier, Maustasten, Cursor - die von SDL3, die Programme kennen sie), `fire_display_common.h` (die Warteschlange
+eines Fensters, Drops, Kompositionen, die Ereignisse der Tests), `fire_display_joystick.h` (Joysticks: `/dev/input/js*`, XInput, GameController, Gamepad-API). Neu gegenüber den
 SDL-Anzeigen: Kompositionen einer Eingabemethode (`FIRE_EV_TEXT_EDITING`, `Window.SetTextInputArea`), `FIRE_EV_SCALE`, Maus herein/hinaus, Fokus, und was hinter dem Fenster liegt
 (`Window.Backdrop`: transparent, Blur, Acryl, Mica - je nach System). Entwurf und Stand: [Eigene Plattformschicht statt SDL, Effekte und ein modernerer Stil](UI_PLATFORM.md).
 
 **SDL (wählbar).** `"sdl": 2|3` des Ziels (0: der Build probiert) oder `FIRE_SDL=2|3|auto` nehmen statt der eigenen Anzeige SDL (das Programm sagt dann `#define FIRE_DISPLAY_SDL 1`).
-Mitgeliefert: `std/fire_display_sdl3.h` (SDL3, für `posix` und `windows`, wenn
-der Build `FIRE_SDL3` definiert; das Programm bittet dann mit der Zeile `// fire-link: SDL3` um `-lSDL3` bzw. `SDL3.lib`), `std/fire_display_sdl.h` (SDL2, für `posix` und `windows` sonst und immer für `wasm`;
-`// fire-link: SDL2`, `-lSDL2`; beide mit dem Systemaussehen aus `std/fire_systheme.h`)
-und `std/fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der
+Mitgeliefert: `fire_display_sdl3.h` (SDL3, für `posix` und `windows`, wenn
+der Build `FIRE_SDL3` definiert; das Programm bittet dann mit der Zeile `// fire-link: SDL3` um `-lSDL3` bzw. `SDL3.lib`), `fire_display_sdl.h` (SDL2, für `posix` und `windows` sonst und immer für `wasm`;
+`// fire-link: SDL2`, `-lSDL2`; beide mit dem Systemaussehen aus `fire_systheme.h`)
+und `fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der
 Fenstermanager an und die Fenster schließen sich. Die VM nutzt SDL3, die Tasten- und
 Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist (beide
 Anzeigen speisen dieselbe Folge ein und liefern dieselbe Ausgabe); die UI-Bibliothek (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
@@ -575,7 +575,7 @@ Umgebungsvariable `FIRE_SDL=2|3`, dann `"sdl": 2|3` des Ziels in `fire.native.js
 und binden kann (ein winziges Programm mit `<SDL3/SDL.h>` und `SDL_Init`, mit denselben `-I`/`-L` wie der Build) - SDL3, wenn ja, sonst SDL2. Die Antwort wird gemerkt (`NativeProbeCache`: im Speicher und in
 `native-probes.json` im Ordner der lokalen Daten von fire, `FIRE_PROBE_CACHE=0` schaltet die Datei ab), unter dem Compiler (Pfad und Zeit), dem Ziel und dem Ort von SDL3 (Ordner, Zeit des Headers):
 wer SDL3 nachinstalliert, wird neu gefragt. Ohne Toolchain (`files`, `forge native`) gilt SDL2, außer `FIRE_SDL`/`sdl` sagen 3; `wasm` bleibt bei SDL2 von Emscripten. Das erzeugte Programm sagt
-`// fire-link: SDL3` und `#define FIRE_SDL3 1` (das `fire_display.h` von `posix`/`windows` nimmt dann `fire_display_sdl3.h`) bzw. `// fire-link: SDL2`. TinyCC übersetzt beide (ohne `__has_include`:
+`// fire-link: SDL3` und `#define FIRE_SDL3 1` (`fire_display_select.h` nimmt dann `fire_display_sdl3.h`) bzw. `// fire-link: SDL2`. TinyCC übersetzt beide (ohne `__has_include`:
 SDL3 liegt immer unter `<SDL3/SDL.h>`; `SDL_DISABLE_IMMINTRIN_H` wie bei SDL2). Was nur SDL3 hat: das **Schweben** eines Zugs aus einem anderen Programm (`FIRE_EV_DRAG_HOVER` 42 mit `x`, `y` aus
 `SDL_EVENT_DROP_POSITION`, `FIRE_EV_DRAG_LEAVE` 43 bei `SDL_EVENT_DROP_COMPLETE` ohne Datei und Text; die Stelle eines Drops nennt SDL3 selbst), und **Bilder und Dateien in der Zwischenablage**:
 `fire_display_clipboardGetImage/SetImage/HasImage` (PNG- oder BMP-Datei; gesetzt als `image/png` und `image/bmp` - SDL3 legt `image/bmp` unter Windows als `CF_DIB` ab) und
@@ -589,7 +589,7 @@ Besitzer hat, über SDLs eigene Verbindung ein `XFixesSelectionNotify` an ein ve
 
 **Ziehen aus dem Fenster** (`Window.StartDrag`) können weder SDL2 noch SDL3 beginnen: `fire_display_startDrag` beider Anzeigen holt sich das Fenster des Betriebssystems (SDL3: die Eigenschaften
 `SDL_PROP_WINDOW_WIN32_HWND_POINTER` bzw. `..._X11_DISPLAY_POINTER`/`..._X11_WINDOW_NUMBER`; SDL2: `SDL_GetWindowWMInfo`, dessen Struktur `fire_display_sdl.h` selbst beschreibt, damit
-`SDL_syswm.h` nicht die Header von X11 verlangt) und gibt es an `std/fire_dragout.h`: unter Windows OLE (`DoDragDrop`, `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP` und `IDropSource` in C,
+`SDL_syswm.h` nicht die Header von X11 verlangt) und gibt es an `fire_dragout.h`: unter Windows OLE (`DoDragDrop`, `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP` und `IDropSource` in C,
 `ole32.dll` zur Laufzeit), unter X11 die Quelle von XDND (libX11 per `dlopen`, die Typen von Xlib selbst beschrieben - kein Header, keine Link-Bibliothek; die Schleife hält `fire_display_lockSdl`).
 Unter Wayland (nur SDL3: `SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER`/`..._SURFACE_POINTER`) `fire_dragout_wayland`: auf SDLs `wl_display` eine eigene Warteschlange mit eigener
 Registry, `wl_seat` (bis Version 5), `wl_data_device_manager` (Version 3) und einem eigenen `wl_pointer`, der die Seriennummer des Tastendrucks für `start_drag` lernt (`fire_dragout_wlPump` nach jedem
@@ -658,10 +658,10 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
   gefunden auf dem PATH, unter `%WATCOM%`, `Toolchain/watcom` oder `/opt/watcom`; es setzt `WATCOM` und `INCLUDE` für seine Programme.
 * **Ziel und Plattform**: das Zielprofil (`TargetProfile`; die alten PCs in `TargetProfile.Pc.cs`, eine Familie je Datei) nennt Plattformpaket, Toolchain,
   Breiten und die Schalter des Ziels für den Compiler (`dos16`: `-bdos -mcmodel=h -march=i86 -mstack-size=...`). Das Plattformpaket ist ein Ordner aus kleinen
-  Auswahl-Headern je Teil (`fire_platform.h`, `fire_display.h`), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,
-  `fire_env_dos.h`, `fire_*_none.h`); eine neue Umsetzung eines Teils ist eine neue Datei in `std/`, ein neues Ziel ein neuer Ordner. Die übrigen Teile (Dateisystem, Netz, TLS,
-  Geräte, GPIO/I2C/SPI, USB, WLAN, Ton, Konsole, Hardware) bringen die Pakete selbst mit (`platformSources`, ROADMAP 13.3b); ein Paket, das die Schicht eines
-  anderen braucht, nennt es in `native.uses` (graphics -> io, tls -> net, circuits -> audio).
+  Auswahl-Headern je Teil (`fire_platform.h`), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,
+  `fire_env_dos.h`, `fire_*_none.h`); eine neue Umsetzung eines Teils ist eine neue Datei in `std/`, ein neues Ziel ein neuer Ordner. Alle übrigen Teile (Dateisystem, Netz, TLS,
+  Geräte, GPIO/I2C/SPI, USB, WLAN, Ton, Anzeige, Konsole, Hardware) bringen die Pakete selbst mit (`platformSources`, ROADMAP 13.3b); ein Paket, das die Schicht eines
+  anderen braucht, nennt es in `native.uses` (graphics -> io, tls -> net, circuits -> audio). Die Auswahl je Plattform bleibt wie geschrieben: die Datei der Plattform bindet die Umsetzung ein, die sie wählt (auch in `#if`) - die Dateien, die so eingebunden werden, stehen in `native.headers` und liegen in jedem Build als Dateien unter `pkg/<import>/` neben dem Programm (das `#include` nennt sie dort).
 
 **`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in
 DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer `#performance` (weicht gewollt ab); dazu Dateien (`io`/`filesystem`

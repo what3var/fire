@@ -1,10 +1,9 @@
-/* fire io package: the file system in C on POSIX calls (stat, opendir, mkdir, ...): Linux, macOS, the BSDs, the browser (Emscripten's virtual file
+/* fire io package: file system part in C on POSIX calls (stat, opendir, mkdir, ...): Linux, macOS, the BSDs, the browser (Emscripten's virtual file
  * system) and the boards whose C library has a virtual file system (ESP-IDF: SPIFFS, FAT, LittleFS). The interface: fire_fs_c.h.
  * On a board set FIRE_FS_ROOT (a string, e.g. "/spiffs"): relative paths are relative to that mounted file system (the board has no current directory worth the
  * name), and it is the root, the home and the parent of the temporary folder; FIRE_FS_SMALL_OFFSETS: positions with ftell/fseek (a C library without fseeko). */
 #ifndef FIRE_FS_POSIX_H
 #define FIRE_FS_POSIX_H
-#if !defined(FIRE_NO_FS)   /* (a board: fire_fs_board.h - FIRE_NO_FS takes fire_fs_none.h instead) */
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -298,5 +297,4 @@ static char* fire_fs_fullPath(const char* path) {
     return out;
 }
 
-#endif
 #endif

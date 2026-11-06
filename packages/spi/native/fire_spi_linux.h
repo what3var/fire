@@ -3,7 +3,6 @@
  * `spi`, or a udev rule). The interface is the one of fire_spi_c.h. */
 #ifndef FIRE_SPI_LINUX_H
 #define FIRE_SPI_LINUX_H
-#if !defined(FIRE_SPI_DESKTOP_H) || defined(FIRE_SPI_USE_LINUX)   /* (with fire_spi_desktop.h in the build: when it chose this one) */
 
 #include <dirent.h>
 #include <errno.h>
@@ -130,5 +129,4 @@ static void fire_spi_closeDevice(FireSpiDevice* d) {
     free(d);
 }
 
-#endif
 #endif

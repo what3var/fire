@@ -4,7 +4,6 @@
  * linked. */
 #ifndef FIRE_USB_WINUSB_H
 #define FIRE_USB_WINUSB_H
-#if !defined(FIRE_USB_DESKTOP_H) || defined(FIRE_USB_USE_WINUSB)   /* (with fire_usb_desktop.h in the build: when it chose this one) */
 
 #include "fire_usb_c.h"
 #include <windows.h>
@@ -378,5 +377,4 @@ static void fire_usb_closeDevice(FireUsbDevice* d) {
     free(d);
 }
 
-#endif
 #endif

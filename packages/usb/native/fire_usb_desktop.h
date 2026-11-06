@@ -3,11 +3,11 @@
 #define FIRE_USB_DESKTOP_H
 
 #if defined(_WIN32) && !defined(FIRE_NO_USB)
-#define FIRE_USB_USE_WINUSB 1
+#include "fire_usb_winusb.h"
 #elif (defined(__linux__) || defined(__APPLE__)) && !defined(FIRE_NO_USB)
-#define FIRE_USB_USE_LIBUSB 1
+#include "fire_usb_libusb.h"
 #else
-#define FIRE_USB_USE_NONE 1
+#include "fire_usb_none.h"
 #endif
 
 #endif

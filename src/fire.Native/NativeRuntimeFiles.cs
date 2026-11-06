@@ -29,6 +29,7 @@ namespace fire.Native
                 WriteResource(name, directory);   // (the dialect of the C compiler, cc/fire_cc.h)
             foreach (string name in Names().Where(n => n.StartsWith("abi/", StringComparison.Ordinal)))
                 WriteResource(name, directory);
+            fire.Package.Manager.PackageHeaders.WriteTo(directory);   // (the headers of the installed packages: pkg/<import>/, ROADMAP 13.3b)
             var wanted = platform == null ? AllPackages() : PackageClosure(platform);
             foreach (string package in wanted)
                 foreach (string name in Names().Where(n => n.StartsWith($"platform/{package}/", StringComparison.Ordinal)))

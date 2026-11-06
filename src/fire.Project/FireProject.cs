@@ -49,6 +49,8 @@ namespace fire.Projects
         public string? Reset { get; set; }
         /// <summary>Imports whose platform layer the natives build on (ROADMAP 13.3b; see PackageNative.Uses).</summary>
         public List<fire.Package.Manager.NativeUse>? Uses { get; set; }
+        /// <summary>Files (patterns) the sources include that are not sources of every build (see PackageNative.Headers).</summary>
+        public fire.Package.Manager.NativeSourceList? Headers { get; set; }
         /// <summary>false: only the `functions` named here are natives - the `inline Value` functions of the sources are not looked for (the standard libraries name all of theirs).</summary>
         public bool? Discover { get; set; }
     }

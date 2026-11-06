@@ -1,4 +1,4 @@
-/* fire native platform layer, part of the display: dragging text and files out of a window into other programs (Window.StartDrag, fire_display_startDrag of
+/* fire windows package: part of the display: dragging text and files out of a window into other programs (Window.StartDrag, fire_display_startDrag of
  * fire_display_sdl3.h and fire_display_sdl.h). Neither SDL2 nor SDL3 can start such a drag, so it is written here per platform, for the OS window that SDL made:
  *
  *   Windows  fire_dragout_win32(hwnd, text, files): OLE's DoDragDrop with an IDataObject of this file (CF_UNICODETEXT for the text, CF_HDROP for the files) and an

@@ -1,7 +1,7 @@
 /* fire native bridge "windows" (C): the natives behind `#import "windows"` - a window that shows a framebuffer of the graphics bridge, and the events of that window.
  * The fire side (Window, EventType - fire source) is the same as in the VM; this file is what its `__GRPHWin...` functions do (the generator calls `__GRPHWinName` as
- * fire_win_WinName). Putting the pixels on the screen and collecting the events is the display of the platform (FIRE_PLATFORM_DISPLAY_C_HEADER: FireDisplayWindow and the
- * fire_display_* functions; SDL3 or SDL2 on the desktop, see platform/std/fire_display_sdl3.h and fire_display_sdl.h).
+ * fire_win_WinName). Putting the pixels on the screen and collecting the events is the display that comes with the package, one per platform (platformSources of windows.fireproj: FireDisplayWindow and the
+ * fire_display_* functions; fire's own or SDL3/SDL2 on the desktop - fire_display_select.h -, VGA on DOS, none on a board).
  *
  * C99, part of the generated file after fire_bridge_graphics.h when the program imports "windows". As in the VM, `Tick` collects the events, shows the framebuffer and then
  * runs the callbacks (registered lambdas) on the calling thread with the real global variables; an exception that a callback does not catch is reported and ends only the callback.
@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_DISPLAY_C_HEADER
+#include "fire_display_c.h"   /* (and before this file the display of the platform: platformSources of windows.fireproj) */
 
 typedef struct FireWinCallback { int type; Value lam; } FireWinCallback;
 

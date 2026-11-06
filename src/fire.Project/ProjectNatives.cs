@@ -54,6 +54,7 @@ namespace fire.Projects
             if (n.LinkLibraries != null) foreach (var (key, libs) in n.LinkLibraries) native.LinkLibraries[key] = libs.ToList();
             if (n.Exceptions != null) native.Exceptions.AddRange(n.Exceptions);
             if (n.Uses != null) native.Uses.AddRange(n.Uses);
+            if (n.Headers != null) native.Headers.AddRange(ExpandOrdered(dir, n.Headers, found));
             foreach (var p in found) problems?.Add($"{project.Name}: native: {p}");
             if (sources.Count == 0 && native.PlatformSources.Count == 0) problems?.Add($"{project.Name}: the project has a native part but no C++ files (put them into the folder 'native').");
 

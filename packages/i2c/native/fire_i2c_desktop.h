@@ -15,12 +15,12 @@
 #if defined(FIRE_I2C_KERNEL_HEADER)
 #include <linux/i2c-dev.h>
 #if defined(I2C_RDWR) && defined(I2C_SMBUS)
-#define FIRE_I2C_USE_LINUX 1
+#include "fire_i2c_linux.h"
 #define FIRE_I2C_HAVE_BACKEND 1
 #endif
 #endif
 #ifndef FIRE_I2C_HAVE_BACKEND
-#define FIRE_I2C_USE_NONE 1
+#include "fire_i2c_none.h"
 #endif
 
 #endif

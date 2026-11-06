@@ -1,4 +1,4 @@
-/* fire native platform layer, display part for DOS in real mode (dos16; Open Watcom): a window is the whole screen in a graphics mode of the VGA -
+/* fire windows package: display part for DOS in real mode (dos16; Open Watcom): a window is the whole screen in a graphics mode of the VGA -
  *   - Mode 13h (320x200, 256 colours) for a framebuffer up to 320x200, VESA mode 101h (640x480, 256 colours, banked) for a larger one when the BIOS has it
  *     (else 13h); the framebuffer is stretched to the screen (nearest pixel), the text mode comes back when the window closes or the program ends;
  *   - a palette framebuffer goes straight into the video memory, its palette into the registers of the card (FIRE_DISPLAY_PRESENT_FB: the windows bridge
@@ -11,7 +11,7 @@
 
 #include "fire_display_c.h"
 #include "fire_display_keys.h"
-#include "fire_cp437.h"   /* (the characters of the keys) */
+#include "platform/std/fire_cp437.h"   /* (the characters of the keys; a helper of the platform layer, the console package uses it too) */
 #include <bios.h>
 #include <conio.h>
 #include <dos.h>

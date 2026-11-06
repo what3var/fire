@@ -101,45 +101,38 @@
     "reset": "fire_tls_reset",
     "language": "c",
     "platformSources": {
+      "posix": [
+        "native/fire_tls_desktop.h"
+      ],
+      "windows": [
+        "native/fire_tls_desktop.h"
+      ],
+      "wasm": [
+        "native/fire_tls_none.h"
+      ],
       "dos16": [
-        "native/fire_tls_c.h",
         "native/fire_tls_none.h"
       ],
       "esp32": [
-        "native/fire_tls_c.h",
         "native/fire_tls_mbedtls.h"
       ],
       "freertos": [
-        "native/fire_tls_c.h",
         "native/fire_tls_none.h"
-      ],
-      "posix": [
-        "native/fire_tls_c.h",
-        "native/fire_tls_desktop.h",
-        "native/fire_tls_none.h",
-        "native/fire_tls_mbedtls.h",
-        "native/fire_tls_schannel.h",
-        "native/fire_tls_openssl.h"
-      ],
-      "wasm": [
-        "native/fire_tls_c.h",
-        "native/fire_tls_none.h"
-      ],
-      "windows": [
-        "native/fire_tls_c.h",
-        "native/fire_tls_desktop.h",
-        "native/fire_tls_none.h",
-        "native/fire_tls_mbedtls.h",
-        "native/fire_tls_schannel.h",
-        "native/fire_tls_openssl.h"
       ],
       "default": [
-        "native/fire_tls_c.h",
         "native/fire_tls_none.h"
       ]
     },
     "uses": [
       "net"
+    ],
+    "headers": [
+      "native/fire_tls_c.h",
+      "native/fire_tls_desktop.h",
+      "native/fire_tls_mbedtls.h",
+      "native/fire_tls_none.h",
+      "native/fire_tls_openssl.h",
+      "native/fire_tls_schannel.h"
     ]
   }
 }

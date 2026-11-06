@@ -1,9 +1,7 @@
 /* fire spi package: SPI part in C for a platform without SPI (Windows, macOS, a board without a package of its own, a Linux without the spidev
- * headers): the list of devices is empty and every call fails with "not supported". The simulated device `sim` of the bridge works everywhere. A platform package
- * is in platformSources of spi.fireproj with the functions listed in fire_spi_c.h. */
+ * headers): the list of devices is empty and every call fails with "not supported". The simulated device `sim` of the bridge works everywhere. Every platform file of the package (platformSources of spi.fireproj) has the functions listed in fire_spi_c.h. */
 #ifndef FIRE_SPI_NONE_H
 #define FIRE_SPI_NONE_H
-#if !defined(FIRE_SPI_DESKTOP_H) || defined(FIRE_SPI_USE_NONE)   /* (with fire_spi_desktop.h in the build: when it chose this one) */
 
 #include "fire_spi_c.h"
 
@@ -22,5 +20,4 @@ static int fire_spi_configure(FireSpiDevice* d, int mode, int speedHz, int lsbFi
 static int fire_spi_transfer(FireSpiDevice* d, const uint8_t* out, uint8_t* in, int n, FireSpiStatus* st) { (void)d; (void)out; (void)in; (void)n; return fire_spi_none(st); }
 static void fire_spi_closeDevice(FireSpiDevice* d) { (void)d; }
 
-#endif
 #endif

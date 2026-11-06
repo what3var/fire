@@ -93,7 +93,7 @@ namespace fire.Package.Manager
                 if (import.Native is { } native)
                 {
                     if (native.Sources.Count == 0 && native.PlatformSources.Count == 0 && native.Libraries.Count == 0) problems.Add(where + "'native' needs at least one file in 'sources' (or in 'platformSources' or 'libraries').");
-                    foreach (var src in native.Sources.Concat(native.PlatformSources.Values.SelectMany(l => l)).Concat(native.Libraries.Values))
+                    foreach (var src in native.Sources.Concat(native.PlatformSources.Values.SelectMany(l => l)).Concat(native.Libraries.Values).Concat(native.Headers))
                         if (fileExists != null && !fileExists(src)) problems.Add(where + $"the file '{src}' does not exist.");
                     if (native.Language is not (null or "c" or "c++")) problems.Add(where + $"'native.language' is '{native.Language}' (c or c++).");
                     var functions = new HashSet<string>();
@@ -167,6 +167,11 @@ namespace fire.Package.Manager
         /// The other import has to be installed; its `sources` (its bridge, its natives) are not taken. An entry can name the platforms it is for
         /// (`{ "import": "audio", "platforms": [ "posix", "windows", "vm" ] }`, keys as in `platformSources`): elsewhere the layer is not taken.</summary>
         public List<NativeUse> Uses { get; set; } = new();
+        /// <summary>Files the sources include (`#include "x.h"`) that are not sources of every build: a selector of a platform includes the implementation it picks, which
+        /// includes the common parts. The headers of an installed package are files of every build (`pkg/<import>/`, next to the generated program): the include stays as it
+        /// is written (also within `#if`), it only names that file; a header that is a source of the build is taken out as before. (The headers of a project are put in where
+        /// they are included.)</summary>
+        public List<string> Headers { get; set; } = new();
     }
 
     public static class PackageNativeExtensions

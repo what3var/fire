@@ -7,7 +7,6 @@
  * The device is the system's default ("default"); the types of AudioToolbox are declared here (no headers of Apple). */
 #ifndef FIRE_AUDIO_COREAUDIO_H
 #define FIRE_AUDIO_COREAUDIO_H
-#if !defined(FIRE_AUDIO_DESKTOP_H) || defined(FIRE_AUDIO_USE_COREAUDIO)   /* (with fire_audio_desktop.h in the build: when it chose this one) */
 
 #include <pthread.h>
 #include <time.h>
@@ -180,5 +179,4 @@ static void fire_audio_closeInput(FireAudioInput* in) {
     free(in);
 }
 
-#endif
 #endif

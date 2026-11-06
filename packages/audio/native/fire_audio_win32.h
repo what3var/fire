@@ -6,7 +6,6 @@
  * the driver sets its DONE flag. So nothing in here blocks and no thread or callback is needed. */
 #ifndef FIRE_AUDIO_WIN32_H
 #define FIRE_AUDIO_WIN32_H
-#if !defined(FIRE_AUDIO_DESKTOP_H) || defined(FIRE_AUDIO_USE_WIN32)   /* (with fire_audio_desktop.h in the build: when it chose this one) */
 
 #include "fire_audio_c.h"
 
@@ -340,5 +339,4 @@ static void fire_audio_closeInput(FireAudioInput* in) {
     free(in);
 }
 
-#endif
 #endif

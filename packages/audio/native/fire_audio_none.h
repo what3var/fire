@@ -3,7 +3,6 @@
  * device `sim` of the bridge works everywhere. The interface is described in fire_audio_c.h. */
 #ifndef FIRE_AUDIO_NONE_H
 #define FIRE_AUDIO_NONE_H
-#if !defined(FIRE_AUDIO_DESKTOP_H) || defined(FIRE_AUDIO_USE_NONE)   /* (with fire_audio_desktop.h in the build: when it chose this one) */
 
 #include "fire_audio_c.h"
 
@@ -43,5 +42,4 @@ static int fire_audio_read(FireAudioInput* in, uint8_t* data, int bytes, int* go
 static int64_t fire_audio_available(FireAudioInput* in) { (void)in; return 0; }
 static void fire_audio_closeInput(FireAudioInput* in) { (void)in; }
 
-#endif
 #endif

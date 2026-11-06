@@ -7,7 +7,6 @@
  * and collects what it records in a list that `read` takes from (at most a second; the oldest is lost). The device is "default". */
 #ifndef FIRE_AUDIO_WEB_H
 #define FIRE_AUDIO_WEB_H
-#if !defined(FIRE_AUDIO_DESKTOP_H) || defined(FIRE_AUDIO_USE_WEB)   /* (with fire_audio_desktop.h in the build: when it chose this one) */
 
 #include <emscripten.h>
 #include "fire_audio_c.h"
@@ -176,5 +175,4 @@ static int fire_audio_read(FireAudioInput* in, uint8_t* data, int bytes, int* go
 static int64_t fire_audio_available(FireAudioInput* in) { return (int64_t)fire_audiojs_availableFrames(in->id) * in->frameBytes; }
 static void fire_audio_closeInput(FireAudioInput* in) { if (!in) return; fire_audiojs_closeInput(in->id); free(in); }
 
-#endif
 #endif

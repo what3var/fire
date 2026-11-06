@@ -1,7 +1,7 @@
-/* fire native platform layer, display part in C (the HAL of the windows bridge): the events a display delivers, a list of them, and what the desktop says about how
+/* fire windows package: display part in C (the HAL of the windows bridge): the events a display delivers, a list of them, and what the desktop says about how
  * programs should look (the system theme).
  *
- * A platform package offers `fire_display.h` (FIRE_PLATFORM_DISPLAY_C_HEADER points to it) with:
+ * The windows package brings, one file per platform (platformSources of windows.fireproj: fire_display_select.h - fire's own or SDL -, _wasm.h, _dos.h, _none.h), with:
  *   FIRE_DISPLAY_AVAILABLE                                    1: a window can be shown; 0: `new Window(...)` throws a HandleUnavailableException
  *   FireDisplayWindow                                         one window (a struct of the implementation)
  *   void fire_display_init(FireDisplayWindow*)                an unopened window (VSync and TouchMouse on)

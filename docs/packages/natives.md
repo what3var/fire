@@ -276,8 +276,22 @@ word buffers as `FIRE_WORDS` and words as `FIRE_WORD`).
   The key is the platform package (`posix`, `windows`, `freertos`, `dos16`) or the name of a target (`linux`, `macos`, `esp32`, ...). Two keys are special:
   `default` is taken for a platform that has no key of its own, and `vm` is the layer of the library for the virtual machine (see below). `platforms` lists where
   the C++ may be used: a build for another target is refused with a clear message (empty: everywhere; with `default`, everywhere as well).
-  So a package brings the code it needs on each system itself and updates it with the package - the standard packages `io` (the file system: `fire_fs_*.h`), `console`, `machine`, `dos` and `xms`
-  do so (`fire_console_dos.h`, `_posix.h`, `_win32.h`; `vm` and `default`: `fire_console_none.h`).
+  So a package brings the code it needs on each system itself and updates it with the package - the standard packages do so: `io` (the file system: `fire_fs_*.h`), `audio`, `net`, `tls`, `devices`, `gpio`, `i2c`, `spi`, `usb`, `wifi`, `windows` (the display), `console`, `machine`, `dos` and `xms` (`fire_console_dos.h`, `_posix.h`, `_win32.h`; `vm` and `default`: `fire_console_none.h`).
+* **Headers: files that a source includes.** A selector of a platform often includes the implementation it picks (`#if defined(__APPLE__)` / `#include "sensor_mac.h"`),
+  which includes common parts. List such files in `native.headers`: they are files of every build (`pkg/<import>/` next to the generated program, the headers of a
+  used import there as well), and an `#include` of a header in a source names that file - so the selector works as written, also inside `#if`, and the program only
+  gets the text it compiles. A header that is a source of the build is taken out as before (it is in the file already). Give every header an include guard. The
+  windows package is the example: `platformSources` names one file per platform (`fire_display_select.h` for `posix` and `windows`: SDL3, SDL2 or fire's own display,
+  which picks X11, Wayland, Win32 or Cocoa), `headers` all the others. Headers are packed with the package. (In a project that is not installed, the headers are
+  put in where they are included.)
+
+  ```json
+  "native": {
+    "sources": [ "native/sensor_bridge.h" ],
+    "platformSources": { "posix": [ "native/sensor_select.h" ], "esp32": [ "native/sensor_esp.h" ] },
+    "headers": [ "native/sensor_select.h", "native/sensor_linux.h", "native/sensor_mac.h", "native/sensor_common.h" ]
+  }
+  ```
 * **Using the platform layer of another package**: `native.uses` names imports whose `platformSources` this package needs as well - the layer of the other package
   is put before the own sources (its include guards keep it to one copy when both packages are imported). `graphics` reads its fonts and images through the file system of `io`:
 

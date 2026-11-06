@@ -2,7 +2,6 @@
  * interface: fire_tls_c.h. */
 #ifndef FIRE_TLS_OPENSSL_H
 #define FIRE_TLS_OPENSSL_H
-#if !defined(FIRE_TLS_DESKTOP_H) || defined(FIRE_TLS_USE_OPENSSL)   /* (with fire_tls_desktop.h in the build: when it chose this one) */
 
 #include <openssl/err.h>
 #include <openssl/pem.h>
@@ -307,5 +306,4 @@ static void fire_tls_closeSession(FireTlsSession* s) {
     fire_tls_freeSession(s);
 }
 
-#endif
 #endif

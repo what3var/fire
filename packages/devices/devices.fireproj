@@ -154,34 +154,35 @@
     ],
     "language": "c",
     "platformSources": {
+      "posix": [
+        "native/fire_dev_posix.h"
+      ],
+      "windows": [
+        "native/fire_dev_win32.h"
+      ],
+      "wasm": [
+        "native/fire_dev_none.h"
+      ],
       "dos16": [
-        "native/fire_dev_c.h",
         "native/fire_dev_dos.h"
       ],
       "esp32": [
-        "native/fire_dev_c.h",
         "native/fire_dev_esp32.h"
       ],
       "freertos": [
-        "native/fire_dev_c.h",
         "native/fire_dev_none.h"
-      ],
-      "posix": [
-        "native/fire_dev_c.h",
-        "native/fire_dev_posix.h"
-      ],
-      "wasm": [
-        "native/fire_dev_c.h",
-        "native/fire_dev_none.h"
-      ],
-      "windows": [
-        "native/fire_dev_c.h",
-        "native/fire_dev_win32.h"
       ],
       "default": [
-        "native/fire_dev_c.h",
         "native/fire_dev_none.h"
       ]
-    }
+    },
+    "headers": [
+      "native/fire_dev_c.h",
+      "native/fire_dev_dos.h",
+      "native/fire_dev_esp32.h",
+      "native/fire_dev_none.h",
+      "native/fire_dev_posix.h",
+      "native/fire_dev_win32.h"
+    ]
   }
 }

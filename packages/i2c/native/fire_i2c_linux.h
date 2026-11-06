@@ -3,7 +3,6 @@
  * (device tree); `fire_i2c_setSpeed` is accepted and has no effect. The interface is the one of fire_i2c_c.h. */
 #ifndef FIRE_I2C_LINUX_H
 #define FIRE_I2C_LINUX_H
-#if !defined(FIRE_I2C_DESKTOP_H) || defined(FIRE_I2C_USE_LINUX)   /* (with fire_i2c_desktop.h in the build: when it chose this one) */
 
 #include <dirent.h>
 #include <errno.h>
@@ -182,5 +181,4 @@ static void fire_i2c_closeBus(FireI2cBus* b) {
     free(b);
 }
 
-#endif
 #endif

@@ -117,38 +117,34 @@
     "reset": "fire_gpio_reset",
     "language": "c",
     "platformSources": {
+      "posix": [
+        "native/fire_gpio_desktop.h"
+      ],
+      "windows": [
+        "native/fire_gpio_desktop.h"
+      ],
+      "wasm": [
+        "native/fire_gpio_none.h"
+      ],
       "dos16": [
-        "native/fire_gpio_c.h",
         "native/fire_gpio_none.h"
       ],
       "esp32": [
-        "native/fire_gpio_c.h",
         "native/fire_gpio_esp32.h"
       ],
       "freertos": [
-        "native/fire_gpio_c.h",
-        "native/fire_gpio_none.h"
-      ],
-      "posix": [
-        "native/fire_gpio_c.h",
-        "native/fire_gpio_desktop.h",
-        "native/fire_gpio_linux.h",
-        "native/fire_gpio_none.h"
-      ],
-      "wasm": [
-        "native/fire_gpio_c.h",
-        "native/fire_gpio_none.h"
-      ],
-      "windows": [
-        "native/fire_gpio_c.h",
-        "native/fire_gpio_desktop.h",
-        "native/fire_gpio_linux.h",
         "native/fire_gpio_none.h"
       ],
       "default": [
-        "native/fire_gpio_c.h",
         "native/fire_gpio_none.h"
       ]
-    }
+    },
+    "headers": [
+      "native/fire_gpio_c.h",
+      "native/fire_gpio_desktop.h",
+      "native/fire_gpio_esp32.h",
+      "native/fire_gpio_linux.h",
+      "native/fire_gpio_none.h"
+    ]
   }
 }

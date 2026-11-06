@@ -7,7 +7,6 @@
  * says so (set `verify` to false only for tests). */
 #ifndef FIRE_TLS_MBEDTLS_H
 #define FIRE_TLS_MBEDTLS_H
-#if !defined(FIRE_TLS_DESKTOP_H) || defined(FIRE_TLS_USE_MBEDTLS)   /* (with fire_tls_desktop.h in the build: when it chose this one) */
 
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
@@ -313,5 +312,4 @@ static void fire_tls_closeSession(FireTlsSession* s) {
     fire_tls_freeSession(s);
 }
 
-#endif
 #endif

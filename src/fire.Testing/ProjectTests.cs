@@ -877,6 +877,28 @@ static class ProjectTests
         Check("native.uses: ein Eintrag als Name (ueberall) oder mit Plattformen (nur dort), und zurueck geschrieben", uses.Count == 2 && uses[0].AppliesTo(new[] { "esp32" })
             && !uses[1].AppliesTo(new[] { "esp32", "esp32" }) && uses[1].AppliesTo(new[] { "vm", "posix", "linux" }) && uses[1].AppliesTo(new[] { "POSIX" })
             && usesBack == "[\"io\",{\"import\":\"audio\",\"platforms\":[\"posix\",\"vm\"]}]", usesBack);
+        {
+            // native.headers: put in where they are included (inside #if too), at the top level once; a source of the build is not put in
+            var files = new Dictionary<string, string> {
+                ["/h/c.h"] = "#ifndef C_H\n#define C_H\nint common;\n#endif\n",
+                ["/h/a.h"] = "#ifndef A_H\n#define A_H\n#include \"c.h\"\nint a;\n#endif\n",
+                ["/h/b.h"] = "#ifndef B_H\n#define B_H\n#include \"c.h\"\nint b;\n#endif\n" };
+            var headers = new Dictionary<string, string> { ["c.h"] = "/h/c.h", ["a.h"] = "/h/a.h", ["b.h"] = "/h/b.h", ["src.h"] = "/h/src.h" };
+            var placed = new HashSet<string>();
+            string sel = fire.Package.Manager.NativeHeaders.Inline("#ifndef S_H\n#define S_H\n#if X\n#include \"a.h\"\n#else\n#include \"b.h\"\n#endif\n#include \"src.h\"\n#endif\n",
+                headers, new HashSet<string> { "src.h" }, f => files[f], placed);
+            string bridge = fire.Package.Manager.NativeHeaders.Inline("#include \"c.h\"\n#include \"c.h\"\nint bridge;\n", headers, new HashSet<string> { "src.h" }, f => files[f], placed);
+            int Count(string t, string w) => (t.Length - t.Replace(w, "").Length) / w.Length;
+            Check("native.headers: eingesetzt, wo sie eingebunden werden (auch in #if), oben nur einmal, eine Quelle des Builds nicht",
+                sel.Contains("int a;") && sel.Contains("int b;") && Count(sel, "int common;") == 2 && sel.Contains("#include \"src.h\"") && !sel.Contains("#include \"a.h\"")
+                && Count(bridge, "int common;") == 1 && bridge.Contains("// (in this file already) #include \"c.h\""), sel + "\n----\n" + bridge);
+        }
+        {
+            string pointed = fire.Package.Manager.NativeHeaders.Point("#if A\n#include \"x11.h\"  /* why */\n#endif\n#include \"src.h\"\n#include <stdio.h>\n",
+                new Dictionary<string, string> { ["x11.h"] = "pkg/windows/x11.h", ["src.h"] = "pkg/windows/src.h" }, new HashSet<string> { "src.h" });
+            Check("native.headers eines installierten Pakets: das #include nennt die Datei im Build (pkg/<import>/), eine Quelle des Builds bleibt", pointed.Contains("#include \"pkg/windows/x11.h\"  /* why */")
+                && pointed.Contains("#include \"src.h\"") && pointed.Contains("<stdio.h>"), pointed);
+        }
         var problems = fire.Package.Manager.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
         Check("Bau-Reihenfolge: die Pruefung nennt Datei und Zeile des #include, das auf eine spaetere Quelle zeigt", problems.Count == 2
             && problems[0].StartsWith("native/top.h:2: #include \"mid.h\"") && problems[0].Contains("give 'native/mid.h' a smaller build order") && problems[1].StartsWith("native/mid.h:2: #include \"base.h\""), string.Join("\n", problems));

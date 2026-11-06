@@ -4,7 +4,6 @@
  * of fire_gpio_c.h. */
 #ifndef FIRE_GPIO_LINUX_H
 #define FIRE_GPIO_LINUX_H
-#if !defined(FIRE_GPIO_DESKTOP_H) || defined(FIRE_GPIO_USE_LINUX)   /* (with fire_gpio_desktop.h in the build: when it chose this one) */
 
 #include <dirent.h>
 #include <errno.h>
@@ -184,5 +183,4 @@ static void fire_gpio_closeLine(FireGpioLine* l) {
     free(l);
 }
 
-#endif
 #endif

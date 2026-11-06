@@ -6,7 +6,6 @@
  * second, so that the program is not far ahead of the sound and `Stop` is quick. The device list is what SDL reports ("default" is the system's default device). */
 #ifndef FIRE_AUDIO_SDL_H
 #define FIRE_AUDIO_SDL_H
-#if !defined(FIRE_AUDIO_DESKTOP_H) || defined(FIRE_AUDIO_USE_SDL)   /* (with fire_audio_desktop.h in the build: when it chose this one) */
 
 #include "fire_audio_c.h"
 
@@ -226,5 +225,4 @@ static void fire_audio_closeInput(FireAudioInput* in) {
     free(in);
 }
 
-#endif
 #endif

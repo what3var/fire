@@ -18,7 +18,6 @@
  * Link libraries: ws2_32 secur32 crypt32 ncrypt (the package brings them). */
 #ifndef FIRE_TLS_SCHANNEL_H
 #define FIRE_TLS_SCHANNEL_H
-#if !defined(FIRE_TLS_DESKTOP_H) || defined(FIRE_TLS_USE_SCHANNEL)   /* (with fire_tls_desktop.h in the build: when it chose this one) */
 
 #ifndef SECURITY_WIN32
 #define SECURITY_WIN32
@@ -1076,5 +1075,4 @@ static void fire_tls_closeSession(FireTlsSession* s) {
     fire_tls_freeSession(s);
 }
 
-#endif
 #endif

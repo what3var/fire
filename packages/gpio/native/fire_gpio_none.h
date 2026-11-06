@@ -1,9 +1,7 @@
 /* fire gpio package: GPIO part in C for a platform without GPIO pins (Windows, macOS, a board without a package of its own, a Linux without the GPIO
- * character device): the list of chips is empty and every call fails with "not supported". The simulated chip `sim` of the bridge works everywhere. A platform
- * file of platformSources in gpio.fireproj has the functions listed in fire_gpio_c.h. */
+ * character device): the list of chips is empty and every call fails with "not supported". The simulated chip `sim` of the bridge works everywhere. Every platform file of the package (platformSources of gpio.fireproj) has the functions listed in fire_gpio_c.h. */
 #ifndef FIRE_GPIO_NONE_H
 #define FIRE_GPIO_NONE_H
-#if !defined(FIRE_GPIO_DESKTOP_H) || defined(FIRE_GPIO_USE_NONE)   /* (with fire_gpio_desktop.h in the build: when it chose this one) */
 
 #include "fire_gpio_c.h"
 
@@ -51,5 +49,4 @@ static int fire_gpio_write(FireGpioLine* l, int value, FireGpioStatus* st) { (vo
 static int fire_gpio_pollEdge(FireGpioLine* l, int* event, int64_t* micros, FireGpioStatus* st) { (void)l; *event = 0; *micros = 0; return fire_gpio_none(st); }
 static void fire_gpio_closeLine(FireGpioLine* l) { (void)l; }
 
-#endif
 #endif

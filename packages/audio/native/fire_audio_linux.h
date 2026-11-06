@@ -10,7 +10,6 @@
  * each Pulse output has a thread that plays a ring buffer (`write` fills the ring and returns); all calls into the simple API are made by that thread. */
 #ifndef FIRE_AUDIO_LINUX_H
 #define FIRE_AUDIO_LINUX_H
-#if !defined(FIRE_AUDIO_DESKTOP_H) || defined(FIRE_AUDIO_USE_LINUX)   /* (with fire_audio_desktop.h in the build: when it chose this one) */
 
 #include "fire_audio_c.h"
 
@@ -659,5 +658,4 @@ static void fire_audio_closeInput(FireAudioInput* in) {
     free(in);
 }
 
-#endif
 #endif
