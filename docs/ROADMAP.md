@@ -528,8 +528,12 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    lokale Arrays (keine Compound-Literals, keine nicht-konstanten Initialisierer). Programme ohne Imports laufen in DOSBox-X wie in der VM (Test in der Suite;
    SKIP ohne Open Watcom/DOSBox-X; von 139 Testprogrammen ohne Imports alle außer Threads, `#performance` und zwei Arrays über 64 KB). Eigenheiten von Open Watcom
    im Dialekt (`fire_cc_watcom.h`): Rundung zur geraden Zahl (`nearbyint`, `printf("%.*f")`), NaN-Vergleiche der 8087-Emulation. Große Blöcke: jede Größe wird breit gerechnet, ein Block über 64 KB ist ein Fehler.
-   **Offen:** Daten großer Arrays/Puffer über `__huge` (`FIRE_HUGE`), `#intwidth 16`, `io`/`filesystem` (die C-Bibliothek von Watcom hat sie), Konsole und
-   Tastatur, Grafik, die Packages `dos`/`machine`/`xms`, Geräte (serieller/paralleler Port).
+   **Dateien** (`io`, `filesystem`; `std/fire_fs_dos.h`, Entscheidung des Benutzers): Pfade wie gewohnt `X:\FOLDER\FILE.EXT` (auch `/`), 8.3 erwartet, lange Namen
+   soweit das DOS darunter sie hat, Groß/Klein gleich; was DOS zurückgibt (volle Pfade, aktuelles Verzeichnis, Listen) ist groß. `FIRE_FS_DRIVES` schaltet die
+   Pfadregeln mit Laufwerken für Windows und DOS. Die VM rechnet weiter mit den Pfaden des Rechners. Test in DOSBox-X mit fester erwarteter Ausgabe.
+   (Nebenbei: `__declspec(aborts)` erzeugte bei Open Watcom falschen Code - eine ungefangene Ausnahme hing; der Dialekt setzt kein `FIRE_NORETURN` mehr.)
+   **Offen:** Daten großer Arrays/Puffer über `__huge` (`FIRE_HUGE`), `#intwidth 16`, Konsole und Tastatur, Grafik, die Packages `dos`/`machine`/`xms`,
+   Geräte (serieller/paralleler Port).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste

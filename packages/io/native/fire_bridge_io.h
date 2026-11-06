@@ -745,7 +745,7 @@ static Value fire_io_HomeDir(OwnList* list) { fire_io_ok(); return fire_io_takeT
 
 /* ---- paths (text only, no file access) --------------------------------------------------------------------------------------------------- */
 static int fire_io_rooted(const char* p) {
-#ifdef _WIN32
+#ifdef FIRE_FS_DRIVES
     return (p[0] && fire_fs_isSep(p[0])) || (p[0] && p[1] == ':');
 #else
     return p[0] == '/';
@@ -809,7 +809,7 @@ static Value fire_io_PathParent(Value pv, OwnList* list) {
     Value v;
     fire_io_ok();
     if (p == NULL) return fire_io_str8("", list);
-#ifdef _WIN32
+#ifdef FIRE_FS_DRIVES
     if (n >= 3 && p[1] == ':' && fire_fs_isSep(p[2])) root = 3; else if (n >= 2 && p[1] == ':') root = 2; else if (n > 0 && fire_fs_isSep(p[0])) root = 1;
 #else
     if (n > 0 && p[0] == '/') root = 1;

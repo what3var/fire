@@ -92,15 +92,19 @@ static int fire_fs_globMatch(const char* pattern, const char* name) {
     return p == pn;
 }
 
+/* FIRE_FS_DRIVES: paths with drives and "\" (Windows, DOS: "C:\DIR\FILE.TXT", "/" is accepted too) - else POSIX paths. */
+#if defined(_WIN32) && !defined(FIRE_FS_DRIVES)
+#define FIRE_FS_DRIVES 1
+#endif
 static const char* fire_fs_separator(void) {
-#ifdef _WIN32
+#ifdef FIRE_FS_DRIVES
     return "\\";
 #else
     return "/";
 #endif
 }
 static int fire_fs_isSep(char c) {
-#ifdef _WIN32
+#ifdef FIRE_FS_DRIVES
     return c == '/' || c == '\\';
 #else
     return c == '/';

@@ -27267,6 +27267,44 @@ else
                 }
                 CheckNat("dos16: mit Open Watcom gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM (Objekte, Strings, Einheiten, Ausnahmen, word 16 Bit, ein fire-Thread)",
                     built.Ok && dosOut == dosVm && dosVm.Length > 0, $"  VM:\n{dosVm}\n  DOS:\n{(built.Ok ? dosOut : built.Log)}");
+
+                // files with the paths of DOS ("X:\FOLDER\FILE.EXT", "/" too, upper or lower case alike, what DOS gives back in upper case) - a fixed expectation:
+                // the VM works with the paths of this machine
+                const string dosFiles = """
+                    #import "io"
+                    #import "filesystem"
+                    print(IO.Path.DirectorySeparatorChar)
+                    IO.Directory.CreateDirectory("c:\\fire\\sub")
+                    IO.File.WriteAllText("C:\\Fire\\Sub\\hello.txt", "Hallo DOS")
+                    print(IO.File.ReadAllText("c:/fire/sub/HELLO.TXT"))
+                    print(IO.File.Exists("C:\\FIRE\\SUB\\HELLO.TXT") + " " + IO.Directory.Exists("c:\\fire"))
+                    print(IO.Path.GetFullPath("c:\\fire\\sub\\..\\x.txt"))
+                    print(IO.Path.Combine("C:\\FIRE", "A.TXT") + " " + IO.Path.GetDirectoryName("C:\\FIRE\\SUB\\HELLO.TXT") + " " + IO.Path.GetFileName("c:\\fire\\b.dat"))
+                    foreach (f in IO.Directory.GetFiles("c:\\fire\\sub")) { print(f) }
+                    IO.File.Copy("C:\\FIRE\\SUB\\HELLO.TXT", "C:\\FIRE\\COPY.TXT")
+                    print(IO.File.Size("c:\\fire\\copy.txt"))
+                    IO.Directory.SetCurrentDirectory("C:\\FIRE")
+                    print(IO.Directory.GetCurrentDirectory())
+                    try { IO.File.ReadAllText("C:\\NOPE\\X.TXT") } catch (e) { print("error: " + e.message) }
+                    IO.Directory.SetCurrentDirectory("C:\\")
+                    IO.Directory.Delete("C:\\FIRE", true)
+                    print(IO.Directory.Exists("C:\\FIRE"))
+                    """;
+                const string dosFilesExpected = "\\\nHallo DOS\nTrue True\nC:\\FIRE\\X.TXT\nC:\\FIRE\\A.TXT C:\\FIRE\\SUB b.dat\nC:\\FIRE\\SUB\\HELLO.TXT\n9\nC:\\FIRE\n"
+                    + "error: Could not find a part of the path 'C:\\NOPE\\X.TXT'.\nFalse\n";
+                string filesDir = Path.Combine(workDir, "dos16files");
+                Directory.CreateDirectory(filesDir);
+                var filesBuilt = fire.Compiler.NativeBuilder.Build(new[] { dosFiles }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(filesDir, "PROG.EXE"), VmExecutionMode.Release);
+                string filesOut = "";
+                if (filesBuilt.Ok)
+                {
+                    var env = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy", ["SDL_AUDIODRIVER"] = "dummy" };
+                    RunProc(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" -c \"mount c {filesDir}\" -c \"c:\" -c \"PROG.EXE > OUT.TXT\" -c \"exit\"", filesDir, out _, null, env);
+                    string outFile = Directory.GetFiles(filesDir).FirstOrDefault(f => Path.GetFileName(f).Equals("OUT.TXT", StringComparison.OrdinalIgnoreCase)) ?? "";
+                    filesOut = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
+                }
+                CheckNat("dos16: Dateien mit DOS-Pfaden (Laufwerk, \\ und /, Gross/Klein gleich, was DOS liefert gross; anlegen, lesen, kopieren, auflisten, Verzeichnis wechseln, loeschen)",
+                    filesBuilt.Ok && filesOut == dosFilesExpected, $"  erwartet:\n{dosFilesExpected}\n  DOS:\n{(filesBuilt.Ok ? filesOut : filesBuilt.Log)}");
             }
         }
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);

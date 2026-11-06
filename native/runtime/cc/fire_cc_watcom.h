@@ -6,7 +6,8 @@
 #define FIRE_MAYBE_UNUSED
 #define FIRE_LIKELY(x) (x)
 #define FIRE_UNLIKELY(x) (x)
-#define FIRE_NORETURN __declspec(aborts)
+/* (no __declspec(aborts): with it Open Watcom made a call of exitNow after reportUnhandled jump back into reportUnhandled - an endless loop, dos16) */
+#define FIRE_NORETURN
 #define FIRE_NOT_REACHED(r) return r;
 #define FIRE_CONST_FN
 #define FIRE_TLS_KEYWORD
