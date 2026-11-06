@@ -4045,7 +4045,7 @@ namespace fire.Runtime
             else if (target.Kind == ValueKind.Class)
             {
                 var obj = (ObjectInstance)target.AsObjectRef();
-                var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }, adoptUnclaimed: 1); // Return value unused
+                var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }, adoptUnclaimed: 0b11); // (the key and the value are slots of the container, SPEC 2.1) Return value unused
                 // null == SetIndex() was left through a thrown exception
                 // (see CallMethodNested documentation) - then do NOT
                 // push, execution already continues elsewhere.
@@ -5948,7 +5948,7 @@ namespace fire.Runtime
             return Pop();
         }
 
-        private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args, bool takeFirst = false, int adoptUnclaimed = -1)
+        private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args, bool takeFirst = false, int adoptUnclaimed = 0)
         {
             _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var rc = ResolveClass(obj.ClassName);
@@ -5982,7 +5982,10 @@ namespace fire.Runtime
             foreach (var a in args) scope.DefineSlot(a);
             if (takeFirst) TakeArgument(scope.SlotRef(0), scope);   // (SetFieldAccessor: a property assignment in an accessor passes the value on like `take`)
             // `obj[i] = new X()` on an object: an unclaimed value goes to the call of SetIndex, like an argument (SPEC 2.1)
-            if (adoptUnclaimed >= 0 && _frames.Count > 0) AdoptReturnedArgument(scope.SlotRef(adoptUnclaimed), _frames.Peek().ReturnScope, scope);
+            // (adoptUnclaimed: a mask of the arguments that are slots of the call - an unclaimed value there belongs to the call)
+            if (adoptUnclaimed != 0 && _frames.Count > 0)
+                for (int i = 0; i < args.Length && i < 31; i++)
+                    if ((adoptUnclaimed >> i & 1) != 0) AdoptReturnedArgument(scope.SlotRef(i), _frames.Peek().ReturnScope, scope);
 
             _currentThis = obj;
             _currentScope = scope;
