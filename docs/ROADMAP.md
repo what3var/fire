@@ -500,6 +500,13 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 
    Parameter und Ergebnis sind C-Typen (`int` -> `FireInt`, `float` -> `Real`, `byte[]` -> die Bytes, `any` -> `Value`); der Generator baut den Wrapper wie bei
    den Natives der Packages. In der VM ist ein Aufruf ein Fehler (oder eine Alternative mit `#if native`); der Editor hebt den Rumpf als C hervor.
+2b. **Eigener Scheduler für Ziele ohne Threads** (Entscheidung des Benutzers, direkt nach Inline-C): fire-Threads auch dort, wo das System keine hat (DOS,
+   BIOS, UEFI, Win16, kleine Boards ohne RTOS). Eine Plattformschicht `std/fire_sched.h` setzt die Schnittstelle der Threads (Mutex, Bedingungsvariable,
+   Thread starten/warten, ein Zeiger je Thread) mit eigenen "grünen" Threads um; der Wechsel des Kontexts ist je Architektur eine kleine Datei (`ucontext` auf
+   POSIX zum Testen am Rechner, 16- und 32-Bit-x86 für Watcom). Gewechselt wird nur an den Safepoints der Runtime (der GIL gibt ohnehin alle 4096 ab) und
+   beim Warten (Mutex, Bedingung, `Sleep`, `join`); ein Timer-IRQ (DOS/BIOS: `INT 08h`/`1Ch`) setzt nur ein Flag, das den nächsten Safepoint früher abgeben lässt -
+   im IRQ selbst wird nie gewechselt (DOS und die C-Bibliothek sind nicht reentrant). Läuft niemand, schläft die Plattform (`hlt`). Ein Mutex übergibt beim
+   Freigeben an den ersten Wartenden (fair). Test: `posix` mit `FIRE_GREEN_THREADS` lässt die Thread-Fälle der Suite auf dem eigenen Scheduler laufen.
 3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
    keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
    paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).

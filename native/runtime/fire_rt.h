@@ -6629,6 +6629,7 @@ FIRE_FN void gilRelease(void) {
 }
 /* Lets a thread that waits for the lock run (the ticket lock is fair: this thread queues up again behind it). */
 FIRE_FN void gilYield(void) {
+    FIRE_PLAT_YIELD();   /* (a scheduler of fire itself: the others get their turn - a thread that has not started yet waits for nothing) */
     if (fire_atomic_load(&g_gilWaiting)) { gilRelease(); gilAcquire(); }
 }
 
@@ -7511,14 +7512,14 @@ FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
 /* A safe point for the signals (function entry, after a native function that waits): now and then the GIL is offered to the other threads, and the signals are
  * looked at - not the queue (ATTN_SECT). True when a leave/an exception is unwinding because of it. */
 FIRE_FN bool pollSignals(void) {
-    if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
+    if (FIRE_UNLIKELY(--g_tick <= 0 || FIRE_PLAT_PREEMPTED())) { g_tick = 4096; gilYield(); }
     if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask & ~(uint32_t)ATTN_SECT))) return false;
     return pollSlow(false);
 }
 
 /* A loop's jump back: like pollSignals, and the main program serves its queue there (ATTN_SECT is in its mask only in the mode `safepoints`). */
 FIRE_FN bool pollLoop(void) {
-    if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
+    if (FIRE_UNLIKELY(--g_tick <= 0 || FIRE_PLAT_PREEMPTED())) { g_tick = 4096; gilYield(); }
     if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask))) return false;
     return pollSlow(true);
 }

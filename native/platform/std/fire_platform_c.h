@@ -21,6 +21,15 @@
 
 #include <stdint.h>
 
+/* A scheduler of fire itself (fire_sched.h; a platform without threads): a safepoint gives the turn to the other fire threads (FIRE_PLAT_YIELD), and asks whether a
+ * timer wants that early (FIRE_PLAT_PREEMPTED). Real threads need neither. */
+#ifndef FIRE_PLAT_YIELD
+#define FIRE_PLAT_YIELD() ((void)0)
+#endif
+#ifndef FIRE_PLAT_PREEMPTED
+#define FIRE_PLAT_PREEMPTED() 0
+#endif
+
 #ifndef FIRE_NORETURN   /* (fire_rt.h includes the dialect of the compiler first, cc/fire_cc.h) */
 #define FIRE_NORETURN
 #endif

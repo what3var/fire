@@ -28457,6 +28457,24 @@ else
                 }
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
             }
+            // the scheduler of fire itself (ROADMAP 13.2b, std/fire_sched.h: green threads for targets without threads) - tried on this machine: every thread case
+            // built with FIRE_GREEN_THREADS (ucontext instead of pthreads) gives what the VM gives
+            if (!OperatingSystem.IsWindows())
+            {
+                var greenIndexes = Enumerable.Range(0, natCases.Length).Where(i => natCases[i].Name.StartsWith("Threads:") && TestSelected("Gruene Threads " + natCases[i].Name)).ToArray();
+                var greenTasks = TestJobs.Map(greenIndexes, (index, _) =>
+                {
+                    string expected = vmResults[index];
+                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release));
+                    string exe = Path.Combine(workDir, $"green{index}.bin");
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"green{index}", $"-pthread -DFIRE_GREEN_THREADS {NativeTestBuild.Opt} -Wall -Wextra", exe, out int buildExit);
+                    if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C-Compiler: " + build);
+                    return (natCases[index].Name, expected, RunProc(exe, "", workDir, out _));
+                });
+                foreach (var (name, expected, actual) in greenTasks)
+                    CheckNat($"Gruene Threads (eigener Scheduler) == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (eigener Scheduler):\n{actual}");
+                if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("Gruene Threads: es gibt Faelle", greenIndexes.Length >= 30, greenIndexes.Length.ToString());
+            }
         });
 
         // ---- Target configuration (fire.native.json) and `build` with the native engine
