@@ -92,7 +92,9 @@ enum { FIRE_BACKDROP_NONE = 0, FIRE_BACKDROP_TRANSPARENT = 1, FIRE_BACKDROP_BLUR
 /* One event; which fields count depends on `type` (positions are in framebuffer pixels: the window may be scaled). */
 typedef struct FireDisplayEvent {
     int type;
-    int keyCode, scanCode, modifier;   /* keys */
+    int32_t keyCode;                   /* keys (int32_t: the code of a key without a character has bit 30) */
+    int scanCode;
+    int32_t modifier;
     int repeat;
     int button;                        /* mouse buttons */
     int buttonState;                   /* mouse motion: the buttons that are down */

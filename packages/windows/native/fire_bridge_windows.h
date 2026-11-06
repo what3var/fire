@@ -20,8 +20,9 @@ typedef struct FireWinCallback { int type; Value lam; } FireWinCallback;
 /* A window manager's thread needs the fire threads (the GIL, host services; the generator switches them on when the program can start one), not the
  * browser. Where windows may only live on the main thread (macOS; FIRE_WINDOW_COOPERATIVE elsewhere, for tests) the thread only gives the beat: it asks the
  * program for a cycle about 60 times a second, and the program opens, pumps and shows the windows itself (FIRE_WINDOW_COOP). */
-#if (defined(FIRE_THREADS) || defined(FIRE_LIBRARY)) && !defined(__EMSCRIPTEN__)
-/* (in the library for the VM the threads are those of the platform; the program's cycles and the holds on its end are the VM's: fire_rt.h's host services) */
+#if (defined(FIRE_THREADS) || defined(FIRE_LIBRARY)) && !defined(__EMSCRIPTEN__) && !defined(FIRE_WINDOW_NO_THREADS)
+/* (FIRE_WINDOW_NO_THREADS: a platform whose fire threads are tasks of its own scheduler - DOS: the program shows its windows itself)
+ * (in the library for the VM the threads are those of the platform; the program's cycles and the holds on its end are the VM's: fire_rt.h's host services) */
 #define FIRE_WINDOW_THREADS 1
 #if defined(__APPLE__) || defined(FIRE_WINDOW_COOPERATIVE)
 #define FIRE_WINDOW_COOP 1
@@ -155,9 +156,9 @@ typedef struct FireWinState {
     FireGfxFramebuffer* fb;
     struct FireWinMgr* mgr;
     int vsync;
-    FireWinCallback* callbacks; size_t callbackCount, callbackCap;
+    FireWinCallback* callbacks; fire_gfx_size callbackCount, callbackCap;
     FireDisplayEvents queue;   /* the events for NextEvent (only once EnableEvents was called) */
-    size_t queueHead;
+    fire_gfx_size queueHead;
     int queueOn;
     int touchMouse;            /* Window.TouchMouse */
     int autoResize;            /* a resize of the window resizes the framebuffer (Window.AutoResize) */
@@ -168,7 +169,7 @@ typedef struct FireWinState {
 } FireWinState;
 
 static void fire_winb_stateDelete(FireWinState* w) {
-    size_t i;
+    fire_gfx_size i;
     if (w == NULL) return;
     for (i = 0; i < w->callbackCount; i++) release(w->callbacks[i].lam);
     free(w->callbacks);
@@ -188,8 +189,8 @@ static void fire_winb_stateDelete(FireWinState* w) {
  * --------------------------------------------------------------------------------------------------------------------------------------------- */
 typedef struct FireWinMgr {
     FireWinMutex m;
-    FireWinShared** shown; size_t shownCount, shownCap;      /* the windows its thread shows (under m) */
-    FireWinState** attached; size_t attachedCount, attachedCap;   /* the program's view */
+    FireWinShared** shown; fire_gfx_size shownCount, shownCap;      /* the windows its thread shows (under m) */
+    FireWinState** attached; fire_gfx_size attachedCount, attachedCap;   /* the program's view */
     fire_atomic32 stop;
     fire_atomic32 pending;     /* a cycle was asked for and has not run yet */
     Value service;
@@ -214,8 +215,8 @@ static int fire_winb_ownsWindows(const FireWinMgr* m) { (void)m; return 0; }
 #endif
 
 /* The windows and the managers by id (index 0 is not used, ids are not used again). The managers are made first and destroyed last: the windows stop their threads when they go. */
-static FireWinState** g_fireWinList; static size_t g_fireWinCount, g_fireWinCap;
-static FireWinMgr** g_fireWinMgrs; static size_t g_fireWinMgrCount, g_fireWinMgrCap;
+static FireWinState** g_fireWinList; static fire_gfx_size g_fireWinCount, g_fireWinCap;
+static FireWinMgr** g_fireWinMgrs; static fire_gfx_size g_fireWinMgrCount, g_fireWinMgrCap;
 static int g_fireWinReady;
 
 static void fire_winb_atExit(void);
@@ -237,7 +238,7 @@ FIRE_NORETURN static void fire_winb_noResource(int64_t i) {
 static FireWinState* fire_winb_windowOf(Value id) {
     int64_t i = (int32_t)id.i;
     fire_winb_ready();
-    if (i > 0 && (size_t)i < g_fireWinCount && g_fireWinList[(size_t)i]) return g_fireWinList[(size_t)i];
+    if (i > 0 && (fire_gfx_size)i < g_fireWinCount && g_fireWinList[(fire_gfx_size)i]) return g_fireWinList[(fire_gfx_size)i];
     fire_winb_noResource(i);
     return NULL;
 }
@@ -246,8 +247,8 @@ static FireWinState* fire_winb_windowOf(Value id) {
 static char* fire_winb_toUtf8(Value v) {
     const Str* s = strOf(v);
     const fire_char16* c = s->data;
-    char* out = (char*)malloc((size_t)s->length * 3 + 1);
-    size_t n = 0;
+    char* out = (char*)malloc((fire_gfx_size)s->length * 3 + 1);
+    fire_gfx_size n = 0;
     uint32_t i;
     if (out == NULL) fatal("Out of memory.");
     for (i = 0; i < s->length; i++) {
@@ -262,14 +263,14 @@ static char* fire_winb_toUtf8(Value v) {
     return out;
 }
 static Value fire_winb_utf8Str(const char* text, OwnList* list) {
-    size_t len = strlen(text), i = 0, count = 0;
+    fire_gfx_size len = strlen(text), i = 0, count = 0;
     fire_char16* w = (fire_char16*)malloc(sizeof(fire_char16) * (len * 2 + 1));
     Str* s;
     if (w == NULL) fatal("Out of memory.");
     while (i < len) {
         unsigned char b = (unsigned char)text[i];
         uint32_t u;
-        size_t n, k;
+        fire_gfx_size n, k;
         if (b < 0x80) { u = b; n = 1; } else if ((b >> 5) == 6) { u = b & 0x1F; n = 2; } else if ((b >> 4) == 14) { u = b & 0x0F; n = 3; } else if ((b >> 3) == 30) { u = b & 0x07; n = 4; } else { u = 0xFFFD; n = 1; }
         if (i + n > len) { u = 0xFFFD; n = 1; } else for (k = 1; k < n; k++) u = (u << 6) | ((unsigned char)text[i + k] & 0x3F);
         i += n;
@@ -283,7 +284,7 @@ static Value fire_winb_utf8Str(const char* text, OwnList* list) {
 
 /* The paths of a drop (one per line in `data`) as an array of strings. */
 static Value fire_winb_paths(const char* data, OwnList* list) {
-    size_t count = 0, i = 0;
+    fire_gfx_size count = 0, i = 0;
     const char* p;
     Arr* a;
     if (data == NULL || data[0] == 0) return ArrV(allocArr(0, list));
@@ -293,7 +294,7 @@ static Value fire_winb_paths(const char* data, OwnList* list) {
     p = data;
     while (i < count) {
         const char* end = strchr(p, '\n');
-        size_t n = end ? (size_t)(end - p) : strlen(p);
+        fire_gfx_size n = end ? (fire_gfx_size)(end - p) : strlen(p);
         char* line = (char*)malloc(n + 1);
         if (line == NULL) fatal("Out of memory.");
         memcpy(line, p, n);
@@ -344,7 +345,7 @@ static void fire_winb_runCallback(Value lam, int argc, const Value* args) {
 
 static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
     FireWinCallback* mine;   /* a callback may register or unregister callbacks */
-    size_t count = 0, i;
+    fire_gfx_size count = 0, i;
     if (w->callbackCount == 0) return;
     mine = (FireWinCallback*)malloc(sizeof(FireWinCallback) * w->callbackCount);
     if (mine == NULL) fatal("Out of memory.");
@@ -384,7 +385,7 @@ static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
 static FireWinMgr* fire_winb_mgrOf(Value id) {
     int64_t i = (int32_t)id.i;
     fire_winb_ready();
-    if (i > 0 && (size_t)i < g_fireWinMgrCount && g_fireWinMgrs[(size_t)i]) return g_fireWinMgrs[(size_t)i];
+    if (i > 0 && (fire_gfx_size)i < g_fireWinMgrCount && g_fireWinMgrs[(fire_gfx_size)i]) return g_fireWinMgrs[(fire_gfx_size)i];
     {
         char text[64];
         snprintf(text, sizeof text, "No window manager with ID %lld.", (long long)i);
@@ -398,7 +399,7 @@ static int fire_winb_threaded(const FireWinState* w) { return w->mgr && fire_win
 
 /* The events that a blocked window still gets: a resize and the end of the program. */
 static void fire_winb_dropBlocked(FireWinState* w, FireDisplayEvents* events) {
-    size_t i, k = 0;
+    fire_gfx_size i, k = 0;
     if (!w->blocked) {
         /* AutoClose: the request closes the window (its handlers still hear of it) */
         if (w->autoClose)
@@ -472,12 +473,12 @@ static int fire_winb_canStartDrag(FireDisplayWindow* display) {
 }
 
 /* (a pointer list: remove every `item`) */
-static void fire_winb_remove(void** items, size_t* count, const void* item) {
-    size_t i, k = 0;
+static void fire_winb_remove(void** items, fire_gfx_size* count, const void* item) {
+    fire_gfx_size i, k = 0;
     for (i = 0; i < *count; i++) if (items[i] != item) items[k++] = items[i];
     *count = k;
 }
-static void fire_winb_add(void*** items, size_t* count, size_t* cap, void* item) {
+static void fire_winb_add(void*** items, fire_gfx_size* count, fire_gfx_size* cap, void* item) {
     if (!fire_gfx_grow((void**)items, cap, *count, sizeof(void*))) fatal("Out of memory.");
     (*items)[(*count)++] = item;
 }
@@ -495,7 +496,7 @@ static void fire_winb_stopThread(FireWinMgr* m) {
 
 /* The end of the program: the threads of the managers end first (they show windows of the list), then the windows close, then the managers go. */
 static void fire_winb_atExit(void) {
-    size_t i;
+    fire_gfx_size i;
     for (i = 0; i < g_fireWinMgrCount; i++) if (g_fireWinMgrs[i]) fire_winb_stopThread(g_fireWinMgrs[i]);
     for (i = 0; i < g_fireWinCount; i++) { fire_winb_stateDelete(g_fireWinList[i]); g_fireWinList[i] = NULL; }
     for (i = 0; i < g_fireWinMgrCount; i++) {
@@ -528,7 +529,7 @@ static void fire_winb_pumpThread(void* arg) {
     FireWinMgr* m = (FireWinMgr*)arg;
     FireDisplayEvents events = {NULL, 0, 0};
     FireWinShared** list = NULL;
-    size_t listCount = 0, listCap = 0, k;
+    fire_gfx_size listCount = 0, listCap = 0, k;
     while (!fire_atomic_load(&m->stop)) {
         int64_t start = fire_plat_nowMs(), rest;
         fire_winb_lock(&m->m);
@@ -538,7 +539,7 @@ static void fire_winb_pumpThread(void* arg) {
         for (k = 0; k < listCount; k++) {
             FireWinShared* s = list[k];
             int w, h, open, fresh;
-            size_t e;
+            fire_gfx_size e;
             fire_winb_lock(&s->m);
             if (s->release) {
                 fire_winb_unlock(&s->m);
@@ -626,7 +627,7 @@ static void fire_winb_pumpThread(void* arg) {
 /* The main program at a safe point: the cycles that the threads of the managers asked for (each runs the manager's Tick). */
 static void fire_winb_serveManagers(void) {
     static int busy = 0;
-    size_t i;
+    fire_gfx_size i;
     if (busy) { fire_atomic_store(&g_hostPending, 1); return; }   /* a cycle is running: the next safe point after it */
     busy = 1;
     for (i = 0; i < g_fireWinMgrCount; i++) {
@@ -719,7 +720,7 @@ static Value fire_win_WinMgrStart(Value mgrId, Value service) {
     return Bool(true);
 #else
     {
-        size_t i;
+        fire_gfx_size i;
         fire_winb_lock(&m->m);
         for (i = 0; i < m->attachedCount; i++) {
             FireWinState* w = m->attached[i];
@@ -786,14 +787,14 @@ static Value fire_win_WinCreate(Value fbId, Value title) {
 static Value fire_win_WinDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     fire_winb_ready();
-    if (i > 0 && (size_t)i < g_fireWinCount && g_fireWinList[(size_t)i]) {
-        FireWinState* w = g_fireWinList[(size_t)i];
+    if (i > 0 && (fire_gfx_size)i < g_fireWinCount && g_fireWinList[(fire_gfx_size)i]) {
+        FireWinState* w = g_fireWinList[(fire_gfx_size)i];
         if (fire_winb_threaded(w)) {
             /* the manager's thread closes the OS window and frees what it shares */
             fire_winb_detachFrom(w);   /* (gives w a fresh, unopened one and marks the old one for release) */
         } else if (w->mgr) fire_winb_detachFrom(w);
         fire_winb_stateDelete(w);
-        g_fireWinList[(size_t)i] = NULL;
+        g_fireWinList[(fire_gfx_size)i] = NULL;
         return Bool(true);
     }
     return Bool(false);
@@ -801,7 +802,7 @@ static Value fire_win_WinDestroy(Value id) {
 
 /* (the events of a cycle for the queue of NextEvent) */
 static void fire_winb_enqueue(FireWinState* w, const FireDisplayEvents* events) {
-    size_t i;
+    fire_gfx_size i;
     if (!w->queueOn) return;
     for (i = 0; i < events->count; i++) if (w->queue.count - w->queueHead < FIRE_WIN_MAX_QUEUED_EVENTS) fire_display_push(&w->queue, &events->items[i]);
 }
@@ -809,14 +810,14 @@ static void fire_winb_enqueue(FireWinState* w, const FireDisplayEvents* events) 
 /* The events of a cycle go to the queue (EnableEvents) and to the callbacks; with AutoResize a resize gives the framebuffer the new size. */
 static void fire_winb_deliver(Value id, FireWinState* w, FireDisplayEvents* events) {
     int64_t i = (int32_t)id.i;
-    size_t k;
+    fire_gfx_size k;
     if (w->autoResize)
         for (k = 0; k < events->count; k++)
             if (events->items[k].type == FIRE_EV_RESIZE && fire_gfx_validSize(events->items[k].width, events->items[k].height)) fire_gfx_fbResize(w->fb, events->items[k].width, events->items[k].height);
     fire_winb_enqueue(w, events);
     for (k = 0; k < events->count; k++) {
         fire_winb_dispatch(w, &events->items[k]);
-        if (!g_fireWinList[(size_t)i]) break;   /* a callback destroyed the window */
+        if (!g_fireWinList[(fire_gfx_size)i]) break;   /* a callback destroyed the window */
     }
 }
 
@@ -844,13 +845,13 @@ static Value fire_win_WinPump(Value id) {
     fire_winb_deliver(id, w, &events);
     fire_display_eventsFree(&events);
     /* (a callback destroyed the window: its close request went with it, as in the VM) */
-    if (!g_fireWinList[(size_t)(int32_t)id.i]) return Bool(open != 0);
+    if (!g_fireWinList[(fire_gfx_size)(int32_t)id.i]) return Bool(open != 0);
     return Bool(open && !w->closeRequested);
 }
 
 /* The pixels of the framebuffer as colors (malloc). */
 static uint32_t* fire_winb_resolve(const FireGfxFramebuffer* fb) {
-    size_t n = fire_gfx_fbPixelCount(fb);
+    fire_gfx_size n = fire_gfx_fbPixelCount(fb);
     uint32_t* pixels = (uint32_t*)malloc(sizeof(uint32_t) * (n ? n : 1));
     if (pixels == NULL) fatal("Out of memory.");
     fire_gfx_fbResolveTo(fb, pixels);
@@ -870,6 +871,25 @@ static uint32_t* fire_winb_frame(FireWinState* w, fire_present_fn* fn, void** ct
         if (!needs) return NULL;
     }
     return fire_winb_resolve(w->fb);
+}
+
+/* Shows the framebuffer of a window here (no manager's thread): a display that reads a framebuffer itself (FIRE_DISPLAY_PRESENT_FB - DOS: the indices and the
+ * palette straight into the video memory and the registers of the card, no copy as colors) gets it, the others its pixels as colors. */
+static void fire_winb_presentHere(FireWinState* w) {
+    uint32_t* pixels;
+    fire_present_fn fn;
+    void* ctx;
+#ifdef FIRE_DISPLAY_PRESENT_FB
+    if (w->fb->presentFn == NULL && w->fb->gpu == NULL) {
+        fire_display_presentFramebuffer(&w->sh->display, w->fb, w->areaSet ? w->area : NULL);
+        w->areaSet = 0;
+        return;
+    }
+#endif
+    pixels = fire_winb_frame(w, &fn, &ctx);
+    fire_winb_showArea(w->sh, fn, ctx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
+    w->areaSet = 0;
+    free(pixels);
 }
 
 /* The second half of a cycle: shows the framebuffer - here, or (a started manager) hands a copy to the manager's thread. */
@@ -897,10 +917,7 @@ static Value fire_win_WinPresent(Value id) {
         return Undef();
     }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Undef();
-    pixels = fire_winb_frame(w, &fn, &ctx);
-    fire_winb_showArea(w->sh, fn, ctx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
-    w->areaSet = 0;
-    free(pixels);
+    fire_winb_presentHere(w);
     return Undef();
 }
 
@@ -910,11 +927,8 @@ static Value fire_win_WinTick(Value id) {
     FireDisplayEvents events = {NULL, 0, 0};
     int open;
     int64_t i;
-    size_t k;
-    uint32_t* pixels;
-    fire_present_fn fn;
-    void* ctx;
-    if (fire_winb_threaded(w)) { Value o = fire_win_WinPump(id); if (g_fireWinList[(size_t)(int32_t)id.i]) fire_win_WinPresent(id); return o; }
+    fire_gfx_size k;
+    if (fire_winb_threaded(w)) { Value o = fire_win_WinPump(id); if (g_fireWinList[(fire_gfx_size)(int32_t)id.i]) fire_win_WinPresent(id); return o; }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
     open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);
     fire_winb_applyRequests(w->sh);
@@ -922,18 +936,15 @@ static Value fire_win_WinTick(Value id) {
         for (k = 0; k < events.count; k++)
             if (events.items[k].type == FIRE_EV_RESIZE && fire_gfx_validSize(events.items[k].width, events.items[k].height)) fire_gfx_fbResize(w->fb, events.items[k].width, events.items[k].height);
     fire_winb_dropBlocked(w, &events);
-    pixels = fire_winb_frame(w, &fn, &ctx);
-    fire_winb_showArea(w->sh, fn, ctx, pixels, w->fb->width, w->fb->height, w->areaSet ? w->area : NULL);
-    w->areaSet = 0;
-    free(pixels);
+    fire_winb_presentHere(w);
     fire_winb_enqueue(w, &events);
     i = (int32_t)id.i;
     for (k = 0; k < events.count; k++) {
         fire_winb_dispatch(w, &events.items[k]);
-        if (!g_fireWinList[(size_t)i]) break;   /* a callback destroyed the window */
+        if (!g_fireWinList[(fire_gfx_size)i]) break;   /* a callback destroyed the window */
     }
     fire_display_eventsFree(&events);
-    if (!g_fireWinList[(size_t)i]) return Bool(open != 0);   /* (a callback destroyed the window: its close request went with it, as in the VM) */
+    if (!g_fireWinList[(fire_gfx_size)i]) return Bool(open != 0);   /* (a callback destroyed the window: its close request went with it, as in the VM) */
     return Bool(open && !w->closeRequested);
 }
 static Value fire_win_WinEnableEvents(Value id) { fire_winb_windowOf(id)->queueOn = 1; return Bool(true); }
@@ -999,7 +1010,7 @@ static Value fire_win_WinClipboardHasText(void) { return Bool(fire_display_clipb
 /* ---- pictures and files on the clipboard: Clipboard.GetImage/SetImage/HasImage, GetFiles/SetFiles/HasFiles ---- */
 /* The picture on the clipboard: the bytes of its PNG or BMP file (the prelude decodes them), undefined when there is none. */
 static Value fire_win_WinClipboardGetImage(OwnList* list) {
-    size_t size = 0;
+    size_t size = 0;   /* (the display's size_t) */
     unsigned char* image = fire_display_clipboardGetImage(&size);
     Buf* b;
     if (image == NULL || size == 0 || size > 0x7FFFFFFFu) { free(image); return Undef(); }
@@ -1014,14 +1025,14 @@ static Value fire_win_WinClipboardSetImage(Value png) {
     FireGfxImage image;
     char err[FIRE_GFX_ERR_SIZE];
     uint8_t* bmp = NULL;
-    size_t bmpSize = 0;
+    fire_gfx_size bmpSize = 0;
     int ok;
     if (!bytesArg(png, "Clipboard.SetImage", &b)) return Undef();
     fire_gfx_imageInit(&image);
     err[0] = 0;
     if (!fire_gfx_decodeImage(b.data, b.length, &image, err)) { fire_gfx_imageFree(&image); return Bool(false); }
     {
-        size_t n = fire_gfx_imageCount(&image), i;
+        fire_gfx_size n = fire_gfx_imageCount(&image), i;
         uint32_t* rgba = (uint32_t*)calloc(n + 1, sizeof(uint32_t));
         if (rgba == NULL) { fire_gfx_imageFree(&image); return Bool(false); }
         if (image.indexed) { for (i = 0; i < n; i++) rgba[i] = image.indices[i] == image.transparentIndex ? image.palette[image.indices[i]] & 0x00FFFFFFu : image.palette[image.indices[i]]; }
@@ -1046,7 +1057,7 @@ static Value fire_win_WinClipboardGetFiles(OwnList* list) {
 static Value fire_win_WinClipboardSetFiles(Value paths) {
     Arr* a;
     char* all = NULL;
-    size_t total = 0, used = 0;
+    fire_gfx_size total = 0, used = 0;
     uint32_t i;
     int ok;
     if (paths.kind != K_Array) return Bool(false);
@@ -1055,7 +1066,7 @@ static Value fire_win_WinClipboardSetFiles(Value paths) {
     for (i = 0; i < a->length; i++) {
         Value item = arrItems(a)[i];
         char* utf8;
-        size_t n;
+        fire_gfx_size n;
         char* grown;
         if (item.kind != K_String) continue;
         utf8 = fire_winb_toUtf8(item);
@@ -1081,14 +1092,14 @@ static Value fire_win_WinClipboardHasFiles(void) { return Bool(fire_display_clip
 static char* fire_winb_pathLines(Value paths) {
     Arr* a;
     char* all = NULL;
-    size_t total = 0, used = 0;
+    fire_gfx_size total = 0, used = 0;
     uint32_t i;
     if (paths.kind != K_Array || !leafAlive(paths)) return NULL;
     a = arrOf(paths);
     for (i = 0; i < a->length; i++) {
         Value item = arrItems(a)[i];
         char* utf8;
-        size_t n;
+        fire_gfx_size n;
         char* grown;
         if (item.kind != K_String) continue;
         utf8 = fire_winb_toUtf8(item);

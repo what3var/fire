@@ -557,14 +557,20 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Kreise, Ellipsen, Polygone, Füllen, Text, Blits (auch gespiegelt/skaliert), `Resize`, Schatten/Unschärfe, PNG hin und zurück, Masken - gleich.
    Grenze: ein Programm mit der Grafikbibliothek hat rund 450 KB Code (je ~115 KB Grafik-C und übersetztes Prelude), daneben bleiben ~150 KB Daten
    (ein Palettenpuffer 320x200 und kleinere; ein RGBA-Puffer 320x200 nicht). Mehr Platz erst mit Overlays oder dos32.
-   **Offen:** die Anzeige (VGA Mode 13h/12h, VESA; die Palette in die Register der Karte), Tastatur/Maus als Ereignisse eines Fensters.
+   **Anzeige** (`windows` auf dos16, `std/fire_display_dos.h`): ein Fenster ist der ganze Bildschirm - Mode 13h (320x200, 256 Farben) bis 320x200, VESA 101h
+   (640x480, 256 Farben, Bänke) darüber, wenn das BIOS ihn hat; der Framebuffer wird gestreckt. Ein Paletten-Framebuffer geht direkt in den Videospeicher und seine
+   Palette in die DAC-Register (`FIRE_DISPLAY_PRESENT_FB`: die Brücke reicht den Framebuffer, keine Kopie als RGBA - 320x200 wären 256 KB), ein RGBA-Framebuffer
+   über den 6x6x6-Farbwürfel und 40 Graustufen. Tasten vom BIOS (Set-1-Scancodes wie unter Windows: `fire_key_fromWin32`; gedrückt und losgelassen im selben
+   Takt), die Maus über INT 33h (ihr Zeiger ist beim Schreiben eines Bildes aus); am Ende der Textmodus. Kein Fenster-Thread (`FIRE_WINDOW_NO_THREADS`). Keycodes
+   und Modifikatoren der Display-Schicht sind `int32_t` (ein Keycode ohne Zeichen hat Bit 30). Tests in DOSBox-X (Videospeicher, DAC, VESA-Modus, Tasten).
+   **Offen:** Mode 12h (640x480, 16 Farben, Bitebenen) und die CGA/EGA-Modi, ein `PackedFramebuffer` (1/2/4 Bit), nur geänderte Bereiche schreiben, die UI.
    **`dos`** und **`xms`** ([DOS and XMS](stdlib/dos.md)): Interrupts mit den Registern des 8086 (`Dos.Interrupt`, `DosRegisters`), DOS-Speicher, Vektoren,
    die Adresse eines Puffers als Segment:Offset; Blöcke im Speicher über 1 MB über den XMS-Treiber (`XmsBlock`, Kopien beliebiger Länge, am Ende freigegeben).
    Ein Teil der Plattformschicht `fire_dos.h` (`std/fire_dos_real.h`; dos32 später über DPMI). Test in DOSBox-X.
    **Geräte:** `devices` auf dos16 - `COM1`..`COM4` (UART direkt, 115200 8N1, FIFO; Empfang über den IRQ in einen Ringpuffer, Vektor und Maske am Ende zurück)
    und `LPT1`..`LPT3` (nur Ausgabe, BUSY/STROBE) als serielle Geräte (`std/fire_dev_dos.h`). Test in DOSBox-X (Dateien für COM1/LPT1, Empfang über den
    Loopback des UART).
-   **Offen:** `#intwidth 16`, die Anzeige der Grafik (s.o.).
+   **Offen:** `#intwidth 16`, weitere Grafikmodi (s.o.).
 3b. **Die Natives eines Packages gehören in das Package** (Entscheidung des Benutzers, nach der Grafik auf DOS): der C-Code der Natives - auch die
    plattformabhängigen Teile, die heute in `native/platform/<platform>/` und `native/platform/std/` liegen (`fire_console_*`, `fire_machine_*`, `fire_dos_*`,
    `fire_dev_*`, `fire_fs_*`, ...) - liegt im Package und wird mit dem Package aktualisiert (ein neues Package bringt seine Umsetzungen je Plattform mit, ohne

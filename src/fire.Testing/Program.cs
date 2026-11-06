@@ -27642,6 +27642,66 @@ else
                 var gfxImages = BuildAndRunDos(dosGfxImages, "dos16gfximg");
                 CheckNat("dos16: graphics - PNG schreiben und lesen (RGBA, Palette)", gfxImages.Ok && gfxImages.Text == "png 120x80 True\npal png 64 4434326\n", $"  erwartet:\npng 120x80 True\npal png 64 4434326\n\n  DOS:\n{gfxImages.Text}");
 
+                // windows on DOS (#import "windows"): the screen in Mode 13h - a palette framebuffer straight into the video memory and its palette into the DAC (read
+                // back), keys from the BIOS as on Windows (the code of Up has bit 30); an RGBA framebuffer through the colour cube, stretched; a larger one in VESA 101h
+                const string dosWindow = """
+                    #import "graphics"
+                    #import "windows"
+                    inline c int Vga(int x, int y) { return *(unsigned char __far*)MK_FP(0xA000, (unsigned)(y * 320 + x)); }
+                    inline c int Dac(int index) { outp(0x3C7, index); { int r = inp(0x3C9), g = inp(0x3C9), b = inp(0x3C9); return (FireInt)(((long)r << 16) | (g << 8) | b); } }
+                    inline c Push(int code) { union REGS r; r.h.ah = 5; r.x.cx = (unsigned short)code; int86(0x16, &r, &r); }
+                    var fb = new Framebuffer(320, 200, 1)
+                    fb.SetPaletteRgb(200, 255, 128, 0)
+                    var r = new Renderer(fb)
+                    r.ClearTo(1)
+                    r.FillRect(10, 20, 30, 40, new SolidBrush(200))
+                    var keys = ""
+                    var w = new Window(fb, "DOS")
+                    w.RegisterKeyDown((code, scan, mods, repeated) => { keys = keys + scan + "/" + code + " " })
+                    Push(0x1E61)
+                    Push(0x48E0)
+                    Push(0x011B)
+                    for (var i = 0; i < 3; i++) { w.Tick() }
+                    var at = Vga(15, 30)
+                    var bg = Vga(100, 100)
+                    var dac = Dac(200)
+                    w.Close()
+                    w.Tick()
+                    print("vga " + at + " " + bg + " dac " + dac)
+                    print("keys " + keys)
+                    """;
+                const string dosWindow2 = """
+                    #import "graphics"
+                    #import "windows"
+                    inline c int Vga(int x, int y) { return *(unsigned char __far*)MK_FP(0xA000, (unsigned)(y * 320 + x)); }
+                    inline c int VesaMode() { union REGS r; r.x.ax = 0x4F03; int86(0x10, &r, &r); return r.x.ax == 0x004F ? (FireInt)(r.x.bx & 0x3FFF) : -1; }
+                    inline c int VesaPixel(int x, int y) { union REGS r; long at = (long)y * 640 + x; r.x.ax = 0x4F05; r.x.bx = 0; r.x.dx = (unsigned)(at >> 16); int86(0x10, &r, &r); return *(unsigned char __far*)MK_FP(0xA000, (unsigned)(at & 0xFFFF)); }
+                    var fb = new Framebuffer(160, 100)
+                    var r = new Renderer(fb)
+                    r.ClearTo(0xFF000000)
+                    r.FillRect(0, 0, 80, 50, new SolidBrush(0xFF0000FF))
+                    var w = new Window(fb, "RGBA")
+                    w.Tick()
+                    print("rgba " + Vga(10, 10) + " " + Vga(300, 150))
+                    w.Close()
+                    w.Tick()
+                    var big = new Framebuffer(400, 300, 1)
+                    var rb = new Renderer(big)
+                    rb.ClearTo(3)
+                    rb.FillRect(200, 150, 200, 150, new SolidBrush(9))
+                    var w2 = new Window(big, "VESA")
+                    w2.Tick()
+                    print("vesa " + VesaMode() + " " + VesaPixel(10, 10) + " " + VesaPixel(600, 400))
+                    w2.Close()
+                    w2.Tick()
+                    """;
+                var winRun = BuildAndRunDos(dosWindow, "dos16win");
+                CheckNat("dos16: windows - Mode 13h (Indizes in den Videospeicher, Palette in die DAC-Register), Tasten des BIOS als KeyDown (a, Pfeil hoch, Esc)",
+                    winRun.Ok && winRun.Text == "vga 200 1 dac 4136960\nkeys 4/97 82/1073741906 41/27 \n", $"  DOS:\n{winRun.Text}");
+                var winRun2 = BuildAndRunDos(dosWindow2, "dos16win2");
+                CheckNat("dos16: windows - RGBA ueber den Farbwuerfel (gestreckt), ein Framebuffer ueber 320x200 in VESA 101h (640x480)",
+                    winRun2.Ok && winRun2.Text == "rgba 180 0\nvesa 257 3 9\n", $"  DOS:\n{winRun2.Text}");
+
                 // the console of DOS (#import "console"): the screen through the BIOS (code page 437, attributes - read back from the video memory) and keys from the
                 // keyboard buffer of the BIOS (INT 16h AH=05h puts them there, as if typed)
                 const string dosCon = """

@@ -41,10 +41,10 @@ enum {
     FIRE_CURSOR_EW = 7, FIRE_CURSOR_NS = 8, FIRE_CURSOR_MOVE = 9, FIRE_CURSOR_NOT_ALLOWED = 10, FIRE_CURSOR_HAND = 11, FIRE_CURSOR_COUNT = 12
 };
 
-#define FIRE_KEY_FROM_SCAN(sc) ((int)(0x40000000u | (unsigned)(sc)))
+#define FIRE_KEY_FROM_SCAN(sc) ((int32_t)(0x40000000ul | (uint32_t)(sc)))   /* (int32_t: an int of 16 bits - DOS - does not hold bit 30) */
 
 /* The key code of a key that types no character (or whose character is not known): the scan code with bit 30; the few keys with a control character keep it. */
-static int fire_key_fromScan(int sc) {
+static int32_t fire_key_fromScan(int sc) {
     switch (sc) {
         case FIRE_SC_RETURN: return 13;
         case FIRE_SC_ESCAPE: return 27;
@@ -70,12 +70,12 @@ static int fire_key_fromScan(int sc) {
 
 /* The key code from the character the layout gives the key without shift (`unshifted`, a code point; 0: none) - only keys of the main block take a character (the
  * number block, the function keys and the arrows keep their own code even when the layout names a character, as in SDL). */
-static int fire_key_code(int sc, uint32_t unshifted) {
+static int32_t fire_key_code(int sc, uint32_t unshifted) {
     int mainBlock = (sc >= FIRE_SC_A && sc <= FIRE_SC_0) || (sc >= FIRE_SC_MINUS && sc <= FIRE_SC_SLASH) || sc == FIRE_SC_NONUSBACKSLASH;
     if (mainBlock && unshifted >= 32 && unshifted != 127) {
         if (unshifted >= 'A' && unshifted <= 'Z') unshifted += 'a' - 'A';
         else if (unshifted >= 0xC0 && unshifted <= 0xDE && unshifted != 0xD7) unshifted += 0x20;   /* (Latin-1 capitals: Ä -> ä) */
-        return (int)unshifted;
+        return (int32_t)unshifted;
     }
     return fire_key_fromScan(sc);
 }
