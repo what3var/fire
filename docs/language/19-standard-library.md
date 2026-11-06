@@ -39,6 +39,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | `"io"` | namespace `IO`: streams (`MemoryStream`, your own), text (`TextReader`, `TextWriter`, `Utf8`), console input and output (`Stdio`) |
 | `"console"` | the text console: `Console.Write`/`WriteAt` in colour (`ConsoleColor`), `Clear`, the cursor, single keys (`ReadKey`, `KeyAvailable`, `ConsoleKey`) - see [The text console](../stdlib/console.md) |
 | `"machine"` | namespace `Machine`: the hardware of the PC on dos16 - ports (`Port`), physical memory (`Memory`), `Cpu` (CPUID), hardware interrupts (`Irq`), `Cmos`, `Speaker`, `Pci` - see [The hardware of the PC](../stdlib/machine.md) |
+| `"dos"`, `"xms"` | under DOS: interrupts with registers (`Dos.Interrupt`, `DosRegisters`), DOS memory and vectors; blocks of extended memory above 1 MB (`XmsBlock`) - see [DOS and XMS](../stdlib/dos.md) |
 | `"filesystem"` | the file system in namespace `IO`, named like .NET: `File`, `Directory`, `Path`, `FileStream` - see [Files, directories and paths](../stdlib/filesystem.md) |
 | `"ui.docking"` | namespace `UI.Docking`: a `DockManager` for tool windows (docked, tabbed, floating) and movable toolstrips with an overflow menu, a `StatusBar` - see [Docking](../ui/docking.md) |
 | `"dialogs"` | open, save and folder dialogs and message boxes: `Dialogs.OpenFileDialog`, `SaveFileDialog`, `FolderBrowserDialog`, `MessageBox` - see [Dialogs](../ui/dialogs.md) |

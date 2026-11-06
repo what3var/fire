@@ -551,7 +551,10 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    **Grafik:** die `graphics`-Bibliothek baut für dos16 (das Plattformpaket setzt `FIRE_GFX_NO_GPU`), rechnet aber Pixelindizes in `int` - auf 16 Bit
    läuft schon 320x200 über; ein RGBA-Framebuffer 320x200 (256 000 Bytes) rechnet zudem seine Größen in `size_t`. Offen, Frage an den Benutzer (die
    Bibliothek 16-Bit-fest machen, oder Grafik ab `dos32` und auf dos16 nur ein kleines eigenes Render-Target).
-   **Offen:** `#intwidth 16`, Grafik (s.o.), die Packages `dos`/`xms`,
+   **`dos`** und **`xms`** ([DOS and XMS](stdlib/dos.md)): Interrupts mit den Registern des 8086 (`Dos.Interrupt`, `DosRegisters`), DOS-Speicher, Vektoren,
+   die Adresse eines Puffers als Segment:Offset; Blöcke im Speicher über 1 MB über den XMS-Treiber (`XmsBlock`, Kopien beliebiger Länge, am Ende freigegeben).
+   Ein Teil der Plattformschicht `fire_dos.h` (`std/fire_dos_real.h`; dos32 später über DPMI). Test in DOSBox-X.
+   **Offen:** `#intwidth 16`, Grafik (s.o.),
    Geräte (serieller/paralleler Port).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).

@@ -20256,6 +20256,19 @@ else
             try { Machine.Pci.Address(0, 32, 0, 0) } catch (ArgumentException e) { print("pci: " + e.message) }
             """)).ToArray();
 
+    // the services of DOS (#import "dos") and its extended memory (#import "xms"): without DOS a DosException / XmsException - the same in the VM and natively
+    natCases = natCases.Append(("dos/xms: ohne DOS eine DosException bzw. XmsException, Xms.Available() false, Register-Hilfen", """
+            #import "dos"
+            #import "xms"
+            try { Dos.Version() } catch (DosException e) { print("dos: " + e.message) }
+            try { Dos.Interrupt(33, new DosRegisters(12288)) } catch (DosException e) { print("int") }
+            print(Xms.Available())
+            try { new XmsBlock(16) } catch (XmsException e) { print("xms: " + e.message) }
+            var r = new DosRegisters(4660)
+            r.flags = 1
+            print(r.Ah + " " + r.Al + " " + r.Carry)
+            """)).ToArray();
+
     // inline c as static methods of a class (C name fire_inl_<Class>_<Name>)
     natCases = natCases.Append(("inline c: statische Methoden einer Klasse (public/private/static, byte[], undefined), Aufruf aus einer fire-Methode", """
             class M {
@@ -27456,6 +27469,46 @@ else
                 var machRun = BuildAndRunDos(dosMachine, "dos16mach");
                 CheckNat("dos16: machine - CPU/CPUID, physischer Speicher (BIOS-Daten, Videospeicher), PCI ueber 32-Bit-Ports, CMOS-Uhr, IRQ 0 gezaehlt, Lautsprecher",
                     machRun.Ok && machRun.Text == dosMachineExpected, $"  erwartet:\n{dosMachineExpected}\n  DOS:\n{machRun.Text}");
+
+                // DOS (#import "dos": interrupts with registers, memory, vectors, a buffer in DS:SI) and XMS (#import "xms": a block of 200 KB, 70001 bytes there and back -
+                // more than a segment, an odd length and offset)
+                const string dosXms = """
+                    #import "dos"
+                    #import "xms"
+                    var v = Dos.Version()
+                    print("dos " + (v[0] >= 5))
+                    var r = Dos.Interrupt(0x1A, new DosRegisters(0))
+                    print("ticks " + (r.cx * 65536 + r.dx > 0))
+                    var seg = Dos.Alloc(256)
+                    print("alloc " + (seg > 0) + " largest " + (Dos.LargestFree() > 1000))
+                    Dos.Free(seg)
+                    try { Dos.Free(1) } catch (DosException e) { print("free: " + (e.message.Length > 0)) }
+                    print("vector " + (Dos.GetVector(0x21) != 0))
+                    var name = new byte[64]
+                    var rr = new DosRegisters(0x4700)
+                    rr.ds = Dos.SegmentOf(name)
+                    rr.si = Dos.OffsetOf(name)
+                    Dos.Call(rr)
+                    print("cwd carry " + rr.Carry)
+                    print("xms " + Xms.Available() + " " + Xms.Version()[0] + " free " + (Xms.FreeKb() > 1000))
+                    var b = new XmsBlock(200)
+                    var data = new byte[70001]
+                    for (var i = 0; i < data.length; i++) { data[i] = i % 253 }
+                    b.Write(100001, data)
+                    var back = b.Read(100001, 70001)
+                    var same = true
+                    for (var i = 0; i < back.length; i += 7) { if (back[i] != data[i]) { same = false } }
+                    print("block " + b.Kb + " same " + same + " last " + back[70000] + " " + data[70000])
+                    try { b.Read(204000, 1000) } catch (ArgumentException e) { print("outside") }
+                    b.Close()
+                    try { new XmsBlock(9999999) } catch (ArgumentException e) { print("too big") }
+                    print("done")
+                    """;
+                const string dosXmsExpected = "dos True\nticks True\nalloc True largest True\nfree: True\nvector True\ncwd carry False\nxms True 3 free True\n"
+                    + "block 200 same True last 172 172\noutside\ntoo big\ndone\n";
+                var xmsRun = BuildAndRunDos(dosXms, "dos16xms");
+                CheckNat("dos16: dos (Interrupts mit Registern, Speicher, Vektoren, Puffer in DS:SI) und xms (Block von 200 KB, 70001 Bytes hin und zurueck, ungerade Laenge)",
+                    xmsRun.Ok && xmsRun.Text == dosXmsExpected, $"  erwartet:\n{dosXmsExpected}\n  DOS:\n{xmsRun.Text}");
 
                 // the console of DOS (#import "console"): the screen through the BIOS (code page 437, attributes - read back from the video memory) and keys from the
                 // keyboard buffer of the BIOS (INT 16h AH=05h puts them there, as if typed)

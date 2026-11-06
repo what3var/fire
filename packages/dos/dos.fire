@@ -1,0 +1,119 @@
+// The services of DOS and of the BIOS (docs/stdlib/dos.md): any interrupt with the registers of the 8086 (int 21h of DOS, int 10h/13h/16h/1Ah of the
+// BIOS, ...), and on it the version of DOS, its memory (paragraphs of 16 bytes) and the interrupt vectors. Only under DOS (dos16; later dos32); elsewhere
+// every call is a DosException. For the hardware itself (ports, memory, IRQs): #import "machine".
+
+class DosException : Exception {
+    string message
+    construct(string message) { this.message = message }
+}
+
+// The registers of an interrupt call: set what the function wants, read what it gives back. DS/ES 0: the program's own data segment.
+class DosRegisters {
+    int ax = 0
+    int bx = 0
+    int cx = 0
+    int dx = 0
+    int si = 0
+    int di = 0
+    int ds = 0
+    int es = 0
+    int flags = 0
+
+    construct() { }
+    construct(int ax) { this.ax = ax }
+
+    // The carry flag after the call (most DOS functions: an error, AX its code).
+    bool Carry { get { return (this.flags & 1) != 0 } }
+    // The halves of AX..DX.
+    int Ah { get { return (this.ax >> 8) & 255 } }
+    int Al { get { return this.ax & 255 } }
+    int Bh { get { return (this.bx >> 8) & 255 } }
+    int Bl { get { return this.bx & 255 } }
+    int Ch { get { return (this.cx >> 8) & 255 } }
+    int Cl { get { return this.cx & 255 } }
+    int Dh { get { return (this.dx >> 8) & 255 } }
+    int Dl { get { return this.dx & 255 } }
+}
+
+class Dos {
+    static undefined Check() {
+        var why = __DosUnavailable()
+        if (why != undefined) { throw new DosException(why) }
+    }
+
+    // INT `number` (0..255) with the registers; they hold what the function gave back afterwards (also returned).
+    static DosRegisters Interrupt(int number, DosRegisters r) {
+        Dos.Check()
+        if (number < 0 || number > 255) { throw new ArgumentException("An interrupt is 0 to 255, not " + number + ".") }
+        var out = __DosInt(number, r.ax, r.bx, r.cx, r.dx, r.si, r.di, r.ds, r.es)
+        r.ax = out[0]
+        r.bx = out[1]
+        r.cx = out[2]
+        r.dx = out[3]
+        r.si = out[4]
+        r.di = out[5]
+        r.ds = out[6]
+        r.es = out[7]
+        r.flags = out[8]
+        return r
+    }
+    // INT 21h, the functions of DOS.
+    static DosRegisters Call(DosRegisters r) { return Dos.Interrupt(33, r) }
+
+    // The version of DOS as [major, minor] (5.0: [5, 0]).
+    static int[] Version() {
+        var r = Dos.Call(new DosRegisters(12288))
+        int v[] = new int[2]
+        v[0] = r.Al
+        v[1] = r.Ah
+        return v
+    }
+
+    // A block of DOS memory of `paragraphs` x 16 bytes: its segment (DosException when there is not that much: the message says how much there is).
+    static int Alloc(int paragraphs) {
+        var r = new DosRegisters(18432)
+        r.bx = paragraphs
+        Dos.Call(r)
+        if (r.Carry) { throw new DosException("DOS has no block of " + paragraphs + " paragraphs (the largest free one has " + r.bx + ").") }
+        return r.ax
+    }
+    static undefined Free(int segment) {
+        var r = new DosRegisters(18688)
+        r.es = segment
+        Dos.Call(r)
+        if (r.Carry) { throw new DosException("The segment " + segment + " is no block of DOS (error " + r.ax + ").") }
+    }
+    // The largest free block of DOS memory, in paragraphs.
+    static int LargestFree() {
+        var r = new DosRegisters(18432)
+        r.bx = 65535
+        Dos.Call(r)
+        return r.bx
+    }
+
+    // The interrupt vector `number` as segment * 65536 + offset.
+    static int GetVector(int number) {
+        var r = new DosRegisters(13568 + (number & 255))
+        Dos.Call(r)
+        return r.es * 65536 + r.bx
+    }
+    // Points the vector `number` at segment * 65536 + offset (only an address that stays valid - a handler of a resident program, a vector read
+    // before; a handler of your own: Machine.Irq).
+    static undefined SetVector(int number, int address) {
+        var r = new DosRegisters(9472 + (number & 255))
+        r.ds = (address >> 16) & 65535
+        r.dx = address & 65535
+        Dos.Call(r)
+    }
+
+    // Where the bytes of a buffer are, from `offset` on: segment * 65536 + offset - for a function that wants a buffer in DS:DX, ES:DI, ...
+    // (valid while the buffer lives).
+    static int FarOf(byte buffer[], int offset = 0) {
+        Dos.Check()
+        var at = __DosFarOf(buffer, offset)
+        if (at == undefined) { throw new ArgumentException("No such place in the buffer: " + offset + ".") }
+        return at
+    }
+    static int SegmentOf(byte buffer[], int offset = 0) { return (Dos.FarOf(buffer, offset) >> 16) & 65535 }
+    static int OffsetOf(byte buffer[], int offset = 0) { return Dos.FarOf(buffer, offset) & 65535 }
+}

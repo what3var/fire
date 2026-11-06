@@ -33,6 +33,8 @@
     "circuits/circuits.fireproj",
     "circuits.ui/circuits.ui.fireproj",
     "console/console.fireproj",
-    "machine/machine.fireproj"
+    "machine/machine.fireproj",
+    "dos/dos.fireproj",
+    "xms/xms.fireproj"
   ]
 }

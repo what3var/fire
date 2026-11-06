@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "name": "fire-dos",
+  "type": "library",
+  "import": "dos",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'dos' of fire: interrupts of DOS and the BIOS, DOS memory, interrupt vectors (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_dos.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__DosUnavailable",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_dos_Unavailable"
+      },
+      {
+        "name": "__DosInt",
+        "arguments": 9,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_dos_Int"
+      },
+      {
+        "name": "__DosFarOf",
+        "arguments": 2,
+        "c": "fire_dos_FarOf"
+      }
+    ],
+    "language": "c"
+  }
+}

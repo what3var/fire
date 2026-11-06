@@ -1,0 +1,98 @@
+// Extended memory above 1 MB through the XMS driver (docs/stdlib/xms.md): blocks of kilobytes, filled from buffers and read back into them - the memory a
+// program in real mode cannot address itself. Only under DOS with an XMS driver (HIMEM.SYS; DOSBox has one); elsewhere an XmsException.
+
+class XmsException : Exception {
+    string message
+    int code
+    construct(string message, int code = 0) {
+        this.message = message
+        this.code = code
+    }
+}
+
+class Xms {
+    static undefined Check() {
+        var why = __XmsUnavailable()
+        if (why != undefined) { throw new XmsException(why) }
+    }
+    // Is there an XMS driver?
+    static bool Available() { return __XmsUnavailable() == undefined }
+    // The version of the XMS specification the driver follows (3.0: [3, 0]).
+    static int[] Version() {
+        Xms.Check()
+        var r = __XmsCall(0, 0)
+        int v[] = new int[2]
+        v[0] = (r[0] >> 8) & 255
+        v[1] = r[0] & 255
+        return v
+    }
+    // The free extended memory in KB, and the largest block that can be allocated.
+    static int FreeKb() {
+        Xms.Check()
+        return __XmsCall(8, 0)[2]
+    }
+    static int LargestKb() {
+        Xms.Check()
+        return __XmsCall(8, 0)[0]
+    }
+    // The text of an error code of the driver.
+    static string ErrorText(int code) {
+        if (code == 160) { return "not enough extended memory" }
+        if (code == 161) { return "no handle left" }
+        if (code == 162 || code == 163 || code == 165) { return "an invalid handle" }
+        if (code == 164 || code == 166) { return "an invalid offset" }
+        if (code == 167) { return "an invalid length" }
+        return "error " + code
+    }
+}
+
+// A block of extended memory. Write/Read move bytes between it and a buffer; Close (or the end of the object, or of the program) gives it back.
+class XmsBlock {
+    int handle = 0
+    int kb = 0
+
+    construct(int kb) {
+        Xms.Check()
+        if (kb <= 0 || kb > 65535) { throw new ArgumentException("A block has 1 to 65535 KB, not " + kb + ".") }
+        var h = __XmsAlloc(kb)
+        if (h <= 0) { throw new XmsException("No block of " + kb + " KB: " + Xms.ErrorText(-h) + ".", -h) }
+        this.handle = h
+        this.kb = kb
+    }
+    destruct() { this.Close() }
+
+    // The size in KB and in bytes.
+    int Kb { get { return this.kb } }
+    int Size { get { return this.kb * 1024 } }
+
+    // `count` bytes of `data` (from `at`; -1: the rest) into the block at `offset`.
+    undefined Write(int offset, byte data[], int at = 0, int count = -1) {
+        if (count == -1) { count = data.length - at }
+        this.Move(offset, data, at, count, true)
+    }
+    // `count` bytes of the block from `offset` as a new buffer.
+    byte[] Read(int offset, int count) {
+        var data = new byte[count]
+        this.Move(offset, data, 0, count, false)
+        return data
+    }
+    // `count` bytes of the block from `offset` into `data` (from `at`).
+    undefined ReadInto(int offset, byte data[], int at = 0, int count = -1) {
+        if (count == -1) { count = data.length - at }
+        this.Move(offset, data, at, count, false)
+    }
+    undefined Move(int offset, byte data[], int at, int count, bool toBlock) {
+        if (this.handle == 0) { throw new XmsException("The block is closed.") }
+        if (offset < 0 || count < 0 || offset + count > this.kb * 1024) { throw new ArgumentException("Bytes " + offset + " to " + (offset + count) + " are outside the block (" + this.kb * 1024 + " bytes).") }
+        var err = __XmsMove(this.handle, offset, data, at, count, toBlock)
+        if (err == -1) { throw new ArgumentException("Bytes " + at + " to " + (at + count) + " are outside the buffer (" + data.length + " bytes).") }
+        if (err != 0) { throw new XmsException("The driver could not move the bytes: " + Xms.ErrorText(err) + ".", err) }
+    }
+
+    undefined Close() {
+        if (this.handle != 0) {
+            __XmsFree(this.handle)
+            this.handle = 0
+        }
+    }
+}
