@@ -20269,6 +20269,20 @@ else
             print(r.Ah + " " + r.Al + " " + r.Carry)
             """)).ToArray();
 
+    // the modes of the processor (#import "x86"): not on this target - an X86Exception in the VM and natively, Mode() "none"
+    natCases = natCases.Append(("x86: ohne den Real Mode von DOS eine X86Exception, Mode() none, CanSwitch() false", """
+            #import "x86"
+            print(X86.Mode() + " " + X86.CanSwitch() + " " + X86.CanLongMode())
+            try { X86.EnableA20() } catch (X86Exception e) { print("a20: " + e.message) }
+            byte code[] = new byte[1]
+            code[0] = 195
+            try { X86.RunProtected(code, new X86Registers(1)) } catch (X86Exception e) { print("run") }
+            try { X86.RunLong(code, new X86Registers(1)) } catch (X86Exception e) { print("long") }
+            try { X86.ReadLinear(1048576, 4) } catch (X86Exception e) { print("read") }
+            var r = new X86Registers(7)
+            print(r.eax + " " + r.ebx)
+            """)).ToArray();
+
     // a constructor that throws made no object (SPEC 5.3): no destruct() - neither of the class nor of a base class -, what it owns is freed; after resume() it is one
     natCases = natCases.Append(("Konstruktor mit Ausnahme: kein destruct() (Klasse und Basis), Besitz wird freigegeben; nach resume() ein normales Objekt", """
             class Part {
@@ -27583,6 +27597,73 @@ else
                 var xmsRun = BuildAndRunDos(dosXms, "dos16xms");
                 CheckNat("dos16: dos (Interrupts mit Registern, Speicher, Vektoren, Puffer in DS:SI) und xms (Block von 200 KB, 70001 Bytes hin und zurueck, ungerade Laenge)",
                     xmsRun.Ok && xmsRun.Text == dosXmsExpected, $"  erwartet:\n{dosXmsExpected}\n  DOS:\n{xmsRun.Text}");
+
+                // the protected mode (#import "x86"): a routine with 32 bits (registers in and out, memory above 1 MB, a buffer of the program by its linear address),
+                // ReadLinear/WriteLinear across the first megabyte, the screen of the text mode read through its linear address - and back in real mode the program goes on
+                const string dosX86 = """
+                    #import "x86"
+                    print(X86.Mode() + " " + X86.CanSwitch() + " a20 " + X86.EnableA20())
+                    // mov [eax], ebx / mov edx, [eax] / add edx, ecx / mov eax, edx / mov ecx, 12345678h / ret
+                    byte code[] = new byte[14]
+                    var bytes = [137, 24, 139, 16, 1, 202, 137, 208, 185, 120, 86, 52, 18, 195]
+                    for (var i = 0; i < 14; i++) { code[i] = bytes[i] }
+                    var r = new X86Registers(1179648)
+                    r.ebx = 1000000
+                    r.ecx = 23
+                    X86.RunProtected(code, r)
+                    print("eax " + r.eax + " ecx " + r.ecx)
+                    byte data[] = new byte[70000]
+                    for (var i = 0; i < data.length; i++) { data[i] = i % 251 }
+                    X86.WriteLinear(2097152 + 3, data)
+                    var back = X86.ReadLinear(2097152 + 3, 70000)
+                    var same = true
+                    for (var i = 0; i < back.length; i += 13) { if (back[i] != data[i]) { same = false } }
+                    print("above 1 MB " + same + " " + back[69999] + " " + data[69999])
+                    // the routine fills a buffer of the program: mov ecx, 8 / mov al, 'A' / rep stosb (edi = the buffer) / ret
+                    byte fill[] = new byte[8]
+                    byte code2[] = new byte[10]
+                    var bytes2 = [185, 8, 0, 0, 0, 176, 65, 243, 170, 195]
+                    for (var i = 0; i < 10; i++) { code2[i] = bytes2[i] }
+                    var r2 = new X86Registers()
+                    r2.edi = X86.LinearOf(fill)
+                    X86.RunProtected(code2, r2)
+                    print("filled " + fill[0] + " " + fill[7])
+                    try { X86.LinearOf(fill, 99) } catch (ArgumentException e) { print("outside") }
+                    print("long " + X86.CanLongMode())
+                    try { X86.RunLong(code2, r2) } catch (X86Exception e) { print("no long: " + e.message) }
+                    print("done")
+                    """;
+                const string dosX86Expected = "real True a20 True\neax 1000023 ecx 305419896\nabove 1 MB True 221 221\nfilled 65 65\noutside\nlong False\n"
+                    + "no long: This processor has no long mode (64 bit).\ndone\n";
+                var x86Run = BuildAndRunDos(dosX86, "dos16x86");
+                CheckNat("dos16: x86 - eine Routine im 32-Bit-Protected-Mode (Register hin und zurueck, Speicher ueber 1 MB, ein Puffer des Programms) und zurueck im Real Mode",
+                    x86Run.Ok && x86Run.Text == dosX86Expected, $"  erwartet:\n{dosX86Expected}\n  DOS:\n{x86Run.Text}");
+
+                // the long mode needs a 64-bit processor (DOSBox-X has none): the two stubs of the x86 package under QEMU, booted without DOS
+                // (packages/x86/native/tools/test_boot.asm) - the registers of a 32-bit routine and of a 64-bit one (EFER with LME and LMA, a 64-bit register)
+                string? qemu = fire.Native.ToolchainSetup.FindProgram("qemu-system-x86_64"), nasm = fire.Native.ToolchainSetup.FindProgram("nasm");
+                string? x86Tools = null;
+                for (var dirInfo = new DirectoryInfo(AppContext.BaseDirectory); dirInfo != null && x86Tools == null; dirInfo = dirInfo.Parent)
+                    if (File.Exists(Path.Combine(dirInfo.FullName, "packages", "x86", "native", "tools", "test_boot.asm"))) x86Tools = Path.Combine(dirInfo.FullName, "packages", "x86", "native", "tools");
+                if (qemu == null || nasm == null || x86Tools == null) Console.WriteLine("(x86 unter QEMU: uebersprungen - qemu-system-x86_64, nasm oder packages/x86/native/tools fehlen)");
+                else
+                {
+                    string qdir = Path.Combine(workDir, "x86qemu");
+                    Directory.CreateDirectory(qdir);
+                    var a1 = TestProcess.Run(nasm, $"-f bin \"{Path.Combine(x86Tools, "x86_protected.asm")}\" -o \"{Path.Combine(qdir, "protected.bin")}\"", qdir);
+                    var a2 = TestProcess.Run(nasm, $"-f bin \"{Path.Combine(x86Tools, "x86_long.asm")}\" -o \"{Path.Combine(qdir, "long.bin")}\"", qdir);
+                    var a3 = TestProcess.Run(nasm, $"-f bin -i \"{qdir}/\" \"{Path.Combine(x86Tools, "test_boot.asm")}\" -o \"{Path.Combine(qdir, "boot.img")}\"", qdir);
+                    string serial = Path.Combine(qdir, "serial.txt");
+                    if (File.Exists(serial)) File.Delete(serial);
+                    if (a1.Exit == 0 && a2.Exit == 0 && a3.Exit == 0)
+                    {
+                        using (var img = File.OpenWrite(Path.Combine(qdir, "boot.img"))) img.SetLength(Math.Max(img.Length, 65536));
+                        TestProcess.Run(qemu, $"-drive format=raw,file=\"{Path.Combine(qdir, "boot.img")}\" -serial file:\"{serial}\" -display none -device isa-debug-exit,iobase=0xf4,iosize=0x04 -no-reboot", qdir, timeoutMs: 60000);
+                    }
+                    string said = File.Exists(serial) ? File.ReadAllText(serial).Trim() : $"(nichts)\n{a1.Stderr}{a2.Stderr}{a3.Stderr}";
+                    CheckNat("x86 unter QEMU ohne DOS: der Stub des Protected Mode (eine 32-Bit-Routine, Speicher ueber 1 MB) und der des Long Mode (EFER: LME und LMA, ein 64-Bit-Register) und zurueck",
+                        said == "000F4257 12345678 00000005 00000500 00000001 OK", said);
+                }
 
                 // the serial and the printer port as devices (#import "devices"): COM1 and LPT1 from the BIOS, written into the files of DOSBox-X; read through the
                 // interrupt of the UART (its loopback, one byte at a time - DOSBox repeats the first byte of a burst there)

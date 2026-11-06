@@ -593,6 +593,12 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Auswahl, z. B. `fire_audio_desktop.h`, `fire_display_select.h`, oder gleich die Umsetzung), die übrigen sind Header; die Umbauten von Stufe 2
    (`FIRE_<TEIL>_USE_<X>`, Wächter in jeder Datei) sind zurückgenommen. `FIRE_PLATFORM_<TEIL>_C_HEADER` gibt es nicht mehr; in `native/platform` bleibt nur, was
    die Runtime selbst braucht (`fire_platform.h`, Scheduler, Umgebung) und `fire_cp437.h` (Konsole und DOS-Anzeige).
+3c. **Package `x86`** (umgesetzt, Wunsch des Benutzers): ein dos16-Programm wechselt in den 32-Bit-Protected-Mode oder den 64-Bit-Long-Mode, führt dort eine
+   Routine (Maschinencode als `byte[]`, Register hin und zurück) aus und kommt zurück; Speicher über 1 MB (`ReadLinear`/`WriteLinear`/`Move`), A20, Erkennung
+   von V86 (EMM386/Windows: ohne VCPI/DPMI kein Wechsel) und 386/Long Mode (docs/stdlib/x86.md). Zwei kleine Stubs (NASM, als Bytes in `fire_x86_stubs.h`).
+   Getestet: Protected Mode aus fire in DOSBox-X; beide Stubs unter QEMU ohne DOS (Bootsektor). Offen: Long Mode aus fire unter DOS auf einem 64-Bit-Rechner
+   (QEMU mit FreeDOS - der Download ist in dieser Umgebung gesperrt), und **fire-Code im Protected Mode** - eine Funktion, für das 32-Bit-Ziel übersetzt
+   (kommt mit `dos32`/`bios-x86`: dieselbe Runtime mit flachem Speicher), als Routine mitgegeben.
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste

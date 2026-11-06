@@ -1,0 +1,83 @@
+{
+  "format": 1,
+  "name": "fire-x86",
+  "type": "library",
+  "import": "x86",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'x86' of fire: the modes of the x86 processor - real mode to 32-bit protected mode or 64-bit long mode and back, memory above 1 MB (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      {
+        "file": "native/fire_x86_c.h",
+        "order": -1
+      },
+      "native/fire_bridge_x86.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__X86Unavailable",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_x86_Unavailable"
+      },
+      {
+        "name": "__X86Mode",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_x86_Mode"
+      },
+      {
+        "name": "__X86A20",
+        "arguments": 0,
+        "c": "fire_x86_A20"
+      },
+      {
+        "name": "__X86Run",
+        "arguments": 7,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_x86_Run"
+      },
+      {
+        "name": "__X86LinearOf",
+        "arguments": 2,
+        "c": "fire_x86_LinearOf"
+      },
+      {
+        "name": "__X86CanLong",
+        "arguments": 0,
+        "c": "fire_x86_CanLong"
+      },
+      {
+        "name": "__X86RunLong",
+        "arguments": 7,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_x86_RunLong"
+      }
+    ],
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_x86_real.h"
+      ],
+      "vm": [
+        "native/fire_x86_none.h"
+      ],
+      "default": [
+        "native/fire_x86_none.h"
+      ]
+    },
+    "headers": [
+      "native/fire_x86_stubs.h"
+    ]
+  }
+}

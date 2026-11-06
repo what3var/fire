@@ -1,0 +1,110 @@
+// The modes of the x86 processor (docs/stdlib/x86.md): a program in the real mode of DOS switches into the 32-bit protected mode (flat memory, all 4 GB)
+// or the 64-bit long mode, runs a routine there and comes back - or reads and writes the memory above 1 MB. Only on dos16; elsewhere every call is an X86Exception
+// (the processor is in the mode of its operating system).
+
+class X86Exception : Exception {
+    string message
+    construct(string message) { this.message = message }
+}
+
+// The registers of a routine: what it gets, and what it leaves.
+class X86Registers {
+    int eax = 0
+    int ebx = 0
+    int ecx = 0
+    int edx = 0
+    int esi = 0
+    int edi = 0
+
+    construct() { }
+    construct(int eax) { this.eax = eax }
+}
+
+class X86 {
+    static undefined Check() {
+        var why = __X86Unavailable()
+        if (why != undefined) { throw new X86Exception(why) }
+    }
+
+    // "real" (the switch is possible), "v86" (virtual 8086 mode under EMM386 or Windows: not without VCPI/DPMI) or "none" (not on this target).
+    static string Mode() { return __X86Mode() }
+    // Can the program switch into the protected mode here?
+    static bool CanSwitch() { return __X86Unavailable() == undefined }
+
+    // Turns the A20 line on (without it every second megabyte is the one below): true when it is on.
+    static bool EnableA20() {
+        X86.Check()
+        return __X86A20()
+    }
+
+    // Runs `code` - 32-bit machine code that ends with RET - in the protected mode: flat segments of 4 GB (CS 08h, DS = ES = SS 10h), interrupts off,
+    // a stack of 4 KB, the registers EAX..EDI from `r`. Afterwards `r` holds what the routine left in them (also returned). Keep it short: while it
+    // runs no interrupt is served (the clock of the BIOS stands still).
+    static X86Registers RunProtected(byte code[], X86Registers r) {
+        X86.Check()
+        if (code.length == 0) { throw new ArgumentException("The routine has no bytes.") }
+        var at = __X86LinearOf(code, 0)
+        var out = __X86Run(at, r.eax, r.ebx, r.ecx, r.edx, r.esi, r.edi)
+        if (!out[0]) { throw new X86Exception("The switch into the protected mode failed (A20 could not be turned on, or no memory for the switch).") }
+        r.eax = out[1]
+        r.ebx = out[2]
+        r.ecx = out[3]
+        r.edx = out[4]
+        r.esi = out[5]
+        r.edi = out[6]
+        return r
+    }
+
+    // Does the processor have the long mode (64 bit)? (false on a 32-bit processor and where the program cannot switch at all)
+    static bool CanLongMode() { return __X86Unavailable() == undefined && __X86CanLong() }
+
+    // Runs `code` - 64-bit machine code that ends with RET - in the long mode: the first 4 GB mapped 1:1 (pages of 2 MB), CS 08h (64 bit), DS = ES = SS 10h,
+    // interrupts off, a stack of 4 KB. RAX..RDI get the registers of `r` (zero-extended); afterwards `r` holds their low 32 bits (also returned).
+    static X86Registers RunLong(byte code[], X86Registers r) {
+        X86.Check()
+        if (!__X86CanLong()) { throw new X86Exception("This processor has no long mode (64 bit).") }
+        if (code.length == 0) { throw new ArgumentException("The routine has no bytes.") }
+        var out = __X86RunLong(__X86LinearOf(code, 0), r.eax, r.ebx, r.ecx, r.edx, r.esi, r.edi)
+        if (!out[0]) { throw new X86Exception("The switch into the long mode failed (A20 could not be turned on, or no memory for the switch).") }
+        r.eax = out[1]
+        r.ebx = out[2]
+        r.ecx = out[3]
+        r.edx = out[4]
+        r.esi = out[5]
+        r.edi = out[6]
+        return r
+    }
+
+    // The linear (physical) address of the bytes of a buffer from `offset` on - to give a routine a buffer of the program (valid while the buffer
+    // lives and keeps its size).
+    static int LinearOf(byte buffer[], int offset = 0) {
+        X86.Check()
+        var at = __X86LinearOf(buffer, offset)
+        if (at == undefined) { throw new ArgumentException("No such place in the buffer: " + offset + ".") }
+        return at
+    }
+
+    // `count` bytes of the memory at a linear address (also above 1 MB), through the protected mode.
+    static byte[] ReadLinear(int address, int count) {
+        if (count < 0) { throw new ArgumentException("A count is not negative: " + count + ".") }
+        byte data[] = new byte[count]
+        if (count > 0) { X86.Move(address, X86.LinearOf(data), count) }
+        return data
+    }
+    // Writes the bytes to a linear address (also above 1 MB), through the protected mode.
+    static undefined WriteLinear(int address, byte data[]) {
+        if (data.length > 0) { X86.Move(X86.LinearOf(data), address, data.length) }
+    }
+    // `count` bytes from one linear address to another (REP MOVSB in the protected mode).
+    static undefined Move(int source, int target, int count) {
+        byte code[] = new byte[3]
+        code[0] = 243
+        code[1] = 164
+        code[2] = 195
+        var r = new X86Registers()
+        r.esi = source
+        r.edi = target
+        r.ecx = count
+        X86.RunProtected(code, r)
+    }
+}

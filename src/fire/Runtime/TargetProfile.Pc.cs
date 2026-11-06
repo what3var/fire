@@ -11,7 +11,7 @@ namespace fire.Runtime
         {
             Name = "dos16", Symbols = new[] { "dos16", "dos" }, HalPackage = "dos16",
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
-            Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
+            Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
                 Platform = "dos16", Toolchain = "watcom",
