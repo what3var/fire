@@ -3511,7 +3511,7 @@ namespace fire.Native
                     string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
                     string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
                     _pendingNewTArgs = null;
-                    E($"{{ Value o = newObject({ClassIdExpr(newClass)}, {newClass.Fields.Count}, {ownerExpr}); {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{selector.Name}(o{args}, &{OwnerList()}); {S(slot)} = o; }}");
+                    E($"{{ Value o = newObject({ClassIdExpr(newClass)}, {newClass.Fields.Count}, {ownerExpr}); {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{selector.Name}(o{args}, &{OwnerList()}); ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -4615,7 +4615,7 @@ namespace fire.Native
                     string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
                     string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
                     _pendingNewTArgs = null;
-                    E($"{{ Value o = newObject({ClassIdExpr(cls)}, {cls.Fields.Count}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); {S(slot)} = o; }}");
+                    E($"{{ Value o = newObject({ClassIdExpr(cls)}, {cls.Fields.Count}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);

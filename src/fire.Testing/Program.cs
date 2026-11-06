@@ -20269,6 +20269,41 @@ else
             print(r.Ah + " " + r.Al + " " + r.Carry)
             """)).ToArray();
 
+    // a constructor that throws made no object (SPEC 5.3): no destruct() - neither of the class nor of a base class -, what it owns is freed; after resume() it is one
+    natCases = natCases.Append(("Konstruktor mit Ausnahme: kein destruct() (Klasse und Basis), Besitz wird freigegeben; nach resume() ein normales Objekt", """
+            class Part {
+                string name
+                construct(string name) { this.name = name }
+                destruct() { print("~Part " + this.name) }
+            }
+            class Base {
+                int n
+                construct(int n) {
+                    this.n = n
+                    if (n == 2) { throw new ArgumentException("base " + n) }
+                }
+                destruct() { print("~Base " + this.n) }
+            }
+            class Thing : Base {
+                Part part
+                construct(int n) : base(n) {
+                    this.part = new Part("p" + n)
+                    this.part.TakeTo(this)
+                    if (n == 3) { throw new ArgumentException("thing " + n) }
+                }
+                destruct() { print("~Thing " + this.n) }
+            }
+            print("a")
+            try { new Thing(2) } catch (ArgumentException e) { print("caught: " + e.message) }
+            print("b")
+            try { new Thing(3) } catch (ArgumentException e) { print("caught: " + e.message) }
+            print("c")
+            try { new Thing(3) } catch (ArgumentException e) { print("resume: " + e.message); e.resume() }
+            print("d")
+            var ok = new Thing(1)
+            print("e")
+            """)).ToArray();
+
     // inline c as static methods of a class (C name fire_inl_<Class>_<Name>)
     natCases = natCases.Append(("inline c: statische Methoden einer Klasse (public/private/static, byte[], undefined), Aufruf aus einer fire-Methode", """
             class M {

@@ -5666,6 +5666,8 @@ namespace fire.Runtime
         {
             var scope = continuation.Scope;
             int frameIdx = 0;
+            // the constructors among the dropped frames will not go on (no resume()): their objects never came to be - no destruct() for them (SPEC 5.3)
+            foreach (var frame in continuation.Frames) if (frame.ConstructedInstance != null) frame.ConstructedInstance.ConstructorFailed = true;
 
             while (frameIdx < continuation.Frames.Count || !ReferenceEquals(scope, targetScope))
             {
@@ -5761,6 +5763,8 @@ namespace fire.Runtime
                 if (atFrameBase && _frames.Count > targetFrameDepth)
                 {
                     var frame = _frames.Pop();
+                    // a constructor left by an exception: the object never came to be - its destruct() does not run (what it owns is freed as usual)
+                    if (frame.ConstructedInstance != null) frame.ConstructedInstance.ConstructorFailed = true;
                     _currentChunk = frame.ReturnChunk;
                     _ip = frame.ReturnIp;
                     _currentScope = frame.ReturnScope;

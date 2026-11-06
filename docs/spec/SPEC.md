@@ -675,6 +675,12 @@ For a derived class the **whole chain** of destructors runs: first that of the
 derived class, then that of each base class (as in C#) - a class without its own
 `destruct()` therefore still cleans up with that of its base class.
 
+An object whose **constructor ends with an exception** never came to be: its
+`destruct()` does not run (neither that of its class nor those of its base
+classes) - what it already owns and its fields are freed as usual when it goes
+(with the scope that held it, usually the statement's temporaries). A constructor
+that catches the exception itself and returns normally makes a normal object.
+
 ### 5.4 Method overloading
 
 ```

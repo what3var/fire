@@ -2638,12 +2638,16 @@ FIRE_FN void batchEnd(void) {
     }
 }
 
+/* After a constructor: one that ended with an exception made no object (SPEC 5.3) - its destructor does not run when it goes (flag 16, as for the copies of
+ * `taking`); its fields and what it owns are freed as usual. */
+FIRE_FN void ctorEnd(Value o) { if (FIRE_UNLIKELY(g_unwind.active) && o.kind == K_Class) asObj(o)->h.flags |= 16; }
+
 FIRE_FN void destroy(Obj* o) {
     if (o->h.flags & 1) return;
     o->h.flags |= 1;
     batchBegin();
     if (o->h.flags & 16) {
-        /* a copy that `taking` made for a fire thread: its original still lives, the destructor is not run for the copy */
+        /* a copy that `taking` made for a fire thread (its original still lives), or an object whose constructor threw: no destructor */
     } else if (FIRE_UNLIKELY(g_unwind.active)) {
         /* the scope is left because of an exception: the destructor runs as ordinary code, the exception keeps unwinding afterwards */
         UnwindState saved = g_unwind;

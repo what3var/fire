@@ -53,6 +53,8 @@ namespace fire.Runtime
         private List<(object Holder, string? Field)>? _referrers;
 
         public bool IsDestroyed => _destroyed;
+        /// <summary>Its constructor ended with an exception (SPEC 5.x "Destruktoren"): when it is destroyed, its destruct() does not run - the fields and what it owns are freed.</summary>
+        public bool ConstructorFailed { get; set; }
 
         internal void AddReferrer(object holder, string? field)
         {
@@ -477,7 +479,7 @@ namespace fire.Runtime
             if (Probes != null) ProbeRegistry.Forget(Probes.RemoveAll());
 
             // Without a destructor in the class chain there is nothing to execute (an object without a RuntimeClass does not know the chain: the runner decides)
-            if (RtClass == null || RtClass.HasDestructorInChain())
+            if (!ConstructorFailed && (RtClass == null || RtClass.HasDestructorInChain()))
                 runner.RunDestructor(this);
 
             _owned.DestroyAll(runner);
