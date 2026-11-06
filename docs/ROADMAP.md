@@ -554,8 +554,10 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    **`dos`** und **`xms`** ([DOS and XMS](stdlib/dos.md)): Interrupts mit den Registern des 8086 (`Dos.Interrupt`, `DosRegisters`), DOS-Speicher, Vektoren,
    die Adresse eines Puffers als Segment:Offset; Blöcke im Speicher über 1 MB über den XMS-Treiber (`XmsBlock`, Kopien beliebiger Länge, am Ende freigegeben).
    Ein Teil der Plattformschicht `fire_dos.h` (`std/fire_dos_real.h`; dos32 später über DPMI). Test in DOSBox-X.
-   **Offen:** `#intwidth 16`, Grafik (s.o.),
-   Geräte (serieller/paralleler Port).
+   **Geräte:** `devices` auf dos16 - `COM1`..`COM4` (UART direkt, 115200 8N1, FIFO; Empfang über den IRQ in einen Ringpuffer, Vektor und Maske am Ende zurück)
+   und `LPT1`..`LPT3` (nur Ausgabe, BUSY/STROBE) als serielle Geräte (`std/fire_dev_dos.h`). Test in DOSBox-X (Dateien für COM1/LPT1, Empfang über den
+   Loopback des UART).
+   **Offen:** `#intwidth 16`, Grafik (s.o.).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste

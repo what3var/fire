@@ -27362,14 +27362,14 @@ else
             {
                 // builds the program as PROG.EXE in its own folder (drive C:) and runs it in DOSBox-X (at most 2 minutes): its output, or the log of the build
                 // (another `outputFile`: the program runs on the screen, not redirected, and writes what it found into that file)
-                (bool Ok, string Text) BuildAndRunDos(string source, string folder, string outputFile = "OUT.TXT")
+                (bool Ok, string Text) BuildAndRunDos(string source, string folder, string outputFile = "OUT.TXT", string dosboxSettings = "")
                 {
                     string dir = Path.Combine(workDir, folder);
                     Directory.CreateDirectory(dir);
                     var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
                     if (!built.Ok) return (false, built.Log);
                     var env = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy", ["SDL_AUDIODRIVER"] = "dummy" };
-                    var run = TestProcess.Run(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" -c \"mount c {dir}\" -c \"c:\" -c \"{(outputFile == "OUT.TXT" ? "PROG.EXE > OUT.TXT" : "PROG.EXE")}\" -c \"exit\"", dir, null, env, 120_000);
+                    var run = TestProcess.Run(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" {dosboxSettings.Replace("{dir}", dir)} -c \"mount c {dir}\" -c \"c:\" -c \"{(outputFile == "OUT.TXT" ? "PROG.EXE > OUT.TXT" : "PROG.EXE")}\" -c \"exit\"", dir, null, env, 120_000);
                     string outFile = Directory.GetFiles(dir).FirstOrDefault(f => Path.GetFileName(f).Equals(outputFile, StringComparison.OrdinalIgnoreCase)) ?? "";
                     string text = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
                     return (true, run.Exit == -1 ? text + "(DOSBox-X nach 2 Minuten beendet)" : text);
@@ -27509,6 +27509,43 @@ else
                 var xmsRun = BuildAndRunDos(dosXms, "dos16xms");
                 CheckNat("dos16: dos (Interrupts mit Registern, Speicher, Vektoren, Puffer in DS:SI) und xms (Block von 200 KB, 70001 Bytes hin und zurueck, ungerade Laenge)",
                     xmsRun.Ok && xmsRun.Text == dosXmsExpected, $"  erwartet:\n{dosXmsExpected}\n  DOS:\n{xmsRun.Text}");
+
+                // the serial and the printer port as devices (#import "devices"): COM1 and LPT1 from the BIOS, written into the files of DOSBox-X; read through the
+                // interrupt of the UART (its loopback, one byte at a time - DOSBox repeats the first byte of a burst there)
+                const string dosSerial = """
+                    #import "devices"
+                    #import "machine"
+                    var list = DeviceManager.Devices()
+                    var names = ""
+                    for (var i = 0; i < list.Count; i++) { names = names + list[i].Identifier() + " " }
+                    print(names)
+                    var com = DeviceManager.Get("serial:COM1")
+                    print("connect " + com.Connect())
+                    print("write " + com.WriteString("Hallo COM1"))
+                    Machine.Port.Out8(0x3FC, 0x1B)
+                    var got = ""
+                    for (var k = 0; k < 3; k++) {
+                        var one = new byte[1]
+                        one[0] = 65 + k
+                        com.Write(one)
+                        var tries = 0
+                        while (!com.HasData() && tries < 500) { tries = tries + 1 }
+                        got = got + com.ReadString()
+                    }
+                    print("loopback " + got)
+                    Machine.Port.Out8(0x3FC, 0x0B)
+                    com.Disconnect()
+                    var lpt = DeviceManager.Get("serial:LPT1")
+                    print("lpt " + lpt.Connect() + " " + lpt.WriteString("Drucker"))
+                    lpt.Disconnect()
+                    """;
+                const string dosSerialExpected = "serial:COM1 serial:COM2 serial:LPT1 \nconnect True\nwrite True\nloopback ABC\nlpt True True\n";
+                var serRun = BuildAndRunDos(dosSerial, "dos16ser", "OUT.TXT", "-set \"serial1=file file:{dir}/SER.TXT\" -set \"parallel1=file file:{dir}/PAR.TXT\"");
+                string serFile = Path.Combine(workDir, "dos16ser", "SER.TXT"), parFile = Path.Combine(workDir, "dos16ser", "PAR.TXT");
+                string serOut = File.Exists(serFile) ? File.ReadAllText(serFile) : "(keine Datei)", parOut = File.Exists(parFile) ? File.ReadAllText(parFile) : "(keine Datei)";
+                CheckNat("dos16: serieller und paralleler Port als Geraete (COM1/LPT1 aus dem BIOS, gesendet, ueber den Interrupt des UART empfangen)",
+                    serRun.Ok && serRun.Text == dosSerialExpected && serOut == "Hallo COM1" && parOut == "Drucker",
+                    $"  erwartet:\n{dosSerialExpected}\n  DOS:\n{serRun.Text}\n  COM1: {serOut}\n  LPT1: {parOut}");
 
                 // the console of DOS (#import "console"): the screen through the BIOS (code page 437, attributes - read back from the video memory) and keys from the
                 // keyboard buffer of the BIOS (INT 16h AH=05h puts them there, as if typed)
