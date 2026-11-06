@@ -1236,6 +1236,7 @@ namespace fire.Compiler
                     inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("Reflect")));
                     inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("SelectorOf")));
                     inner._chunk.EmitByte(2);
+                    inner.EmitClaimToScope(0, unclaimed: true, hoist: false);   // (the reflection object belongs to the call)
                     inner._chunk.EmitOp(OpCode.StoreLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);

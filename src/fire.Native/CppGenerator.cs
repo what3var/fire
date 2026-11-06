@@ -3016,7 +3016,7 @@ namespace fire.Native
             }
             if (f.NeedsArgList)
             {
-                if (framed) Var("OwnList", "AL", "scopeList(0)"); else decl.AppendLine("    OwnList AL = {NULL, NULL, 0, 0, NULL, NULL};");
+                if (framed) Var("OwnList", "AL", "scopeList(0)"); else decl.AppendLine("    OwnList AL = {NULL, NULL, 0, 0, NULL, NULL, NULL};");
             }
             // the handlers of the `try` statements, and the operand stack slots of the catch blocks
             foreach (var region in f.Regions.Values.OrderBy(r => r.Template))

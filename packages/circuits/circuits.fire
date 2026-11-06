@@ -939,6 +939,7 @@ namespace Circuits {
 
         construct(any model = "diode") : base("D") {
             this.model = Circuits.Models.Of(model, "D")
+            try this.model.TakeTo(this)   // (a model made for this part - `new Zener()` passes one - belongs to it; one of the library stays there, SPEC 2.2)
         }
 
         Circuits.Model Model { get { return this.model } }
@@ -988,6 +989,7 @@ namespace Circuits {
 
         construct(any model = "npn") : base("Q") {
             this.model = Circuits.Models.Of(model, "NPN,PNP")
+            try this.model.TakeTo(this)   // (a model made for this part - `new Zener()` passes one - belongs to it; one of the library stays there, SPEC 2.2)
             this.AddPort("c")
             this.AddPort("b")
             this.AddPort("e")
@@ -1028,6 +1030,7 @@ namespace Circuits {
 
         construct(any model = "nmos") : base("M") {
             this.model = Circuits.Models.Of(model, "NMOS,PMOS")
+            try this.model.TakeTo(this)   // (a model made for this part - `new Zener()` passes one - belongs to it; one of the library stays there, SPEC 2.2)
             this.AddPort("d")
             this.AddPort("g")
             this.AddPort("s")
@@ -1066,6 +1069,7 @@ namespace Circuits {
 
         construct(any model = "opamp") : base("U") {
             this.model = Circuits.Models.Of(model, "OPAMP")
+            try this.model.TakeTo(this)   // (a model made for this part - `new Zener()` passes one - belongs to it; one of the library stays there, SPEC 2.2)
             this.AddPort("plus")
             this.AddPort("minus")
             this.AddPort("out")
@@ -2278,6 +2282,7 @@ namespace Circuits {
 
         construct(string prefix, string kind, any model, string parameters, int pins) : base(prefix) {
             this.model = Circuits.Models.Of(model, kind)
+            try this.model.TakeTo(this)   // (a model made for this part - `new Zener()` passes one - belongs to it; one of the library stays there, SPEC 2.2)
             Circuits.Tube.Check(parameters)
             this.parameters = parameters
             // the ports: plate, (screen), (grid), cathode

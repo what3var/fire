@@ -31,18 +31,19 @@ namespace fire.Runtime
             if (rootNode == null) return;
 
             var visited = new HashSet<object>(ReferenceEqualityComparer.Instance) { rootNode };
-            var work = new Stack<object>();
-            work.Push(rootNode);
+            var work = new Stack<(object node, IOwner? via)>();
+            work.Push((rootNode, null));
             var values = new List<Value>();
             while (work.Count > 0)
             {
-                var node = work.Pop();
-                // where taken-along things go: to the object that points to them; for an array to the object that owns the array, otherwise to the array itself (it can own)
+                var (node, via) = work.Pop();
+                // where taken-along things go: to the object that points to them; for an array to the object that owns the array, otherwise to the array itself (it can own);
+                // a lambda owns nothing: what it captured goes to whoever holds the lambda
                 IOwner carrier = node switch
                 {
                     ObjectInstance obj => obj,
                     ScriptArray array => (array.LeafOwner as ObjectInstance) ?? (IOwner)array,
-                    _ => fallback,
+                    _ => via ?? fallback,
                 };
                 values.Clear();
                 // `Takes.Children` of an IEnumerable: its items, not its fields
@@ -52,6 +53,7 @@ namespace fire.Runtime
                 {
                     var child = NodeOf(v);
                     if (child == null || !visited.Add(child)) continue;
+                    if (child is LambdaValue) { work.Push((child, carrier)); continue; }   // (its captures hang on the holder)
                     if (IsDestroyed(child)) continue;
                     var owner = OwnerOf(child);
                     bool move = mode switch
@@ -73,7 +75,7 @@ namespace fire.Runtime
                         if (child is ObjectInstance childObj && IsAncestor(childObj, target)) target = fallback;
                         Reparent(child, target);
                     }
-                    if (descend) work.Push(child);
+                    if (descend) work.Push((child, null));
                 }
             }
         }
@@ -88,6 +90,7 @@ namespace fire.Runtime
         private static object? NodeOf(Value v) => v.Kind switch
         {
             ValueKind.Class => v.AsObjectRef() as ObjectInstance,
+            ValueKind.Lambda => v.AsLambda() as LambdaValue,
             ValueKind.Array => v.AsArray(),
             ValueKind.Buffer => v.AsBuffer(),
             _ => null,
@@ -101,6 +104,7 @@ namespace fire.Runtime
         {
             if (node is ObjectInstance oi) oi.Fields.AppendValues(sink);
             else if (node is ScriptArray array) sink.AddRange(array.Items);
+            else if (node is LambdaValue { Captures: { } captures }) sink.AddRange(captures);
         }
 
         private static void Reparent(object node, IOwner target)

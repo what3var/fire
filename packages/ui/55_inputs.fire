@@ -426,7 +426,7 @@ namespace UI {
 
         List ItemsSource {
             get { return this.items }
-            set { this.SetItems(value, false) }
+            set { this.SetItems(value, false); this.items = value }   // (a new list - no one else has it - belongs to the control: the field claims it, SPEC 2.1)
         }
 
         string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }

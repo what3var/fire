@@ -6925,7 +6925,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         var b2 = copy bytes
         b2[0] = 67
         print(bytes[0] + " " + b2[0])
-        """, "1 20 10", "True", "False", "1 2 100 200", "65 67", "~Barr", "~I1", "~I20", "~Barr", "~Barr", "~I2", "~I10");
+        """, "1 20 10", "True", "False", "1 2 100 200", "65 67", "~Barr", "~I1", "~I20", "~Barr", "~Barr", "~I10", "~I2");
 
     CheckClone("Werte: nichts zu kopieren", """
         print(copy 5)
@@ -15043,7 +15043,7 @@ DebuggerTests.Run();
         T.Lost()
         print(T.Inner().n)
         print("end")
-        """, new[] { "~x", "dead: Access to a destroyed object.", "dead set", "~d", "~W sees d", "batch done", "3 i2", "ra", "~lost", "~outer", "inner", "end", "~i0", "~i1", "~i2", "~ra", "~rb", "~inner" });
+        """, new[] { "~x", "dead: Access to a destroyed object.", "dead set", "~d", "~W sees d", "batch done", "3 i2", "ra", "~lost", "~outer", "inner", "~inner", "end", "~i0", "~i1", "~i2", "~ra", "~rb" });   // (T.Inner() without a target dies at the end of the statement, SPEC 2.1)
 
     CheckScChecked("Takes: This, Children, Locals, All bei TakeUpwards/TakeTo/TakeGlobal und fuer Arrays", """
         class N {
@@ -15239,7 +15239,7 @@ DebuggerTests.Run();
         try { print(a.n) } catch (DestroyedException ex) { print("dead a") }
         try { T.Eat(take a) } catch (DestroyedException ex) { print("dead take") }
         print("end")
-        """, new[] { "eat a","~mine","~a","1","~x0","kept","2","False","True","3","~out","4","5","dead a","dead take","end","~box","~b","~c","~d","~inner","~e" });
+        """, new[] { "eat a","~mine","~a","1","kept","2","False","True","3","~out","4","5","dead a","dead take","end","~box","~b","~c","~d","~x0","~inner","~e" });   // (the literal's element belongs to the array, SPEC 2.1)
 
     CheckScChecked("Ein Array besitzt, was return und Takes mitnehmen", """
         class Item { string n
@@ -21163,6 +21163,219 @@ else
             print("abc" == "abc")
             try { print("a" < "b") } catch (ArgumentException e) { print("caught: " + e.message) }
             try { print("42"!int) } catch (ArgumentException e) { print("caught: " + e.message) }
+            """),
+    }).ToArray();
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Ziel-Regel (SPEC 2.1): Temporaere am Statement-Ende, var, Feld, Element (das Array besitzt), Builder, aeussere Variable, Hochziehen", """
+            class Item {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+                string Name() { return this.n }
+            }
+            class Factory { static Item Make(string n) { return new Item(n) } }
+            class Box { Item content }
+            class Builder {
+                int size = 0
+                Builder With(int n) { this.size = this.size + n; return this }
+                destruct() { print("destroy builder") }
+            }
+            print("1 temp:")
+            print(new Item("temp").Name())
+            print("2 var:")
+            var a = new Item("a")
+            print("3 field:")
+            var box = new Box()
+            box.content = Factory.Make("boxed")
+            print(box.content is from box)
+            print("4 array:")
+            {
+                Item items[2]
+                items[0] = new Item("e0")
+                items[0] = new Item("e1")
+                print("overwritten")
+            }
+            print("5 builder:")
+            var b = new Builder().With(2).With(3)
+            print(b.size)
+            print("6 outer var:")
+            Item keep = undefined
+            {
+                {
+                    keep = new Item("keep")
+                }
+                print("inner left: " + keep.n)
+            }
+            print("7 hoist:")
+            Item last = undefined
+            for (int i = 0; i < 2; i++) {
+                var it = new Item("loop " + i)
+                if (i == 1) { last = it }
+            }
+            print("kept " + last.n)
+            print("end")
+            """),
+        ("Ziel-Regel (SPEC 2.1): bis zum deklarierenden Block, Kette, Ternary, Argument, Rueckgabe in ein Element, copy", """
+            class Item {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+            }
+            class Holder {
+                Item held
+                undefined Keep(Item i) { this.held = i; try i.TakeTo(this) }
+                undefined Look(Item i) { print("look " + i.n) }
+            }
+            class T {
+                static Item Make(string n) { return new Item(n) }
+                static undefined Hoist() {
+                    print("hoist: start")
+                    {
+                        Item mid = undefined
+                        for (int i = 0; i < 2; i++) {
+                            var it = new Item("h" + i)
+                            if (i == 1) { mid = it }
+                        }
+                        print("hoist: loop done, mid=" + mid.n)
+                    }
+                    print("hoist: block of mid left")
+                }
+                static undefined Chain() {
+                    Item a = undefined
+                    Item b = undefined
+                    {
+                        a = b = new Item("chain")
+                    }
+                    print("chain: " + a.n + " " + b.n)
+                }
+                static undefined Ternary(bool c) {
+                    Item x = new Item("x")
+                    var t = c ? new Item("fresh") : x
+                    print("ternary: " + t.n)
+                }
+            }
+            T.Hoist()
+            print("--")
+            T.Chain()
+            print("--")
+            T.Ternary(true)
+            print("--")
+            var h = new Holder()
+            h.Keep(new Item("kept"))
+            h.Look(new Item("looked"))
+            print("after look")
+            print(h.held.n)
+            print("--")
+            var arr = [undefined, undefined]
+            arr[0] = T.Make("returned into array")
+            print("--")
+            var c = copy h.held
+            print("copy " + c.n)
+            print("end")
+            """),
+        ("Ziel-Regel (SPEC 2.1): Setter - Feld, Property-Kette, Aufruf, nicht genommener Zweig, mehrdeutig, kein neuer Wert", """
+            class Item {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+            }
+            class Store {
+                List items = new List()
+                undefined Keep(Item i) { this.items.Add(i); try i.TakeTo(this) }
+            }
+            class Shelf {
+                Item top
+                Item other
+                Store store = new Store()
+                Item Top { get { return this.top } set { this.top = value } }
+                Item Via { get { return this.other } set { this.Top2 = value } }
+                Item Top2 { get { return this.other } set { this.other = value } }
+                Item Peek { get { return this.top } set { print("peek " + value.n) } }
+                Item Stored { get { return this.top } set { this.store.Keep(value) } }
+                bool cond = false
+                Item Maybe { get { return this.top } set { if (this.cond) { this.top = value } } }
+                Item Amb { get { return this.top } set { this.store.Keep(value); if (this.cond) { this.other = value } } }
+            }
+            var s = new Shelf()
+            print("1"); s.Top = new Item("top")
+            print("2"); s.Via = new Item("via")
+            print("3"); s.Peek = new Item("peek")
+            print("4"); s.Stored = new Item("stored")
+            print("5"); s.Maybe = new Item("maybe")
+            print("6"); s.Amb = new Item("amb")
+            print("7")
+            var mine = new Item("mine")
+            s.Top = mine
+            print(s.top is from s)
+            print("end")
+            """),
+        ("Ziel-Regel (SPEC 2.1): fire M(new X()) uebergibt, Nachricht an einen Actor besitzt ihr frisches Argument", """
+            #import "time"
+            class Job {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+            }
+            actor Log {
+                int count = 0
+                undefined Put(Job j) { print("log " + j.n); this.count++ }
+            }
+            class Runner {
+                undefined Work(Job j) { print("work " + j.n) }
+                undefined Start() {
+                    fire Work(new Job("handed"))
+                    Sleep(200ms)
+                    var mine = new Job("mine")
+                    print("still mine: " + mine.n)
+                }
+            }
+            new Runner().Start()
+            var log = new Log()
+            log.Put(new Job("msg"))
+            var keep = new Job("ref")
+            log.Put(keep)
+            process log
+            process log
+            print("count " + log.count)
+            print("end")
+            """),
+        ("Ziel-Regel (SPEC 2.1): ein zurueckgegebenes Lambda nimmt seine Captures mit, Wert an einem Temporaeren, foreach-Quelle, Argument im Rueckgabewert", """
+            class X {
+                int v
+                construct(int v) { this.v = v }
+                destruct() { print("~X" + this.v) }
+            }
+            class W {
+                X x
+                lambda f
+                construct(X x) { this.x = x }
+                destruct() { print("~W") }
+            }
+            class Box {
+                List all
+                construct() { this.all = new List(); this.all.Add(new X(1)); this.all.Add(new X(2)) }
+                X First() { return this.all[0] }
+                destruct() { print("~Box") }
+            }
+            class T {
+                static lambda Counter(int start[]) { return () => start.length }
+                static W Wrap(X o) { return new W(o) }
+                static W WithLambda(int o[]) { var w = new W(undefined); w.f = () => o.length * 10; return w }
+                static List Fresh() { var l = new List(); l.Add(new X(7)); return l }
+            }
+            var c = T.Counter([1, 2, 3])
+            print("counter " + c())
+            var w = T.Wrap(new X(4))
+            print("wrapped " + w.x.v)
+            var wl = T.WithLambda([1, 2])
+            print("lambda in object " + wl.f())
+            var first = new Box().First()
+            print("first " + first.v)
+            var seen = 0
+            foreach (x in T.Fresh()) { seen = seen + x.v }
+            print("seen " + seen)
+            print("end")
             """),
     }).ToArray();
     natCases = natCases.Concat(new (string Name, string Source)[]

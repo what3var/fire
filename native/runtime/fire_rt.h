@@ -2669,6 +2669,22 @@ FIRE_FN Owned* ownedOf(Value v) {
 FIRE_FN void transferOut(Value v, OwnList* list) {
     Owned* o = ownedOf(v);
     if (o && o->owner == list) ownUnlink(o);
+    else if (v.kind == K_Lambda) {   /* a lambda owns nothing: what it captured from `list` travels with it (the caller's `adopt` takes it) */
+        Lam* l = (Lam*)v.p;
+        uint32_t i;
+        for (i = 0; i < l->ncaps; i++) transferOut(lamCaps(l)[i], list);
+    }
+}
+
+/* The captures of a returned lambda that travel without an owner (transferOut, transferTree): `list` takes them like the lambda. */
+FIRE_FN void adoptCaptures(Lam* l, OwnList* list) {
+    uint32_t i;
+    for (i = 0; i < l->ncaps; i++) {
+        Value c = lamCaps(l)[i];
+        Owned* o = ownedOf(c);
+        if (o) { if (!o->owner) ownLink(list, o); }
+        else if (c.kind == K_Lambda) adoptCaptures((Lam*)c.p, list);
+    }
 }
 
 /* The caller takes over what came back from a call: an object, array or buffer without an owner, or a string/lambda that the callee retained for the trip (that
@@ -2684,6 +2700,7 @@ FIRE_FN void adopt(Value v, OwnList* list) {
     } else if (isRef(v)) {
         Ref* r = refOf(v);
         if (r->rc != IMMORTAL) poolPush(r);   /* the count that came with the value now belongs to the pool */
+        if (v.kind == K_Lambda) adoptCaptures((Lam*)v.p, list);
     }
 }
 
@@ -5624,16 +5641,13 @@ FIRE_FN void takeArg(Value v, OwnList* from, OwnList* al) {
 
 /* `f(g())`: the result of a call passed straight on belongs to the callee, not to the caller (SPEC 2.1). The generated code lets the value travel in the
  * argument list `al` of the call and destroys what is left in it afterwards (the callee has moved, stored or returned what it wants to keep). */
+FIRE_FN OwnList* scopeListOf(const Owned* o);
 FIRE_FN void reownArg(Value v, OwnList* from, OwnList* al) {
     Owned* o = ownedOf(v);
-    if (o && o->owner == from) { ownUnlink(o); ownLink(al, o); }
+    if (o && scopeListOf(o) == from) { ownUnlink(o); ownLink(al, o); }   /* (also what hangs on a temporary object) */
     al->parent = from;
     al->mark = AL_MARK;
     al->depth = g_callDepth;
-}
-FIRE_FN void finishArgs(Value result, OwnList* al) {
-    transferOut(result, al);
-    if (al->head) destroyList(al);
 }
 
 /* ---- Ownership in property accessors (SPEC 2.2): what belongs to the running accessor call - in one of its scopes `lists`, or handed to a setter by the
@@ -5780,6 +5794,31 @@ FIRE_FN void fire_moveSinkItem(Value v, void* ctx) {
  * belongs to a scope of the call (recursively), TK_ALL everything reachable. A thing that moves belongs to the object that points to it; what would end up
  * below itself stays where it is. Every node is visited once. TK_CHILDREN of an IEnumerable takes its items (through the enumerator, which lives in `here`,
  * null: none) instead of its fields. */
+/* One value that hangs on a node of moveReachable: it moves to `carrier` (by the mode) and is walked further. A lambda owns nothing: what it captured hangs
+ * on the holder of the lambda. */
+FIRE_FN void fire_moveChild(Value v, OwnList* carrier, int mode, const LocalScopes* locals, OwnedStack* work, OwnedStack* seen) {
+    Owned* child = ownedOf(v);
+    bool move, descend;
+    if (!child) {
+        if (v.kind == K_Lambda) {
+            Lam* l = (Lam*)v.p;
+            uint32_t i;
+            for (i = 0; i < l->ncaps; i++) fire_moveChild(lamCaps(l)[i], carrier, mode, locals, work, seen);
+        }
+        return;
+    }
+    if (child->flags & (1 | F_VISIT)) return;
+    child->flags |= F_VISIT;
+    ownedStackPush(seen, child);
+    move = mode != TK_LOCALS || isLocalNode(child, locals);
+    descend = mode == TK_ALL || (mode == TK_LOCALS && (move || (child->owner && child->owner->holder && (child->owner->holder->flags & F_VISIT))));
+    if (move && carrier && child->owner != carrier) {
+        bool cycle = child->okind == O_Object && carrier->holder && ownsTransitively(child, carrier->holder);
+        if (!cycle) { if (child->owner) ownUnlink(child); ownLink(carrier, child); }
+    }
+    if (descend) ownedStackPush(work, child);
+}
+
 FIRE_FN void moveReachable(Owned* root, int mode, const LocalScopes* locals, OwnList* here) {
     OwnedStack work = {NULL, 0, 0}, seen = {NULL, 0, 0};
     size_t k;
@@ -5801,20 +5840,7 @@ FIRE_FN void moveReachable(Owned* root, int mode, const LocalScopes* locals, Own
         if (node->okind == O_Object) { Obj* ob = (Obj*)node; items = objFields(ob); n = ob->nfields; }
         else if (node->okind == O_Array) { Arr* a = (Arr*)node; items = arrValues(a); n = items ? a->length : 0; }   /* (a packed array holds numbers only) */
         else continue;
-        for (i = 0; i < n; i++) {
-            Owned* child = ownedOf(items[i]);
-            bool move, descend;
-            if (!child || (child->flags & (1 | F_VISIT))) continue;
-            child->flags |= F_VISIT;
-            ownedStackPush(&seen, child);
-            move = mode != TK_LOCALS || isLocalNode(child, locals);
-            descend = mode == TK_ALL || (mode == TK_LOCALS && (move || (child->owner && child->owner->holder && (child->owner->holder->flags & F_VISIT))));
-            if (move && carrier && child->owner != carrier) {
-                bool cycle = child->okind == O_Object && carrier->holder && ownsTransitively(child, carrier->holder);
-                if (!cycle) { if (child->owner) ownUnlink(child); ownLink(carrier, child); }
-            }
-            if (descend) ownedStackPush(&work, child);
-        }
+        for (i = 0; i < n; i++) fire_moveChild(items[i], carrier, mode, locals, &work, &seen);
     }
     for (k = 0; k < seen.count; k++) seen.items[k]->flags &= (uint8_t)~F_VISIT;
     ownedStackFree(&work);
@@ -5826,12 +5852,41 @@ FIRE_FN void moveReachable(Owned* root, int mode, const LocalScopes* locals, Own
 FIRE_FN void transferTree(Value v, OwnList* const* lists, int n) {
     Owned* o = ownedOf(v);
     LocalScopes scopes;
-    if (!o) return;
+    if (!o) {
+        if (v.kind == K_Lambda) {   /* (a lambda owns nothing, but what it captured from the call goes along with it) */
+            Lam* l = (Lam*)v.p;
+            uint32_t i;
+            for (i = 0; i < l->ncaps; i++) transferTree(lamCaps(l)[i], lists, n);
+        }
+        return;
+    }
     scopes.lists = lists;
     scopes.n = n;
     if (!isLocalNode(o, &scopes)) return;
     ownUnlink(o);   /* (the caller takes it over: adopt) */
     moveReachable(o, TK_LOCALS, &scopes, NULL);
+}
+
+/* After a call with arguments that travelled in `al` (SPEC 2.1: they belong to the call): what the call returned freshly takes along what still hangs on it
+ * in `al` (`return new W(arg)`, a lambda that captured an argument - like the scopes of the call at its `return`), the rest dies. */
+FIRE_FN void fire_carryFromArgs(Value v, OwnList* al) {
+    Owned* o = ownedOf(v);
+    LocalScopes scopes;
+    if (o) {
+        if (o->owner) return;   /* (only a value the call handed back: on its way to the caller's `adopt`) */
+        scopes.lists = &al;
+        scopes.n = 1;
+        moveReachable(o, TK_LOCALS, &scopes, NULL);
+    } else if (v.kind == K_Lambda) {
+        Lam* l = (Lam*)v.p;
+        uint32_t i;
+        for (i = 0; i < l->ncaps; i++) fire_carryFromArgs(lamCaps(l)[i], al);
+    }
+}
+FIRE_FN void finishArgs(Value result, OwnList* al) {
+    transferOut(result, al);
+    if (al->head) fire_carryFromArgs(result, al);
+    if (al->head) destroyList(al);
 }
 
 /* ---- The first slot owns an unclaimed value (SPEC 2.1) ----
@@ -5842,23 +5897,37 @@ FIRE_FN void transferTree(Value v, OwnList* const* lists, int n) {
  * points to it - the inner copies of a `copy`, the parts of a literal). */
 FIRE_FN void claimTree(Owned* o, OwnList* from, OwnList* to) {
     LocalScopes scopes;
-    if (!o || o->owner != from || !to) return;
+    if (!o || scopeListOf(o) != from || !to) return;   /* (also what hangs on a temporary object: `Type.Of(c).Find("x")`) */
     ownUnlink(o);
     ownLink(to, o);
     if (from->head) { scopes.lists = &from; scopes.n = 1; moveReachable(o, TK_LOCALS, &scopes, NULL); }
 }
 /* `var v = E`, `v = E`, a global: the scope's list claims an unclaimed value. */
-FIRE_FN void claimToList(Value v, OwnList* from, OwnList* to) { claimTree(ownedOf(v), from, to); }
+FIRE_FN void claimToList(Value v, OwnList* from, OwnList* to) {
+    if (v.kind == K_Lambda) {   /* a lambda owns nothing: the slot claims what it captured and is still in the temporaries */
+        Lam* l = (Lam*)v.p;
+        uint32_t i;
+        for (i = 0; i < l->ncaps; i++) claimToList(lamCaps(l)[i], from, to);
+        return;
+    }
+    claimTree(ownedOf(v), from, to);
+}
 /* `obj.f = E`, `arr[i] = E`, a field initializer: the object (the array) claims an unclaimed value. */
 FIRE_FN void claimToHolder(Value holder, Value v, OwnList* from) {
     Owned* o = ownedOf(v);
     Owned* h = ownedOf(holder);
     LocalScopes scopes;
     Arr* a;
-    if (!o || o->owner != from || !h || h == o || h->okind == O_Buffer) return;
+    if (!o && v.kind == K_Lambda && h && h->okind != O_Buffer) {   /* (what a stored lambda captured belongs to the holder) */
+        Lam* l = (Lam*)v.p;
+        uint32_t i;
+        for (i = 0; i < l->ncaps; i++) claimToHolder(holder, lamCaps(l)[i], from);
+        return;
+    }
+    if (!o || scopeListOf(o) != from || !h || h == o || h->okind == O_Buffer) return;
     if (h->okind == O_Object) {
         takeToObject(o, (Obj*)h);
-        if (from->head && o->owner != from) { scopes.lists = &from; scopes.n = 1; moveReachable(o, TK_LOCALS, &scopes, NULL); }
+        if (from->head && scopeListOf(o) != from) { scopes.lists = &from; scopes.n = 1; moveReachable(o, TK_LOCALS, &scopes, NULL); }
         return;
     }
     a = (Arr*)h;

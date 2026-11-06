@@ -2334,14 +2334,14 @@ namespace fire.Runtime
                 case ValueKind.Class:
                 {
                     var obj = (ObjectInstance)arg.AsObjectRef();
-                    if (!obj.IsDestroyed && ReferenceEquals(obj.Owner, callerScope.Temp)) obj.ReparentToArgument(calleeScope);
+                    if (!obj.IsDestroyed && RootedIn(arg, callerScope.Temp)) obj.ReparentToArgument(calleeScope);
                     break;
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
                 {
                     var leaf = arg.Kind == ValueKind.Array ? (IOwnedLeaf)arg.AsArray() : arg.AsBuffer();
-                    if (!leaf.IsDestroyed && ReferenceEquals(leaf.LeafOwner, callerScope.Temp)) LeafOwnership.Reparent(leaf, calleeScope);
+                    if (!leaf.IsDestroyed && RootedIn(arg, callerScope.Temp)) LeafOwnership.Reparent(leaf, calleeScope);
                     break;
                 }
             }
@@ -2521,6 +2521,8 @@ namespace fire.Runtime
                     LeafOwnership.Reparent(leaf, target);
                     break;
                 }
+                case ValueKind.Lambda:
+                    break;   // (a lambda owns nothing, but what it captured from the call goes along with it)
                 default:
                     return;
             }
@@ -6166,7 +6168,13 @@ namespace fire.Runtime
         private void ClaimTree(Value v, IOwner target)
         {
             var temp = _currentScope.Temp;
-            if (!ReferenceEquals(OwnerOfValue(v), temp)) return;
+            if (v.Kind == ValueKind.Lambda)
+            {
+                // a lambda owns nothing: what it captured and is still in the temporaries (a returned lambda's captures) goes to the slot
+                if (temp.HasOwned) OwnershipWalk.MoveReachable(v, Takes.Locals, s => ReferenceEquals(s, temp), target);
+                return;
+            }
+            if (!RootedIn(v, temp)) return;
             OwnershipWalk.TakeValue(v, target, this);
             if (temp.HasOwned) OwnershipWalk.MoveReachable(v, Takes.Locals, s => ReferenceEquals(s, temp), target);
         }
@@ -6181,15 +6189,29 @@ namespace fire.Runtime
         }
 
         /// <summary>Is the value unclaimed - does it belong to the statement temporaries of the current scope (SPEC 2.1)?</summary>
-        private bool IsUnclaimed(Value v) => OwnerOfValue(v) is Scope { IsTemp: true } temp && ReferenceEquals(temp.Parent, _currentScope);
+        private bool IsUnclaimed(Value v) => RootedIn(v, _currentScope.Temp);
+
+        /// <summary>Does the value belong to <paramref name="temp"/> - directly or via objects/arrays that belong to it (`Type.Of(c).Find("x")`: the member
+        /// hangs on a temporary type)? Such a value is unclaimed too: the first slot takes it out of the temporary (SPEC 2.1).</summary>
+        private static bool RootedIn(Value v, Scope temp)
+        {
+            IOwner? o = OwnerOfValue(v);
+            for (int guard = 0; o != null && guard < 10000; guard++)
+            {
+                if (ReferenceEquals(o, temp)) return true;
+                o = o switch { ObjectInstance oi => oi.Owner, ScriptArray a => a.LeafOwner, _ => null };
+            }
+            return false;
+        }
 
         /// <summary>An assignment to a variable (SPEC 2.1): an unclaimed value (flags bit 0) goes to the scope of the variable; with bit 1 a value of a
         /// block between the current one and that scope moves up to it (within the call; the global scope only from the top-level code).</summary>
         private void ClaimToScope(Value v, Scope target, int flags)
         {
+            if (v.Kind == ValueKind.Lambda) { if ((flags & 1) != 0) ClaimTree(v, target); return; }
+            if ((flags & 1) != 0 && RootedIn(v, _currentScope.Temp)) { ClaimTree(v, target); return; }
             if (OwnerOfValue(v) is not Scope owner || ReferenceEquals(owner, target)) return;
             bool move = false;
-            if ((flags & 1) != 0 && owner.IsTemp && ReferenceEquals(owner.Parent, _currentScope)) { ClaimTree(v, target); return; }
             if ((flags & 2) != 0)
             {
                 // a scope between the current one (included) and the target (excluded) - or the temporaries of one of them

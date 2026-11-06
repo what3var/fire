@@ -128,11 +128,12 @@ class Item {
     destruct() { print("destroy " + this.n) }
 }
 {
-    var items = new Item[2]
+    Item items[2]
     items[0] = new Item("a")
     items[1] = new Item("b")
-    print(items[0] is from items)   // True
-}                                   // destroy a, destroy b
+    items[0] = new Item("c")        // "a" stays: it belongs to the array
+    print("end of block")
+}                                   // destroy a, destroy b, destroy c - with the array
 ```
 
 ## A reference does not keep anything alive
