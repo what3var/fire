@@ -10,7 +10,7 @@ using System.Threading;
 namespace fire.Debugging
 {
     /// <summary>
-    /// Running a program on an ESP32 from spark (ROADMAP 8.6, docs/NATIVE_BACKEND.md "ESP32"): the program is an ESP-IDF project (the component that `build -t esp32`
+    /// Running a program on an ESP32 from spark (ROADMAP 8.6, docs/spec/NATIVE_BACKEND.md "ESP32"): the program is an ESP-IDF project (the component that `build -t esp32`
     /// writes into <c>main</c>, plus the CMakeLists.txt of the project next to it), <c>idf.py build flash</c> builds and flashes it, then spark opens the console
     /// UART itself (<see cref="SerialFramedTransport"/>): plain Run shows the console, Debug drives the debug agent of a debug build over it.
     /// </summary>

@@ -1,7 +1,7 @@
 #import "io"
 #import "time"
 #import "devices"
-// USB devices (docs/USB.md): the list of devices, control transfers, bulk and interrupt transfers, and a pair of bulk endpoints as an IO.Stream. Through libusb-1.0 on Linux and
+// USB devices (docs/devices/usb.md): the list of devices, control transfers, bulk and interrupt transfers, and a pair of bulk endpoints as an IO.Stream. Through libusb-1.0 on Linux and
 // macOS, WinUSB on Windows; the simulated device "sim" (a loopback) is there everywhere.
 namespace Usb {
     // The codes of UsbException.code (the same numbers as in the bridge).

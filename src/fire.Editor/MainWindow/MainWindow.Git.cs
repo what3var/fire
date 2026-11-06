@@ -12,7 +12,7 @@ using fire.Projects;
 
 namespace fire.Editor
 {
-    // Git (docs/GIT.md): the state of the files in the solution explorer, the branch in the status bar, the Git menu - commit, history, differences, branches, pull and push.
+    // Git (docs/tools/git.md): the state of the files in the solution explorer, the branch in the status bar, the Git menu - commit, history, differences, branches, pull and push.
     // The repository is opened for each command (nothing stays open, so nothing stays locked); what the explorer shows is a snapshot that is read again in the background.
     public partial class MainWindow
     {

@@ -1,0 +1,28 @@
+// Made from docs/ui/lists.md by extract.py - edit the page, not this file.
+#include "ui-lists/People.fxml"
+#include "shot.fire"
+
+class Person {
+    string name
+    int born
+    string field
+    construct(string name, int born, string field) { this.name = name; this.born = born; this.field = field }
+}
+
+class Model {
+    List people = new List()
+}
+
+class PeopleWindow : PeopleBase {
+    override undefined ShowPerson(any sender) { print("open " + this.table.selectedItem.name) }
+}
+
+var model = new Model()
+model.people.Add(new Person("Ada Lovelace", 1815, "the first program"))
+model.people.Add(new Person("Grace Hopper", 1906, "compilers, COBOL"))
+model.people.Add(new Person("Alan Turing", 1912, "computability"))
+model.people.Add(new Person("Edsger Dijkstra", 1930, "shortest paths"))
+var window = new PeopleWindow()
+window.SetDataContext(model)
+window.table.Select(1)
+Shot.Save(window.ui, "ui-lists.png")

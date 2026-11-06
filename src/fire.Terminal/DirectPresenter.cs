@@ -17,7 +17,7 @@ namespace fire.Terminal
     }
 
     /// <summary>
-    /// A package that shows the pictures of a framebuffer's windows itself (the scene3d package: a camera's pictures straight from the GPU, docs/SCENE3D.md "DirectDrawing"): the
+    /// A package that shows the pictures of a framebuffer's windows itself (the scene3d package: a camera's pictures straight from the GPU, docs/graphics/3d.md "DirectDrawing"): the
     /// presenter of the package library (`fire_present_fn` of native/abi/fire_pkg_abi.h) and its context. A window that shows the framebuffer calls it, on its own thread, instead of
     /// showing the framebuffer: op 1 shows the package's picture with the framebuffer's pixels laid over it where their alpha is not 0; op 0: let go of the window. It returns 1 when it
     /// showed the picture, 0 when it cannot (the window then shows the framebuffer as before, and does not ask this presenter again).

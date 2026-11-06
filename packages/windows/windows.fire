@@ -111,7 +111,7 @@ class Window {
         set { __GRPHWinSetBackdrop(this.id, value!int) }
     }
 
-    // How the window showed its last frame (docs/UI_PLATFORM.md, part 4.4): "gpu+directcomposition" (Windows: the frame from the GPU into DirectComposition's
+    // How the window showed its last frame (docs/spec/UI_PLATFORM.md, part 4.4): "gpu+directcomposition" (Windows: the frame from the GPU into DirectComposition's
     // swap chain), "gpu" (into a swap chain of Vulkan; or a package's presenter, scene3d DirectDrawing), "directcomposition" (Windows: the pixels into
     // DirectComposition), "pixels" (the pixels, the display's usual way). With a manager's thread: after its next cycle.
     string PresentPath() { return __GRPHWinPresentPath(this.id) }

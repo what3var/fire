@@ -11,7 +11,7 @@ using static fire.Editor.SettingsLayout;
 namespace fire.Editor
 {
     /// <summary>
-    /// The fields of a board (ESP32: Run and Debug in spark, docs/NATIVE_BACKEND.md "Ziel esp32") that the project properties and the toolchain settings share: the serial
+    /// The fields of a board (ESP32: Run and Debug in spark, docs/spec/NATIVE_BACKEND.md "Ziel esp32") that the project properties and the toolchain settings share: the serial
     /// port (a list of the ports of this machine, typed in also; empty or "auto": the only USB serial port, else the one esptool uses), the baud rate (the usual rates, typed
     /// in also; empty: the inherited one or 115200) and the ESP-IDF folder of spark with a folder picker and the check "idf.py found / not found".
     /// The fields only call `set`; the dialogs write the same keys as before (`port`, `baud`, `idfPath`).

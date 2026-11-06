@@ -21,7 +21,7 @@
                     <Button Classes="tool" Click="Table_Click" ToolTip.Tip="Insert table"><TextBlock Text="Table"/></Button>
                     <Border Width="1" Background="#3C3544" Margin="4,2"/>
                 </StackPanel>
-                <!-- the tools of a canvas (docs/NOTES.md): filled in the code -->
+                <!-- the tools of a canvas (docs/tools/notes.md): filled in the code -->
                 <StackPanel x:Name="CanvasTools" Orientation="Horizontal" Spacing="2"/>
                 <!-- the view: Surface (default), Split, Code, View -->
                 <ComboBox x:Name="LayoutBox" FontSize="12" MinWidth="86" VerticalAlignment="Center" SelectionChanged="LayoutBox_SelectionChanged" ToolTip.Tip="How the document is shown">

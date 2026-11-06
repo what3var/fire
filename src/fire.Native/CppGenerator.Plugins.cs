@@ -46,7 +46,7 @@ namespace fire.Native
     public sealed record PluginBuildPlan(string C, string? Natives, string Name, IReadOnlyList<(string Module, string Abi)> Deps, string Log);
 
     /// <summary>
-    /// fire plugins (ROADMAP 9, phase D b; docs/NATIVE_BACKEND.md "Plugins"): the classes of a program built as a library module of their own (`--linkage plugin`), a
+    /// fire plugins (ROADMAP 9, phase D b; docs/spec/NATIVE_BACKEND.md "Plugins"): the classes of a program built as a library module of their own (`--linkage plugin`), a
     /// shared library that a program with linkage "shared" loads while it runs (`Library.Load`) - the runtime registers its classes (fire_rt.h fireRegisterPlugin).
     ///
     /// The plugin is a library module (its generator has the library role): it numbers its classes from a base the runtime gives it, calls the other modules by their

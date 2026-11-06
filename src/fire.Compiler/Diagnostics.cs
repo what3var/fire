@@ -110,7 +110,7 @@ namespace fire.Compiler
         Native,
     }
 
-    /// <summary>The codes of the errors of the compiler (docs/ERRORS.md): every message has one, `E3012` - the letter, the area (the thousands) and a number inside the area. The codes are
+    /// <summary>The codes of the errors of the compiler (docs/tools/errors.md): every message has one, `E3012` - the letter, the area (the thousands) and a number inside the area. The codes are
     /// stable: a code names a message even after its wording is improved, so that a search for it, a note in a bug report or a link in the docs keeps working. A message that has no entry of its
     /// own in the catalogue (a new one) has the general code of its area (`E3000` for the parser, ...).</summary>
     public static partial class ErrorCatalog

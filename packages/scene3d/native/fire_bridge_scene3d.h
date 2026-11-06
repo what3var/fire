@@ -1,4 +1,4 @@
-/* fire native bridge "scene3d" (C): the natives behind `#import "scene3d"` (docs/SCENE3D.md) - meshes, textures and the renderer that draws them into RGBA pixels. The fire side (Scene,
+/* fire native bridge "scene3d" (C): the natives behind `#import "scene3d"` (docs/graphics/3d.md) - meshes, textures and the renderer that draws them into RGBA pixels. The fire side (Scene,
  * Camera, Object, Light, Texture, Material, Template, Model - fire source) is the same in the VM and in a native build; this file is what its `__S3D...` functions do.
  *
  * This file is the one implementation, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine runs it in a shared library built from it

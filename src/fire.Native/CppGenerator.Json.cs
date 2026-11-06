@@ -7,7 +7,7 @@ using fire.Standard;
 namespace fire.Native
 {
     /// <summary>
-    /// JSON (`#import "json"`, docs/JSON.md) in the native backend: the program calls `__JsonCall`, the runtime part is native/runtime/fire_json.h (C)
+    /// JSON (`#import "json"`, docs/stdlib/json.md) in the native backend: the program calls `__JsonCall`, the runtime part is native/runtime/fire_json.h (C)
     /// (put into the generated file), and the generator writes the tables it reads - per class its fields as JSON sees them (JsonMethods.JsonFieldsOf),
     /// the slots of List and JsonObject, and the texts of the type arguments. Every class of the program is generated: `"$type"` can name any of them.
     /// </summary>

@@ -29,7 +29,7 @@ namespace fire.Compiler
         /// <summary>The message without the line.</summary>
         public string RawMessage { get; }
 
-        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        /// <summary>The code of the message (docs/tools/errors.md).</summary>
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Compiler, RawMessage);
 
         public IReadOnlyList<CompilerException> Errors { get; }
@@ -542,7 +542,7 @@ namespace fire.Compiler
             var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
             var classes = compiler.CompileClasses(program);
 
-            // When the main program processes its queue by itself (docs/THREADING_DESIGN.md section 7): the command line and the project (`globalJobsForced`) go before
+            // When the main program processes its queue by itself (docs/spec/THREADING_DESIGN.md section 7): the command line and the project (`globalJobsForced`) go before
             // `#globaljobs`/`#nosync` (the last one in the top-level code, no matter where it stands), that before fire.native.json (`globalJobsDefault`); right at the
             // start, before any code runs. The default (safepoints) needs no instruction.
             var globalJobs = globalJobsForced ?? program.OfType<GlobalJobsDirective>().LastOrDefault()?.Mode ?? globalJobsDefault ?? GlobalJobsMode.Safepoints;
@@ -812,7 +812,7 @@ namespace fire.Compiler
             return meta;
         }
 
-        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/NATIVE_BACKEND.md) , `[NotSerializable]` before the class (docs/JSON.md) and `[NoCopy]` (SPEC 5.12).</summary>
+        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/spec/NATIVE_BACKEND.md) , `[NotSerializable]` before the class (docs/stdlib/json.md) and `[NoCopy]` (SPEC 5.12).</summary>
         private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
         {
             static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;

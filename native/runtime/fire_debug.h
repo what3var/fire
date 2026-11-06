@@ -1,4 +1,4 @@
-/* fire native runtime: the debugger of a debug build (docs/NATIVE_DEBUG_PROTOCOL.md, docs/NATIVE_BACKEND.md "Debug-Builds"). Included by fire_rt.h when the
+/* fire native runtime: the debugger of a debug build (docs/spec/NATIVE_DEBUG_PROTOCOL.md, docs/spec/NATIVE_BACKEND.md "Debug-Builds"). Included by fire_rt.h when the
  * program is generated in the mode `debug` (FIRE_DEBUG).
  *
  * The generated code keeps a shadow stack: every fire function has a frame (DbgFrame) on it with its function, the addresses of its variables, `this`, and
@@ -43,7 +43,7 @@ struct DbgFrame {
 
 extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached: the hooks look at the position */
 extern FIRE_RT_DATA int32_t g_dbgGlobalCount;    /* the global variables declared so far (VM.DebugGlobals) */
-/* The program's standard input comes from the agent (a framed transport owns the input, docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): IO reads it with
+/* The program's standard input comes from the agent (a framed transport owns the input, docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport"): IO reads it with
  * fire_dbgStdinRead (waits for input or its end, without the GIL; 0 at the end) and gives a byte back with fire_dbgStdinUnget. */
 extern FIRE_RT_DATA volatile int g_dbgStdin;
 FIRE_RT_FN int64_t fire_dbgStdinRead(uint8_t* out, int64_t count);
@@ -106,7 +106,7 @@ int64_t fire_dbgStdinRead(uint8_t* out, int64_t count) { (void)out; (void)count;
 void fire_dbgStdinUnget(int c) { (void)c; }
 #else
 
-/* ---- the system: threads, a lock with a condition (also with a timeout), and the transport (docs/NATIVE_DEBUG_PROTOCOL.md "Transport") ----
+/* ---- the system: threads, a lock with a condition (also with a timeout), and the transport (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport") ----
  * Three transports behind one small interface (open, send a message, receive bytes, close):
  *   tcp    FIRE_DEBUG=tcp:HOST:PORT;token=T - the desktop: the program connects to spark; one JSON message per line.
  *   stdio  FIRE_DEBUG=stdio[;token=T][;wait=MS] on the desktop, or FIRE_DEBUG_TRANSPORT_STDIO (a FreeRTOS board, the simulator native/sim): framed
@@ -843,7 +843,7 @@ static const DbgLevel* dbgThreadGlobals(DbgThread* t, DbgFrame** bottom) {
     return f->fn->levels[lv].functionTop == 2 ? &f->fn->levels[lv] : NULL;
 }
 
-/* Resolves a ref (docs/NATIVE_DEBUG_PROTOCOL.md "Werte"): the slot of the value, or null with a reason. `thread` is the thread a `l:`/`t:` ref names. */
+/* Resolves a ref (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Werte"): the slot of the value, or null with a reason. `thread` is the thread a `l:`/`t:` ref names. */
 static Value* dbgResolveField(const char* ref, const char** error, DbgThread** thread, Value* object, long* field);
 static Value* dbgResolve(const char* ref, const char** error, DbgThread** thread) {
     Value object;

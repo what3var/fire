@@ -131,7 +131,7 @@ Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Ext}\OpenWithProgids"; ValueTy
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc5Name}"; Flags: uninsdeletekey; Tasks: assoc_biscuit
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconBiscuit}"; Tasks: assoc_biscuit
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_biscuit
-; xmd (canvas: extended Markdown, docs/NOTES.md)
+; xmd (canvas: extended Markdown, docs/tools/notes.md)
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc6Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_xmd
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc6Name}"; Flags: uninsdeletekey; Tasks: assoc_xmd
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconCanvas}"; Tasks: assoc_xmd

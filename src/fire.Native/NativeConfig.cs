@@ -19,7 +19,7 @@ namespace fire.Native
         public string? Target { get; set; }
         /// <summary>The default toolchain (a built-in name or a key of <see cref="Toolchains"/>) for targets that name none themselves; null: the first one found on this machine.</summary>
         public string? Toolchain { get; set; }
-        /// <summary>How much a native build leaves out (`"stripping"`, docs/NATIVE_BACKEND.md "Größe des Programms"): 0 `none` .. 3 `all` (null: the default, 3), as a
+        /// <summary>How much a native build leaves out (`"stripping"`, docs/spec/NATIVE_BACKEND.md "Größe des Programms"): 0 `none` .. 3 `all` (null: the default, 3), as a
         /// number or a name; a debug build always keeps everything (0).</summary>
         [JsonConverter(typeof(StrippingJsonConverter))]
         public StrippingLevel? Stripping { get; set; }
@@ -40,7 +40,7 @@ namespace fire.Native
         [JsonIgnore] public bool StrippingFromCommandLine { get; set; }
         /// <summary>(`"stripping"` was given: it goes before `"trim"`, whatever comes first in the file)</summary>
         private bool StrippingExplicit => Stripping != null && !_strippingFromTrim;
-        /// <summary>When the main program runs the `fire global` jobs by itself (`"globalJobs"`: `safepoints`, `sleep` or `sync`; docs/THREADING_DESIGN.md section 7): the default of a
+        /// <summary>When the main program runs the `fire global` jobs by itself (`"globalJobs"`: `safepoints`, `sleep` or `sync`; docs/spec/THREADING_DESIGN.md section 7): the default of a
         /// native build whose program says nothing (`#globaljobs`, `#nosync`); the project and `--global-jobs` go before it. Null: safepoints.</summary>
         public string? GlobalJobs
         {
@@ -56,7 +56,7 @@ namespace fire.Native
         /// <summary><see cref="GlobalJobs"/> as a mode.</summary>
         [JsonIgnore] public GlobalJobsMode? GlobalJobsValue => GlobalJobsModes.Parse(_globalJobs);
         /// <summary>How the libraries and packages are linked (ROADMAP 9): `source` (null, the default: everything is one C file) or `static` (each library a static library of
-        /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
+        /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
         public string? Linkage { get; set; }
         /// <summary>`--linkage plugin`: the program the plugin is built for (its path, or its `.firehost` file) - its switches and the interfaces of its libraries.</summary>
         public string? Host { get; set; }
@@ -162,7 +162,7 @@ namespace fire.Native
     }
 
     /// <summary>How much a native build leaves out (`"stripping"` in fire.native.json, in the settings of a project, `--stripping` on the command line;
-    /// docs/NATIVE_BACKEND.md "Größe des Programms"). Each level leaves out what the one before keeps, and more.</summary>
+    /// docs/spec/NATIVE_BACKEND.md "Größe des Programms"). Each level leaves out what the one before keeps, and more.</summary>
     public enum StrippingLevel
     {
         /// <summary>0 `none`: everything stays (as in the VM): every class with all its members (`--keep-all`, debug builds).</summary>

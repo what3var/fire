@@ -4,7 +4,7 @@ using fire.Projects;
 namespace fire.Compiler
 {
     /// <summary>
-    /// The C++ natives of projects (docs/PROJECTS.md) go the way of the natives of packages: a project with a `native` part stands for a package that is not installed - it is put into the
+    /// The C++ natives of projects (docs/tools/projects.md) go the way of the natives of packages: a project with a `native` part stands for a package that is not installed - it is put into the
     /// overlay of the package store (<see cref="PackageStore.AddOverlay"/>), the build finds its natives there (the virtual machine builds a shared library from them, a native build puts the
     /// C++ into the generated file) and its import key switches them on. The package has no prelude: the fire code of the project comes from the project's files.
     /// </summary>

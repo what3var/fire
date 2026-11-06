@@ -1,4 +1,4 @@
-/* fire native bridge "net" (C): the natives behind `#import "net"` (docs/NETWORK.md) - TCP connections and listeners, UDP sockets, name resolution. The fire side
+/* fire native bridge "net" (C): the natives behind `#import "net"` (docs/networking/README.md) - TCP connections and listeners, UDP sockets, name resolution. The fire side
  * (Net.TcpClient, Net.TcpListener, Net.UdpSocket, Net.Dns, ... - fire source) is the same in the VM and in a native build; this file is what its `__Net...`
  * functions do.
  *

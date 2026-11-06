@@ -23,7 +23,7 @@ namespace fire.Compiler
         /// <summary>The message without the line.</summary>
         public string RawMessage { get; }
 
-        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        /// <summary>The code of the message (docs/tools/errors.md).</summary>
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Resolver, RawMessage);
 
         public IReadOnlyList<ResolverException> Errors { get; }
@@ -2313,7 +2313,7 @@ namespace fire.Compiler
         /// READONLY shadows, at THE SAME slots as in the main program - see
         /// below), THEN all TakingCaptures (in list order), then
         /// with. This enables the read-only snapshot provided for in
-        /// docs/THREADING_DESIGN.md section 8: the fire thread gets at
+        /// docs/spec/THREADING_DESIGN.md section 8: the fire thread gets at
         /// its start an OWN, isolated copy of ALL main-program
         /// globals (see VM.OpCode.Fire) - visible for reading under the same
         /// name as in the main program, but NOT writable (an
@@ -2348,7 +2348,7 @@ namespace fire.Compiler
             if (!_noShadowGlobals)
                 foreach (var (name, slot) in _globalScope.Slots)
                 {
-                    // A fire thread may change globals (docs/THREADING_DESIGN.md section 7): single assignments run as a section that
+                    // A fire thread may change globals (docs/spec/THREADING_DESIGN.md section 7): single assignments run as a section that
                     // the main program grants at `sync globals` - therefore no write protection any more here.
                     _current.Slots[name] = slot;
                 }

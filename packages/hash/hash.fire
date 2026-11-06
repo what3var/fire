@@ -1,6 +1,6 @@
 #import "io"
 
-// Hash functions (docs/HASH.md): MD5, SHA-1, SHA-256, SHA-384, SHA-512, CRC-32, Adler-32 and HMAC. Everything is plain C in the package (no library), so the
+// Hash functions (docs/stdlib/hash.md): MD5, SHA-1, SHA-256, SHA-384, SHA-512, CRC-32, Adler-32 and HMAC. Everything is plain C in the package (no library), so the
 // results are the same on every target. Data is a byte buffer, a string (hashed as UTF-8) or an IO.Stream (read to its end).
 namespace Hash {
     enum Algorithm { Md5 = 1, Sha1 = 2, Sha256 = 3, Sha384 = 4, Sha512 = 5, Crc32 = 6, Adler32 = 7 }

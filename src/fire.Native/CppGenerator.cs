@@ -1561,7 +1561,7 @@ namespace fire.Native
                 sb.AppendLine("};");
                 _initCode.AppendLine($"    g_textUnits = kTextUnits; g_textUnitCount = {textUnits.Count};");
             }
-            // the files of `new Resource("path")` are part of the binary (docs/RESOURCES.md)
+            // the files of `new Resource("path")` are part of the binary (docs/stdlib/resources.md)
             var resources = _program.Program.Resources;
             if (resources.Count > 0)
             {
@@ -1798,9 +1798,9 @@ namespace fire.Native
             if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
             if (Modular) sb.AppendLine("#define FIRE_MODULES 1   // modules (ROADMAP 9): the members of the classes of other modules by name, through the class descriptors");
             if (DebugBuild) sb.AppendLine("#define FIRE_DEBUG 1   // a debug build: the shadow stack and the hooks of the debugger (fire_debug.h)");
-            if (DebugBuild && DebugAgent) sb.AppendLine("#define FIRE_DEBUG_AGENT 1   // the debug agent (docs/NATIVE_DEBUG_PROTOCOL.md; the desktop: FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T)");
+            if (DebugBuild && DebugAgent) sb.AppendLine("#define FIRE_DEBUG_AGENT 1   // the debug agent (docs/spec/NATIVE_DEBUG_PROTOCOL.md; the desktop: FIRE_DEBUG=tcp:127.0.0.1:PORT;token=T)");
             if (DebugBuild && DebugAgent && DebugTransportDefine is { } transport)
-                sb.AppendLine($"#define {transport} 1   // the agent talks framed over {(transport.EndsWith("UART", StringComparison.Ordinal) ? "the console UART" : "stdio")} (docs/NATIVE_DEBUG_PROTOCOL.md, Transport)");
+                sb.AppendLine($"#define {transport} 1   // the agent talks framed over {(transport.EndsWith("UART", StringComparison.Ordinal) ? "the console UART" : "stdio")} (docs/spec/NATIVE_DEBUG_PROTOCOL.md, Transport)");
             if (_usesThreads) sb.AppendLine("#define FIRE_THREADS 1");
             if (_usesReflection) sb.AppendLine("#define FIRE_REFLECTION 1");
             if (_usesElementPointers && _program.ExecutionMode != VmExecutionMode.Performance) sb.AppendLine("#define FIRE_PTRBOUNDS 1 // pointers into arrays and buffers (`ref a[i]`, `p + n`) know the bounds");
@@ -3128,7 +3128,7 @@ namespace fire.Native
         /// <summary>The function of the catch blocks of a `try` statement.</summary>
         private static string CatchName(Func f, Region region) => $"C_{f.Name}_{region.Template}";
 
-        // `#line` (docs/NATIVE_BACKEND.md "Zeilen des Programms im C"): the instructions name their fire line; after the code of a function the C file names itself
+        // `#line` (docs/spec/NATIVE_BACKEND.md "Zeilen des Programms im C"): the instructions name their fire line; after the code of a function the C file names itself
         // again (the final pass replaces the marker with `#line <its own line> "fire_program.c"`).
         private string? _lineDir;
         private bool _lineFresh;
@@ -3708,7 +3708,7 @@ namespace fire.Native
             if (_usesThreads && sb != null && ins.A.Length > 0 && ins.A[0] <= ins.Addr
                 && ins.Op is OpCode.Jump or OpCode.JumpIfFalse or OpCode.JumpIfFalsePeek or OpCode.JumpIfTruePeek
                     or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq)
-                E($"if (FIRE_UNLIKELY(pollLoop())) goto {ExitLabel(f, st, locals)};");   // (and the main program's queue: docs/THREADING_DESIGN.md section 7)
+                E($"if (FIRE_UNLIKELY(pollLoop())) goto {ExitLabel(f, st, locals)};");   // (and the main program's queue: docs/spec/THREADING_DESIGN.md section 7)
 
             switch (ins.Op)
             {
@@ -5844,7 +5844,7 @@ namespace fire.Native
         }
 
         /// <summary>The C of an import the compiler knows itself (`graphics`, `windows`): its natives in the virtual machine are C#, its C is the source of the standard package
-        /// (`Source/graphics/native/`, docs/PACKAGES.md), put into the generated file like that of any package.</summary>
+        /// (`Source/graphics/native/`, docs/packages/README.md), put into the generated file like that of any package.</summary>
         private readonly HashSet<string> _standardNativesWritten = new(StringComparer.OrdinalIgnoreCase);
 
         private void AppendStandardNatives(StringBuilder sb, string import)

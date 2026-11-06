@@ -127,7 +127,7 @@ namespace fire.Editor
                         string marker = list.Ordered ? number + "." : listDepth % 2 == 0 ? "•" : "◦";
                         number++;
                         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
-                        // a task: its state as a drawn box (docs/NOTES.md), else the bullet or number
+                        // a task: its state as a drawn box (docs/tools/notes.md), else the bullet or number
                         row.Children.Add(item.Task is { } state
                             ? new TaskMark { State = state, Margin = new Thickness(1, 3, 9, 1), VerticalAlignment = VerticalAlignment.Top }
                             : new TextBlock { Text = marker, Foreground = foreground, FontSize = 14, Margin = new Thickness(0, 1, 8, 1), MinWidth = 16, VerticalAlignment = VerticalAlignment.Top });

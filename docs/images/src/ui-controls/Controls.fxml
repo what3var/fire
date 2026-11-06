@@ -1,0 +1,32 @@
+<Window Class="Controls" Title="Controls" Width="560" Height="330">
+  <Grid Width="536" Height="306" Columns="*, *" Rows="auto, *" Margin="12">
+    <StackPanel Grid.Column="0" Spacing="8" Margin="0,0,12,0">
+      <Label Text="Order" FontSize="20"/>
+      <TextBox Name="customer" Width="-1" Text="Ada Lovelace"/>
+      <AutoSuggestBox Name="city" Width="-1" Text="Lo">
+        <Suggestion>London</Suggestion>
+        <Suggestion>Los Angeles</Suggestion>
+        <Suggestion>Lyon</Suggestion>
+      </AutoSuggestBox>
+      <CheckBox Text="Gift wrap" IsChecked="true"/>
+      <CheckBox Text="Express" Enabled="false"/>
+      <RadioButtons Header="Payment" Horizontal="true" SelectedIndex="1">
+        <Item>Card</Item>
+        <Item>Invoice</Item>
+        <Item>Cash</Item>
+      </RadioButtons>
+    </StackPanel>
+    <StackPanel Grid.Column="1" Spacing="8">
+      <ComboBox Name="size" Width="-1" SelectedIndex="1">
+        <Item>Small</Item>
+        <Item>Medium</Item>
+        <Item>Large</Item>
+      </ComboBox>
+      <TextArea Height="96" Width="-1" WordWrap="true" Text="A note that is long enough to wrap onto the next line of the text area."/>
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <Button Text="Order" Icon="Check"/>
+        <Button Text="Cancel" Icon="Close"/>
+      </StackPanel>
+    </StackPanel>
+  </Grid>
+</Window>

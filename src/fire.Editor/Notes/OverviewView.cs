@@ -55,11 +55,11 @@ namespace fire.Editor
         string? Fill { get; }
     }
 
-    /// <summary>The tools of a canvas (docs/NOTES.md).</summary>
+    /// <summary>The tools of a canvas (docs/tools/notes.md).</summary>
     internal enum OverviewTool { Select, Container, Rect, Ellipse, Arrow, Pen, Text, Connect }
 
     /// <summary>
-    /// A project overview (docs/NOTES.md), shown: the text at the top left, the containers at their places (their text, sketches and containers in them, or the document they show),
+    /// A project overview (docs/tools/notes.md), shown: the text at the top left, the containers at their places (their text, sketches and containers in them, or the document they show),
     /// the lines between containers on top. Ctrl+mouse wheel zooms. A todo list in a container is a working list: its tasks are ticked off there.
     /// With a host (an editable document) the surface edits the overview: a click selects a container, dragging moves it, its handles resize it (on a raster of 10, Alt: free);
     /// a double click edits its text in place - the containers in it stay visible at half opacity. Every change goes into the text of the document, only to the lines concerned.
@@ -1291,7 +1291,7 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// A todo list in an overview (docs/NOTES.md): its groups and tasks with their marks; a click on a mark moves the task on, like in the Todo window, and the file is written
+    /// A todo list in an overview (docs/tools/notes.md): its groups and tasks with their marks; a click on a mark moves the task on, like in the Todo window, and the file is written
     /// (through <see cref="OverviewContext.WriteTodo"/>, which keeps the Todo window and an open document in step). Changes of the file from outside are read again.
     /// </summary>
     internal sealed class TodoListView : UserControl

@@ -3,7 +3,7 @@ using System.Text;
 
 namespace fire.UI.Markup
 {
-    /// <summary>A circuit of Paul Falstad's simulator (the text of File > Export As Text, a `.txt` file, or the XML format of the newer simulator, `<cir>`) as a `.biscuit` schematic (docs/CIRCUITS.md). The grid of the
+    /// <summary>A circuit of Paul Falstad's simulator (the text of File > Export As Text, a `.txt` file, or the XML format of the newer simulator, `<cir>`) as a `.biscuit` schematic (docs/circuits/README.md). The grid of the
     /// schematic is 8 pixels of Falstad's, the elements keep their points, so the drawing stays the same. Elements the package `circuits` does not have are left out
     /// and named in <see cref="Result.Warnings"/>.</summary>
     public static class FalstadImport

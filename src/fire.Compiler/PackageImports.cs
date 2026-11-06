@@ -5,7 +5,7 @@ using fire.Values;
 
 namespace fire.Compiler
 {
-    /// <summary>The imports of installed packages (docs/PACKAGES.md) as far as the compiler and the virtual machine are concerned: their natives are C++ source for the native backend, so the
+    /// <summary>The imports of installed packages (docs/packages/README.md) as far as the compiler and the virtual machine are concerned: their natives are C++ source for the native backend, so the
     /// virtual machine only knows their names (a call is an error that says so); a prelude without natives works in both.</summary>
     public static class PackageImports
     {

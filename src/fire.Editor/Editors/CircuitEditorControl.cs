@@ -22,7 +22,7 @@ using fire.UI.Markup;
 namespace fire.Editor
 {
     /// <summary>
-    /// The editor of a circuit (`.biscuit`, docs/CIRCUITS.md). The schematic itself is the CircuitView of the package `circuits.ui` - the same control a program
+    /// The editor of a circuit (`.biscuit`, docs/circuits/README.md). The schematic itself is the CircuitView of the package `circuits.ui` - the same control a program
     /// shows - running live in a fire program of its own (<see cref="LiveSession"/>): it draws, simulates, and is edited right there (select, move, stretch, wires,
     /// rotate, delete, undo). Around it, in Avalonia: the palette of parts (a click places the next one in the view), the properties of the selected element,
     /// the tools and the import of Falstad circuits. The text of the file is what the view reports after every change.

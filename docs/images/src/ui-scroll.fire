@@ -1,0 +1,16 @@
+// Made from docs/ui/containers.md by extract.py - edit the page, not this file.
+#include "ui-scroll/Tiles.fxml"
+#include "shot.fire"
+
+class TilesWindow : TilesBase {
+    construct() {
+        for (var i = 1; i <= 24; i++) {
+            var b = new UI.Button("Tile " + i)
+            b.Margin = new UI.Thickness(3)
+            this.tiles.Add(b)
+        }
+    }
+}
+
+var window = new TilesWindow()
+Shot.Save(window.ui, "ui-scroll.png")

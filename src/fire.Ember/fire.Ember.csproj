@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    ember - the command line of the package manager (docs/PACKAGES.md). The package manager itself is the library fire.Package.Manager (referenced by fire.Native and fire.Project;
+    ember - the command line of the package manager (docs/packages/README.md). The package manager itself is the library fire.Package.Manager (referenced by fire.Native and fire.Project;
     forge and spark get it from them); this is only the program, so that no library references an executable.
   -->
   <PropertyGroup>

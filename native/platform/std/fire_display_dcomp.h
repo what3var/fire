@@ -1,7 +1,7 @@
 /* fire native platform package "std": the frames of a Windows window through DirectComposition (Windows 8 and later) - a bridge to the compositor, not a scene: one
  * visual per window, its content a swap chain of DXGI "for composition" (R8G8B8A8; alpha ignored for an opaque window, premultiplied for one that shows what lies
  * behind it: DWM mixes it - also with Mica and acrylic). What the window shows is drawn already (by the CPU: the framebuffer's pixels; by the GPU: Vulkan, see below);
- * this only hands it to DWM. docs/UI_PLATFORM.md, part 4.4.
+ * this only hands it to DWM. docs/spec/UI_PLATFORM.md, part 4.4.
  *
  * When it is there (fire_dcomp_available: d3d11.dll, dxgi.dll and dcomp.dll load, a D3D11 device and a DirectComposition device can be made; FIRE_DCOMP=0 switches
  * it off), every window of the display gets WS_EX_NOREDIRECTIONBITMAP - it has no bitmap of GDI - and shows all its frames this way: the pixels go into the window's

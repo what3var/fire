@@ -4,7 +4,7 @@ using fire.Values;
 
 namespace fire.Runtime
 {
-    /// <summary>A probe (`probe obj.member changed/changing handler`, docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): a handler for
+    /// <summary>A probe (`probe obj.member changed/changing handler`, docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md): a handler for
     /// write accesses to a member (or all, `Member == null`) of an object.</summary>
     public sealed class ProbeEntry
     {

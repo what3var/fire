@@ -22,7 +22,7 @@ namespace fire.Compiler
         /// <summary>`-f`: precision of `float` (32 or 64); null = the one in the script (`#floatwidth`) or 64.</summary>
         public int? FloatWidth { get; init; }
         public int? IntWidth { get; init; }
-        /// <summary>`--types lax|strict`: how a type conflict is reported (docs/TYPES.md); null = the project's setting, else lax.</summary>
+        /// <summary>`--types lax|strict`: how a type conflict is reported (docs/spec/TYPES.md); null = the project's setting, else lax.</summary>
         public TypeCheckMode? TypeChecking { get; init; }
 
         /// <summary>`-D name` (repeatable): extra symbols for `#if`.</summary>
@@ -49,14 +49,14 @@ namespace fire.Compiler
         public bool KeepSources { get; init; }
         /// <summary>`--keep-all`: a native build keeps every class and member, also what the program does not reach (`--stripping 0`).</summary>
         public bool KeepAll { get; init; }
-        /// <summary>`--stripping 0-3|none|protected|methods|all`: how much a native build leaves out (`"stripping"` in fire.native.json, the project's setting; docs/NATIVE_BACKEND.md).</summary>
+        /// <summary>`--stripping 0-3|none|protected|methods|all`: how much a native build leaves out (`"stripping"` in fire.native.json, the project's setting; docs/spec/NATIVE_BACKEND.md).</summary>
         public fire.Native.StrippingLevel? Stripping { get; init; }
         /// <summary>`--linkage source|static|shared|plugin`: how a native build links the libraries (`"linkage"` in fire.native.json, the project's setting; ROADMAP 9);
         /// `plugin` builds the program's classes as a fire plugin.</summary>
         public string? Linkage { get; init; }
         /// <summary>`--host <program>`: with `--linkage plugin`, the program (linkage "shared") the plugin is built for.</summary>
         public string? Host { get; init; }
-        /// <summary>`--global-jobs safepoints|sleep|sync`: when the main program runs the `fire global` jobs by itself (docs/THREADING_DESIGN.md section 7); goes before the
+        /// <summary>`--global-jobs safepoints|sleep|sync`: when the main program runs the `fire global` jobs by itself (docs/spec/THREADING_DESIGN.md section 7); goes before the
         /// project's `globalJobs`, `#globaljobs`/`#nosync` and fire.native.json. Null: those decide.</summary>
         public fire.Runtime.GlobalJobsMode? GlobalJobs { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
@@ -102,12 +102,12 @@ namespace fire.Compiler
                     A target other than this machine (-t esp32, wasm, another system) is always native: the VM exists only for this machine.
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
             native  translates the files into C (written next to fire_rt.h, the runtime it includes; default: out.c - and fire_natives.cpp with natives in C++)
-                    - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
+                    - an experimental ahead-of-time backend, see docs/spec/NATIVE_BACKEND.md.
             -t      Target of a native build: windows, linux, macos, esp32, freertos, wasm (a page for the browser, needs Emscripten) or one that fire.native.json defines (default: this machine). The target decides the
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
-            --stripping 0-3  How much a native build leaves out of what the program does not reach (docs/NATIVE_BACKEND.md; "stripping" in fire.native.json or the project):
+            --stripping 0-3  How much a native build leaves out of what the program does not reach (docs/spec/NATIVE_BACKEND.md; "stripping" in fire.native.json or the project):
                     0 none (everything stays, as in the VM), 1 protected (every class and public member stays), 2 methods (every class with its constructors, fields
                     and properties stays, a method only when it is used), 3 all (the default: only what the program reaches). Names work as well (--stripping methods).
                     Names given as literals to reflection (Reflect.New("Dog")) always stay; a debug build always keeps everything.
@@ -119,21 +119,21 @@ namespace fire.Compiler
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             -i      Width of int in bits: 32 or 64 (default: whatever the script sets with #intwidth, otherwise 64 - also on small targets).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
-                    typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).
+                    typeChecking does the same, #lax / #strict in a file decides for that file (docs/spec/TYPES.md).
             --global-jobs safepoints|sleep|sync  When the main program runs the `fire global` jobs (and lets in the sections of its threads, the host callbacks) by itself:
                     safepoints (the default: at a loop's jump back, Sleep and the wait functions), sleep (only at Sleep and the wait functions) or sync (only at `sync globals`);
                     `sync globals` and the end of the program always do. Goes before the project's globalJobs, #globaljobs / #nosync in the source and "globalJobs" in
-                    fire.native.json (docs/THREADING_DESIGN.md section 7). The VM and a native build behave the same.
+                    fire.native.json (docs/spec/THREADING_DESIGN.md section 7). The VM and a native build behave the same.
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
-            test    runs the tests: the methods with [Test] (docs/TESTING.md), in the VM or with --engine native as a native program for this machine. Without a file: the solution or the
+            test    runs the tests: the methods with [Test] (docs/tools/testing.md), in the VM or with --engine native as a native program for this machine. Without a file: the solution or the
                     project in the current folder (all projects of a solution, or -p <name>). The files in testing/ of a project belong to its tests; the top level of a program does not run.
                     --filter A.B,C runs only these tests (Class.Method, or a class for all its tests; * for any text). Exit code 0 when every test passed, 1 otherwise.
-            ui      writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) - not needed to build: `#include "x.fxml"` does it on the fly.
-            biscuit writes the script generated from the schematic of a circuit (docs/CIRCUITS.md) - `#include "x.biscuit"` does it on the fly as well.
+            ui      writes the script generated from the markup of a user interface (docs/ui/markup.md) - not needed to build: `#include "x.fxml"` does it on the fly.
+            biscuit writes the script generated from the schematic of a circuit (docs/circuits/README.md) - `#include "x.biscuit"` does it on the fly as well.
             falstad converts a circuit of Paul Falstad's simulator (File > Export As Text) into a schematic (.biscuit); what the package circuits has not got is named.
 
-            A project (`.fireproj`) or a solution (`.firesln`, docs/PROJECTS.md) instead of the files: run runs the project (of a solution: the startup project, or -p <name>), build builds it -
+            A project (`.fireproj`) or a solution (`.firesln`, docs/tools/projects.md) instead of the files: run runs the project (of a solution: the startup project, or -p <name>), build builds it -
             a program like above (the settings of the project decide: engine, target, mode, output), a library as a package (`name-version.fpk`, in the folder of -o, the project's `output` or `bin`).
             The settings of the project go before the tags in the source; the options of the command line go before both.
 
@@ -562,7 +562,7 @@ namespace fire.Compiler
             return ExitOk;
         }
 
-        /// <summary>`test` (docs/TESTING.md): the tests of files, of a project or of every project of a solution.</summary>
+        /// <summary>`test` (docs/tools/testing.md): the tests of files, of a project or of every project of a solution.</summary>
         private static int Test(CommandLineOptions options, TextWriter stdout, TextWriter stderr)
         {
             var files = options.Files.ToList();
@@ -650,7 +650,7 @@ namespace fire.Compiler
         private static bool IsProjectFile(string path) =>
             string.Equals(Path.GetExtension(path), fire.Projects.FireProject.Extension, StringComparison.OrdinalIgnoreCase) || string.Equals(Path.GetExtension(path), fire.Projects.FireSolution.Extension, StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>`run` and `build` of a project or a solution (docs/PROJECTS.md).</summary>
+        /// <summary>`run` and `build` of a project or a solution (docs/tools/projects.md).</summary>
         private static int RunProject(CommandLineOptions options, TextWriter stdout, TextWriter stderr)
         {
             string file = options.Files[0];

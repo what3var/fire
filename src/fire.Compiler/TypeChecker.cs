@@ -8,7 +8,7 @@ using fire.Values;
 
 namespace fire.Compiler
 {
-    /// <summary>How a type conflict is reported (docs/TYPES.md): `Lax` a warning, `Strict` an error.</summary>
+    /// <summary>How a type conflict is reported (docs/spec/TYPES.md): `Lax` a warning, `Strict` an error.</summary>
     public enum TypeCheckMode { Lax, Strict }
 
     /// <summary>The errors of the type checker in strict mode (the conflicts of lax mode are warnings and do not stop the build).</summary>
@@ -73,7 +73,7 @@ namespace fire.Compiler
     }
 
     /// <summary>
-    /// The type checker (docs/TYPES.md, step 1): runs after the resolver and computes a static type for every expression it can (literals, declared variables, parameters, return types and fields,
+    /// The type checker (docs/spec/TYPES.md, step 1): runs after the resolver and computes a static type for every expression it can (literals, declared variables, parameters, return types and fields,
     /// `new`, `var x = typed expression`), `Dynamic` for everything else. A conflict between two KNOWN types (assigning a string to an `int`, an argument that does not fit a typed parameter, a
     /// wrong return value) is reported - as a warning in lax mode, as an error in strict mode. It looks only at the code of the user (not at the preludes) and never changes the program.
     /// Rules: `int` goes to `float` implicitly, everything goes to `string`, `undefined` goes to everything, an object goes to the class it derives from; the type of a target never changes

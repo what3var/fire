@@ -5,7 +5,7 @@ using fire.Terminal;
 namespace fire.Terminal.Windows
 {
     /// <summary>
-    /// Standalone console window (see docs/CONSOLE.md) - a THIN
+    /// Standalone console window (see docs/spec/GRAPHICS_LAYER.md) - a THIN
     /// shell that ONLY takes care of rendering an EXTERNALLY supplied framebuffer
     /// (see FramebufferManager) - deliberately owns NO
     /// framebuffer of its own and NO renderer of its own any more (unlike
@@ -184,7 +184,7 @@ namespace fire.Terminal.Windows
             if (_realized && !_failed) _renderer.Dispose();   // a window that never opened has nothing of the display to release
         }
         /// <summary>Why a window without a renderer cannot open.</summary>
-        public const string NoDisplayMessage = "No display: the windows of the desktop are shown by the C library of graphics and windows, which needs a C compiler to be built (see docs/UI_PLATFORM.md).";
+        public const string NoDisplayMessage = "No display: the windows of the desktop are shown by the C library of graphics and windows, which needs a C compiler to be built (see docs/spec/UI_PLATFORM.md).";
 
         /// <summary>No display: opening the window fails (it counts as closed, <see cref="FailureMessage"/> says why).</summary>
         private sealed class NoDisplay : IFramebufferRenderer

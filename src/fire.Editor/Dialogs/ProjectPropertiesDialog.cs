@@ -16,7 +16,7 @@ using static fire.Editor.SettingsLayout;
 namespace fire.Editor
 {
     /// <summary>
-    /// The properties of a project (docs/PROJECTS.md), on pages chosen at the left: General (what most projects need), Version &amp; Info, Build, Native &amp; Toolchain, Run &amp; Debug,
+    /// The properties of a project (docs/tools/projects.md), on pages chosen at the left: General (what most projects need), Version &amp; Info, Build, Native &amp; Toolchain, Run &amp; Debug,
     /// References, Notes - and, when a solution is open, the solution. A field that is empty is not set at this level: it shows in grey what the solution or the default says.
     /// The dialog works on copies; Save checks them and puts them into the project (and the solution) - the caller writes the files. `ShowDialog` returns true on Save.
     /// </summary>
@@ -389,7 +389,7 @@ namespace fire.Editor
                 Refill(toolchain, _native.ToolchainNames, s.Toolchain);
             };
             var natives = _project.Project.Native != null
-                ? Hint("This project has C++ natives in native/ (docs/PACKAGE_NATIVES.md); they are built with the toolchain, too.")
+                ? Hint("This project has C++ natives in native/ (docs/packages/natives.md); they are built with the toolchain, too.")
                 : Hint("This project has no C++ natives of its own.");
             // (the stripping level as its number - the file may name it: "methods" is 2)
             static string? Level(string? v) => v != null && ProjectSettings.Strippings.ToList().IndexOf(v.ToLowerInvariant()) is int i and >= 0 ? i.ToString(System.Globalization.CultureInfo.InvariantCulture) : v;
@@ -444,7 +444,7 @@ namespace fire.Editor
         private Control NotesPage()
         {
             string current = ProjectNotes.Folder(_project.FilePath, null);
-            return Page("Notes", "The todo list and the overview of the project live in a folder of their own (docs/NOTES.md).",
+            return Page("Notes", "The todo list and the overview of the project live in a folder of their own (docs/tools/notes.md).",
                 Group("Folder",
                     Row("Notes folder", Text(() => _notes, v => _notes = v, null, null, $"{ProjectNotes.DefaultFolder}   (default)")),
                     Hint($"Relative to the project file. Without a value: {Path.GetRelativePath(_project.Directory, current)}/ next to it.")));

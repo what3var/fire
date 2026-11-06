@@ -1,4 +1,4 @@
-/* fire native bridge "usb" (C): the natives behind `#import "usb"` (docs/USB.md): USB devices from the program - the list of devices, control transfers, bulk and
+/* fire native bridge "usb" (C): the natives behind `#import "usb"` (docs/devices/usb.md): USB devices from the program - the list of devices, control transfers, bulk and
  * interrupt transfers on the endpoints, and a bulk endpoint pair as a stream. The fire side (Usb.Device, Usb.Bus, Usb.UsbStream - fire source) is the same in the
  * VM and in a native build; this file is what its `__Usb...` functions do.
  *

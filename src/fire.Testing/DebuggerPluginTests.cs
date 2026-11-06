@@ -1,7 +1,7 @@
 using fire.Debugging;
 using fire.Runtime;
 
-/// <summary>Debugging a fire plugin in the VM (docs/NATIVE_BACKEND.md "Plugins"): the plugin's bytecode carries its line tables, its sources get the next indexes of
+/// <summary>Debugging a fire plugin in the VM (docs/spec/NATIVE_BACKEND.md "Plugins"): the plugin's bytecode carries its line tables, its sources get the next indexes of
 /// the program when it is loaded (VM.PluginSourcesLinked), VmDebugTarget grows SourceFiles, a breakpoint by file in the plugin applies at once, a step goes into its
 /// methods. Part of `FIRE_TESTS_ONLY=debugger`.</summary>
 static partial class DebuggerTests

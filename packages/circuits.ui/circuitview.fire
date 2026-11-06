@@ -1,7 +1,7 @@
 #import "ui"
 #import "circuits"
 
-// circuits.ui (docs/CIRCUITS.md, "CircuitView"): a circuit as a live schematic in the user interface. The view draws the elements of the schematic of a circuit
+// circuits.ui (docs/circuits/README.md, "CircuitView"): a circuit as a live schematic in the user interface. The view draws the elements of the schematic of a circuit
 // (Circuits.Schematic) on a grid, colours the wires by their voltage (green positive, red negative, grey 0 V) and lets dots run with the current, the way
 // Paul Falstad's simulator does. While `running`, it simulates in real time at the pace of the circuit (Circuit.Speed: slow motion or faster). A click toggles switches and logic inputs; unless `readOnly`, the
 // schematic can be edited right in the view: select, move, stretch, rotate, flip, delete, draw wires, place elements (BeginPlace, from a palette outside the view),

@@ -5,7 +5,7 @@
  *   void    fire_plat_sleepMs(int64_t ms)    the calling thread sleeps
  *   void    fire_plat_exit(int code)         ends the program (the streams are flushed already); never returns
  *
- * and with FIRE_THREADS (fire threads, see docs/NATIVE_BACKEND.md):
+ * and with FIRE_THREADS (fire threads, see docs/spec/NATIVE_BACKEND.md):
  *
  *   fire_mutex          fire_mutex_init / fire_mutex_lock / fire_mutex_unlock      (not recursive)
  *   fire_cond           fire_cond_init / fire_cond_wait(c, m) / fire_cond_waitFor(c, m, ms) (0: timed out) / fire_cond_notifyAll(c)

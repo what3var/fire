@@ -10,7 +10,7 @@ using fire.Projects;
 
 namespace fire.Editor
 {
-    // The Test Explorer (docs/TESTING.md): finds the tests of the solution, the project or the file and runs them in the VM, like `forge test`.
+    // The Test Explorer (docs/tools/testing.md): finds the tests of the solution, the project or the file and runs them in the VM, like `forge test`.
     public partial class MainWindow
     {
         private readonly TestExplorerControl _testExplorer = new();

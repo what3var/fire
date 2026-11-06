@@ -1,4 +1,4 @@
-/* fire scene3d: the renderer behind `#import "scene3d"` (docs/SCENE3D.md). Plain C99 that knows nothing of fire: triangles go in, RGBA pixels come out.
+/* fire scene3d: the renderer behind `#import "scene3d"` (docs/graphics/3d.md). Plain C99 that knows nothing of fire: triangles go in, RGBA pixels come out.
  *
  * What it does: a perspective camera (vertical field of view), the model matrix of an object from its position, rotation, scale and pivot, clipping against the near plane, back-face
  * culling, a depth buffer (1/w interpolation of z in screen space), perspective-correct interpolation of the texture coordinates, the normal and the world position, textures (repeat,

@@ -1,6 +1,6 @@
 #import "time"
 
-// Devices (docs/DEVICES.md): every device is a `Device` - a serial port, a GPIO port, an I2C bus or a device on it, an SPI device - and comes from a `Driver`.
+// Devices (docs/devices/README.md): every device is a `Device` - a serial port, a GPIO port, an I2C bus or a device on it, an SPI device - and comes from a `Driver`.
 // `DeviceManager` holds the drivers of the program (`DeviceManager.AddDriver(new GpioDriver())`) and finds devices by their identifier (`DeviceManager.Get("gpio:gpioa")`).
 // What the program's host offers (the editor: the default device it chose, its packet trace) comes in through `DeviceManager.Host`.
 
@@ -268,7 +268,7 @@ class DeviceHost {
     undefined DevicesChanged(List devices) { }
 }
 
-/// <summary>Something simulated that runs alongside the program - a circuit at the simulated GPIO chip, I2C bus and SPI device (docs/CIRCUITS.md): every time
+/// <summary>Something simulated that runs alongside the program - a circuit at the simulated GPIO chip, I2C bus and SPI device (docs/circuits/README.md): every time
 /// the program uses one of the simulated devices, the simulation first catches up with the time (Advance). `Simulation.Start(s)` makes `s` the one that runs.</summary>
 class Simulation {
     static Simulation current

@@ -141,7 +141,7 @@ namespace fire.Bytecode
                         //   copies these arguments itself as soon as the scope of the called function exists, and the copy belongs to this scope
                         //   (SPEC 2.4). At most 16 arguments.
 
-        // Global variables and fire threads (docs/THREADING_DESIGN.md section 7) - again appended AFTER all previous ones.
+        // Global variables and fire threads (docs/spec/THREADING_DESIGN.md section 7) - again appended AFTER all previous ones.
         SyncGlobals,    //                : `sync globals`: the main program works off the queue of its fire threads; push count (int)
         SectionEnter,   //                : `sync global { ` - a fire thread registers and waits until the main program grants the section
                         //                  (no effect in the main program); counterpart SectionExit sits in the `finally` of the block

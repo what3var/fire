@@ -7,7 +7,7 @@ using fire.Projects;
 
 namespace fire.Editor
 {
-    // The notes of projects and solutions (docs/NOTES.md): the Todo window shows `notes/todo.md` of the project of the active document (or of the solution) and writes
+    // The notes of projects and solutions (docs/tools/notes.md): the Todo window shows `notes/todo.md` of the project of the active document (or of the solution) and writes
     // every change to the file - or, when the file is open as a document, keeps the document in step with it.
     public partial class MainWindow
     {
@@ -108,7 +108,7 @@ namespace fire.Editor
         }
 
         /// <summary>
-        /// The first tool of a canvas in a Markdown document (docs/NOTES.md): asks whether the document should become a canvas; yes renames the file to `.xmd`
+        /// The first tool of a canvas in a Markdown document (docs/tools/notes.md): asks whether the document should become a canvas; yes renames the file to `.xmd`
         /// (a document that was never saved becomes one when it is saved).
         /// </summary>
         private async System.Threading.Tasks.Task<bool> ConvertToCanvas(MarkdownEditorControl view)

@@ -36,19 +36,19 @@ namespace fire.Projects
         public string? Target { get; set; }
         /// <summary>The toolchain of a native build.</summary>
         public string? Toolchain { get; set; }
-        /// <summary>How a native build links the libraries and packages (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): `source` (the default: all in one C file),
+        /// <summary>How a native build links the libraries and packages (ROADMAP 9, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): `source` (the default: all in one C file),
         /// `static` (each library once as a static library in the user-wide cache, linked into the program).</summary>
         public string? Linkage { get; set; }
-        /// <summary>How much a native build leaves out (docs/NATIVE_BACKEND.md "Größe des Programms"): `0`-`3` or `none`, `protected`, `methods`, `all` (the default 3);
+        /// <summary>How much a native build leaves out (docs/spec/NATIVE_BACKEND.md "Größe des Programms"): `0`-`3` or `none`, `protected`, `methods`, `all` (the default 3);
         /// in the file a number or a name.</summary>
         [JsonConverter(typeof(StrippingTextConverter))]
         public string? Stripping { get; set; }
         /// <summary>Where the result of a build is written (a path relative to the file that holds the setting; for a library the folder of the package).</summary>
         public string? Output { get; set; }
-        /// <summary>`lax` (a type conflict is a warning, the default) or `strict` (an error); docs/TYPES.md. A `#lax` / `#strict` in a file decides for that file.</summary>
+        /// <summary>`lax` (a type conflict is a warning, the default) or `strict` (an error); docs/spec/TYPES.md. A `#lax` / `#strict` in a file decides for that file.</summary>
         public string? TypeChecking { get; set; }
         /// <summary>When the main program runs the `fire global` jobs (and lets in the sections of its threads, the host callbacks) by itself: `safepoints` (the default),
-        /// `sleep` or `sync` (docs/THREADING_DESIGN.md section 7; the tag `#globaljobs`). The same in the VM and in a native build.</summary>
+        /// `sleep` or `sync` (docs/spec/THREADING_DESIGN.md section 7; the tag `#globaljobs`). The same in the VM and in a native build.</summary>
         public string? GlobalJobs { get; set; }
         /// <summary>The arguments a run of the program gets (`forge run`, *Run* in spark; `Environment.Args`); arguments after `--` on the command line replace them.</summary>
         public List<string>? Arguments { get; set; }

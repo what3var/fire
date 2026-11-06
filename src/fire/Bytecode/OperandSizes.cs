@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace fire.Bytecode
 {
-    /// <summary>The operand sizes in bytes of each opcode (1 = u8, 2 = u16 little endian; docs/BYTECODE.md) - the native backend decodes chunks with them, the VM
+    /// <summary>The operand sizes in bytes of each opcode (1 = u8, 2 = u16 little endian; docs/spec/BYTECODE.md) - the native backend decodes chunks with them, the VM
     /// rewrites the native indices of a plugin's code (VM.Plugins.cs).</summary>
     public static class OperandSizes
     {

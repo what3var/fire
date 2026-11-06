@@ -1,4 +1,4 @@
-/* fire native bridge "wifi" (C): the natives behind `#import "wifi"` (docs/NETWORK.md, "WiFi"): scan for networks, join one as a station, be an access point. The
+/* fire native bridge "wifi" (C): the natives behind `#import "wifi"` (docs/networking/README.md, "WiFi"): scan for networks, join one as a station, be an access point. The
  * fire side (WiFi.Station, WiFi.AccessPoint, WiFi.Board, WiFi.Sim - fire source) is the same in the VM and in a native build; this file is what its `__WiFi...`
  * functions do.
  *

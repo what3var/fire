@@ -1,0 +1,23 @@
+// Screenshot of the open file dialog (docs/ui/dialogs.md) - hand-written: the dialog is modal, so a subclass saves the picture from the dialog's cycle and closes it.
+#import "dialogs"
+#include "shot.fire"
+
+class ShotDialog : Dialogs.OpenFileDialog {
+    int cycles = 0
+    override undefined Build() {
+        base.Build()
+        this.dialog.root.onTick = func () on this => {
+            this.cycles++
+            if (this.cycles == 8) {
+                Shot.SaveFramebuffer(this.dialog.root.framebuffer, "dialog-open.png")
+                this.dialog.Close(Dialogs.DialogResult.Cancel)
+            }
+        }
+    }
+}
+
+var d = new ShotDialog()
+d.Title = "Open a page"
+d.Filter = "Markdown|*.md|All files|*.*"
+d.InitialDirectory = IO.Path.GetFullPath("../ui")
+d.ShowDialog()

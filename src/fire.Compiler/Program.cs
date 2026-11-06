@@ -1,7 +1,7 @@
 using fire.Compiler;
 
 // Command line of the compiler, see CommandLineParser (run / build / native / test).
-// `prebuild-standard <Source> <Prebuilt>`: for the build of the solution - builds the libraries of the standard packages for this machine (docs/PACKAGES.md).
+// `prebuild-standard <Source> <Prebuilt>`: for the build of the solution - builds the libraries of the standard packages for this machine (docs/packages/README.md).
 if (args.Length >= 3 && args[0] == "prebuild-standard")
 {
     foreach (var file in StandardSources.Prebuild(args[1], args[2], Console.Error.WriteLine)) Console.WriteLine(file);
@@ -14,7 +14,7 @@ if (args.Length >= 1 && args[0] == "install-standard")
     return 0;
 }
 
-// `falstad <circuit.txt> [-o <file.biscuit>]`: a circuit of Falstad's simulator (File > Export As Text) as a schematic (docs/CIRCUITS.md); without -o to the output.
+// `falstad <circuit.txt> [-o <file.biscuit>]`: a circuit of Falstad's simulator (File > Export As Text) as a schematic (docs/circuits/README.md); without -o to the output.
 if (args.Length >= 2 && args[0] == "falstad")
 {
     try
@@ -33,8 +33,8 @@ if (args.Length >= 2 && args[0] == "falstad")
     }
 }
 
-// `ui <file.fxml> [-o <file>]` / `biscuit <file.biscuit> [-o <file>]`: writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) or from the
-// schematic of a circuit (docs/CIRCUITS.md); without -o to the output.
+// `ui <file.fxml> [-o <file>]` / `biscuit <file.biscuit> [-o <file>]`: writes the script generated from the markup of a user interface (docs/ui/markup.md) or from the
+// schematic of a circuit (docs/circuits/README.md); without -o to the output.
 if (args.Length >= 2 && (args[0] == "ui" || args[0] == "biscuit"))
 {
     try

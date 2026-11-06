@@ -78,7 +78,7 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// The Test Explorer (docs/TESTING.md): the tests (`[Test]` methods) of the solution, of the project of the active document or of the active file, grouped by project and class.
+    /// The Test Explorer (docs/tools/testing.md): the tests (`[Test]` methods) of the solution, of the project of the active document or of the active file, grouped by project and class.
     /// It runs all of them, the selected ones or those that failed and shows the results live; a double click goes to the test. The window finds the tests and runs them
     /// (see MainWindow.Tests.cs) - the control only shows them and asks for the commands.
     /// </summary>
@@ -166,7 +166,7 @@ namespace fire.Editor
             grid.Children.Add(splitter);
             grid.Children.Add(detailsBorder);
             Content = grid;
-            ShowEmpty("No tests. A test is a method with [Test] (docs/TESTING.md).");
+            ShowEmpty("No tests. A test is a method with [Test] (docs/tools/testing.md).");
         }
 
         private static Button ToolButton(string text, string tip, Action click)
@@ -252,7 +252,7 @@ namespace fire.Editor
                 Aggregate(group);
             }
             ApplyCollapsed();
-            if (_roots.Count == 0) ShowEmpty("No tests. A test is a method with [Test] (docs/TESTING.md)."); else HideEmpty();
+            if (_roots.Count == 0) ShowEmpty("No tests. A test is a method with [Test] (docs/tools/testing.md)."); else HideEmpty();
             UpdateSummary();
             ShowDetails();
         }

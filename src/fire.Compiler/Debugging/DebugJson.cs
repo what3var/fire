@@ -6,7 +6,7 @@ using System.Text;
 namespace fire.Debugging
 {
     /// <summary>
-    /// The JSON of the native debug protocol (docs/NATIVE_DEBUG_PROTOCOL.md): one message per line. A small reader and writer of its own: the program writes
+    /// The JSON of the native debug protocol (docs/spec/NATIVE_DEBUG_PROTOCOL.md): one message per line. A small reader and writer of its own: the program writes
     /// fire strings as UTF-16 units in `\uXXXX`, also single surrogates, which System.Text.Json refuses - here they become the string as it is.
     /// Values: <see cref="Dictionary{TKey,TValue}"/> (object), <see cref="List{T}"/> (array), string, long or double (number), bool, null.
     /// </summary>

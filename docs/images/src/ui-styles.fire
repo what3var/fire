@@ -1,0 +1,8 @@
+// Made from docs/ui/styling.md by extract.py - edit the page, not this file.
+#include "ui-styles/Styled.fxml"
+#include "shot.fire"
+
+class StyledWindow : StyledBase { }
+
+var window = new StyledWindow()
+Shot.Save(window.ui, "ui-styles.png")

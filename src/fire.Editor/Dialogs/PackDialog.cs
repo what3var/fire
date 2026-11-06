@@ -13,7 +13,7 @@ using fire.Projects;
 namespace fire.Editor
 {
     /// <summary>
-    /// "Pack as Package" (docs/PROJECTS.md): what goes into the manifest of the package - everything comes from the project's settings and is written back to them: the version (three numbers; it
+    /// "Pack as Package" (docs/tools/projects.md): what goes into the manifest of the package - everything comes from the project's settings and is written back to them: the version (three numbers; it
     /// can be raised afterwards for the next one), description, author, license - and the folder the `.fpk` is written to. The import name is the project's (Project properties).
     /// </summary>
     internal sealed class PackDialog : Window

@@ -36,7 +36,7 @@ namespace fire.Git
     public enum GitPullResult { UpToDate, FastForward, Merged, Conflicts }
 
     /// <summary>
-    /// A git repository for the editor (docs/GIT.md), over LibGit2Sharp. `Discover` finds the repository a path is in, `Init` makes one. Paths that are given and returned are full paths in the working
+    /// A git repository for the editor (docs/tools/git.md), over LibGit2Sharp. `Discover` finds the repository a path is in, `Init` makes one. Paths that are given and returned are full paths in the working
     /// folder; <see cref="GitChange.Path"/> is relative to it (with `/`). A server that asks for a user name and a password (https) is served by the `credentials` function that the caller gives:
     /// it gets the address and returns the credentials (null: no).
     /// </summary>

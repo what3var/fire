@@ -1,0 +1,11 @@
+<Window Class="Dark" Title="Dark" Width="380" Height="200">
+  <StackPanel Margin="16" Spacing="10">
+    <Label Text="Appearance" FontSize="20"/>
+    <TextBox Width="-1" Text="Follows the system - or not"/>
+    <CheckBox Text="Glass and transparency" IsChecked="true"/>
+    <StackPanel Orientation="Horizontal" Spacing="8">
+      <Button Text="OK"/>
+      <Button Text="Cancel"/>
+    </StackPanel>
+  </StackPanel>
+</Window>

@@ -135,7 +135,7 @@ print(d.Name())                            // my driver
   for every object of the class once the plugin is loaded, also for the program (`any d = dev; d.Tag()`, `Reflect.Call`). Two plugins that add the same method
   to a class do not load together (a `LibraryException`).
 - Not yet: named arguments in calls of a native program on objects of a plugin;
-  in a native program `Reflect.Get`/`Set` of a plugin's own fields unless the plugin imports `reflection` itself; debugging a plugin.
+  in a native program `Reflect.Get`/`Set` of a plugin's own fields unless the plugin imports `reflection` itself.
 
 ### Functions that can fail: `try Name(...)`
 

@@ -1,0 +1,23 @@
+// Made from docs/ui/shapes.md by extract.py - edit the page, not this file.
+#include "ui-shapes/Shapes.fxml"
+#include "shot.fire"
+
+class ShapesWindow : ShapesBase {
+    override undefined PaintWave(any sender, any canvas) {
+        var r = canvas.renderer
+        r.ClearTo(UI.Color.Rgb(250, 250, 250))
+        var pen = new Pen(UI.Color.Rgb(200, 40, 40), 2)
+        var w = canvas.framebuffer.Width()
+        var h = canvas.framebuffer.Height()
+        var lastY = h / 2
+        for (var x = 1; x < w; x++) {
+            var y = h / 2 - Math.Round(Math.Sin(x / 12.0) * (h / 3))!int
+            r.DrawLine(x - 1, lastY, x, y, pen)
+            lastY = y
+        }
+        r.DrawRect(0, 0, w, h, new Pen(UI.Color.Rgb(160, 160, 160), 1))
+    }
+}
+
+var window = new ShapesWindow()
+Shot.Save(window.ui, "ui-shapes.png")

@@ -1,0 +1,40 @@
+// Made from docs/ui/docking.md by extract.py - edit the page, not this file.
+#import "ui.docking"
+#include "shot.fire"
+
+var fb = new Framebuffer(800, 600)
+var window = new Window(fb, "Editor")
+var ui = new UI.Root(fb, window)
+var dock = new UI.Docking.DockManager()
+ui.Add(dock)
+
+// a toolstrip at the top
+var tools = new UI.Docking.ToolStrip("Standard")
+tools.AddButton("New", func () => { print("new") }, UI.Icons.File())
+tools.AddButton("Open", func () => { print("open") }, UI.Icons.Folder())
+tools.AddSeparator()
+var run = tools.AddSplitButton("Run", func () => { print("run") })
+run.AddItem("Run without debugging", func () => { print("run only") })
+tools.AddLabel("Target:")
+var target = tools.AddComboBox(90)
+target.Add("Debug")
+target.Add("Release")
+target.SelectedIndex = 0
+tools.AddTextBox("", 120)
+dock.AddToolStrip(tools)
+
+// tool windows
+var files = new UI.ListBox()
+files.Add("main.fire")
+dock.Add(new UI.Docking.ToolWindow("Explorer", files), UI.Dock.Left)
+var output = dock.Add(new UI.Docking.ToolWindow("Output", new UI.TextBox("")), UI.Dock.Bottom)
+dock.AddTabbed(new UI.Docking.ToolWindow("Errors", new UI.ListBox()), output)
+
+// the centre and the status bar
+dock.SetContent(new UI.TextArea("the document"))
+var status = new UI.Docking.StatusBar()
+status.AddLabel("Ready", true)
+status.AddLabel("Ln 1, Col 1")
+dock.SetStatusBar(status)
+
+Shot.Save(ui, "ui-docking.png")

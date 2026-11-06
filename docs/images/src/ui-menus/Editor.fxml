@@ -1,0 +1,32 @@
+<Window Class="Editor" Title="Editor" Width="480" Height="260">
+  <DockPanel Width="480" Height="260">
+    <MenuBar Name="menu" DockPanel.Dock="Top">
+      <Menu Header="File">
+        <MenuItem Header="New" Shortcut="Ctrl+N" OnClick="NewFile"/>
+        <MenuItem Header="Open..." Shortcut="Ctrl+O" OnClick="OpenFile"/>
+        <MenuItem Header="Recent">
+          <MenuItem Header="notes.txt"/>
+          <MenuItem Header="todo.md"/>
+        </MenuItem>
+        <MenuSeparator/>
+        <MenuItem Header="Word wrap" Checkable="true" IsChecked="true" OnClick="ToggleWrap"/>
+        <MenuItem Header="Print" Enabled="false"/>
+        <MenuSeparator/>
+        <MenuItem Header="Exit" OnClick="Quit"/>
+      </Menu>
+      <Menu Header="Edit">
+        <MenuItem Header="Undo" Shortcut="Ctrl+Z"/>
+      </Menu>
+      <Menu Header="Help">
+        <MenuItem Header="About"/>
+      </Menu>
+    </MenuBar>
+    <ToolBar DockPanel.Dock="Top">
+      <Button Text="New" Icon="Add" Width="-1" OnClick="NewFile"/>
+      <Button Text="Open" Icon="Folder" Width="-1" OnClick="OpenFile"/>
+      <Separator/>
+      <Button Icon="Home" Width="30"/>
+    </ToolBar>
+    <TextArea Name="text" Width="-1" Height="-1" Margin="4" WordWrap="true"/>
+  </DockPanel>
+</Window>

@@ -129,7 +129,7 @@ print(steps[2])                          // 3cm
 ```
 
 The bounds are `int`s (a `float` is an `ArgumentException`). `..` binds looser than `+`, so `1..n - 1` is `1..(n - 1)`. In an attribute (`[Parameters 1..5]`,
-see docs/TESTING.md) a range runs a test once for each of its numbers.
+see [Testing: forge test](../tools/testing.md)) a range runs a test once for each of its numbers.
 
 ## Logic
 

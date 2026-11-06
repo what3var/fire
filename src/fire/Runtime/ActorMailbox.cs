@@ -23,7 +23,7 @@ namespace fire.Runtime
         }
     }
 
-    /// <summary>The mailbox of ONE actor instance (docs/THREADING_DESIGN.md
+    /// <summary>The mailbox of ONE actor instance (docs/spec/THREADING_DESIGN.md
     /// section 2) - each actor instance (see Runtime.ObjectInstance.
     /// Mailbox) gets exactly one of its own on `new`. `Enqueue` is called from
     /// ANY thread (whenever anywhere in the program

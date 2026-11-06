@@ -14,7 +14,7 @@ namespace fire.Runtime
     }
 
     /// <summary>Handle to a running/finished fire thread. Since `fire`
-    /// has no return values (docs/THREADING_DESIGN.md section 1),
+    /// has no return values (docs/spec/THREADING_DESIGN.md section 1),
     /// this handle is of no use in the language itself later (no
     /// join language construct) - here, in this development stage without
     /// language syntax, `Join`/`Error` is the tool for TESTS to wait for the
@@ -27,7 +27,7 @@ namespace fire.Runtime
         /// <summary>An exception that broke through unhandled in the thread delegate -
         /// in the later language binding this corresponds exactly
         /// to the case "unhandled user exception in a fire thread"
-        /// (docs/THREADING_DESIGN.md section 6.2), here still without the
+        /// (docs/spec/THREADING_DESIGN.md section 6.2), here still without the
         /// actual `catch threads(...)` delivery (which needs the
         /// language binding/cooperative check points, see the documentation there) -
         /// deliberately kept only as test visibility.</summary>
@@ -41,7 +41,7 @@ namespace fire.Runtime
     }
 
     /// <summary>
-    /// Spawns a REAL thread for `fire` (docs/THREADING_DESIGN.md
+    /// Spawns a REAL thread for `fire` (docs/spec/THREADING_DESIGN.md
     /// section 1). Immutable, already compiled data (chunk,
     /// RuntimeClass definitions, NativeRegistry, ...) can safely be shared between
     /// any number of VM instances/threads (it is never changed after
@@ -197,7 +197,7 @@ namespace fire.Runtime
         }
 
         /// <summary>Like FireVm, but with `taking`/`with` bindings and the connection to the globals of the main program (see
-        /// docs/THREADING_DESIGN.md section 7, GlobalsBroker):
+        /// docs/spec/THREADING_DESIGN.md section 7, GlobalsBroker):
         ///
         /// `broker`/`sharedGlobalCount`: the globals of the main program (slots 0..sharedGlobalCount-1) are NOT copied - the thread reads them
         /// directly and changes them in sections (see VM.AttachToGlobals). The thread's private global scope holds only placeholders for that, so that the

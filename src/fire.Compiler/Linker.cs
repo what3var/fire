@@ -27,7 +27,7 @@ namespace fire.Compiler
         /// directory of the active file.</summary>
         public string? BasePath { get; set; }
 
-        /// <summary>How a type conflict is reported (docs/TYPES.md): a warning (lax, the default) or an error (strict); a `#lax` / `#strict` in a file decides for that file.</summary>
+        /// <summary>How a type conflict is reported (docs/spec/TYPES.md): a warning (lax, the default) or an error (strict); a `#lax` / `#strict` in a file decides for that file.</summary>
         public TypeCheckMode? TypeChecking { get; set; }
 
         /// <summary>The mode the command line asked for (`--types lax|strict`); used by every linker that has no mode of its own set.</summary>
@@ -41,7 +41,7 @@ namespace fire.Compiler
         private TypeCheckMode EffectiveTypeChecking => TypeChecking ?? ProcessDefaultTypeChecking
             ?? (string.Equals(Plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax);
 
-        /// <summary>When the main program processes its queue by itself (`--global-jobs`, docs/THREADING_DESIGN.md section 7): goes before the project, `#globaljobs` and
+        /// <summary>When the main program processes its queue by itself (`--global-jobs`, docs/spec/THREADING_DESIGN.md section 7): goes before the project, `#globaljobs` and
         /// fire.native.json. Process-wide, like <see cref="ProcessDefaultTypeChecking"/>.</summary>
         public static GlobalJobsMode? ProcessGlobalJobs { get; set; }
 
@@ -61,7 +61,7 @@ namespace fire.Compiler
         /// <summary>Further symbols of `#if` (`-D name` on the command line).</summary>
         public IReadOnlyList<string>? Defines { get; set; }
 
-        /// <summary>The project that is built (docs/PROJECTS.md): its settings go before the tags in the source, its libraries can be imported with `#import "Name"`, its package references are
+        /// <summary>The project that is built (docs/tools/projects.md): its settings go before the tags in the source, its libraries can be imported with `#import "Name"`, its package references are
         /// checked, and a library project must not have statements at the top level. Null: single sources without a project.</summary>
         public fire.Projects.BuildPlan? Plan { get; set; }
 
@@ -85,7 +85,7 @@ namespace fire.Compiler
             return (Defines ?? Array.Empty<string>()).Concat(fromProject).Distinct().ToList();
         }
 
-        /// <summary>The settings of a project over what the tags of the source said (the order of docs/PROJECTS.md: project, solution, tags, defaults).</summary>
+        /// <summary>The settings of a project over what the tags of the source said (the order of docs/tools/projects.md: project, solution, tags, defaults).</summary>
         public static void ApplySettings(AssemblyInfo info, fire.Projects.ProjectSettings? settings, ref int? floatWidth)
         {
             int? intWidth = null;
@@ -300,7 +300,7 @@ namespace fire.Compiler
         private static bool IsDeclaration(Ast.Stmt stmt) =>
             stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
 
-        /// <summary>`forge test` (docs/TESTING.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
+        /// <summary>`forge test` (docs/tools/testing.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
         /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
         [ThreadStatic] public static Func<IReadOnlyList<Ast.Stmt>, int, string>? TestDriver;
 
@@ -587,7 +587,7 @@ namespace fire.Compiler
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
             var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
-            // the classes of a package with `"serializable": false` (docs/JSON.md)
+            // the classes of a package with `"serializable": false` (docs/stdlib/json.md)
             var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));
             if (notSerializable.Count > 0)
                 foreach (var rc in compiled.Classes.Values)

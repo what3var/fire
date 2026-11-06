@@ -1,4 +1,4 @@
-// Tests of $name$: `forge test` runs every method with [Test] (docs/TESTING.md).
+// Tests of $name$: `forge test` runs every method with [Test] (docs/tools/testing.md).
 #import "testing"
 
 class $class$ {

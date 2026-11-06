@@ -36,7 +36,7 @@ namespace fire.Editor
         public LoadedProject? Project { get; init; }
         public ProjectReference? Reference { get; init; }
         public bool IsBold { get; init; }
-        /// <summary>The notes folder of a project (docs/NOTES.md): a double click opens its overview.</summary>
+        /// <summary>The notes folder of a project (docs/tools/notes.md): a double click opens its overview.</summary>
         public bool IsNotes { get; init; }
         /// <summary>A row for something that does not exist yet (the notes folder before its first use): shown pale, made when it is used.</summary>
         public bool IsVirtual { get; init; }
@@ -58,7 +58,7 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// The solution explorer (docs/PROJECTS.md): the open solution (or the single project) with its projects, their references and files. A double click opens a file; the context menus
+    /// The solution explorer (docs/tools/projects.md): the open solution (or the single project) with its projects, their references and files. A double click opens a file; the context menus
     /// ask the window for the commands (new file, add reference, startup project, properties, ...). The window refreshes it when the workspace or the active document changes.
     /// </summary>
     internal sealed class SolutionExplorerControl : UserControl

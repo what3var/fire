@@ -1,4 +1,4 @@
-/* fire native bridge "hash" (C): the natives behind `#import "hash"` (docs/HASH.md) - MD5, SHA-1, SHA-256, SHA-384, SHA-512, CRC-32 and Adler-32, in plain C99
+/* fire native bridge "hash" (C): the natives behind `#import "hash"` (docs/stdlib/hash.md) - MD5, SHA-1, SHA-256, SHA-384, SHA-512, CRC-32 and Adler-32, in plain C99
  * without a library (the same results on every target, the ESP32 included).
  *
  * A hasher keeps its state in a byte buffer that belongs to the fire object (`__HashInit` makes it, `__HashUpdate` changes it in place, `__HashFinal` reads the

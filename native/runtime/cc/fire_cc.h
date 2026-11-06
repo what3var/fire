@@ -1,4 +1,4 @@
-/* fire native runtime - the dialect of the C compiler (docs/NATIVE_BACKEND.md, "Compiler"). Everything the runtime needs that C does not say the same way in
+/* fire native runtime - the dialect of the C compiler (docs/spec/NATIVE_BACKEND.md, "Compiler"). Everything the runtime needs that C does not say the same way in
  * every compiler is defined in one small file per compiler family; this file only picks it. A new compiler is a new file here and one line below.
  *
  * Each file defines:

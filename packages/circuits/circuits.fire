@@ -1,4 +1,4 @@
-// Circuit simulation (docs/CIRCUITS.md), after the model of Paul Falstad's circuit simulator: parts with ports, ports connected into nodes, a modified nodal
+// Circuit simulation (docs/circuits/README.md), after the model of Paul Falstad's circuit simulator: parts with ports, ports connected into nodes, a modified nodal
 // analysis solved every time step (trapezoidal rule for capacitors and inductors), instruments that record what happens (Scope, Multimeter, Fft).
 // The units of electricity are declared here: V, A, Ohm, F, H, Hz (with prefixes: 4.7kOhm, 10uF, 1mH, 2kHz) and dB. Every value may also be given as a plain number in SI units.
 
@@ -496,7 +496,7 @@ namespace Circuits {
     }
 
     /// <summary>The input of sound into a circuit: a voltage source that Circuit.ProcessAudio drives with the samples (a full-scale sample is `amplitude`) - or,
-    /// with a `Device` ("default", "sim", a name of Audio.Board.Inputs()), what that sound device records (the kernel fills it itself, docs/CIRCUITS.md).</summary>
+    /// with a `Device` ("default", "sim", a name of Audio.Board.Inputs()), what that sound device records (the kernel fills it itself, docs/circuits/README.md).</summary>
     class AudioInput : VoltageSource {
         float amplitude
         string device = ""
@@ -532,7 +532,7 @@ namespace Circuits {
     }
 
     /// <summary>A loudspeaker: the voltage between its pins plays on a sound device ("default", "sim", a name of Audio.Board.Devices()); a sample of `fullScale`
-    /// volts is full scale. To the circuit it is a resistance of 1 MOhm (a high impedance input). The kernel hands the sound over itself (docs/CIRCUITS.md).</summary>
+    /// volts is full scale. To the circuit it is a resistance of 1 MOhm (a high impedance input). The kernel hands the sound over itself (docs/circuits/README.md).</summary>
     class AudioOutput : Resistor {
         string device
         float fullScale
@@ -2723,7 +2723,7 @@ namespace Circuits {
             this.schematic = undefined
         }
 
-        /// <summary>The drawing of the circuit (made on first use): elements on a grid that make the parts and their connections (docs/CIRCUITS.md).</summary>
+        /// <summary>The drawing of the circuit (made on first use): elements on a grid that make the parts and their connections (docs/circuits/README.md).</summary>
         Circuits.Schematic Schematic {
             get {
                 if (this.schematic == undefined) {
@@ -2972,7 +2972,7 @@ namespace Circuits {
             }
         }
 
-        /// <summary>A stream with the voltage of `plus` against `minus` (ground when left out) at `rate` samples per second (docs/CIRCUITS.md, "Streams"): the
+        /// <summary>A stream with the voltage of `plus` against `minus` (ground when left out) at `rate` samples per second (docs/circuits/README.md, "Streams"): the
         /// circuit writes a sample at every point of the grid of the stream, whether the program steps it or the thread of the kernel runs it; the program reads
         /// them (Read, ReadPcm). `capacity`: samples it holds (0: one second); older ones are given up when nobody reads.</summary>
         Circuits.SignalStream Output(Port plus, Port minus = undefined, float rate : any = 44100, int capacity = 0) {
@@ -4647,7 +4647,7 @@ namespace Circuits {
         override float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
     }
 
-    /// <summary>A stream of samples at a fixed rate between a circuit and the program: a ring of volts (docs/CIRCUITS.md, "Streams"). Circuit.Output fills it
+    /// <summary>A stream of samples at a fixed rate between a circuit and the program: a ring of volts (docs/circuits/README.md, "Streams"). Circuit.Output fills it
     /// with the voltage between two ports - a sample at every point k / Rate of its grid, also while the circuit runs in the thread of the kernel - and the
     /// program takes them out (Read, ReadPcm); Circuit.Input lets it drive a source, and the program puts samples in (Write, WritePcm). The raw numbers
     /// are volts; as 16 bit sound a full-scale sample is `fullScale` volts.</summary>

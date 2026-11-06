@@ -1,4 +1,4 @@
-/* fire native bridge "audio" (C): the natives behind `#import "audio"` (docs/AUDIO.md): sound output - 16 bit signed samples, mono or stereo, any rate the device
+/* fire native bridge "audio" (C): the natives behind `#import "audio"` (docs/audio/README.md): sound output - 16 bit signed samples, mono or stereo, any rate the device
  * takes. The fire side (Audio.Output, Audio.Sound, Audio.Sim - fire source) is the same in the VM and in a native build; this file is what its `__Audio...` functions do.
  *
  * This file is the one implementation of the audio natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine

@@ -1,4 +1,4 @@
-/* JSON (docs/JSON.md, `#import "json"`) for native programs, in C: the tables of the program's classes that the engine reads (the program defines them and the
+/* JSON (docs/stdlib/json.md, `#import "json"`) for native programs, in C: the tables of the program's classes that the engine reads (the program defines them and the
  * functions declared below: generated, after this file) and the engine itself (FIRE_JSON_IMPLEMENTATION). The program includes this file after fire_rt.h. */
 #ifndef FIRE_JSON_H
 #define FIRE_JSON_H

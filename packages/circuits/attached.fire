@@ -1,4 +1,4 @@
-// Parts written in fire ("attached" parts, docs/CIRCUITS.md): pins whose voltages fire code reads and drives every step. The parts at the simulated devices
+// Parts written in fire ("attached" parts, docs/circuits/README.md): pins whose voltages fire code reads and drives every step. The parts at the simulated devices
 // (GPIO chip "sim", I2C bus "sim", SPI device "sim") are attached parts: a program that uses those devices talks to the circuit. Circuit.RunAlongside lets
 // the circuit run in real time next to the program (it catches up whenever the program touches a simulated device).
 #import "gpio"

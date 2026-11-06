@@ -113,7 +113,7 @@ namespace fire.Compiler
     }
 
     /// <summary>
-    /// `forge test` (docs/TESTING.md): compiles a program with its tests (the top level of its files does not run), runs the generated driver in the VM or as a native program and reports.
+    /// `forge test` (docs/tools/testing.md): compiles a program with its tests (the top level of its files does not run), runs the generated driver in the VM or as a native program and reports.
     /// While it runs, a console that is not redirected shows a spinner (`\ - / |`) with the running test; at the end a list of the tests and the sums.
     /// </summary>
     public sealed class TestRunner
@@ -342,7 +342,7 @@ namespace fire.Compiler
                 output.WriteLine($"  PROBLEM {lines[0].TrimEnd('\r')}");
                 foreach (var line in lines.Skip(1)) output.WriteLine($"          {line.TrimEnd('\r')}");
             }
-            if (run.Results.Count == 0 && run.Problems.Count == 0) output.WriteLine("  no tests (a test is a method with [Test], see docs/TESTING.md)");
+            if (run.Results.Count == 0 && run.Problems.Count == 0) output.WriteLine("  no tests (a test is a method with [Test], see docs/tools/testing.md)");
             output.WriteLine($"{run.Results.Count} test{(run.Results.Count == 1 ? "" : "s")}: {run.Passed} passed, {run.Failed} failed, {run.Errors} error{(run.Errors == 1 ? "" : "s")}"
                 + (run.Problems.Count > 0 ? $", {run.Problems.Count} problem{(run.Problems.Count == 1 ? "" : "s")}" : "") + $" ({run.Duration.TotalSeconds:0.00} s)");
         }

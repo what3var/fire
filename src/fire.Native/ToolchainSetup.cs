@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace fire.Native
 {
     /// <summary>
-    /// Finding and providing a C++ toolchain on the machine of the user (docs/PACKAGE_NATIVES.md): native builds and the natives of packages need one. The compiler looks for it
+    /// Finding and providing a C++ toolchain on the machine of the user (docs/packages/natives.md): native builds and the natives of packages need one. The compiler looks for it
     /// in this order: the toolchain that was chosen for the machine (<c>Toolchain\toolchain.json</c>), the portable toolchains below <c>Toolchain\</c> next to the program
     /// (w64devkit first), well-known places, the PATH. On Windows the portable <b>w64devkit</b> (GCC) can be downloaded into <c>Toolchain\w64devkit\</c> - nothing is installed system-wide.
     /// </summary>

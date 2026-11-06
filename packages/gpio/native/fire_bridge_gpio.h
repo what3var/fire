@@ -1,4 +1,4 @@
-/* fire native bridge "gpio" (C): the natives behind `#import "gpio"` (docs/NETWORK.md, "Hardware"): digital pins - read, write, pull resistors, edge events. The
+/* fire native bridge "gpio" (C): the natives behind `#import "gpio"` (docs/networking/README.md, "Hardware"): digital pins - read, write, pull resistors, edge events. The
  * fire side (Gpio.Pin, Gpio.Board, Gpio.Sim - fire source) is the same in the VM and in a native build; this file is what its `__Gpio...` functions do.
  *
  * This file is the one implementation of the gpio natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual

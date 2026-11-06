@@ -4,7 +4,7 @@ namespace fire.Bytecode
 {
     /// <summary>
     /// Global (process-wide, shared across ALL VM instances/threads)
-    /// registration for the two handlers from docs/THREADING_DESIGN.md
+    /// registration for the two handlers from docs/spec/THREADING_DESIGN.md
     /// section 6.2/6.3: `catch threads(ExceptionType e)`/`catch threads()`
     /// (unhandled user exceptions from fire threads) and
     /// `catch terminate(v)` (global emergency stop). Both are - unlike a

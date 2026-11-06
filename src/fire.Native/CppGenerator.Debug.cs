@@ -6,7 +6,7 @@ using fire.Runtime;
 namespace fire.Native
 {
     /// <summary>
-    /// Debug builds (mode `debug`, docs/NATIVE_BACKEND.md "Debug-Builds", docs/NATIVE_DEBUG_PROTOCOL.md): every fire function gets a frame on a shadow stack
+    /// Debug builds (mode `debug`, docs/spec/NATIVE_BACKEND.md "Debug-Builds", docs/spec/NATIVE_DEBUG_PROTOCOL.md): every fire function gets a frame on a shadow stack
     /// (fire_debug.h) - pushed by its wrapper, which also notices the return into the caller - and the code updates its position where a line begins
     /// (`FIRE_DBG_L(source, line, scope state)`), at the same places where the stepping loops of the VM see a new position: the start of a range of the line
     /// table, and every jump target. The scope state is a static table per function: the levels of the scope chain with the names of their variables and
@@ -24,7 +24,7 @@ namespace fire.Native
         private bool DebugAgent => _target.Native.Platform is "posix" or "windows" or "esp32" or "freertos";
 
         /// <summary>The transport of the agent that the build fixes (a board has no environment): the console UART of an ESP32, stdio on FreeRTOS; null: the
-        /// desktop, where FIRE_DEBUG chooses (docs/NATIVE_DEBUG_PROTOCOL.md "Transport").</summary>
+        /// desktop, where FIRE_DEBUG chooses (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport").</summary>
         private string? DebugTransportDefine => _target.Native.Platform switch
         {
             "esp32" => "FIRE_DEBUG_TRANSPORT_UART",

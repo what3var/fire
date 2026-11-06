@@ -2,7 +2,7 @@ namespace fire.Runtime
 {
     /// <summary>
     /// When the main program processes its queue by itself - the `fire global` jobs, the sections of the fire threads and the host callbacks
-    /// (docs/THREADING_DESIGN.md section 7). The same in the VM and in a native build. `sync globals` and the end of the program always process it.
+    /// (docs/spec/THREADING_DESIGN.md section 7). The same in the VM and in a native build. `sync globals` and the end of the program always process it.
     /// The values are the operand of `SetAutoSync` (0 is what `#nosync` always emitted).
     /// </summary>
     public enum GlobalJobsMode : byte

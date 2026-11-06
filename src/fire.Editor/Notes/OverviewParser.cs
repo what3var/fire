@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 namespace fire.Editor
 {
     // -----------------------------------------------------------
-    // The model of a project overview (docs/NOTES.md), without any user interface - testable on its own.
+    // The model of a project overview (docs/tools/notes.md), without any user interface - testable on its own.
     // -----------------------------------------------------------
 
     /// <summary>The attributes of a definition: what stands between `&lt;` and `&gt;` - `key=value` pairs (a value with spaces in quotes) and words without a key.</summary>
@@ -141,7 +141,7 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// Reads a project overview (docs/NOTES.md): Markdown in which what only spark understands is written as link reference definitions -
+    /// Reads a project overview (docs/tools/notes.md): Markdown in which what only spark understands is written as link reference definitions -
     /// `[container]: &lt;x= y= w=&gt; "name"` … `[/]: &lt;&gt;`, `[sketch]: &lt;&gt;` with shapes, `[line]: &lt;from= to=&gt;`. Everything else is the text of the overview or
     /// of the container it is in.
     /// </summary>
@@ -155,7 +155,7 @@ namespace fire.Editor
         private static readonly Regex HeadingLine = new(@"^ {0,3}#{1,6}(\s|$)", RegexOptions.Compiled);
         private static readonly HashSet<string> ShapeKinds = new(StringComparer.OrdinalIgnoreCase) { "rect", "ellipse", "path", "text" };
 
-        /// <summary>The extension of a canvas: Markdown with containers, sketches and lines (docs/NOTES.md).</summary>
+        /// <summary>The extension of a canvas: Markdown with containers, sketches and lines (docs/tools/notes.md).</summary>
         public const string CanvasExtension = ".xmd";
 
         /// <summary>A Markdown text is an overview when it has at least one container, sketch or line.</summary>
@@ -270,7 +270,7 @@ namespace fire.Editor
 namespace fire.Editor
 {
     /// <summary>
-    /// Changes to the text of an overview that the surface makes (docs/NOTES.md): only the lines concerned - the attributes of one definition (a container moved or resized),
+    /// Changes to the text of an overview that the surface makes (docs/tools/notes.md): only the lines concerned - the attributes of one definition (a container moved or resized),
     /// or the own text of a container (or of the overview), the elements in it kept after the text.
     /// </summary>
     public static class OverviewSource

@@ -3,7 +3,7 @@ using fire.Compiler;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>Errors with codes and warnings (`warn 123: "text"`): docs/ERRORS.md, SPEC 1.7.</summary>
+/// <summary>Errors with codes and warnings (`warn 123: "text"`): docs/tools/errors.md, SPEC 1.7.</summary>
 static class DiagnosticTests
 {
     private static int _failures;

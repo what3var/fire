@@ -9,7 +9,7 @@ using fire.Projects;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>Linkage "static" (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): every library module a static library in the user-wide cache - built once, then
+/// <summary>Linkage "static" (ROADMAP 9, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): every library module a static library in the user-wide cache - built once, then
 /// reused; the program's output the same as with linkage "source" (and the VM); a library that changes is built again, the others not; a debug build stops in a library.
 /// `FIRE_TESTS_ONLY=linkage`.</summary>
 static class LinkageTests
@@ -83,7 +83,7 @@ static class LinkageTests
         return found;
     }
 
-    /// <summary>spark's build window (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"): a build with linkage "static" and an empty cache is cancelled while gcc compiles
+    /// <summary>spark's build window (docs/spec/NATIVE_BACKEND.md "Fortschritt und Abbrechen"): a build with linkage "static" and an empty cache is cancelled while gcc compiles
     /// its library modules side by side - gcc (with cc1, as) ends within seconds, the build says it was cancelled, the cache has no half library (no temporary file, every
     /// library with its interface) and no program is left; the next build into the same cache works, its progress arrives in order (compile fire in steps, generate C,
     /// compile C counting 0..N modules - N the modules that are new -, link) and its log has the commands as they ran.</summary>
@@ -383,7 +383,7 @@ static class LinkageTests
         }
         """;
 
-    /// <summary>Stripping (docs/NATIVE_BACKEND.md "Größe des Programms") with libraries: the program leaves out like with "source" (a method of its own by a name
+    /// <summary>Stripping (docs/spec/NATIVE_BACKEND.md "Größe des Programms") with libraries: the program leaves out like with "source" (a method of its own by a name
     /// made at run time, a class it never makes); a library keeps its API at every level (List.IndexOf by a name made at run time).</summary>
     private const string Strip = """
         #import "reflection"
@@ -988,7 +988,7 @@ static class LinkageTests
         finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); Environment.SetEnvironmentVariable("FIRE_TEST_UNITS", null); Environment.SetEnvironmentVariable("FIRE_TEST_JSON", null); }
     }
 
-    /// <summary>Debugging a native plugin (docs/NATIVE_DEBUG_PROTOCOL.md "sources"): a debug build of a program with linkage "shared" loads the debug build of the plugin
+    /// <summary>Debugging a native plugin (docs/spec/NATIVE_DEBUG_PROTOCOL.md "sources"): a debug build of a program with linkage "shared" loads the debug build of the plugin
     /// Kit; the event `sources` gives its file the next index, NativeDebugTarget sends the breakpoints by file in it (the program waits for them), Step Into goes into
     /// its method, scopes and `this` (the field names from the plugin's own table), Step Out - the plan of the VM (DebuggerTests.PluginPlan).</summary>
     private static void PluginDebug(string root)

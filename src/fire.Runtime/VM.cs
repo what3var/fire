@@ -206,7 +206,7 @@ namespace fire.Runtime
         private int _ip;
 
         // -----------------------------------------------------------
-        // leave/terminate (docs/THREADING_DESIGN.md section 6) - cooperative
+        // leave/terminate (docs/spec/THREADING_DESIGN.md section 6) - cooperative
         // check points instead of real interruption: every running VM instance
         // notices a signal at the latest at the next safe point (see
         // PollSignals) and then cleanly unwinds itself (UnwindForShutdown),
@@ -323,7 +323,7 @@ namespace fire.Runtime
 
         /// <summary>Marks EXACTLY one VM instance in the whole program as "the"
         /// main-thread instance - basis for `catch threads(...)`/`catch
-        /// terminate(v)` (docs/THREADING_DESIGN.md 6.2/6.3), which according to the design
+        /// terminate(v)` (docs/spec/THREADING_DESIGN.md 6.2/6.3), which according to the design
         /// run EXCLUSIVELY there, not on any fire thread.
         /// Must be set explicitly by the caller (no automatic
         /// "first created VM is the main VM" - that would be fragile in tests that
@@ -448,7 +448,7 @@ namespace fire.Runtime
         private ObjectInstance? _callbackError;
 
         // -----------------------------------------------------------
-        // Global variables and fire threads (docs/THREADING_DESIGN.md section 7, Runtime.GlobalsBroker)
+        // Global variables and fire threads (docs/spec/THREADING_DESIGN.md section 7, Runtime.GlobalsBroker)
         // -----------------------------------------------------------
 
         /// <summary>In the main program: set as soon as a `fire` (or `fire global`) runs for the first time. From then on this VM writes globals
@@ -656,7 +656,7 @@ namespace fire.Runtime
         private readonly System.Collections.Concurrent.ConcurrentQueue<InboundCallback> _inbound = new();
         private volatile bool _acceptingCallbacks;
 
-        /// <summary>When the main program processes the queue by itself (`#globaljobs`, `#nosync`, `--global-jobs`; docs/THREADING_DESIGN.md section 7). The safe points
+        /// <summary>When the main program processes the queue by itself (`#globaljobs`, `#nosync`, `--global-jobs`; docs/spec/THREADING_DESIGN.md section 7). The safe points
         /// are the same as in a native build: a loop's jump back (only `Safepoints`), `Sleep` and the wait functions (`Safepoints`, `Sleep`); `sync globals` and the end
         /// of the program always. Not a call, not a native call (`print`, `Window.Tick`).</summary>
         private GlobalJobsMode _globalJobs = GlobalJobsMode.Safepoints;
@@ -1123,7 +1123,7 @@ namespace fire.Runtime
         /// interrupted place (no stopping, unlike with
         /// leave/terminate). No matching handler registered -> complete
         /// program abort, like an unhandled exception in the main thread
-        /// itself (docs/THREADING_DESIGN.md 6.2).</summary>
+        /// itself (docs/spec/THREADING_DESIGN.md 6.2).</summary>
         private bool HandleDeliveredThreadException(ObjectInstance excInstance)
         {
             var handlerProto = FindGlobalThreadsCatch(excInstance);
@@ -4992,7 +4992,7 @@ namespace fire.Runtime
                     // after compiling, safe across threads, see
                     // FireRuntime class comment) - fire itself does
                     // NOT block (no return values, no join, see
-                    // docs/THREADING_DESIGN.md section 1).
+                    // docs/spec/THREADING_DESIGN.md section 1).
                     int protoIdx = ReadU16();
                     int globalSlotCount = ReadU16();
                     int takingCount = ReadByte();
@@ -5592,7 +5592,7 @@ namespace fire.Runtime
             // "abort the program", but "end this thread cleanly and
             // deliver the exception (without resumability - that has in any case never arisen as more than
             // purely LOCAL VM state, see _pendingResumes documentation)
-            // to the main thread" (docs/THREADING_DESIGN.md 6.2).
+            // to the main thread" (docs/spec/THREADING_DESIGN.md 6.2).
             if (IsFireThreadVm)
             {
                 UnhandledTrace = _lastThrowTrace;

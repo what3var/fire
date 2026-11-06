@@ -7,7 +7,7 @@ using fire.Runtime;
 namespace fire.Compiler
 {
     /// <summary>
-    /// What a project build needs besides the linker (docs/PROJECTS.md): choosing the project of a solution, checking a library (it compiles, it has no entry point) and packing it as a package
+    /// What a project build needs besides the linker (docs/tools/projects.md): choosing the project of a solution, checking a library (it compiles, it has no entry point) and packing it as a package
     /// (`.fpk`) that `ember` installs and other programs `#import`.
     /// </summary>
     public static class ProjectBuilder

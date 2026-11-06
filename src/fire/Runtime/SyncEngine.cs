@@ -5,7 +5,7 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>Result of sync/try sync/sync flat/try sync flat (see
-    /// docs/THREADING_DESIGN.md section 4.1) - `LockBusy` can occur only with the
+    /// docs/spec/THREADING_DESIGN.md section 4.1) - `LockBusy` can occur only with the
     /// `try` variants (the blocking variants wait
     /// instead until the lock is free). With the later connection
     /// to the language it becomes 1:1 true/false/undefined.</summary>
@@ -18,7 +18,7 @@ namespace fire.Runtime
 
     /// <summary>
     /// Implements `sync`/`try sync`/`sync flat`/`try sync flat` (see
-    /// docs/THREADING_DESIGN.md section 4). `copy` must be a copy created via
+    /// docs/spec/THREADING_DESIGN.md section 4). `copy` must be a copy created via
     /// ObjectCopier.Take (SyncOrigin set) - `sync`
     /// ALWAYS writes from the copy (source) to the original (target), never
     /// the other way round, last-writer-wins, no conflict resolution.
@@ -80,7 +80,7 @@ namespace fire.Runtime
         }
 
         /// <summary>A single field/array-element value, according to case A/B/C
-        /// (see docs/THREADING_DESIGN.md 4.3) for object references, with
+        /// (see docs/spec/THREADING_DESIGN.md 4.3) for object references, with
         /// special handling for arrays (4.4) and primitive values (taken
         /// over directly).</summary>
         private static Value SyncSingleValue(

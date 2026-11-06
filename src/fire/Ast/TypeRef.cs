@@ -13,7 +13,7 @@ namespace fire.Ast
     /// or return type that were itself a lambda type with its own signature
     /// is deliberately not supported (SPEC limit of this stage).
     /// `IsSelector`: `lambda member&lt;T&gt; name` - the passed lambda selects a member (`c => c.radius`); in its body the parameter
-    /// instead holds the reflection of this member (see docs/DESIGN_LAMBDA_REFLECTION_PROBE.md); `ParamTypeNames`
+    /// instead holds the reflection of this member (see docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md); `ParamTypeNames`
     /// then contains exactly the name `T`. `SelectorKind` determines what the lambda may select:
     /// `field` (a field only), `property` (a property only), `member` (field or property), `method` (a method only), `selector` (anything).
     /// Only the NUMBER of parameters is checked at runtime (VM.

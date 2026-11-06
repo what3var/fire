@@ -1,7 +1,7 @@
 namespace fire.Projects
 {
     /// <summary>Where a program of a project is built when nothing names its place (no `output` setting, no `-o`): <c>bin/&lt;target&gt;-&lt;mode&gt;/&lt;name&gt;</c> below the
-    /// project folder (docs/PROJECTS.md). The same for spark and forge.</summary>
+    /// project folder (docs/tools/projects.md). The same for spark and forge.</summary>
     public static class ProjectOutput
     {
         /// <summary>The target of a program that carries the virtual machine (a native build names the target it was built for: linux, windows, esp32, ...).</summary>

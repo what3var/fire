@@ -4,7 +4,7 @@
     The windows of the C# implementation of graphics and windows: ConsoleWindow
     (framebuffer + renderer) and WindowManager. The renderer is the host's (the
     tests, an editor that shows the pictures itself); the windows of the desktop
-    are the C library's (docs/UI_PLATFORM.md) - no SDL here any more.
+    are the C library's (docs/spec/UI_PLATFORM.md) - no SDL here any more.
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>

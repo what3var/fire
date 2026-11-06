@@ -1,4 +1,4 @@
-/* fire scene3d: the hardware backend - the queue of s3d_engine.h drawn by the GPU through Vulkan (docs/SCENE3D.md, "Hardware").
+/* fire scene3d: the hardware backend - the queue of s3d_engine.h drawn by the GPU through Vulkan (docs/graphics/3d.md, "Hardware").
  *
  * Optional at every level: Vulkan is not linked but loaded when the backend is first asked for (libvulkan.so.1, vulkan-1.dll, libvulkan.1.dylib or MoltenVK), the declarations it needs
  * come with the package (s3d_vk.h, made from the Khronos header: no SDK needed to build), and when anything is missing - no loader, no driver, no GPU, an error - `s3d_gpu_flush`

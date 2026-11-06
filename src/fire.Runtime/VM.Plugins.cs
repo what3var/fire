@@ -12,7 +12,7 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// fire plugins in the VM (ROADMAP 9 phase D b, decision 9.8: the VM loads bytecode; docs/NATIVE_BACKEND.md "Plugins"). `Library.Load` of a `.fireplugin` file (or of
+    /// fire plugins in the VM (ROADMAP 9 phase D b, decision 9.8: the VM loads bytecode; docs/spec/NATIVE_BACKEND.md "Plugins"). `Library.Load` of a `.fireplugin` file (or of
     /// the native library next to which it lies) reads the plugin's bytecode; `__LibCall(5, handle)` links its classes into the running program: the interfaces of the
     /// modules it was compiled against must be the program's (ROADMAP 9.6, the hashes only - <see cref="ModuleInterface"/>), the native functions its code calls are
     /// renumbered by name, its base classes are the program's, its static initialisers run. The errors are those of the native runtime (fire_rt.h fireRegisterPlugin).

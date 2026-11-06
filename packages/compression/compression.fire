@@ -2,7 +2,7 @@
 #import "filesystem"
 #import "time"
 
-// Compression (docs/COMPRESSION.md): Deflate, zlib and gzip as streams and in one go, and Zip archives. The Deflate is the package's own C (no library), so
+// Compression (docs/stdlib/compression.md): Deflate, zlib and gzip as streams and in one go, and Zip archives. The Deflate is the package's own C (no library), so
 // the bytes are the same in the VM, in a native build and on every target.
 namespace Compression {
     // The framing around the Deflate data: none (raw, as in Zip), zlib (RFC 1950: a small header and Adler-32) or gzip (RFC 1952: a header and CRC-32).

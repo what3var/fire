@@ -27,7 +27,7 @@ namespace fire.Editor
     public sealed record MdCodeBlock(string? Language, string Code) : MdBlock;
     public sealed record MdQuote(IReadOnlyList<MdBlock> Blocks) : MdBlock;
     public sealed record MdRule : MdBlock;
-    /// <summary>The state of a task entry (docs/NOTES.md): `[ ]` open, `[/]` in progress, `[#]` blocked, `[x]` done.</summary>
+    /// <summary>The state of a task entry (docs/tools/notes.md): `[ ]` open, `[/]` in progress, `[#]` blocked, `[x]` done.</summary>
     public enum MdTaskState { Open, InProgress, Blocked, Done }
 
     /// <summary>`Task`: null = no task entry, otherwise its state (`- [ ]`, `- [/]`, `- [#]`, `- [x]`).</summary>
