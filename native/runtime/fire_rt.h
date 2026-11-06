@@ -5778,8 +5778,9 @@ FIRE_FN void ownedStackFree(OwnedStack* s) { free(s->items); s->items = NULL; s-
 
 /* The list that what `node` points to joins when it moves: the object that points to it - for an array the object that owns the array, else the array itself
  * (an array can own). */
+/* (An object: its list as it is - NULL when it owns nothing yet; moveReachable makes it only when something really moves, see fire_carrierList.) */
 FIRE_FN OwnList* carrierOf(Owned* node) {
-    if (node->okind == O_Object) return objOwned((Obj*)node);
+    if (node->okind == O_Object) return ((Obj*)node)->owned;
     if (node->okind == O_Array) {
         Arr* a;
         if (node->owner && node->owner->holder) return node->owner;
@@ -5795,17 +5796,28 @@ FIRE_FN OwnList* carrierOf(Owned* node) {
 typedef bool (*EnumerateItemsFn)(Value obj, OwnList* list, void (*sink)(Value, void*), void* ctx);
 extern FIRE_RT_DATA EnumerateItemsFn g_enumerateItems;
 
-typedef struct fire_MoveSink { OwnList* carrier; OwnedStack* seen; } fire_MoveSink;
+/* Where what moves goes: a list, or an object whose list is made when the first value moves into it (most objects own nothing). */
+typedef struct fire_Carrier { OwnList* list; Obj* obj; } fire_Carrier;
+FIRE_FN OwnList* fire_carrierList(fire_Carrier* c) { if (!c->list && c->obj) c->list = objOwned(c->obj); return c->list; }
+FIRE_FN bool fire_carrierHas(const fire_Carrier* c) { return c->list != NULL || c->obj != NULL; }
+FIRE_FN Owned* fire_carrierHolder(const fire_Carrier* c) { return c->obj ? &c->obj->h : c->list ? c->list->holder : NULL; }
+/* Moves `child` there (unless it would end up below itself). */
+FIRE_FN void fire_carrierTake(fire_Carrier* c, Owned* child) {
+    Owned* holder;
+    bool cycle;
+    if (!fire_carrierHas(c) || (c->list && child->owner == c->list)) return;
+    holder = fire_carrierHolder(c);
+    cycle = child->okind == O_Object && holder && ownsTransitively(child, holder);
+    if (!cycle) { OwnList* l = fire_carrierList(c); if (child->owner) ownUnlink(child); ownLink(l, child); }
+}
+typedef struct fire_MoveSink { fire_Carrier* carrier; OwnedStack* seen; } fire_MoveSink;
 FIRE_FN void fire_moveSinkItem(Value v, void* ctx) {
     fire_MoveSink* k = (fire_MoveSink*)ctx;
     Owned* child = ownedOf(v);
     if (!child || (child->flags & (1 | F_VISIT))) return;
     child->flags |= F_VISIT;
     ownedStackPush(k->seen, child);
-    if (k->carrier && child->owner != k->carrier) {
-        bool cycle = child->okind == O_Object && k->carrier->holder && ownsTransitively(child, k->carrier->holder);
-        if (!cycle) { if (child->owner) ownUnlink(child); ownLink(k->carrier, child); }
-    }
+    fire_carrierTake(k->carrier, child);
 }
 
 /* Takes what hangs on `root` along (the root has its new owner already), by `mode`: TK_CHILDREN what it points to directly, TK_LOCALS everything reachable that
@@ -5814,7 +5826,7 @@ FIRE_FN void fire_moveSinkItem(Value v, void* ctx) {
  * null: none) instead of its fields. */
 /* One value that hangs on a node of moveReachable: it moves to `carrier` (by the mode) and is walked further. A lambda owns nothing: what it captured hangs
  * on the holder of the lambda. */
-FIRE_FN void fire_moveChild(Value v, OwnList* carrier, int mode, const LocalScopes* locals, OwnedStack* work, OwnedStack* seen) {
+FIRE_FN void fire_moveChild(Value v, fire_Carrier* carrier, int mode, const LocalScopes* locals, OwnedStack* work, OwnedStack* seen) {
     Owned* child = ownedOf(v);
     bool move, descend;
     if (!child) {
@@ -5830,10 +5842,7 @@ FIRE_FN void fire_moveChild(Value v, OwnList* carrier, int mode, const LocalScop
     ownedStackPush(seen, child);
     move = mode != TK_LOCALS || isLocalNode(child, locals);
     descend = mode == TK_ALL || (mode == TK_LOCALS && (move || (child->owner && child->owner->holder && (child->owner->holder->flags & F_VISIT))));
-    if (move && carrier && child->owner != carrier) {
-        bool cycle = child->okind == O_Object && carrier->holder && ownsTransitively(child, carrier->holder);
-        if (!cycle) { if (child->owner) ownUnlink(child); ownLink(carrier, child); }
-    }
+    if (move) fire_carrierTake(carrier, child);
     if (descend) ownedStackPush(work, child);
 }
 
@@ -5846,19 +5855,21 @@ FIRE_FN void moveReachable(Owned* root, int mode, const LocalScopes* locals, Own
     ownedStackPush(&work, root);
     while (work.count) {
         Owned* node = work.items[--work.count];
-        OwnList* carrier = carrierOf(node);
+        fire_Carrier carrier;
         Value* items;
         uint32_t n, i;
+        carrier.list = carrierOf(node);
+        carrier.obj = node->okind == O_Object ? (Obj*)node : NULL;
         if (mode == TK_CHILDREN && node->okind == O_Object && g_enumerateItems && here) {
             fire_MoveSink sink;
-            sink.carrier = carrier;
+            sink.carrier = &carrier;
             sink.seen = &seen;
             if (g_enumerateItems(ObjV((Obj*)node), here, fire_moveSinkItem, &sink)) continue;
         }
         if (node->okind == O_Object) { Obj* ob = (Obj*)node; items = objFields(ob); n = ob->nfields; }
         else if (node->okind == O_Array) { Arr* a = (Arr*)node; items = arrValues(a); n = items ? a->length : 0; }   /* (a packed array holds numbers only) */
         else continue;
-        for (i = 0; i < n; i++) fire_moveChild(items[i], carrier, mode, locals, &work, &seen);
+        for (i = 0; i < n; i++) fire_moveChild(items[i], &carrier, mode, locals, &work, &seen);
     }
     for (k = 0; k < seen.count; k++) seen.items[k]->flags &= (uint8_t)~F_VISIT;
     ownedStackFree(&work);
