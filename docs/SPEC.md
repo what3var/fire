@@ -168,13 +168,15 @@ Until a slot claims it, an unclaimed value belongs to the **statement temporarie
 - **Chains:** in `a = b = E` the inner assignment claims: `b` owns, `a` only refers to it (the value of an assignment expression is not unclaimed).
 - **Values held by the statement temporaries count as unclaimed.** `var b = new Builder().With(1).With(2)` - `With` returns `this`: the builder belongs to
   the temporaries (it was made in this statement, nobody claimed it yet), so the result of the last `With` is unclaimed and `b` claims it. The same holds for
-  a getter or method that returns an object of the temporaries.
+  a getter or method that returns an object of the temporaries. It also holds for what hangs on a temporary object: `var m = Type.Of(c).Find("radius")` -
+  the member belongs to the type, which is a temporary; `m` takes it out of the type (with what hangs on it) before the type dies at the end of the statement.
 - **Inner arrays:** an array made in one expression together with inner arrays (`new int[3][4]`, `[[1, 2], [3]]`) owns them: they live and die with the
   outer one.
-- **Lambda values** follow the same rule (a field: the object, otherwise as above). The `on` binding (4.2) does not change the owner.
+- **Lambda values** follow the same rule (a field: the object, otherwise as above). The `on` binding (4.2) does not change the owner. A lambda owns nothing
+  itself: what it captured (4.2.1) and is unclaimed goes to the slot of the lambda - the holder of a field, the scope of a variable.
 - **The end of a statement:** an expression statement, a declaration, an assignment, `return`/`throw` (their value goes on first), `delete`; the condition of
   `if`/`while`/`do`/`for` and the subject of `switch` after they are evaluated; the collection of `foreach` and the value of `with` at the end of the loop / the
-  block. A thrown object is claimed by the throw (it travels with the exception) and belongs to the `catch` variable when it is caught.
+  block (`foreach (x in F())`: what `F` returned dies when the loop ends - keep it in a variable if its elements should outlive the loop). A thrown object is claimed by the throw (it travels with the exception) and belongs to the `catch` variable when it is caught.
 
 **Assignment moves ownership up - inside the method.** `v = x` where `v` is a variable of an *outer* block and `x` is **not** unclaimed (a variable, a field
 read, an element): if `x` belongs to a block between the current one and the block that declares `v` (a loop body, an `if`), it moves to the scope that
@@ -262,7 +264,8 @@ does not pass on there (`TC018`: the value dies with the setter on that path). A
   at the caller (2.1: the scope of `v` in `var v = F()`, the object in `obj.f = F()`, the array in `arr[i] = F()`, the call of `f` in `f(F())`; without a
   target the caller's statement temporaries - it dies at the end of that statement), **together with everything that hangs on it and also belongs to those
   scopes** (that is `Takes.Locals`, 2.2): the elements of a returned list, the objects a returned object points to. What is taken along belongs to the object
-  that points to it, so it lives and dies with it. A value that belongs to someone else (an object that stays, the caller, the global scope) is not touched -
+  that points to it, so it lives and dies with it. The arguments of the call count among those scopes (an argument belongs to the call): `return new W(arg)`
+  takes `arg` along. A returned **lambda** takes along what it captured from them (`return () => list.Count`). A value that belongs to someone else (an object that stays, the caller, the global scope) is not touched -
   and is not unclaimed at the caller.
 - **Destroyed objects.** A destroyed object is **dead** when the destruction that destroyed it is over (the scope is left, `delete` returned): using it - a field, a method, a property - throws a catchable
   `DestroyedException`, like an array (2.5). While the destruction is still running (the destructors of one scope), the objects of that scope can still be used, also those that were destroyed before - the destructor of a

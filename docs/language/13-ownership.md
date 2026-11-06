@@ -70,6 +70,18 @@ var b = new Builder().With(2).With(3)
 print(b.size)                       // 5 - the builder lives on in b
 ```
 
+The same holds for what hangs on a temporary: `var m = Type.Of(c).Find("radius")` keeps the member, although the type it belongs to dies at the end of the
+statement.
+
+The collection of a `foreach` is a temporary of the loop: `foreach (d in Bus.Devices()) { found.Add(d) }` leaves `found` with destroyed devices after the
+loop. Keep the collection in a variable when its elements should outlive the loop:
+
+```fire
+var all = Bus.Devices()
+foreach (d in all) { if (d.Matches()) { found.Add(d) } }
+return found                          // the devices in found go along with the return
+```
+
 ## Returning objects
 
 A returned object goes on to where the call's result lands - a variable, a field, an element, the next call - together with everything it points to
@@ -90,6 +102,9 @@ box.content = Factory.Make("boxed")   // the box owns it
 print(kept.n + ", " + box.content.n)  // returned, boxed
 print(box.content is from box)        // True
 ```
+
+Arguments count as the method's own (they belong to the call), and a returned lambda takes along what it captured: `return new Wrapper(arg)` and
+`return () => list.Count` both keep their values alive at the caller.
 
 A method that returns something that belongs to somebody else - an object's field, a variable of the caller - does not hand it over: the caller
 only gets a reference, and the owner stays.
