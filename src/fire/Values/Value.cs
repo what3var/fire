@@ -51,7 +51,7 @@ namespace fire.Values
         {
             Kind = kind;
             Width = width;
-            _bits = kind == ValueKind.Int && Ints32 ? (int)bits : bits;
+            _bits = kind == ValueKind.Int && Ints32 ? (Ints16 ? (short)bits : (int)bits) : bits;
             _ref = reference;
             _enum = enumId;
         }
@@ -70,6 +70,8 @@ namespace fire.Values
         // result stored into an int32). Set by the host before a program runs from LinkedProgram.IntWidth.
         // ---------------------------------------------------------------
         public static bool Ints32;
+        // `#intwidth 16` (with Ints32 set too: an int narrower than 64 bits): every int is cut to 16 bits.
+        public static bool Ints16;
 
         // ---------------------------------------------------------------
         // The width of `word` (SPEC 8.10): the machine word of the target the program is built for - 16, 32 or 64 bits, unsigned. A word keeps its bits in

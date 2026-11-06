@@ -13,6 +13,8 @@
  *   FIRE_STATIC_ASSERT_C(c,m) a check when compiling (C; C++ has static_assert)
  *   FIRE_CC_RUNTIME_BEGIN / FIRE_CC_RUNTIME_END   around the runtime: what the compiler should not warn about there
  *   FIRE_FAR / FIRE_HUGE      the segmented pointers of 16-bit x86 (empty elsewhere)
+ *   FIRE_CC_NEAR_DATA         optional: a global the code reaches all the time (the state of the thread: g_unwind ...) in the data segment of the program (16-bit x86,
+ *                             the huge model: no segment register to load for it); empty elsewhere
  *   FIRE_CC_FEQ(x, y)         optional: `==` of two floating-point numbers that is false with a NaN (the 8087 code of Open Watcom says "equal")
  *   FIRE_CC_FIXED(d, places)  optional: the number given to printf("%.*f") (where the C library rounds a half the other way)
  *   FIRE_CC_BIG_ALLOC(bytes) / FIRE_CC_BIG_FREE(p)   optional: a block larger than a size_t says (16-bit x86, the huge model); FREE: 1 if it was one of them
@@ -46,6 +48,9 @@
 #endif
 #ifndef FIRE_HUGE
 #define FIRE_HUGE
+#endif
+#ifndef FIRE_CC_NEAR_DATA
+#define FIRE_CC_NEAR_DATA
 #endif
 /* The bytes of a block one call of the C library may take at once (an int64_t count: the result fits a size_t) */
 #ifndef FIRE_CC_IO_STEP

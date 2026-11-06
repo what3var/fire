@@ -43,6 +43,7 @@ static double fire_cc_fixedHalfEven(double d, int places) {
 #define FIRE_FAR __far
 #define FIRE_HUGE __huge
 #if defined(__HUGE__)
+#define FIRE_CC_NEAR_DATA __near   /* (the state of the thread in DGROUP: a test of g_unwind without loading a segment) */
 /* The huge model (dos16): every pointer is huge - an array or a buffer may hold more than 64 KB; its block comes from halloc (DOS memory, a size_t of 16 bits
  * cannot say it), the blocks are remembered to give them back with hfree. */
 #include <malloc.h>

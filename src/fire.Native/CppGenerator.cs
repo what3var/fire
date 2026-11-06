@@ -1807,6 +1807,7 @@ namespace fire.Native
             if (_usesElementPointers) sb.AppendLine("#define FIRE_ELEMPTRS 1 // pointers into arrays find their array (a typed one converts what is written through them)");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
+            if (_program.IntWidth == 16) sb.AppendLine("#define FIRE_INT16 1 // #intwidth 16: every int is cut to 16 bits, like in the VM (its storage stays 32 bits)");
             if (_program.IntWidth == 32) sb.AppendLine("#define FIRE_INT32 1 // #intwidth 32: int is a 32-bit int, like in the VM (with FIRE_FLOAT32 and 32-bit pointers a value takes 8 bytes)");
             sb.AppendLine($"#define FIRE_WORD_BITS {_program.WordWidth} // `word`: the machine word of the target (SPEC 8.10)");
             return sb.ToString();
@@ -2867,9 +2868,12 @@ namespace fire.Native
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
             // has its type from the GuardLocal of the prologue.
             f.GuardAddr = code.Where(c => c.Op is OpCode.GuardLocal or OpCode.GuardLocalType).ToDictionary(c => c.A[0], c => c.Addr);
+            // (a parameter declared int/float/bool - GuardLocal - holds no reference after its check: it is only counted when the function stores one in it;
+            // then its retain at the entry comes back too, so a guard that fails before it still leaves the counts right)
+            var scalarParams = code.Where(c => c.Op == OpCode.GuardLocal && c.A[0] < f.ParamLike).Select(c => c.A[0]).ToHashSet();
             for (int i = 0; i < f.ParamLike; i++)
             {
-                MarkVarRef(VarKey(f, $"P{i}"));
+                if (!scalarParams.Contains(i)) MarkVarRef(VarKey(f, $"P{i}"));
                 if (!f.GuardAddr.ContainsKey(i)) JoinVarType(VarKey(f, $"P{i}"), TypeUnknown);
             }
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) f.NeedsList.Add(GlobalScope);   // thrown exceptions, TakeGlobal and TakeUpwards need the list of the global scope

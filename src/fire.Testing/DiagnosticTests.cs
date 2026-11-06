@@ -24,7 +24,7 @@ static class DiagnosticTests
         {
             var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
             session.Run();
-            Value.SingleFloats = false; Value.Ints32 = false;
+            Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
         }
         catch (Exception ex)
         {

@@ -141,7 +141,7 @@ namespace fire.Projects
             if (Subsystem != null && !Subsystems.Contains(Subsystem)) problems.Add($"settings.subsystem '{Subsystem}' is not one of: {string.Join(", ", Subsystems)}.");
             if (Mode != null && !Modes.Contains(Mode)) problems.Add($"settings.mode '{Mode}' is not one of: {string.Join(", ", Modes)}.");
             if (FloatWidth != null && FloatWidth != 32 && FloatWidth != 64) problems.Add("settings.floatWidth must be 32 or 64.");
-            if (IntWidth != null && IntWidth != 32 && IntWidth != 64) problems.Add("settings.intWidth must be 32 or 64.");
+            if (IntWidth != null && IntWidth != 16 && IntWidth != 32 && IntWidth != 64) problems.Add("settings.intWidth must be 16, 32 or 64.");
             if (TypeChecking != null && !TypeCheckings.Contains(TypeChecking)) problems.Add("settings.typeChecking must be lax or strict.");
             if (GlobalJobs != null && !GlobalJobsModes.Contains(GlobalJobs.ToLowerInvariant())) problems.Add($"settings.globalJobs '{GlobalJobs}' is not one of: {string.Join(", ", GlobalJobsModes)}.");
             if (Engine != null && !Engines.Contains(Engine)) problems.Add($"settings.engine '{Engine}' is not one of: {string.Join(", ", Engines)}.");

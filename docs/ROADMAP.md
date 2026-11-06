@@ -570,7 +570,9 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    **Geräte:** `devices` auf dos16 - `COM1`..`COM4` (UART direkt, 115200 8N1, FIFO; Empfang über den IRQ in einen Ringpuffer, Vektor und Maske am Ende zurück)
    und `LPT1`..`LPT3` (nur Ausgabe, BUSY/STROBE) als serielle Geräte (`std/fire_dev_dos.h`). Test in DOSBox-X (Dateien für COM1/LPT1, Empfang über den
    Loopback des UART).
-   **Offen:** `#intwidth 16`, weitere Grafikmodi (s.o.).
+   **`#intwidth 16`** (SPEC 8.2.2): jedes int und jede int-Konstante auf 16 Bit geschnitten - die VM (`Value.Ints16`), nativ beim Erzeugen (`FIRE_INT16`,
+   gespeichert in 32 Bit, demselben Feld wie ein `char`), Direktive, `-i 16`, Projekteinstellung, `#if int16`, Editor. Tests: VM == gcc, und in DOSBox-X.
+   **Offen:** weitere Grafikmodi (s.o.).
 3b. **Die Natives eines Packages gehören in das Package** (Entscheidung des Benutzers, nach der Grafik auf DOS): der C-Code der Natives - auch die
    plattformabhängigen Teile, die heute in `native/platform/<platform>/` und `native/platform/std/` liegen (`fire_console_*`, `fire_machine_*`, `fire_dos_*`,
    `fire_dev_*`, `fire_fs_*`, ...) - liegt im Package und wird mit dem Package aktualisiert (ein neues Package bringt seine Umsetzungen je Plattform mit, ohne
@@ -601,6 +603,15 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    mbedTLS statt Schannel, kein USB, GDI aus dem laufenden Umbau.
 9. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
    gepackt pro Klasse später.
+   **Messung (Frage des Benutzers: woher die 350 KB eines Grafikprogramms auf dos16 kommen).** Grafik-C ~85 KB (~23 Byte je Zeile, normal), Runtime 75 KB,
+   C-Bibliothek 46 KB - und **109 KB aus fire übersetzter Code** für 725 Zeilen (Prelude der Grafik + Programm), ~150 Byte je Zeile: `DrawRoundRect` (4 Zeilen,
+   reicht an ein Native weiter) wird 298 Zeilen C und 4,7 KB. gcc `-m32 -Os` erzeugt aus demselben C ebenso viel (108 KB) - es ist der allgemeine Code, nicht
+   der 16-Bit-Modus. Wo er steckt (Versuch: jeweils eine Gruppe weggelassen, im DOS-Build): Tests auf eine laufende Ausnahme nach jedem Schritt ~11 KB,
+   Gültigkeitslisten (`leave`/`adopt`/`transferTree`) ~8 KB, Prüfungen der Parameter ~8 KB, `retain`/`release` ~4 KB; der Rest (~70 KB) sind die 8-Byte-`Value`s
+   selbst (Kopien, Aufrufe mit Values, Feldzugriffe) - das nimmt erst diese Ebene 2. Schon umgesetzt: kein `retain`/`release` für Parameter, die nach ihrer
+   Prüfung `int`/`float`/`bool` sind (DOS 109 -> 103 KB, gcc 108 -> 79 KB), der Zustand des Threads im Datensegment unter Watcom/Huge (`FIRE_CC_NEAR_DATA`).
+   Noch offen dort: Methoden mit erklärtem skalaren Rückgabetyp ohne `adopt` (braucht den Rückgabetyp im Bytecode und eine Regel, wann er gilt - der
+   Typprüfer prüft ihn, die VM erzwingt ihn nicht).
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios-x86` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
 Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios-x86`; `efi-x64` mit der Firmware OVMF),

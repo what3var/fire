@@ -117,7 +117,7 @@ namespace fire.Compiler
                     plugin builds the classes of the program as a fire plugin (<output>.so/.dll and <output>.fireplugin for the VM) that a program with linkage shared loads with Library.Load.
             --host <program>  With --linkage plugin: the program (built with linkage shared) the plugin is for - its switches and libraries (<program>.firehost next to it).
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
-            -i      Width of int in bits: 32 or 64 (default: whatever the script sets with #intwidth, otherwise 64 - also on small targets).
+            -i      Width of int in bits: 16, 32 or 64 (default: whatever the script sets with #intwidth, otherwise 64 - also on small targets).
             --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
                     typeChecking does the same, #lax / #strict in a file decides for that file (docs/spec/TYPES.md).
             --global-jobs safepoints|sleep|sync  When the main program runs the `fire global` jobs (and lets in the sections of its threads, the host callbacks) by itself:
@@ -289,9 +289,9 @@ namespace fire.Compiler
                 else if (TryOption(arg, "-i", "--int", out var intInline))
                 {
                     string? value = intInline ?? (i + 1 < args.Count ? args[++i] : null);
-                    if (value == null) return Fail(command, "-i must be followed by the width of int (32 or 64).");
-                    if (Unquote(value) is not ("32" or "64"))
-                        return Fail(command, $"Unknown int width '{value}' (allowed: 32, 64).");
+                    if (value == null) return Fail(command, "-i must be followed by the width of int (16, 32 or 64).");
+                    if (Unquote(value) is not ("16" or "32" or "64"))
+                        return Fail(command, $"Unknown int width '{value}' (allowed: 16, 32, 64).");
                     intWidth = int.Parse(Unquote(value));
                 }
                 else if (TryOption(arg, "-D", "--define", out var defineInline) || (arg.Length > 2 && arg.StartsWith("-D", StringComparison.Ordinal) && (defineInline = arg.Substring(2)) != null))

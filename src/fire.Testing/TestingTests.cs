@@ -25,7 +25,7 @@ static class TestingTests
     {
         var output = new StringWriter();
         int exit = CommandLineRunner.Run(args, output, output);
-        fire.Values.Value.SingleFloats = false; fire.Values.Value.Ints32 = false;
+        fire.Values.Value.SingleFloats = false; fire.Values.Value.Ints32 = false; fire.Values.Value.Ints16 = false;
         return (exit, output.ToString().Replace("\r\n", "\n"));
     }
 

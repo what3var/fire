@@ -122,8 +122,17 @@ FIRE_NORETURN FIRE_FN void exitNow(int code) {
 enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_PtrByte, K_PtrElem, K_Array, K_Buffer, K_Undefined, K_Word };
 #define FIRE_IS_PTR_KIND(k) ((unsigned)(k) - (unsigned)K_PtrVar <= (unsigned)(K_PtrElem - K_PtrVar))
 
-/* The width of `int`: 64 bits, 32 when the program is generated with `#intwidth 32` (FIRE_INT32; SPEC 8.2.1). An operation computes in 64 bits (the
- * operands of an int32 are widened) and the result is cut when it is stored - like the VM, which cuts every int it makes. */
+/* The width of `int`: 64 bits, 32 when the program is generated with `#intwidth 32` (FIRE_INT32; SPEC 8.2.1), 16 with `#intwidth 16` (FIRE_INT16: the
+ * storage stays 32 bits - the field also holds chars up to 10FFFFh - and every int that is made is cut to 16, FIRE_INT_CUT). An operation computes in 64 bits
+ * (the operands are widened) and the result is cut when it is stored - like the VM, which cuts every int it makes. */
+#ifdef FIRE_INT16
+#ifndef FIRE_INT32
+#define FIRE_INT32 1
+#endif
+#define FIRE_INT_CUT(v) ((int64_t)(int16_t)(v))
+#else
+#define FIRE_INT_CUT(v) (v)
+#endif
 #ifdef FIRE_INT32
 typedef int32_t FireInt;
 #define FIRE_INT_UNDEF INT32_MIN   /* (an `undefined` element of a packed int array; a real INT32_MIN is marked in `real`) */
@@ -226,7 +235,7 @@ FIRE_FN bool isPtr(Value v) { return FIRE_IS_PTR_KIND(v.kind); }
 /* ---------------------------------------------------------------------------------------------------------------------
  * Construction
  * --------------------------------------------------------------------------------------------------------------------- */
-FIRE_FN Value fire_IntU(int64_t v, uint32_t unit) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.i = v; return r; }
+FIRE_FN Value fire_IntU(int64_t v, uint32_t unit) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.i = (FireInt)FIRE_INT_CUT(v); return r; }
 FIRE_FN Value fire_Int1(int64_t v) { return fire_IntU(v, 0); }
 FIRE_FN Value fire_FloatU(Real v, uint32_t unit) { Value r; r.kind = K_Float; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.f = v; return r; }
 FIRE_FN Value fire_Float1(Real v) { return fire_FloatU(v, 0); }
@@ -244,7 +253,7 @@ typedef struct FireEnum { const char* name; uint8_t flags; const FireEnumMember*
 extern FIRE_RT_DATA const FireEnum* g_enums;
 extern FIRE_RT_DATA uint32_t g_enumCount;
 /* A value of the enum `index` (1-based, the generated table). */
-FIRE_FN Value EnumV(int64_t v, uint16_t index) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = index; r.unit = 0; r.i = v; return r; }
+FIRE_FN Value EnumV(int64_t v, uint16_t index) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = index; r.unit = 0; r.i = (FireInt)FIRE_INT_CUT(v); return r; }
 /* The enum of a value (null: none). */
 FIRE_FN const FireEnum* enumOf(Value v) { return v.kind == K_Int && v.reserved != 0 && v.reserved <= g_enumCount ? &g_enums[v.reserved - 1] : NULL; }
 /* `undefined` as a constant initializer (a global or static of the generated program: C has no dynamic initialization) */
@@ -417,7 +426,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_dbgSelf FIRE_TLV(g_dbgSelf)
 #endif
 #else
-#define FIRE_X(type, name, init) extern FIRE_RT_DATA FIRE_TLS type name;
+#define FIRE_X(type, name, init) extern FIRE_RT_DATA FIRE_TLS type FIRE_CC_NEAR_DATA name;   /* (FIRE_CC_NEAR_DATA: the 16-bit real mode keeps them in the data segment of the program - a test of g_unwind is one instruction) */
 FIRE_THREAD_VARS(FIRE_X)
 #undef FIRE_X
 #endif
@@ -7886,7 +7895,7 @@ fire_atomic32 g_hostPending;
 #if defined(FIRE_THREADS) && defined(FIRE_DLL)
 ThreadLocals* fire_tl(void) { return &fire_tlsBlock; }   /* (linkage "shared" on Windows: the block of the calling thread) */
 #elif !(defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT))
-#define FIRE_X(type, name, init) FIRE_TLS type name = init;
+#define FIRE_X(type, name, init) FIRE_TLS type FIRE_CC_NEAR_DATA name = init;
 FIRE_THREAD_VARS(FIRE_X)
 #undef FIRE_X
 #endif

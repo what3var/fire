@@ -7806,7 +7806,7 @@ packerTests:
                     node.WaitForExit();
                     var vmLines = new List<string>();
                     RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
-                    Value.SingleFloats = false; Value.Ints32 = false;
+                    Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
                     // linkage "static" (ROADMAP 9): the modules as static libraries of Emscripten (emar), in a cache of their own; the same output
                     string? cacheBefore = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
@@ -23010,6 +23010,39 @@ else
             print(5cm + 3mm)
             print(0.5 + 1)
             """),
+        ("#intwidth 16: Ueberlauf, Division, Schieben, Konstanten, typisierte Arrays, Felder, Schleifen, Laengen, Zeichen jenseits von 16 Bit", """
+            #intwidth 16
+            var a = 32767
+            a = a + 1
+            print(a)
+            print(256 * 256)
+            var m = -32767 - 1
+            print(m / -1)
+            print(m % -1)
+            print(1 << 15)
+            print(1 << 16)
+            print(70000)
+            var big = 1000
+            print(big * big)
+            int u[3]
+            u[0] = 32767
+            u[0]++
+            print(u[0])
+            class P { int x }
+            var p = new P()
+            p.x = 300 * 300
+            print(p.x)
+            var s = 0
+            for (var i = 0; i < 1000; i++) { s += i }
+            print(s)
+            var buf = new byte[30000]
+            print(buf.length)
+            var smile = 128512.ToChar()
+            print("x".Length + " " + smile + " " + (smile!int))
+            print(5cm + 3mm)
+            print(0.5 + 1)
+            print(2147483647 + 0)
+            """),
         ("Typisierte Arrays: Breiten, undefined und der Merker (-128, NaN, 0xFF, 0xFFFF), strikte Typen, Einheiten, ++, Zuweisung liefert den gespeicherten Wert", """
             int[8] a[] = new int[4]
             a[0] = 300
@@ -26716,7 +26749,7 @@ else
         var vmResults = new string[natCases.Length];
         int vmAt = 0;
         using (TestProgress.Heartbeat("VM (Faelle nativ == VM)", () => Volatile.Read(ref vmAt), natCases.Length, () => natCases[Math.Min(Volatile.Read(ref vmAt), natCases.Length - 1)].Name))
-            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Value.Ints32 = false; Volatile.Write(ref vmAt, i + 1); }
+            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false; Volatile.Write(ref vmAt, i + 1); }
         Value.SingleFloats = false;
         // what the native program of a case did: its output, stderr and exit code (Output null: it did not build - Stderr says why)
         var natRan = new (string? Output, string Stderr, int Exit)[natCases.Length];
@@ -27041,7 +27074,7 @@ else
 
         // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
         string out64 = vmOutput("print(0.1 + 0.2)\nprint(1.0 / 3)"), out32 = vmOutput("#floatwidth 32\nprint(0.1 + 0.2)\nprint(1.0 / 3)");
-        Value.SingleFloats = false; Value.Ints32 = false;
+        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
         CheckNat("#floatwidth: 64 Bit ist der Standard", out64 == "0.30000000000000004\n0.3333333333333333\n", out64);
         CheckNat("#floatwidth 32: float rechnet und druckt mit 32 Bit", out32 == "0.3\n0.33333334\n", out32);
         var overridden = new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, floatWidthOverride: 32);
@@ -27057,20 +27090,26 @@ else
         // #intwidth (SPEC 8.2.1): int is 64 bits everywhere unless the program asks for 32
         {
             string int64 = vmOutput("print(2147483647 + 1)"), int32 = vmOutput("#intwidth 32\nprint(2147483647 + 1)\nprint(65536 * 65536)\nprint(3000000000)");
-            Value.SingleFloats = false; Value.Ints32 = false;
+            Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
             CheckNat("#intwidth: 64 Bit ist der Standard, auch auf dem esp32", int64 == "2147483648\n" && new Linker().CompileAndLink(new[] { "print(1)" }).IntWidth == 64
                 && new Linker().CompileAndLink(new[] { "print(1)" }, null, null, null, null, TargetProfile.Esp32).IntWidth == 64, int64);
             CheckNat("#intwidth 32: int rechnet mit 32 Bit (Ergebnis abgeschnitten, Konstanten auch)", int32 == "-2147483648\n0\n-1294967296\n", int32);
-            try { new Linker().CompileAndLink(new[] { "#intwidth 16\nprint(1)" }); CheckNat("#intwidth 16 wird abgelehnt", false); }
-            catch (Exception ex) { CheckNat("#intwidth 16 wird abgelehnt", ex.Message.Contains("32 or 64"), ex.Message); }
+            string int16 = vmOutput("#intwidth 16\nprint(32767 + 1)\nprint(256 * 256)\nprint(70000)");
+            CheckNat("#intwidth 16: int rechnet mit 16 Bit (Ergebnis abgeschnitten, Konstanten auch), das C bekommt FIRE_INT16",
+                int16 == "-32768\n0\n4464\n" && new Linker().CompileAndLink(new[] { "#intwidth 16\nprint(1)" }) is var l16 && l16.IntWidth == 16
+                && fire.Native.CppGenerator.Generate(l16).Contains("#define FIRE_INT16 1"), int16);
+            Value.Ints32 = false; Value.Ints16 = false;
+            try { new Linker().CompileAndLink(new[] { "#intwidth 8\nprint(1)" }); CheckNat("#intwidth 8 wird abgelehnt", false); }
+            catch (Exception ex) { CheckNat("#intwidth 8 wird abgelehnt", ex.Message.Contains("16, 32 or 64"), ex.Message); }
             var cliInt = CommandLineParser.Parse(new[] { "run", "a.script", "-i", "32" });
-            CheckNat("Befehlszeile: -i 32 / -i 16", cliInt.Error == null && cliInt.IntWidth == 32 && CommandLineParser.Parse(new[] { "run", "a.script", "-i", "16" }).Error != null
+            CheckNat("Befehlszeile: -i 32 / -i 16 / -i 8", cliInt.Error == null && cliInt.IntWidth == 32 && CommandLineParser.Parse(new[] { "run", "a.script", "-i", "16" }).IntWidth == 16
+                && CommandLineParser.Parse(new[] { "run", "a.script", "-i", "8" }).Error != null
                 && CommandLineParser.Parse(new[] { "run", "a.script" }).IntWidth == null);
             var intLinked = new Linker().CompileAndLink(new[] { "#intwidth 32\nvar x = 3000000000\nprint(x)" });
             CheckNat("#intwidth 32: Konstanten werden auf 32 Bit abgeschnitten, das C bekommt FIRE_INT32", intLinked.IntWidth == 32
                 && intLinked.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Int && c.AsInt() == -1294967296)
                 && fire.Native.CppGenerator.Generate(intLinked, TargetProfile.Host).Contains("#define FIRE_INT32 1"));
-            Value.SingleFloats = false; Value.Ints32 = false;
+            Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
 
             // `word` (SPEC 8.10): the target's machine word - 64 bits on the desktop, 32 on the esp32 (the VM follows the target of the build), `wordWidth` in a target
             {
@@ -27176,11 +27215,11 @@ else
                     print(box)
                     """;
                 string expectedCompact = vmOutput(compactSource);
-                Value.SingleFloats = false; Value.Ints32 = false;
+                Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                 string compactC = Path.Combine(workDir, "compact.c");
                 File.WriteAllText(compactC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { compactSource }, null, null, null, null, compactTarget), compactTarget)
                     + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
-                Value.SingleFloats = false; Value.Ints32 = false;
+                Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                 string compactBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{compactC}\" -I\"{workDir}\" -o \"{compactC}.bin\" -lm", workDir, out int compactExit);
                 string compactOut = compactExit == 0 ? RunProc($"{compactC}.bin", "", workDir, out _) : compactBuild;
                 CheckNat("8-Byte-Value (#intwidth 32, #floatwidth 32, 32-Bit-Zeiger): dasselbe wie die VM", compactExit == 0 && !compactBuild.Contains("warning") && compactOut.Replace("\r", "") == expectedCompact,
@@ -27249,11 +27288,11 @@ else
                 {
                     string source = perf ? "#performance\n" + string.Join("\n", slotSource.Split('\n').Where(l => !l.Contains("stale") && !l.Contains("gone"))) : slotSource;
                     string expected = vmOutput(source);
-                    Value.SingleFloats = false; Value.Ints32 = false;
+                    Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                     string slotC = Path.Combine(workDir, perf ? "compactslotsperf.c" : "compactslots.c");
                     File.WriteAllText(slotC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { source }, null, null, null, null, compactTarget), compactTarget)
                         + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
-                    Value.SingleFloats = false; Value.Ints32 = false;
+                    Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                     string slotBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{slotC}\" -I\"{workDir}\" -o \"{slotC}.bin\" -lm", workDir, out int slotExit);
                     string slotOut = slotExit == 0 ? RunProc($"{slotC}.bin", "", workDir, out _) : slotBuild;
                     CheckNat($"8-Byte-Value{(perf ? " (#performance)" : "")}: mehr als 65535 lebende Objekte/Arrays, Generationen ueber 4096, Zeiger in Arrays und Puffer (Kaesten)",
@@ -27387,7 +27426,7 @@ else
             CheckNat("dos16: das C nennt die Plattform dos16 und die Breiten", dosC.Contains("platform/dos16/fire_platform.h") && dosC.Contains("#define FIRE_INT32 1") && dosC.Contains("#define FIRE_WORD_BITS 16"));
             var dosVmLines = new List<string>();
             fire.Runtime.Session.Build(dosLinked, VmExecutionMode.Release, a => { dosVmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
-            Value.WordBits = 64; Value.Ints32 = false; Value.SingleFloats = false;
+            Value.WordBits = 64; Value.Ints32 = false; Value.Ints16 = false; Value.SingleFloats = false;
             string dosVm = string.Concat(dosVmLines.Select(l => l + "\n"));
             var watcom = new fire.Native.WatcomToolchain();
             string? dosbox = fire.Native.ToolchainSetup.FindProgram("dosbox-x");
@@ -27736,6 +27775,44 @@ else
                 var winRun2 = BuildAndRunDos(dosWindow2, "dos16win2");
                 CheckNat("dos16: windows - RGBA ueber den Farbwuerfel (gestreckt), ein Framebuffer ueber 320x200 in VESA 101h (640x480)",
                     winRun2.Ok && winRun2.Text == "rgba 180 0\nvesa 257 3 9\n", $"  DOS:\n{winRun2.Text}");
+
+                // #intwidth 16 on the 8086 (SPEC 8.2.2): the same as the VM and natively (overflow, constants, arrays, fields, loops)
+                const string dosInt16 = """
+                    #intwidth 16
+                    var a = 32767
+                    a = a + 1
+                    print(a)
+                    print(256 * 256)
+                    var m = -32767 - 1
+                    print(m / -1)
+                    print(m % -1)
+                    print(1 << 15)
+                    print(1 << 16)
+                    print(70000)
+                    var big = 1000
+                    print(big * big)
+                    int u[3]
+                    u[0] = 32767
+                    u[0]++
+                    print(u[0])
+                    class P { int x }
+                    var p = new P()
+                    p.x = 300 * 300
+                    print(p.x)
+                    var s = 0
+                    for (var i = 0; i < 1000; i++) { s += i }
+                    print(s)
+                    var buf = new byte[30000]
+                    print(buf.length)
+                    var smile = 128512.ToChar()
+                    print("x".Length + " " + smile + " " + (smile!int))
+                    print(5cm + 3mm)
+                    print(0.5 + 1)
+                    print(2147483647 + 0)
+                    """;
+                var int16Run = BuildAndRunDos(dosInt16, "dos16int16");
+                CheckNat("dos16: #intwidth 16 - dieselben Ergebnisse wie VM und gcc (Ueberlauf, Konstanten, Schieben, Arrays, Felder, Schleifen)",
+                    int16Run.Ok && int16Run.Text == "-32768\n0\n-32768\n0\n-32768\n0\n4464\n16960\n-32768\n24464\n-24788\n30000\n1   0\n53mm\n1.5\n-1\n", $"  DOS:\n{int16Run.Text}");
 
                 // the console of DOS (#import "console"): the screen through the BIOS (code page 437, attributes - read back from the video memory) and keys from the
                 // keyboard buffer of the BIOS (INT 16h AH=05h puts them there, as if typed)

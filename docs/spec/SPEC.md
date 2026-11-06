@@ -1722,13 +1722,19 @@ complement number for the whole program: every operation computes as before and 
 (`2147483647 + 1` is `-2147483648`, `65536 * 65536` is 0, `1 << 32` is 0, `-2147483648 / -1` is `-2147483648`), and so is
 every int constant (`3000000000` is `-1294967296`). The VM cuts every int it makes (`Value.Ints32`, process-wide while a program
 runs), the native backend stores an int in an `int32_t` (`FIRE_INT32`) - the same results in every engine. Explicit widths
-(`int[8]`, `int[64]`) keep their meaning. Overrides: `-i 32|64` on the command line (wins), the project setting `intWidth`, a
+(`int[8]`, `int[64]`) keep their meaning. Overrides: `-i 16|32|64` on the command line (wins), the project setting `intWidth`, a
 target's `intWidth` in `fire.native.json`; `#if int32` sees the width the command line or the target gives (the directive is read
 later than the symbols). Natively, `#intwidth 32` together with `#floatwidth 32` on a target with 32-bit pointers (a
 microcontroller) makes every value 8 bytes instead of 16 (`FIRE_COMPACT`): fields, array elements, variables and stack slots take
 half the memory - without a limit on the objects, arrays and buffers alive at once (a pointer into an array or a buffer then takes a
 counted box of 16 bytes while it lives), and with up to 65535 different units.
 (A target whose `word` has 64 bits - 8.10a - keeps 16-byte values.)
+
+`#intwidth 16` (the native width of the 8086/286, for `dos16`) cuts every int and every int constant to 16 bits the same way
+(`32767 + 1` is `-32768`, `256 * 256` is 0, `70000` is `4464`): the VM cuts every int it makes (`Value.Ints16`), natively an int
+is cut when it is made (`FIRE_INT16`; it is stored in 32 bits, the field that also holds a `char`). A length or an index is an
+int too: an array of more than 32767 elements is made with a computed size, and its `length` reads cut (a constant `40000` is
+already `-25536`). `#if int16` sees the width as for `int32`.
 
 ### 8.3 Pointers & `unsafe`
 

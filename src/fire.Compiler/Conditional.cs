@@ -26,6 +26,7 @@ namespace fire.Compiler
             set.Add(string.IsNullOrWhiteSpace(engine) ? DefaultEngine : engine);
             if ((floatWidth ?? target.FloatWidth) == 32) set.Add("float32");
             if ((intWidth ?? target.IntWidth) == 32) set.Add("int32");
+            if ((intWidth ?? target.IntWidth) == 16) set.Add("int16");
             set.Add("word" + target.WordWidth);   // (the machine word of the target: word16, word32 or word64, SPEC 8.10)
             if (defines != null) foreach (var d in defines) if (!string.IsNullOrWhiteSpace(d)) set.Add(d.Trim());
             return set;

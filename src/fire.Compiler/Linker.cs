@@ -237,11 +237,11 @@ namespace fire.Compiler
             return assemblyInfo;
         }
 
-        /// <summary>The value of `#intwidth n` (32 or 64).</summary>
+        /// <summary>The value of `#intwidth n` (16, 32 or 64).</summary>
         public static int ParseIntWidth(Value arg)
         {
-            if (arg.Kind == ValueKind.Int && arg.AsInt() is 32 or 64) return (int)arg.AsInt();
-            throw new Exception("The 'intwidth' directive expects 32 or 64.");
+            if (arg.Kind == ValueKind.Int && arg.AsInt() is 16 or 32 or 64) return (int)arg.AsInt();
+            throw new Exception("The 'intwidth' directive expects 16, 32 or 64.");
         }
 
         /// <summary>The value of `#floatwidth n` (32 or 64).</summary>
@@ -604,8 +604,8 @@ namespace fire.Compiler
             if (floatWidth != 32 && floatWidth != 64) throw new ArgumentOutOfRangeException(nameof(floatWidthOverride), "The float width must be 32 or 64.");
             if (floatWidth == 32) FloatNarrowing.Apply(compiled);
             int intWidth = intWidthOverride ?? ProcessIntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
-            if (intWidth != 32 && intWidth != 64) throw new ArgumentOutOfRangeException(nameof(intWidthOverride), "The int width must be 32 or 64.");
-            if (intWidth == 32) FloatNarrowing.ApplyInts32(compiled);
+            if (intWidth != 16 && intWidth != 32 && intWidth != 64) throw new ArgumentOutOfRangeException(nameof(intWidthOverride), "The int width must be 16, 32 or 64.");
+            if (intWidth < 64) FloatNarrowing.ApplyIntWidth(compiled, intWidth);
 
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
