@@ -507,6 +507,11 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    beim Warten (Mutex, Bedingung, `Sleep`, `join`); ein Timer-IRQ (DOS/BIOS: `INT 08h`/`1Ch`) setzt nur ein Flag, das den nächsten Safepoint früher abgeben lässt -
    im IRQ selbst wird nie gewechselt (DOS und die C-Bibliothek sind nicht reentrant). Läuft niemand, schläft die Plattform (`hlt`). Ein Mutex übergibt beim
    Freigeben an den ersten Wartenden (fair). Test: `posix` mit `FIRE_GREEN_THREADS` lässt die Thread-Fälle der Suite auf dem eigenen Scheduler laufen.
+   **Umgesetzt** (Branch `targets`): `std/fire_sched.h`, `sched/fire_ctx_ucontext.h` (Test am Rechner: alle 52 Thread-Fälle der Suite mit `FIRE_GREEN_THREADS`
+   wie die VM) und `sched/fire_ctx_x86_16.h` (dos16: `setjmp`/`longjmp` zwischen laufenden Aufgaben, ein paar Befehle Assembler für den Start auf einem neuen
+   Stack, `INT 1Ch` setzt das Flag; übersetzt mit `-zu` und ohne Stackprüfung, 16 KB Stack je Thread). Alle 40 Thread-Fälle ohne Imports laufen in DOSBox-X wie
+   die VM. Die Haken der Runtime: `FIRE_PLAT_YIELD` (ein Safepoint gibt an bereite Aufgaben ab) und `FIRE_PLAT_PREEMPTED`.
+   **Offen:** der Wechsel für 32-Bit-x86 (dos32, bios-x86, win32-legacy ohne Threads), Win16 (kooperativ über die Nachrichtenschleife), Boards ohne RTOS (ARM).
 3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
    keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
    paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).

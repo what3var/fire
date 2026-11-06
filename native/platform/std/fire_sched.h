@@ -51,7 +51,12 @@ static fire_task* fire_sched_cur = NULL;
 static fire_taskq fire_sched_ready;
 static fire_task* fire_sched_sleepers = NULL;
 static fire_task* fire_sched_dead = NULL;   /* a finished task whose stack is freed by the next switch (not on its own stack) */
+#ifndef FIRE_SCHED_WANT_DECLARED   /* (a context that has a timer of its own declares it: the interrupt sets it) */
 static volatile int fire_sched_wantSwitch = 0;
+#endif
+#ifndef FIRE_SCHED_ON_FIRST_THREAD
+#define FIRE_SCHED_ON_FIRST_THREAD() ((void)0)   /* (DOS: the timer interrupt is installed then) */
+#endif
 
 static inline void fire_taskq_push(fire_taskq* q, fire_task* t) { t->next = NULL; if (q->tail) q->tail->next = t; else q->head = t; q->tail = t; }
 static inline fire_task* fire_taskq_pop(fire_taskq* q) { fire_task* t = q->head; if (t) { q->head = t->next; if (!q->head) q->tail = NULL; t->next = NULL; } return t; }
@@ -203,6 +208,7 @@ static inline fire_thread* fire_thread_start(fire_thread_fn fn, void* arg, uint3
     fire_task* k = (fire_task*)calloc(1, sizeof(fire_task));
     size_t size = stackBytes ? stackBytes : FIRE_SCHED_STACK_BYTES;
     fire_sched_self();
+    FIRE_SCHED_ON_FIRST_THREAD();
     if (!t || !k || !(k->stack = malloc(size))) { fputs("fire runtime error: Out of memory (the stack of a thread).\n", stderr); exit(1); }
     k->fn = fn;
     k->arg = arg;

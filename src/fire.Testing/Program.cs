@@ -27003,8 +27003,8 @@ else
         CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
         // dos16 (ROADMAP 13.3): DOS in real mode - the profile, the generated C, and with Open Watcom and DOSBox-X on the machine: built and run like the VM
         {
-            CheckNat("dos16: Zielprofil (Plattform dos16, Toolchain watcom, int/float 32, word 16, keine Threads)", TargetProfile.TryGet("dos16", out var dos16)
-                && dos16.Native.Platform == "dos16" && dos16.Native.Toolchain == "watcom" && dos16.IntWidth == 32 && dos16.FloatWidth == 32 && dos16.WordWidth == 16 && !dos16.Native.SupportsThreads
+            CheckNat("dos16: Zielprofil (Plattform dos16, Toolchain watcom, int/float 32, word 16, Threads ueber den eigenen Scheduler)", TargetProfile.TryGet("dos16", out var dos16)
+                && dos16.Native.Platform == "dos16" && dos16.Native.Toolchain == "watcom" && dos16.IntWidth == 32 && dos16.FloatWidth == 32 && dos16.WordWidth == 16 && dos16.Native.SupportsThreads
                 && fire.Native.ToolchainDef.BuiltIn.ContainsKey("watcom") && !fire.Native.ToolchainDef.BuiltIn["watcom"].CompilesCpp);
             const string dosSource = """
                 class Animal { string name
@@ -27021,6 +27021,12 @@ else
                 try { throw new Exception("boom") } catch (e) { print("caught " + e.message) }
                 word w = 65535
                 print(w + 1)
+                var done = 0
+                fire { var t = 0
+                  for (var i = 0; i < 2000; i++) { t = t + i }
+                  sync global { done = t } }
+                while (done == 0) { sync globals }
+                print("thread " + done)
                 """;
             var dosLinked = new Linker().CompileAndLink(new[] { dosSource }, null, null, VmExecutionMode.Release, null, dos16);
             string dosC = fire.Native.CppGenerator.Generate(dosLinked, dos16);
@@ -27046,7 +27052,7 @@ else
                     string outFile = Directory.GetFiles(dosDir).FirstOrDefault(f => Path.GetFileName(f).Equals("OUT.TXT", StringComparison.OrdinalIgnoreCase)) ?? "";
                     dosOut = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
                 }
-                CheckNat("dos16: mit Open Watcom gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM (Objekte, Strings, Einheiten, Ausnahmen, word 16 Bit)",
+                CheckNat("dos16: mit Open Watcom gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM (Objekte, Strings, Einheiten, Ausnahmen, word 16 Bit, ein fire-Thread)",
                     built.Ok && dosOut == dosVm && dosVm.Length > 0, $"  VM:\n{dosVm}\n  DOS:\n{(built.Ok ? dosOut : built.Log)}");
             }
         }

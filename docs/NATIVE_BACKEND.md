@@ -665,6 +665,8 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
 DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer denen mit fire-Threads (beim Bauen abgelehnt), `#performance`
 (weicht gewollt ab) und zwei Benchmarks mit Arrays über 64 KB. Large Model: Zeiger 32 Bit, also mit `int`/`float` von 32 Bit (Standard des Ziels) ein 8-Byte-Wert; `word` 16 Bit. Keine fire-Threads. Die Runtime rechnet
 die Größe jedes Blocks breit (`blockSize`): ein Block über 64 KB ist ein Fehler, nie ein kleinerer Block (die Daten großer Arrays über `__huge` folgen).
+fire-Threads laufen dort als Aufgaben des eigenen Schedulers (`std/fire_sched.h`, ROADMAP 13.2b): gewechselt wird an den Safepoints (der GIL gibt ab, `FIRE_PLAT_YIELD`)
+und beim Warten; `INT 1Ch` setzt nur ein Flag (`FIRE_PLAT_PREEMPTED`), im Interrupt wird nie gewechselt. Der Wechsel des Kontexts je Architektur in `std/sched/`.
 Offen: `io`/`filesystem`, Konsole/Tastatur, Grafik, die Packages `dos`/`machine`, `#intwidth 16`.
 
 ### Zielkonfiguration (`fire.native.json`)

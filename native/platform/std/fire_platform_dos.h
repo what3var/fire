@@ -9,9 +9,6 @@
 #include <dos.h>
 #include "fire_platform_c.h"
 
-#ifdef FIRE_THREADS
-#error "fire platform dos: DOS has no threads - a program with `fire` cannot be built for this target"
-#endif
 
 /* A monotonic clock in milliseconds: the BIOS timer (18.2 ticks per second; clock() widens it), carried over midnight. */
 static inline int64_t fire_plat_nowMs(void) {
@@ -34,10 +31,27 @@ static inline int64_t fire_plat_unixMicros(void) {
     return anchor + ms;
 }
 
-static inline void fire_plat_sleepMs(int64_t ms) {
+static inline void fire_dos_delayMs(int64_t ms) {
     while (ms > 30000) { delay(30000); ms -= 30000; }
     if (ms > 0) delay((unsigned)ms);
 }
+
+#ifdef FIRE_THREADS
+/* DOS has one thread: fire threads are tasks of fire's own scheduler (std/fire_sched.h; ROADMAP 13.2b) - switched at the safepoints, a timer interrupt asks for it */
+#ifndef FIRE_SCHED_STACK_BYTES
+#define FIRE_SCHED_STACK_BYTES 16384
+#endif
+#define FIRE_SCHED_IDLE(ms) fire_dos_delayMs(ms)
+#if defined(_M_I86)
+#include "sched/fire_ctx_x86_16.h"
+#else
+#error "fire platform dos: the switch of the context for this processor is missing (std/sched/)"
+#endif
+#include "fire_sched.h"
+static inline void fire_plat_sleepMs(int64_t ms) { fire_sched_sleepMs(ms); }
+#else
+static inline void fire_plat_sleepMs(int64_t ms) { fire_dos_delayMs(ms); }
+#endif
 
 FIRE_NORETURN static inline void fire_plat_exit(int code) {
     exit(code);
