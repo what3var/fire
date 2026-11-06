@@ -3,8 +3,8 @@
  * build; this file is what its `__I2c...` functions do.
  *
  * This file is the one implementation of the i2c natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
- * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The buses come from the platform layer (FIRE_PLATFORM_I2C_C_HEADER: fire_i2c_*, see
- * platform/std/fire_i2c_c.h): /dev/i2c-N on a Linux board, the master driver of ESP-IDF on an ESP32. Where there is no hardware the list of buses is empty - but
+ * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The buses come with the package (fire_i2c_*; one file per platform, platformSources of i2c.fireproj, see
+ * fire_i2c_c.h): /dev/i2c-N on a Linux board, the master driver of ESP-IDF on an ESP32. Where there is no hardware the list of buses is empty - but
  * one bus is always there:
  *
  *   "sim"   a simulated bus with devices that the program (or a test) puts on it: each device has a register file of 256 bytes that behaves like a typical sensor
@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_I2C_C_HEADER
+#include "fire_i2c_c.h"
 
 /* (the codes are those of the platform layer: FIRE_I2C_E_*, the same numbers as I2c.I2cException.code) */
 

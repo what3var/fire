@@ -7,7 +7,7 @@
  *   - a native build: FIRE_DEVICES, a string with the drivers in the order they are registered: "serial" (the default: the serial ports of the platform),
  *     "loopback" (a simulated device that sends back what it gets, identifier `loopback:echo`), e.g. -DFIRE_DEVICES="\"loopback,serial\""  (target
  *     configuration: defines); FIRE_DEFAULT_DEVICE is the identifier of the default device (`Device.Default`); none by default. The serial ports come from the
- *     platform layer (FIRE_PLATFORM_DEV_C_HEADER: fire_dev_serialNames and FireDevSerialPort, see platform/std/fire_dev_c.h, 115200 baud 8N1); a board without
+ *     package (fire_dev_serialNames and FireDevSerialPort; one file per platform, platformSources of devices.fireproj, see fire_dev_c.h, 115200 baud 8N1); a board without
  *     one has none and so no `serial` devices.
  *   - the library for the VM: the driver "host" - the devices are those of the host (the device manager of the editor with its drivers, sharing and packet
  *     trace; the callbacks `dev_*` of `fire_host`), the identifiers are the host's. The receive buffer, the handles and the matching of `WaitFor` stay in this
@@ -22,7 +22,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_DEV_C_HEADER
+#include "fire_dev_c.h"
 
 #ifndef FIRE_DEVICES
 #ifdef FIRE_LIBRARY

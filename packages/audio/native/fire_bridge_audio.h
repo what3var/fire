@@ -2,8 +2,8 @@
  * takes. The fire side (Audio.Output, Audio.Sound, Audio.Sim - fire source) is the same in the VM and in a native build; this file is what its `__Audio...` functions do.
  *
  * This file is the one implementation of the audio natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
- * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come from the platform layer (FIRE_PLATFORM_AUDIO_C_HEADER: fire_audio_*, see
- * platform/std/fire_audio_c.h): PulseAudio or ALSA on Linux, winmm on Windows, PWM on a GPIO pin of an ESP32. Where there is no sound hardware the list of devices is
+ * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come with the package (fire_audio_*; one file per platform, platformSources of audio.fireproj, see
+ * fire_audio_c.h): PulseAudio or ALSA on Linux, winmm on Windows, PWM on a GPIO pin of an ESP32. Where there is no sound hardware the list of devices is
  * empty - but one device is always there:
  *
  *   "sim"   a simulated device that records what is played to it (the bytes, the rate and the channels of the last opened output): for tests, and to try a program on
@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_AUDIO_C_HEADER
+#include "fire_audio_c.h"
 
 enum { FIRE_AUDIOB_NONE = 0, FIRE_AUDIOB_INVALID_ARGUMENT = 1, FIRE_AUDIOB_INVALID_HANDLE = 2, FIRE_AUDIOB_NOT_FOUND = 3, FIRE_AUDIOB_BUSY = 4,
        FIRE_AUDIOB_PERMISSION = 5, FIRE_AUDIOB_UNSUPPORTED = 6, FIRE_AUDIOB_OTHER = 7 };

@@ -1,7 +1,7 @@
 # Sound (`#import "audio"`, the package `fire-audio`)
 
 Sound output and input: play samples, generate tones, play WAV files, record from a microphone or a line in. Like every bridge it is a **package** (`ember`, [Packages and ember](../packages/README.md)): a prelude in fire plus C in `packages/audio/native/fire_bridge_audio.h` over the platform layer in C `fire_audio_*`
-(`native/platform/std/fire_audio_*.h`), so the same code runs in the virtual machine (through the package ABI, [Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)) and in a native build. It needs `time`.
+(`packages/audio/native/fire_audio_*.h`), so the same code runs in the virtual machine (through the package ABI, [Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)) and in a native build. It needs `time`.
 
 ```
 program        #import "audio"        Audio.Output, Audio.Input, Audio.Sound, Audio.Board, Audio.Sim   (fire, package fire-audio)
@@ -130,7 +130,7 @@ it sound, which an `Audio.Input("sim", ...)` then reads (in the channels of that
 
 ## How the platform layers work
 
-`fire_audio_*` (`native/platform/std/fire_audio_c.h` describes the interface; it compiles as C++ as well): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close` -
+`fire_audio_*` (`packages/audio/native/fire_audio_c.h` describes the interface; it compiles as C++ as well): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close` -
 and for inputs `inputDevices`, `openInput`, `read` (takes what was recorded, never blocks), `available`, `closeInput`. The package `circuits` uses the same layer for its fast way to a device. The bridge keeps the handle table, applies
 the volume and generates the waves. macOS: the ring and the buffers on their way are `queued`; the browser: the planned time not played yet; SDL2 (`FIRE_AUDIO_SDL`): `SDL_QueueAudio`, kept to half a second ahead, `SDL_GetQueuedAudioSize` for `queued`. Linux: ALSA runs non-blocking (`snd_pcm_writei`, `-EAGAIN` means full, an underrun is recovered); PulseAudio's simple API only blocks, so each output has a thread that plays a ring buffer
 (all calls into PulseAudio are made by that thread, with a 200 ms buffer on the server and playback starting at once). Windows: blocks of 50 ms handed to `waveOutWrite`, free again when the driver sets the DONE flag.

@@ -41,7 +41,7 @@ namespace fire.Package.Manager
             var keys = platformKeys.ToList();
             // the platform layers of the imports this one uses (`native.uses`): before its own sources, each file once, named as the other package names it
             var used = new List<(string Name, string Text)>();
-            foreach (var other in UsedImports())
+            foreach (var other in UsedImports(keys))
                 foreach (var src in other.Import.Native!.PlatformLayerFor(keys))
                     if (!used.Any(u => u.Name == other.Name + "/" + src)) used.Add((other.Name + "/" + src, File.ReadAllText(other.PathOf(src))));
             var sources = Import.Native.SourcesFor(keys);
@@ -59,14 +59,14 @@ namespace fire.Package.Manager
             return used.Concat(texts).Select(t => (t.Name, StripLocalIncludes(StripPragmaOnce(t.Text), names))).ToList();
         }
 
-        /// <summary>The installed imports named by `native.uses` (an import that is not installed is a <see cref="PackageException"/>).</summary>
-        public IEnumerable<InstalledImport> UsedImports()
+        /// <summary>The installed imports named by `native.uses` for a build with these keys (an import that is not installed is a <see cref="PackageException"/>).</summary>
+        public IEnumerable<InstalledImport> UsedImports(IEnumerable<string> platformKeys)
         {
             if (Import.Native == null || Import.Native.Uses.Count == 0) yield break;
             var installed = PackageStore.Default.Installed().SelectMany(p => p.Manifest.Imports.Select(i => new InstalledImport(p, i))).ToList();
-            foreach (var name in Import.Native.Uses)
-                yield return installed.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase) && i.Import.Native != null)
-                    ?? throw new PackageException($"The natives of '{Import.Name}' use the platform layer of '{name}', which is not installed.");
+            foreach (var use in Import.Native.Uses.Where(u => u.AppliesTo(platformKeys)))
+                yield return installed.FirstOrDefault(i => string.Equals(i.Name, use.Import, StringComparison.OrdinalIgnoreCase) && i.Import.Native != null)
+                    ?? throw new PackageException($"The natives of '{Import.Name}' use the platform layer of '{use.Import}', which is not installed.");
         }
 
         /// <summary>The sources go into one file in the order of the package (what a file includes comes before it): an `#include "x.hpp"` of another source of the package is

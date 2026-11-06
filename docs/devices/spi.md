@@ -1,7 +1,7 @@
 # SPI (`#import "spi"`)
 
 
-The SPI bus as a controller. The natives are C (`packages/spi/native/fire_bridge_spi.h` over `fire_spi_*` of `fire_spi.h`, see `native/platform/std/fire_spi_c.h`; the implementations are `native/platform/std/fire_spi_*.h`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
+The SPI bus as a controller. The natives are C (`packages/spi/native/fire_bridge_spi.h` over `fire_spi_*` of the platform files of the package, see `packages/spi/native/fire_spi_c.h`; the implementations are `packages/spi/native/fire_spi_*.h`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
 `FIRE_NO_SPI` switches it off), the **SPI master driver of ESP-IDF** (`driver/spi_master.h`; add the component `esp_driver_spi` or `driver`) on an ESP32, and a stub elsewhere (no devices). Every platform has the **simulated device** `"sim"`.
 A *device* is a bus with one chip select (that is how the kernel sees it and what a chip on the bus needs).
 

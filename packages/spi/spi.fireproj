@@ -115,6 +115,40 @@
       }
     ],
     "reset": "fire_spi_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_spi_c.h",
+        "native/fire_spi_none.h"
+      ],
+      "esp32": [
+        "native/fire_spi_c.h",
+        "native/fire_spi_esp32.h"
+      ],
+      "freertos": [
+        "native/fire_spi_c.h",
+        "native/fire_spi_none.h"
+      ],
+      "posix": [
+        "native/fire_spi_c.h",
+        "native/fire_spi_desktop.h",
+        "native/fire_spi_linux.h",
+        "native/fire_spi_none.h"
+      ],
+      "wasm": [
+        "native/fire_spi_c.h",
+        "native/fire_spi_none.h"
+      ],
+      "windows": [
+        "native/fire_spi_c.h",
+        "native/fire_spi_desktop.h",
+        "native/fire_spi_linux.h",
+        "native/fire_spi_none.h"
+      ],
+      "default": [
+        "native/fire_spi_c.h",
+        "native/fire_spi_none.h"
+      ]
+    }
   }
 }

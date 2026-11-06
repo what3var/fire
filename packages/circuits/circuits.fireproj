@@ -437,6 +437,16 @@
       }
     ],
     "reset": "fire_cir_reset",
-    "language": "c"
+    "language": "c",
+    "uses": [
+      {
+        "import": "audio",
+        "platforms": [
+          "posix",
+          "windows",
+          "vm"
+        ]
+      }
+    ]
   }
 }

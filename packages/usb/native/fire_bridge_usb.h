@@ -3,8 +3,8 @@
  * VM and in a native build; this file is what its `__Usb...` functions do.
  *
  * This file is the one implementation of the usb natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
- * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come from the platform layer (FIRE_PLATFORM_USB_C_HEADER: fire_usb_*, see
- * platform/std/fire_usb_c.h): libusb-1.0 on Linux and macOS, WinUSB on Windows. One device is always there:
+ * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come with the package (fire_usb_*; one file per platform, platformSources of usb.fireproj, see
+ * fire_usb_c.h): libusb-1.0 on Linux and macOS, WinUSB on Windows. One device is always there:
  *
  *   "sim"   a simulated device (vendor 0x1209, product 0x0001): interface 0 with a bulk OUT endpoint 0x01, a bulk IN endpoint 0x81 (64-byte packets) and an
  *           interrupt IN endpoint 0x82. What is written to 0x01 comes back on 0x81 (a loopback; reading with nothing queued times out at once); 0x82 answers a
@@ -21,7 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_USB_C_HEADER
+#include "fire_usb_c.h"
 
 static int64_t fire_usbb_error(int code, const char* message) {
     g_ioError.code = code;

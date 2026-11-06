@@ -1,7 +1,7 @@
 # TLS (`#import "tls"`)
 
 
-TLS over a TCP connection of the net package. The natives are C (`packages/tls/native/fire_bridge_tls.h` over `fire_tls_*` of `fire_tls.h`, one backend per platform; see `native/platform/std/fire_tls_c.h`); the classes are in `namespace Tls`. The package needs `net` (`io`, `time`).
+TLS over a TCP connection of the net package. The natives are C (`packages/tls/native/fire_bridge_tls.h` over `fire_tls_*` of the platform files of the package, one backend per platform; see `packages/tls/native/fire_tls_c.h`); the classes are in `namespace Tls`. The package needs `net` (`io`, `time`).
 `http` uses it for `https://` URLs and for `Http.Server.UseTls`.
 
 ```

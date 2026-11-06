@@ -3,8 +3,8 @@
  * native build; this file is what its `__Spi...` functions do.
  *
  * This file is the one implementation of the spi natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
- * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come from the platform layer (FIRE_PLATFORM_SPI_C_HEADER: fire_spi_*, see
- * platform/std/fire_spi_c.h): /dev/spidevB.C on a Linux board, the SPI master driver of ESP-IDF on an ESP32. Where there is no hardware the list of devices is
+ * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come with the package (fire_spi_*; one file per platform, platformSources of spi.fireproj, see
+ * fire_spi_c.h): /dev/spidevB.C on a Linux board, the SPI master driver of ESP-IDF on an ESP32. Where there is no hardware the list of devices is
  * empty - but one device is always there:
  *
  *   "sim"   a simulated device. By default it is a loopback (MISO is tied to MOSI: what is sent comes back), which is what the usual wiring test does. `Reply`
@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_SPI_C_HEADER
+#include "fire_spi_c.h"
 
 /* (the codes are those of the platform layer: FIRE_SPI_E_*, the same numbers as Spi.SpiException.code) */
 

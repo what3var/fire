@@ -532,10 +532,10 @@ was ein Skript offen lässt, wird am Programmende geschlossen (statisches Destru
 
 **`devices`** (`fire_bridge_devices.h`, C): Geräteverwaltung (Handles, Kennungen `treiber:port`, Standardgerät), Empfangspuffer mit Paketgrenzen und `WaitFor`/`WaitForString`. Welche Geräte
 es gibt, bestimmen **Treiber**: `FIRE_DEVICES` (Komma-Liste in der Reihenfolge der Anmeldung, Standard `"serial"`; `"loopback"` ist ein simuliertes Gerät `loopback:echo`, das nach 5 ms zurücksendet,
-was es bekommt) und `FIRE_DEFAULT_DEVICE` (Kennung des Standardgeräts, `Device.Default`) - beides als `defines` im Ziel. Die seriellen Ports liefert das Plattformpaket
-(`platform/<name>/fire_dev.h`, vom Generator als `FIRE_PLATFORM_DEV_C_HEADER` eingebunden, Schnittstelle in `std/fire_dev_c.h`): `fire_dev_serialNames()` und `FireDevSerialPort` (115200 Baud 8N1, `fire_dev_serialOpen/Close/Read/Write`, Lesen ohne
-Blockieren). Mitgeliefert: `std/fire_dev_posix.h` (termios; Linux `/dev/ttyS*|ttyUSB*|ttyACM*|ttyAMA*`, macOS `/dev/tty.*|cu.*`), `std/fire_dev_win32.h` (Win32-Kommunikations-API, Ports aus der Registry),
-`std/fire_dev_esp32.h` (UART-Treiber von ESP-IDF; `FIRE_SERIAL_PORTS`, `FIRE_UART<n>_TX/RX`) und `std/fire_dev_none.h` (keine Ports). Die Windows- und ESP32-Teile sind noch nicht auf echter Hardware probiert.
+was es bekommt) und `FIRE_DEFAULT_DEVICE` (Kennung des Standardgeräts, `Device.Default`) - beides als `defines` im Ziel. Die seriellen Ports bringt das Paket selbst mit
+(`platformSources` von `devices.fireproj`, je Plattform eine Datei in `packages/devices/native/`, Schnittstelle in `fire_dev_c.h`): `fire_dev_serialNames()` und `FireDevSerialPort` (115200 Baud 8N1, `fire_dev_serialOpen/Close/Read/Write`, Lesen ohne
+Blockieren). Mitgeliefert: `fire_dev_posix.h` (termios; Linux `/dev/ttyS*|ttyUSB*|ttyACM*|ttyAMA*`, macOS `/dev/tty.*|cu.*`), `fire_dev_win32.h` (Win32-Kommunikations-API, Ports aus der Registry),
+`fire_dev_esp32.h` (UART-Treiber von ESP-IDF; `FIRE_SERIAL_PORTS`, `FIRE_UART<n>_TX/RX`) und `fire_dev_none.h` (keine Ports). Die Windows- und ESP32-Teile sind noch nicht auf echter Hardware probiert.
 **Es gibt keine Hintergrund-Threads**: Empfangenes wird eingesammelt, wenn das Programm fragt (`HasData`, `Read...`, die Warte-Funktionen, `Connect`) - bis dahin hält es der Puffer des Betriebssystems bzw. des
 UART-Treibers. Die Gerätliste entsteht beim ersten Zugriff auf eine Geräte-Funktion und bei jedem `Refresh` (in einem VM-Programm ohne Editor ist sie vor dem ersten `Refresh` leer). Die Warte-Funktionen
 benutzen `#timeout` (`SetTimeout` setzt `g_defaultTimeoutTicks`), warten mit freigegebenem GIL und enden bei `terminate`.
@@ -658,8 +658,10 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
   gefunden auf dem PATH, unter `%WATCOM%`, `Toolchain/watcom` oder `/opt/watcom`; es setzt `WATCOM` und `INCLUDE` für seine Programme.
 * **Ziel und Plattform**: das Zielprofil (`TargetProfile`; die alten PCs in `TargetProfile.Pc.cs`, eine Familie je Datei) nennt Plattformpaket, Toolchain,
   Breiten und die Schalter des Ziels für den Compiler (`dos16`: `-bdos -mcmodel=h -march=i86 -mstack-size=...`). Das Plattformpaket ist ein Ordner aus kleinen
-  Auswahl-Headern je Teil (`fire_platform.h`, `fire_net.h`, ...), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,
-  `fire_env_dos.h`, `fire_*_none.h`); eine neue Umsetzung eines Teils ist eine neue Datei in `std/`, ein neues Ziel ein neuer Ordner.
+  Auswahl-Headern je Teil (`fire_platform.h`, `fire_display.h`), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,
+  `fire_env_dos.h`, `fire_*_none.h`); eine neue Umsetzung eines Teils ist eine neue Datei in `std/`, ein neues Ziel ein neuer Ordner. Die übrigen Teile (Dateisystem, Netz, TLS,
+  Geräte, GPIO/I2C/SPI, USB, WLAN, Ton, Konsole, Hardware) bringen die Pakete selbst mit (`platformSources`, ROADMAP 13.3b); ein Paket, das die Schicht eines
+  anderen braucht, nennt es in `native.uses` (graphics -> io, tls -> net, circuits -> audio).
 
 **`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in
 DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer `#performance` (weicht gewollt ab); dazu Dateien (`io`/`filesystem`

@@ -151,6 +151,37 @@
       }
     ],
     "reset": "fire_net_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_net_c.h",
+        "native/fire_net_none.h"
+      ],
+      "esp32": [
+        "native/fire_net_esp32.h",
+        "native/fire_net_c.h",
+        "native/fire_net_sockets.h"
+      ],
+      "freertos": [
+        "native/fire_net_c.h",
+        "native/fire_net_none.h"
+      ],
+      "posix": [
+        "native/fire_net_c.h",
+        "native/fire_net_sockets.h"
+      ],
+      "wasm": [
+        "native/fire_net_c.h",
+        "native/fire_net_none.h"
+      ],
+      "windows": [
+        "native/fire_net_c.h",
+        "native/fire_net_sockets.h"
+      ],
+      "default": [
+        "native/fire_net_c.h",
+        "native/fire_net_none.h"
+      ]
+    }
   }
 }

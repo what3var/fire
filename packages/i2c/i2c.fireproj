@@ -110,6 +110,40 @@
       }
     ],
     "reset": "fire_i2c_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_i2c_c.h",
+        "native/fire_i2c_none.h"
+      ],
+      "esp32": [
+        "native/fire_i2c_c.h",
+        "native/fire_i2c_esp32.h"
+      ],
+      "freertos": [
+        "native/fire_i2c_c.h",
+        "native/fire_i2c_none.h"
+      ],
+      "posix": [
+        "native/fire_i2c_c.h",
+        "native/fire_i2c_desktop.h",
+        "native/fire_i2c_linux.h",
+        "native/fire_i2c_none.h"
+      ],
+      "wasm": [
+        "native/fire_i2c_c.h",
+        "native/fire_i2c_none.h"
+      ],
+      "windows": [
+        "native/fire_i2c_c.h",
+        "native/fire_i2c_desktop.h",
+        "native/fire_i2c_linux.h",
+        "native/fire_i2c_none.h"
+      ],
+      "default": [
+        "native/fire_i2c_c.h",
+        "native/fire_i2c_none.h"
+      ]
+    }
   }
 }

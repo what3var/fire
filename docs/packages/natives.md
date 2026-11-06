@@ -286,6 +286,8 @@ word buffers as `FIRE_WORDS` and words as `FIRE_WORD`).
   ```
 
   The shared part belongs to the package whose core it is; the others reference it, so it is updated in one place. The used package must be installed.
+  An entry can name the platforms it is for (the keys of `platformSources`, `vm` for the library of the virtual machine) - circuits plays through the sound of
+  audio only where it has some: `"uses": [ { "import": "audio", "platforms": [ "posix", "windows", "vm" ] } ]`.
 * **The virtual machine** runs on the machine it is on: the library is built for it (Windows: `windows`, Linux and macOS: `posix`) with its `platformSources` -
   unless the package has the key `vm`: then the library gets only that layer (a package whose code reaches hardware or a console the VM does not have says
   "none" there, and the program sees the same behaviour as natively without that hardware).
@@ -324,8 +326,8 @@ In the VM your functions run in a shared library, so values are **copied** at th
   console goes (`std_read`/`std_write`/`std_flush`, the `IoStdio` of the host, e.g. the output window of the editor). In C++ they are `libraryHost()->io_allow(...)` etc.; the io package is the example
   (`fire_io_allowed()` and the console functions in `packages/io/native/fire_bridge_io.h`). When a program ends the VM calls `fire_pkg_reset` - the function named by `native.reset` in the manifest (`"reset": "fire_io_reset"`): forget what the program
   left behind (open streams), the library stays loaded for the next program;
-* **the network**: `net_allow(host, port, access, ...)` asks whether a script may connect to, listen on or resolve a host (`NetPolicy` of the host); the net package is the example (`fire_net_allowed()` in `packages/net/native/fire_bridge_net.h`, its sockets come from
-  `FIRE_PLATFORM_NET_C_HEADER`: `fire_net_*`, `native/platform/std/fire_net_sockets.h`);
+* **the network**: `net_allow(host, port, access, ...)` asks whether a script may connect to, listen on or resolve a host (`NetPolicy` of the host); the net package is the example (`fire_net_allowed()` in `packages/net/native/fire_bridge_net.h`, its sockets come with the package:
+  `fire_net_*`, `packages/net/native/fire_net_sockets.h`);
 * **windows**: `win_attach(framebuffer, present, ctx)` lets a package draw into the windows that show a framebuffer itself: the host calls `present` (a `fire_present_fn`) on the window's
   thread with the native handles of the window (`fire_native_window`: Win32, X11, Wayland, a CAMetalLayer) and the framebuffer's pixels to lay over its picture, instead of showing the
   framebuffer; `win_detach` ends it. The scene3d package is the example (DirectDrawing, `s3d_gpu_present` in `packages/scene3d/native/s3d_gpu_vk.h`);

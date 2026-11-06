@@ -3,7 +3,7 @@
  *
  * This file is the one implementation of the io natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
  * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The file system comes with the package, one file per platform (fire_fs_*, platformSources of io.fireproj;
- * see platform/std/fire_fs_c.h). Every function reports an error the same way: a result of -1/false/undefined and the error code and message of this thread
+ * see fire_fs_c.h). Every function reports an error the same way: a result of -1/false/undefined and the error code and message of this thread
  * (`__IOLastError`, `__IOLastErrorMessage`), from which the fire code throws a typed exception.
  *
  * What the host decides (the policy for paths and where the console goes) differs by build:

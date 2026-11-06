@@ -164,8 +164,9 @@ namespace fire.Package.Manager
         public string? Reset { get; set; }
         /// <summary>Other imports whose platform layer this one builds on (ROADMAP 13.3b): their `platformSources` for the target - the code of the platform a package owns,
         /// such as the file system of `io` - come before this import's own sources, once (`"uses": [ "io" ]` in graphics: its fonts are read through the file system of io).
-        /// The other import has to be installed; its `sources` (its bridge, its natives) are not taken.</summary>
-        public List<string> Uses { get; set; } = new();
+        /// The other import has to be installed; its `sources` (its bridge, its natives) are not taken. An entry can name the platforms it is for
+        /// (`{ "import": "audio", "platforms": [ "posix", "windows", "vm" ] }`, keys as in `platformSources`): elsewhere the layer is not taken.</summary>
+        public List<NativeUse> Uses { get; set; } = new();
     }
 
     public static class PackageNativeExtensions
@@ -180,14 +181,6 @@ namespace fire.Package.Manager
         /// The key <see cref="VmKey"/> (the library for the virtual machine, <c>PackageLibrary.HostPlatformKeys</c> names it first) is the only one when the package has it - the
         /// VM then gets that layer, not the one of the machine it runs on (a package whose platform layer reaches hardware or a console the VM does not have says "none" there);
         /// when no key names the target, <see cref="DefaultKey"/> does (the layer of a platform the package knows nothing special about).
-        /// <summary>The platform layer of an import for a build: only its <see cref="PackageNative.PlatformSources"/> for the keys (with the rules of <see cref="SourcesFor"/>) -
-        /// what an import that <see cref="PackageNative.Uses"/> it gets.</summary>
-        public static IReadOnlyList<string> PlatformLayerFor(this PackageNative native, IEnumerable<string> platformKeys)
-        {
-            var layerOnly = new PackageNative { PlatformSources = native.PlatformSources };
-            return layerOnly.SourcesFor(platformKeys);
-        }
-
         public static IReadOnlyList<string> SourcesFor(this PackageNative native, IEnumerable<string> platformKeys)
         {
             var result = new List<(string File, int Order)>();
@@ -203,6 +196,15 @@ namespace fire.Package.Manager
             foreach (var f in native.Sources) if (seen.Add(f)) result.Add((f, native.Sources.OrderOf(f) ?? 0));
             return NativeSourceOrder.Sort(result);
         }
+
+        /// <summary>The platform layer of an import for a build: only its <see cref="PackageNative.PlatformSources"/> for the keys (with the rules of <see cref="SourcesFor"/>) -
+        /// what an import that <see cref="PackageNative.Uses"/> it gets.</summary>
+        public static IReadOnlyList<string> PlatformLayerFor(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            var layerOnly = new PackageNative { PlatformSources = native.PlatformSources };
+            return layerOnly.SourcesFor(platformKeys);
+        }
+
 
         /// <summary>The system libraries to link in a build for a target (see <see cref="PackageNative.LinkLibraries"/>).</summary>
         public static IReadOnlyList<string> LinkLibrariesFor(this PackageNative native, IEnumerable<string> platformKeys)

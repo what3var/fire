@@ -3,8 +3,8 @@
  * functions do.
  *
  * This file is the one implementation of the net natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
- * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The sockets come from the platform layer (FIRE_PLATFORM_NET_C_HEADER: fire_net_*, see
- * platform/std/fire_net_c.h). A socket is an integer handle in a table of this bridge (like the streams of io); handles are not used again. Every function
+ * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The sockets come with the package (fire_net_*; one file per platform, platformSources of net.fireproj, see
+ * fire_net_c.h). A socket is an integer handle in a table of this bridge (like the streams of io); handles are not used again. Every function
  * reports an error the same way: a result of -1/false/undefined and the code and message of this thread (`__NetLastError`, `__NetLastErrorMessage`, the slot of
  * the io bridge), from which the fire code throws a typed exception.
  *
@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_NET_C_HEADER
+#include "fire_net_c.h"
 
 enum { FIRE_NET_A_CONNECT = 1, FIRE_NET_A_LISTEN = 2, FIRE_NET_A_RESOLVE = 4 };
 enum { FIRE_NET_K_TCP = 1, FIRE_NET_K_LISTENER = 2, FIRE_NET_K_UDP = 3, FIRE_NET_K_CONNECTING = 4 };

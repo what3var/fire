@@ -1,7 +1,7 @@
 # I2C (`#import "i2c"`)
 
 
-The I2C bus as a controller. The natives are C (`packages/i2c/native/fire_bridge_i2c.h` over `fire_i2c_*` of `fire_i2c.h`, see `native/platform/std/fire_i2c_c.h`; the implementations are `native/platform/std/fire_i2c_*.h`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
+The I2C bus as a controller. The natives are C (`packages/i2c/native/fire_bridge_i2c.h` over `fire_i2c_*` of the platform files of the package, see `packages/i2c/native/fire_i2c_c.h`; the implementations are `packages/i2c/native/fire_i2c_*.h`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
 there, `FIRE_NO_I2C` switches it off), the **master driver of ESP-IDF** (`driver/i2c_master.h`, IDF 5.2+; add the component `esp_driver_i2c` or `driver`) on an ESP32, and a stub elsewhere (no buses). Every platform has the **simulated bus** `"sim"`.
 
 ```

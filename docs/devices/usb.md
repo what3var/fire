@@ -3,7 +3,7 @@
 The package `fire-usb` lets a program talk to USB devices directly - without a kernel driver of its own: control transfers on
 endpoint 0, bulk and interrupt transfers, and the bulk endpoints of an interface as an `IO.Stream`. It is a standard package
 (`packages/usb`); its natives are one C file (`native/fire_bridge_usb.h`, over the platform layer `fire_usb_*` in
-`native/platform/std/fire_usb_*.h`) that the VM builds into a library and the native
+`packages/usb/native/fire_usb_*.h`) that the VM builds into a library and the native
 backend compiles into the program.
 
 | Platform | Backend | Notes |

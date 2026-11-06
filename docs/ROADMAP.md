@@ -585,7 +585,12 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    **Stufe 2 (Entscheidung: Referenzen):** ein Teil, den mehrere Packages brauchen, gehört dem Package, dessen Kern er ist; ein anderes nimmt ihn über
    `"native": { "uses": [ "io" ] }` mit (dessen `platformSources` für das Ziel kommen vor die eigenen; das benutzte Package muss installiert sein).
    Umgesetzt: `fs` -> io (`packages/io/native/fire_fs_{c,posix,win32,dos,board,none}.h`; die Boards: `fire_fs_board.h` mit posix oder - `FIRE_NO_FS` - none),
-   graphics benutzt io. Noch offen: `audio` -> audio (circuits benutzt), `dev` -> devices, `display` -> windows (ui, scene3d), `net`/`tls`, `gpio`, `i2c`, `spi`, `usb`, `wifi`.
+   graphics benutzt io; `audio` -> audio (circuits benutzt es nur auf posix, windows und in der VM: ein Eintrag von `uses` kann seine Plattformen nennen,
+   `{ "import": "audio", "platforms": [ ... ] }`), `net`, `tls` (benutzt net), `dev` -> devices, `gpio`, `i2c`, `spi`, `usb`, `wifi`. Eine Auswahl unter
+   mehreren Umsetzungen auf einer Plattform (`fire_<teil>_desktop.h`: PulseAudio/ALSA/winmm/..., OpenSSL/SChannel, ...) setzt jetzt `FIRE_<TEIL>_USE_<X>`
+   statt einzubinden - alle Dateien sind im Build, aktiv ist die gewählte. Achtung beim Schreiben: die gemeinsame Datei (`fire_<teil>_c.h`) kommt vor der
+   Plattformdatei - was sie prüft, muss vorher feststehen (eine Board-Datei davor, so `fire_net_esp32.h` mit lwIP).
+   Noch in `native/platform`: `display` (windows, ui, scene3d - mit SDL und der eigenen Anzeige je System der größte Teil) und `fire_cp437.h`.
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste

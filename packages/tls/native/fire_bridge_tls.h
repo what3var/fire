@@ -5,7 +5,7 @@
  * This file is the one implementation of the tls natives, in C99 ("language": "c"). A TLS session is an integer handle in a table of this bridge; the socket is
  * the operating system's (the number that `__NetNativeHandle` of the net package gives): the session only reads and writes it, the net package keeps owning it
  * (and closes it). The library for the VM is a different library from the one of the net package, so the two share nothing but that number. The TLS
- * implementation comes from the platform layer (FIRE_PLATFORM_TLS_C_HEADER: fire_tls_*, OpenSSL, SChannel or mbedTLS, see platform/std/fire_tls_c.h).
+ * implementation comes with the package (fire_tls_*; one file per platform, platformSources of tls.fireproj, OpenSSL, SChannel or mbedTLS, see fire_tls_c.h).
  * Errors are reported like those of the net bridge: -1/false/undefined and the code and message of this thread (`__TlsLastError`, `__TlsLastErrorMessage`, the
  * slot of the io bridge, read right after the call); the codes are those of net, plus 14 (a TLS error: handshake failed, protocol error) and 15 (the
  * certificate was not accepted). */
@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_TLS_C_HEADER
+#include "fire_tls_c.h"
 
 static int64_t fire_tlsb_fail(int code, const char* message) {
     g_ioError.code = code;

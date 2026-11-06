@@ -39,10 +39,10 @@
 #endif
 
 /* A stream can play to a sound device and record from one in the kernel itself (StreamPlay / StreamRecord): on the hosted platforms, with the devices of the
- * platform layer in C (fire_audio_*, as the package "audio"). Elsewhere only the simulated device "sim" is there. */
-#if !defined(CIR_NO_AUDIO) && !defined(__EMSCRIPTEN__) && defined(FIRE_PLATFORM_AUDIO_C_HEADER) && (defined(FIRE_LIBRARY) || defined(FIRE_HAL_POSIX) || defined(FIRE_HAL_WINDOWS))
+ * audio package (fire_audio_*: "uses" of circuits.fireproj, only on these platforms). Elsewhere only the simulated device "sim" is there. */
+#if !defined(CIR_NO_AUDIO) && !defined(__EMSCRIPTEN__) && (defined(FIRE_LIBRARY) || defined(FIRE_HAL_POSIX) || defined(FIRE_HAL_WINDOWS))
 #define CIR_AUDIO 1
-#include FIRE_PLATFORM_AUDIO_C_HEADER
+#include "fire_audio_c.h"   /* (the platforms of "uses" in circuits.fireproj) */
 #endif
 
 /* the message of the last error is per thread, where the compiler has thread-local storage (TinyCC has none) */

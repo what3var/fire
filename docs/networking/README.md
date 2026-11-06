@@ -59,7 +59,7 @@ print(Net.Dns.First("localhost"))                         // 127.0.0.1
 ```
 program        #import "net"      TcpClient, TcpListener, UdpSocket, Dns, NetAddress   (fire, package fire-net)
 bridge         fire_bridge_net.h     handles, errors, timeouts, policy                  (C99, shared by VM and native; TinyCC is enough)
-platform       fire_net_*            connect/listen/accept/send/recv/poll/resolve       (fire_net.h: posix BSD sockets, windows Winsock, esp32 lwIP; freertos/wasm none)
+platform       fire_net_*            connect/listen/accept/send/recv/poll/resolve       (packages/net/native: posix BSD sockets, windows Winsock, esp32 lwIP; freertos/wasm none)
 ```
 
 * **Handles, not objects:** a socket is an integer handle in a table of the bridge, like the streams of `io`. The fire classes own the handle (`Close()`, destructor closes it).

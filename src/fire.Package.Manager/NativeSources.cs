@@ -104,6 +104,60 @@ namespace fire.Package.Manager
         }
     }
 
+    /// <summary>An entry of `native.uses`: an import whose platform layer a package builds on - everywhere (`"io"`), or only on some platforms
+    /// (`{ "import": "audio", "platforms": [ "posix", "windows", "vm" ] }`, the keys of `platformSources`).</summary>
+    [JsonConverter(typeof(NativeUseConverter))]
+    public sealed class NativeUse
+    {
+        public string Import { get; set; } = "";
+        /// <summary>The keys the entry is for; empty: every build.</summary>
+        public List<string> Platforms { get; set; } = new();
+
+        public NativeUse() { }
+        public NativeUse(string import) { Import = import; }
+
+        /// <summary>Is the entry for a build with these keys (the platform package, the target, `vm` for the library of the VM)?</summary>
+        public bool AppliesTo(IEnumerable<string> platformKeys) =>
+            Platforms.Count == 0 || platformKeys.Any(k => Platforms.Any(p => string.Equals(p, k, StringComparison.OrdinalIgnoreCase)));
+
+        public static implicit operator NativeUse(string import) => new(import);
+        public override string ToString() => Platforms.Count == 0 ? Import : Import + " (" + string.Join(", ", Platforms) + ")";
+    }
+
+    /// <summary>Reads an entry of `native.uses` as a string or as `{ "import": "...", "platforms": [ ... ] }`; writes the string form when it is for every build.</summary>
+    public sealed class NativeUseConverter : JsonConverter<NativeUse>
+    {
+        public override NativeUse Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String) return new NativeUse(reader.GetString()!);
+            if (reader.TokenType != JsonTokenType.StartObject) throw new JsonException("An entry of 'uses' is \"import\" or { \"import\": \"name\", \"platforms\": [ \"posix\", ... ] }.");
+            var use = new NativeUse();
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName) throw new JsonException("An entry of 'uses' has 'import' and 'platforms'.");
+                string name = reader.GetString()!;
+                reader.Read();
+                if (string.Equals(name, "import", StringComparison.OrdinalIgnoreCase))
+                    use.Import = reader.TokenType == JsonTokenType.String ? reader.GetString()! : throw new JsonException("'import' of an entry of 'uses' is the name of an import.");
+                else if (string.Equals(name, "platforms", StringComparison.OrdinalIgnoreCase))
+                    use.Platforms = JsonSerializer.Deserialize<List<string>>(ref reader, options) ?? new();
+                else throw new JsonException($"An entry of 'uses' has 'import' and 'platforms', not '{name}'.");
+            }
+            if (string.IsNullOrWhiteSpace(use.Import)) throw new JsonException("An entry of 'uses' { ... } needs 'import'.");
+            return use;
+        }
+
+        public override void Write(Utf8JsonWriter writer, NativeUse value, JsonSerializerOptions options)
+        {
+            if (value.Platforms.Count == 0) { writer.WriteStringValue(value.Import); return; }
+            writer.WriteStartObject();
+            writer.WriteString("import", value.Import);
+            writer.WritePropertyName("platforms");
+            JsonSerializer.Serialize(writer, value.Platforms, options);
+            writer.WriteEndObject();
+        }
+    }
+
     /// <summary>
     /// The build order of the native sources and its check. The sources of an import are put into one file in that order; an `#include "x.h"` of another source of the
     /// same import is taken out there (the source is in the file already) - so whatever a source includes has to come before it. <see cref="CheckIncludes"/> says where not.

@@ -1,7 +1,7 @@
 # GPIO (`#import "gpio"`)
 
 
-Digital pins. It needs `time` (the clock of the time limits). The natives are C (`packages/gpio/native/fire_bridge_gpio.h` over `fire_gpio_*` of `fire_gpio.h`, see `native/platform/std/fire_gpio_c.h`; the implementations are `native/platform/std/fire_gpio_*.h`): the **GPIO character device** of Linux
+Digital pins. It needs `time` (the clock of the time limits). The natives are C (`packages/gpio/native/fire_bridge_gpio.h` over `fire_gpio_*` of the platform files of the package, see `packages/gpio/native/fire_gpio_c.h`; the implementations are `packages/gpio/native/fire_gpio_*.h`): the **GPIO character device** of Linux
 (`/dev/gpiochipN`, the v2 ioctl interface of kernel 5.10+ - Raspberry Pi and other boards; used only when the kernel headers are there, `FIRE_NO_GPIO` switches it off), **ESP-IDF `driver/gpio`** on an ESP32
 (add the components `driver` and `esp_timer`), and a stub elsewhere (Windows, macOS: no chips). Every platform has the **simulated chip** `"sim"`, so a program can be written and tested on the PC.
 

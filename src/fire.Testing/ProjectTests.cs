@@ -872,6 +872,11 @@ static class ProjectTests
         string used(params string[] keys) => string.Join(",", fire.Package.Manager.PackageNativeExtensions.PlatformLayerFor(layered, keys));
         Check("native.uses: ein anderes Package bekommt nur die Plattformschicht (ohne die eigenen Quellen)", used("dos16") == "real" && used("esp32") == "none" && used("vm", "posix") == "none",
             $"{used("dos16")} | {used("esp32")} | {used("vm", "posix")}");
+        var uses = System.Text.Json.JsonSerializer.Deserialize<List<fire.Package.Manager.NativeUse>>("[ \"io\", { \"import\": \"audio\", \"platforms\": [ \"posix\", \"vm\" ] } ]")!;
+        string usesBack = System.Text.Json.JsonSerializer.Serialize(uses);
+        Check("native.uses: ein Eintrag als Name (ueberall) oder mit Plattformen (nur dort), und zurueck geschrieben", uses.Count == 2 && uses[0].AppliesTo(new[] { "esp32" })
+            && !uses[1].AppliesTo(new[] { "esp32", "esp32" }) && uses[1].AppliesTo(new[] { "vm", "posix", "linux" }) && uses[1].AppliesTo(new[] { "POSIX" })
+            && usesBack == "[\"io\",{\"import\":\"audio\",\"platforms\":[\"posix\",\"vm\"]}]", usesBack);
         var problems = fire.Package.Manager.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
         Check("Bau-Reihenfolge: die Pruefung nennt Datei und Zeile des #include, das auf eine spaetere Quelle zeigt", problems.Count == 2
             && problems[0].StartsWith("native/top.h:2: #include \"mid.h\"") && problems[0].Contains("give 'native/mid.h' a smaller build order") && problems[1].StartsWith("native/mid.h:2: #include \"base.h\""), string.Join("\n", problems));

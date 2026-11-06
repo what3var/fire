@@ -102,6 +102,42 @@
       }
     ],
     "reset": "fire_usb_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_usb_c.h",
+        "native/fire_usb_none.h"
+      ],
+      "esp32": [
+        "native/fire_usb_c.h",
+        "native/fire_usb_none.h"
+      ],
+      "freertos": [
+        "native/fire_usb_c.h",
+        "native/fire_usb_none.h"
+      ],
+      "posix": [
+        "native/fire_usb_c.h",
+        "native/fire_usb_desktop.h",
+        "native/fire_usb_winusb.h",
+        "native/fire_usb_libusb.h",
+        "native/fire_usb_none.h"
+      ],
+      "wasm": [
+        "native/fire_usb_c.h",
+        "native/fire_usb_none.h"
+      ],
+      "windows": [
+        "native/fire_usb_c.h",
+        "native/fire_usb_desktop.h",
+        "native/fire_usb_winusb.h",
+        "native/fire_usb_libusb.h",
+        "native/fire_usb_none.h"
+      ],
+      "default": [
+        "native/fire_usb_c.h",
+        "native/fire_usb_none.h"
+      ]
+    }
   }
 }

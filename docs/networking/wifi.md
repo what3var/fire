@@ -1,7 +1,7 @@
 # WiFi (`#import "wifi"`)
 
 
-The radio of a board: scan for networks, join one as a **station**, be an **access point**. It needs `time`. The natives are `packages/wifi/native/fire_bridge_wifi.h` (C) over `fire_wifi_*` (`native/platform/std/fire_wifi_*.h`, the interface in `fire_wifi_c.h`): the **WiFi driver of ESP-IDF** (`esp_wifi`, `esp_event`,
+The radio of a board: scan for networks, join one as a **station**, be an **access point**. It needs `time`. The natives are `packages/wifi/native/fire_bridge_wifi.h` (C) over `fire_wifi_*` (`packages/wifi/native/fire_wifi_*.h`, the interface in `fire_wifi_c.h`): the **WiFi driver of ESP-IDF** (`esp_wifi`, `esp_event`,
 `esp_netif`, `nvs_flash`) on an ESP32. Where the operating system owns the network (Windows, Linux, macOS) there is no radio for a program to control: the list of interfaces is empty, and the package reports "not supported" (`WiFi.Board.Available()` is false). Every platform has the
 **simulated radio** `"sim"`. Once the station has an address the lwIP sockets of the `net` package (and `http`, `tls`) work - **the network packages do not know about WiFi**; a program joins the network first and then opens its sockets. Ethernet on the ESP32 would follow the same pattern.
 
