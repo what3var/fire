@@ -192,7 +192,8 @@ namespace Usb {
         // The devices with this vendor and product id (and serial number, unless it is empty).
         static List Find(int vendorId, int productId, string serialNumber = "") {
             var found = new List()
-            foreach (d in Usb.Bus.Devices()) {
+            var all = Usb.Bus.Devices()   // (a variable: the devices must outlive the loop - return hands the ones in `found` on, SPEC 2.1)
+            foreach (d in all) {
                 if (d.VendorId == vendorId && d.ProductId == productId && (serialNumber == "" || d.SerialNumber == serialNumber)) { found.Add(d) }
             }
             return found

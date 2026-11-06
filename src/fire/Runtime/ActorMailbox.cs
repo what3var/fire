@@ -12,11 +12,14 @@ namespace fire.Runtime
     {
         public string MethodName { get; }
         public Value[] Args { get; }
+        /// <summary>The owner of the message's unclaimed arguments until the message runs (SPEC 2.4, THREADING_DESIGN.md section 2); null: none.</summary>
+        public Scope? Holder { get; }
 
-        public ActorMessage(string methodName, Value[] args)
+        public ActorMessage(string methodName, Value[] args, Scope? holder = null)
         {
             MethodName = methodName;
             Args = args;
+            Holder = holder;
         }
     }
 

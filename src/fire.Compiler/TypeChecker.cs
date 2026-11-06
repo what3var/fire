@@ -108,6 +108,9 @@ namespace fire.Compiler
         public const string InterfaceAccessorCode = "TC016";
         /// <summary>A unit at `byte` or `word` (raw data without a unit, SPEC 8.10): `byte b = 5m`, `word w : s`, `byte data[] = [1m]` - an error in lax mode too.</summary>
         public const string RawUnitCode = "TC017";
+        /// <summary>A setter's call with `value` that is the claim site of some paths but not of all (SPEC 2.1 "Setters"): on those paths the value does not pass on
+        /// and dies with the setter - always a warning.</summary>
+        public const string SetterClaimCode = "TC018";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -201,7 +204,7 @@ namespace fire.Compiler
         private bool Strict => _strictBySource.TryGetValue(_source, out bool strict) ? strict : _defaultMode == TypeCheckMode.Strict;
 
         private void Report(string code, string message, int line) =>
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
         private void CheckCondition(Expr condition)
@@ -1321,7 +1324,13 @@ namespace fire.Compiler
                         break;
                     case PropertyDecl p:
                         if (p.Getter != null) CheckBody(Array.Empty<LambdaParam>(), p.Getter, Declared(p.Type), p.Type, $"Property '{p.Name}'");
-                        if (p.Setter != null) CheckBody(new[] { new LambdaParam("value", p.Type, Array.Empty<Expr?>()) }, p.Setter, null);
+                        if (p.Setter != null)
+                        {
+                            CheckBody(new[] { new LambdaParam("value", p.Type, Array.Empty<Expr?>()) }, p.Setter, null);
+                            if (!p.IsStatic)
+                                foreach (int line in SetterClaims.Analyze(p.Setter).Ambiguous)
+                                    Report(SetterClaimCode, $"The setter of '{p.Name}' passes a new value to this call only on some paths: where another path assigns 'value' to a field or property, the call does not take it - on the paths without that assignment a new value dies with the setter", line);
+                        }
                         break;
                 }
             }

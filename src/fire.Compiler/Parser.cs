@@ -2014,9 +2014,10 @@ namespace fire.Compiler
         /// `{ fire ...; x = undefined }`, so that the resolver, the type checker and both back ends treat the reset like any assignment.</summary>
         private Stmt WithHandoverReset(FireStmt fire)
         {
-            if (!fire.TakingCaptures.Any(c => c.Handover)) return fire;
+            // (a variable that was handed over is undefined afterwards; a direct `new` argument of `fire M(new X())` has none)
+            if (!fire.TakingCaptures.Any(c => c.Handover && c.Source is IdentifierExpr)) return fire;
             var statements = new List<Stmt> { fire };
-            foreach (var c in fire.TakingCaptures.Where(c => c.Handover))
+            foreach (var c in fire.TakingCaptures.Where(c => c.Handover && c.Source is IdentifierExpr))
                 statements.Add(new ExprStmt(_sourceIndex, fire.Line, new AssignExpr(fire.Line, new IdentifierExpr(fire.Line, c.VarName), new LiteralExpr(fire.Line, Value.MakeUndefined()))));
             return new Stmt.BlockStmt(_sourceIndex, fire.Line, statements);
         }
@@ -2124,13 +2125,19 @@ namespace fire.Compiler
             const string thisCaptureName = "__fire_this__";
             var allCaptures = new List<FireTakingCapture> { new(thisCaptureName, new ThisExpr(line)) };
             var argRefs = new List<Expr>();
+            var handedOver = new List<FireTakingCapture>();
             for (int i = 0; i < callArgs.Count; i++)
             {
                 string argCaptureName = $"__fire_arg{i}__";
-                allCaptures.Add(new FireTakingCapture(argCaptureName, callArgs[i]));
+                // a direct `new` goes to the thread without a copy (handover, SPEC 2.1 / THREADING_DESIGN.md section 1); every other argument is copied like `taking`
+                if (callArgs[i] is NewExpr) handedOver.Add(new FireTakingCapture(argCaptureName, callArgs[i], Handover: true));
+                else allCaptures.Add(new FireTakingCapture(argCaptureName, callArgs[i]));
                 argRefs.Add(new IdentifierExpr(line, argCaptureName));
             }
-            allCaptures.AddRange(explicitTaking);
+            // (the handover captures stand last: the explicit ones are last in explicitTaking already)
+            allCaptures.AddRange(explicitTaking.Where(c => !c.Handover));
+            allCaptures.AddRange(handedOver);
+            allCaptures.AddRange(explicitTaking.Where(c => c.Handover));
 
             var callExpr = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, thisCaptureName), methodName), argRefs);
             var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
