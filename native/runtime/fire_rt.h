@@ -7428,6 +7428,17 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
             arrItems(na)[i] = syncSingle(arrItems(sa)[i], oldElem, container, flat);
             retain(arrItems(na)[i]);
         }
+        if (oldArr && oldArr->parts) {
+            /* (an element the old array owned - a literal's, SPEC 2.1 - that stays in the new one goes over to it before the old one dies) */
+            for (i = 0; i < na->length && arrValues(na); i++) {
+                Owned* e = ownedOf(arrItems(na)[i]);
+                if (e && e->owner == oldArr->parts) {
+                    if (!na->parts) na->parts = newPartsList(&na->h);
+                    ownUnlink(e);
+                    ownLink(na->parts, e);
+                }
+            }
+        }
         if (oldArr && oldArr->h.owner == &container->owned) destroyLeaf(&oldArr->h);
         return result;
     }

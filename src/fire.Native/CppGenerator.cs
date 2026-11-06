@@ -2501,7 +2501,8 @@ namespace fire.Native
             string secEnd = _usesThreads ? " sectionScopeExit(ss_);" : "";
             if (_usesThreads) sb.AppendLine("    bool ss_ = sectionScopeEnterV(a);");
             if (_dispatchers.Contains(("SetIndex", 2)))
-                sb.AppendLine($"    if (a.kind == K_Class) {{ Value r = {CallFn("SetIndex", 2)}(a, i, v{DispatchTail("SetIndex", 2, "list", "0xFFFFFFFFu")}); adopt(r, list);{secEnd} return v; }}");
+                // (a new key is a slot of the container, like the value: `d[new Key()] = v` - the object takes it out of the temporaries, SPEC 2.1)
+                sb.AppendLine($"    if (a.kind == K_Class) {{ claimToHolder(a, i, list); Value r = {CallFn("SetIndex", 2)}(a, i, v{DispatchTail("SetIndex", 2, "list", "0xFFFFFFFFu")}); adopt(r, list);{secEnd} return v; }}");
             else sb.AppendLine("    (void)list;");
             sb.AppendLine(_usesThreads ? "    v = arraySet(a, i, v);" + secEnd + "\n    return v;" : "    return arraySet(a, i, v);");
             sb.AppendLine("}");
