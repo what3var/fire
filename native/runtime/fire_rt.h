@@ -126,8 +126,10 @@ enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_
  * operands of an int32 are widened) and the result is cut when it is stored - like the VM, which cuts every int it makes. */
 #ifdef FIRE_INT32
 typedef int32_t FireInt;
+#define FIRE_INT_UNDEF INT32_MIN   /* (an `undefined` element of a packed int array; a real INT32_MIN is marked in `real`) */
 #else
 typedef int64_t FireInt;
+#define FIRE_INT_UNDEF INT64_MIN
 #endif
 
 /* `word` (SPEC 8.10): the machine word of the target, unsigned, without a unit - K_Word, its bits in `w` (zero above the width). The generator defines
@@ -1365,7 +1367,7 @@ typedef struct Buf {
 } Buf;
 FIRE_FN uint8_t* bufBytes(Buf* b) { return b->data; }
 /* The size of a buffer in bytes (elements times their size). */
-FIRE_FN size_t bufSize(const Buf* b) { return (size_t)b->length * b->elem; }
+FIRE_FN uint32_t bufSize(const Buf* b) { return b->length * (uint32_t)b->elem; }   /* (in 32 bits: a size_t of 16-bit DOS would cut it) */
 /* The words of a buffer of machine words. */
 FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
 
@@ -2544,6 +2546,41 @@ FIRE_FN size_t blockSize(size_t head, uint32_t count, size_t elem) {
 #define FIRE_ENV_VALUE_MAX 4096
 #endif
 
+/* The block of an array or a buffer (with its data): it may pass what a size_t holds where the compiler has bigger blocks (16-bit real mode, the huge model:
+ * FIRE_CC_BIG_ALLOC - halloc); freed with dataFree. Elsewhere malloc and free. */
+FIRE_FN void* dataAlloc(size_t head, uint32_t count, size_t elem) {
+#ifdef FIRE_CC_BIG_ALLOC
+    uint64_t n = (uint64_t)head + (uint64_t)count * (uint64_t)elem;
+    if (n > (uint64_t)SIZE_MAX - 8) {
+        if (FIRE_UNLIKELY(n > 0x7FFFFFF0u)) fatal("Out of memory: a block larger than 2 GB.");
+        return FIRE_CC_BIG_ALLOC((uint32_t)n);
+    }
+#endif
+    return malloc(blockSize(head, count, elem));
+}
+FIRE_FN void dataFree(void* p) {
+#ifdef FIRE_CC_BIG_FREE
+    if (FIRE_CC_BIG_FREE(p)) return;   /* (a big block: given back the way it was made) */
+#endif
+    free(p);
+}
+/* Fills / copies the data of an array or a buffer - also more than a size_t holds (the dialect of a compiler with huge blocks does it in steps: FIRE_CC_ZERO,
+ * FIRE_CC_COPY; the C library's memset/memcpy of the 16-bit real mode wrap at the end of a segment). */
+FIRE_FN void dataZero(void* p, uint32_t bytes) {
+#ifdef FIRE_CC_ZERO
+    FIRE_CC_ZERO(p, bytes);
+#else
+    memset(p, 0, (size_t)bytes);
+#endif
+}
+FIRE_FN void dataCopy(void* to, const void* from, uint32_t bytes) {
+#ifdef FIRE_CC_COPY
+    FIRE_CC_COPY(to, from, bytes);
+#else
+    memcpy(to, from, (size_t)bytes);
+#endif
+}
+
 FIRE_FN Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
     void* memory = malloc(blockSize(FIRE_HDR(Obj), fieldCount, sizeof(Value)));
     Obj* o;
@@ -2663,12 +2700,12 @@ FIRE_FN void destroyLeaf(Owned* o) {
         if (a->typed) {
             ArrTyped* t = a->typed;
             free(t->real);
-            if (t->own & AT_DATA) free(t->data);
+            if (t->own & AT_DATA) dataFree(t->data);
             if (t->own & AT_SELF) free(t);
         }
     }
     slotRelease(o);
-    free(o);
+    dataFree(o);
 }
 
 /* Leaving a scope: destroys what it owns and lets go of the strings/arrays it created. */
@@ -2767,7 +2804,7 @@ FIRE_FN fire_char16* strChars(Str* s) { return (fire_char16*)s->data; }
 
 /* A new array; it belongs to `list` (the innermost scope of the creator, or the object that it is assigned to directly). */
 FIRE_FN Arr* allocArr(uint32_t length, OwnList* list) {
-    Arr* a = (Arr*)malloc(blockSize(FIRE_HDR(Arr), length, sizeof(Value)));
+    Arr* a = (Arr*)dataAlloc(FIRE_HDR(Arr), length, sizeof(Value));
     Value* items;
     uint32_t i;
     if (FIRE_UNLIKELY(!a)) allocFailed();
@@ -2981,7 +3018,7 @@ FIRE_FN bool hostLittle(void) { uint16_t one = 1; return *(uint8_t*)&one == 1; }
 /* A buffer of `length` elements of `elem` bytes (1: a byte buffer; sizeof(FireWord): a buffer of machine words), all 0. The data is aligned for a word. */
 FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
     size_t head = (sizeof(Buf) + 7u) & ~(size_t)7u;
-    Buf* b = (Buf*)malloc(blockSize(head, length, elem));
+    Buf* b = (Buf*)dataAlloc(head, length, elem);
     if (FIRE_UNLIKELY(!b)) allocFailed();
     b->h.okind = O_Buffer;
     b->h.flags = 0;
@@ -2989,7 +3026,7 @@ FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
     b->little = hostLittle() ? 1 : 0;
     b->elem = elem;
     b->data = (uint8_t*)b + head;
-    memset(b->data, 0, (size_t)length * elem);
+    dataZero(b->data, (uint32_t)((uint64_t)length * elem));
     slotAcquire(&b->h);
     ownLink(list, &b->h);
     return b;
@@ -2998,7 +3035,7 @@ FIRE_FN Buf* allocBuf(uint32_t length, OwnList* list) { return allocBufOf(length
 /* A copy of a buffer (its elements, its byte order) owned by `list`. */
 FIRE_FN Buf* bufCopy(const Buf* src, OwnList* list) {
     Buf* c = allocBufOf(src->length, src->elem, list);
-    if (src->length) memcpy(c->data, src->data, bufSize(src));
+    if (src->length) dataCopy(c->data, src->data, (uint32_t)((uint64_t)src->length * src->elem));
     c->little = src->little;
     return c;
 }
@@ -3730,7 +3767,7 @@ FIRE_FN Value resourceCall(int64_t op, Value id, OwnList* list) {
     r = &g_resources[id.i];
     switch (op) {
         case 1: return Int((int64_t)r->length);
-        case 2: { Buf* b = allocBuf(r->length, list); if (r->length) memcpy(b->data, r->data, r->length); return BufV(b); }
+        case 2: { Buf* b = allocBuf(r->length, list); if (r->length) dataCopy(b->data, r->data, r->length); return BufV(b); }
         case 3: return newStrFromUtf8((const uint8_t*)r->name, strlen(r->name), list);
         case 4: return newStrFromUtf8(r->data, r->length, list);
         default: fatal("Unknown resource operation.");
@@ -4287,6 +4324,7 @@ FIRE_FN Value indexError(const char* what, int64_t index, int64_t length) {
 #else
     (void)n;
     fatalException("IndexOutOfBoundsException", text);
+    FIRE_NOT_REACHED(Undef())
 #endif
 }
 
@@ -4694,6 +4732,7 @@ FIRE_FN Value destroyedError(Value leaf) {
     return throwValue(makeDestroyedError(fire_asciiMessage(text)));
 #else
     fatalException("DestroyedException", text);
+    FIRE_NOT_REACHED(Undef())
 #endif
 }
 
@@ -4719,6 +4758,7 @@ FIRE_FN size_t arrElemSize(uint8_t e) {
         case E_I16: case E_Char: return 2;
         case E_I32: case E_F8: case E_F16: case E_F32: return 4;
         case E_F64: return sizeof(Real);
+        case E_I64: return sizeof(FireInt);   /* (`int`: 4 bytes with #intwidth 32) */
         default: return 8;
     }
 }
@@ -4778,7 +4818,7 @@ FIRE_FN Value arrPackedGet(const Arr* a, uint32_t i) {
         case E_I8: { int8_t x = ((const int8_t*)t->data)[i]; if (FIRE_LIKELY(x != INT8_MIN) || arrIsReal(t, i)) return Int(x, u); break; }
         case E_I16: { int16_t x = ((const int16_t*)t->data)[i]; if (FIRE_LIKELY(x != INT16_MIN) || arrIsReal(t, i)) return Int(x, u); break; }
         case E_I32: { int32_t x = ((const int32_t*)t->data)[i]; if (FIRE_LIKELY(x != INT32_MIN) || arrIsReal(t, i)) return Int(x, u); break; }
-        case E_I64: { int64_t x = ((const int64_t*)t->data)[i]; if (FIRE_LIKELY(x != INT64_MIN) || arrIsReal(t, i)) return Int(x, u); break; }
+        case E_I64: { FireInt x = ((const FireInt*)t->data)[i]; if (FIRE_LIKELY(x != FIRE_INT_UNDEF) || arrIsReal(t, i)) return Int(x, u); break; }
         case E_U8: { uint8_t x = ((const uint8_t*)t->data)[i]; if (FIRE_LIKELY(x != 0xFF) || arrIsReal(t, i)) return Int(x, u); break; }
         case E_F8: case E_F16: case E_F32: {
             float x = ((const float*)t->data)[i];
@@ -4812,7 +4852,7 @@ FIRE_FN void arrPackedSet(Arr* a, uint32_t i, Value v) {
         case E_I8: { int8_t x = undef ? INT8_MIN : (int8_t)v.i; hint = !undef && x == INT8_MIN; ((int8_t*)t->data)[i] = x; break; }
         case E_I16: { int16_t x = undef ? INT16_MIN : (int16_t)v.i; hint = !undef && x == INT16_MIN; ((int16_t*)t->data)[i] = x; break; }
         case E_I32: { int32_t x = undef ? INT32_MIN : (int32_t)v.i; hint = !undef && x == INT32_MIN; ((int32_t*)t->data)[i] = x; break; }
-        case E_I64: { int64_t x = undef ? INT64_MIN : v.i; hint = !undef && x == INT64_MIN; ((int64_t*)t->data)[i] = x; break; }
+        case E_I64: { FireInt x = undef ? FIRE_INT_UNDEF : (FireInt)v.i; hint = !undef && x == FIRE_INT_UNDEF; ((FireInt*)t->data)[i] = x; break; }
         case E_U8: { uint8_t x = undef ? 0xFF : (uint8_t)v.i; hint = !undef && x == 0xFF; ((uint8_t*)t->data)[i] = x; break; }
         case E_F8: case E_F16: case E_F32: {
             float x;
@@ -4841,11 +4881,11 @@ FIRE_FN void arrPackedSet(Arr* a, uint32_t i, Value v) {
 /* The Values of a packed array (a native function asks for them): unpacked once; the type stays (arraySet still converts). */
 FIRE_COLD FIRE_FN Value* arrUnpack(Arr* a) {
     ArrTyped* t = a->typed;
-    Value* items = (t->own & AT_INLINE) ? (Value*)((char*)a + FIRE_HDR(Arr)) : (Value*)malloc(blockSize(1, a->length, sizeof(Value)));
+    Value* items = (t->own & AT_INLINE) ? (Value*)((char*)a + FIRE_HDR(Arr)) : (Value*)dataAlloc(1, a->length, sizeof(Value));
     uint32_t i;
     if (FIRE_UNLIKELY(!items)) allocFailed();
     for (i = 0; i < a->length; i++) items[i] = arrPackedGet(a, i);
-    if (t->own & AT_DATA) free(t->data);
+    if (t->own & AT_DATA) dataFree(t->data);
     free(t->real);
     t->real = NULL;
     t->data = items;
@@ -4887,7 +4927,7 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
         t->data = items;
         return true;
     }
-    t->data = malloc(blockSize(1, a->length, arrElemSize(elem)));
+    t->data = dataAlloc(1, a->length, arrElemSize(elem));
     if (FIRE_UNLIKELY(!t->data)) allocFailed();
     t->own |= AT_DATA;
     t->packed = 1;
@@ -4988,7 +5028,7 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
         return r;
     }
     length = (uint32_t)size.i;
-    a = (Arr*)malloc(blockSize(head + 1, length, arrElemSize(elem)));
+    a = (Arr*)dataAlloc(head + 1, length, arrElemSize(elem));
     if (FIRE_UNLIKELY(!a)) allocFailed();
     a->h.okind = O_Array;
     a->h.flags = 0;
@@ -5006,21 +5046,50 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
     return ArrV(a);
 }
 
+/* A copy of a packed array (copy, taking, sync) made at once like newTypedArray - the numbers only, no Values beside them (on 16-bit DOS those would not fit).
+ * NULL when `src` is not packed (the caller then makes an array of Values). */
+FIRE_FN Arr* packedCopy(const Arr* src, OwnList* list) {
+    const ArrTyped* s = src->typed;
+    size_t head = FIRE_HDR(Arr) + ((sizeof(ArrTyped) + 7u) & ~(size_t)7u);
+    Arr* a;
+    ArrTyped* t;
+    if (!s || !s->packed) return NULL;
+    a = (Arr*)dataAlloc(head + 1, src->length, arrElemSize(s->elem));
+    if (FIRE_UNLIKELY(!a)) allocFailed();
+    a->h.okind = O_Array;
+    a->h.flags = 0;
+    a->length = src->length;
+    a->parts = NULL;
+    t = (ArrTyped*)((char*)a + FIRE_HDR(Arr));
+    memset(t, 0, sizeof *t);
+    t->elem = s->elem; t->unit = s->unit; t->flags = s->flags; t->unitText = s->unitText;
+    t->data = (char*)a + head;
+    t->packed = 1;
+    a->typed = t;
+    dataCopy(t->data, s->data, (uint32_t)((uint64_t)src->length * arrElemSize(s->elem)));
+    if (s->real) {
+        t->real = (uint8_t*)malloc((src->length + 7) / 8);
+        if (FIRE_UNLIKELY(!t->real)) allocFailed();
+        memcpy(t->real, s->real, (src->length + 7) / 8);
+    }
+    slotAcquire(&a->h);
+    ownLink(list, &a->h);
+    return a;
+}
+
 /* A copy of the typed array `src` (copy, taking, sync): `dst` (new, untyped, `undefined` elements) gets its type; a packed one its numbers too (true: the
  * caller copies no elements). */
 FIRE_FN bool arrCopyTyped(Arr* dst, const Arr* src) {
     const ArrTyped* s = src->typed;
     ArrTyped* t;
-    size_t bytes;
     if (!s) return false;
     t = arrTypedNew(s->elem, s->unit, s->flags, s->unitText);
     t->own |= AT_INLINE;
     dst->typed = t;
     if (!s->packed) { t->data = (char*)dst + FIRE_HDR(Arr); return false; }
-    bytes = (size_t)src->length * arrElemSize(s->elem);
-    t->data = malloc(bytes + 1);
+    t->data = dataAlloc(1, src->length, arrElemSize(s->elem));
     if (FIRE_UNLIKELY(!t->data)) allocFailed();
-    memcpy(t->data, s->data, bytes);
+    dataCopy(t->data, s->data, (uint32_t)((uint64_t)src->length * arrElemSize(s->elem)));
     t->own |= AT_DATA;
     t->packed = 1;
     if (s->real) {
@@ -5490,7 +5559,7 @@ FIRE_FN Value bufToEndian(Value v, bool little, OwnList* list) {
     n = (uint32_t)bufSize(b);
     e = b->elem;
     c = allocBuf(n, list);
-    if ((b->little != 0) == little) memcpy(c->data, b->data, n);
+    if ((b->little != 0) == little) dataCopy(c->data, b->data, n);
     else if (e > 1) { for (i = 0; i < n; i++) c->data[i] = b->data[(i / e) * e + (e - 1 - i % e)]; }
     else for (i = 0; i < n; i++) c->data[i] = b->data[n - 1 - i];
     c->little = little ? 1 : 0;
@@ -6091,6 +6160,7 @@ FIRE_FN Value flatCopy(Value v, OwnList* owner) {
             Arr* dst;
             if (!ownedOf(v)) return destroyedError(v);
             src = arrOf(v);
+            if ((dst = packedCopy(src, owner)) != NULL) return ArrV(dst);
             dst = allocArr(src->length, owner);
             if (!arrCopyTyped(dst, src))   /* (a copy of a typed array is typed; a packed one copies its numbers) */
                 for (i = 0; i < src->length; i++) { arrItems(dst)[i] = arrItems(src)[i]; retain(arrItems(dst)[i]); }
@@ -6164,8 +6234,10 @@ FIRE_COLD FIRE_FN Value takingRefused(const char* what) {
 /* A growing array of anything (`elem` bytes per item). */
 FIRE_FN void* fire_growPush(void* items, uint32_t* count, uint32_t* cap, size_t elem) {
     if (*count == *cap) {
-        *cap = *cap ? *cap * 2 : 16;
-        items = realloc(items, *cap * elem);
+        uint32_t next = *cap ? *cap * 2 : 16;
+        if (FIRE_UNLIKELY((uint64_t)next * elem > (uint64_t)SIZE_MAX)) allocFailed();   /* (a 16-bit size_t: a list larger than 64 KB) */
+        *cap = next;
+        items = realloc(items, (size_t)next * elem);
         if (!items) allocFailed();
     }
     return items;
@@ -6198,6 +6270,7 @@ FIRE_FN void copierFree(DeepCopier* c) {
     free(c->pending);
 }
 FIRE_FN void copierPushPending(DeepCopier* c, Value v) {
+    if (v.kind != K_Class && v.kind != K_Array && !(c->taking && (v.kind == K_Lambda || isPtr(v)))) return;   /* nothing to discover */
     c->pending = (Value*)fire_growPush(c->pending, &c->pendingCount, &c->pendingCap, sizeof(Value));
     c->pending[c->pendingCount++] = v;
 }
@@ -6268,6 +6341,7 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
             src = arrOf(v);
             m = copyMapFind(&c->containers, src);
             if (m) return *m;
+            if ((dst = packedCopy(src, c->owner)) != NULL) { r = ArrV(dst); copyMapPut(&c->containers, src, r); return r; }   /* (numbers only: nothing inside to copy) */
             dst = allocArr(src->length, c->owner);
             r = ArrV(dst);
             copyMapPut(&c->containers, src, r);   /* before filling: an array may contain itself */

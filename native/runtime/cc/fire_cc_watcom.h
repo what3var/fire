@@ -42,4 +42,64 @@ static double fire_cc_fixedHalfEven(double d, int places) {
 /* 16-bit x86 (wcc): the large model has far pointers already; the data of arrays and buffers may pass 64 KB (FIRE_HUGE: the compiler normalizes the segment) */
 #define FIRE_FAR __far
 #define FIRE_HUGE __huge
+#if defined(__HUGE__)
+/* The huge model (dos16): every pointer is huge - an array or a buffer may hold more than 64 KB; its block comes from halloc (DOS memory, a size_t of 16 bits
+ * cannot say it), the blocks are remembered to give them back with hfree. */
+#include <malloc.h>
+#define FIRE_CC_BIG_KEEP 256
+static void __huge* fire_cc_bigBlocks[FIRE_CC_BIG_KEEP];
+static void* fire_cc_bigAlloc(uint32_t bytes) {
+    void __huge* p;
+    int i;
+    for (i = 0; i < FIRE_CC_BIG_KEEP && fire_cc_bigBlocks[i]; i++) {}
+    if (i == FIRE_CC_BIG_KEEP) return NULL;   /* (more big blocks than the table holds: out of memory) */
+    p = halloc((long)((bytes + 15u) / 16u), 16);
+    if (p) fire_cc_bigBlocks[i] = p;
+    return (void*)p;
+}
+static int fire_cc_bigFree(void* p) {
+    int i;
+    for (i = 0; i < FIRE_CC_BIG_KEEP; i++)
+        if (fire_cc_bigBlocks[i] == (void __huge*)p) { hfree(fire_cc_bigBlocks[i]); fire_cc_bigBlocks[i] = 0; return 1; }
+    return 0;
+}
+#define FIRE_CC_BIG_ALLOC(bytes) fire_cc_bigAlloc(bytes)
+#define FIRE_CC_BIG_FREE(p) fire_cc_bigFree(p)
+/* memset/memcpy of the C library compute with the offset of a far pointer: a step must not pass the end of the segment of either pointer */
+#include <i86.h>
+static uint32_t fire_cc_room(const void __huge* p) { return 0x10000ul - FP_OFF(p); }
+static void fire_cc_zero(void* p, uint32_t bytes) {
+    char __huge* q = (char __huge*)p;
+    while (bytes > 0) {
+        uint32_t step = fire_cc_room(q);
+        if (step > 0x8000u) step = 0x8000u;
+        if (step > bytes) step = bytes;
+        memset((void __far*)q, 0, (size_t)step);
+        q += step;
+        bytes -= step;
+    }
+}
+static void fire_cc_copy(void* to, const void* from, uint32_t bytes) {
+    char __huge* d = (char __huge*)to;
+    const char __huge* s = (const char __huge*)from;
+    while (bytes > 0) {
+        uint32_t step = fire_cc_room(d), r2 = fire_cc_room(s);
+        if (r2 < step) step = r2;
+        if (step > 0x8000u) step = 0x8000u;
+        if (step > bytes) step = bytes;
+        memcpy((void __far*)d, (const void __far*)s, (size_t)step);
+        d += step;
+        s += step;
+        bytes -= step;
+    }
+}
+static size_t fire_cc_ioStep(const void* p, int64_t n) {
+    uint32_t step = fire_cc_room((const void __huge*)p);
+    if (step > 0x8000u) step = 0x8000u;
+    return (size_t)(n < (int64_t)step ? n : (int64_t)step);
+}
+#define FIRE_CC_IO_STEP(p, n) fire_cc_ioStep(p, n)
+#define FIRE_CC_ZERO(p, bytes) fire_cc_zero(p, bytes)
+#define FIRE_CC_COPY(to, from, bytes) fire_cc_copy(to, from, bytes)
+#endif
 #endif

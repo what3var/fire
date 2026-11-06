@@ -518,7 +518,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Stack, `INT 1Ch` setzt das Flag; übersetzt mit `-zu` und ohne Stackprüfung, 16 KB Stack je Thread). Alle 40 Thread-Fälle ohne Imports laufen in DOSBox-X wie
    die VM. Die Haken der Runtime: `FIRE_PLAT_YIELD` (ein Safepoint gibt an bereite Aufgaben ab) und `FIRE_PLAT_PREEMPTED`.
    **Offen:** der Wechsel für 32-Bit-x86 (dos32, bios-x86, win32-legacy ohne Threads), Win16 (kooperativ über die Nachrichtenschleife), Boards ohne RTOS (ARM).
-3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
+3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Huge Model (keine 64-KB-Grenze für die Daten von Arrays und Puffern),
    keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
    paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).
    Dazu **`#intwidth 16`** (native Breite des 8086/286); `word` ist dort 16 Bit (Punkt 1c).
@@ -526,13 +526,20 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Treiber in `src/fire.Native/Toolchains/`), Plattformpaket `native/platform/dos16` (Uhr, Sleep, Ende, Umgebung über `std/fire_platform_dos.h` und
    `std/fire_env_dos.h`; alle anderen Teile `none`), der Dialekt des Compilers (`native/runtime/cc/fire_cc_watcom.h`). Der Generator schreibt C89-taugliche
    lokale Arrays (keine Compound-Literals, keine nicht-konstanten Initialisierer). Programme ohne Imports laufen in DOSBox-X wie in der VM (Test in der Suite;
-   SKIP ohne Open Watcom/DOSBox-X; von 139 Testprogrammen ohne Imports alle außer Threads, `#performance` und zwei Arrays über 64 KB). Eigenheiten von Open Watcom
-   im Dialekt (`fire_cc_watcom.h`): Rundung zur geraden Zahl (`nearbyint`, `printf("%.*f")`), NaN-Vergleiche der 8087-Emulation. Große Blöcke: jede Größe wird breit gerechnet, ein Block über 64 KB ist ein Fehler.
+   SKIP ohne Open Watcom/DOSBox-X; von 139 Testprogrammen ohne Imports alle außer Threads und `#performance`; die Arrays über 64 KB laufen inzwischen auch). Eigenheiten von Open Watcom
+   im Dialekt (`fire_cc_watcom.h`): Rundung zur geraden Zahl (`nearbyint`, `printf("%.*f")`), NaN-Vergleiche der 8087-Emulation.
    **Dateien** (`io`, `filesystem`; `std/fire_fs_dos.h`, Entscheidung des Benutzers): Pfade wie gewohnt `X:\FOLDER\FILE.EXT` (auch `/`), 8.3 erwartet, lange Namen
    soweit das DOS darunter sie hat, Groß/Klein gleich; was DOS zurückgibt (volle Pfade, aktuelles Verzeichnis, Listen) ist groß. `FIRE_FS_DRIVES` schaltet die
    Pfadregeln mit Laufwerken für Windows und DOS. Die VM rechnet weiter mit den Pfaden des Rechners. Test in DOSBox-X mit fester erwarteter Ausgabe.
    (Nebenbei: `__declspec(aborts)` erzeugte bei Open Watcom falschen Code - eine ungefangene Ausnahme hing; der Dialekt setzt kein `FIRE_NORETURN` mehr.)
-   **Offen:** Daten großer Arrays/Puffer über `__huge` (`FIRE_HUGE`), `#intwidth 16`, Konsole und Tastatur, Grafik, die Packages `dos`/`machine`/`xms`,
+   **Große Daten** (Arrays und Puffer über 64 KB): das Huge Model (`-mcmodel=h`, jeder Zeiger rechnet über Segmentgrenzen), Blöcke über 64 KB von `halloc`
+   (`dataAlloc`/`dataFree` der Runtime, `FIRE_CC_BIG_ALLOC`), Löschen und Kopieren in Stücken bis zum Segmentende (`FIRE_CC_ZERO`/`FIRE_CC_COPY` - `memset`/`memcpy`
+   der C-Bibliothek rechnen nur mit dem Offset), ebenso `fread`/`fwrite` der io-Brücke (`FIRE_CC_IO_STEP`); Größen in 32 Bit statt `size_t`. Gebunden wird
+   gegen die C-Bibliothek des Large Model: deren Code liegt in einem Segment `_TEXT` (höchstens 64 KB), die des Huge Model ist rund 30 % größer und passt
+   nicht mehr; Aufrufkonvention und Daten sind gleich, die Runtime gibt ihr keinen Block über ein Segmentende. Ein `int` im gepackten Array ist mit
+   `#intwidth 32` 4 Byte (nicht 8). `ReadAll` einer Datei liest den Rest auf einmal in einen Puffer seiner Größe. Test in DOSBox-X (100000 Bytes, `int[30000]`,
+   `any[9000]`, Kopien, eine Datei mit 100000 Bytes). Grenze: der freie DOS-Speicher (rund 400 KB neben dem Programm).
+   **Offen:** `#intwidth 16`, Konsole und Tastatur, Grafik, die Packages `dos`/`machine`/`xms`,
    Geräte (serieller/paralleler Port).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).

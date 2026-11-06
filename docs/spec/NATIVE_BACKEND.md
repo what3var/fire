@@ -657,17 +657,19 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
   `WatcomToolchain`: `owcc` übersetzt und bindet in einem Schritt (C99, jede Funktion in einem eigenen Segment - ein Segment des Real Mode fasst 64 KB),
   gefunden auf dem PATH, unter `%WATCOM%`, `Toolchain/watcom` oder `/opt/watcom`; es setzt `WATCOM` und `INCLUDE` für seine Programme.
 * **Ziel und Plattform**: das Zielprofil (`TargetProfile`; die alten PCs in `TargetProfile.Pc.cs`, eine Familie je Datei) nennt Plattformpaket, Toolchain,
-  Breiten und die Schalter des Ziels für den Compiler (`dos16`: `-bdos -mcmodel=l -march=i86 -mstack-size=...`). Das Plattformpaket ist ein Ordner aus kleinen
+  Breiten und die Schalter des Ziels für den Compiler (`dos16`: `-bdos -mcmodel=h -march=i86 -mstack-size=...`). Das Plattformpaket ist ein Ordner aus kleinen
   Auswahl-Headern je Teil (`fire_platform.h`, `fire_fs.h`, `fire_net.h`, ...), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,
   `fire_env_dos.h`, `fire_*_none.h`); eine neue Umsetzung eines Teils ist eine neue Datei in `std/`, ein neues Ziel ein neuer Ordner.
 
 **`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in
-DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer denen mit fire-Threads (beim Bauen abgelehnt), `#performance`
-(weicht gewollt ab) und zwei Benchmarks mit Arrays über 64 KB. Large Model: Zeiger 32 Bit, also mit `int`/`float` von 32 Bit (Standard des Ziels) ein 8-Byte-Wert; `word` 16 Bit. Keine fire-Threads. Die Runtime rechnet
-die Größe jedes Blocks breit (`blockSize`): ein Block über 64 KB ist ein Fehler, nie ein kleinerer Block (die Daten großer Arrays über `__huge` folgen).
+DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer `#performance` (weicht gewollt ab); dazu Dateien (`io`/`filesystem`
+mit DOS-Pfaden). Huge Model (`-mcmodel=h`): Zeiger 32 Bit und über Segmentgrenzen gerechnet, also mit `int`/`float` von 32 Bit (Standard des Ziels) ein 8-Byte-Wert;
+`word` 16 Bit. Die Runtime rechnet die Größe jedes Blocks breit (`blockSize`, nie ein kleinerer Block); die Daten von Arrays und Puffern dürfen über 64 KB groß
+sein (`dataAlloc`: `halloc`; Löschen, Kopieren und `fread`/`fwrite` in Stücken bis zum Segmentende: `FIRE_CC_ZERO`, `FIRE_CC_COPY`, `FIRE_CC_IO_STEP`).
+Gebunden wird gegen die C-Bibliothek des Large Model (ihr Code passt in das eine Segment `_TEXT`, der des Huge Model nicht; gleiche Aufrufkonvention).
 fire-Threads laufen dort als Aufgaben des eigenen Schedulers (`std/fire_sched.h`, ROADMAP 13.2b): gewechselt wird an den Safepoints (der GIL gibt ab, `FIRE_PLAT_YIELD`)
 und beim Warten; `INT 1Ch` setzt nur ein Flag (`FIRE_PLAT_PREEMPTED`), im Interrupt wird nie gewechselt. Der Wechsel des Kontexts je Architektur in `std/sched/`.
-Offen: `io`/`filesystem`, Konsole/Tastatur, Grafik, die Packages `dos`/`machine`, `#intwidth 16`.
+Offen: Konsole/Tastatur, Grafik, die Packages `dos`/`machine`/`xms`, `#intwidth 16`.
 
 ### Zielkonfiguration (`fire.native.json`)
 

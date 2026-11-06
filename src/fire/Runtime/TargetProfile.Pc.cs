@@ -15,10 +15,14 @@ namespace fire.Runtime
             Native = new NativeTarget
             {
                 Platform = "dos16", Toolchain = "watcom",
-                // (owcc: a DOS program of the large model, for the 8086; 32 KB of stack - the default of 2 KB is too small for the generated code; inlining
+                // (owcc: a DOS program of the huge model - an array or a buffer may hold more than 64 KB (fire_cc_watcom.h) -, for the 8086; 32 KB of stack - the default of 2 KB is too small for the generated code; inlining
                 // limited - a function of the real mode must fit one segment of 64 KB, and a long `fire_main` with every fast path inlined does not; the stacks of
-                // fire threads lie outside DGROUP: SS is not DS (-zu) and no stack checks - they compare with the program's own stack)
-                CompileArgs = new[] { "-bdos", "-mcmodel=l", "-march=i86", "-mstack-size=32768", "-Wc,-oe=20", "-Wc,-zu", "-fno-stack-check" },
+                // fire threads lie outside DGROUP: SS is not DS (-zu) and no stack checks - they compare with the program's own stack.
+                // Linked with the C library of the large model: the code of the library lies in one segment `_TEXT` of at most 64 KB, and the one of the huge model
+                // does not fit (it is about 30 % larger); the calling convention is the same, and the runtime never hands the library a block that passes the end
+                // of a segment (fire_cc_watcom.h copies and clears big blocks piece by piece))
+                CompileArgs = new[] { "-bdos", "-mcmodel=h", "-march=i86", "-mstack-size=32768", "-Wc,-oe=20", "-Wc,-zu", "-fno-stack-check",
+                    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87" },
             },
         };
 

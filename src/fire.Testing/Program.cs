@@ -27254,19 +27254,22 @@ else
                 Console.WriteLine("SKIP: dos16 bauen und laufen lassen - Open Watcom (owcc) oder DOSBox-X fehlt");
             else
             {
-                string dosDir = Path.Combine(workDir, "dos16");
-                Directory.CreateDirectory(dosDir);
-                var built = fire.Compiler.NativeBuilder.Build(new[] { dosSource }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dosDir, "PROG.EXE"), VmExecutionMode.Release);
-                string dosOut = "";
-                if (built.Ok)
+                // builds the program as PROG.EXE in its own folder (drive C:) and runs it in DOSBox-X (at most 2 minutes): its output, or the log of the build
+                (bool Ok, string Text) BuildAndRunDos(string source, string folder)
                 {
+                    string dir = Path.Combine(workDir, folder);
+                    Directory.CreateDirectory(dir);
+                    var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
+                    if (!built.Ok) return (false, built.Log);
                     var env = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy", ["SDL_AUDIODRIVER"] = "dummy" };
-                    RunProc(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" -c \"mount c {dosDir}\" -c \"c:\" -c \"PROG.EXE > OUT.TXT\" -c \"exit\"", dosDir, out _, null, env);
-                    string outFile = Directory.GetFiles(dosDir).FirstOrDefault(f => Path.GetFileName(f).Equals("OUT.TXT", StringComparison.OrdinalIgnoreCase)) ?? "";
-                    dosOut = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
+                    var run = TestProcess.Run(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" -c \"mount c {dir}\" -c \"c:\" -c \"PROG.EXE > OUT.TXT\" -c \"exit\"", dir, null, env, 120_000);
+                    string outFile = Directory.GetFiles(dir).FirstOrDefault(f => Path.GetFileName(f).Equals("OUT.TXT", StringComparison.OrdinalIgnoreCase)) ?? "";
+                    string text = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
+                    return (true, run.Exit == -1 ? text + "(DOSBox-X nach 2 Minuten beendet)" : text);
                 }
+                var dosRun = BuildAndRunDos(dosSource, "dos16");
                 CheckNat("dos16: mit Open Watcom gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM (Objekte, Strings, Einheiten, Ausnahmen, word 16 Bit, ein fire-Thread)",
-                    built.Ok && dosOut == dosVm && dosVm.Length > 0, $"  VM:\n{dosVm}\n  DOS:\n{(built.Ok ? dosOut : built.Log)}");
+                    dosRun.Ok && dosRun.Text == dosVm && dosVm.Length > 0, $"  VM:\n{dosVm}\n  DOS:\n{dosRun.Text}");
 
                 // files with the paths of DOS ("X:\FOLDER\FILE.EXT", "/" too, upper or lower case alike, what DOS gives back in upper case) - a fixed expectation:
                 // the VM works with the paths of this machine
@@ -27292,19 +27295,47 @@ else
                     """;
                 const string dosFilesExpected = "\\\nHallo DOS\nTrue True\nC:\\FIRE\\X.TXT\nC:\\FIRE\\A.TXT C:\\FIRE\\SUB b.dat\nC:\\FIRE\\SUB\\HELLO.TXT\n9\nC:\\FIRE\n"
                     + "error: Could not find a part of the path 'C:\\NOPE\\X.TXT'.\nFalse\n";
-                string filesDir = Path.Combine(workDir, "dos16files");
-                Directory.CreateDirectory(filesDir);
-                var filesBuilt = fire.Compiler.NativeBuilder.Build(new[] { dosFiles }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(filesDir, "PROG.EXE"), VmExecutionMode.Release);
-                string filesOut = "";
-                if (filesBuilt.Ok)
-                {
-                    var env = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy", ["SDL_AUDIODRIVER"] = "dummy" };
-                    RunProc(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" -c \"mount c {filesDir}\" -c \"c:\" -c \"PROG.EXE > OUT.TXT\" -c \"exit\"", filesDir, out _, null, env);
-                    string outFile = Directory.GetFiles(filesDir).FirstOrDefault(f => Path.GetFileName(f).Equals("OUT.TXT", StringComparison.OrdinalIgnoreCase)) ?? "";
-                    filesOut = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
-                }
+                var filesRun = BuildAndRunDos(dosFiles, "dos16files");
                 CheckNat("dos16: Dateien mit DOS-Pfaden (Laufwerk, \\ und /, Gross/Klein gleich, was DOS liefert gross; anlegen, lesen, kopieren, auflisten, Verzeichnis wechseln, loeschen)",
-                    filesBuilt.Ok && filesOut == dosFilesExpected, $"  erwartet:\n{dosFilesExpected}\n  DOS:\n{(filesBuilt.Ok ? filesOut : filesBuilt.Log)}");
+                    filesRun.Ok && filesRun.Text == dosFilesExpected, $"  erwartet:\n{dosFilesExpected}\n  DOS:\n{filesRun.Text}");
+
+                // more than 64 KB in one array or buffer (the huge model: halloc, copies across segment ends)
+                const string dosBig = """
+                    #import "io"
+                    #import "filesystem"
+                    class Big {
+                        static Bytes() {
+                            var buf = new byte[100000]
+                            for (var i = 0; i < 100000; i++) { buf[i] = i % 251 }
+                            var c = copy buf
+                            var t = 0
+                            for (var i = 0; i < 100000; i += 997) { t = t + c[i] }
+                            print(c.length + " " + c[99999] + " " + c[65536] + " " + t)
+                            IO.File.WriteAllBytes("C:\\BIG.DAT", c)
+                            var back = IO.File.ReadAllBytes("C:\\BIG.DAT")
+                            print(back.length + " " + back[99999] + " " + back[65536] + " " + back[70001])
+                        }
+                        static Ints() {
+                            int big[] = new int[30000]
+                            big[29999] = 42
+                            var bc = copy big
+                            print(bc[29999] + " " + bc.length + " " + bc[17000])
+                        }
+                        static Values() {
+                            var plain = new any[9000]
+                            plain[8999] = "end"
+                            var pc = copy plain
+                            print(pc[8999])
+                        }
+                    }
+                    Big.Bytes()
+                    Big.Ints()
+                    Big.Values()
+                    """;
+                const string dosBigExpected = "100000 101 25 13344\n100000 101 25 223\n42 30000 undefined\nend\n";
+                var bigRun = BuildAndRunDos(dosBig, "dos16big");
+                CheckNat("dos16: Arrays und Puffer ueber 64 KB (100000 Bytes, int[30000], any[9000]; kopieren ueber Segmentgrenzen, eine Datei mit 100000 Bytes)",
+                    bigRun.Ok && bigRun.Text == dosBigExpected, $"  erwartet:\n{dosBigExpected}\n  DOS:\n{bigRun.Text}");
             }
         }
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);

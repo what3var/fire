@@ -192,6 +192,28 @@ static int fire_io_allowed(const char* full, int access, char* reason, size_t si
 #endif
 }
 
+/* fread/fwrite of a block of any size: in pieces the C library can take at once (FIRE_CC_IO_STEP - on 16-bit DOS a size_t ends at 64 KB, a call at the end of a segment).
+ * fire_io_fwriteAll: false on an error. */
+static int64_t fire_io_freadAll(void* to, int64_t count, FILE* f) {
+    int64_t done = 0;
+    while (done < count) {
+        uint8_t* at = (uint8_t*)to + done;
+        size_t step = FIRE_CC_IO_STEP(at, count - done), n = fread(at, 1, step, f);
+        done += (int64_t)n;
+        if (n < step) break;
+    }
+    return done;
+}
+static int fire_io_fwriteAll(const void* from, int64_t count, FILE* f) {
+    int64_t done = 0;
+    while (done < count) {
+        const uint8_t* at = (const uint8_t*)from + done;
+        size_t step = FIRE_CC_IO_STEP(at, count - done);
+        if (fwrite(at, 1, step, f) != step) return 0;
+        done += (int64_t)step;
+    }
+    return 1;
+}
 /* The console (standard input, output and error). A native build: C stdio. The library for the VM: the callbacks of the host (the editor shows the output in its
  * own window). */
 #ifdef FIRE_LIBRARY
@@ -232,16 +254,16 @@ static int fire_io_getc(void) {
     return getc(stdin);
 }
 static void fire_io_ungetc(int c) { if (g_dbgStdin) fire_dbgStdinUnget(c); else ungetc(c, stdin); }
-static int64_t fire_io_consoleRead(uint8_t* out, int64_t count) { return g_dbgStdin ? fire_dbgStdinRead(out, count) : (int64_t)fread(out, 1, (size_t)count, stdin); }
+static int64_t fire_io_consoleRead(uint8_t* out, int64_t count) { return g_dbgStdin ? fire_dbgStdinRead(out, count) : fire_io_freadAll(out, count, stdin); }
 #else
 static int fire_io_getc(void) { return getc(stdin); }
 static void fire_io_ungetc(int c) { ungetc(c, stdin); }
-static int64_t fire_io_consoleRead(uint8_t* out, int64_t count) { return (int64_t)fread(out, 1, (size_t)count, stdin); }
+static int64_t fire_io_consoleRead(uint8_t* out, int64_t count) { return fire_io_freadAll(out, count, stdin); }
 #endif
 #ifndef FIRE_LIBRARY
 static int fire_io_consoleWrite(int kind, const uint8_t* data, int64_t count) {
     FILE* f = kind == 1 ? stdout : stderr;
-    if (count > 0 && fwrite(data, 1, (size_t)count, f) != (size_t)count) { clearerr(f); return 0; }
+    if (count > 0 && !fire_io_fwriteAll(data, count, f)) { clearerr(f); return 0; }
     return 1;
 }
 static void fire_io_consoleFlush(int kind) { fflush(kind == 1 ? stdout : stderr); }
@@ -381,22 +403,22 @@ static int fire_io_memWrite(FireStream* s, const uint8_t* data, int64_t count) {
 }
 /* Reads up to `count` bytes. -1: an error is recorded. */
 static int64_t fire_io_readBytes(FireStream* s, uint8_t* out, int64_t count) {
-    size_t n;
+    int64_t n;
     if (!s->canRead) return fire_io_fail(FIRE_IO_NOT_SUPPORTED, "The stream is not readable.");
     if (count == 0) return 0;
     if (s->kind == FIRE_IO_MEMORY) return fire_io_memRead(s, out, count);
     if (s->kind == FIRE_IO_STD) { fire_io_consoleFlush(1); return fire_io_consoleRead(out, count); }
     fire_io_prepare(s, 1);
-    n = fread(out, 1, (size_t)count, s->file);
-    if (n < (size_t)count && ferror(s->file)) { clearerr(s->file); return fire_io_fail(FIRE_IO_OTHER, "The stream could not be read."); }
-    return (int64_t)n;
+    n = fire_io_freadAll(out, count, s->file);
+    if (n < count && ferror(s->file)) { clearerr(s->file); return fire_io_fail(FIRE_IO_OTHER, "The stream could not be read."); }
+    return n;
 }
 static int64_t fire_io_writeBytes(FireStream* s, const uint8_t* data, int64_t count) {
     if (!s->canWrite) return fire_io_fail(FIRE_IO_NOT_SUPPORTED, "The stream is not writable.");
     if (s->kind == FIRE_IO_MEMORY) return fire_io_memWrite(s, data, count) ? count : fire_io_fail(FIRE_IO_OTHER, "Out of memory.");
     if (s->kind == FIRE_IO_STD) return fire_io_consoleWrite(s->stdKind, data, count) ? count : fire_io_fail(FIRE_IO_OTHER, "The stream could not be written.");
     fire_io_prepare(s, 2);
-    if (count > 0 && fwrite(data, 1, (size_t)count, s->file) != (size_t)count) { clearerr(s->file); return fire_io_fail(FIRE_IO_OTHER, "The stream could not be written."); }
+    if (count > 0 && !fire_io_fwriteAll(data, count, s->file)) { clearerr(s->file); return fire_io_fail(FIRE_IO_OTHER, "The stream could not be written."); }
     return count;
 }
 
@@ -446,30 +468,53 @@ static Value fire_io_WriteByte(Value h, Value value) {
 static Value fire_io_ReadRest(Value h, OwnList* list) {
     FireStream* s = fire_io_find(h);
     uint8_t* all = NULL;
-    size_t size = 0, cap = 0;
+    uint32_t size = 0, cap = 0;   /* (32 bits and the blocks of the runtime: on 16-bit DOS the rest may pass 64 KB) */
     uint8_t chunk[1024];
     Buf* b;
     if (s == NULL) return Undef();
     if (!s->canRead) { fire_io_fail(FIRE_IO_NOT_SUPPORTED, "The stream is not readable."); return Undef(); }
+    if (s->kind == FIRE_IO_FILE && s->canSeek) {
+        /* a file: the rest at once, into a buffer of its size (a block of the rest only once in memory - on DOS it may be most of what there is) */
+        int64_t here, end, n;
+        fire_io_prepare(s, 1);
+        here = fire_fs_tell(s->file);
+        if (here >= 0 && fire_fs_seek(s->file, 0, SEEK_END) && (end = fire_fs_tell(s->file)) >= here && fire_fs_seek(s->file, here, SEEK_SET)
+            && end - here <= 0x7FFFFFF0) {
+            b = allocBuf((uint32_t)(end - here), list);
+            n = fire_io_readBytes(s, b->data, end - here);
+            if (n < 0) return Undef();
+            if (n == end - here) { fire_io_ok(); return BufV(b); }
+            /* (shorter than it said: the bytes read, then the loop for the rest) */
+            size = (uint32_t)n;
+            if (size > 0) {
+                all = (uint8_t*)dataAlloc(0, size, 1);
+                if (all == NULL) { fire_io_fail(FIRE_IO_OTHER, "Out of memory."); return Undef(); }
+                dataCopy(all, b->data, size);
+                cap = size;
+            }
+        }
+    }
     for (;;) {
         int64_t n = fire_io_readBytes(s, chunk, sizeof chunk);
-        if (n < 0) { free(all); return Undef(); }
+        if (n < 0) { if (all) dataFree(all); return Undef(); }
         if (n == 0) break;
-        if (size + (size_t)n > cap) {
-            size_t c = cap ? cap * 2 : 4096;
+        if ((uint64_t)size + (uint64_t)n > cap) {
+            uint64_t c = cap ? (uint64_t)cap * 2 : 4096;
             uint8_t* grown;
-            while (c < size + (size_t)n) c *= 2;
-            grown = (uint8_t*)realloc(all, c);
-            if (grown == NULL) { free(all); fire_io_fail(FIRE_IO_OTHER, "Out of memory."); return Undef(); }
+            while (c < (uint64_t)size + (uint64_t)n) c *= 2;
+            grown = c > 0x7FFFFFF0u ? NULL : (uint8_t*)dataAlloc(0, (uint32_t)c, 1);
+            if (grown == NULL) { if (all) dataFree(all); fire_io_fail(FIRE_IO_OTHER, "Out of memory."); return Undef(); }
+            if (size > 0) dataCopy(grown, all, size);
+            if (all) dataFree(all);
             all = grown;
-            cap = c;
+            cap = (uint32_t)c;
         }
-        memcpy(all + size, chunk, (size_t)n);
-        size += (size_t)n;
+        dataCopy(all + size, chunk, (uint32_t)n);
+        size += (uint32_t)n;
     }
-    b = allocBuf((uint32_t)size, list);
-    if (size > 0) memcpy(b->data, all, size);
-    free(all);
+    b = allocBuf(size, list);
+    if (size > 0) dataCopy(b->data, all, size);
+    if (all) dataFree(all);
     fire_io_ok();
     return BufV(b);
 }
