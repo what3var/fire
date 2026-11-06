@@ -56,7 +56,7 @@ namespace fire.Package.Manager
         /// <summary>The sources go into one file in the order of the package (what a file includes comes before it): an `#include "x.hpp"` of another source of the package is
         /// already there and is left out.</summary>
         private static string StripLocalIncludes(string text, HashSet<string> names) =>
-            System.Text.RegularExpressions.Regex.Replace(text, @"^([ \t]*)#include[ \t]+""([^""\r\n]+)""[ \t]*\r?$",
+            System.Text.RegularExpressions.Regex.Replace(text, @"^([ \t]*)#include[ \t]+""([^""\r\n]+)""[ \t]*(?:/\*.*\*/[ \t]*|//.*)?\r?$",   // (a comment may follow on the line)
                 m => names.Contains(Path.GetFileName(m.Groups[2].Value)) ? m.Groups[1].Value + "// (in this file already) #include \"" + m.Groups[2].Value + "\"" : m.Value,
                 System.Text.RegularExpressions.RegexOptions.Multiline);
 

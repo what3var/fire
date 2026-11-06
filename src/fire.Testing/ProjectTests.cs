@@ -856,6 +856,19 @@ static class ProjectTests
         string posix = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "posix" }));
         string common = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "windows" }));
         Check("Bau-Reihenfolge: sortiert nach order, stabil (ohne order 0, Plattformquellen zuerst)", posix == "b,q,a,c,p" && common == "b,a,c", posix + " | " + common);
+        // `vm`: the library of the VM gets only that layer; `default`: a platform without a key of its own (ROADMAP 13.3b - console, machine, dos, xms)
+        var layered = new fire.Package.Manager.PackageNative();
+        layered.Sources.Add("bridge");
+        layered.PlatformSources["dos16"] = new fire.Package.Manager.NativeSourceList { "real" };
+        layered.PlatformSources["posix"] = new fire.Package.Manager.NativeSourceList { "term" };
+        layered.PlatformSources["vm"] = new fire.Package.Manager.NativeSourceList { "none" };
+        layered.PlatformSources["default"] = new fire.Package.Manager.NativeSourceList { "none" };
+        string Layer(params string[] keys) => string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(layered, keys));
+        string withoutVm = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "vm", "posix" }));
+        Check("Plattformquellen: `vm` allein fuer die Bibliothek der VM, `default` fuer eine Plattform ohne eigenen Schluessel, ohne `vm`-Eintrag die Plattform",
+            Layer("vm", "posix", "linux") == "none,bridge" && Layer("posix", "linux") == "term,bridge" && Layer("dos16", "dos16") == "real,bridge" && Layer("esp32", "esp32") == "none,bridge"
+            && withoutVm == posix && fire.Package.Manager.PackageNativeExtensions.SupportsAny(layered, new[] { "wasm" }),
+            $"{Layer("vm", "posix", "linux")} | {Layer("posix", "linux")} | {Layer("esp32", "esp32")} | {withoutVm}");
         var problems = fire.Package.Manager.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
         Check("Bau-Reihenfolge: die Pruefung nennt Datei und Zeile des #include, das auf eine spaetere Quelle zeigt", problems.Count == 2
             && problems[0].StartsWith("native/top.h:2: #include \"mid.h\"") && problems[0].Contains("give 'native/mid.h' a smaller build order") && problems[1].StartsWith("native/mid.h:2: #include \"base.h\""), string.Join("\n", problems));

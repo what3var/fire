@@ -1,16 +1,12 @@
 /* fire native bridge "machine" (C): the natives behind `#import "machine"` (docs/stdlib/machine.md) - ports, physical memory, the processor and hardware
- * interrupts of the PC, through the machine part of the platform layer (FIRE_PLATFORM_MACHINE_C_HEADER: fire_mach_*). The checks of the arguments and the
+ * interrupts of the PC, through the machine of the platform that comes with the package (fire_mach_*: platformSources of machine.fireproj). The checks of the arguments and the
  * exceptions are in the prelude: a native that cannot do its work returns undefined (Peek of an address out of reach, an IRQ hooked twice). */
 #ifndef FIRE_BRIDGE_MACHINE_H
 #define FIRE_BRIDGE_MACHINE_H
 
 #include <stdint.h>
 #include <string.h>
-#ifdef FIRE_LIBRARY
-#include "platform/std/fire_machine_none.h"   /* (the VM: never the hardware) */
-#else
-#include FIRE_PLATFORM_MACHINE_C_HEADER
-#endif
+#include "fire_machine_c.h"   /* (and before this file the machine of the platform: platformSources of machine.fireproj - the VM gets fire_machine_none.h) */
 
 static int fire_machb_bits(Value bits) { return bits.i == 8 || bits.i == 16 ? (int)bits.i : 32; }
 

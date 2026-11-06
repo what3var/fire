@@ -1,4 +1,4 @@
-/* fire native platform layer, console part for POSIX terminals (Linux, macOS, the BSDs): ANSI escape sequences for the cursor and the colours, termios for the
+/* fire console package: the console for POSIX terminals (Linux, macOS, the BSDs): ANSI escape sequences for the cursor and the colours, termios for the
  * keyboard - raw only while a key is read or looked for (the terminal echoes and edits lines as usual in between), the keys of the cursor block and F1..F12 from
  * their sequences (xterm, the Linux console, VT220). A console only when standard input and output are terminals. */
 #ifndef FIRE_CONSOLE_POSIX_H

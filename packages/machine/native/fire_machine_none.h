@@ -1,4 +1,4 @@
-/* fire native platform layer, machine part: no access to the hardware (an operating system owns it, or the VM) - every function of Machine is a
+/* fire machine package: the machine: no access to the hardware (an operating system owns it, or the VM) - every function of Machine is a
  * MachineException (fire_mach_unavailable says why); the others are never called. */
 #ifndef FIRE_MACHINE_NONE_H
 #define FIRE_MACHINE_NONE_H

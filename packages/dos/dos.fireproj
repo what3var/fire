@@ -12,6 +12,10 @@
   },
   "native": {
     "sources": [
+      {
+        "file": "native/fire_dos_c.h",
+        "order": -1
+      },
       "native/fire_bridge_dos.h"
     ],
     "discover": false,
@@ -36,6 +40,17 @@
         "c": "fire_dos_FarOf"
       }
     ],
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_dos_real.h"
+      ],
+      "vm": [
+        "native/fire_dos_none.h"
+      ],
+      "default": [
+        "native/fire_dos_none.h"
+      ]
+    }
   }
 }

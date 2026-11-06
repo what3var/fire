@@ -12,6 +12,10 @@
   },
   "native": {
     "sources": [
+      {
+        "file": "native/fire_xms_c.h",
+        "order": -1
+      },
       "native/fire_bridge_xms.h"
     ],
     "discover": false,
@@ -46,6 +50,17 @@
         "c": "fire_xms_Move"
       }
     ],
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_xms_real.h"
+      ],
+      "vm": [
+        "native/fire_xms_none.h"
+      ],
+      "default": [
+        "native/fire_xms_none.h"
+      ]
+    }
   }
 }

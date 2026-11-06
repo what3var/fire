@@ -53,5 +53,5 @@ block.Close()
 A move may be of any length and at any offset (the driver moves an even number of bytes: an odd last byte goes through a word read from the block and
 written back), and a buffer may be larger than 64 KB.
 
-Both are parts of the platform layer (`native/platform/<platform>/fire_dos.h`, the interface in `native/platform/std/fire_dos_c.h`; `std/fire_dos_real.h`
-for the real mode).
+Each package brings its platform parts itself (`fire_dos_real.h` / `fire_xms_real.h` for the real mode, `_none.h` elsewhere and in the VM, chosen by
+`platformSources` of `dos.fireproj` / `xms.fireproj`).

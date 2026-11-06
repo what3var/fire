@@ -1,4 +1,4 @@
-/* fire native platform layer, console part for Windows: the console API of Win32 (also on the old Windows versions - no escape sequences): the attributes of
+/* fire console package: the console for Windows: the console API of Win32 (also on the old Windows versions - no escape sequences): the attributes of
  * the console are the colours in the order of the CGA, the text goes as UTF-16 (WriteConsoleW), the keys come from ReadConsoleInputW. A console only when
  * standard input and output are one (GetConsoleMode). */
 #ifndef FIRE_CONSOLE_WIN32_H

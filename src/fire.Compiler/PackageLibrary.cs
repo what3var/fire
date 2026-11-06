@@ -26,7 +26,8 @@ namespace fire.Compiler
         }
 
         /// <summary>The keys that `platformSources` and `platforms` of a package are matched with for this machine: the platform package and the target name.</summary>
-        public static IReadOnlyList<string> HostPlatformKeys => new[] { TargetProfile.Host.Native.Platform, TargetProfile.Host.Name };
+        /// <summary>The keys of the platform sources for the library of the VM: `vm` first (a package that has it gets only that layer - see SourcesFor), then the machine's.</summary>
+        public static IReadOnlyList<string> HostPlatformKeys => new[] { fire.Package.Manager.PackageNativeExtensions.VmKey, TargetProfile.Host.Native.Platform, TargetProfile.Host.Name };
 
         private static string Extension => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".dll" : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? ".dylib" : ".so";
         private static string Prefix => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "" : "lib";

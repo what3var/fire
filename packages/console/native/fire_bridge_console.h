@@ -1,7 +1,7 @@
 /* fire native bridge "console" (C): the natives behind `#import "console"` (docs/stdlib/console.md) - the screen and the keyboard of a text console.
  *
- * The console itself is a part of the platform layer (FIRE_PLATFORM_CONSOLE_C_HEADER: fire_con_*; DOS through the BIOS, POSIX terminals with ANSI and termios,
- * the console API of Windows). When the program has none - its output or input is redirected, the platform has no console, or it runs in the VM (the library
+ * The console itself comes with the package, one file per platform (fire_con_*; DOS through the BIOS, POSIX terminals with ANSI and termios, the console API
+ * of Windows; chosen by the platformSources of console.fireproj). When the program has none - its output or input is redirected, the platform has no console, or it runs in the VM (the library
  * for the VM writes to the output of the host) - the console is "plain": text goes to standard output without colours, the cursor stays where the text puts
  * it, keys are the characters of standard input. A program behaves the same either way, only the screen looks different. */
 #ifndef FIRE_BRIDGE_CONSOLE_H
@@ -11,11 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef FIRE_LIBRARY
-#include "platform/std/fire_console_none.h"   /* (the VM: always plain, through the host) */
-#else
-#include FIRE_PLATFORM_CONSOLE_C_HEADER
-#endif
+#include "fire_console_c.h"   /* (and before this file the console of the platform: platformSources of console.fireproj - the VM gets fire_console_none.h) */
 
 static int g_conState = -1;   /* -1: not asked yet, 0: plain, 1: a console */
 static int fire_con_live(void) {

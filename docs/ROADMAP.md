@@ -576,6 +576,14 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    `fire_dev_*`, `fire_fs_*`, ...) - liegt im Package und wird mit dem Package aktualisiert (ein neues Package bringt seine Umsetzungen je Plattform mit, ohne
    neue Runtime). Die Auswahl je Plattform über die Quellen des Packages (`ReadNativeSources` mit den Schlüsseln der Plattform und des Ziels); in der Runtime
    bleibt nur, was sie selbst braucht (Uhr, Threads, Speicher, der Kern der Plattform).
+   **Stufe 1 umgesetzt:** `console`, `machine`, `dos`, `xms` bringen ihre Plattformteile selbst (`packages/<name>/native/fire_<name>_<plattform>.h`, gewählt über
+   `platformSources`); zwei neue Schlüssel: `default` (eine Plattform ohne eigenen Eintrag) und `vm` (die Bibliothek der VM bekommt nur diese Schicht - dort
+   "none"). Die gemeinsame Codepage-437-Tabelle bleibt als Hilfe der Plattformschicht (`std/fire_cp437.h`, auch für die DOS-Anzeige). Ein `#include "x.h"` mit
+   Kommentar dahinter gilt jetzt auch als Include einer Quelle des Packages (er blieb sonst stehen). Test: die Regeln von `SourcesFor` (Projekt-Tests).
+   **Offen (Stufe 2), Frage an den Benutzer:** die Teile, die mehrere Packages benutzen - `fs` (io, filesystem und die Schriften der Grafik), `audio` (audio,
+   circuits), `display` (windows, ui, scene3d), `dev` (devices, gpio, i2c, spi, usb, wifi) - und `net`/`tls`. Vorschlag: ein Teil gehört dem Package, dessen
+   Kern er ist (`fs` -> io, `display` -> windows, `audio` -> audio, `dev` -> devices), und ein anderes Package nimmt ihn über eine Abhängigkeit mit
+   (`"native": { "uses": [ "io" ] }`: dessen Plattformquellen kommen einmal vor die eigenen).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste

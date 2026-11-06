@@ -1,4 +1,4 @@
-/* fire native platform layer, console part for DOS (dos16; dos32 later): the text mode of the PC through the BIOS - INT 10h for the screen (cursor, a character
+/* fire console package: the console for DOS (dos16; dos32 later): the text mode of the PC through the BIOS - INT 10h for the screen (cursor, a character
  * with its attribute, scrolling), INT 16h for the keyboard (the enhanced functions: F11/F12, the keys of the cursor block). The text is shown in code page 437
  * (what the BIOS font has); a key's character comes back as Unicode. A console only when standard input and output are not redirected (isatty). */
 #ifndef FIRE_CONSOLE_DOS_H
@@ -75,7 +75,7 @@ static void fire_con_write(const char* utf8, uint32_t n) {
             union REGS r;
             if (row >= rows) { fire_con_scroll(0, row - rows + 1); row = rows - 1; }
             fire_con_setCursor(col, row);
-            r.h.ah = 9; r.h.al = fire_con_toCp437(c); r.h.bh = 0; r.h.bl = fire_con_attr; r.x.cx = 1;
+            r.h.ah = 9; r.h.al = fire_cp437_byte(c); r.h.bh = 0; r.h.bl = fire_con_attr; r.x.cx = 1;
             fire_con_bios(&r);
             if (++col >= cols) { col = 0; row++; }
         }
@@ -102,7 +102,7 @@ static int fire_con_readKey(FireConKey* k) {
     unsigned scan = (code >> 8) & 0xFF, ascii = code & 0xFF;
     int mods = ((shift & 3) ? FIRE_KEYMOD_SHIFT : 0) | ((shift & 4) ? FIRE_KEYMOD_CONTROL : 0) | ((shift & 8) ? FIRE_KEYMOD_ALT : 0);
     if (ascii != 0 && ascii != 0xE0) {
-        fire_con_keyOfChar(ascii == 13 ? '\n' : fire_con_fromCp437((unsigned char)ascii), k);
+        fire_con_keyOfChar(ascii == 13 ? '\n' : fire_cp437_char((unsigned char)ascii), k);
         if (ascii == 13 && scan == 0x1C) k->key = FIRE_KEY_ENTER;
         k->mods |= mods & ~(k->key == FIRE_KEY_CHARACTER && ascii >= 32 ? FIRE_KEYMOD_SHIFT : 0);   /* (an upper-case letter: the character says it) */
         return 1;

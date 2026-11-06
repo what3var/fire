@@ -11,7 +11,7 @@
 
 #include "fire_display_c.h"
 #include "fire_display_keys.h"
-#include "fire_console_c.h"   /* (code page 437: the characters of the keys) */
+#include "fire_cp437.h"   /* (the characters of the keys) */
 #include <bios.h>
 #include <conio.h>
 #include <dos.h>
@@ -224,7 +224,7 @@ static void fire_display_dosKeys(FireDisplayEvents* out) {
         unsigned scan = fire_display_dosBaseScan((code >> 8) & 0xFF), ascii = code & 0xFF;
         int extended = ascii == 0xE0 || (ascii == 0 && scan >= 0x47 && scan <= 0x53 && scan != 0x4A && scan != 0x4C && scan != 0x4E);
         int sc = fire_key_fromWin32(scan, extended);
-        uint32_t ch = ascii != 0 && ascii != 0xE0 ? fire_con_fromCp437((unsigned char)ascii) : 0;
+        uint32_t ch = ascii != 0 && ascii != 0xE0 ? fire_cp437_char((unsigned char)ascii) : 0;
         int mods = ((shift & 1) ? 0x2 : 0) | ((shift & 2) ? 0x1 : 0) | ((shift & 4) ? 0x40 : 0) | ((shift & 8) ? 0x100 : 0) | ((shift & 0x20) ? 0x1000 : 0) | ((shift & 0x40) ? 0x2000 : 0);
         FireDisplayEvent e;
         uint32_t unshifted = ch >= 'A' && ch <= 'Z' ? ch + 32 : (ch >= 32 && ch < 127 ? ch : 0);

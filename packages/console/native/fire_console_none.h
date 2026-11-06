@@ -1,4 +1,4 @@
-/* fire native platform layer, console part: no console of its own (a board, the browser) - the console bridge writes plain text to standard output and reads
+/* fire console package: the console: no console of its own (a board, the browser) - the console bridge writes plain text to standard output and reads
  * standard input (fire_con_open says 0; the other functions are never called). */
 #ifndef FIRE_CONSOLE_NONE_H
 #define FIRE_CONSOLE_NONE_H

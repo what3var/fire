@@ -12,6 +12,10 @@
   },
   "native": {
     "sources": [
+      {
+        "file": "native/fire_console_c.h",
+        "order": -1
+      },
       "native/fire_bridge_console.h"
     ],
     "discover": false,
@@ -82,6 +86,23 @@
         "c": "fire_console_ReadKey"
       }
     ],
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_console_dos.h"
+      ],
+      "posix": [
+        "native/fire_console_posix.h"
+      ],
+      "windows": [
+        "native/fire_console_win32.h"
+      ],
+      "vm": [
+        "native/fire_console_none.h"
+      ],
+      "default": [
+        "native/fire_console_none.h"
+      ]
+    }
   }
 }

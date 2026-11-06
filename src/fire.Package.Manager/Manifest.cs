@@ -144,8 +144,9 @@ namespace fire.Package.Manager
         public bool IsC => Language == "c";
         /// <summary>The source files; an entry can have a build order (see <see cref="NativeSourceList"/>).</summary>
         public NativeSourceList Sources { get; set; } = new();
-        /// <summary>More source files for one platform or target: the key is the platform package (`posix`, `windows`, `freertos`, `esp32`, ...) or the name of the target
-        /// (`linux`, `macos`, `esp32`, ...); they come before <see cref="Sources"/> in builds for it, so that the common code can use what they declare. The same code can use `FIRE_TARGET_&lt;NAME&gt;` and `FIRE_HAL_&lt;PLATFORM&gt;`.</summary>
+        /// <summary>More source files for one platform or target: the key is the platform package (`posix`, `windows`, `freertos`, `esp32`, `dos16`, ...) or the name of the target
+        /// (`linux`, `macos`, `esp32`, ...), `vm` for the library of the virtual machine (then only it), `default` for a platform without a key of its own; they come before
+        /// <see cref="Sources"/> in builds for it, so that the common code can use what they declare. The same code can use `FIRE_TARGET_&lt;NAME&gt;` and `FIRE_HAL_&lt;PLATFORM&gt;`.</summary>
         public Dictionary<string, NativeSourceList> PlatformSources { get; set; } = new();
         /// <summary>The platforms of the target (`posix`, `windows`, `freertos`, ...) the source is written for; empty: all (and the keys of <see cref="PlatformSources"/>).</summary>
         public List<string> Platforms { get; set; } = new();
@@ -165,13 +166,26 @@ namespace fire.Package.Manager
 
     public static class PackageNativeExtensions
     {
+        /// <summary>The key of <see cref="PackageNative.PlatformSources"/> for the library of the virtual machine.</summary>
+        public const string VmKey = "vm";
+        /// <summary>The key of <see cref="PackageNative.PlatformSources"/> for a platform that has no key of its own.</summary>
+        public const string DefaultKey = "default";
+
         /// <summary>The source files for a build for a target, in build order: first those of every key that names the target (not case sensitive) - the layer under the common code - then
         /// <see cref="PackageNative.Sources"/>, which can use what the platform files declare; all of them then sorted by their build order (`order`, stable: without one 0).</summary>
+        /// The key <see cref="VmKey"/> (the library for the virtual machine, <c>PackageLibrary.HostPlatformKeys</c> names it first) is the only one when the package has it - the
+        /// VM then gets that layer, not the one of the machine it runs on (a package whose platform layer reaches hardware or a console the VM does not have says "none" there);
+        /// when no key names the target, <see cref="DefaultKey"/> does (the layer of a platform the package knows nothing special about).
         public static IReadOnlyList<string> SourcesFor(this PackageNative native, IEnumerable<string> platformKeys)
         {
             var result = new List<(string File, int Order)>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var key in platformKeys)
+            var keys = platformKeys.ToList();
+            bool Has(string key) => native.PlatformSources.Keys.Any(k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase));
+            if (keys.Any(k => string.Equals(k, VmKey, StringComparison.OrdinalIgnoreCase)) && Has(VmKey)) keys = new List<string> { VmKey };
+            else keys.RemoveAll(k => string.Equals(k, VmKey, StringComparison.OrdinalIgnoreCase));
+            if (!keys.Any(Has)) keys = new List<string> { DefaultKey };
+            foreach (var key in keys)
                 foreach (var (k, files) in native.PlatformSources)
                     if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var f in files) if (seen.Add(f)) result.Add((f, files.OrderOf(f) ?? 0));
             foreach (var f in native.Sources) if (seen.Add(f)) result.Add((f, native.Sources.OrderOf(f) ?? 0));
@@ -197,7 +211,7 @@ namespace fire.Package.Manager
                 if (native.Platforms.Contains(key, StringComparer.OrdinalIgnoreCase)) return true;
                 if (native.PlatformSources.Keys.Contains(key, StringComparer.OrdinalIgnoreCase)) return true;
             }
-            return false;
+            return native.PlatformSources.Keys.Contains(DefaultKey, StringComparer.OrdinalIgnoreCase);
         }
     }
 

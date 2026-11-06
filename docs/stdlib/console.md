@@ -58,5 +58,5 @@ cursor is at 0, 0. `Console.IsConsole()` says which it is. A program therefore r
 The colours are those of the PC's text mode in its order; a terminal shows them as its ANSI colours. On DOS a bright background (`DarkGray` and above)
 blinks on the CGA, or is bright after the program switched blinking off.
 
-The console is a part of the platform layer (`native/platform/<platform>/fire_console.h`, the interface in `native/platform/std/fire_console_c.h`): a new
-console is a new file in `std/` and a line in the platform's header.
+The console of each platform comes with the package (`packages/console/native/fire_console_<platform>.h`, the interface in `fire_console_c.h`,
+chosen by `platformSources` of `console.fireproj`): a new console is a new file in the package and a line there - an update of the package brings it.

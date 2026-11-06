@@ -12,6 +12,10 @@
   },
   "native": {
     "sources": [
+      {
+        "file": "native/fire_machine_c.h",
+        "order": -1
+      },
       "native/fire_bridge_machine.h"
     ],
     "discover": false,
@@ -97,6 +101,17 @@
       "ArgumentException",
       "DestroyedException"
     ],
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_machine_x86_16.h"
+      ],
+      "vm": [
+        "native/fire_machine_none.h"
+      ],
+      "default": [
+        "native/fire_machine_none.h"
+      ]
+    }
   }
 }

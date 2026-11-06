@@ -1,15 +1,11 @@
-/* fire native bridge "dos" (C): the natives behind `#import "dos"` (docs/stdlib/dos.md) - interrupts of DOS and the BIOS in real mode, through the DOS part
- * of the platform layer (FIRE_PLATFORM_DOS_C_HEADER: fire_dos_*). The checks and the exceptions are in the prelude. */
+/* fire native bridge "dos" (C): the natives behind `#import "dos"` (docs/stdlib/dos.md) - interrupts of DOS and the BIOS in real mode, through DOS of the
+ * platform that comes with the package (fire_dos_*: platformSources of dos.fireproj). The checks and the exceptions are in the prelude. */
 #ifndef FIRE_BRIDGE_DOS_H
 #define FIRE_BRIDGE_DOS_H
 
 #include <stdint.h>
 #include <string.h>
-#ifdef FIRE_LIBRARY
-#include "platform/std/fire_dos_none.h"   /* (the VM: never DOS) */
-#else
-#include FIRE_PLATFORM_DOS_C_HEADER
-#endif
+#include "fire_dos_c.h"   /* (and before this file DOS of the platform: platformSources of dos.fireproj - the VM gets fire_dos_none.h) */
 
 static Value fire_dos_Unavailable(OwnList* list) {
     const char* why = fire_dos_unavailable();

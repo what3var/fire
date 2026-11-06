@@ -46,5 +46,5 @@ fire {
 it asks (`Count`, `Wait` - typically in a fire thread of its own). A device that keeps its line active until it is served raises no new interrupt
 meanwhile; read its status when `Wait` returns. The vectors and masks are put back when the program ends, also after an exception.
 
-The hardware is a part of the platform layer (`native/platform/<platform>/fire_machine.h`, the interface in `native/platform/std/fire_machine_c.h`;
-`std/fire_machine_x86_16.h` for the real mode).
+The machine of each platform comes with the package (`packages/machine/native/fire_machine_x86_16.h` for the real mode, `fire_machine_none.h`
+elsewhere and in the VM; the interface in `fire_machine_c.h`, chosen by `platformSources` of `machine.fireproj`).

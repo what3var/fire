@@ -1,7 +1,8 @@
 /* fire native platform layer, console part in C (the HAL of the console bridge, packages/console): the screen and the keyboard of a text console - what the
  * implementations share (the keys, UTF-8, code page 437, the ANSI colours).
  *
- * A platform package offers `fire_console.h` (FIRE_PLATFORM_CONSOLE_C_HEADER points to it) with:
+ * The package brings the console of each platform (`platformSources` of console.fireproj: fire_console_dos.h, _posix.h, _win32.h; `vm` and `default`:
+ * fire_console_none.h), each with:
  *   int  fire_con_open(void)                      1: the program's output and input are a console (a screen and a keyboard); 0: not (redirected, or none at
  *                                                 all) - then the bridge writes plain text to standard output and reads standard input, and calls nothing else here
  *   void fire_con_write(const char* utf8, uint32_t n)   text at the cursor in the current colours (\n \r \b \t; the screen scrolls at the bottom)
@@ -14,7 +15,7 @@
  *   int  fire_con_keyAvailable(void)              a key waits (never blocks)
  *   int  fire_con_readKey(FireConKey* key)        the next key (blocks; the bridge only calls it when one is available): 1, or 0 when there is no more input
  *   void fire_con_close(void)                     colours, cursor and the mode of the terminal as they were (at the end of the program)
- * A new console is a new file in std/ and a line in the fire_console.h of the platform. */
+ * A new console is a new file in the package and a line in its platformSources. */
 #ifndef FIRE_CONSOLE_C_H
 #define FIRE_CONSOLE_C_H
 
@@ -59,24 +60,8 @@ static inline uint32_t fire_con_utf8Next(const char* s, uint32_t n, uint32_t* i)
     return c;
 }
 
-/* Code page 437 (the character set of the PC's text mode): the upper half as Unicode. The lower half is ASCII. */
-static const uint16_t fire_con_cp437[128] = {
-    0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, 0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x00EC, 0x00C4, 0x00C5,
-    0x00C9, 0x00E6, 0x00C6, 0x00F4, 0x00F6, 0x00F2, 0x00FB, 0x00F9, 0x00FF, 0x00D6, 0x00DC, 0x00A2, 0x00A3, 0x00A5, 0x20A7, 0x0192,
-    0x00E1, 0x00ED, 0x00F3, 0x00FA, 0x00F1, 0x00D1, 0x00AA, 0x00BA, 0x00BF, 0x2310, 0x00AC, 0x00BD, 0x00BC, 0x00A1, 0x00AB, 0x00BB,
-    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556, 0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B, 0x2510,
-    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F, 0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567,
-    0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B, 0x256A, 0x2518, 0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580,
-    0x03B1, 0x00DF, 0x0393, 0x03C0, 0x03A3, 0x03C3, 0x00B5, 0x03C4, 0x03A6, 0x0398, 0x03A9, 0x03B4, 0x221E, 0x03C6, 0x03B5, 0x2229,
-    0x2261, 0x00B1, 0x2265, 0x2264, 0x2320, 0x2321, 0x00F7, 0x2248, 0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x25A0, 0x00A0 };
-/* A code point as a byte of code page 437 ('?' when it has none). */
-static inline unsigned char fire_con_toCp437(uint32_t c) {
-    int i;
-    if (c < 0x80) return (unsigned char)c;
-    for (i = 0; i < 128; i++) if (fire_con_cp437[i] == c) return (unsigned char)(0x80 + i);
-    return '?';
-}
-static inline uint32_t fire_con_fromCp437(unsigned char b) { return b < 0x80 ? b : fire_con_cp437[b - 0x80]; }
+/* (code page 437: the shared table of the platform layer) */
+#include "platform/std/fire_cp437.h"
 
 /* The key of a character that came as text (a terminal, a redirected input): Enter, Tab, Backspace, Escape, a control letter, or the character itself. */
 static inline void fire_con_keyOfChar(uint32_t c, FireConKey* k) {

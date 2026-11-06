@@ -1,4 +1,4 @@
-/* fire native platform layer, machine part for the 16-bit real mode of the PC (dos16; Open Watcom): the ports with IN/OUT (32 bits with the
+/* fire machine package: the machine for the 16-bit real mode of the PC (dos16; Open Watcom): the ports with IN/OUT (32 bits with the
  * operand-size prefix from the 386 on), physical memory below 1 MB + 64 KB through segment:offset, the CPU level by the classic flag tests and CPUID,
  * IRQ 0..15 through the vectors 08h-0Fh and 70h-77h and the two 8259 PICs. The 386 instructions are written as bytes: the program is built for the 8086
  * and only runs them after the check (fire_mach_cpuLevel). */

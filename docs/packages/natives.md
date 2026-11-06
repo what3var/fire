@@ -273,9 +273,15 @@ word buffers as `FIRE_WORDS` and words as `FIRE_WORD`).
   }
   ```
 
-  The key is the platform package (`posix`, `windows`, `freertos`) or the name of a target (`linux`, `macos`, `esp32`, ...). `platforms` lists where the C++ may be used:
-  a build for another target is refused with a clear message (empty: everywhere).
-* **The virtual machine** runs on the machine it is on: the library is built for it (Windows: `windows`, Linux and macOS: `posix`) with its `platformSources`.
+  The key is the platform package (`posix`, `windows`, `freertos`, `dos16`) or the name of a target (`linux`, `macos`, `esp32`, ...). Two keys are special:
+  `default` is taken for a platform that has no key of its own, and `vm` is the layer of the library for the virtual machine (see below). `platforms` lists where
+  the C++ may be used: a build for another target is refused with a clear message (empty: everywhere; with `default`, everywhere as well).
+  So a package brings the code it needs on each system itself and updates it with the package - the standard packages `console`, `machine`, `dos` and `xms`
+  do so (`fire_console_dos.h`, `_posix.h`, `_win32.h`; `vm` and `default`: `fire_console_none.h`).
+* **The virtual machine** runs on the machine it is on: the library is built for it (Windows: `windows`, Linux and macOS: `posix`) with its `platformSources` -
+  unless the package has the key `vm`: then the library gets only that layer (a package whose code reaches hardware or a console the VM does not have says
+  "none" there, and the program sees the same behaviour as natively without that hardware).
+* **`#include` and the comment after it.** `#include "x.h"  /* why */` is fine: the line counts as an include of `x.h`.
 * **Build order.** All sources of a build - first the `platformSources` of the target, then `sources` - are put into **one** file, one after the other. An `#include "x.h"` of another
   source of the same import is taken out there (the source is in the file already), so whatever a source includes has to come **before** it. By default that is the order of the lists;
   an entry can say it explicitly with an order value - the sources are sorted by it (smaller first, stable; an entry without one has order 0 and keeps its place among the others):
