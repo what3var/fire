@@ -1,0 +1,213 @@
+// The hardware of the PC (docs/stdlib/machine.md): I/O ports, physical memory, the processor, hardware interrupts - and on them the CMOS clock, the
+// PC speaker and the PCI configuration. Only where a program owns the machine (dos16; later dos32 and bios-x86); elsewhere every call is a
+// Machine.MachineException. An interrupt is only counted when it comes: the program asks for it (Irq.Count, Irq.Wait) - fire code never runs inside one.
+namespace Machine {
+    class MachineException : Exception {
+        string message
+        construct(string message) { this.message = message }
+    }
+
+    // (the hardware is there - else the MachineException that says why)
+    class Check {
+        static undefined Hardware() {
+            var why = __MachUnavailable()
+            if (why != undefined) { throw new Machine.MachineException(why) }
+        }
+        static undefined Bits(int bits) {
+            if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
+            if (bits == 32 && __MachCpuLevel() < 3) { throw new Machine.MachineException("32-bit access needs a 386 or later.") }
+        }
+        static undefined Port(int port) {
+            if (port < 0 || port > 65535) { throw new ArgumentException("A port is 0 to 65535, not " + port + ".") }
+        }
+    }
+
+    // I/O ports: In8/In16/In32 read, Out8/Out16/Out32 write (32 bits from the 386 on).
+    class Port {
+        static int In(int port, int bits) {
+            Machine.Check.Hardware()
+            Machine.Check.Port(port)
+            Machine.Check.Bits(bits)
+            return __MachIn(port, bits)
+        }
+        static undefined Out(int port, int bits, int value) {
+            Machine.Check.Hardware()
+            Machine.Check.Port(port)
+            Machine.Check.Bits(bits)
+            __MachOut(port, bits, value)
+        }
+        static int In8(int port) { return Machine.Port.In(port, 8) }
+        static int In16(int port) { return Machine.Port.In(port, 16) }
+        static int In32(int port) { return Machine.Port.In(port, 32) }
+        static undefined Out8(int port, int value) { Machine.Port.Out(port, 8, value) }
+        static undefined Out16(int port, int value) { Machine.Port.Out(port, 16, value) }
+        static undefined Out32(int port, int value) { Machine.Port.Out(port, 32, value) }
+    }
+
+    // Physical memory (real mode: the first megabyte and the 64 KB after it). Peek/Poke with 8, 16 or 32 bits, little endian.
+    class Memory {
+        static int Peek(int address, int bits) {
+            Machine.Check.Hardware()
+            if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
+            var v = __MachPeek(address, bits)
+            if (v == undefined) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
+            return v
+        }
+        static undefined Poke(int address, int bits, int value) {
+            Machine.Check.Hardware()
+            if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
+            if (!__MachPoke(address, bits, value)) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
+        }
+        static int Peek8(int address) { return Machine.Memory.Peek(address, 8) }
+        static int Peek16(int address) { return Machine.Memory.Peek(address, 16) }
+        static int Peek32(int address) { return Machine.Memory.Peek(address, 32) }
+        static undefined Poke8(int address, int value) { Machine.Memory.Poke(address, 8, value) }
+        static undefined Poke16(int address, int value) { Machine.Memory.Poke(address, 16, value) }
+        static undefined Poke32(int address, int value) { Machine.Memory.Poke(address, 32, value) }
+        // `count` bytes from `address` as a new buffer.
+        static byte[] Read(int address, int count) {
+            Machine.Check.Hardware()
+            if (count < 0) { throw new ArgumentException("A count is not negative.") }
+            var data = __MachRead(address, count)
+            if (data == undefined) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
+            return data
+        }
+        static undefined Write(int address, byte data[]) {
+            Machine.Check.Hardware()
+            if (!__MachWrite(address, data)) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
+        }
+    }
+
+    // The processor.
+    class Cpu {
+        // 86 (8086/8088), 286, 386, 486, or 586 for one with CPUID (a Pentium or later: Id/Vendor say more).
+        static int Level() {
+            Machine.Check.Hardware()
+            var l = __MachCpuLevel()
+            if (l == 0) { return 86 }
+            if (l == 5) { return 586 }
+            return l * 100 + 86
+        }
+        static bool HasCpuid() {
+            Machine.Check.Hardware()
+            return __MachCpuLevel() == 5
+        }
+        // CPUID: [EAX, EBX, ECX, EDX] of the leaf (and subleaf).
+        static int[] Id(int leaf, int subleaf = 0) {
+            if (!Machine.Cpu.HasCpuid()) { throw new Machine.MachineException("This processor has no CPUID.") }
+            return __MachCpuid(leaf, subleaf)
+        }
+        // "GenuineIntel", "AuthenticAMD", ... (undefined without CPUID)
+        static string Vendor() {
+            if (!Machine.Cpu.HasCpuid()) { return undefined }
+            var r = __MachCpuid(0, 0)
+            return Machine.Cpu.Text(r[1]) + Machine.Cpu.Text(r[3]) + Machine.Cpu.Text(r[2])
+        }
+        static string Text(int v) {
+            var s = ""
+            for (var i = 0; i < 4; i++) { s = s + ((v >> (8 * i)) & 255).ToChar() }
+            return s
+        }
+        // Interrupts on or off (STI / CLI) - off only briefly: the clock and the keyboard stop meanwhile.
+        static undefined EnableInterrupts() {
+            Machine.Check.Hardware()
+            __MachInterrupts(true)
+        }
+        static undefined DisableInterrupts() {
+            Machine.Check.Hardware()
+            __MachInterrupts(false)
+        }
+    }
+
+    // A hardware interrupt line (IRQ 0..15). While it is open its interrupts are counted; `chain`: the handler that was there before runs too (and
+    // acknowledges the interrupt controller) - for a line someone else serves as well, like IRQ 0 of the clock. Without `chain` this one acknowledges it.
+    // The device behind the line is served by the program (reading its ports after Wait). Close (or the end of the object, or of the program) puts back what
+    // was there before.
+    class Irq {
+        int line = -1
+        bool open = false   // (also when the constructor threw: the destructor runs then too)
+
+        construct(int line, bool chain = false) {
+            Machine.Check.Hardware()
+            if (line < 0 || line > 15) { throw new ArgumentException("An IRQ is 0 to 15, not " + line + ".") }
+            if (!__MachIrqOpen(line, chain)) { throw new Machine.MachineException("IRQ " + line + " is open already.") }
+            this.line = line
+            this.open = true
+        }
+        destruct() { this.Close() }
+
+        int Line { get { return this.line } }
+        // The interrupts since the last Count or Wait.
+        int Count() { return __MachIrqTake(this.line) }
+        // Waits for an interrupt (at most `timeoutMs`; -1: as long as it takes): how many came since the last Count or Wait, 0 when none came in the time.
+        int Wait(int timeoutMs = -1) { return __MachIrqWait(this.line, timeoutMs) }
+        undefined Close() {
+            if (this.open) {
+                __MachIrqClose(this.line)
+                this.open = false
+            }
+        }
+    }
+
+    // The CMOS memory of the clock (ports 70h/71h; register 0..127).
+    class Cmos {
+        static int Read(int register) {
+            Machine.Port.Out8(112, register & 127)
+            return Machine.Port.In8(113)
+        }
+        static undefined Write(int register, int value) {
+            Machine.Port.Out8(112, register & 127)
+            Machine.Port.Out8(113, value & 255)
+        }
+        // The date and time of the battery clock as [year, month, day, hour, minute, second] (BCD or binary, as the clock keeps it).
+        static int[] Clock() {
+            while ((Machine.Cmos.Read(10) & 128) != 0) { }   // (an update is running)
+            var binary = (Machine.Cmos.Read(11) & 4) != 0
+            var regs = [9, 8, 7, 4, 2, 0]
+            int t[] = new int[6]
+            for (var i = 0; i < 6; i++) {
+                var v = Machine.Cmos.Read(regs[i])
+                if (i == 3 && !binary) { v = v & 127 }
+                t[i] = binary ? v : (v >> 4) * 10 + (v & 15)
+            }
+            var century = Machine.Cmos.Read(50)
+            t[0] = t[0] + (century > 0 && century < 160 ? (binary ? century : (century >> 4) * 10 + (century & 15)) * 100 : (t[0] < 80 ? 2000 : 1900))
+            return t
+        }
+    }
+
+    // The PC speaker: a tone from channel 2 of the timer chip (PIT).
+    class Speaker {
+        static undefined Tone(int hz) {
+            if (hz < 19 || hz > 1193181) { throw new ArgumentException("A tone is 19 to 1193181 Hz, not " + hz + ".") }
+            var divisor = 1193182 / hz
+            Machine.Port.Out8(67, 182)              // channel 2, low and high byte, square wave
+            Machine.Port.Out8(66, divisor & 255)
+            Machine.Port.Out8(66, (divisor >> 8) & 255)
+            Machine.Port.Out8(97, Machine.Port.In8(97) | 3)
+        }
+        static undefined Off() { Machine.Port.Out8(97, Machine.Port.In8(97) & 252) }
+    }
+
+    // The configuration space of PCI devices (mechanism 1: ports CF8h/CFCh, 32 bits - a 386 or later).
+    class Pci {
+        static int Address(int bus, int device, int function, int offset) {
+            if (bus < 0 || bus > 255 || device < 0 || device > 31 || function < 0 || function > 7 || offset < 0 || offset > 255) {
+                throw new ArgumentException("PCI: bus 0..255, device 0..31, function 0..7, offset 0..255.")
+            }
+            return (1 << 31) | (bus << 16) | (device << 11) | (function << 8) | (offset & 252)
+        }
+        static int Read32(int bus, int device, int function, int offset) {
+            Machine.Port.Out32(3320, Machine.Pci.Address(bus, device, function, offset))
+            return Machine.Port.In32(3324)
+        }
+        static undefined Write32(int bus, int device, int function, int offset, int value) {
+            Machine.Port.Out32(3320, Machine.Pci.Address(bus, device, function, offset))
+            Machine.Port.Out32(3324, value)
+        }
+        // Is there a device (vendor not FFFFh)? Its vendor and device id: Read32(..., 0).
+        static bool Present(int bus, int device, int function) {
+            return (Machine.Pci.Read32(bus, device, function, 0) & 65535) != 65535
+        }
+    }
+}

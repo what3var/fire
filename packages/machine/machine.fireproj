@@ -1,0 +1,102 @@
+{
+  "format": 1,
+  "name": "fire-machine",
+  "type": "library",
+  "import": "machine",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'machine' of fire: the hardware of the PC - ports, physical memory, CPU, hardware interrupts, CMOS clock, speaker, PCI (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_machine.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__MachUnavailable",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_machine_Unavailable"
+      },
+      {
+        "name": "__MachIn",
+        "arguments": 2,
+        "c": "fire_machine_In"
+      },
+      {
+        "name": "__MachOut",
+        "arguments": 3,
+        "c": "fire_machine_Out"
+      },
+      {
+        "name": "__MachPeek",
+        "arguments": 2,
+        "c": "fire_machine_Peek"
+      },
+      {
+        "name": "__MachPoke",
+        "arguments": 3,
+        "c": "fire_machine_Poke"
+      },
+      {
+        "name": "__MachRead",
+        "arguments": 2,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_machine_Read"
+      },
+      {
+        "name": "__MachWrite",
+        "arguments": 2,
+        "c": "fire_machine_Write"
+      },
+      {
+        "name": "__MachCpuLevel",
+        "arguments": 0,
+        "c": "fire_machine_CpuLevel"
+      },
+      {
+        "name": "__MachCpuid",
+        "arguments": 2,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_machine_Cpuid"
+      },
+      {
+        "name": "__MachInterrupts",
+        "arguments": 1,
+        "c": "fire_machine_Interrupts"
+      },
+      {
+        "name": "__MachIrqOpen",
+        "arguments": 2,
+        "c": "fire_machine_IrqOpen"
+      },
+      {
+        "name": "__MachIrqClose",
+        "arguments": 1,
+        "c": "fire_machine_IrqClose"
+      },
+      {
+        "name": "__MachIrqTake",
+        "arguments": 1,
+        "c": "fire_machine_IrqTake"
+      },
+      {
+        "name": "__MachIrqWait",
+        "arguments": 2,
+        "c": "fire_machine_IrqWait"
+      }
+    ],
+    "exceptions": [
+      "ArgumentException",
+      "DestroyedException"
+    ],
+    "language": "c"
+  }
+}

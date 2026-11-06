@@ -545,7 +545,13 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    (INT 10h/16h, Codepage 437), POSIX-Terminals (ANSI, termios), Windows (Konsolen-API; übersetzt mit den NT-Headern von Open Watcom, noch nicht ausgeführt),
    sonst `none`. Ohne Konsole (umgeleitet, die VM) einfacher Text und die Zeichen der Standardeingabe - das Programm verhält sich gleich. Tests: VM und nativ
    umgeleitet, ein Pseudo-Terminal (`script`), DOS in DOSBox-X (Bildschirm aus dem Videospeicher gelesen, Tasten über den Tastaturpuffer des BIOS).
-   **Offen:** `#intwidth 16`, Grafik, die Packages `dos`/`machine`/`xms`,
+   **`machine`** (Hardware-Paket, siehe unten; [The hardware of the PC](stdlib/machine.md)): Ports 8/16/32 Bit, physischer Speicher, CPU-Stufe und CPUID,
+   CLI/STI, IRQ 0..15 (gezählt, verkettet oder selbst quittiert; fire-Code läuft nie im Interrupt - `Irq.Wait` in einem fire-Thread), CMOS-Uhr, Lautsprecher, PCI;
+   ein neuer Teil der Plattformschicht (`fire_machine.h`: `std/fire_machine_x86_16.h`, sonst `none` - dort eine `MachineException`). Test in DOSBox-X.
+   **Grafik:** die `graphics`-Bibliothek baut für dos16 (das Plattformpaket setzt `FIRE_GFX_NO_GPU`), rechnet aber Pixelindizes in `int` - auf 16 Bit
+   läuft schon 320x200 über; ein RGBA-Framebuffer 320x200 (256 000 Bytes) rechnet zudem seine Größen in `size_t`. Offen, Frage an den Benutzer (die
+   Bibliothek 16-Bit-fest machen, oder Grafik ab `dos32` und auf dos16 nur ein kleines eigenes Render-Target).
+   **Offen:** `#intwidth 16`, Grafik (s.o.), die Packages `dos`/`xms`,
    Geräte (serieller/paralleler Port).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).

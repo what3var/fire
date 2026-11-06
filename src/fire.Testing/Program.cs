@@ -20243,6 +20243,19 @@ else
             }
             """)).ToArray();
 
+    // the hardware of the PC (#import "machine"): where a program does not own the machine (the VM, Linux) every access is a MachineException - the same in
+    // the VM and natively; what is only arithmetic (the address of a PCI register) works everywhere (on DOS: the dos16 checks)
+    natCases = natCases.Append(("machine: ohne Zugang zur Hardware eine MachineException (Ports, Speicher, CPU, IRQ), Argumente zuerst geprueft", """
+            #import "machine"
+            try { Machine.Port.In8(96) } catch (Machine.MachineException e) { print("port: " + e.message) }
+            try { Machine.Memory.Peek8(0) } catch (Machine.MachineException e) { print("memory") }
+            try { Machine.Cpu.Level() } catch (Machine.MachineException e) { print("cpu") }
+            try { new Machine.Irq(1) } catch (Machine.MachineException e) { print("irq") }
+            try { Machine.Cmos.Clock() } catch (Machine.MachineException e) { print("cmos") }
+            print(Machine.Pci.Address(0, 1, 2, 7))
+            try { Machine.Pci.Address(0, 32, 0, 0) } catch (ArgumentException e) { print("pci: " + e.message) }
+            """)).ToArray();
+
     // inline c as static methods of a class (C name fire_inl_<Class>_<Name>)
     natCases = natCases.Append(("inline c: statische Methoden einer Klasse (public/private/static, byte[], undefined), Aufruf aus einer fire-Methode", """
             class M {
@@ -27417,6 +27430,32 @@ else
                 var bigRun = BuildAndRunDos(dosBig, "dos16big");
                 CheckNat("dos16: Arrays und Puffer ueber 64 KB (100000 Bytes, int[30000], any[9000]; kopieren ueber Segmentgrenzen, eine Datei mit 100000 Bytes)",
                     bigRun.Ok && bigRun.Text == dosBigExpected, $"  erwartet:\n{dosBigExpected}\n  DOS:\n{bigRun.Text}");
+
+                // the hardware (#import "machine"): CPU and CPUID, the BIOS data area and the video memory (physical addresses), PCI over 32-bit ports, the CMOS
+                // clock, IRQ 0 (the clock, chained: DOS keeps its time), the speaker; the arguments and an address out of reach are exceptions
+                const string dosMachine = """
+                    #import "machine"
+                    print("cpu " + Machine.Cpu.Level() + " " + Machine.Cpu.Vendor())
+                    print("com1 " + Machine.Memory.Peek16(0x400))
+                    Machine.Memory.Poke16(0xB8000 + 158, 0x4E41)
+                    print("screen " + Machine.Memory.Peek16(0xB8000 + 158) + " " + Machine.Memory.Read(0xB8000 + 158, 2)[0])
+                    print("pci " + Machine.Pci.Present(0, 0, 0) + " " + ((Machine.Pci.Read32(0, 0, 0, 0) & 65535) != 65535))
+                    var c = Machine.Cmos.Clock()
+                    print("year ok " + (c[0] >= 2020) + " month ok " + (c[1] >= 1 && c[1] <= 12))
+                    var irq = new Machine.Irq(0, true)
+                    print("irq0 " + (irq.Wait(1000) > 0))
+                    irq.Close()
+                    try { new Machine.Irq(16) } catch (ArgumentException e) { print("arg: " + e.message) }
+                    try { Machine.Memory.Peek8(0x200000) } catch (Machine.MachineException e) { print("far: " + e.message) }
+                    Machine.Speaker.Tone(440)
+                    Machine.Speaker.Off()
+                    print("done")
+                    """;
+                const string dosMachineExpected = "cpu 586 GenuineIntel\ncom1 1016\nscreen 20033 65\npci True True\nyear ok True month ok True\nirq0 True\n"
+                    + "arg: An IRQ is 0 to 15, not 16.\nfar: The address 2097152 cannot be reached from here.\ndone\n";
+                var machRun = BuildAndRunDos(dosMachine, "dos16mach");
+                CheckNat("dos16: machine - CPU/CPUID, physischer Speicher (BIOS-Daten, Videospeicher), PCI ueber 32-Bit-Ports, CMOS-Uhr, IRQ 0 gezaehlt, Lautsprecher",
+                    machRun.Ok && machRun.Text == dosMachineExpected, $"  erwartet:\n{dosMachineExpected}\n  DOS:\n{machRun.Text}");
 
                 // the console of DOS (#import "console"): the screen through the BIOS (code page 437, attributes - read back from the video memory) and keys from the
                 // keyboard buffer of the BIOS (INT 16h AH=05h puts them there, as if typed)

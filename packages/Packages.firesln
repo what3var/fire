@@ -32,6 +32,7 @@
     "json/json.fireproj",
     "circuits/circuits.fireproj",
     "circuits.ui/circuits.ui.fireproj",
-    "console/console.fireproj"
+    "console/console.fireproj",
+    "machine/machine.fireproj"
   ]
 }
