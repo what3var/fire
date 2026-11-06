@@ -31,6 +31,7 @@
     "scene3d/scene3d.fireproj",
     "json/json.fireproj",
     "circuits/circuits.fireproj",
-    "circuits.ui/circuits.ui.fireproj"
+    "circuits.ui/circuits.ui.fireproj",
+    "console/console.fireproj"
   ]
 }

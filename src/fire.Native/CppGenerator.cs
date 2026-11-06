@@ -2733,8 +2733,8 @@ namespace fire.Native
             _version++;
         }
 
-        /// <summary>The parts of the platform layer in C that the packages in C include (`#include FIRE_PLATFORM_NET_C_HEADER`): the file system (io), the sockets (net), TLS (tls), the devices (dev, gpio, i2c, spi, usb, wifi), sound (audio), the window (display).</summary>
-        public static readonly string[] CPlatformLayers = { "fs", "net", "tls", "dev", "gpio", "i2c", "spi", "usb", "wifi", "audio", "display" };
+        /// <summary>The parts of the platform layer in C that the packages in C include (`#include FIRE_PLATFORM_NET_C_HEADER`): the file system (io), the sockets (net), TLS (tls), the devices (dev, gpio, i2c, spi, usb, wifi), sound (audio), the window (display), the text console (console).</summary>
+        public static readonly string[] CPlatformLayers = { "fs", "net", "tls", "dev", "gpio", "i2c", "spi", "usb", "wifi", "audio", "display", "console" };
 
         /// <summary>`#define FIRE_PLATFORM_<PART>_C_HEADER "platform/<platform>/fire_<part>.h"` for every part of <see cref="CPlatformLayers"/>.</summary>
         public static IEnumerable<string> CPlatformHeaderDefines(string platform) =>

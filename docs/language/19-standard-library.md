@@ -37,6 +37,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | `"compression"` | `Compression.GZip.Compress/Decompress` (also `Deflate`, `ZLib`), `GZipStream`/`DeflateStream`/`ZLibStream` as IO streams, Zip archives: `Zip.Archive.Open`/`Create`, `Entries`, `ExtractTo`, `Add`, `CreateFromDirectory` - see [Compression and Zip](../stdlib/compression.md) |
 | `"reflection"` | `Type`, `Member`, `Reflect`, selectors - see [Probes and reflection](16-probes-and-reflection.md) |
 | `"io"` | namespace `IO`: streams (`MemoryStream`, your own), text (`TextReader`, `TextWriter`, `Utf8`), console input and output (`Stdio`) |
+| `"console"` | the text console: `Console.Write`/`WriteAt` in colour (`ConsoleColor`), `Clear`, the cursor, single keys (`ReadKey`, `KeyAvailable`, `ConsoleKey`) - see [The text console](../stdlib/console.md) |
 | `"filesystem"` | the file system in namespace `IO`, named like .NET: `File`, `Directory`, `Path`, `FileStream` - see [Files, directories and paths](../stdlib/filesystem.md) |
 | `"ui.docking"` | namespace `UI.Docking`: a `DockManager` for tool windows (docked, tabbed, floating) and movable toolstrips with an overflow menu, a `StatusBar` - see [Docking](../ui/docking.md) |
 | `"dialogs"` | open, save and folder dialogs and message boxes: `Dialogs.OpenFileDialog`, `SaveFileDialog`, `FolderBrowserDialog`, `MessageBox` - see [Dialogs](../ui/dialogs.md) |

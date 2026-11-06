@@ -669,7 +669,8 @@ sein (`dataAlloc`: `halloc`; Löschen, Kopieren und `fread`/`fwrite` in Stücken
 Gebunden wird gegen die C-Bibliothek des Large Model (ihr Code passt in das eine Segment `_TEXT`, der des Huge Model nicht; gleiche Aufrufkonvention).
 fire-Threads laufen dort als Aufgaben des eigenen Schedulers (`std/fire_sched.h`, ROADMAP 13.2b): gewechselt wird an den Safepoints (der GIL gibt ab, `FIRE_PLAT_YIELD`)
 und beim Warten; `INT 1Ch` setzt nur ein Flag (`FIRE_PLAT_PREEMPTED`), im Interrupt wird nie gewechselt. Der Wechsel des Kontexts je Architektur in `std/sched/`.
-Offen: Konsole/Tastatur, Grafik, die Packages `dos`/`machine`/`xms`, `#intwidth 16`.
+Die Konsole (`#import "console"`) über das BIOS: `std/fire_console_dos.h`.
+Offen: Grafik, die Packages `dos`/`machine`/`xms`, `#intwidth 16`.
 
 ### Zielkonfiguration (`fire.native.json`)
 

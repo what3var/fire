@@ -35,7 +35,7 @@ The [language reference](language/README.md) - one page per topic, with examples
 | **Audio** | [Sound output and input](audio/README.md) · [Tracker modules](audio/tracker.md) |
 | **Circuits** | [Simulation, schematics, the circuit editor](circuits/README.md) |
 | **Devices** | [Device framework](devices/README.md) · [GPIO](devices/gpio.md) · [I2C](devices/i2c.md) · [SPI](devices/spi.md) · [USB](devices/usb.md) |
-| **Standard library** | [Files](stdlib/filesystem.md) · [Streams](stdlib/io.md) · [JSON](stdlib/json.md) · [Hashes](stdlib/hash.md) · [Compression and Zip](stdlib/compression.md) · [Processes](stdlib/process.md) · [Resources](stdlib/resources.md) · [Random, LINQ](stdlib/more.md) |
+| **Standard library** | [Files](stdlib/filesystem.md) · [Streams](stdlib/io.md) · [Console](stdlib/console.md) · [JSON](stdlib/json.md) · [Hashes](stdlib/hash.md) · [Compression and Zip](stdlib/compression.md) · [Processes](stdlib/process.md) · [Resources](stdlib/resources.md) · [Random, LINQ](stdlib/more.md) |
 
 ## Building and sharing code
 

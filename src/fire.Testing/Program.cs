@@ -27214,6 +27214,86 @@ else
         catch (NotSupportedException ex) { CheckNat("Zielprofil: nicht verfuegbare Bibliothek wird abgelehnt", ex.Message.Contains("'graphics'") && ex.Message.Contains("'esp32'"), ex.Message); }
         CheckNat("Zielprofil: Windows erlaubt die Grafik, esp32 hat Devices/IO/Time", TargetProfile.Windows.HasImport("graphics") && esp.HasImport("devices") && esp.HasImport("io") && esp.HasImport("time") && !esp.HasImport("ui"));
         CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
+        // the text console (#import "console", docs/stdlib/console.md): without a console (redirected) plain text and the characters of standard input as keys -
+        // the VM and the native program alike; in a terminal (a pseudo-terminal through `script`) the escape sequences and the keys of their sequences
+        if (TestSelected("console"))
+        {
+            const string conSource = """
+                #import "console"
+                Console.WriteLine("console " + Console.IsConsole() + " " + Console.Width() + "x" + Console.Height())
+                Console.SetColor(ConsoleColor.Yellow, ConsoleColor.DarkBlue)
+                Console.Write("gelb ")
+                Console.ResetColor()
+                Console.WriteLine("normal äöü ╔═╗")
+                Console.WriteAt(5, 3, "da")
+                Console.WriteLine(" " + Console.Column() + "," + Console.Row())
+                Console.Clear()
+                Console.ShowCursor(false)
+                while (Console.KeyAvailable()) {
+                    var k = Console.ReadKey()
+                    Console.WriteLine(k.ToString() + " " + k.Key + " " + k.Control)
+                }
+                Console.WriteLine(Console.ReadKey())
+                """;
+            const string conInput = "a\u0001\tZä\r\nx";
+            const string conExpected = "console False 80x25\ngelb normal äöü ╔═╗\nda 0,0\na Character False\nCtrl+a Character True\nTab Tab False\nZ Character False\n"
+                + "ä Character False\nEnter Enter False\nx Character False\nundefined\n";
+            var conLines = new List<string>();
+            try
+            {
+                VM.ResetTerminateForTests();
+                RuntimeSession.Build(new[] { conSource }, VmExecutionMode.Release, a => { conLines.Add(a[0].ToString()!); return Value.MakeUndefined(); },
+                    ioStdio: fire.IO.Bridge.IoStdio.Custom(l => conLines.Add(l), null, new MemoryStream(System.Text.Encoding.UTF8.GetBytes(conInput)))).Run();
+            }
+            catch (Exception ex) { conLines.Add("AUSNAHME: " + ex.Message); }
+            string conVm = string.Concat(conLines.Select(l => l + "\n"));
+            CheckNat("console: in der VM ohne Konsole - Text wie geschrieben, Farben/Cursor/Clear ohne Wirkung, Tasten aus der Standardeingabe (Strg, Tab, UTF-8, \\r\\n)",
+                conVm == conExpected, $"  erwartet:\n{conExpected}\n  VM:\n{conVm}");
+            // (built like the cases "nativ == VM")
+            string? conExe = null, conBuild = "";
+            try
+            {
+                var conGen = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { conSource }, null, null, VmExecutionMode.Release));
+                string exe = Path.Combine(workDir, "console.bin");
+                conBuild = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, conGen, workDir, "console", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra", exe, out int conExit);
+                if (conExit == 0 && !conBuild.Contains("warning:")) conExe = exe;
+            }
+            catch (Exception ex) { conBuild = ex.ToString(); }
+            string conNat = conExe == null ? "C-Compiler: " + conBuild : TestProcess.Run(conExe, "", workDir, conInput).Stdout;
+            CheckNat("console: nativ umgeleitet - dieselbe Ausgabe und dieselben Tasten wie die VM", conExe != null && conNat == conExpected, $"  erwartet:\n{conExpected}\n  nativ:\n{conNat}");
+            // a terminal: `script` gives the program a pseudo-terminal (its input is what we write, its echo is in the output)
+            string? scriptTool = OperatingSystem.IsLinux() ? fire.Native.ToolchainSetup.FindProgram("script") : null;
+            if (conExe == null || scriptTool == null) Console.WriteLine("SKIP: console im Terminal - kein `script` (util-linux) oder das Programm baute nicht");
+            else
+            {
+                const string termSource = """
+                    #import "console"
+                    Console.WriteLine("console " + Console.IsConsole())
+                    Console.SetColor(ConsoleColor.Yellow, ConsoleColor.DarkBlue)
+                    Console.Write("gelb")
+                    Console.ResetColor()
+                    Console.SetCursor(5, 3)
+                    Console.WriteLine("da")
+                    for (var i = 0; i < 6; i++) {
+                        var k = Console.ReadKey()
+                        Console.WriteLine("key " + k.ToString() + " " + k.Key)
+                    }
+                    """;
+                string termOut = "";
+                try
+                {
+                    var termGen = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { termSource }, null, null, VmExecutionMode.Release));
+                    string exe = Path.Combine(workDir, "console-term.bin");
+                    string termLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, termGen, workDir, "console-term", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra", exe, out int termExit);
+                    termOut = termExit != 0 ? "C-Compiler: " + termLog
+                        : TestProcess.Run(scriptTool, $"-qec \"{exe}\" /dev/null", workDir, "x\u001b[A\u001b[15~\u001b[1;5C\u001bq\r", new Dictionary<string, string?> { ["TERM"] = "xterm" }, 30_000).Stdout;
+                }
+                catch (Exception ex) { termOut = ex.ToString(); }
+                string[] termWant = { "console True", "\u001b[93m\u001b[44mgelb\u001b[0m", "\u001b[4;6Hda", "key x Character", "key Up Up", "key F5 F5", "key Ctrl+Right Right", "key Alt+q Character", "key Enter Enter" };
+                CheckNat("console: im Terminal - ANSI-Farben und -Cursor, Tasten aus ihren Folgen (Pfeil, F5, Strg+Pfeil, Alt+Taste, Enter)",
+                    termWant.All(termOut.Contains), $"  erwartet (enthalten): {string.Join(" | ", termWant.Select(w => w.Replace("\u001b", "ESC")))}\n  Terminal:\n{termOut.Replace("\u001b", "ESC")}");
+            }
+        }
         // dos16 (ROADMAP 13.3): DOS in real mode - the profile, the generated C, and with Open Watcom and DOSBox-X on the machine: built and run like the VM
         {
             CheckNat("dos16: Zielprofil (Plattform dos16, Toolchain watcom, int/float 32, word 16, Threads ueber den eigenen Scheduler)", TargetProfile.TryGet("dos16", out var dos16)
@@ -27255,15 +27335,16 @@ else
             else
             {
                 // builds the program as PROG.EXE in its own folder (drive C:) and runs it in DOSBox-X (at most 2 minutes): its output, or the log of the build
-                (bool Ok, string Text) BuildAndRunDos(string source, string folder)
+                // (another `outputFile`: the program runs on the screen, not redirected, and writes what it found into that file)
+                (bool Ok, string Text) BuildAndRunDos(string source, string folder, string outputFile = "OUT.TXT")
                 {
                     string dir = Path.Combine(workDir, folder);
                     Directory.CreateDirectory(dir);
                     var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
                     if (!built.Ok) return (false, built.Log);
                     var env = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy", ["SDL_AUDIODRIVER"] = "dummy" };
-                    var run = TestProcess.Run(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" -c \"mount c {dir}\" -c \"c:\" -c \"PROG.EXE > OUT.TXT\" -c \"exit\"", dir, null, env, 120_000);
-                    string outFile = Directory.GetFiles(dir).FirstOrDefault(f => Path.GetFileName(f).Equals("OUT.TXT", StringComparison.OrdinalIgnoreCase)) ?? "";
+                    var run = TestProcess.Run(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" -c \"mount c {dir}\" -c \"c:\" -c \"{(outputFile == "OUT.TXT" ? "PROG.EXE > OUT.TXT" : "PROG.EXE")}\" -c \"exit\"", dir, null, env, 120_000);
+                    string outFile = Directory.GetFiles(dir).FirstOrDefault(f => Path.GetFileName(f).Equals(outputFile, StringComparison.OrdinalIgnoreCase)) ?? "";
                     string text = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
                     return (true, run.Exit == -1 ? text + "(DOSBox-X nach 2 Minuten beendet)" : text);
                 }
@@ -27336,6 +27417,44 @@ else
                 var bigRun = BuildAndRunDos(dosBig, "dos16big");
                 CheckNat("dos16: Arrays und Puffer ueber 64 KB (100000 Bytes, int[30000], any[9000]; kopieren ueber Segmentgrenzen, eine Datei mit 100000 Bytes)",
                     bigRun.Ok && bigRun.Text == dosBigExpected, $"  erwartet:\n{dosBigExpected}\n  DOS:\n{bigRun.Text}");
+
+                // the console of DOS (#import "console"): the screen through the BIOS (code page 437, attributes - read back from the video memory) and keys from the
+                // keyboard buffer of the BIOS (INT 16h AH=05h puts them there, as if typed)
+                const string dosCon = """
+                    #import "console"
+                    #import "io"
+                    #import "filesystem"
+                    inline c int Cell(int col, int row) { unsigned short __far* v = (unsigned short __far*)MK_FP(0xB800, 0); return (FireInt)v[row * 80 + col]; }
+                    inline c Push(int code) { union REGS r; r.h.ah = 5; r.x.cx = (unsigned short)code; int86(0x16, &r, &r); }
+                    var log = ""
+                    Console.Clear()
+                    log = log + "console " + Console.IsConsole() + " " + Console.Width() + "x" + Console.Height() + "\n"
+                    Console.SetColor(ConsoleColor.Yellow, ConsoleColor.DarkBlue)
+                    Console.WriteAt(2, 1, "Hi╔")
+                    Console.ResetColor()
+                    log = log + "at " + Console.Column() + "," + Console.Row() + "\n"
+                    var c = Cell(2, 1)
+                    log = log + "cell " + (c & 255) + " attr " + (c >> 8) + " box " + (Cell(4, 1) & 255) + "\n"
+                    Push(0x1E61)
+                    Push(0x48E0)
+                    Push(0x3F00)
+                    Push(0x7400)
+                    Push(0x011B)
+                    Push(0x1C0D)
+                    Push(0x1E01)
+                    Push(0x0E08)
+                    log = log + "avail " + Console.KeyAvailable() + "\n"
+                    for (var i = 0; i < 8; i++) {
+                        var k = Console.ReadKey()
+                        log = log + k.ToString() + " " + k.Key + "\n"
+                    }
+                    IO.File.WriteAllText("C:\\RES.TXT", log)
+                    """;
+                const string dosConExpected = "console True 80x25\nat 5,1\ncell 72 attr 30 box 201\navail True\na Character\nUp Up\nF5 F5\nCtrl+Right Right\nEscape Escape\n"
+                    + "Enter Enter\nCtrl+a Character\nBackspace Backspace\n";
+                var conRun = BuildAndRunDos(dosCon, "dos16con", "RES.TXT");
+                CheckNat("dos16: Konsole ueber das BIOS (Farben als Attribut, Codepage 437, Cursor) und Tasten aus dem Tastaturpuffer (Pfeil, F5, Strg+Pfeil, Esc, Enter, Strg+A, Backspace)",
+                    conRun.Ok && conRun.Text == dosConExpected, $"  erwartet:\n{dosConExpected}\n  DOS:\n{conRun.Text}");
             }
         }
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);

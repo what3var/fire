@@ -539,7 +539,13 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    nicht mehr; Aufrufkonvention und Daten sind gleich, die Runtime gibt ihr keinen Block über ein Segmentende. Ein `int` im gepackten Array ist mit
    `#intwidth 32` 4 Byte (nicht 8). `ReadAll` einer Datei liest den Rest auf einmal in einen Puffer seiner Größe. Test in DOSBox-X (100000 Bytes, `int[30000]`,
    `any[9000]`, Kopien, eine Datei mit 100000 Bytes). Grenze: der freie DOS-Speicher (rund 400 KB neben dem Programm).
-   **Offen:** `#intwidth 16`, Konsole und Tastatur, Grafik, die Packages `dos`/`machine`/`xms`,
+   **Konsole und Tastatur:** neues Standardpaket **`console`** ([The text console](stdlib/console.md)) für alle Ziele: `Console.Write`/`WriteAt` in den 16 Farben des
+   Textmodus (`ConsoleColor`), `Clear`, Cursor, `Width`/`Height`, einzelne Tasten (`ReadKey`, `KeyAvailable`, `ConsoleKey`: Zeichen, Pfeile, Pos1/Ende, Bild,
+   Einfg/Entf, F1-F12, mit Shift/Strg/Alt). Ein neuer Teil der Plattformschicht (`fire_console.h`, Schnittstelle `std/fire_console_c.h`): DOS über das BIOS
+   (INT 10h/16h, Codepage 437), POSIX-Terminals (ANSI, termios), Windows (Konsolen-API; übersetzt mit den NT-Headern von Open Watcom, noch nicht ausgeführt),
+   sonst `none`. Ohne Konsole (umgeleitet, die VM) einfacher Text und die Zeichen der Standardeingabe - das Programm verhält sich gleich. Tests: VM und nativ
+   umgeleitet, ein Pseudo-Terminal (`script`), DOS in DOSBox-X (Bildschirm aus dem Videospeicher gelesen, Tasten über den Tastaturpuffer des BIOS).
+   **Offen:** `#intwidth 16`, Grafik, die Packages `dos`/`machine`/`xms`,
    Geräte (serieller/paralleler Port).
 4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
    Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).

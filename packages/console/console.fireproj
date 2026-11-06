@@ -1,0 +1,87 @@
+{
+  "format": 1,
+  "name": "fire-console",
+  "type": "library",
+  "import": "console",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'console' of fire: the text console - colours, cursor, Clear, single keys (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_console.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__ConIsConsole",
+        "arguments": 0,
+        "c": "fire_console_IsConsole"
+      },
+      {
+        "name": "__ConWrite",
+        "arguments": 1,
+        "c": "fire_console_Write"
+      },
+      {
+        "name": "__ConFlush",
+        "arguments": 0,
+        "c": "fire_console_Flush"
+      },
+      {
+        "name": "__ConWidth",
+        "arguments": 0,
+        "c": "fire_console_Width"
+      },
+      {
+        "name": "__ConHeight",
+        "arguments": 0,
+        "c": "fire_console_Height"
+      },
+      {
+        "name": "__ConColumn",
+        "arguments": 0,
+        "c": "fire_console_Column"
+      },
+      {
+        "name": "__ConRow",
+        "arguments": 0,
+        "c": "fire_console_Row"
+      },
+      {
+        "name": "__ConSetCursor",
+        "arguments": 2,
+        "c": "fire_console_SetCursor"
+      },
+      {
+        "name": "__ConSetColor",
+        "arguments": 2,
+        "c": "fire_console_SetColor"
+      },
+      {
+        "name": "__ConClear",
+        "arguments": 0,
+        "c": "fire_console_Clear"
+      },
+      {
+        "name": "__ConShowCursor",
+        "arguments": 1,
+        "c": "fire_console_ShowCursor"
+      },
+      {
+        "name": "__ConKeyAvailable",
+        "arguments": 0,
+        "c": "fire_console_KeyAvailable"
+      },
+      {
+        "name": "__ConReadKey",
+        "arguments": 0,
+        "c": "fire_console_ReadKey"
+      }
+    ],
+    "language": "c"
+  }
+}
