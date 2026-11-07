@@ -44,6 +44,8 @@ static inline void fire_dos_delayMs(int64_t ms) {
 #define FIRE_SCHED_IDLE(ms) fire_dos_delayMs(ms)
 #if defined(_M_I86)
 #include "sched/fire_ctx_x86_16.h"
+#elif defined(__386__)
+#include "sched/fire_ctx_x86_32.h"
 #else
 #error "fire platform dos: the switch of the context for this processor is missing (std/sched/)"
 #endif

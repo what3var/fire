@@ -111,7 +111,13 @@
       ],
       "default": [
         "native/fire_machine_none.h"
+      ],
+      "dos32": [
+        "native/fire_machine_x86_32.h"
       ]
-    }
+    },
+    "headers": [
+      "native/fire_machine_pc_irq.h"
+    ]
   }
 }

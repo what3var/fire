@@ -1,4 +1,4 @@
-/* fire console package: the console for DOS (dos16; dos32 later): the text mode of the PC through the BIOS - INT 10h for the screen (cursor, a character
+/* fire console package: the console for DOS (dos16 in real mode, dos32 with a DOS extender - platform/std/fire_dos_bios.h): the text mode of the PC through the BIOS - INT 10h for the screen (cursor, a character
  * with its attribute, scrolling), INT 16h for the keyboard (the enhanced functions: F11/F12, the keys of the cursor block). The text is shown in code page 437
  * (what the BIOS font has); a key's character comes back as Unicode. A console only when standard input and output are not redirected (isatty). */
 #ifndef FIRE_CONSOLE_DOS_H
@@ -7,13 +7,14 @@
 #include <i86.h>
 #include <bios.h>
 #include <io.h>
+#include "platform/std/fire_dos_bios.h"   /* (the BIOS and the first megabyte: real mode and DOS extender) */
 
 static unsigned char fire_con_attr = 0x07, fire_con_startAttr = 0x07;
 static unsigned short fire_con_startShape = 0x0607;
 
-static unsigned char fire_con_peekb(unsigned off) { return *(unsigned char __far*)MK_FP(0x40, off); }
-static unsigned short fire_con_peekw(unsigned off) { return *(unsigned short __far*)MK_FP(0x40, off); }
-static void fire_con_bios(union REGS* r) { int86(0x10, r, r); }
+static unsigned char fire_con_peekb(unsigned off) { return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0x40, off); }
+static unsigned short fire_con_peekw(unsigned off) { return *(unsigned short FIRE_DOS_FAR*)FIRE_DOS_LOW(0x40, off); }
+static void fire_con_bios(union REGS* r) { fire_dos_int(0x10, r); }
 
 static void fire_con_size(int* cols, int* rows) {
     unsigned char last = fire_con_peekb(0x84);   /* (the last row: EGA and later; 0 on the CGA/MDA - 25 rows) */
@@ -75,7 +76,7 @@ static void fire_con_write(const char* utf8, uint32_t n) {
             union REGS r;
             if (row >= rows) { fire_con_scroll(0, row - rows + 1); row = rows - 1; }
             fire_con_setCursor(col, row);
-            r.h.ah = 9; r.h.al = fire_cp437_byte(c); r.h.bh = 0; r.h.bl = fire_con_attr; r.x.cx = 1;
+            r.h.ah = 9; r.h.al = fire_cp437_byte(c); r.h.bh = 0; r.h.bl = fire_con_attr; r.FIRE_DOS_W.cx = 1;
             fire_con_bios(&r);
             if (++col >= cols) { col = 0; row++; }
         }
@@ -92,8 +93,8 @@ static void fire_con_clear(void) { fire_con_scroll(0, 0); fire_con_setCursor(0, 
 static void fire_con_showCursor(int show) {
     union REGS r;
     r.h.ah = 1;
-    r.x.cx = show ? fire_con_startShape : 0x2000;
-    if (show && (r.x.cx & 0x2000)) r.x.cx = 0x0607;
+    r.FIRE_DOS_W.cx = show ? fire_con_startShape : 0x2000;
+    if (show && (r.FIRE_DOS_W.cx & 0x2000)) r.FIRE_DOS_W.cx = 0x0607;
     fire_con_bios(&r);
 }
 static int fire_con_keyAvailable(void) { return _bios_keybrd(_NKEYBRD_READY) != 0; }

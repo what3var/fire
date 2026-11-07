@@ -31,6 +31,7 @@ static Value fire_dos_FarOf(Value buffer, Value offset) {
     b = bufOf(buffer);
     if (offset.i < 0 || (uint64_t)offset.i > bufSize(b)) return Undef();
     fire_dos_farOf(b->data + offset.i, &seg, &off);
+    if (seg == 0 && off == 0) return Int(-1);   /* (above the first megabyte: dos32) */
     return Int(((int64_t)seg << 16) | off);
 }
 

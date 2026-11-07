@@ -1,5 +1,5 @@
 /* fire native platform package "dos32": DOS with the extender DOS/32A from the 386 on (ROADMAP 13.4) - Open Watcom (wcc386), flat 32-bit memory; the core of the
- * platform is the one of DOS (std/fire_platform_dos.h: the clock, sleep and exit of the C library work under DPMI as in real mode). No fire threads yet. No GPU. */
+ * platform is the one of DOS (std/fire_platform_dos.h: the clock, sleep and exit of the C library work under DPMI as in real mode). fire threads are tasks of fire's own scheduler (std/sched/fire_ctx_x86_32.h). No GPU. */
 #ifndef FIRE_PLATFORM_H
 #define FIRE_PLATFORM_H
 #ifndef FIRE_GFX_NO_GPU

@@ -50,6 +50,9 @@
       ],
       "default": [
         "native/fire_dos_none.h"
+      ],
+      "dos32": [
+        "native/fire_dos_dpmi.h"
       ]
     }
   }

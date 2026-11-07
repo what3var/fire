@@ -1,4 +1,4 @@
-/* fire windows package: display part for DOS in real mode (dos16; Open Watcom): a window is the whole screen in a graphics mode of the VGA -
+/* fire windows package: display part for DOS (dos16 in real mode, dos32 with a DOS extender - platform/std/fire_dos_bios.h; Open Watcom): a window is the whole screen in a graphics mode of the VGA -
  *   - Mode 13h (320x200, 256 colours) for a framebuffer up to 320x200, VESA mode 101h (640x480, 256 colours, banked) for a larger one when the BIOS has it
  *     (else 13h); the framebuffer is stretched to the screen (nearest pixel), the text mode comes back when the window closes or the program ends;
  *   - a palette framebuffer goes straight into the video memory, its palette into the registers of the card (FIRE_DISPLAY_PRESENT_FB: the windows bridge
@@ -12,6 +12,7 @@
 #include "fire_display_c.h"
 #include "fire_display_keys.h"
 #include "platform/std/fire_cp437.h"   /* (the characters of the keys; a helper of the platform layer, the console package uses it too) */
+#include "platform/std/fire_dos_bios.h"   /* (the BIOS and the first megabyte: real mode and DOS extender) */
 #include <bios.h>
 #include <conio.h>
 #include <dos.h>
@@ -44,20 +45,20 @@ static void fire_display_systemTheme(FireSystemTheme* t) {
 }
 static void fire_display_threadDone(void) {}
 
-static void fire_display_dosBios(union REGS* r) { int86(0x10, r, r); }
+static void fire_display_dosBios(union REGS* r) { fire_dos_int(0x10, r); }
 static int fire_display_dosMouse(int ax, int cx, int dx, int* bx, int* cxOut, int* dxOut) {
     union REGS r;
-    r.x.ax = (unsigned)ax; r.x.bx = 0; r.x.cx = (unsigned)cx; r.x.dx = (unsigned)dx;
-    int86(0x33, &r, &r);
-    if (bx) *bx = (int)r.x.bx;
-    if (cxOut) *cxOut = (int)r.x.cx;
-    if (dxOut) *dxOut = (int)r.x.dx;
-    return (int)r.x.ax;
+    r.FIRE_DOS_W.ax = (unsigned)ax; r.FIRE_DOS_W.bx = 0; r.FIRE_DOS_W.cx = (unsigned)cx; r.FIRE_DOS_W.dx = (unsigned)dx;
+    fire_dos_int(0x33, &r);
+    if (bx) *bx = (int)r.FIRE_DOS_W.bx;
+    if (cxOut) *cxOut = (int)r.FIRE_DOS_W.cx;
+    if (dxOut) *dxOut = (int)r.FIRE_DOS_W.dx;
+    return (int)r.FIRE_DOS_W.ax;
 }
 /* (INT 33h: a vector of 0 or one that points at an IRET means no driver) */
 static int fire_display_dosHasMouse(void) {
-    unsigned char __far* v = *(unsigned char __far* __far*)MK_FP(0, 0x33 * 4);
-    if (v == 0 || *v == 0xCF) return 0;
+    unsigned off = *(unsigned short FIRE_DOS_FAR*)FIRE_DOS_LOW(0, 0x33 * 4), seg = *(unsigned short FIRE_DOS_FAR*)FIRE_DOS_LOW(0, 0x33 * 4 + 2);
+    if ((seg | off) == 0 || *FIRE_DOS_LOW(seg, off) == 0xCF) return 0;
     return (unsigned)fire_display_dosMouse(0, 0, 0, NULL, NULL, NULL) == 0xFFFFu;
 }
 
@@ -105,22 +106,21 @@ static int fire_display_open(FireDisplayWindow* w, const char* title, int width,
     w->mode = 0x13; w->sw = 320; w->sh = 200; w->pitch = 320; w->granularity = 65536ul; w->bank = -1;
     if (width > 320 || height > 200) {
         /* VESA 101h: the information of the mode (INT 10h AX=4F01h) - the window granularity and the bytes per line */
-        static unsigned char info[256];
-        struct SREGS s;
-        segread(&s);
-        r.x.ax = 0x4F01; r.x.cx = 0x101; r.x.di = FP_OFF(info); s.es = FP_SEG(info);
-        int86x(0x10, &r, &r, &s);
-        if (r.x.ax == 0x004F && (info[0] & 1)) {
-            r.x.ax = 0x4F02; r.x.bx = 0x101;
+        unsigned seg = 0;
+        unsigned char FIRE_DOS_FAR* info = fire_dos_lowBuffer(&seg);   /* (below 1 MB: the BIOS writes it in real mode) */
+        r.FIRE_DOS_W.ax = 0x4F01; r.FIRE_DOS_W.cx = 0x101; r.FIRE_DOS_W.di = 0;
+        if (info != NULL) fire_dos_realInt(0x10, &r, seg);
+        if (info != NULL && r.FIRE_DOS_W.ax == 0x004F && (info[0] & 1)) {
+            r.FIRE_DOS_W.ax = 0x4F02; r.FIRE_DOS_W.bx = 0x101;
             fire_display_dosBios(&r);
-            if (r.x.ax == 0x004F) {
+            if (r.FIRE_DOS_W.ax == 0x004F) {
                 unsigned gran = info[4] | (info[5] << 8);
                 w->mode = 0x101; w->sw = 640; w->sh = 480; w->pitch = info[16] | (info[17] << 8);
                 w->granularity = (unsigned long)(gran ? gran : 64) * 1024ul;
             }
         }
     }
-    if (w->mode == 0x13) { r.x.ax = 0x0013; fire_display_dosBios(&r); }
+    if (w->mode == 0x13) { r.FIRE_DOS_W.ax = 0x0013; fire_display_dosBios(&r); }
     w->palette = -1;
     w->open = 1;
     w->mouse = fire_display_dosHasMouse();
@@ -153,7 +153,7 @@ static void fire_display_restore(FireDisplayWindow* w) { (void)w; }
 static void fire_display_dosBank(FireDisplayWindow* w, int bank) {
     union REGS r;
     if (bank == w->bank) return;
-    r.x.ax = 0x4F05; r.x.bx = 0; r.x.dx = (unsigned)bank;
+    r.FIRE_DOS_W.ax = 0x4F05; r.FIRE_DOS_W.bx = 0; r.FIRE_DOS_W.dx = (unsigned)bank;
     fire_display_dosBios(&r);
     w->bank = bank;
 }
@@ -161,13 +161,13 @@ static void fire_display_dosBank(FireDisplayWindow* w, int bank) {
 static void fire_display_dosLine(FireDisplayWindow* w, int y, const unsigned char* row, int n) {
     unsigned long at = (unsigned long)y * (unsigned long)w->pitch;
     int done = 0;
-    if (w->mode == 0x13) { _fmemcpy(MK_FP(0xA000, (unsigned)at), row, (size_t)n); return; }
+    if (w->mode == 0x13) { FIRE_DOS_COPY(FIRE_DOS_LOW(0xA000, (unsigned)at), row, (size_t)n); return; }
     while (done < n) {
         unsigned long off = (at + (unsigned long)done) % w->granularity;
         unsigned long room = 65536ul - off;
         int step = (unsigned long)(n - done) < room ? n - done : (int)room;
         fire_display_dosBank(w, (int)((at + (unsigned long)done) / w->granularity));
-        _fmemcpy(MK_FP(0xA000, (unsigned)off), row + done, (size_t)step);
+        FIRE_DOS_COPY(FIRE_DOS_LOW(0xA000, (unsigned)off), row + done, (size_t)step);
         done += step;
     }
 }

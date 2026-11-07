@@ -112,6 +112,7 @@ class Dos {
         Dos.Check()
         var at = __DosFarOf(buffer, offset)
         if (at == undefined) { throw new ArgumentException("No such place in the buffer: " + offset + ".") }
+        if (at == -1) { throw new DosException("The buffer lies above the first megabyte (dos32): DOS cannot reach it - take DOS memory (Dos.Alloc) and fill it with Machine.Memory.") }
         return at
     }
     static int SegmentOf(byte buffer[], int offset = 0) { return (Dos.FarOf(buffer, offset) >> 16) & 65535 }

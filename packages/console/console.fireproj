@@ -102,6 +102,9 @@
       ],
       "default": [
         "native/fire_console_none.h"
+      ],
+      "dos32": [
+        "native/fire_console_dos.h"
       ]
     }
   }

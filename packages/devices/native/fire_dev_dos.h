@@ -1,4 +1,4 @@
-/* fire devices package: serial and parallel ports for the devices bridge on DOS (real mode; Open Watcom): the ports the BIOS found (its data area at
+/* fire devices package: serial and parallel ports for the devices bridge on DOS (dos16 in real mode, dos32 with a DOS extender: its protected-mode handler gets the IRQ; Open Watcom): the ports the BIOS found (its data area at
  * 0040:0000) as "COM1".."COM4" and "LPT1".."LPT3".
  *   - COM: the 8250/16550 UART directly, 115200 baud 8N1, the FIFO on; what comes in is taken by an interrupt (IRQ 4 for COM1/COM3, IRQ 3 for COM2/COM4)
  *     into a ring buffer of the port - nothing is lost while the program does something else (the devices bridge reads when the program asks). The vector and
@@ -9,6 +9,7 @@
 #define FIRE_DEV_DOS_H
 
 #include "fire_dev_c.h"
+#include "platform/std/fire_dos_bios.h"   /* (the first megabyte: real mode and DOS extender) */
 #include <conio.h>
 #include <dos.h>
 #include <i86.h>
@@ -29,7 +30,7 @@ typedef void (__interrupt __far *fire_dev_dosIsr)(void);
 static fire_dev_dosIsr fire_dev_dosOld[2];   /* the vectors before: [0] IRQ 3, [1] IRQ 4 */
 static int fire_dev_dosHooks[2], fire_dev_dosMasked[2], fire_dev_dosAtExit = 0;
 
-static unsigned fire_dev_dosBios(unsigned off) { return *(unsigned short __far*)MK_FP(0x40, off); }
+static unsigned fire_dev_dosBios(unsigned off) { return *(unsigned short FIRE_DOS_FAR*)FIRE_DOS_LOW(0x40, off); }
 static int fire_dev_dosLine(int irq) { return irq == 3 ? 0 : 1; }
 
 /* the interrupt of IRQ 3 or 4: every open COM port on the line empties its UART into its ring */

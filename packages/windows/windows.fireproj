@@ -37,6 +37,9 @@
       ],
       "default": [
         "native/fire_display_none.h"
+      ],
+      "dos32": [
+        "native/fire_display_dos.h"
       ]
     },
     "headers": [

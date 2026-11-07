@@ -27450,11 +27450,11 @@ else
             {
                 // builds the program as PROG.EXE in its own folder (drive C:) and runs it in DOSBox-X (at most 2 minutes): its output, or the log of the build
                 // (another `outputFile`: the program runs on the screen, not redirected, and writes what it found into that file)
-                (bool Ok, string Text) BuildAndRunDos(string source, string folder, string outputFile = "OUT.TXT", string dosboxSettings = "")
+                (bool Ok, string Text) BuildAndRunDos(string source, string folder, string outputFile = "OUT.TXT", string dosboxSettings = "", TargetProfile? target = null)
                 {
                     string dir = Path.Combine(workDir, folder);
                     Directory.CreateDirectory(dir);
-                    var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
+                    var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), target ?? dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
                     if (!built.Ok) return (false, built.Log);
                     var env = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy", ["SDL_AUDIODRIVER"] = "dummy" };
                     var run = TestProcess.Run(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" {dosboxSettings.Replace("{dir}", dir)} -c \"mount c {dir}\" -c \"c:\" -c \"{(outputFile == "OUT.TXT" ? "PROG.EXE > OUT.TXT" : "PROG.EXE")}\" -c \"exit\"", dir, null, env, 120_000);
@@ -27984,6 +27984,69 @@ else
                 var conRun = BuildAndRunDos(dosCon, "dos16con", "RES.TXT");
                 CheckNat("dos16: Konsole ueber das BIOS (Farben als Attribut, Codepage 437, Cursor) und Tasten aus dem Tastaturpuffer (Pfeil, F5, Strg+Pfeil, Esc, Enter, Strg+A, Backspace)",
                     conRun.Ok && conRun.Text == dosConExpected, $"  erwartet:\n{dosConExpected}\n  DOS:\n{conRun.Text}");
+
+                // ---- dos32 (ROADMAP 13.4): the same programs with Open Watcom 386 and the extender DOS/32A in the program - flat memory, int and float of 64 bits
+                var dos32 = TargetProfile.Dos32;
+                (bool Ok, string Text) RunDos32(string source, string folder, string outputFile = "OUT.TXT", string settings = "") => BuildAndRunDos(source, folder, outputFile, settings, dos32);
+                // what the VM prints with the widths of a target (int, float and word as the target has them)
+                string VmOf(string source, TargetProfile target)
+                {
+                    var linked = new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target);
+                    var lines = new List<string>();
+                    try { fire.Runtime.Session.Build(linked, VmExecutionMode.Release, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run(); }
+                    finally { Value.WordBits = 64; Value.Ints32 = false; Value.Ints16 = false; Value.SingleFloats = false; }
+                    return string.Concat(lines.Select(l => l + "\n"));
+                }
+                CheckNat("dos32: Zielprofil (Plattform dos32, Toolchain watcom, int/float 64, word 32, Threads ueber den eigenen Scheduler)",
+                    dos32.Native.Platform == "dos32" && dos32.Native.Toolchain == "watcom" && dos32.IntWidth == 64 && dos32.FloatWidth == 64 && dos32.WordWidth == 32 && dos32.Native.SupportsThreads
+                    && dos32.Native.CompileArgs.Contains("-bdos32a"));
+                string dos32Vm = VmOf(dosSource, dos32);
+                var d32Run = RunDos32(dosSource, "dos32");
+                CheckNat("dos32: mit Open Watcom 386 und DOS/32A gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM mit den Breiten von dos32 (Objekte, Strings, Einheiten, Ausnahmen, word 32 Bit, ein fire-Thread)",
+                    d32Run.Ok && d32Run.Text == dos32Vm && dos32Vm.Length > 0, $"  VM:\n{dos32Vm}\n  DOS:\n{d32Run.Text}");
+                var d32Files = RunDos32(dosFiles, "dos32files");
+                CheckNat("dos32: Dateien mit DOS-Pfaden (wie dos16)", d32Files.Ok && d32Files.Text == dosFilesExpected, $"  erwartet:\n{dosFilesExpected}\n  DOS:\n{d32Files.Text}");
+                var d32Big = RunDos32(dosBig, "dos32big");
+                CheckNat("dos32: grosse Arrays und Puffer im flachen Speicher (wie dos16)", d32Big.Ok && d32Big.Text == dosBigExpected, $"  erwartet:\n{dosBigExpected}\n  DOS:\n{d32Big.Text}");
+                var d32Mach = RunDos32(dosMachine, "dos32mach");
+                string dos32MachineExpected = dosMachineExpected.Replace("far: The address 2097152 cannot be reached from here.\n", "");
+                CheckNat("dos32: machine - wie dos16; der Speicher ueber 1 MB ist ueber DPMI erreichbar (eine Seite abgebildet)", d32Mach.Ok && d32Mach.Text == dos32MachineExpected,
+                    $"  erwartet:\n{dos32MachineExpected}\n  DOS:\n{d32Mach.Text}");
+                const string dos32Dos = """
+                    #import "dos"
+                    #import "xms"
+                    #import "x86"
+                    var v = Dos.Version()
+                    print("dos " + (v[0] >= 5))
+                    var r = Dos.Interrupt(0x1A, new DosRegisters(0))
+                    print("ticks " + (r.cx * 65536 + r.dx > 0))
+                    var seg = Dos.Alloc(256)
+                    print("alloc " + (seg > 0))
+                    Dos.Free(seg)
+                    print("vector " + (Dos.GetVector(0x21) != 0))
+                    var name = new byte[64]
+                    try { Dos.SegmentOf(name) } catch (DosException e) { print("high: " + (e.message.IndexOf("first megabyte") > 0)) }
+                    print("xms " + Xms.Available())
+                    print("x86 " + X86.Mode() + " " + X86.CanSwitch())
+                    print("done")
+                    """;
+                var d32Dos = RunDos32(dos32Dos, "dos32dos");
+                CheckNat("dos32: dos ueber DPMI (Interrupts im Real Mode, DOS-Speicher, Vektoren; ein Puffer des Programms liegt ueber 1 MB), ohne xms und x86",
+                    d32Dos.Ok && d32Dos.Text == "dos True\nticks True\nalloc True\nvector True\nhigh: True\nxms False\nx86 none False\ndone\n", $"  DOS:\n{d32Dos.Text}");
+                var d32Ser = RunDos32(dosSerial, "dos32ser", "OUT.TXT", "-set \"serial1=file file:{dir}/SER.TXT\" -set \"parallel1=file file:{dir}/PAR.TXT\"");
+                string ser32 = Path.Combine(workDir, "dos32ser", "SER.TXT"), par32 = Path.Combine(workDir, "dos32ser", "PAR.TXT");
+                string ser32Out = File.Exists(ser32) ? File.ReadAllText(ser32) : "(keine Datei)", par32Out = File.Exists(par32) ? File.ReadAllText(par32) : "(keine Datei)";
+                CheckNat("dos32: serieller und paralleler Port (wie dos16; die IRQ des UART im Handler des Protected Mode)",
+                    d32Ser.Ok && d32Ser.Text == dosSerialExpected && ser32Out == "Hallo COM1" && par32Out == "Drucker", $"  DOS:\n{d32Ser.Text}\n  COM1: {ser32Out}\n  LPT1: {par32Out}");
+                string gfxVm = VmOf(dosGfxDraw, dos32);
+                var d32Gfx = RunDos32(dosGfxDraw, "dos32gfx");
+                CheckNat("dos32: graphics - dieselben Pixel wie die VM mit den Breiten von dos32", d32Gfx.Ok && d32Gfx.Text == gfxVm && gfxVm.Length > 0, $"  VM:\n{gfxVm}\n  DOS:\n{d32Gfx.Text}");
+                var d32Win = RunDos32(dosWindow, "dos32win");
+                CheckNat("dos32: windows - Mode 13h und die Tasten des BIOS (wie dos16)", d32Win.Ok && d32Win.Text == "vga 200 1 dac 4136960\nkeys 4/97 82/1073741906 41/27 \n", $"  DOS:\n{d32Win.Text}");
+                var d32Win2 = RunDos32(dosWindow2, "dos32win2");
+                CheckNat("dos32: windows - RGBA ueber den Farbwuerfel, VESA 101h (die Information des Modus ueber DPMI im Real Mode)", d32Win2.Ok && d32Win2.Text == "rgba 180 0\nvesa 257 3 9\n", $"  DOS:\n{d32Win2.Text}");
+                var d32Con = RunDos32(dosCon, "dos32con", "RES.TXT");
+                CheckNat("dos32: Konsole ueber das BIOS (wie dos16)", d32Con.Ok && d32Con.Text == dosConExpected, $"  erwartet:\n{dosConExpected}\n  DOS:\n{d32Con.Text}");
             }
         }
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
