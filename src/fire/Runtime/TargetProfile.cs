@@ -51,24 +51,45 @@ namespace fire.Runtime
         /// <summary>A small target without an operating system shell: no console program, the entry point is the board's.</summary>
         public bool IsEmbedded { get; init; }
 
+        /// <summary>Where the target stands in the choice of targets (the tree of the build tool strip): a system with an operating system, a PC without one,
+        /// a board.</summary>
+        public TargetCategory Category { get; init; } = TargetCategory.Os;
+
+        /// <summary>The name shown in the choice of targets ("BIOS16 (+IO)"); null: <see cref="Name"/>.</summary>
+        public string? DisplayName { get; init; }
+
+        /// <summary>The name to show: <see cref="DisplayName"/>, else <see cref="Name"/>.</summary>
+        public string Title => DisplayName ?? Name;
+
+        /// <summary>The kinds of toolchain that can build for this target (`watcom` for DOS and Windows 3.x); null: any. The toolchain `files` (the sources only)
+        /// always can. A toolchain chosen for the editor or the machine that cannot is not used: the target's own is (NativeConfig.ResolveToolchain).</summary>
+        public IReadOnlyList<string>? Toolchains { get; init; }
+
+        /// <summary>Can a toolchain of this kind build for the target?</summary>
+        public bool AllowsToolchain(string kind) =>
+            Toolchains == null || string.Equals(kind, "files", StringComparison.OrdinalIgnoreCase) || Toolchains.Contains(kind, StringComparer.OrdinalIgnoreCase);
+
         public bool HasImport(string import) => Imports == null || Imports.Contains(import) || import.StartsWith("pkg:", StringComparison.Ordinal);   // imports of packages: their native part names the platforms it supports
 
         // -------------------------------------------------------------------------------------------------------------
         public static readonly TargetProfile Windows = new()
         {
             Name = "windows", Symbols = new[] { "windows" }, HalPackage = "windows",
+            DisplayName = "Windows", Category = TargetCategory.Os,
             Native = new NativeTarget { Platform = "windows" },
         };
 
         public static readonly TargetProfile Linux = new()
         {
             Name = "linux", Symbols = new[] { "linux", "posix" }, HalPackage = "posix",
+            DisplayName = "Linux", Category = TargetCategory.Os,
             Native = new NativeTarget { Platform = "posix", CompileArgs = new[] { "-pthread" } },
         };
 
         public static readonly TargetProfile MacOs = new()
         {
             Name = "macos", Symbols = new[] { "macos", "posix" }, HalPackage = "posix",
+            DisplayName = "macOS", Category = TargetCategory.Os,
             Native = new NativeTarget { Platform = "posix", CompileArgs = new[] { "-pthread" } },
         };
 
@@ -77,6 +98,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Esp32 = new()
         {
             Name = "esp32", Symbols = new[] { "esp32", "freertos" }, HalPackage = "esp32",
+            DisplayName = "ESP32", Category = TargetCategory.Embedded, Toolchains = new[] { "esp-idf" },
             FloatWidth = 32, WordWidth = 32, DefaultStackBytes = 8192, IsEmbedded = true,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
@@ -93,6 +115,7 @@ namespace fire.Runtime
         public static readonly TargetProfile FreeRtos = new()
         {
             Name = "freertos", Symbols = new[] { "freertos" }, HalPackage = "freertos",
+            DisplayName = "FreeRTOS (sources)", Category = TargetCategory.Embedded,
             FloatWidth = 32, WordWidth = 32, DefaultStackBytes = 8192, IsEmbedded = true,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
@@ -109,6 +132,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Wasm = new()
         {
             Name = "wasm", Symbols = new[] { "wasm", "browser" }, HalPackage = "wasm", WordWidth = 32,
+            DisplayName = "WebAssembly (browser)", Category = TargetCategory.Os, Toolchains = new[] { "emscripten" },
             Native = new NativeTarget { Platform = "wasm", SupportsThreads = false, Toolchain = "emscripten" },
         };
 
@@ -193,5 +217,16 @@ namespace fire.Runtime
 
         /// <summary>A board: the baud rate of its console (null: 115200).</summary>
         public int? Baud { get; init; }
+    }
+
+    /// <summary>The groups of the choice of targets.</summary>
+    public enum TargetCategory
+    {
+        /// <summary>A system with an operating system: Windows, Linux, macOS, the browser, DOS, Windows 3.x.</summary>
+        Os,
+        /// <summary>A PC without an operating system, started by its firmware (BIOS, UEFI).</summary>
+        Native,
+        /// <summary>A board: a microcontroller, with or without an RTOS.</summary>
+        Embedded,
     }
 }

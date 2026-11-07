@@ -54,6 +54,14 @@ static class BiosTests
         CheckNat("bios16: Zielprofil (Plattform bios16, Toolchain watcom, eigener Start, int/float 32, word 16, Threads ueber den eigenen Scheduler, nofarcalls)",
             bios16.Native.Platform == "bios16" && bios16.Native.Toolchain == "watcom" && bios16.IntWidth == 32 && bios16.FloatWidth == 32 && bios16.WordWidth == 16
             && bios16.Native.SupportsThreads && bios16.Native.CompileArgs.Contains("-Wl,start=_cstart_") && bios16.Native.CompileArgs.Contains("-Wl,nofarcalls"));
+        // the choice of targets: groups, display names, the toolchains a target allows (gcc chosen for dos16 builds with watcom)
+        var nativeConfig = new fire.Native.NativeConfig();
+        CheckNat("Ziele: Gruppen und Klarnamen (BIOS16 (+IO) unter Native, DOS unter OS, ESP32 unter Embedded)",
+            TargetProfile.Bios16Dos.Title == "BIOS16 (+IO)" && TargetProfile.Bios16Dos.Category == TargetCategory.Native && TargetProfile.Dos16.Category == TargetCategory.Os
+            && TargetProfile.TryGet("esp32", out var esp) && esp.Category == TargetCategory.Embedded);
+        CheckNat("Ziele: eine Toolchain, die das Ziel nicht baut, wird nicht genommen (dos16 mit gcc -> watcom; linux mit gcc bleibt gcc; files immer)",
+            nativeConfig.ResolveToolchain(TargetProfile.Dos16, "gcc").EffectiveKind == "watcom" && nativeConfig.ResolveToolchain(TargetProfile.Linux, "gcc").EffectiveKind == "gcc"
+            && nativeConfig.ResolveToolchain(TargetProfile.Dos16, "files").EffectiveKind == "files");
         string? biosDir = null;
         for (var dirInfo = new DirectoryInfo(AppContext.BaseDirectory); dirInfo != null && biosDir == null; dirInfo = dirInfo.Parent)
             if (File.Exists(Path.Combine(dirInfo.FullName, "native", "platform", "bios16", "fire_bios16_boot.asm"))) biosDir = Path.Combine(dirInfo.FullName, "native", "platform", "bios16");

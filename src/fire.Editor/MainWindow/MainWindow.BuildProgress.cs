@@ -123,7 +123,8 @@ namespace fire.Editor
             // (not in the first half second either: a quick build shows nothing at all)
             bool show = job is { Ended: false } && (job.Window == null || !job.Window.IsVisible) && job.Watch.Elapsed >= BuildWindowDelay;
             BuildStatusButton.IsVisible = show;
-            if (!show) return;
+            // (an indeterminate bar animates even while it is hidden - a redraw of the window 60 times a second, for nothing)
+            if (!show) { BuildStatusBar.IsIndeterminate = false; return; }
             var p = job!.Last;
             string count = p is { Indeterminate: false } q ? $" {q.Done}/{q.Total}" + (q.Phase == BuildPhase.CompileC && q.Text.Contains("module", StringComparison.Ordinal) ? " modules" : q.Phase == BuildPhase.PackageNatives ? " packages" : "") : "";
             BuildStatusText.Text = job.Cancelling ? "Cancelling the build..." : $"Building...{count}";

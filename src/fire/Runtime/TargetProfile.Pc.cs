@@ -4,12 +4,16 @@ namespace fire.Runtime
     /// 32-bit Windows. Each one is a platform package of its own (native/platform/&lt;name&gt;/) built with its toolchain; none of them has fire threads.</summary>
     public sealed partial record TargetProfile
     {
+        /// <summary>The targets of Open Watcom: only it builds for them.</summary>
+        private static readonly string[] Watcom = { "watcom" };
+
         /// <summary>DOS in real mode from the 8086 on (ROADMAP 13.3): Open Watcom, large model (far pointers: 32 bits, so with `int` and `float` of 32 bits a
         /// value takes 8 bytes), the machine word has 16 bits. fire threads are tasks of fire's own scheduler (std/fire_sched.h, switched at the safepoints, the timer
         /// interrupt asks for it); no windows; the console is DOS's.</summary>
         public static readonly TargetProfile Dos16 = new()
         {
             Name = "dos16", Symbols = new[] { "dos16", "dos" }, HalPackage = "dos16",
+            DisplayName = "DOS (16 bit, real mode)", Category = TargetCategory.Os, Toolchains = Watcom,
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
@@ -32,6 +36,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Dos32 = new()
         {
             Name = "dos32", Symbols = new[] { "dos32", "dos" }, HalPackage = "dos32",
+            DisplayName = "DOS (32 bit, DOS/32A)", Category = TargetCategory.Os, Toolchains = Watcom,
             FloatWidth = 64, IntWidth = 64, WordWidth = 32, DefaultStackBytes = 65536,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
@@ -48,6 +53,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Win16 = new()
         {
             Name = "win16", Symbols = new[] { "win16", "windows3" }, HalPackage = "win16",
+            DisplayName = "Windows 3.x", Category = TargetCategory.Os, Toolchains = Watcom,
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
             Imports = new[] { NativeImports.Print, "io", "filesystem", "time", "random", "hash", "json", "compression", "graphics", "windows", "ui", "dialogs",
                 NativeImports.Reflection, NativeImports.Linq },
@@ -71,6 +77,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Bios16 = new()
         {
             Name = "bios16", Symbols = new[] { "bios16", "bios" }, HalPackage = "bios16",
+            DisplayName = "BIOS16", Category = TargetCategory.Native, Toolchains = Watcom,
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
             Imports = new[] { NativeImports.Print, "time", "console", "machine", "graphics", "windows", NativeImports.Devices, NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
@@ -92,7 +99,7 @@ namespace fire.Runtime
         /// dos16 (platform/bios16/fire_bios16_dos.h).</summary>
         public static readonly TargetProfile Bios16Dos = Bios16 with
         {
-            Name = "bios16-dos", Symbols = new[] { "bios16", "bios", "bios16dos" },
+            Name = "bios16-dos", Symbols = new[] { "bios16", "bios", "bios16dos" }, DisplayName = "BIOS16 (+IO)",
             Imports = Bios16.Imports.Concat(new[] { "io", "filesystem", "dos" }).ToArray(),
             Native = Bios16.Native with { Defines = new[] { "FIRE_BIOS_MINIDOS=1" } },
         };

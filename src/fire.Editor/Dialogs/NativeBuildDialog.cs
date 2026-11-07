@@ -117,8 +117,7 @@ namespace fire.Editor
             cmbToolchain.SelectionChanged += Toolchain_SelectionChanged;
 
             cmbPlatform.ItemsSource = NativeRuntimeFiles.AllPackages().ToList();
-            cmbTarget.ItemsSource = _config.TargetNames.ToList();
-            cmbTarget.SelectedItem = _config.TargetNames.FirstOrDefault(n => string.Equals(n, _config.Target ?? TargetProfile.Host.Name, StringComparison.OrdinalIgnoreCase)) ?? TargetProfile.Host.Name;
+            FillTargets(_config.Target ?? TargetProfile.Host.Name);
 
             cmbToolchain.ItemsSource = _config.ToolchainNames.ToList();
             string? wanted = _config.Toolchain ?? _config.ResolveTarget(_config.Target).Native.Toolchain;
@@ -234,10 +233,22 @@ namespace fire.Editor
         {
             if (_loading) return;
             StoreTarget();
-            _currentTarget = cmbTarget.SelectedItem as string;
+            _currentTarget = SelectedTargetName();
             if (_currentTarget == null) return;
             LoadTarget(_config.ResolveTarget(_currentTarget));
         }
+
+        /// <summary>Fills the choice of targets as a tree (OS, Native, Embedded; MainWindow.TargetTreeItems) and selects the target <paramref name="select"/>.</summary>
+        private void FillTargets(string select)
+        {
+            var items = MainWindow.TargetTreeItems(_config).ToList();
+            cmbTarget.ItemsSource = items;
+            cmbTarget.SelectedItem = items.FirstOrDefault(i => string.Equals(i.Tag as string, select, StringComparison.OrdinalIgnoreCase))
+                ?? items.FirstOrDefault(i => string.Equals(i.Tag as string, TargetProfile.Host.Name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>The name of the chosen target (null: none).</summary>
+        private string? SelectedTargetName() => (cmbTarget.SelectedItem as ComboBoxItem)?.Tag as string;
 
         private void LoadTarget(TargetProfile t)
         {
@@ -324,9 +335,8 @@ namespace fire.Editor
             StoreTarget();
             _config.Targets[name] = new TargetDef { Extends = baseName };
             _loading = true;
-            cmbTarget.ItemsSource = _config.TargetNames.ToList();
+            FillTargets(name);
             _loading = false;
-            cmbTarget.SelectedItem = name;
         }
 
         private async void BrowsePlatform_Click(object? sender, RoutedEventArgs e)
@@ -466,7 +476,7 @@ namespace fire.Editor
             StoreToolchain();
             _config.Engine = segEngine.SelectedIndex == 1 ? "native" : "vm";
             _config.Stripping = cmbStripping.SelectedIndex > 0 ? (StrippingLevel)(cmbStripping.SelectedIndex - 1) : null;
-            _config.Target = cmbTarget.SelectedItem as string;
+            _config.Target = SelectedTargetName();
             _config.Toolchain = cmbToolchain.SelectedItem as string;
             Close(true);
         }

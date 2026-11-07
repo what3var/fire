@@ -243,13 +243,39 @@ namespace fire.Editor
                 string defaultName;
                 try { defaultName = config.ResolveTarget(ProjectTargetSetting()).Name; }
                 catch (fire.Native.NativeConfigException) { defaultName = "?"; }
-                var items = new List<ComboBoxItem> { new() { Content = $"Default ({defaultName})", Tag = "" } };
-                foreach (string name in config.TargetNames) items.Add(new ComboBoxItem { Content = name, Tag = name });
+                var items = new List<ComboBoxItem> { new() { Content = $"Default ({TargetTitle(config, defaultName)})", Tag = "" } };
+                items.AddRange(TargetTreeItems(config));
                 cmbTarget.ItemsSource = items;
                 int index = _nativeTargetChoice == null ? 0 : items.FindIndex(i => string.Equals((string?)i.Tag, _nativeTargetChoice, StringComparison.OrdinalIgnoreCase));
                 cmbTarget.SelectedIndex = Math.Max(0, index);
             }
             finally { _updatingTargetUi = false; }
+        }
+
+        /// <summary>The targets as a tree: a heading per group (OS, Native, Embedded; not selectable), under it the targets with their display names (the name of a target
+        /// as its tooltip). Tag: the name of the target (null for a heading).</summary>
+        internal static IEnumerable<ComboBoxItem> TargetTreeItems(fire.Native.NativeConfig config)
+        {
+            var targets = config.TargetProfiles.ToList();
+            foreach (var group in new[] { (fire.Runtime.TargetCategory.Os, "OS"), (fire.Runtime.TargetCategory.Native, "Native"), (fire.Runtime.TargetCategory.Embedded, "Embedded") })
+            {
+                var members = targets.Where(t => t.Category == group.Item1).ToList();
+                if (members.Count == 0) continue;
+                yield return new ComboBoxItem { Content = group.Item2, IsEnabled = false, FontWeight = Avalonia.Media.FontWeight.SemiBold, Tag = null };
+                foreach (var t in members)
+                    yield return new ComboBoxItem
+                    {
+                        Content = t.Title, Tag = t.Name, Padding = new Avalonia.Thickness(22, 3, 8, 3),
+                        [ToolTip.TipProperty] = t.DisplayName != null ? t.Name : null,
+                    };
+            }
+        }
+
+        /// <summary>The display name of a target (its name when it has none or is unknown).</summary>
+        internal static string TargetTitle(fire.Native.NativeConfig config, string name)
+        {
+            try { return config.ResolveTarget(name).Title; }
+            catch (fire.Native.NativeConfigException) { return name; }
         }
 
         /// <summary>The target that the settings of the project of the active file name (null: none).</summary>
@@ -262,7 +288,7 @@ namespace fire.Editor
             _nativeTargetChoice = tag.Length == 0 ? null : tag;
             _settings.NativeTarget = _nativeTargetChoice;
             _settings.Save();
-            UpdateStatus(_nativeTargetChoice == null ? "Native target: the default." : $"Native target: {_nativeTargetChoice}.");
+            UpdateStatus(_nativeTargetChoice == null ? "Native target: the default." : $"Native target: {(cmbTarget.SelectedItem is ComboBoxItem { Content: string title } ? title : _nativeTargetChoice)}.");
         }
 
         // -----------------------------------------------------------

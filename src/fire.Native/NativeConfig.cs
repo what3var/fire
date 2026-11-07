@@ -147,6 +147,30 @@ namespace fire.Native
         /// <summary>The toolchain to build <paramref name="target"/> with: the one asked for, the configured default, the target's, else the first compiler found on this machine.</summary>
         public ToolchainDef ResolveToolchain(TargetProfile target, string? name = null)
         {
+            var chosen = ResolveToolchainNamed(target, name);
+            // a toolchain that cannot build for the target (gcc for DOS) is not used: the target's own, else the first it allows
+            if (target.AllowsToolchain(chosen.EffectiveKind)) return chosen;
+            string own = target.Native.Toolchain is { } t && target.AllowsToolchain(ResolveToolchainNamed(target, t).EffectiveKind) ? t : target.Toolchains![0];
+            return ResolveToolchainNamed(target, own);
+        }
+
+        /// <summary>The targets in the order of their choice: the built-in ones and the configured ones, resolved (a broken one is left out).</summary>
+        [JsonIgnore]
+        public IEnumerable<TargetProfile> TargetProfiles
+        {
+            get
+            {
+                foreach (string n in TargetNames)
+                {
+                    TargetProfile? t = null;
+                    try { t = ResolveTarget(n); } catch (NativeConfigException) { }
+                    if (t != null) yield return t;
+                }
+            }
+        }
+
+        private ToolchainDef ResolveToolchainNamed(TargetProfile target, string? name)
+        {
             name ??= target.Native.Toolchain ?? Toolchain;
             if (name != null)
             {
@@ -249,6 +273,12 @@ namespace fire.Native
         /// <summary>The `#import` libraries that exist on the target; null: as the base.</summary>
         public List<string>? Imports { get; set; }
         public bool? Embedded { get; set; }
+        /// <summary>The name shown in the choice of targets.</summary>
+        public string? DisplayName { get; set; }
+        /// <summary>The group in the choice of targets: "os", "native" or "embedded".</summary>
+        public string? Category { get; set; }
+        /// <summary>The kinds of toolchain that can build for the target ("watcom"); the others are not used for it.</summary>
+        public List<string>? Toolchains { get; set; }
         /// <summary>The platform package of the runtime (`posix`, `windows`, `freertos`, `esp32`, or your own: see <see cref="PlatformPath"/>).</summary>
         public string? Platform { get; set; }
         /// <summary>A folder with your own platform package (it holds `fire_platform.hpp`); it is copied to `platform/&lt;platform&gt;/` next to the generated file.</summary>
@@ -302,6 +332,11 @@ namespace fire.Native
                 DefaultStackBytes = StackBytes ?? b.DefaultStackBytes,
                 Imports = Imports ?? b.Imports,
                 IsEmbedded = Embedded ?? b.IsEmbedded,
+                DisplayName = DisplayName ?? (string.Equals(name, b.Name, StringComparison.OrdinalIgnoreCase) ? b.DisplayName : null),
+                Category = Category == null ? (Embedded == true ? TargetCategory.Embedded : b.Category)
+                    : Enum.TryParse<TargetCategory>(Category, ignoreCase: true, out var category) ? category
+                    : throw new NativeConfigException($"Target '{name}': \"category\" must be \"os\", \"native\" or \"embedded\", not \"{Category}\"."),
+                Toolchains = Toolchains ?? b.Toolchains,
                 HalPackage = Platform ?? b.HalPackage,
                 Native = native,
             };
