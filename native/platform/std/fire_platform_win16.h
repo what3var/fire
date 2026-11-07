@@ -162,7 +162,7 @@ int PASCAL WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR commandLine, in
     (void)previous; (void)show;
     g_win16Instance = instance;
     GetModuleFileName(instance, g_win16Path, sizeof g_win16Path);
-    if (to != NULL && to[0] != 0) freopen(to, "w", stdout);
+    if (to != NULL && to[0] != 0) { freopen(to, "w", stdout); setvbuf(stdout, NULL, _IONBF, 0); }   /* (unbuffered: what a test sees also of a program that hangs) */
     else {
         /* (collected next to the program, shown at the end) */
         size_t n = strlen(g_win16Path);

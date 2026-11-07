@@ -41,7 +41,7 @@ static void fire_display_systemTheme(FireSystemTheme* t) {
     t->transparency = 0;
     t->scale = 1.0;
     t->dark = brightness < 96;
-    t->accent = ((int)GetRValue(caption) << 16) | ((int)GetGValue(caption) << 8) | (int)GetBValue(caption);
+    t->accent = ((int32_t)GetRValue(caption) << 16) | ((int32_t)GetGValue(caption) << 8) | (int32_t)GetBValue(caption);
     strcpy(t->fonts, "MS Sans Serif;Arial;System");
     t->fontSize = 13;
 }
@@ -406,7 +406,7 @@ static unsigned char* fire_display_clipboardGetImage(size_t* size) {
         DWORD n = GlobalSize(h);
         const BITMAPINFOHEADER __far* bi = (const BITMAPINFOHEADER __far*)p;
         DWORD colors = bi->biBitCount <= 8 ? (bi->biClrUsed ? bi->biClrUsed : (1ul << bi->biBitCount)) : 0;
-        DWORD offset = 14 + bi->biSize + colors * 4;
+        DWORD offset = 14 + bi->biSize + colors * 4 + (bi->biCompression == 3 && bi->biSize == 40 ? 12 : 0);   /* (BI_BITFIELDS: three masks after the header) */
         out = (unsigned char*)malloc((size_t)(n + 14));
         if (out != NULL) {
             out[0] = 'B'; out[1] = 'M';

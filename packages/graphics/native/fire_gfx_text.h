@@ -300,6 +300,13 @@ static void fire_gfx_fontFolders(FireFsList* out) {
         if (end == NULL) break;
         start = end + 1;
     }
+#if defined(FIRE_FS_DRIVES) && !defined(_WIN32)
+    /* DOS and Windows 3.x: only the folders of Windows - its TrueType fonts lie in SYSTEM (3.1) or FONTS - and FIRE_FONT_DIRS; not the folders of other
+     * systems, which a DOS emulator may well show (Wine: the root of Linux is drive Z:, its hundreds of fonts would be read one by one) */
+    if (!*win) win = fire_gfx_env("windir");   /* (Windows 3.x writes the name in lower case) */
+    if (*win) { fire_gfx_addFolder(out, fire_gfx_concat(win, "/SYSTEM")); fire_gfx_addFolder(out, fire_gfx_concat(win, "/FONTS")); }
+    (void)local; (void)home; (void)xdg;
+#else
     if (*win) fire_gfx_addFolder(out, fire_gfx_concat(win, "/Fonts"));
     if (*local) fire_gfx_addFolder(out, fire_gfx_concat(local, "/Microsoft/Windows/Fonts"));
     fire_fs_listAdd(out, "/System/Library/Fonts");
@@ -313,6 +320,7 @@ static void fire_gfx_fontFolders(FireFsList* out) {
         fire_gfx_addFolder(out, fire_gfx_concat(home, "/.local/share/fonts"));
     }
     if (*xdg) fire_gfx_addFolder(out, fire_gfx_concat(xdg, "/fonts"));
+#endif
 }
 
 /* The bytes of a file (malloc'd into *bytes, *size); 0 when it cannot be opened. */

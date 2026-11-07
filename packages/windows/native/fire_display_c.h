@@ -146,7 +146,7 @@ typedef struct FireSystemTheme {
     int embedded;      /* a board without a desktop */
     double scale;      /* logical pixels -> pixels of the screen */
     int dark;          /* 1: dark mode */
-    int accent;        /* 0xRRGGBB */
+    int32_t accent;    /* 0xRRGGBB (32 bits: an int of the 16-bit targets would cut it) */
     char fonts[512];   /* candidates for the font of the interface, the best first, separated by ';' ("" = none known) */
     int fontSize;      /* the height of the letters in logical pixels (0 = not known) */
     int transparency;  /* 1: the desktop allows transparency effects (Windows "Transparency effects", macOS "Reduce transparency" off); 0: the user switched them off */

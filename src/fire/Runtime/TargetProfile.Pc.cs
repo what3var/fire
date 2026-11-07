@@ -55,8 +55,9 @@ namespace fire.Runtime
             {
                 Platform = "win16", Toolchain = "watcom", SupportsThreads = false,
                 Entry = new EntryPoint { Name = "fire_win16_main" },
-                // (as dos16: the huge model linked with the C library of the large model - here the one of Windows; the 286 is the least Windows 3.x runs on)
-                CompileArgs = new[] { "-bwindows", "-mcmodel=h", "-march=i286", "-mstack-size=16384", "-Wc,-oe=20",
+                // (as dos16: the huge model linked with the C library of the large model - here the one of Windows; the 286 is the least Windows 3.x runs on;
+                // -zt=16: data from 16 bytes on gets far segments of its own - the stack and the small data share DGROUP, 64 KB, and the UI library has much of it)
+                CompileArgs = new[] { "-bwindows", "-mcmodel=h", "-march=i286", "-mstack-size=32768", "-Wc,-oe=20", "-Wc,-zt=16",
                     "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87", "-Wl,library", "-Wl,windows", "-Wl,library", "-Wl,shell" },
             },
         };
