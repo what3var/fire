@@ -38,6 +38,8 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
 // FIRE_TESTS_ONLY=linkage: linkage "static" of native builds (libraries in the cache, ROADMAP 9)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { LinkageTests.Run(); return; }
+// FIRE_TESTS_ONLY=bios16: the targets without an operating system (ROADMAP 13.5: the boot sector, a build booted in QEMU)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { BiosTests.RunAlone(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
@@ -28159,6 +28161,8 @@ else
                         w16Ui.Ok && w16Ui.Text == "ui True True\n", $"  Wine:\n{w16Ui.Text}");
                 }
             }
+            // bios16 (ROADMAP 13.5): BiosTests (also alone: FIRE_TESTS_ONLY=bios16)
+            BiosTests.Run(CheckNat, workDir, dosSource);
         }
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
         CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",

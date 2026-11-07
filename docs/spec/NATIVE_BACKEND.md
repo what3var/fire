@@ -673,7 +673,19 @@ DOSBox-X mit den Programmen von dos16 (dieselbe Ausgabe wie die VM mit den Breit
 **`win16`** (Windows 3.x, ROADMAP 13.7): Open Watcom über `owcc -bwindows`, Huge Model, gelinkt mit der C-Bibliothek des Large Model für Windows
 (`clibl`, `math87l`, `emu87`, `windows`); der Treiber nimmt `h/win` in INCLUDE. Der Einstieg heißt `fire_win16_main` (`EntryPoint.Name`), `WinMain` in
 `std/fire_platform_win16.h` ruft ihn. Ausgabe: `FIRE_STDOUT` (eine Datei) oder ein Fenster am Ende. Achtung im Huge Model: `NULL` ist ein `__huge`-Zeiger -
-Handles (HWND, ...) mit 0 vergleichen, Zeiger an Windows mit `(LPCSTR)` / `FAR` übergeben. Getestet unter Wine.
+Handles (HWND, ...) mit 0 vergleichen, Zeiger an Windows mit `(LPCSTR)` / `FAR` übergeben. Getestet unter Wine. Der Stack (32 KB) kommt über `option stack=` von wlink in den
+NE-Header - `-mstack-size` erreicht ihn bei `-bwindows` nicht (es blieben 8 KB; ein Überlauf endet in einer Messagebox der Stack-Prüfung).
+
+**`bios16`** (ein PC ohne Betriebssystem im Real Mode, ROADMAP 13.5): dieselbe Runtime und dieselben Breiten wie dos16, aber kein DOS darunter. Der Treiber
+übersetzt zuerst `platform/bios16/fire_bios16_start.asm` (wasm; `ToolchainDriver.PreCommands`) und bindet mit `option start=_cstart_`, `nodefaultlibs`,
+`clibl`/`mathl` (Gleitkomma über Aufrufe, `-fpc`: der Emulator emu87 patcht Code und braucht DOS) und `nofarcalls`; danach schreibt er das Boot-Image
+(`ToolchainDriver.AfterLink`: `<programm>.img` = der Bootsektor aus `BiosBootSectors` + die Exe, auf eine Diskette von 1,44 MB aufgefüllt). Der Bootsektor
+(`fire_bios16_boot.asm`, nasm; ein Test vergleicht die eingebauten Bytes mit seiner Ausgabe) lädt die Exe, reloziert sie und springt hinein. Der Start setzt
+DGROUP und den Stack, löscht das BSS, baut eine PSP nach und legt `int 21h` auf `fire_bios_int21` (`fire_bios16_libc.h`): die Dienste, die die C-Bibliothek
+von Watcom ruft (Konsole auf Bildschirm und COM1, Tastatur, Uhr aus den Ticks des BIOS, Datum aus der RTC, Vektoren, Ende über den Debug-Port von QEMU).
+`malloc` und Co. kommen aus einem eigenen Heap bis zur Grenze aus `int 12h`, die kleinen Blöcke der C-Bibliothek aus 8 KB in DGROUP. Getestet in QEMU
+(`qemu-system-i386`, Ausgabe über COM1). Achtung: wlink macht aus Far-Calls im selben Segment `push cs; call near`; ein solcher Call, der unter IP 0
+umläuft, ist auf einem x86 richtig, QEMU 8.2 (TCG mit verketteten Blöcken) maskiert die IP aber nicht - daher `nofarcalls`.
 
 **`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in
 DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer `#performance` (weicht gewollt ab); dazu Dateien (`io`/`filesystem`
