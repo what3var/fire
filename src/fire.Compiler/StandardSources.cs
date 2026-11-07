@@ -186,10 +186,14 @@ namespace fire.Compiler
         {
             var result = new List<string>();
             string storeDir = Path.Combine(Path.GetTempPath(), "fire-prebuild-" + Guid.NewGuid().ToString("N"));
+            var previous = PackageStore.Default;
             try
             {
                 var store = new PackageStore(storeDir);
                 EnsureInstalled(log, folder, store, prebuiltFolder: null);
+                // (the store of this build is the one the builds look in: the imports of `native.uses` (tls -> net, circuits -> audio), the headers under pkg/ and
+                // "is it an installed package" - with the default store they were looked up where the packages are not, or in an older version)
+                PackageStore.Default = store;
                 foreach (var import in AllImports(store).Where(i => i.Import.Native != null && i.Import.Native.Functions.Any(f => !f.Host)))
                 {
                     try
@@ -207,6 +211,7 @@ namespace fire.Compiler
             }
             finally
             {
+                PackageStore.Default = previous;
                 try { Directory.Delete(storeDir, true); } catch (IOException) { }
             }
             return result;
