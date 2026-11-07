@@ -40,6 +40,9 @@
       ],
       "dos32": [
         "native/fire_display_dos.h"
+      ],
+      "win16": [
+        "native/fire_display_win16.h"
       ]
     },
     "headers": [

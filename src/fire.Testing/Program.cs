@@ -28047,6 +28047,49 @@ else
                 CheckNat("dos32: windows - RGBA ueber den Farbwuerfel, VESA 101h (die Information des Modus ueber DPMI im Real Mode)", d32Win2.Ok && d32Win2.Text == "rgba 180 0\nvesa 257 3 9\n", $"  DOS:\n{d32Win2.Text}");
                 var d32Con = RunDos32(dosCon, "dos32con", "RES.TXT");
                 CheckNat("dos32: Konsole ueber das BIOS (wie dos16)", d32Con.Ok && d32Con.Text == dosConExpected, $"  erwartet:\n{dosConExpected}\n  DOS:\n{d32Con.Text}");
+
+                // ---- win16 (ROADMAP 13.7): Windows 3.x with Open Watcom, run under Wine (its 32-bit part runs programs of 16 bits) in Xvfb; the output through
+                // FIRE_STDOUT into a file (a Windows program has no console)
+                string? wine = fire.Native.ToolchainSetup.FindProgram("wine"), xvfbRunW = fire.Native.ToolchainSetup.FindProgram("xvfb-run");
+                var win16 = TargetProfile.Win16;
+                CheckNat("win16: Zielprofil (Plattform win16, Toolchain watcom, -bwindows, Einstieg ueber WinMain, int/float 32, word 16, keine Threads)",
+                    win16.Native.Platform == "win16" && win16.Native.Toolchain == "watcom" && win16.Native.CompileArgs.Contains("-bwindows") && win16.Native.Entry.Name == "fire_win16_main"
+                    && win16.IntWidth == 32 && win16.WordWidth == 16 && !win16.Native.SupportsThreads);
+                if (wine == null || xvfbRunW == null) Console.WriteLine("(win16: uebersprungen - wine (mit seinem 32-Bit-Teil) oder xvfb-run fehlen)");
+                else
+                {
+                    string winePrefix = Path.Combine(workDir, "wineprefix");
+                    (bool Ok, string Text) RunWin16(string source, string folder)
+                    {
+                        string dir = Path.Combine(workDir, folder);
+                        Directory.CreateDirectory(dir);
+                        var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), win16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
+                        if (!built.Ok) return (false, built.Log);
+                        string outFile = Path.Combine(dir, "OUT.TXT");
+                        if (File.Exists(outFile)) File.Delete(outFile);
+                        var env = new Dictionary<string, string?> { ["WINEDEBUG"] = "-all", ["WINEPREFIX"] = winePrefix, ["FIRE_STDOUT"] = "OUT.TXT" };
+                        var run = TestProcess.Run(xvfbRunW, $"-a \"{wine}\" PROG.EXE", dir, environment: env, timeoutMs: 120000);
+                        string text = File.Exists(outFile) ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)\n" + run.Stdout + run.Stderr;
+                        return (true, run.Exit == -1 ? text + "(Wine nach 2 Minuten beendet)" : text);
+                    }
+                    string win16Source = dosSource.Substring(0, dosSource.IndexOf("var done = 0", StringComparison.Ordinal));
+                    string win16Vm = VmOf(win16Source, win16);
+                    var w16Run = RunWin16(win16Source, "win16");
+                    CheckNat("win16: mit Open Watcom fuer Windows 3.x gebaut, unter Wine gelaufen - dieselbe Ausgabe wie die VM mit den Breiten von win16",
+                        w16Run.Ok && w16Run.Text == win16Vm && win16Vm.Length > 0, $"  VM:\n{win16Vm}\n  Wine:\n{w16Run.Text}");
+                    const string win16Big = """
+                        var big = new byte[3000000]
+                        big[2999999] = 7
+                        int many[] = new int[40000]
+                        many[39999] = 42
+                        var c = copy big
+                        print("big " + big.length + " " + c[2999999] + " " + many[39999])
+                        print("args " + Environment.Args.length)
+                        """;
+                    var w16Big = RunWin16(win16Big, "win16big");
+                    CheckNat("win16: grosse Arrays (3 MB, int[40000]) im Huge Model von Windows, die Argumente (WinMain)",
+                        w16Big.Ok && w16Big.Text == "big 3000000 7 42\nargs 0\n", $"  Wine:\n{w16Big.Text}");
+                }
             }
         }
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);

@@ -1,4 +1,4 @@
-/* fire native platform layer, the process (Environment) on DOS: the name of the platform, the arguments, the path of the program (the C library of Open
+/* fire native platform layer, the process (Environment) on DOS and Windows 3.x: the name of the platform, the arguments, the path of the program (the C library of Open
  * Watcom: _cmdname) and the environment variables of DOS (in the code page of the machine; ASCII is the same in UTF-8). No libraries loaded at run time. */
 #ifndef FIRE_ENV_DOS_H
 #define FIRE_ENV_DOS_H
@@ -19,6 +19,7 @@ static inline void fire_plat_eachArg(int argc, char** argv, void (*fn)(const cha
     for (i = 1; i < argc && argv != NULL; i++) fn(argv[i], ctx);
 }
 
+#ifndef FIRE_ENV_OWN_PROGRAM_PATH   /* (Windows 3.x: GetModuleFileName, std/fire_platform_win16.h) */
 static inline int fire_plat_programPath(char* out, size_t cap) {
     char path[144];
     size_t n;
@@ -28,6 +29,7 @@ static inline int fire_plat_programPath(char* out, size_t cap) {
     memcpy(out, path, n + 1);
     return (int)n;
 }
+#endif
 
 static inline int fire_plat_getenv(const char* name, char* out, size_t cap) {
     const char* v = getenv(name);

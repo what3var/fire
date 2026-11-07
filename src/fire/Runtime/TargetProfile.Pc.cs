@@ -42,6 +42,24 @@ namespace fire.Runtime
             },
         };
 
-        private static TargetProfile[] PcTargets() => new[] { Dos16, Dos32 };
+        /// <summary>Windows 3.x (ROADMAP 13.7): Open Watcom (wcc, -bwindows), the huge model of the 16-bit protected mode as dos16 (arrays over 64 KB), the widths of
+        /// dos16. The program starts in WinMain (std/fire_platform_win16.h) and calls the generated main; sleep keeps the messages flowing (the multitasking of
+        /// Windows 3.x is cooperative). No fire threads.</summary>
+        public static readonly TargetProfile Win16 = new()
+        {
+            Name = "win16", Symbols = new[] { "win16", "windows3" }, HalPackage = "win16",
+            FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
+            Imports = new[] { NativeImports.Print, "io", "filesystem", "time", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
+            Native = new NativeTarget
+            {
+                Platform = "win16", Toolchain = "watcom", SupportsThreads = false,
+                Entry = new EntryPoint { Name = "fire_win16_main" },
+                // (as dos16: the huge model linked with the C library of the large model - here the one of Windows; the 286 is the least Windows 3.x runs on)
+                CompileArgs = new[] { "-bwindows", "-mcmodel=h", "-march=i286", "-mstack-size=16384", "-Wc,-oe=20",
+                    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87", "-Wl,library", "-Wl,windows" },
+            },
+        };
+
+        private static TargetProfile[] PcTargets() => new[] { Dos16, Dos32, Win16 };
     }
 }

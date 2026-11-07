@@ -55,7 +55,7 @@ namespace fire.Native
             string? root = bin != null ? Path.GetDirectoryName(bin) : null;
             if (root == null || !Directory.Exists(Path.Combine(root, "h")) || !File.Exists(Path.Combine(root, "h", "stdio.h"))) return;   // (not a Watcom tree)
             environment["WATCOM"] = root;
-            environment["INCLUDE"] = Path.Combine(root, "h");
+            environment["INCLUDE"] = Path.Combine(root, "h") + Path.PathSeparator + Path.Combine(root, "h", "win");   // (h/win: windows.h for win16)
             environment["EDPATH"] = Path.Combine(root, "eddat");
             // (the linker finds the stubs of the DOS extenders - dos32a.exe for dos32 - in binw, through the PATH)
             string binw = Path.Combine(root, "binw");
