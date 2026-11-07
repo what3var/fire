@@ -30,6 +30,14 @@ namespace fire.Native
 
         /// <summary>Adds what the programs of the toolchain need to their environment (Open Watcom: WATCOM and INCLUDE) when <paramref name="executable"/> is one of them.</summary>
         void PrepareEnvironment(string executable, IDictionary<string, string?> environment);
+
+        /// <summary>Commands that run before the program is compiled (in the folder of the build, <paramref name="includeDir"/>): Open Watcom assembles the startup code
+        /// of a platform without an operating system. None by default.</summary>
+        IReadOnlyList<(string Executable, string Arguments)> PreCommands(ToolchainDef toolchain, TargetProfile target, string includeDir) => Array.Empty<(string, string)>();
+
+        /// <summary>What happens after the program was linked to <paramref name="exe"/>: Open Watcom writes the disk image of a target without an operating system
+        /// next to it. The text goes into the log of the build (null: nothing happened).</summary>
+        string? AfterLink(ToolchainDef toolchain, TargetProfile target, string exe) => null;
     }
 
     /// <summary>The drivers of the toolchain kinds that have one.</summary>
@@ -40,6 +48,13 @@ namespace fire.Native
         public static IToolchainDriver? For(string kind) => All.FirstOrDefault(d => string.Equals(d.Kind, kind, StringComparison.OrdinalIgnoreCase));
 
         public static IEnumerable<IToolchainDriver> Each => All;
+
+        /// <summary>The commands of the driver of <paramref name="toolchain"/> before the program is compiled (none without a driver).</summary>
+        public static IReadOnlyList<(string Executable, string Arguments)> PreCommands(ToolchainDef toolchain, TargetProfile target, string includeDir) =>
+            For(toolchain.EffectiveKind)?.PreCommands(toolchain, target, includeDir) ?? Array.Empty<(string, string)>();
+
+        /// <summary>The step of the driver of <paramref name="toolchain"/> after the link (its text for the log, or null).</summary>
+        public static string? AfterLink(ToolchainDef toolchain, TargetProfile target, string exe) => For(toolchain.EffectiveKind)?.AfterLink(toolchain, target, exe);
 
         /// <summary>The environment of a tool of a build: every driver adds what its programs need.</summary>
         public static void PrepareEnvironment(string executable, IDictionary<string, string?> environment)

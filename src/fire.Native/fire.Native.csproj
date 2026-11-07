@@ -29,6 +29,7 @@
     <!-- The platform packages (native/platform/<name>/): everything that depends on the operating system or the board. -->
     <EmbeddedResource Include="..\..\native\platform\**\*.hpp" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\..\native\platform\**\*.h" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\native\platform\**\*.asm" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
     <!-- A FreeRTOS simulator on top of pthreads (to try a FreeRTOS build on a PC, and for the tests). -->
     <EmbeddedResource Include="..\..\native\sim\**\*.h" LogicalName="sim/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

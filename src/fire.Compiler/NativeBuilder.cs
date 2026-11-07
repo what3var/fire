@@ -182,6 +182,7 @@ namespace fire.Compiler
                 }
                 bool built = ok && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
+                if (built && ToolchainDrivers.AfterLink(toolchain, target, exe) is { } after) log.AppendLine(after);   // (a target without an operating system: its disk image)
                 // a Windows program with a window needs SDL2.dll (SDL3.dll) next to it
                 int sdlVersion = SdlSetup.RequiredVersion(cppFile);
                 if (built && toolchain.EffectiveKind != "emscripten" && sdlVersion > 0 && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain, sdlVersion))) log.AppendLine($"SDL{sdlVersion}.dll copied next to the program.");
@@ -335,6 +336,7 @@ namespace fire.Compiler
                 log.AppendLine($"program built in {watch.ElapsedMilliseconds} ms");
                 bool built = linkedOk && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
+                if (built && ToolchainDrivers.AfterLink(toolchain, target, exe) is { } after) log.AppendLine(after);
                 // (shared: the libraries next to the program - it finds them there, wherever the cache is)
                 if (built && shared)
                 {
@@ -535,7 +537,8 @@ namespace fire.Compiler
             IReadOnlyList<string>? libraries = null)
         {
             if (nativesFile == null || toolchain.EffectiveKind == "custom")
-                return new[] { CompilerCommand(toolchain, target, cFile, workDir, exe, gui: gui, language: "c", natives: nativesFile, extraInputs: libraries) };
+                return ToolchainDrivers.PreCommands(toolchain, target, workDir)   // (Open Watcom: the startup code of a target without an operating system)
+                    .Append(CompilerCommand(toolchain, target, cFile, workDir, exe, gui: gui, language: "c", natives: nativesFile, extraInputs: libraries)).ToList();
             if (!toolchain.CompilesCpp)
                 throw new NativeConfigException($"The program uses natives in C++ ({NativesInCpp(nativesFile)}): the toolchain '{toolchain.EffectiveKind}' compiles only C. Build it with gcc, clang or msvc (--toolchain).");
             string obj = Path.Combine(workDir, toolchain.EffectiveKind == "msvc" ? "fire_program.obj" : "fire_program.o");

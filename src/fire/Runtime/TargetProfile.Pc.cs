@@ -62,6 +62,26 @@ namespace fire.Runtime
             },
         };
 
-        private static TargetProfile[] PcTargets() => new[] { Dos16, Dos32, Win16 };
+        /// <summary>A PC without an operating system, started by the BIOS, in real mode from the 8086 on (ROADMAP 13.5): the widths and the huge model of dos16, the
+        /// C library of Open Watcom with what it would ask DOS for served by the program itself (platform/bios16: the console of the BIOS and COM1, the conventional
+        /// memory as the heap, int 21h for the C library). The build writes a disk image next to the program (`.img`: the boot sector, then the program). No files,
+        /// no network, no sound; fire threads over fire's own scheduler as on dos16.</summary>
+        public static readonly TargetProfile Bios16 = new()
+        {
+            Name = "bios16", Symbols = new[] { "bios16", "bios" }, HalPackage = "bios16",
+            FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
+            Imports = new[] { NativeImports.Print, "time", "console", "machine", "graphics", "windows", NativeImports.Devices, NativeImports.Reflection, NativeImports.Linq },
+            Native = new NativeTarget
+            {
+                Platform = "bios16", Toolchain = "watcom",
+                // (as dos16 - but the start is the platform's (fire_bios16_start.asm: `_cstart_`, its stack of 32 KB), so no stack size here; floats are calls of
+                // the math library (-fpc, mathl): they run with and without an 8087 and change no code - the emulator of DOS (emu87) patches the program's code at
+                // run time, and that went wrong without DOS)
+                CompileArgs = new[] { "-bdos", "-mcmodel=h", "-march=i86", "-Wc,-fpc", "-Wc,-oe=20", "-Wc,-zu", "-fno-stack-check",
+                    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,option", "-Wl,start=_cstart_", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,mathl" },
+            },
+        };
+
+        private static TargetProfile[] PcTargets() => new[] { Dos16, Dos32, Win16, Bios16 };
     }
 }
