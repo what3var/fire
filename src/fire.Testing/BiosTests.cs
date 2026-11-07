@@ -62,6 +62,35 @@ static class BiosTests
         CheckNat("Ziele: eine Toolchain, die das Ziel nicht baut, wird nicht genommen (dos16 mit gcc -> watcom; linux mit gcc bleibt gcc; files immer)",
             nativeConfig.ResolveToolchain(TargetProfile.Dos16, "gcc").EffectiveKind == "watcom" && nativeConfig.ResolveToolchain(TargetProfile.Linux, "gcc").EffectiveKind == "gcc"
             && nativeConfig.ResolveToolchain(TargetProfile.Dos16, "files").EffectiveKind == "files");
+        // Open Watcom portable: the archive is unpacked (the WATCOM folder found inside it, the compilers executable); without Open Watcom a target of it asks for it
+        // (download / change / cancel) instead of taking another compiler
+        {
+            string owDir = Path.Combine(workDir, "owzip");
+            Directory.CreateDirectory(owDir);
+            string zip = Path.Combine(owDir, "ow.zip");
+            using (var z = System.IO.Compression.ZipFile.Open(zip, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                z.CreateEntry("ow2/h/stdio.h").Open().Dispose();
+                z.CreateEntry("ow2/binl64/owcc").Open().Dispose();
+                z.CreateEntry("ow2/binnt64/owcc.exe").Open().Dispose();
+                z.CreateEntry("ow2/lib286/dos/clibl.lib").Open().Dispose();
+            }
+            string target = Path.Combine(owDir, "watcom");
+            string? unpacked = null, error = null;
+            try { unpacked = fire.Native.WatcomSetup.Unpack(zip, null, target); } catch (InvalidOperationException e) { error = e.Message; }
+            CheckNat("Open Watcom portable: das Archiv wird entpackt (der WATCOM-Ordner darin wird Toolchain/watcom, h und lib286 dabei)",
+                unpacked == target && File.Exists(Path.Combine(target, "h", "stdio.h")) && File.Exists(Path.Combine(target, "lib286", "dos", "clibl.lib"))
+                && (OperatingSystem.IsWindows() || (File.GetUnixFileMode(Path.Combine(target, "binl64", "owcc")) & UnixFileMode.UserExecute) != 0), error);
+            var missing = new fire.Native.ToolchainDef { Kind = "watcom", Compiler = Path.Combine(owDir, "nowhere", "owcc") };
+            fire.Native.ToolchainRequest? asked = null;
+            var oldAsk = fire.Native.ToolchainProvider.Ask;
+            fire.Native.ToolchainProvider.Ask = r => { asked = r; return fire.Native.ToolchainChoice.Cancel; };
+            fire.Native.ToolchainDef? got;
+            try { got = fire.Native.ToolchainProvider.Require(missing, "test"); }
+            finally { fire.Native.ToolchainProvider.Ask = oldAsk; }
+            CheckNat("Open Watcom fehlt: der Benutzer wird gefragt (Open Watcom laden), kein anderer Compiler springt ein",
+                got == null && asked is { IsWatcom: true } && asked.InstallDirectory == fire.Native.WatcomSetup.Directory, asked?.Message);
+        }
         string? biosDir = null;
         for (var dirInfo = new DirectoryInfo(AppContext.BaseDirectory); dirInfo != null && biosDir == null; dirInfo = dirInfo.Parent)
             if (File.Exists(Path.Combine(dirInfo.FullName, "native", "platform", "bios16", "fire_bios16_boot.asm"))) biosDir = Path.Combine(dirInfo.FullName, "native", "platform", "bios16");

@@ -178,6 +178,119 @@ namespace fire.Native
         }
     }
 
+    /// <summary>
+    /// The portable Open Watcom v2 (the toolchain of the old PC targets: dos16, dos32, win16, bios16; ROADMAP 13): downloaded as one zip into
+    /// <c>Toolchain\watcom\</c> next to the program, where <see cref="WatcomToolchain"/> looks for it - nothing is installed system-wide. The archive brings the compilers
+    /// for Windows (binnt64) and Linux (binl64) and the headers and libraries of every target.
+    /// </summary>
+    public static class WatcomSetup
+    {
+        public const string DownloadUrl = "http://openwatcom.org/ftp/source/ow_portable_v2_stable.zip";
+        public const string DownloadSizeHint = "about 150 MB";
+        public static string Directory => Path.Combine(ToolchainSetup.Root, "watcom");
+
+        /// <summary>Can this machine use the portable archive (Windows or Linux on x64)?</summary>
+        public static bool CanInstall => RuntimeInformation.OSArchitecture == Architecture.X64 && (OperatingSystem.IsWindows() || OperatingSystem.IsLinux());
+
+        /// <summary>Downloads the portable Open Watcom and unpacks it to <see cref="Directory"/>. Returns its root (the WATCOM folder). A failure is an
+        /// <see cref="InvalidOperationException"/> with the reason.</summary>
+        public static string Install(Action<string>? log = null)
+        {
+            if (!CanInstall) throw new InvalidOperationException("The portable Open Watcom can only be downloaded on Windows or Linux (x64). Install Open Watcom v2 yourself and set WATCOM.");
+            System.IO.Directory.CreateDirectory(ToolchainSetup.Root);
+            string temp = Path.Combine(Path.GetTempPath(), "fire-watcom-" + Guid.NewGuid().ToString("N"));
+            string zip = temp + ".zip";
+            try
+            {
+                using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(20) })
+                {
+                    log?.Invoke($"Downloading {DownloadUrl} ...");
+                    using var request = new HttpRequestMessage(HttpMethod.Get, DownloadUrl);
+                    request.Headers.UserAgent.ParseAdd("fire-toolchain-setup");
+                    using var response = http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+                    response.EnsureSuccessStatusCode();
+                    long total = response.Content.Headers.ContentLength ?? 0;
+                    using var input = response.Content.ReadAsStream();
+                    using var output = File.Create(zip);
+                    var buffer = new byte[81920];
+                    long done = 0; int lastPercent = -1;
+                    int n;
+                    while ((n = input.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        output.Write(buffer, 0, n);
+                        done += n;
+                        int percent = total > 0 ? (int)(done * 100 / total) : -1;
+                        if (percent != lastPercent && (percent % 5 == 0 || percent < 0)) { lastPercent = percent; log?.Invoke(total > 0 ? $"Downloading... {percent}% ({done / 1048576} MB)" : $"Downloading... {done / 1048576} MB"); }
+                    }
+                    if (total > 0 && done != total) throw new IOException($"The download is incomplete ({done} of {total} bytes). Check the connection (or a proxy / virus scanner) and try again.");
+                }
+                return Unpack(zip, log);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                throw new InvalidOperationException("Installing Open Watcom failed: " + ex.Message, ex);
+            }
+            finally
+            {
+                try { File.Delete(zip); } catch (IOException) { }
+                try { if (System.IO.Directory.Exists(temp)) System.IO.Directory.Delete(temp, true); } catch (IOException) { }
+            }
+        }
+
+        /// <summary>Unpacks the archive (as <see cref="Install"/> downloads it) to <paramref name="directory"/> (default: <see cref="Directory"/>): the folder of the archive
+        /// that holds h\ and the compilers becomes it. Returns it.</summary>
+        public static string Unpack(string zip, Action<string>? log = null, string? directory = null)
+        {
+            string Directory = directory ?? WatcomSetup.Directory;
+            // (unpacked next to the target: a move between file systems would fail)
+            string temp = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(Directory))!, ".watcom-unpack-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(temp)!);
+            try
+            {
+                log?.Invoke($"Unpacking to {Directory} ...");
+                ZipFile.ExtractToDirectory(zip, temp, overwriteFiles: true);
+                // the WATCOM folder of the archive: the one with h\ and the compilers (the zip may hold it directly or in a folder of its own)
+                string root = FindRoot(temp) ?? throw new InvalidOperationException("The archive holds no Open Watcom (no folder with h and binnt64/binl64).");
+                if (System.IO.Directory.Exists(Directory)) System.IO.Directory.Delete(Directory, recursive: true);
+                System.IO.Directory.Move(root, Directory);
+                if (!OperatingSystem.IsWindows())
+                    foreach (string bin in new[] { "binl64", "binl" })
+                    {
+                        string dir = Path.Combine(Directory, bin);
+                        if (!System.IO.Directory.Exists(dir)) continue;
+                        foreach (string f in System.IO.Directory.GetFiles(dir))
+                            File.SetUnixFileMode(f, File.GetUnixFileMode(f) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+                    }
+                string owcc = Path.Combine(Directory, OperatingSystem.IsWindows() ? "binnt64" : "binl64", OperatingSystem.IsWindows() ? "owcc.exe" : "owcc");
+                if (!File.Exists(owcc)) throw new InvalidOperationException($"Open Watcom was unpacked, but '{owcc}' is not there.");
+                log?.Invoke("Open Watcom is ready: " + Directory);
+                return Directory;
+            }
+            catch (InvalidDataException ex) { throw new InvalidOperationException("The archive of Open Watcom is damaged: " + ex.Message, ex); }
+            finally
+            {
+                try { if (System.IO.Directory.Exists(temp)) System.IO.Directory.Delete(temp, true); } catch (IOException) { }
+            }
+        }
+
+        private static string? FindRoot(string dir)
+        {
+            for (int depth = 0; depth < 3; depth++)
+            {
+                if (System.IO.Directory.Exists(Path.Combine(dir, "h")) && (System.IO.Directory.Exists(Path.Combine(dir, "binnt64")) || System.IO.Directory.Exists(Path.Combine(dir, "binl64")))) return dir;
+                var subs = System.IO.Directory.GetDirectories(dir);
+                string? found = subs.Select(s => FindRoot1(s)).FirstOrDefault(r => r != null);
+                if (found != null) return found;
+                if (subs.Length != 1) return null;
+                dir = subs[0];
+            }
+            return null;
+        }
+
+        private static string? FindRoot1(string dir) =>
+            System.IO.Directory.Exists(Path.Combine(dir, "h")) && (System.IO.Directory.Exists(Path.Combine(dir, "binnt64")) || System.IO.Directory.Exists(Path.Combine(dir, "binl64"))) ? dir : null;
+    }
+
     /// <summary>What the user is asked when a C++ toolchain is needed and there is none.</summary>
     public enum ToolchainChoice { Install, Change, Cancel }
 
@@ -191,7 +304,15 @@ namespace fire.Native
         public bool IsToolchain => Component == "C++ toolchain";
 
         /// <summary>The text for the user: why it is needed, and what can be done.</summary>
-        public string Message => IsToolchain
+        public bool IsWatcom => Component == WatcomComponent;
+        public const string WatcomComponent = "Open Watcom";
+
+        public string Message => IsWatcom
+            ? Reason + "\n\nThis target is built with Open Watcom v2, and it was not found on this machine (on the PATH, in %WATCOM%, in Toolchain\\watcom or /opt/watcom).\n\n" +
+              (CanInstall
+                  ? $"fire can download the portable Open Watcom ({WatcomSetup.DownloadSizeHint}) and keep it in '{InstallDirectory}'. Nothing is installed on the system; it is only used by fire."
+                  : "Install Open Watcom v2 (open-watcom.github.io) and set WATCOM to its folder.")
+            : IsToolchain
             ? Reason + "\n\nA C++ toolchain (compiler) is needed for that, and none was found on this machine.\n\n" +
               (CanInstall
                   ? $"fire can download the portable w64devkit ({ToolchainSetup.DownloadSizeHint}, a GCC for Windows) and keep it in '{InstallDirectory}'. Nothing is installed on the system; it is only used by fire."
@@ -202,7 +323,10 @@ namespace fire.Native
                   : SdlSetup.HelpTextFor(Component == "SDL3" ? 3 : 2));
 
         /// <summary>The line below the button "install automatically".</summary>
-        public string InstallHint => IsToolchain
+        public string InstallHint => IsWatcom
+            ? (CanInstall ? $"Open Watcom is downloaded ({WatcomSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
+                          : "Only available on Windows and Linux (x64). Install Open Watcom v2 yourself.")
+            : IsToolchain
             ? (CanInstall ? $"w64devkit is downloaded ({ToolchainSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
                           : "Only available on Windows. Install a C++ compiler with the package manager of your system.")
             : (CanInstall ? $"{Component} is downloaded ({SdlSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
@@ -227,6 +351,7 @@ namespace fire.Native
         /// the user cancels (null). <paramref name="reason"/> says why a toolchain is needed.</summary>
         public static ToolchainDef? Require(ToolchainDef wanted, string reason)
         {
+            if (string.Equals(wanted.EffectiveKind, "watcom", StringComparison.OrdinalIgnoreCase)) return RequireWatcom(wanted, reason);
             for (int attempt = 0; attempt < 5; attempt++)
             {
                 if (ToolchainDetector.Find(wanted) != null) return wanted;
@@ -244,6 +369,36 @@ namespace fire.Native
                         try
                         {
                             Action<Action<string>> work = log => ToolchainSetup.InstallW64devkit(log);
+                            if (RunInstall != null) { if (!RunInstall(work)) return null; }
+                            else work(m => Log?.Invoke(m));
+                        }
+                        catch (InvalidOperationException ex) { Log?.Invoke(ex.Message); return null; }
+                        break;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>Open Watcom for a target that only it builds (DOS, Windows 3.x, BIOS): no other compiler stands in for it; the user is asked to download it
+        /// (Windows, Linux), to change the toolchain, or to cancel.</summary>
+        private static ToolchainDef? RequireWatcom(ToolchainDef wanted, string reason)
+        {
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                if (ToolchainDetector.Find(wanted) != null) return wanted;
+                if (Ask == null) return null;
+                var choice = Ask(new ToolchainRequest(reason, WatcomSetup.CanInstall, WatcomSetup.Directory, ToolchainRequest.WatcomComponent));
+                switch (choice)
+                {
+                    case ToolchainChoice.Cancel: return null;
+                    case ToolchainChoice.Change:
+                        if (ChangeToolchain == null || !ChangeToolchain()) return null;
+                        break;
+                    case ToolchainChoice.Install:
+                        if (!WatcomSetup.CanInstall) return null;
+                        try
+                        {
+                            Action<Action<string>> work = log => WatcomSetup.Install(log);
                             if (RunInstall != null) { if (!RunInstall(work)) return null; }
                             else work(m => Log?.Invoke(m));
                         }
