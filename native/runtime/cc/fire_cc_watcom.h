@@ -19,6 +19,10 @@
 
 /* The C library of Open Watcom rounds a half away from zero in nearbyint(); C (and the VM, .NET) round it to the even number in the default rounding mode. */
 #include <math.h>
+/* (C99's HUGE_VALF - the code of a float literal beyond the range of a 32-bit float - is missing in its math.h) */
+#ifndef HUGE_VALF
+#define HUGE_VALF ((float)HUGE_VAL)
+#endif
 static double fire_cc_nearbyint(double x) {
     double f = floor(x), d = x - f;
     if (d > 0.5) return f + 1.0;

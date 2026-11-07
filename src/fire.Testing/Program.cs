@@ -28130,7 +28130,7 @@ else
                         new Renderer(pic).ClearTo(255)
                         print("image " + Clipboard.SetImage(pic) + " " + Clipboard.HasImage)
                         var back = Clipboard.GetImage()
-                        print("back " + back.Width + "x" + back.Height)
+                        print("back " + back.Width() + "x" + back.Height())
                         w.Close()
                         """;
                     var w16Clip = RunWin16(win16Clip, "win16clip");
