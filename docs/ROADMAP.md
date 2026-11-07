@@ -617,7 +617,13 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 
    Gemeinsam für `bios-x86` und `efi-x64`: eine kleine freistehende C-Bibliothek für die Runtime (Heap aus der Speicherkarte - E820 bzw. die der Firmware -,
    `snprintf`, Strings, Mathe, `setjmp`).
-7. **`win16`** - Win 3.x: `wcc`, Large Model, GDI, kooperative Nachrichtenschleife (`Sleep` gibt ab), keine fire-Threads.
+7. **`win16`** - Windows 3.x (**umgesetzt**, Grundstock): Open Watcom `wcc -bwindows`, das Huge Model wie dos16 (Arrays über 64 KB), die Breiten von dos16,
+   keine fire-Threads. `std/fire_platform_win16.h`: das Programm beginnt in `WinMain` (Argumente aus der Befehlszeile, dann der erzeugte Einstieg
+   `fire_win16_main`), Uhr über `GetTickCount`, Schlafen hält die Nachrichten am Laufen (kooperatives Multitasking), die Ausgabe geht in die Datei aus
+   `FIRE_STDOUT` oder wird am Ende in einem Fenster gezeigt. Das Paket `windows` hat `fire_display_win16.h`: ein eigenes Fenster über GDI (`StretchDIBits` in
+   Bändern unter 64 KB, Palette als 8-Bit-DIB, RGBA als 24-Bit), Tasten aus `WM_KEYDOWN` (Scancode wie unter Win32), Text aus `WM_CHAR`, Maus, Größe, Schließen.
+   Getestet unter Wine (sein 32-Bit-Teil führt 16-Bit-Programme aus) in Xvfb: dieselbe Ausgabe wie die VM, große Arrays, ein Fenster (Pixel mit `GetPixel`
+   zurückgelesen, Tasten). Offen: die Zwischenablage von Windows, Ausgabe live in einem Fenster statt am Ende, Dateidialoge.
 8. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
    `CONDITION_VARIABLE`), `GetTickCount` statt `GetTickCount64`, ANSI/Unicode-Schicht für 9x, `inet_addr` statt `inet_pton` (NT 3.51: Winsock 1.1), TLS über
    mbedTLS statt Schannel, kein USB, GDI aus dem laufenden Umbau.

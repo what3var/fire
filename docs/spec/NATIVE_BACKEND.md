@@ -670,6 +670,11 @@ dos16 (`std/fire_platform_dos.h`: Uhr, Schlafen, Ende über die C-Bibliothek, di
 DOS-Dateien von console, windows und devices für beide Ziele gleich; machine `fire_machine_x86_32.h`, dos `fire_dos_dpmi.h`; xms und x86 nicht. Getestet in
 DOSBox-X mit den Programmen von dos16 (dieselbe Ausgabe wie die VM mit den Breiten von dos32).
 
+**`win16`** (Windows 3.x, ROADMAP 13.7): Open Watcom über `owcc -bwindows`, Huge Model, gelinkt mit der C-Bibliothek des Large Model für Windows
+(`clibl`, `math87l`, `emu87`, `windows`); der Treiber nimmt `h/win` in INCLUDE. Der Einstieg heißt `fire_win16_main` (`EntryPoint.Name`), `WinMain` in
+`std/fire_platform_win16.h` ruft ihn. Ausgabe: `FIRE_STDOUT` (eine Datei) oder ein Fenster am Ende. Achtung im Huge Model: `NULL` ist ein `__huge`-Zeiger -
+Handles (HWND, ...) mit 0 vergleichen, Zeiger an Windows mit `(LPCSTR)` / `FAR` übergeben. Getestet unter Wine.
+
 **`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in
 DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer `#performance` (weicht gewollt ab); dazu Dateien (`io`/`filesystem`
 mit DOS-Pfaden). Huge Model (`-mcmodel=h`): Zeiger 32 Bit und über Segmentgrenzen gerechnet, also mit `int`/`float` von 32 Bit (Standard des Ziels) ein 8-Byte-Wert;
