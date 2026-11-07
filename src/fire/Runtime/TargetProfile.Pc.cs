@@ -76,9 +76,12 @@ namespace fire.Runtime
                 Platform = "bios16", Toolchain = "watcom",
                 // (as dos16 - but the start is the platform's (fire_bios16_start.asm: `_cstart_`, its stack of 32 KB), so no stack size here; floats are calls of
                 // the math library (-fpc, mathl): they run with and without an 8087 and change no code - the emulator of DOS (emu87) patches the program's code at
-                // run time, and that went wrong without DOS)
+                // run time, and that went wrong without DOS). `nofarcalls`: wlink otherwise turns a far call into the same segment into `push cs; call near`; a near
+                // call whose target lies below IP 0 (it wraps around within the 64 KB of CS) is correct on an x86, but QEMU (8.2, TCG with chained blocks) does not
+                // wrap the IP and lands 64 KB too low - and QEMU is where the boot images are tested.
                 CompileArgs = new[] { "-bdos", "-mcmodel=h", "-march=i86", "-Wc,-fpc", "-Wc,-oe=20", "-Wc,-zu", "-fno-stack-check",
-                    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,option", "-Wl,start=_cstart_", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,mathl" },
+                    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,option", "-Wl,start=_cstart_", "-Wl,option", "-Wl,nofarcalls",
+                    "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,mathl" },
             },
         };
 
