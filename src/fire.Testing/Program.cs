@@ -28089,6 +28089,35 @@ else
                     var w16Big = RunWin16(win16Big, "win16big");
                     CheckNat("win16: grosse Arrays (3 MB, int[40000]) im Huge Model von Windows, die Argumente (WinMain)",
                         w16Big.Ok && w16Big.Text == "big 3000000 7 42\nargs 0\n", $"  Wine:\n{w16Big.Text}");
+                    // the window through GDI (#import "windows"): a palette framebuffer stretched into the client area (read back with GetPixel), a key posted to the
+                    // window arrives as KeyDown with its scan code
+                    const string win16Window = """
+                        #import "graphics"
+                        #import "windows"
+                        inline c int Pixel(int x, int y) { HWND h = FindWindow("FireWindow16", "Win16"); HDC dc; COLORREF c; if (h == NULL) return -1; dc = GetDC(h); c = GetPixel(dc, (int)x, (int)y); ReleaseDC(h, dc); return (FireInt)(c & 0xFFFFFFL); }
+                        inline c Key(int vk, int scan) { HWND h = FindWindow("FireWindow16", "Win16"); if (h != NULL) { PostMessage(h, WM_KEYDOWN, (WPARAM)vk, ((LPARAM)scan << 16) | 1); PostMessage(h, WM_KEYUP, (WPARAM)vk, ((LPARAM)scan << 16) | 0xC0000001L); } }
+                        var fb = new Framebuffer(80, 60, 1)
+                        fb.SetPaletteRgb(7, 255, 0, 0)
+                        fb.SetPaletteRgb(9, 0, 0, 255)
+                        var r = new Renderer(fb)
+                        r.ClearTo(9)
+                        r.FillRect(0, 0, 40, 60, new SolidBrush(7))
+                        var keys = ""
+                        var w = new Window(fb, "Win16")
+                        w.RegisterKeyDown((code, scan, mods, repeated) => { keys = keys + scan + "/" + code + " " })
+                        w.Tick()
+                        print("left " + Pixel(10, 30) + " right " + Pixel(70, 30))
+                        Key(65, 30)
+                        Key(27, 1)
+                        w.Tick()
+                        w.Tick()
+                        print("keys " + keys)
+                        w.Close()
+                        print("done")
+                        """;
+                    var w16Win = RunWin16(win16Window, "win16win");
+                    CheckNat("win16: windows - ein Fenster ueber GDI (Palette-Framebuffer gestreckt, mit GetPixel zurueckgelesen), Tasten aus WM_KEYDOWN (Scancode wie unter Win32)",
+                        w16Win.Ok && w16Win.Text == "left 255 right 16711680\nkeys 4/97 41/27 \ndone\n", $"  Wine:\n{w16Win.Text}");
                 }
             }
         }
