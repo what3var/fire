@@ -27843,9 +27843,10 @@ else
                     var palPng = Framebuffer.FromImage(small.ToPng())
                     print("pal png " + palPng.Width() + " " + T.Sum(palPng))
                     """;
+                const string gfxDrawExpected = "pal clear 12820480\npal lines 14068416\npal circles 9446186\npal polygons 715367\npal round flood 11109143\npal text 4903732\npal blits 1318769\npal resize 2394223\nrgba draw 7557237\nrgba fx 12353285\nrgba text 11443732\nmask 8222753\n";
                 var gfxDraw = BuildAndRunDos(dosGfxDraw, "dos16gfx");
                 CheckNat("dos16: graphics - Zeichnen wie nativ (Palette 320x200 und RGBA: Linien, Kreise, Polygone, Fuellen, Text, Blits, Resize, Schatten/Unschaerfe, Maske)",
-                    gfxDraw.Ok && gfxDraw.Text == "pal clear 12820480\npal lines 14068416\npal circles 9446186\npal polygons 715367\npal round flood 11109143\npal text 4903732\npal blits 1318769\npal resize 2394223\nrgba draw 7557237\nrgba fx 12353285\nrgba text 11443732\nmask 8222753\n", $"  erwartet:\npal clear 12820480\npal lines 14068416\npal circles 9446186\npal polygons 715367\npal round flood 11109143\npal text 4903732\npal blits 1318769\npal resize 2394223\nrgba draw 7557237\nrgba fx 12353285\nrgba text 11443732\nmask 8222753\n\n  DOS:\n{gfxDraw.Text}");
+                    gfxDraw.Ok && gfxDraw.Text == gfxDrawExpected, $"  erwartet:\npal clear 12820480\npal lines 14068416\npal circles 9446186\npal polygons 715367\npal round flood 11109143\npal text 4903732\npal blits 1318769\npal resize 2394223\nrgba draw 7557237\nrgba fx 12353285\nrgba text 11443732\nmask 8222753\n\n  DOS:\n{gfxDraw.Text}");
                 var gfxImages = BuildAndRunDos(dosGfxImages, "dos16gfximg");
                 CheckNat("dos16: graphics - PNG schreiben und lesen (RGBA, Palette)", gfxImages.Ok && gfxImages.Text == "png 120x80 True\npal png 64 4434326\n", $"  erwartet:\npng 120x80 True\npal png 64 4434326\n\n  DOS:\n{gfxImages.Text}");
 
@@ -27854,9 +27855,9 @@ else
                 const string dosWindow = """
                     #import "graphics"
                     #import "windows"
-                    inline c int Vga(int x, int y) { return *(unsigned char __far*)MK_FP(0xA000, (unsigned)(y * 320 + x)); }
+                    inline c int Vga(int x, int y) { return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(y * 320 + x)); }
                     inline c int Dac(int index) { outp(0x3C7, index); { int r = inp(0x3C9), g = inp(0x3C9), b = inp(0x3C9); return (FireInt)(((long)r << 16) | (g << 8) | b); } }
-                    inline c Push(int code) { union REGS r; r.h.ah = 5; r.x.cx = (unsigned short)code; int86(0x16, &r, &r); }
+                    inline c Push(int code) { union REGS r; r.h.ah = 5; r.FIRE_DOS_W.cx = (unsigned short)code; fire_dos_int(0x16, &r); }
                     var fb = new Framebuffer(320, 200, 1)
                     fb.SetPaletteRgb(200, 255, 128, 0)
                     var r = new Renderer(fb)
@@ -27880,9 +27881,9 @@ else
                 const string dosWindow2 = """
                     #import "graphics"
                     #import "windows"
-                    inline c int Vga(int x, int y) { return *(unsigned char __far*)MK_FP(0xA000, (unsigned)(y * 320 + x)); }
-                    inline c int VesaMode() { union REGS r; r.x.ax = 0x4F03; int86(0x10, &r, &r); return r.x.ax == 0x004F ? (FireInt)(r.x.bx & 0x3FFF) : -1; }
-                    inline c int VesaPixel(int x, int y) { union REGS r; long at = (long)y * 640 + x; r.x.ax = 0x4F05; r.x.bx = 0; r.x.dx = (unsigned)(at >> 16); int86(0x10, &r, &r); return *(unsigned char __far*)MK_FP(0xA000, (unsigned)(at & 0xFFFF)); }
+                    inline c int Vga(int x, int y) { return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(y * 320 + x)); }
+                    inline c int VesaMode() { union REGS r; r.FIRE_DOS_W.ax = 0x4F03; fire_dos_int(0x10, &r); return r.FIRE_DOS_W.ax == 0x004F ? (FireInt)(r.FIRE_DOS_W.bx & 0x3FFF) : -1; }
+                    inline c int VesaPixel(int x, int y) { union REGS r; long at = (long)y * 640 + x; r.FIRE_DOS_W.ax = 0x4F05; r.FIRE_DOS_W.bx = 0; r.FIRE_DOS_W.dx = (unsigned)(at >> 16); fire_dos_int(0x10, &r); return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(at & 0xFFFF)); }
                     var fb = new Framebuffer(160, 100)
                     var r = new Renderer(fb)
                     r.ClearTo(0xFF000000)
@@ -27953,8 +27954,8 @@ else
                     #import "console"
                     #import "io"
                     #import "filesystem"
-                    inline c int Cell(int col, int row) { unsigned short __far* v = (unsigned short __far*)MK_FP(0xB800, 0); return (FireInt)v[row * 80 + col]; }
-                    inline c Push(int code) { union REGS r; r.h.ah = 5; r.x.cx = (unsigned short)code; int86(0x16, &r, &r); }
+                    inline c int Cell(int col, int row) { unsigned short __far* v = (unsigned short FIRE_DOS_FAR*)FIRE_DOS_LOW(0xB800, 0); return (FireInt)v[row * 80 + col]; }
+                    inline c Push(int code) { union REGS r; r.h.ah = 5; r.FIRE_DOS_W.cx = (unsigned short)code; fire_dos_int(0x16, &r); }
                     var log = ""
                     Console.Clear()
                     log = log + "console " + Console.IsConsole() + " " + Console.Width() + "x" + Console.Height() + "\n"
@@ -28038,9 +28039,8 @@ else
                 string ser32Out = File.Exists(ser32) ? File.ReadAllText(ser32) : "(keine Datei)", par32Out = File.Exists(par32) ? File.ReadAllText(par32) : "(keine Datei)";
                 CheckNat("dos32: serieller und paralleler Port (wie dos16; die IRQ des UART im Handler des Protected Mode)",
                     d32Ser.Ok && d32Ser.Text == dosSerialExpected && ser32Out == "Hallo COM1" && par32Out == "Drucker", $"  DOS:\n{d32Ser.Text}\n  COM1: {ser32Out}\n  LPT1: {par32Out}");
-                string gfxVm = VmOf(dosGfxDraw, dos32);
                 var d32Gfx = RunDos32(dosGfxDraw, "dos32gfx");
-                CheckNat("dos32: graphics - dieselben Pixel wie die VM mit den Breiten von dos32", d32Gfx.Ok && d32Gfx.Text == gfxVm && gfxVm.Length > 0, $"  VM:\n{gfxVm}\n  DOS:\n{d32Gfx.Text}");
+                CheckNat("dos32: graphics - dieselben Pixel wie dos16 und nativ", d32Gfx.Ok && d32Gfx.Text == gfxDrawExpected, $"  erwartet:\n{gfxDrawExpected}\n  DOS:\n{d32Gfx.Text}");
                 var d32Win = RunDos32(dosWindow, "dos32win");
                 CheckNat("dos32: windows - Mode 13h und die Tasten des BIOS (wie dos16)", d32Win.Ok && d32Win.Text == "vga 200 1 dac 4136960\nkeys 4/97 82/1073741906 41/27 \n", $"  DOS:\n{d32Win.Text}");
                 var d32Win2 = RunDos32(dosWindow2, "dos32win2");

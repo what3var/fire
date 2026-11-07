@@ -21,7 +21,7 @@ static int fire_mach_cpuLevel(void) {
         pushfd
         pop eax
         mov ecx, eax
-        xor eax, 40000h
+        xor eax, 0x40000
         push eax
         popfd
         pushfd
@@ -29,11 +29,11 @@ static int fire_mach_cpuLevel(void) {
         push ecx
         popfd
         xor eax, ecx
-        test eax, 40000h
+        test eax, 0x40000
         jz done
         mov level, 4
         mov eax, ecx
-        xor eax, 200000h
+        xor eax, 0x200000
         push eax
         popfd
         pushfd
@@ -41,7 +41,7 @@ static int fire_mach_cpuLevel(void) {
         push ecx
         popfd
         xor eax, ecx
-        test eax, 200000h
+        test eax, 0x200000
         jz done
         mov level, 5
     done:
@@ -50,19 +50,19 @@ static int fire_mach_cpuLevel(void) {
     return level;
 }
 static void fire_mach_cpuid(uint32_t leaf, uint32_t sub, uint32_t out[4]) {
-    uint32_t a, b, c, d;
+    uint32_t valLeaf = leaf, valSub = sub, gotA, gotB, gotC, gotD;   /* (names the inline assembler cannot take for a mnemonic: "sub", "inC" are) */
     __asm {
         push ebx
-        mov eax, leaf
-        mov ecx, sub
+        mov eax, valLeaf
+        mov ecx, valSub
         db 0x0F, 0xA2              /* cpuid */
-        mov a, eax
-        mov b, ebx
-        mov c, ecx
-        mov d, edx
+        mov gotA, eax
+        mov gotB, ebx
+        mov gotC, ecx
+        mov gotD, edx
         pop ebx
     }
-    out[0] = a; out[1] = b; out[2] = c; out[3] = d;
+    out[0] = gotA; out[1] = gotB; out[2] = gotC; out[3] = gotD;
 }
 
 static uint32_t fire_mach_in(unsigned port, int bits) {
