@@ -517,7 +517,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    wie die VM) und `sched/fire_ctx_x86_16.h` (dos16: `setjmp`/`longjmp` zwischen laufenden Aufgaben, ein paar Befehle Assembler für den Start auf einem neuen
    Stack, `INT 1Ch` setzt das Flag; übersetzt mit `-zu` und ohne Stackprüfung, 16 KB Stack je Thread). Alle 40 Thread-Fälle ohne Imports laufen in DOSBox-X wie
    die VM. Die Haken der Runtime: `FIRE_PLAT_YIELD` (ein Safepoint gibt an bereite Aufgaben ab) und `FIRE_PLAT_PREEMPTED`.
-   **Offen:** der Wechsel für 32-Bit-x86 (dos32, bios-x86, win32-legacy ohne Threads), Win16 (kooperativ über die Nachrichtenschleife), Boards ohne RTOS (ARM).
+   **Offen:** der Wechsel für 32-Bit-x86 (dos32, bios32, win32-legacy ohne Threads), Win16 (kooperativ über die Nachrichtenschleife), Boards ohne RTOS (ARM).
 3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Huge Model (keine 64-KB-Grenze für die Daten von Arrays und Puffern),
    keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
    paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).
@@ -598,7 +598,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    von V86 (EMM386/Windows: ohne VCPI/DPMI kein Wechsel) und 386/Long Mode (docs/stdlib/x86.md). Zwei kleine Stubs (NASM, als Bytes in `fire_x86_stubs.h`).
    Getestet: Protected Mode aus fire in DOSBox-X; beide Stubs unter QEMU ohne DOS (Bootsektor). Offen: Long Mode aus fire unter DOS auf einem 64-Bit-Rechner
    (QEMU mit FreeDOS - der Download ist in dieser Umgebung gesperrt), und **fire-Code im Protected Mode** - eine Funktion, für das 32-Bit-Ziel übersetzt
-   (kommt mit `dos32`/`bios-x86`: dieselbe Runtime mit flachem Speicher), als Routine mitgegeben.
+   (kommt mit `dos32`/`bios16`/`bios32`: dieselbe Runtime mit flachem Speicher), als Routine mitgegeben.
 4. **`dos32`** - DOS mit DOS-Extender ab 386 (**umgesetzt**): Open Watcom 386, der Extender DOS/32A steckt im Programm (`-bdos32a`: eine .exe, kein
    DOS4GW.EXE daneben), flacher Speicher, `int`/`float` 64 Bit wie auf dem Desktop (dieselben Ergebnisse wie die VM), fire-Threads über den eigenen Scheduler
    (`std/sched/fire_ctx_x86_32.h`, Takt über IRQ 0). Die Packages mit Real-Mode-Code dienen dos16 und dos32 mit denselben Dateien über
@@ -608,14 +608,23 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    `fire_dos_dpmi.h` (Interrupts im Real Mode über DPMI; ein Puffer des Programms liegt über 1 MB: DosException). xms und x86 gibt es dort nicht (der Speicher
    gehört dem Programm, es ist schon im Protected Mode). Getestet in DOSBox-X mit denselben Programmen wie dos16.
    Offen: ein Package **`dpmi`** (Interrupts mit Registersatz, Real-Mode-Aufrufe, Selektoren, DOS-Speicher als Puffer des Programms).
-5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste
-   (`int 10h`, ...) über einen kurzen Rücksprung in den Real Mode; Start als Multiboot-Kernel (GRUB, `qemu -kernel`) oder über einen eigenen Bootsektor.
-   Kein Audio, keine Dateien, kein Netz, keine fire-Threads - nur Grafik, grober IO (Bildschirm/Konsole, Tastatur, serieller Port) und die Hardware-Packages.
+5. **`bios16` und `bios32`** - ohne Betriebssystem, vom BIOS gestartet (Entscheidung des Benutzers: `bios16`/`bios32` geteilt; zuerst die BIOS-Ziele, danach die Grafik):
+   * **`bios16`**: Real Mode ab 8086, die Breiten und das Huge Model von dos16 (Open Watcom `wcc`); BIOS-Dienste direkt (`int 10h`, `13h`, `16h`, `1Ah`).
+   * **`bios32`**: 32-Bit-Protected-Mode mit flachem Speicher ab 386 (Open Watcom `wcc386`), die Breiten von dos32; das Boot-Image schaltet selbst in den
+     Protected Mode, BIOS-Dienste über einen kurzen Rücksprung in den Real Mode.
+   * Start über ein eigenes Boot-Image (Bootsektor lädt das Programm von Diskette/Platte, in QEMU als `-drive`/`-fda`); Ende in QEMU über den Debug-Port.
+   * **Zwei Stufen, wählbar** (Entscheidung des Benutzers): **minimale libc** (Grundlage; eigener Startcode, Heap aus der Speicherkarte - `int 12h`/E820 -,
+     Strings, `snprintf` mit Gleitkomma, Mathe, `setjmp`; Ausgabe auf Bildschirm und seriellen Port, Tastatur, Zeit über das BIOS; keine Dateien) oder darauf
+     aufbauend ein **Mini-DOS** (ein `int 21h`-Dienst über dieser libc: Speicher, Ausgabe, Tastatur, Zeit, Vektoren, Ende, Dateien nur lesend aus dem Boot-Image),
+     mit dem die Packages laufen, die DOS aufrufen (`dos`, `xms`, ...). Auswahl über das Ziel bzw. eine Option des Ziels.
+   * Kein Audio, kein Netz; fire-Threads über den eigenen Scheduler (Takt über IRQ 0) wie dos16/dos32. Nur Grafik, grober IO (Bildschirm/Konsole, Tastatur,
+     serieller Port) und die Hardware-Packages.
+   * Tests in QEMU (`qemu-system-i386`) ohne Fenster: Ausgabe über den seriellen Port, Ende über den Debug-Port.
 6. **`efi-x64`** - eine UEFI-Anwendung (PE32+; clang + lld-link oder mingw-w64 x86_64 ohne CRT), bleibt in den Boot Services: Konsole über ConIn/ConOut, Grafik über
-   den GOP-Framebuffer, Zeit und `Sleep` über Timer-Ereignisse, Speicher über `AllocatePool`. Keine fire-Threads; Audio, Dateien und Netz wie bei `bios-x86` nicht.
-   EFI mit 32 Bit nicht (solche Rechner haben praktisch immer ein CSM: dort läuft `bios-x86`).
+   den GOP-Framebuffer, Zeit und `Sleep` über Timer-Ereignisse, Speicher über `AllocatePool`. Keine fire-Threads; Audio, Dateien und Netz wie bei `bios16`/`bios32` nicht.
+   EFI mit 32 Bit nicht (solche Rechner haben praktisch immer ein CSM: dort laufen `bios16`/`bios32`).
 
-   Gemeinsam für `bios-x86` und `efi-x64`: eine kleine freistehende C-Bibliothek für die Runtime (Heap aus der Speicherkarte - E820 bzw. die der Firmware -,
+   Gemeinsam für `bios16`, `bios32` und `efi-x64`: eine kleine freistehende C-Bibliothek für die Runtime (Heap aus der Speicherkarte - E820 bzw. die der Firmware -,
    `snprintf`, Strings, Mathe, `setjmp`).
 7. **`win16`** - Windows 3.x (**umgesetzt**, Grundstock): Open Watcom `wcc -bwindows`, das Huge Model wie dos16 (Arrays über 64 KB), die Breiten von dos16,
    keine fire-Threads. `std/fire_platform_win16.h`: das Programm beginnt in `WinMain` (Argumente aus der Befehlszeile, dann der erzeugte Einstieg
@@ -639,11 +648,11 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Noch offen dort: Methoden mit erklärtem skalaren Rückgabetyp ohne `adopt` (braucht den Rückgabetyp im Bytecode und eine Regel, wann er gilt - der
    Typprüfer prüft ihn, die VM erzwingt ihn nicht).
 
-Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios-x86` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
-Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios-x86`; `efi-x64` mit der Firmware OVMF),
+Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
+Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),
 9x und NT über QEMU-Images.
 
-**Grafik auf alter Hardware** (Render-Targets der `graphics`-Bibliothek, für `dos16`, `dos32` und `bios-x86`; `efi-x64` hat nur GOP):
+**Grafik auf alter Hardware** (Render-Targets der `graphics`-Bibliothek, für `dos16`, `dos32` und `bios16`/`bios32`; `efi-x64` hat nur GOP):
 
 * **MDA** (Text 80x25, monochrom mit Attributen): ein Render-Target für Zeichenzellen; Grafik auf der Monochromkarte über **Hercules** (720x348, 1 Bit).
 * **CGA** (Text 40/80x25 in 16 Farben, 320x200 mit 4 Farben aus den beiden Paletten, 640x200 mit 2), **EGA** (320x200 und 640x200/350 mit 16 aus 64 Farben, Bitebenen),
@@ -657,15 +666,15 @@ Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2
     Muster, Masken nur an den Rändern); Blits mit Versatz tauschen die Bytes (x86 ist Little Endian) oder gehen in Bytes;
   * Zeilen auf die Wortbreite des Ziels gerundet;
   * bei 4 Bit wahlweise *chunky* (2 Pixel pro Byte) oder *planar* (4 Ebenen mit je 1 Bit: das Layout der EGA/VGA-16, jede Ebene bleibt unter 64 KB);
-    *planar* ist der Standard auf `dos16` und `bios-x86` (auch im Bootblock, solange der Code dort noch im Real Mode läuft), sonst *chunky*;
+    *planar* ist der Standard auf `dos16` und `bios16`/`bios32` (auch im Bootblock, solange der Code dort noch im Real Mode läuft), sonst *chunky*;
   * dieselbe Zeichen-API wie der `Framebuffer` über eine gemeinsame Schnittstelle; ein Blit zwischen beiden bildet die Farben über die Palette ab.
   Wer auf eine CGA/EGA zeichnet, kann ebenso einen 8-Bit-`Framebuffer` nehmen - das Render-Target bildet dann auf die Farben der Karte ab.
 
-**Hardware-Packages** (für `dos16`, `dos32`, `bios-x86`, teils `efi-x64`):
+**Hardware-Packages** (für `dos16`, `dos32`, `bios16`/`bios32`, teils `efi-x64`):
 
 * **`machine`** - die Hardware des PCs, auf jedem dieser Ziele gleich: Ports (`In`/`Out` mit 8/16/32 Bit), physischer Speicher (`Peek`/`Poke`, Bereiche abbilden),
   PCI-Konfiguration, CPUID, PIT, CMOS/RTC, Interrupts (Handler eintragen, PIC/EOI, sperren/freigeben). Darunter je Ziel: DOS über die Vektoren von `int 21h`,
-  DPMI über die DPMI-Funktionen, `bios-x86` über eine eigene IDT; EFI ohne Interrupts (Abfragen, Timer-Ereignisse) und PCI über die Protokolle der Firmware.
+  DPMI über die DPMI-Funktionen, `bios16`/`bios32` über eine eigene IDT; EFI ohne Interrupts (Abfragen, Timer-Ereignisse) und PCI über die Protokolle der Firmware.
   Paralleler und serieller Port als Geräte des Gerätemanagers (`devices`).
 * Darauf die Dienste der Umgebung: **`dos`** (`int 21h`, `int86`, Speicher und Vektoren von DOS), **`dpmi`** (siehe 4), **`bios`** (`int 10h`/`13h`/`16h`/`1Ah` über den
   Rücksprung in den Real Mode), **`efi`** (Protokolle der Firmware: GOP, Konsole, Variablen, Zeit), **`xms`** (siehe 3).
