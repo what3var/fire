@@ -49,14 +49,15 @@ namespace fire.Runtime
         {
             Name = "win16", Symbols = new[] { "win16", "windows3" }, HalPackage = "win16",
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
-            Imports = new[] { NativeImports.Print, "io", "filesystem", "time", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
+            Imports = new[] { NativeImports.Print, "io", "filesystem", "time", "random", "hash", "json", "compression", "graphics", "windows", "ui", "dialogs",
+                NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
                 Platform = "win16", Toolchain = "watcom", SupportsThreads = false,
                 Entry = new EntryPoint { Name = "fire_win16_main" },
                 // (as dos16: the huge model linked with the C library of the large model - here the one of Windows; the 286 is the least Windows 3.x runs on)
                 CompileArgs = new[] { "-bwindows", "-mcmodel=h", "-march=i286", "-mstack-size=16384", "-Wc,-oe=20",
-                    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87", "-Wl,library", "-Wl,windows" },
+                    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87", "-Wl,library", "-Wl,windows", "-Wl,library", "-Wl,shell" },
             },
         };
 

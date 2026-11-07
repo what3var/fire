@@ -3,8 +3,9 @@
  * every other one), the start through WinMain and the output of the program.
  *   - The program starts in WinMain: the arguments come from the command line of Windows (split at spaces, "..." keeps spaces), argv[0] is the path of the
  *     program; then the generated main (fire_win16_main).
- *   - Output: a Windows program has no console. With the environment variable FIRE_STDOUT standard output goes into that file (the tests); else it is collected
- *     and shown in a window of text when the program ends (the program's name in its title).
+ *   - Output: a Windows program has no console. With the environment variable FIRE_STDOUT standard output goes into that file (the tests); else into a file next
+ *     to the program that a window of text shows as the program goes - each time it takes its messages (Sleep, Tick of a window), at most every 100 ms; at the end
+ *     the window stays until it is closed (the program's name in its title; a program that writes nothing opens none).
  * No fire threads: Windows 3.x has one thread per program. */
 #ifndef FIRE_PLATFORM_WIN16_H
 #define FIRE_PLATFORM_WIN16_H
@@ -38,10 +39,80 @@ static inline int64_t fire_plat_unixMicros(void) {
     return anchor + ms;
 }
 
-/* the messages of the program's queue (a WM_QUIT ends it) - the other programs of Windows get their turn meanwhile */
+/* ---- the output window: a read-only EDIT control in a window of its own, fed from the file standard output goes to ---- */
+static char g_win16Out[148];
+static long g_win16Shown = 0;
+static DWORD g_win16LastLook = 0;
+static HWND g_win16OutWnd = 0, g_win16OutEdit = 0;
+static HINSTANCE g_win16Instance = 0;   /* (the windows of the display: their class belongs to the program's instance) */
+static char g_win16Path[144];
+
+LRESULT CALLBACK __export fire_win16_outProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_SIZE: if (g_win16OutEdit != 0) MoveWindow(g_win16OutEdit, 0, 0, LOWORD(lp), HIWORD(lp), TRUE); return 0;
+    case WM_SETFOCUS: if (g_win16OutEdit != 0) SetFocus(g_win16OutEdit); return 0;
+    case WM_DESTROY: g_win16OutWnd = 0; g_win16OutEdit = 0; return 0;
+    }
+    return DefWindowProc(h, msg, wp, lp);
+}
+static int fire_win16_outOpen(void) {
+    WNDCLASS c;
+    if (g_win16OutWnd != 0) return 1;
+    memset(&c, 0, sizeof c);
+    c.lpfnWndProc = fire_win16_outProc;
+    c.hInstance = g_win16Instance;
+    c.hCursor = LoadCursor(0, IDC_ARROW);
+    c.hIcon = LoadIcon(0, IDI_APPLICATION);
+    c.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    c.lpszClassName = (LPCSTR)"FireOutput16";
+    RegisterClass(&c);   /* (again: it is there already) */
+    g_win16OutWnd = CreateWindow((LPCSTR)"FireOutput16", (LPCSTR)g_win16Path, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 560, 360,
+                                 (HWND)0, (HMENU)0, g_win16Instance, (void FAR*)0);
+    if (g_win16OutWnd == 0) return 0;
+    g_win16OutEdit = CreateWindow((LPCSTR)"EDIT", (LPCSTR)"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY,
+                                  0, 0, 0, 0, g_win16OutWnd, (HMENU)1, g_win16Instance, (void FAR*)0);
+    SendMessage(g_win16OutEdit, WM_SETFONT, (WPARAM)GetStockObject(SYSTEM_FIXED_FONT), 0);
+    SendMessage(g_win16OutEdit, EM_LIMITTEXT, 0, 0);
+    ShowWindow(g_win16OutWnd, SW_SHOWNORMAL);
+    UpdateWindow(g_win16OutWnd);
+    { RECT r; GetClientRect(g_win16OutWnd, &r); MoveWindow(g_win16OutEdit, 0, 0, r.right, r.bottom, TRUE); }
+    return 1;
+}
+/* what the program wrote since the last look: to the end of the text (LF -> CR LF; the oldest lines go when the control is full) */
+static void fire_win16_outShow(void) {
+    static char chunk[512], text[1100];
+    FILE* f;
+    size_t n;
+    if (g_win16Out[0] == 0) return;
+    fflush(stdout);
+    f = fopen(g_win16Out, "rb");
+    if (f == NULL) return;
+    if (fseek(f, g_win16Shown, SEEK_SET) == 0) {
+        while ((n = fread(chunk, 1, sizeof chunk, f)) > 0) {
+            size_t i, o = 0;
+            long length;
+            g_win16Shown += (long)n;
+            for (i = 0; i < n; i++) { if (chunk[i] == '\n') text[o++] = '\r'; text[o++] = chunk[i]; }
+            text[o] = 0;
+            if (!fire_win16_outOpen()) break;
+            length = (long)SendMessage(g_win16OutEdit, WM_GETTEXTLENGTH, 0, 0);
+            if (length > 28000) {
+                SendMessage(g_win16OutEdit, EM_SETSEL, 0, MAKELPARAM(0, 8000));
+                SendMessage(g_win16OutEdit, EM_REPLACESEL, 0, (LPARAM)(LPCSTR)"");
+                length = (long)SendMessage(g_win16OutEdit, WM_GETTEXTLENGTH, 0, 0);
+            }
+            SendMessage(g_win16OutEdit, EM_SETSEL, 0, MAKELPARAM((WORD)length, (WORD)length));
+            SendMessage(g_win16OutEdit, EM_REPLACESEL, 0, (LPARAM)(LPCSTR)text);
+        }
+    }
+    fclose(f);
+}
+
+/* the messages of the program's queue (a WM_QUIT ends it) - the other programs of Windows get their turn meanwhile; new output into its window */
 static void fire_win16_pump(void) {
     MSG m;
-    while (PeekMessage(&m, NULL, 0, 0, PM_REMOVE)) {
+    if (g_win16Out[0] != 0 && GetTickCount() - g_win16LastLook >= 100) { g_win16LastLook = GetTickCount(); fire_win16_outShow(); }
+    while (PeekMessage(&m, 0, 0, 0, PM_REMOVE)) {
         if (m.message == WM_QUIT) exit((int)m.wParam);
         TranslateMessage(&m);
         DispatchMessage(&m);
@@ -60,9 +131,6 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 }
 
 /* ---- the start: WinMain ---- */
-static char g_win16Path[144];
-static HINSTANCE g_win16Instance = 0;   /* (the windows of the display: their class belongs to the program's instance) */
-static char g_win16Out[148];
 #define FIRE_ENV_OWN_PROGRAM_PATH 1
 static inline int fire_plat_programPath(char* out, size_t cap) {
     size_t n = strlen(g_win16Path);
@@ -71,20 +139,16 @@ static inline int fire_plat_programPath(char* out, size_t cap) {
     return (int)n;
 }
 
-/* the collected output in a window of text (at most what a message box shows) */
-static void fire_win16_showOutput(void) {
-    static char text[4096];
-    FILE* f;
-    size_t n;
-    fflush(stdout);
-    if (g_win16Out[0] == 0) return;
-    f = fopen(g_win16Out, "r");
-    if (f == NULL) return;
-    n = fread(text, 1, sizeof text - 1, f);
-    fclose(f);
+/* the end of the program: the rest of the output into its window, which stays until it is closed */
+static void fire_win16_outEnd(void) {
+    MSG m;
+    fire_win16_outShow();
+    while (g_win16OutWnd != 0 && GetMessage(&m, 0, 0, 0)) {
+        TranslateMessage(&m);
+        DispatchMessage(&m);
+    }
+    fclose(stdout);
     remove(g_win16Out);
-    text[n] = 0;
-    if (n > 0) MessageBox(NULL, text, g_win16Path, MB_OK | MB_ICONINFORMATION);
 }
 
 int fire_win16_main(int argc, char** argv);
@@ -104,7 +168,7 @@ int PASCAL WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR commandLine, in
         size_t n = strlen(g_win16Path);
         memcpy(g_win16Out, g_win16Path, n + 1);
         if (n > 4 && g_win16Out[n - 4] == '.') strcpy(g_win16Out + n - 4, ".OUT"); else strcat(g_win16Out, ".OUT");
-        if (freopen(g_win16Out, "w", stdout) != NULL) atexit(fire_win16_showOutput);
+        if (freopen(g_win16Out, "w", stdout) != NULL) atexit(fire_win16_outEnd);
         else g_win16Out[0] = 0;
     }
     argv[argc++] = g_win16Path;

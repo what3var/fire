@@ -3,14 +3,19 @@
  *     the bridge hands over the framebuffer -, an RGBA one as a 24-bit DIB);
  *   - keys from WM_KEYDOWN/WM_KEYUP (the scan code of lParam, as on Win32 - fire_key_fromWin32), text from WM_CHAR (the ANSI code page: Latin-1), the mouse in
  *     framebuffer pixels, the size of the window, closing as a request;
+ *   - the mouse pointer of the program (WM_SETCURSOR; what Windows 3.1 does not have - the hand, "not allowed" - is the arrow), files dropped from the File Manager
+ *     (DragAcceptFiles of SHELL.DLL: FIRE_EV_DROP_FILES), the colours of the desktop (GetSysColor) for the system theme;
+ *   - the clipboard of Windows: text (CF_TEXT, the ANSI code page taken as Latin-1, lines with CR LF), pictures (CF_DIB - the BMP of the bridge without its file
+ *     header; back as a BMP file); paths stay the program's own (Windows 3.x has no format for them);
  *   - the messages are taken when the program pumps (Tick, Sleep of the platform): Windows 3.x waits for every program to take them.
- * The clipboard is the program's own for now; nothing can be dragged out. */
+ * Nothing can be dragged out of a window. */
 #ifndef FIRE_DISPLAY_WIN16_H
 #define FIRE_DISPLAY_WIN16_H
 
 #include "fire_display_c.h"
 #include "fire_display_keys.h"
 #include <windows.h>
+#include <shellapi.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,16 +29,21 @@ typedef struct FireDisplayWindow {
     int cw, ch;                  /* the client area */
     int fbw, fbh;                /* the framebuffer of the last frame (for the positions of the mouse) */
     int buttons, mx, my;
+    int cursor;                  /* FIRE_CURSOR_* */
     FireDisplayEvents pending;   /* what the window procedure collected since the last pump */
 } FireDisplayWindow;
 
 static void fire_display_systemTheme(FireSystemTheme* t) {
+    DWORD caption = GetSysColor(COLOR_ACTIVECAPTION), window = GetSysColor(COLOR_WINDOW);   /* (0x00BBGGRR) */
+    unsigned brightness = (unsigned)(GetRValue(window) * 3u + GetGValue(window) * 6u + GetBValue(window)) / 10u;
     fire_display_themeDefaults(t);
     t->embedded = 0;
     t->transparency = 0;
     t->scale = 1.0;
-    t->dark = 0;
-    t->accent = 0x800000;   /* (the title bar of Windows 3.1: navy, 0xBBGGRR) */
+    t->dark = brightness < 96;
+    t->accent = ((int)GetRValue(caption) << 16) | ((int)GetGValue(caption) << 8) | (int)GetBValue(caption);
+    strcpy(t->fonts, "MS Sans Serif;Arial;System");
+    t->fontSize = 13;
 }
 static void fire_display_threadDone(void) {}
 
@@ -116,6 +126,41 @@ LRESULT CALLBACK __export fire_w16_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) 
     case WM_SETFOCUS: fire_display_eventInit(&e); e.type = FIRE_EV_FOCUS_GAINED; fire_display_push(&w->pending, &e); return 0;
     case WM_KILLFOCUS: fire_display_eventInit(&e); e.type = FIRE_EV_FOCUS_LOST; fire_display_push(&w->pending, &e); return 0;
     case WM_ERASEBKGND: return 1;   /* (the next frame paints it all) */
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT) {
+            /* IDC_ARROW, IBEAM, WAIT, CROSS, (APPSTARTING: WAIT), SIZENWSE, SIZENESW, SIZEWE, SIZENS, (SIZEALL: IDC_SIZE), (NO, HAND: the arrow) */
+            static const WORD ids[FIRE_CURSOR_COUNT] = { 32512, 32513, 32514, 32515, 32514, 32642, 32643, 32644, 32645, 32640, 32512, 32512 };
+            SetCursor(LoadCursor(0, MAKEINTRESOURCE(ids[w->cursor >= 0 && w->cursor < FIRE_CURSOR_COUNT ? w->cursor : 0])));
+            return TRUE;
+        }
+        break;
+    case WM_DROPFILES: {
+        HDROP drop = (HDROP)wp;
+        UINT n = DragQueryFile(drop, (UINT)-1, NULL, 0), k;
+        POINT at;
+        size_t used = 0;
+        char* all = (char*)malloc(n * 160u + 1);
+        if (all != NULL) {
+            for (k = 0; k < n; k++) {
+                char name[160];
+                UINT len = DragQueryFile(drop, k, (LPSTR)name, sizeof name);
+                if (k > 0) all[used++] = '\n';
+                memcpy(all + used, name, len);
+                used += len;
+            }
+            all[used] = 0;
+            DragQueryPoint(drop, &at);
+            fire_display_eventInit(&e);
+            e.type = FIRE_EV_DROP_FILES;
+            e.data = all;
+            e.x = (float)((long)at.x * (w->fbw > 0 ? w->fbw : w->cw) / (w->cw > 0 ? w->cw : 1));
+            e.y = (float)((long)at.y * (w->fbh > 0 ? w->fbh : w->ch) / (w->ch > 0 ? w->ch : 1));
+            fire_display_push(&w->pending, &e);
+            free(all);
+        }
+        DragFinish(drop);
+        return 0;
+    }
     }
     return DefWindowProc(h, msg, wp, lp);
 }
@@ -150,6 +195,7 @@ static int fire_display_open(FireDisplayWindow* w, const char* title, int width,
     w->hwnd = CreateWindow((LPCSTR)"FireWindow16", (LPCSTR)title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top,
                            (HWND)0, (HMENU)0, g_win16Instance, (void FAR*)0);   /* (no NULL: in the huge model it is a __huge pointer) */
     if (w->hwnd == 0) { g_w16Windows[i] = NULL; return 0; }   /* (a handle: 0, not NULL - a __huge pointer in this model) */
+    DragAcceptFiles(w->hwnd, TRUE);   /* (files from the File Manager) */
     ShowWindow(w->hwnd, SW_SHOWNORMAL);
     UpdateWindow(w->hwnd);
     w->open = 1;
@@ -171,7 +217,16 @@ static void fire_display_setSize(FireDisplayWindow* w, int width, int height) {
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     SetWindowPos(w->hwnd, NULL, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER);
 }
-static void fire_display_setCursor(FireDisplayWindow* w, int c) { (void)w; (void)c; }
+static void fire_display_setCursor(FireDisplayWindow* w, int c) {
+    POINT p;
+    RECT r;
+    if (c < 0 || c >= FIRE_CURSOR_COUNT) return;
+    w->cursor = c;
+    if (!w->open) return;
+    GetCursorPos(&p);
+    GetWindowRect(w->hwnd, &r);
+    if (PtInRect(&r, p)) SendMessage(w->hwnd, WM_SETCURSOR, (WPARAM)w->hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));   /* (at once, not with the next move) */
+}
 static int fire_display_vsync(const FireDisplayWindow* w) { return w->vsync; }
 static void fire_display_setTouchMouse(FireDisplayWindow* w, int v) { w->touchMouse = v; }
 static int fire_display_touchMouse(const FireDisplayWindow* w) { return w->touchMouse; }
@@ -253,13 +308,120 @@ static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int f
     return !w->closed;
 }
 
-/* the clipboard is the program's own (Windows 3.x has one; later) */
-static int fire_display_clipboardSet(const char* text) { return fire_display_memSetText(text); }
-static char* fire_display_clipboardGet(void) { return fire_display_memGetText(); }
-static int fire_display_clipboardHas(void) { return fire_display_memHasText(); }
-static unsigned char* fire_display_clipboardGetImage(size_t* size) { return fire_display_memGetImage(size); }
-static int fire_display_clipboardSetImage(const unsigned char* png, size_t pngSize, const unsigned char* bmp, size_t bmpSize) { (void)bmp; (void)bmpSize; return fire_display_memSetImage(png, pngSize); }
-static int fire_display_clipboardHasImage(void) { return fire_display_memHasImage(); }
+/* ---- the clipboard of Windows: text (CF_TEXT) and pictures (CF_DIB); paths are the program's own ---- */
+/* the owner of the clipboard: a window of the program (Windows 3.x wants one for OpenClipboard; NULL works too) */
+static HWND fire_w16_clipOwner(void) { int i; for (i = 0; i < FIRE_W16_MAX; i++) if (g_w16Windows[i] && g_w16Windows[i]->open) return g_w16Windows[i]->hwnd; return 0; }
+/* a block of global memory with the bytes (hmemcpy: also above 64 KB) */
+static HGLOBAL fire_w16_global(const void* data, DWORD n, const void* head, DWORD headN) {
+    HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, headN + n + 1);
+    char __huge* p;
+    if (h == 0) return 0;
+    p = (char __huge*)GlobalLock(h);
+    if (p == NULL) { GlobalFree(h); return 0; }
+    if (headN > 0) hmemcpy(p, head, (long)headN);
+    if (n > 0) hmemcpy(p + headN, data, (long)n);
+    p[headN + n] = 0;
+    GlobalUnlock(h);
+    return h;
+}
+static int fire_display_clipboardSet(const char* text) {
+    size_t n = strlen(text), i, o = 0;
+    char* ansi = (char*)malloc(n * 2 + 1);
+    HGLOBAL h;
+    int ok = 0;
+    if (ansi == NULL) return 0;
+    for (i = 0; i < n; ) {   /* UTF-8 -> Latin-1 ('?' beyond it), LF -> CR LF */
+        unsigned c = (unsigned char)text[i];
+        unsigned long u = c;
+        int len = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : 4;
+        if (len == 2 && i + 1 < n) u = ((c & 0x1Fu) << 6) | ((unsigned char)text[i + 1] & 0x3Fu);
+        else if (len > 2) u = 0xFFFF;
+        i += (size_t)len;
+        if (u == '\n') ansi[o++] = '\r';
+        ansi[o++] = (char)(u < 256 ? u : '?');
+    }
+    h = fire_w16_global(ansi, (DWORD)o, NULL, 0);
+    free(ansi);
+    if (h == 0) return 0;
+    if (OpenClipboard(fire_w16_clipOwner())) {
+        EmptyClipboard();
+        ok = SetClipboardData(CF_TEXT, h) != 0;
+        CloseClipboard();
+    }
+    if (!ok) GlobalFree(h);
+    fire_display_memSetText(text);   /* (the program's own copy too: a desktop without a clipboard owner) */
+    return ok;
+}
+static char* fire_display_clipboardGet(void) {
+    HGLOBAL h;
+    const char __far* p;
+    char* out = NULL;
+    if (!IsClipboardFormatAvailable(CF_TEXT) || !OpenClipboard(fire_w16_clipOwner())) return NULL;
+    h = GetClipboardData(CF_TEXT);
+    if (h != 0 && (p = (const char __far*)GlobalLock(h)) != NULL) {
+        size_t n = 0, i, o = 0;
+        while (p[n] && n < 60000u) n++;
+        out = (char*)malloc(n * 2 + 1);
+        if (out != NULL) {
+            for (i = 0; i < n; i++) {   /* Latin-1 -> UTF-8, CR LF -> LF */
+                unsigned c = (unsigned char)p[i];
+                if (c == '\r' && p[i + 1] == '\n') continue;
+                if (c < 0x80) out[o++] = (char)c;
+                else { out[o++] = (char)(0xC0 | (c >> 6)); out[o++] = (char)(0x80 | (c & 0x3F)); }
+            }
+            out[o] = 0;
+        }
+        GlobalUnlock(h);
+    }
+    CloseClipboard();
+    return out;
+}
+static int fire_display_clipboardHas(void) { return IsClipboardFormatAvailable(CF_TEXT) != 0; }
+/* a picture: the BMP of the bridge as CF_DIB (its file header of 14 bytes left out) */
+static int fire_display_clipboardSetImage(const unsigned char* png, size_t pngSize, const unsigned char* bmp, size_t bmpSize) {
+    HGLOBAL h;
+    int ok = 0;
+    fire_display_memSetImage(png, pngSize);
+    if (bmp == NULL || bmpSize <= 14) return 0;
+    h = fire_w16_global(bmp + 14, (DWORD)(bmpSize - 14), NULL, 0);
+    if (h == 0) return 0;
+    if (OpenClipboard(fire_w16_clipOwner())) {
+        EmptyClipboard();
+        ok = SetClipboardData(CF_DIB, h) != 0;
+        CloseClipboard();
+    }
+    if (!ok) GlobalFree(h);
+    return ok;
+}
+/* CF_DIB as the bytes of a BMP file (the header before it) */
+static unsigned char* fire_display_clipboardGetImage(size_t* size) {
+    HGLOBAL h;
+    const unsigned char __far* p;
+    unsigned char* out = NULL;
+    *size = 0;
+    if (!IsClipboardFormatAvailable(CF_DIB)) return fire_display_memGetImage(size);
+    if (!OpenClipboard(fire_w16_clipOwner())) return NULL;
+    h = GetClipboardData(CF_DIB);
+    if (h != 0 && (p = (const unsigned char __far*)GlobalLock(h)) != NULL) {
+        DWORD n = GlobalSize(h);
+        const BITMAPINFOHEADER __far* bi = (const BITMAPINFOHEADER __far*)p;
+        DWORD colors = bi->biBitCount <= 8 ? (bi->biClrUsed ? bi->biClrUsed : (1ul << bi->biBitCount)) : 0;
+        DWORD offset = 14 + bi->biSize + colors * 4;
+        out = (unsigned char*)malloc((size_t)(n + 14));
+        if (out != NULL) {
+            out[0] = 'B'; out[1] = 'M';
+            out[2] = (unsigned char)(n + 14); out[3] = (unsigned char)((n + 14) >> 8); out[4] = (unsigned char)((n + 14) >> 16); out[5] = (unsigned char)((n + 14) >> 24);
+            out[6] = out[7] = out[8] = out[9] = 0;
+            out[10] = (unsigned char)offset; out[11] = (unsigned char)(offset >> 8); out[12] = (unsigned char)(offset >> 16); out[13] = (unsigned char)(offset >> 24);
+            hmemcpy(out + 14, p, (long)n);
+            *size = (size_t)(n + 14);
+        }
+        GlobalUnlock(h);
+    }
+    CloseClipboard();
+    return out;
+}
+static int fire_display_clipboardHasImage(void) { return IsClipboardFormatAvailable(CF_DIB) != 0 || fire_display_memHasImage(); }
 static char* fire_display_clipboardGetFiles(void) { return fire_display_memGetFiles(); }
 static int fire_display_clipboardSetFiles(const char* paths) { return fire_display_memSetFiles(paths); }
 static int fire_display_clipboardHasFiles(void) { return fire_display_memHasFiles(); }
