@@ -27665,6 +27665,58 @@ else
                         said == "000F4257 12345678 00000005 00000500 00000001 OK", said);
                 }
 
+                // FreeDOS under QEMU (a 64-bit processor, which DOSBox-X does not have): the image of FreeDOS 1.4 (FD14-LiteUSB, FD14LITE.img) from FIRE_FREEDOS_IMAGE or
+                // ~/.cache/fire/freedos/FD14LITE.img, mtools to put the program in; CONFIG without EMM386 (the processor stays in real mode), AUTOEXEC runs PROG.EXE > OUT.TXT
+                // and QUIT.COM (out to the isa-debug-exit of QEMU: B0 00 E6 F4 C3)
+                string freedosImage = Environment.GetEnvironmentVariable("FIRE_FREEDOS_IMAGE") is { Length: > 0 } fdi ? fdi
+                    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "fire", "freedos", "FD14LITE.img");
+                string? mcopy = fire.Native.ToolchainSetup.FindProgram("mcopy"), mtype = fire.Native.ToolchainSetup.FindProgram("mtype");
+                (bool Ok, string Text)? BuildAndRunFreeDos(string source, string folder)
+                {
+                    if (qemu == null || mcopy == null || mtype == null || !File.Exists(freedosImage)) return null;
+                    string dir = Path.Combine(workDir, folder);
+                    Directory.CreateDirectory(dir);
+                    var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
+                    if (!built.Ok) return (false, built.Log);
+                    string img = Path.Combine(dir, "disk.img");
+                    File.Copy(freedosImage, img, true);
+                    File.WriteAllText(Path.Combine(dir, "FDCONFIG.SYS"), "FILES=40\r\nBUFFERS=20\r\nDOS=HIGH\r\nDEVICE=\\FREEDOS\\BIN\\HIMEMX.EXE\r\nSHELL=\\COMMAND.COM \\ /E:1024 /P=\\FDAUTO.BAT\r\n");
+                    File.WriteAllText(Path.Combine(dir, "FDAUTO.BAT"), "@echo off\r\nC:\r\ncd \\\r\nPROG.EXE > OUT.TXT\r\nQUIT.COM\r\n");
+                    File.WriteAllBytes(Path.Combine(dir, "QUIT.COM"), new byte[] { 0xB0, 0x00, 0xE6, 0xF4, 0xC3 });
+                    string rc = Path.Combine(dir, "mtoolsrc");
+                    File.WriteAllText(rc, $"drive c: file=\"{img}\" offset=32256\nmtools_skip_check=1\n");
+                    var env = new Dictionary<string, string?> { ["MTOOLSRC"] = rc };
+                    var put = TestProcess.Run(mcopy, "-o FDCONFIG.SYS FDAUTO.BAT QUIT.COM PROG.EXE c:/", dir, environment: env);
+                    if (put.Exit != 0) return (false, "mcopy: " + put.Stderr);
+                    var run = TestProcess.Run(qemu, $"-drive format=raw,file=\"{img}\" -display none -device isa-debug-exit,iobase=0xf4,iosize=0x04 -no-reboot -m 64", dir, timeoutMs: 120000);
+                    var got = TestProcess.Run(mtype, "c:/OUT.TXT", dir, environment: env);
+                    string text = got.Exit == 0 ? got.Stdout.Replace("\r", "") : "(keine Ausgabe)";
+                    return (true, run.Exit == -1 ? text + "(QEMU nach 2 Minuten beendet)" : text);
+                }
+                // the long mode from a fire program under DOS: a 64-bit routine (EFER: LME and LMA, a 64-bit register), and back
+                const string dosLong = """
+                    #import "x86"
+                    print(X86.Mode() + " " + X86.CanSwitch() + " long " + X86.CanLongMode())
+                    // mov ecx, C0000080h / rdmsr / mov ebx, eax / mov r8, 100000005h / mov rax, r8 / shr rax, 32 / mov edx, eax / mov eax, r8d / ret
+                    var bytes = [185, 128, 0, 0, 192, 15, 50, 137, 195, 73, 184, 5, 0, 0, 0, 1, 0, 0, 0, 76, 137, 192, 72, 193, 232, 32, 137, 194, 68, 137, 192, 195]
+                    byte code[] = new byte[bytes.length]
+                    for (var i = 0; i < bytes.length; i++) { code[i] = bytes[i] }
+                    var r = X86.RunLong(code, new X86Registers(7))
+                    print("eax " + r.eax + " edx " + r.edx + " efer " + r.ebx)
+                    print("done")
+                    """;
+                var longRun = BuildAndRunFreeDos(dosLong, "freedoslong");
+                if (longRun == null) Console.WriteLine($"(FreeDOS unter QEMU: uebersprungen - qemu-system-x86_64, mtools oder {freedosImage} fehlen)");
+                else
+                {
+                    const string dosLongExpected = "real True long True\neax 5 edx 1 efer 1280\ndone\n";
+                    CheckNat("FreeDOS unter QEMU: x86 - eine 64-Bit-Routine im Long Mode aus einem fire-Programm (EFER: LME und LMA, ein 64-Bit-Register) und zurueck im Real Mode",
+                        longRun.Value.Ok && longRun.Value.Text == dosLongExpected, $"  erwartet:\n{dosLongExpected}\n  DOS:\n{longRun.Value.Text}");
+                    var pmRun = BuildAndRunFreeDos(dosX86.Replace("print(\"long \" + X86.CanLongMode())\n", "").Replace("try { X86.RunLong(code2, r2) } catch (X86Exception e) { print(\"no long: \" + e.message) }\n", ""), "freedospm");
+                    string pmExpected = dosX86Expected.Replace("long False\nno long: This processor has no long mode (64 bit).\n", "");
+                    CheckNat("FreeDOS unter QEMU: x86 - der Protected Mode wie in DOSBox-X (mit HIMEMX)", pmRun!.Value.Ok && pmRun.Value.Text == pmExpected, $"  erwartet:\n{pmExpected}\n  DOS:\n{pmRun.Value.Text}");
+                }
+
                 // the serial and the printer port as devices (#import "devices"): COM1 and LPT1 from the BIOS, written into the files of DOSBox-X; read through the
                 // interrupt of the UART (its loopback, one byte at a time - DOSBox repeats the first byte of a burst there)
                 const string dosSerial = """

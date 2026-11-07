@@ -26,6 +26,22 @@ namespace fire.Runtime
             },
         };
 
-        private static TargetProfile[] PcTargets() => new[] { Dos16 };
+        /// <summary>DOS with a DOS extender from the 386 on (ROADMAP 13.4): Open Watcom (wcc386), flat 32-bit memory - every pointer 32 bits, blocks of any size -, the
+        /// extender DOS/32A in the program (`-bdos32a`: one .exe, it switches into the protected mode and serves DPMI). Integers and floats of 64 bits as on the
+        /// desktop (the 386 has the room; the results are the ones of the VM); no fire threads yet.</summary>
+        public static readonly TargetProfile Dos32 = new()
+        {
+            Name = "dos32", Symbols = new[] { "dos32", "dos" }, HalPackage = "dos32",
+            FloatWidth = 64, IntWidth = 64, WordWidth = 32, DefaultStackBytes = 65536,
+            Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
+            Native = new NativeTarget
+            {
+                Platform = "dos32", Toolchain = "watcom", SupportsThreads = false,
+                // (owcc: the 32-bit compiler for the system dos32a - its stub is the whole extender; a stack of 256 KB)
+                CompileArgs = new[] { "-bdos32a", "-march=i386", "-mstack-size=262144" },
+            },
+        };
+
+        private static TargetProfile[] PcTargets() => new[] { Dos16, Dos32 };
     }
 }

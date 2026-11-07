@@ -57,6 +57,10 @@ namespace fire.Native
             environment["WATCOM"] = root;
             environment["INCLUDE"] = Path.Combine(root, "h");
             environment["EDPATH"] = Path.Combine(root, "eddat");
+            // (the linker finds the stubs of the DOS extenders - dos32a.exe for dos32 - in binw, through the PATH)
+            string binw = Path.Combine(root, "binw");
+            string path = environment.TryGetValue("PATH", out var p) && p != null ? p : Environment.GetEnvironmentVariable("PATH") ?? "";
+            if (Directory.Exists(binw) && !path.Split(Path.PathSeparator).Contains(binw)) environment["PATH"] = bin + Path.PathSeparator + binw + Path.PathSeparator + path;
         }
 
         /// <summary>Where an Open Watcom tree may be: %WATCOM%, Toolchain/watcom next to the compiler, /opt/watcom, C:\WATCOM.</summary>

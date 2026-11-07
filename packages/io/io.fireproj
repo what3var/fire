@@ -358,6 +358,9 @@
       ],
       "default": [
         "native/fire_fs_none.h"
+      ],
+      "dos32": [
+        "native/fire_fs_dos.h"
       ]
     },
     "headers": [
