@@ -53,6 +53,9 @@
       ],
       "dos32": [
         "native/fire_dos_dpmi.h"
+      ],
+      "bios16-dos": [
+        "native/fire_dos_real.h"
       ]
     }
   }

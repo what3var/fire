@@ -1,9 +1,36 @@
-; fire bios16 (ROADMAP 13.5): the boot sector. The toolchain driver carries it assembled (WatcomToolchain.Bios16BootSector; nasm -f bin) and writes the
-; disk image: this sector, then the program from sector 1 on. Loads the program (a DOS MZ executable, stored from sector 1 on) to LOADSEG, relocates it, clears the memory it asks for
-; beyond its image (BSS) and jumps to its entry with its stack. Sectors are read one by one with CHS (int 13h AH=02h) - floppies and hard disks alike.
+; fire bios16 (ROADMAP 13.5): the boot sector of a FAT12 floppy of 1.44 MB. The toolchain driver carries it assembled (BiosBootSectors.Bios16; nasm -f bin) and
+; writes the disk image (WatcomToolchain.AfterLink): this sector with its BIOS parameter block, the FATs, the root directory, FIRE.EXE as the first file in one
+; piece, then the files of the program's `disk` folder. Finds FIRE.EXE in the first sector of the root directory, loads it (a DOS MZ executable) to LOADSEG,
+; relocates it, clears the memory it asks for beyond its image (BSS) and jumps to its entry with its stack (BP = the first free paragraph behind it).
+; Sectors are read one by one with CHS (int 13h AH=02h). FIRE.EXE must lie in one piece - the image is written so; a tool that moves it breaks the start.
 bits 16
 org 0x7C00
 LOADSEG equ 0x0800
+ROOTSEC equ 19              ; 1 reserved sector + 2 FATs of 9 sectors
+DATASEC equ 31              ; the first data sector (33) minus the 2 clusters that are not on the disk
+DIRSEG  equ 0x0050          ; a sector of the root directory is read to 0050:0000
+
+    jmp short start
+    nop
+    db "FIRE    "           ; OEM name
+bps     dw 512              ; bytes per sector
+        db 1                ; sectors per cluster
+        dw 1                ; reserved sectors
+        db 2                ; FATs
+        dw 224              ; entries of the root directory
+        dw 2880             ; sectors
+        db 0xF0             ; media
+        dw 9                ; sectors per FAT
+spt     dw 18               ; sectors per track
+heads   dw 2                ; heads
+        dd 0                ; hidden sectors
+        dd 0                ; sectors (32 bits)
+drive   db 0
+        db 0
+        db 0x29             ; extended boot signature
+        dd 0x46495245       ; serial
+        db "NO NAME    "    ; label (none: the root directory has no label entry)
+        db "FAT12   "
 
 start:
     cli
@@ -14,26 +41,36 @@ start:
     sti
     cld
     mov [drive], dl
-    ; the geometry of the drive (a floppy whose BIOS does not answer: 18 sectors, 2 heads)
-    mov ah, 0x08
+    ; FIRE.EXE in the first sector of the root directory: its first cluster
+    mov ax, DIRSEG
+    mov es, ax
+    mov ax, ROOTSEC
+    call readsec
     xor di, di
-    mov es, di
-    int 0x13
-    jc .nogeo
-    and cl, 0x3F
-    mov [spt], cl
-    inc dh
-    mov [heads], dh
-.nogeo:
+.find:
+    mov si, name
+    mov cx, 11
+    push di
+    repe cmpsb
+    pop di
+    je .found
+    add di, 32
+    cmp di, 512
+    jb .find
+    mov al, 'F'
+    jmp fail
+.found:
+    mov ax, [es:di+26]
+    add ax, DATASEC
+    mov [lba], ax
     ; the first sector of the program: its header
     mov ax, LOADSEG
     mov es, ax
-    mov ax, 1
+    mov ax, [lba]
     call readsec
     ; its size in sectors (pages of 512 bytes; the last one may be partial: the rest is read anyway)
     mov cx, [es:4]
     mov [left], cx
-    mov word [lba], 1
     mov ax, LOADSEG
     mov [dst], ax
 .load:
@@ -113,14 +150,11 @@ start:
 readsec:
     push ax
     xor dx, dx
-    xor bh, bh
-    mov bl, [spt]
-    div bx                  ; ax = lba / spt, dx = lba % spt
+    div word [spt]                  ; ax = lba / spt, dx = lba % spt
     inc dx
     mov cl, dl              ; sector (1-based)
     xor dx, dx
-    mov bl, [heads]
-    div bx                  ; ax = cylinder, dx = head
+    div word [heads]                  ; ax = cylinder, dx = head
     mov ch, al
     ror ah, 1
     ror ah, 1
@@ -133,24 +167,23 @@ readsec:
     mov ax, 0x0201
     xor bx, bx
     int 0x13
-    jnc .ok
+    jnc rs_ok
     xor ax, ax
     int 0x13
     dec si
     jnz .try
     mov al, 'E'
+fail:                       ; (AL: E a disk error, F no FIRE.EXE)
     mov ah, 0x0E
     int 0x10
-.halt:
+halt:
     hlt
-    jmp .halt
-.ok:
+    jmp halt
+rs_ok:
     pop ax
     ret
 
-drive db 0
-spt   db 18
-heads db 2
+name  db "FIRE    EXE"
 left  dw 0
 lba   dw 0
 dst   dw 0

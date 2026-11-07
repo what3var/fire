@@ -66,7 +66,7 @@ namespace fire.Runtime
 
         /// <summary>A PC without an operating system, started by the BIOS, in real mode from the 8086 on (ROADMAP 13.5): the widths and the huge model of dos16, the
         /// C library of Open Watcom with what it would ask DOS for served by the program itself (platform/bios16: the console of the BIOS and COM1, the conventional
-        /// memory as the heap, int 21h for the C library). The build writes a disk image next to the program (`.img`: the boot sector, then the program). No files,
+        /// memory as the heap, int 21h for the C library). The build writes a disk image next to the program (`.img`: a FAT12 floppy with FIRE.EXE). No files (those: bios16-dos),
         /// no network, no sound; fire threads over fire's own scheduler as on dos16.</summary>
         public static readonly TargetProfile Bios16 = new()
         {
@@ -87,6 +87,16 @@ namespace fire.Runtime
             },
         };
 
-        private static TargetProfile[] PcTargets() => new[] { Dos16, Dos32, Win16, Bios16 };
+        /// <summary>bios16 with the mini-DOS (ROADMAP 13.5, the second stage the user chooses): the same platform, and int 21h also serves files - read only, from
+        /// the boot floppy (FAT12: FIRE.EXE and the folder `disk` next to the program, Fat12Image) - and the memory of DOS, so io, filesystem and dos run as on
+        /// dos16 (platform/bios16/fire_bios16_dos.h).</summary>
+        public static readonly TargetProfile Bios16Dos = Bios16 with
+        {
+            Name = "bios16-dos", Symbols = new[] { "bios16", "bios", "bios16dos" },
+            Imports = Bios16.Imports.Concat(new[] { "io", "filesystem", "dos" }).ToArray(),
+            Native = Bios16.Native with { Defines = new[] { "FIRE_BIOS_MINIDOS=1" } },
+        };
+
+        private static TargetProfile[] PcTargets() => new[] { Dos16, Dos32, Win16, Bios16, Bios16Dos };
     }
 }

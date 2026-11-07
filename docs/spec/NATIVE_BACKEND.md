@@ -679,11 +679,16 @@ NE-Header - `-mstack-size` erreicht ihn bei `-bwindows` nicht (es blieben 8 KB; 
 **`bios16`** (ein PC ohne Betriebssystem im Real Mode, ROADMAP 13.5): dieselbe Runtime und dieselben Breiten wie dos16, aber kein DOS darunter. Der Treiber
 übersetzt zuerst `platform/bios16/fire_bios16_start.asm` (wasm; `ToolchainDriver.PreCommands`) und bindet mit `option start=_cstart_`, `nodefaultlibs`,
 `clibl`/`mathl` (Gleitkomma über Aufrufe, `-fpc`: der Emulator emu87 patcht Code und braucht DOS) und `nofarcalls`; danach schreibt er das Boot-Image
-(`ToolchainDriver.AfterLink`: `<programm>.img` = der Bootsektor aus `BiosBootSectors` + die Exe, auf eine Diskette von 1,44 MB aufgefüllt). Der Bootsektor
-(`fire_bios16_boot.asm`, nasm; ein Test vergleicht die eingebauten Bytes mit seiner Ausgabe) lädt die Exe, reloziert sie und springt hinein. Der Start setzt
+(`ToolchainDriver.AfterLink`: `<programm>.img`, eine FAT12-Diskette von 1,44 MB - `Fat12Image`: der Bootsektor aus `BiosBootSectors`, `FIRE.EXE` als erste
+Datei am Stück, die Dateien und Ordner von `disk/` neben dem Programm). Der Bootsektor (`fire_bios16_boot.asm`, nasm, mit BPB; ein Test vergleicht die
+eingebauten Bytes mit seiner Ausgabe) findet `FIRE.EXE` im ersten Sektor des Wurzelverzeichnisses, lädt die Exe, reloziert sie und springt hinein. Der Start setzt
 DGROUP und den Stack, löscht das BSS, baut eine PSP nach und legt `int 21h` auf `fire_bios_int21` (`fire_bios16_libc.h`): die Dienste, die die C-Bibliothek
 von Watcom ruft (Konsole auf Bildschirm und COM1, Tastatur, Uhr aus den Ticks des BIOS, Datum aus der RTC, Vektoren, Ende über den Debug-Port von QEMU).
-`malloc` und Co. kommen aus einem eigenen Heap bis zur Grenze aus `int 12h`, die kleinen Blöcke der C-Bibliothek aus 8 KB in DGROUP. Getestet in QEMU
+`malloc` und Co. kommen aus einem eigenen Heap bis zur Grenze aus `int 12h`, die kleinen Blöcke der C-Bibliothek aus 8 KB in DGROUP. Das Ziel **`bios16-dos`**
+(`FIRE_BIOS_MINIDOS`) bindet zusätzlich `fire_bios16_dos.h` ein: das Mini-DOS beantwortet die Dateifunktionen lesend aus der FAT12-Diskette (Geometrie und
+Laufwerk aus dem BPB, der bei 0000:7C00 bleibt; gelesen über einen Sektorpuffer, der keine 64-KB-Grenze schneidet - der DMA der Diskette kann das nicht) und
+den DOS-Speicher aus demselben Heap; schreibende Funktionen enden mit Fehler 5. Die Packages nennen das Ziel in `platformSources` (`bios16-dos`: wie
+`dos16`). Eine Diagnose: `-DFIRE_BIOS_TRACE21` meldet die Funktionen von `int 21h`, die niemand beantwortet, auf der Konsole. Getestet in QEMU
 (`qemu-system-i386`, Ausgabe über COM1). Achtung: wlink macht aus Far-Calls im selben Segment `push cs; call near`; ein solcher Call, der unter IP 0
 umläuft, ist auf einem x86 richtig, QEMU 8.2 (TCG mit verketteten Blöcken) maskiert die IP aber nicht - daher `nofarcalls`.
 

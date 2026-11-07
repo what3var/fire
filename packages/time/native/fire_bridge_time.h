@@ -127,6 +127,8 @@ static Value fire_tm_localOffset(Value utc) {
     if ((int64_t)t != unixSeconds) return Int(0);
 #ifdef _WIN32
     if (localtime_s(&lt, &t) != 0) return Int(0);
+#elif defined(__WATCOMC__)
+    if (!_localtime(&t, &lt)) return Int(0);   /* (Open Watcom: no localtime_r - an undeclared one returned an int and cut the far pointer) */
 #else
     if (!localtime_r(&t, &lt)) return Int(0);
 #endif

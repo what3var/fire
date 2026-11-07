@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System;
+using System.Linq;
 
 namespace fire.Runtime
 {
@@ -20,6 +21,10 @@ namespace fire.Runtime
 
         /// <summary>Name on the command line (`--target esp32`).</summary>
         public required string Name { get; init; }
+
+        /// <summary>The name as a part of a C macro (`FIRE_TARGET_&lt;it&gt;`): upper case, every character that is no letter or digit an underscore
+        /// (`bios16-dos`: BIOS16_DOS).</summary>
+        public string MacroName => new string(Name.ToUpperInvariant().Select(c => char.IsAsciiLetterOrDigit(c) ? c : '_').ToArray());
 
         /// <summary>Symbols for conditional compilation (`#if windows`): the operating system or board.</summary>
         public required IReadOnlyList<string> Symbols { get; init; }

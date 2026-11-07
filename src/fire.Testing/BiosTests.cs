@@ -70,17 +70,57 @@ static class BiosTests
             CheckNat("bios16: der eingebaute Boot-Sektor ist die Ausgabe von nasm fuer fire_bios16_boot.asm", assembled.SequenceEqual(fire.Native.BiosBootSectors.Bios16),
                 $"  nasm: {asm.Exit} {asm.Stderr}");
         }
+        // the boot image is a FAT12 floppy: FIRE.EXE first and in one piece, folders, 8.3 names; fsck.fat and mtools (when they are there) read it
+        {
+            var exe = new byte[3000];
+            for (int i = 0; i < exe.Length; i++) exe[i] = (byte)i;
+            var files = new List<fire.Native.Fat12Image.Entry>
+            {
+                new() { Name = "README.TXT", Data = System.Text.Encoding.ASCII.GetBytes("Hallo") },
+                new() { Name = "DATA", Children = new() { new() { Name = "BIG.BIN", Data = new byte[5000] }, new() { Name = "EMPTY" , Data = Array.Empty<byte>() } } },
+            };
+            byte[] img = fire.Native.Fat12Image.Create(fire.Native.BiosBootSectors.Bios16, exe, files);
+            int root = 19 * 512;
+            bool exeFirst = System.Text.Encoding.ASCII.GetString(img, root, 11) == "FIRE    EXE" && BitConverter.ToUInt16(img, root + 26) == 2
+                && BitConverter.ToInt32(img, root + 28) == 3000 && img.AsSpan(33 * 512, 3000).SequenceEqual(exe);
+            string? badName = null;
+            try { fire.Native.Fat12Image.Create(fire.Native.BiosBootSectors.Bios16, exe, new List<fire.Native.Fat12Image.Entry> { new() { Name = "LONGNAME123.TXT", Data = new byte[1] } }); }
+            catch (InvalidOperationException e) { badName = e.Message; }
+            CheckNat("bios16: das Boot-Image ist eine FAT12-Diskette (1,44 MB) - FIRE.EXE zuerst und am Stueck ab Cluster 2, Ordner, ein langer Name ist ein Fehler",
+                img.Length == 1474560 && exeFirst && badName != null && badName.Contains("8.3"), badName);
+            string? fsck = fire.Native.ToolchainSetup.FindProgram("fsck.fat"), mtype = fire.Native.ToolchainSetup.FindProgram("mtype");
+            string fatDir = Path.Combine(workDir, "bios16fat");
+            Directory.CreateDirectory(fatDir);
+            string imgFile = Path.Combine(fatDir, "disk.img");
+            File.WriteAllBytes(imgFile, img);
+            if (fsck == null || mtype == null) Console.WriteLine("SKIP: bios16 FAT12 mit fsck.fat/mtools pruefen - dosfstools oder mtools fehlen");
+            else
+            {
+                var check = TestProcess.Run(fsck, $"-n \"{imgFile}\"", fatDir);
+                var typed = TestProcess.Run(mtype, $"-i \"{imgFile}\" ::/README.TXT", fatDir, null, new Dictionary<string, string?> { ["MTOOLS_SKIP_CHECK"] = "1" });
+                CheckNat("bios16: fsck.fat findet nichts, mtype liest die Datei", check.Exit == 0 && !check.Stdout.Contains("Auto-") && typed.Stdout == "Hallo",
+                    $"  fsck.fat ({check.Exit}):\n{check.Stdout}{check.Stderr}\n  mtype: {typed.Stdout}{typed.Stderr}");
+            }
+        }
         var biosWatcom = new fire.Native.WatcomToolchain();
         if (biosWatcom.Locate(fire.Native.ToolchainDef.BuiltIn["watcom"]) == null || biosQemu == null)
             Console.WriteLine("SKIP: bios16 bauen und in QEMU booten - Open Watcom (owcc) oder qemu-system-i386 fehlt");
         else
         {
             // builds the program and its boot image (PROG.img: boot sector + program, a floppy of 1.44 MB) and boots it in QEMU (at most 2 minutes)
-            (bool Ok, string Text) RunBios16(string source, string folder)
+            // (the files of `disk` go into the folder disk next to the program: onto the floppy)
+            (bool Ok, string Text) RunBios16(string source, string folder, TargetProfile? target = null, IReadOnlyDictionary<string, string>? disk = null)
             {
                 string dir = Path.Combine(workDir, folder);
                 Directory.CreateDirectory(dir);
-                var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), bios16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
+                if (disk != null)
+                    foreach (var (name, content) in disk)
+                    {
+                        string file = Path.Combine(dir, "disk", name);
+                        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                        File.WriteAllText(file, content);
+                    }
+                var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), target ?? bios16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
                 if (!built.Ok) return (false, built.Log);
                 string image = Path.Combine(dir, "PROG.img"), serial = Path.Combine(dir, "COM1.TXT");
                 if (!File.Exists(image)) return (false, "kein Boot-Image\n" + built.Log);
@@ -120,6 +160,40 @@ static class BiosTests
             CheckNat("bios16: ein Thread neben dem Hauptprogramm (Zeitscheiben ueber INT 1Ch), Sleep, int von 32 Bit",
                 biosThr.Ok && thrLines.Length == 4 && thrLines[0] == "start" && thrLines[3] == "ende" && thrLines.Contains("thread -1474936480") && thrLines.Contains("main 300000"),
                 $"  QEMU:\n{biosThr.Text}");
+
+            // ---- bios16-dos: the mini-DOS - files read from the floppy (io/filesystem with the paths of DOS), the folder, the current directory, writing
+            // refused; the memory and the version of DOS through the package dos
+            var bios16Dos = TargetProfile.Bios16Dos;
+            CheckNat("bios16-dos: Zielprofil (bios16 mit FIRE_BIOS_MINIDOS, dazu io, filesystem und dos)", bios16Dos.Native.Platform == "bios16"
+                && bios16Dos.Native.Defines.Contains("FIRE_BIOS_MINIDOS=1") && bios16Dos.Imports.Contains("io") && bios16Dos.Imports.Contains("dos") && bios16Dos.MacroName == "BIOS16_DOS");
+            const string miniDos = """
+                #import "io"
+                #import "filesystem"
+                #import "dos"
+                print("exists " + IO.File.Exists("README.TXT") + " " + IO.File.Exists("A:\\DATA\\ZAHLEN.TXT") + " " + IO.File.Exists("nope.txt"))
+                print(IO.File.ReadAllText("readme.txt"))
+                var lines = IO.File.ReadAllLines("data/zahlen.txt")
+                print("lines " + lines.Count + " " + lines[999])
+                var names = IO.Directory.GetFiles("A:\\")
+                foreach (n in names) { print(n) }
+                print("dirs " + IO.Directory.GetDirectories("\\").Count)
+                IO.Directory.SetCurrentDirectory("DATA")
+                print("cwd " + IO.Directory.GetCurrentDirectory() + " " + IO.File.Exists("ZAHLEN.TXT"))
+                IO.Directory.SetCurrentDirectory("..")
+                try { IO.File.WriteAllText("x.txt", "a") } catch (e) { print("write: " + e.message) }
+                var v = Dos.Version()
+                print("dos " + v[0] + "." + v[1])
+                var seg = Dos.Alloc(100)
+                print("alloc " + (seg > 0) + " " + (Dos.LargestFree() > 1000))
+                Dos.Free(seg)
+                try { Dos.Alloc(65000) } catch (e) { print("too big") }
+                """;
+            var numbers = string.Concat(Enumerable.Range(1, 1000).Select(i => $"Zahl {i}\r\n"));
+            var dosRun = RunBios16(miniDos, "bios16dos", bios16Dos, new Dictionary<string, string> { ["README.TXT"] = "Hallo vom Boot-Image", ["DATA/ZAHLEN.TXT"] = numbers });
+            const string miniDosExpected = "exists True True False\nHallo vom Boot-Image\nlines 1000 Zahl 1000\nA:\\FIRE.EXE\nA:\\README.TXT\ndirs 1\ncwd A:\\DATA True\n"
+                + "write: Access to the path 'A:\\X.TXT' is denied.\ndos 5.0\nalloc True True\ntoo big\n";
+            CheckNat("bios16-dos: das Mini-DOS - Dateien von der Diskette (ueber mehrere Cluster, Unterordner, Muster, aktueller Ordner), Schreiben verweigert, Speicher und Version von DOS",
+                dosRun.Ok && dosRun.Text == miniDosExpected, $"  erwartet:\n{miniDosExpected}\n  QEMU:\n{dosRun.Text}");
         }
     }
 }

@@ -620,11 +620,15 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    * Kein Audio, kein Netz; fire-Threads über den eigenen Scheduler (Takt über IRQ 0) wie dos16/dos32. Nur Grafik, grober IO (Bildschirm/Konsole, Tastatur,
      serieller Port) und die Hardware-Packages.
    * Tests in QEMU (`qemu-system-i386`) ohne Fenster: Ausgabe über den seriellen Port, Ende über den Debug-Port.
-   * **Stand `bios16`** (umgesetzt: die Stufe *minimale libc*): Boot-Image (`<programm>.img`, Bootsektor + DOS-Exe, eine Diskette von 1,44 MB), eigener Start
-     (`fire_bios16_start.asm`), Heap bis zur Grenze aus `int 12h`, ein `int 21h` der Plattform für das, was die C-Bibliothek von Watcom braucht (Konsole auf
-     Bildschirm und COM1, Tastatur, Zeit), fire-Threads über den eigenen Scheduler (Takt über `INT 1Ch`). Getestet in QEMU (`FIRE_TESTS_ONLY=bios16`).
+   * **Stand `bios16`** (umgesetzt, beide Stufen): das Boot-Image `<programm>.img` ist eine FAT12-Diskette von 1,44 MB (`Fat12Image`): der Bootsektor mit BPB lädt
+     `FIRE.EXE` (die erste Datei, am Stück), dazu kommen die Dateien und Ordner des Ordners `disk` neben dem Programm (8.3-Namen); `fsck.fat` und mtools lesen sie.
+     Eigener Start (`fire_bios16_start.asm`), Heap bis zur Grenze aus `int 12h`, ein `int 21h` der Plattform für die C-Bibliothek von Watcom (Konsole auf
+     Bildschirm und COM1, Tastatur, Zeit), fire-Threads über den eigenen Scheduler (Takt über `INT 1Ch`).
+     **`bios16`** = die minimale libc; **`bios16-dos`** = dazu das Mini-DOS (`fire_bios16_dos.h`): Dateien nur lesend von der Diskette (öffnen, lesen, suchen,
+     Muster, Ordner, aktueller Ordner, Zeit und Attribute; Schreiben wird mit „Zugriff verweigert“ abgelehnt) und der Speicher von DOS (48h/49h/4Ah) - damit
+     laufen `io`, `filesystem` und `dos` wie auf dos16. Getestet in QEMU (`FIRE_TESTS_ONLY=bios16`).
      Gebunden mit `option nofarcalls`: QEMU 8.2 rechnet einen Near-Call, der unter IP 0 umläuft, nicht in 16 Bit (die Umwandlung der Far-Calls durch wlink
-     erzeugt solche). Offen: das Mini-DOS, `bios32`, die Grafik.
+     erzeugt solche). Offen: `xms` (das Mini-DOS hat keinen XMS-Treiber), `bios32`, die Grafik.
 6. **`efi-x64`** - eine UEFI-Anwendung (PE32+; clang + lld-link oder mingw-w64 x86_64 ohne CRT), bleibt in den Boot Services: Konsole über ConIn/ConOut, Grafik über
    den GOP-Framebuffer, Zeit und `Sleep` über Timer-Ereignisse, Speicher über `AllocatePool`. Keine fire-Threads; Audio, Dateien und Netz wie bei `bios16`/`bios32` nicht.
    EFI mit 32 Bit nicht (solche Rechner haben praktisch immer ein CSM: dort laufen `bios16`/`bios32`).

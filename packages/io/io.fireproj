@@ -364,6 +364,9 @@
       ],
       "win16": [
         "native/fire_fs_dos.h"
+      ],
+      "bios16-dos": [
+        "native/fire_fs_dos.h"
       ]
     },
     "headers": [

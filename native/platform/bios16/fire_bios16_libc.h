@@ -4,7 +4,7 @@
  *  - the heap: the conventional memory between the end of the program (BP from the boot sector) and the top the BIOS reports (int 12h) - malloc/calloc/realloc/
  *    free and halloc/hfree (blocks over 64 KB) -, and a near heap of 8 KB in DGROUP for the C library's own structures (stdio, arguments);
  *  - int 21h: the services the C library uses (console, version, time and date of the BIOS clock, vectors, the end of the program); everything else fails as
- *    "invalid function" - there are no files;
+ *    "invalid function" - there are no files (the target bios16-dos adds the mini-DOS of fire_bios16_dos.h: files from the boot floppy, the memory of DOS);
  *  - the end: port 0xF4 (QEMU's debug exit) with the exit code, then the machine waits with a message on the screen.
  * Every definition here is the program's own (no `static`): the linker takes them instead of the ones of the C library. The startup code (fire_bios16_start.asm)
  * calls fire_bios_cmain. Only the translation unit of the program includes this file. */
@@ -73,6 +73,9 @@ int fire_bios_getc(void) {
 void fire_bios_exit(int code) {
     static const char text[] = "\r\nThe program has ended. The machine can be switched off.\r\n";
     const char* p;
+#if FIRE_BIOS_SERIAL
+    { unsigned spin = 0; while (fire_bios_serialReady && !(inp(FIRE_BIOS_SERIAL + 5) & 0x40) && ++spin != 0) {} }   /* (COM1 sends what it holds first) */
+#endif
     outp(0xF4, code & 0xFF);   /* (QEMU with -device isa-debug-exit ends here with the code) */
     for (p = text; *p; p++) fire_bios_screenPut(*p);
     for (;;) { _disable(); }
@@ -222,10 +225,17 @@ static unsigned char fire_bios_noDbcs[4];   /* (an empty table of DBCS lead byte
 static unsigned fire_bios_bcd(unsigned char b) { return (b >> 4) * 10u + (b & 15u); }
 static void fire_bios_fail(FireBiosRegs __far* r, unsigned code) { r->ax = code; r->flags |= 1; }
 
+#ifdef FIRE_BIOS_MINIDOS
+#include "fire_bios16_dos.h"   /* (bios16-dos: files from the boot floppy, the memory of DOS) */
+#endif
+
 void __far fire_bios_int21(FireBiosRegs __far* r) {
     unsigned char ah = (unsigned char)(r->ax >> 8), al = (unsigned char)r->ax;
     union REGS q;
     r->flags &= ~1u;
+#ifdef FIRE_BIOS_MINIDOS
+    if (fire_bios_dos(r, ah, al)) return;
+#endif
     switch (ah) {
     case 0x30: r->ax = 0x0005; r->bx = 0; r->cx = 0; return;                       /* the version: 5.0 */
     case 0x44:                                                                     /* IOCTL: handles 0-2 are the console */
@@ -290,7 +300,15 @@ void __far fire_bios_int21(FireBiosRegs __far* r) {
         r->bx = 1;
         return;
     }
-    default: fire_bios_fail(r, 1); return;                                         /* "invalid function" (files, memory of DOS, ...) */
+    default:                                                                       /* "invalid function" (files, memory of DOS, ...) */
+#ifdef FIRE_BIOS_TRACE21
+        {   /* (a build with -DFIRE_BIOS_TRACE21: the functions nobody answers, on the console) */
+            static const char hex[] = "0123456789ABCDEF";
+            fire_bios_putc('['); fire_bios_putc('2'); fire_bios_putc('1'); fire_bios_putc(':'); fire_bios_putc(hex[ah >> 4]); fire_bios_putc(hex[ah & 15]);
+            fire_bios_putc(hex[al >> 4]); fire_bios_putc(hex[al & 15]); fire_bios_putc(']');
+        }
+#endif
+        fire_bios_fail(r, 1); return;
     }
 }
 

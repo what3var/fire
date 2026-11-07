@@ -76,22 +76,18 @@ namespace fire.Native
             return sources.Select(f => (wasm, $"-q {cpu} {Quote(f)} -fo={Quote(ObjectOf(f))}")).ToList();
         }
 
-        /// <summary>A target without an operating system gets its disk image next to the program (bios16: <c>&lt;name&gt;.img</c> - the boot sector, then the program from
-        /// sector 1 on; a floppy of 1.44 MB when it fits, else a hard disk).</summary>
+        /// <summary>A target without an operating system gets its disk image next to the program (bios16, bios16-dos: <c>&lt;name&gt;.img</c>, a FAT12 floppy of
+        /// 1.44 MB - the boot sector, FIRE.EXE, and the files and folders of a folder <c>disk</c> next to the program: the mini-DOS of bios16-dos reads them).</summary>
         public string? AfterLink(ToolchainDef toolchain, TargetProfile target, string exe)
         {
             if (target.Native.Platform != "bios16") return null;
-            byte[] program = File.ReadAllBytes(exe);
-            long size = 512 + program.LongLength;
-            long floppy = 1474560, length = size <= floppy ? floppy : (size + 512 * 63 * 16 - 1) / (512 * 63 * 16) * (512 * 63 * 16);
             string image = Path.ChangeExtension(exe, ".img");
-            using (var file = File.Create(image))
-            {
-                file.Write(BiosBootSectors.Bios16);
-                file.Write(program);
-                file.SetLength(length);
-            }
-            return $"boot image: {image} ({(length == floppy ? "a floppy of 1.44 MB" : $"a hard disk of {length / 1048576} MB")}, the program {program.Length} bytes from sector 1 on)";
+            string disk = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(exe))!, "disk");
+            var files = Directory.Exists(disk) ? Fat12Image.FromFolder(disk) : new List<Fat12Image.Entry>();
+            byte[] program = File.ReadAllBytes(exe);
+            try { File.WriteAllBytes(image, Fat12Image.Create(BiosBootSectors.Bios16, program, files)); }
+            catch (InvalidOperationException e) { return $"boot image: not written - {e.Message}"; }
+            return $"boot image: {image} (a FAT12 floppy of 1.44 MB: FIRE.EXE, {program.Length} bytes" + (files.Count > 0 ? $", and {files.Count} entries of {disk}" : "") + ")";
         }
 
         private static IReadOnlyList<string> StartupSources(TargetProfile target, string includeDir)

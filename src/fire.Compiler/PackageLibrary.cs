@@ -218,7 +218,7 @@ namespace fire.Compiler
             foreach (string lib in native.LinkLibrariesFor(HostPlatformKeys)) sb.AppendLine($"// fire-link: {lib}");
             sb.AppendLine("#define FIRE_LIBRARY 1");
             sb.AppendLine($"#define FIRE_TARGET \"{target.Name}\"");
-            sb.AppendLine($"#define FIRE_TARGET_{target.Name.ToUpperInvariant()} 1");
+            sb.AppendLine($"#define FIRE_TARGET_{target.MacroName} 1");
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
@@ -316,7 +316,7 @@ namespace fire.Compiler
             foreach (string lib in CppGenerator.DisplayLibraries(target)) sb.AppendLine($"// fire-link: {lib}");
             sb.AppendLine("#define FIRE_LIBRARY 1");
             sb.AppendLine($"#define FIRE_TARGET \"{target.Name}\"");
-            sb.AppendLine($"#define FIRE_TARGET_{target.Name.ToUpperInvariant()} 1");
+            sb.AppendLine($"#define FIRE_TARGET_{target.MacroName} 1");
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
@@ -366,7 +366,7 @@ namespace fire.Compiler
             foreach (string lib in native.LinkLibrariesFor(HostPlatformKeys)) sb.AppendLine($"// fire-link: {lib}");   // (`linkLibraries` of the package: the build links them)
             sb.AppendLine("#define FIRE_LIBRARY 1");
             sb.AppendLine($"#define FIRE_TARGET \"{target.Name}\"");
-            sb.AppendLine($"#define FIRE_TARGET_{target.Name.ToUpperInvariant()} 1");
+            sb.AppendLine($"#define FIRE_TARGET_{target.MacroName} 1");
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
