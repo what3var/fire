@@ -28094,8 +28094,8 @@ else
                     const string win16Window = """
                         #import "graphics"
                         #import "windows"
-                        inline c int Pixel(int x, int y) { HWND h = FindWindow("FireWindow16", "Win16"); HDC dc; COLORREF c; if (h == NULL) return -1; dc = GetDC(h); c = GetPixel(dc, (int)x, (int)y); ReleaseDC(h, dc); return (FireInt)(c & 0xFFFFFFL); }
-                        inline c Key(int vk, int scan) { HWND h = FindWindow("FireWindow16", "Win16"); if (h != NULL) { PostMessage(h, WM_KEYDOWN, (WPARAM)vk, ((LPARAM)scan << 16) | 1); PostMessage(h, WM_KEYUP, (WPARAM)vk, ((LPARAM)scan << 16) | 0xC0000001L); } }
+                        inline c int Pixel(int x, int y) { HWND h = FindWindow((LPCSTR)"FireWindow16", (LPCSTR)"Win16"); HDC dc; COLORREF c; if (h == 0) return -1; dc = GetDC(h); c = GetPixel(dc, (int)x, (int)y); ReleaseDC(h, dc); return (FireInt)(c & 0xFFFFFFL); }
+                        inline c Key(int vk, int scan) { HWND h = FindWindow((LPCSTR)"FireWindow16", (LPCSTR)"Win16"); if (h != 0) { PostMessage(h, WM_KEYDOWN, (WPARAM)vk, ((LPARAM)scan << 16) | 1); PostMessage(h, WM_KEYUP, (WPARAM)vk, ((LPARAM)scan << 16) | 0xC0000001L); } }
                         var fb = new Framebuffer(80, 60, 1)
                         fb.SetPaletteRgb(7, 255, 0, 0)
                         fb.SetPaletteRgb(9, 0, 0, 255)

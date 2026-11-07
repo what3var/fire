@@ -135,7 +135,7 @@ static int fire_display_open(FireDisplayWindow* w, const char* title, int width,
         c.hInstance = g_win16Instance;
         c.hCursor = LoadCursor(NULL, IDC_ARROW);
         c.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-        c.lpszClassName = "FireWindow16";
+        c.lpszClassName = (LPCSTR)"FireWindow16";   /* (the huge model: a pointer is __huge, Windows takes __far) */
         if (!RegisterClass(&c)) return 0;
         registered = 1;
     }
@@ -147,9 +147,9 @@ static int fire_display_open(FireDisplayWindow* w, const char* title, int width,
     w->fbw = width; w->fbh = height;
     r.left = 0; r.top = 0; r.right = width; r.bottom = height;
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    w->hwnd = CreateWindow("FireWindow16", title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top,
-                           NULL, NULL, g_win16Instance, NULL);
-    if (w->hwnd == NULL) { g_w16Windows[i] = NULL; return 0; }
+    w->hwnd = CreateWindow((LPCSTR)"FireWindow16", (LPCSTR)title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top,
+                           (HWND)0, (HMENU)0, g_win16Instance, (void FAR*)0);   /* (no NULL: in the huge model it is a __huge pointer) */
+    if (w->hwnd == 0) { g_w16Windows[i] = NULL; return 0; }   /* (a handle: 0, not NULL - a __huge pointer in this model) */
     ShowWindow(w->hwnd, SW_SHOWNORMAL);
     UpdateWindow(w->hwnd);
     w->open = 1;
@@ -225,7 +225,7 @@ static void fire_w16_frame(FireDisplayWindow* w, const FireGfxFramebuffer* fb, c
             }
         }
         bmi.h.biHeight = n;
-        if (dy1 > dy0) StretchDIBits(dc, 0, dy0, w->cw, dy1 - dy0, 0, 0, fw, n, band, (BITMAPINFO*)&bmi, DIB_RGB_COLORS, SRCCOPY);
+        if (dy1 > dy0) StretchDIBits(dc, 0, dy0, w->cw, dy1 - dy0, 0, 0, fw, n, (const void FAR*)band, (BITMAPINFO FAR*)&bmi, DIB_RGB_COLORS, SRCCOPY);
     }
     ReleaseDC(w->hwnd, dc);
     ValidateRect(w->hwnd, NULL);
