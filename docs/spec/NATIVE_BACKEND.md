@@ -663,6 +663,13 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
   Geräte, GPIO/I2C/SPI, USB, WLAN, Ton, Anzeige, Konsole, Hardware) bringen die Pakete selbst mit (`platformSources`, ROADMAP 13.3b); ein Paket, das die Schicht eines
   anderen braucht, nennt es in `native.uses` (graphics -> io, tls -> net, circuits -> audio). Die Auswahl je Plattform bleibt wie geschrieben: die Datei der Plattform bindet die Umsetzung ein, die sie wählt (auch in `#if`) - die Dateien, die so eingebunden werden, stehen in `native.headers` und liegen in jedem Build als Dateien unter `pkg/<import>/` neben dem Programm (das `#include` nennt sie dort).
 
+**`dos32`** (DOS mit DOS-Extender ab 386, ROADMAP 13.4): Open Watcom `wcc386` über `owcc -bdos32a` - der Stub ist der ganze Extender DOS/32A, das Programm
+ist eine .exe (der Treiber legt `binw` auf den PATH, dort liegen die Stubs). Flacher Speicher, `int`/`float` 64 Bit, `word` 32 Bit, 256 KB Stack, fire-Threads
+über den eigenen Scheduler (`std/sched/fire_ctx_x86_32.h`: setjmp/longjmp, ESP für einen neuen Task, IRQ 0 als Takt). Die Plattform ist dieselbe Datei wie bei
+dos16 (`std/fire_platform_dos.h`: Uhr, Schlafen, Ende über die C-Bibliothek, die unter DPMI genauso geht). Die Packages: `platform/std/fire_dos_bios.h` macht die
+DOS-Dateien von console, windows und devices für beide Ziele gleich; machine `fire_machine_x86_32.h`, dos `fire_dos_dpmi.h`; xms und x86 nicht. Getestet in
+DOSBox-X mit den Programmen von dos16 (dieselbe Ausgabe wie die VM mit den Breiten von dos32).
+
 **`dos16`** (DOS im Real Mode ab 8086, ROADMAP 13.3) - Stand: Programme ohne Imports laufen (Zahlen, Strings, Objekte, Arrays, Ausnahmen, Einheiten), getestet in
 DOSBox-X: von den 139 nativen Testprogrammen ohne Imports laufen alle wie in der VM außer `#performance` (weicht gewollt ab); dazu Dateien (`io`/`filesystem`
 mit DOS-Pfaden). Huge Model (`-mcmodel=h`): Zeiger 32 Bit und über Segmentgrenzen gerechnet, also mit `int`/`float` von 32 Bit (Standard des Ziels) ein 8-Byte-Wert;

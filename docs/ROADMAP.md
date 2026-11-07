@@ -599,8 +599,15 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Getestet: Protected Mode aus fire in DOSBox-X; beide Stubs unter QEMU ohne DOS (Bootsektor). Offen: Long Mode aus fire unter DOS auf einem 64-Bit-Rechner
    (QEMU mit FreeDOS - der Download ist in dieser Umgebung gesperrt), und **fire-Code im Protected Mode** - eine Funktion, für das 32-Bit-Ziel übersetzt
    (kommt mit `dos32`/`bios-x86`: dieselbe Runtime mit flachem Speicher), als Routine mitgegeben.
-4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
-   Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
+4. **`dos32`** - DOS mit DOS-Extender ab 386 (**umgesetzt**): Open Watcom 386, der Extender DOS/32A steckt im Programm (`-bdos32a`: eine .exe, kein
+   DOS4GW.EXE daneben), flacher Speicher, `int`/`float` 64 Bit wie auf dem Desktop (dieselben Ergebnisse wie die VM), fire-Threads über den eigenen Scheduler
+   (`std/sched/fire_ctx_x86_32.h`, Takt über IRQ 0). Die Packages mit Real-Mode-Code dienen dos16 und dos32 mit denselben Dateien über
+   `platform/std/fire_dos_bios.h` (BIOS über `int386` - der Extender reicht Interrupts nur mit Registern hinunter -, das erste Megabyte an seiner linearen
+   Adresse, DPMI 0300h für einen Interrupt mit Puffer, z. B. die VESA-Information): Konsole, Anzeige von windows (Mode 13h, VESA 101h), serielle Ports;
+   machine hat `fire_machine_x86_32.h` (CPUID, 32-Bit-Ports, physischer Speicher über 1 MB per DPMI 0800h, IRQs gemeinsam mit dos16), dos hat
+   `fire_dos_dpmi.h` (Interrupts im Real Mode über DPMI; ein Puffer des Programms liegt über 1 MB: DosException). xms und x86 gibt es dort nicht (der Speicher
+   gehört dem Programm, es ist schon im Protected Mode). Getestet in DOSBox-X mit denselben Programmen wie dos16.
+   Offen: ein Package **`dpmi`** (Interrupts mit Registersatz, Real-Mode-Aufrufe, Selektoren, DOS-Speicher als Puffer des Programms).
 5. **`bios-x86`** - ohne Betriebssystem, vom BIOS gestartet: 32-Bit-Protected-Mode mit flachem Speicher (dieselbe Runtime wie `dos32`), BIOS-Dienste
    (`int 10h`, ...) über einen kurzen Rücksprung in den Real Mode; Start als Multiboot-Kernel (GRUB, `qemu -kernel`) oder über einen eigenen Bootsektor.
    Kein Audio, keine Dateien, kein Netz, keine fire-Threads - nur Grafik, grober IO (Bildschirm/Konsole, Tastatur, serieller Port) und die Hardware-Packages.
