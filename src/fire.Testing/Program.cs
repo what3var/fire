@@ -28118,6 +28118,45 @@ else
                     var w16Win = RunWin16(win16Window, "win16win");
                     CheckNat("win16: windows - ein Fenster ueber GDI (Palette-Framebuffer gestreckt, mit GetPixel zurueckgelesen), Tasten aus WM_KEYDOWN (Scancode wie unter Win32)",
                         w16Win.Ok && w16Win.Text == "left 255 right 16711680\nkeys 4/97 41/27 \ndone\n", $"  Wine:\n{w16Win.Text}");
+                    // the clipboard of Windows: text (Latin-1, the line break as CR LF and back) and a picture (CF_DIB)
+                    const string win16Clip = """
+                        #import "graphics"
+                        #import "windows"
+                        var fb = new Framebuffer(10, 6)
+                        var w = new Window(fb, "Clip")
+                        print("set " + Clipboard.SetText("Grüße\nzwei"))
+                        print("has " + Clipboard.HasText + " [" + Clipboard.GetText() + "]")
+                        var pic = new Framebuffer(10, 6)
+                        new Renderer(pic).ClearTo(255)
+                        print("image " + Clipboard.SetImage(pic) + " " + Clipboard.HasImage)
+                        var back = Clipboard.GetImage()
+                        print("back " + back.Width + "x" + back.Height)
+                        w.Close()
+                        """;
+                    var w16Clip = RunWin16(win16Clip, "win16clip");
+                    CheckNat("win16: die Zwischenablage von Windows - Text (Latin-1, Zeilenumbruch) und ein Bild (CF_DIB) hin und zurueck",
+                        w16Clip.Ok && w16Clip.Text == "set True\nhas True [Grüße\nzwei]\nimage True True\nback 10x6\n", $"  Wine:\n{w16Clip.Text}");
+                    // the user interface library (#import "ui", "dialogs") in 16 bits: a panel with a label and a button, drawn into the GDI window
+                    const string win16Ui = """
+                        #import "graphics"
+                        #import "windows"
+                        #import "ui"
+                        #import "dialogs"
+                        var fb = new Framebuffer(240, 120)
+                        var win = new Window(fb, "UI16")
+                        var ui = new UI.Root(fb, win)
+                        var panel = new UI.Panel(8, 8, 220, 100)
+                        ui.Add(panel)
+                        panel.Add(new UI.Label("Hello Windows 3.x", 6, 6))
+                        panel.Add(new UI.Button("OK", 6, 30, 80, 26))
+                        ui.Tick()
+                        var rd = new Renderer(fb)
+                        print("ui " + (rd.GetPixel(20, 50) != rd.GetPixel(200, 90)) + " " + (Dialogs.DialogResult.OK != Dialogs.DialogResult.Cancel))
+                        win.Close()
+                        """;
+                    var w16Ui = RunWin16(win16Ui, "win16ui");
+                    CheckNat("win16: die UI-Bibliothek (ui, dialogs) im Huge Model - ein Panel mit Label und Knopf, ueber GDI gezeigt",
+                        w16Ui.Ok && w16Ui.Text == "ui True True\n", $"  Wine:\n{w16Ui.Text}");
                 }
             }
         }
