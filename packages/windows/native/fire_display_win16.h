@@ -42,8 +42,8 @@ static void fire_display_systemTheme(FireSystemTheme* t) {
     t->scale = 1.0;
     t->dark = brightness < 96;
     t->accent = ((int32_t)GetRValue(caption) << 16) | ((int32_t)GetGValue(caption) << 8) | (int32_t)GetBValue(caption);
-    strcpy(t->fonts, "MS Sans Serif;Arial;System");
-    t->fontSize = 13;
+    t->fonts[0] = 0;   /* (the fonts of Windows 3.1 - MS Sans Serif, System - are bitmap fonts (.FON) the graphics library does not read; the UI keeps its own) */
+    t->fontSize = 0;
 }
 static void fire_display_threadDone(void) {}
 
