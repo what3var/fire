@@ -165,18 +165,22 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   kein Wert eines Enums: eine Konstante der Programmbreite (ohne Enum), eine Rechnung auf solchen Zahlen (`+ - * % & | # << >>`), ein Element eines
   typisierten int-Arrays oder eines Bytepuffers, `length`, ein Schnitt auf eine Breite (`ConvertWidth`: `int[8]`, `int[16]`, `int[32]` bis zur
   Programmbreite, ein Byte); `CutBit` - von der Programmbreite, aber vielleicht ein Enum-Wert: ein `int`-Parameter oder -Feld (jeder Weg hinein schneidet).
-  Zusammengeführt bleibt ein Merkmal nur, wo beide Seiten es haben. Ein Platz mit einer schmalen Zahl ohne Einheit, einem bool eines Vergleichs oder
-  einem `word` lebt dann in seinem **Schatten** (`s0_n` ein `FireInt`, `s0_b` ein `bool`, `s0_w` ein `FireWord`; `Flow.Scalar`): Konstanten, Laden
+  Zusammengeführt bleibt ein Merkmal nur, wo beide Seiten es haben. Ein Platz mit einer schmalen Zahl ohne Einheit, einem float ohne Einheit, einem
+  bool eines Vergleichs oder einem `word` lebt dann in seinem **Schatten** (`s0_n` ein `FireInt`, `s0_f` ein `Real`, `s0_b` ein `bool`, `s0_w` ein
+  `FireWord`; `Flow.Scalar`): Konstanten, Laden
   skalarer Variablen, die Rechnungen und Vergleiche (auch gegen einen `int`-Parameter, der `undefined` sein kann: dessen Art wird geprüft, sonst
   entscheidet der allgemeine Vergleich), `JumpIfFalse`, die verschmolzenen `JumpIfNot*`, `ConvertWidth` und das Lesen aus Puffern arbeiten in C.
+  Floats rechnen in `Real` (ein Cast rundet auf den float des Programms, wie `Float(...)`; mit Ints gemischt wird der Int umgewandelt, `%` ist `fmod`),
+  ordnende Vergleiche wie `compareNumeric` (`fire_cmpReal`: NaN liegt unter allem), `==`/`!=` wie `FIRE_CC_FEQ`; `float[32]` rundet wie `convertWidth`
+  (`roundFloatToWidth`). Negation und `!` arbeiten auf den Schatten.
   `FireInt`/`FireUInt` haben die Programmbreite (32 oder 64 Bit) und laufen über wie `FIRE_INT_CUT`; die Schiebeoperationen rechnen wie `shl`/`shr`
   (`FIRE_SCALAR_SHL/SHR`: eine Verschiebung um die volle Breite ist in C undefiniert), Wörter laufen an ihrer Breite über. Jede allgemeine Benutzung
   eines Platzes (`S(k)`) macht ihn vorher zum Value, ebenso jede Operation, die Skalare nicht kennt, jeder Sprung und jeder Übergang in ein Sprungziel:
   an einem Sprungziel ist nie ein Platz skalar (die Zustände werden mit UND zusammengeführt). **Variablen**, deren jede Speicherung eine schmale Zahl
-  ohne Einheit (oder ein `word`) ist, sind C-Zahlen (kein Parameter, kein globaler, keine Variable eines Threads, nichts zeigt auf sie; in einer
+  ohne Einheit (ein float ohne Einheit, ein `word`) ist, sind C-Zahlen (kein Parameter, kein globaler, keine Variable eines Threads, nichts zeigt auf sie; in einer
   Funktion mit catch-Blöcken im Rahmen); `x += c` auf ihnen ist C. Nicht in Debug-Builds (der Debugger liest die Values) und nicht mit `#intwidth 16`.
   Gemessen auf dos16 (Open Watcom, `-Os`): eine Schleife `s = (s * 31 + i) % 1000003` mit `i < n` gegen den Parameter 1012 -> 334 Byte, eine
-  Float-Schleife (nur der Zähler skalar) 1001 -> 615 Byte. Mit gcc `-O2` gleich schnell wie vorher (gcc hielt die Values schon in Registern).
+  Float-Schleife `a = a + x * x; x = x + 0.25` 1001 -> 351 Byte. Mit gcc `-O2` gleich schnell wie vorher (gcc hielt die Values schon in Registern).
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit

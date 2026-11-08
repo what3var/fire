@@ -2145,6 +2145,11 @@ FIRE_FN int compareNumeric(Value a, Value b) {
     if (x > y) return 1;
     return 0;
 }
+/* The order of two floats of the generator's scalars, like compareNumeric (NaN below everything, like double.CompareTo in the VM): -1, 0 or 1. */
+FIRE_FN int fire_cmpReal(Real x, Real y) {
+    if (FIRE_UNLIKELY(isnan(x) || isnan(y))) return isnan(x) ? (isnan(y) ? 0 : -1) : 1;
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
 /* Two texts by their UTF-16 code units (string.CompareOrdinal): -1, 0 or 1. */
 FIRE_FN int compareText(Value a, Value b) {
     const Str* x = strOf(a);
