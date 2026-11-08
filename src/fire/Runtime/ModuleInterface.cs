@@ -33,7 +33,7 @@ namespace fire.Runtime
                 sb.Append(" layout ").Append(string.Join(",", rc.FlattenedFieldNames)).Append('\n');
                 foreach (var (field, info) in rc.OwnFieldInfo.OrderBy(f => f.Key, StringComparer.Ordinal))
                     sb.Append(" field ").Append(field).Append(' ').Append(info.IsStatic).Append(' ').Append(info.AccessModifier).Append(' ').Append(info.RequiredKind).Append(' ')
-                        .Append(info.RequiredUnit).Append(' ').Append(info.RequiredType).Append(' ').Append(info.TypeText).Append('\n');
+                        .Append(info.RequiredUnit).Append(' ').Append(info.RequiredType).Append(' ').Append(info.TypeText).Append(info.RequiredArray != 0 ? " a" + info.RequiredArray : "").Append('\n');
                 void Proto(string what, FunctionProto p) =>
                     sb.Append(' ').Append(what).Append(" (").Append(p.ParamCount).Append(") ").Append(p.Access).Append(p.IsStatic ? " static" : "").Append(" t").Append(p.TypeParamCount)
                         .Append(" r").Append(p.RefMask).Append(" [").Append(string.Join(",", (p.ParamTypes ?? Array.Empty<string?>()).Select(t => t ?? "?"))).Append("] d")

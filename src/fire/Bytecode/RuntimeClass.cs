@@ -38,6 +38,10 @@ namespace fire.Bytecode
         /// (DeclaredType, its encoded form); null: none.</summary>
         public string? RequiredType { get; set; }
 
+        /// <summary>A field declared as a typed array (`int data[]`, `float[32] m[][]`): the element (ArrayElem) | the rank << 8 - every assignment types the array
+        /// (OpCode.TypeArray: an array of that element or `undefined`, RequiredUnit is the unit of its elements); 0: none. Not for `byte`/`word` (buffers).</summary>
+        public ushort RequiredArray { get; set; }
+
         public AccessModifier AccessModifier { get; set; }
 
         /// <summary>SPEC "Static members" - `true` for a `static`
@@ -231,6 +235,15 @@ namespace fire.Bytecode
                 if (rc.OwnFieldInfo.TryGetValue(name, out var field))
                     return field.RequiredType;
             return null;
+        }
+
+        /// <summary>Like FindFieldRequiredUnit, for a typed array (FieldInfo.RequiredArray, 0: none).</summary>
+        public ushort FindFieldRequiredArray(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.RequiredArray;
+            return 0;
         }
 
         /// <summary>Like FindFieldRequiredUnit, for the kind (FieldInfo.RequiredKind, 0: none).</summary>
