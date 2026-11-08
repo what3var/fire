@@ -304,7 +304,7 @@ namespace fire.Standard
                 }
 
                 undefined operator[](int index, T value) {
-                    var old = this.items[index]
+                    any old = this.items[index]
                     if (value is of class) {
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
@@ -314,7 +314,7 @@ namespace fire.Standard
 
                 // removes the element at `index` (the ones behind it move up); the element itself is destroyed only if the list owns it (Owns.Values)
                 undefined RemoveAt(int index) {
-                    var old = this.items[index]
+                    any old = this.items[index]
                     var i = index
                     while (i < this.count - 1) {
                         this.items[i] = this.items[i + 1]
@@ -327,7 +327,7 @@ namespace fire.Standard
 
                 // removes the element at `index` and gives it to the caller (who owns it then, if the list owned it)
                 T TakeAt(int index) {
-                    var value = this.items[index]
+                    any value = this.items[index]
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
                     if (value is of class && value is from this) { taken = take value }
                     this.RemoveAt(index)
@@ -378,7 +378,7 @@ namespace fire.Standard
                 undefined Clear() {
                     var i = 0
                     while (i < this.count) {
-                        var old = this.items[i]
+                        any old = this.items[i]
                         this.items[i] = undefined
                         this.DropElement(old)
                         i = i + 1
@@ -394,7 +394,7 @@ namespace fire.Standard
                         i = i + 1
                     }
                     // the new array belongs to the list (a local array dies with this method), the old one is released
-                    var old = this.items
+                    any old = this.items
                     this.items = newItems
                     newItems.TakeTo(this)
                     delete old
@@ -447,7 +447,7 @@ namespace fire.Standard
 
                 // the entry of `key` (hash `h`), -1 if there is none
                 int Find(any key, int h) {
-                    var i = this.buckets[h & (this.buckets.length - 1)] - 1
+                    any i = this.buckets[h & (this.buckets.length - 1)] - 1
                     while (i >= 0) {
                         if (this.hashes[i] == h && this.SameKey(this.keys[i], key)) { return i }
                         i = this.next[i] - 1
@@ -464,7 +464,7 @@ namespace fire.Standard
                     this.vals[i] = value
                     this.hashes[i] = h
                     this.live[i] = true
-                    var b = h & (this.buckets.length - 1)
+                    any b = h & (this.buckets.length - 1)
                     this.next[i] = this.buckets[b]
                     this.buckets[b] = i + 1
                     this.count = this.count + 1
@@ -472,8 +472,8 @@ namespace fire.Standard
 
                 // takes the entry out of its chain; key and value stay with the caller (Drop or TakeLocal)
                 undefined Unlink(int at) {
-                    var b = this.hashes[at] & (this.buckets.length - 1)
-                    var i = this.buckets[b] - 1
+                    any b = this.hashes[at] & (this.buckets.length - 1)
+                    any i = this.buckets[b] - 1
                     var prev = -1
                     while (i >= 0 && i != at) {
                         prev = i
@@ -515,12 +515,12 @@ namespace fire.Standard
                             j = j + 1
                         }
                     }
-                    var oldKeys = this.keys
-                    var oldVals = this.vals
-                    var oldHashes = this.hashes
-                    var oldNext = this.next
-                    var oldLive = this.live
-                    var oldBuckets = this.buckets
+                    any oldKeys = this.keys
+                    any oldVals = this.vals
+                    any oldHashes = this.hashes
+                    any oldNext = this.next
+                    any oldLive = this.live
+                    any oldBuckets = this.buckets
                     this.keys = nk
                     this.vals = nv
                     this.hashes = nh
@@ -546,8 +546,8 @@ namespace fire.Standard
                 undefined ClearEntries(Owns keyPart, Owns valuePart) {
                     for (var i = 0; i < this.used; i = i + 1) {
                         if (this.live[i]) {
-                            var k = this.keys[i]
-                            var v = this.vals[i]
+                            any k = this.keys[i]
+                            any v = this.vals[i]
                             this.keys[i] = undefined
                             this.vals[i] = undefined
                             this.live[i] = false
@@ -589,7 +589,7 @@ namespace fire.Standard
                     this.index = -1
                 }
                 bool MoveNext() {
-                    var at = this.table.__NextEntry(this.index)
+                    any at = this.table.__NextEntry(this.index)
                     if (at < 0) { return false }
                     this.index = at
                     return true
@@ -607,7 +607,7 @@ namespace fire.Standard
                     this.index = -1
                 }
                 bool MoveNext() {
-                    var at = this.table.__NextEntry(this.index)
+                    any at = this.table.__NextEntry(this.index)
                     if (at < 0) { return false }
                     this.index = at
                     return true
@@ -650,7 +650,7 @@ namespace fire.Standard
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
                     if (at >= 0) {
-                        var old = this.vals[at]
+                        any old = this.vals[at]
                         this.vals[at] = value
                         if (old != value) { this.Drop(old, Owns.Values) }
                         return
@@ -689,8 +689,8 @@ namespace fire.Standard
                 bool Remove(K key) {
                     var at = this.Find(key, this.HashOf(key))
                     if (at < 0) { return false }
-                    var k = this.keys[at]
-                    var v = this.vals[at]
+                    any k = this.keys[at]
+                    any v = this.vals[at]
                     this.Unlink(at)
                     this.Drop(k, Owns.Keys)
                     this.Drop(v, Owns.Values)
@@ -701,8 +701,8 @@ namespace fire.Standard
                 V Take(K key) {
                     var at = this.Find(key, this.HashOf(key))
                     if (at < 0) { throw new ArgumentException("The key '" + key + "' is not in the dictionary.") }
-                    var k = this.keys[at]
-                    var v = this.vals[at]
+                    any k = this.keys[at]
+                    any v = this.vals[at]
                     this.Unlink(at)
                     this.Drop(k, Owns.Keys)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
@@ -761,7 +761,7 @@ namespace fire.Standard
                 bool Remove(T item) {
                     var at = this.Find(item, this.HashOf(item))
                     if (at < 0) { return false }
-                    var k = this.keys[at]
+                    any k = this.keys[at]
                     this.Unlink(at)
                     this.Drop(k, Owns.Values)
                     return true
@@ -771,7 +771,7 @@ namespace fire.Standard
                 T Take(T item) {
                     var at = this.Find(item, this.HashOf(item))
                     if (at < 0) { throw new ArgumentException("The item '" + item + "' is not in the set.") }
-                    var k = this.keys[at]
+                    any k = this.keys[at]
                     this.Unlink(at)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
                     if (k is of class && k is from this) {

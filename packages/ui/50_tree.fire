@@ -91,7 +91,7 @@ namespace UI {
             for (var i = 0; i < this.nodes.Count; i = i + 1) { this.Collect_(list, this.nodes[i]) }
             var sig = list.Count
             for (var i = 0; i < list.Count; i = i + 1) {
-                var n = list[i]
+                any n = list[i]
                 sig = (sig * 31 + n.Text.Length * 7 + n.Depth()) % 1000000007
                 if (n.Expanded) { sig = (sig * 31 + 1) % 1000000007 }
             }
@@ -129,7 +129,7 @@ namespace UI {
             this.Flatten()
             var widest = 0
             for (var i = 0; i < this.visibleNodes.Count; i = i + 1) {
-                var n = this.visibleNodes[i]
+                any n = this.visibleNodes[i]
                 widest = UI.M.Max(widest, n.Depth() * this.Indent + 20 + this.TextWidth(root, n.Text))
             }
             this.cw = widest + 4
@@ -164,7 +164,7 @@ namespace UI {
             var first = this.scroller.offset / rh
             var last = UI.M.Min(this.visibleNodes.Count - 1, (this.scroller.offset + this.viewH) / rh)
             for (var i = first; i <= last; i = i + 1) {
-                var node = this.visibleNodes[i]
+                any node = this.visibleNodes[i]
                 var y = top + i * rh - this.scroller.offset
                 var text = theme.text
                 if (this.Foreground != undefined) { text = this.Foreground }
@@ -175,7 +175,7 @@ namespace UI {
                 } else if (i == this.hotIndex && this.Enabled) {
                     r.FillRect(ax + 1, y, this.viewW, rh, theme.faceHover)
                 }
-                var x = ax + 3 + node.Depth() * this.Indent
+                any x = ax + 3 + node.Depth() * this.Indent
                 if (node.HasChildren()) { this.DrawBox(root, x, y + (rh - 9) / 2, node.Expanded, text) }
                 this.DrawString(root, x + 14, y + (rh - this.TextHeight(root)) / 2, node.Text, text)
             }
@@ -255,8 +255,8 @@ namespace UI {
             }
             var index = this.RowAt(root, px, py)
             if (index < 0) { return }
-            var node = this.visibleNodes[index]
-            var boxX = this.ax + 3 + node.Depth() * this.Indent
+            any node = this.visibleNodes[index]
+            any boxX = this.ax + 3 + node.Depth() * this.Indent
             if (node.HasChildren() && px >= boxX && px < boxX + 12) {
                 node.Expanded = !node.Expanded
                 this.lastClickNode = undefined
@@ -320,7 +320,7 @@ namespace UI {
             else if (key == UI.Keys.Right()) {
                 if (index < 0) { index = 0 }
                 else {
-                    var n = this.visibleNodes[index]
+                    any n = this.visibleNodes[index]
                     if (n.HasChildren()) {
                         if (!n.Expanded) { n.Expanded = true }
                         else { index = index + 1 }
@@ -328,20 +328,20 @@ namespace UI {
                 }
             } else if (key == UI.Keys.Left()) {
                 if (index >= 0) {
-                    var n = this.visibleNodes[index]
+                    any n = this.visibleNodes[index]
                     if (n.HasChildren() && n.Expanded) { n.Expanded = false }
                     else if (n.parent != undefined) { index = this.visibleNodes.IndexOf(n.parent) }
                 }
             } else if (key == UI.Keys.Enter()) {
                 if (index >= 0) {
-                    var n = this.visibleNodes[index]
+                    any n = this.visibleNodes[index]
                     if (n.HasChildren()) { n.Expanded = !n.Expanded }
                     this.Activate()
                 }
                 return
             } else { return }
             if (index < 0 || index >= this.visibleNodes.Count) { return }
-            var node = this.visibleNodes[index]
+            any node = this.visibleNodes[index]
             this.SelectNode(node)
             this.EnsureVisible(root, node)
         }

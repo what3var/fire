@@ -200,7 +200,7 @@ namespace UI {
         undefined ClearStyle() {
             if (this.styleStates == undefined) { return }
             for (var i = 0; i < this.styleStates.Count; i = i + 1) {
-                var state = this.styleStates[i]
+                any state = this.styleStates[i]
                 if (state.active) { state.Deactivate() }
                 delete state
             }
@@ -210,7 +210,7 @@ namespace UI {
         // Builds the parts from the template.
         undefined BuildTemplate() {
             var make = this.Template.factory
-            var tree = make(this)
+            any tree = make(this)
             tree.TakeTo(this)
             tree.parent = this
             this.templateRoot = tree
@@ -271,11 +271,11 @@ namespace UI {
             }
             if (this.templateRoot != undefined) {
                 for (var i = 0; i < this.Template.bindings.Count; i = i + 1) {
-                    var part = this.templateParts[i]
+                    any part = this.templateParts[i]
                     if (part == undefined) { continue }
-                    var binding = this.Template.bindings[i]
+                    any binding = this.Template.bindings[i]
                     if (!Reflect.Has(this, binding.ownerProperty) || !Reflect.Has(part, binding.partProperty)) { continue }
-                    var value = Reflect.Get(this, binding.ownerProperty)
+                    any value = Reflect.Get(this, binding.ownerProperty)
                     if (Reflect.Get(part, binding.partProperty) != value) { Reflect.Set(part, binding.partProperty, value) }
                 }
                 for (var k = 0; k < this.templateStates.Count; k = k + 1) { this.templateStates[k].Update(this) }
@@ -485,14 +485,14 @@ namespace UI {
         UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
             var callback = this.OnDragOver
             if (callback == undefined) { return UI.DropEffect.Copy }
-            var effect = callback(data, px, py)
+            any effect = callback(data, px, py)
             if (effect == undefined) { return UI.DropEffect.Copy }
             return effect
         }
         UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
             var callback = this.OnDrop
             if (callback == undefined) { return UI.DropEffect.None }
-            var effect = callback(data, px, py)
+            any effect = callback(data, px, py)
             if (effect == undefined) { return UI.DropEffect.Copy }
             return effect
         }
@@ -547,7 +547,7 @@ namespace UI {
         // Destroy all children.
         undefined Clear() {
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 child.parent = undefined
                 delete child
             }
@@ -565,7 +565,7 @@ namespace UI {
             var w = 0
             var h = 0
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 child.Measure(root, -1, -1)
                 if (!child.Visible) { continue }
                 w = UI.M.Max(w, child.Left + child.dw)
@@ -577,7 +577,7 @@ namespace UI {
 
         override undefined ArrangeCore(Root root, int w, int h) {
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 child.Arrange(root, child.Left, child.Top, child.dw, child.dh)
             }
         }
@@ -601,7 +601,7 @@ namespace UI {
 
         undefined DrawChildren(Root root, int ax, int ay) {
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 if (child.Visible) { child.Draw(root, ax + child.rx, ay + child.ry) }
             }
         }
@@ -611,7 +611,7 @@ namespace UI {
             if (!this.Contains(px, py)) { return undefined }
             var i = this.children.Count - 1
             while (i >= 0) {
-                var hit = this.children[i].HitTest(px, py)
+                any hit = this.children[i].HitTest(px, py)
                 if (hit != undefined) { return hit }
                 i = i - 1
             }
@@ -630,7 +630,7 @@ namespace UI {
         override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var found = this.children[i].FindName(name)
+                any found = this.children[i].FindName(name)
                 if (found != undefined) { return found }
             }
             return undefined
@@ -673,7 +673,7 @@ namespace UI {
             var across = 0
             var count = 0
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 if (this.Horizontal) { child.Measure(root, -1, ih) } else { child.Measure(root, iw, -1) }
                 if (!child.Visible) { continue }
                 if (this.Horizontal) {
@@ -700,7 +700,7 @@ namespace UI {
             var iw = w - this.Padding * 2
             var ih = h - this.Padding * 2
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 if (!child.Visible) { continue }
                 if (this.Horizontal) {
                     child.Arrange(root, pos, this.Padding, child.dw, ih)
@@ -745,7 +745,7 @@ namespace UI {
             var maxH = 0
             var last = this.LastVisible()
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 if (!child.Visible) { continue }
                 var availW = -1
                 var availH = -1
@@ -783,7 +783,7 @@ namespace UI {
             var bottom = h
             var last = this.LastVisible()
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 if (!child.Visible) { continue }
                 var fills = this.LastChildFill && i == last
                 if (fills) {
@@ -826,15 +826,15 @@ namespace UI {
             var limit = aw
             if (this.Vertical) { limit = ah }
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 child.Measure(root, this.ItemWidth, this.ItemHeight)
                 if (!child.Visible) { continue }
-                var w = child.dw
-                var h = child.dh
+                any w = child.dw
+                any h = child.dh
                 if (this.ItemWidth >= 0) { w = this.ItemWidth }
                 if (this.ItemHeight >= 0) { h = this.ItemHeight }
-                var along = w
-                var thick = h
+                any along = w
+                any thick = h
                 if (this.Vertical) {
                     along = h
                     thick = w
@@ -868,10 +868,10 @@ namespace UI {
             // a row is only arranged when it is full (its thickness is not known beforehand)
             var start = 0
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 if (!child.Visible) { continue }
-                var along = child.dw
-                var thick = child.dh
+                any along = child.dw
+                any thick = child.dh
                 if (this.ItemWidth >= 0) { along = this.ItemWidth }
                 if (this.ItemHeight >= 0) { thick = this.ItemHeight }
                 if (this.Vertical) {
@@ -897,10 +897,10 @@ namespace UI {
         undefined ArrangeLine(Root root, int first, int last, int offset, int thick) {
             var pos = 0
             for (var i = first; i < last; i = i + 1) {
-                var child = this.children[i]
+                any child = this.children[i]
                 if (!child.Visible) { continue }
-                var cwid = child.dw
-                var chei = child.dh
+                any cwid = child.dw
+                any chei = child.dh
                 if (this.ItemWidth >= 0) { cwid = this.ItemWidth }
                 if (this.ItemHeight >= 0) { chei = this.ItemHeight }
                 if (this.Vertical) {
@@ -933,7 +933,7 @@ namespace UI {
 
         // "auto", "*", "2*" or a number (pixels)
         static Track Parse(string text) {
-            var t = text.Trim().ToLower()
+            any t = text.Trim().ToLower()
             if (t == "auto" || t == "") { return new Track(0, 0) }
             if (t.EndsWith("*")) {
                 var w = 1
@@ -963,7 +963,7 @@ namespace UI {
 
         undefined Fill(List list, string spec) {
             list.Clear()
-            var parts = spec.Split(",")
+            any parts = spec.Split(",")
             for (var i = 0; i < parts.length; i = i + 1) {
                 var track = UI.Track.Parse(parts[i])
                 track.TakeTo(this)
@@ -1021,7 +1021,7 @@ namespace UI {
             var given = 0
             var seen = 0
             for (var i = 0; i < list.Count; i = i + 1) {
-                var t = list[i]
+                any t = list[i]
                 if (t.mode != 2) { continue }
                 seen = seen + t.value
                 // the remainder is used up: the sum of the shares so far, rounded, minus what has already been given out
@@ -1038,7 +1038,7 @@ namespace UI {
             this.ResolveAxis(root, cols, rows, aw, true)
             // measure every child with the final size of its cell (also those that did not determine a track)
             for (var c = 0; c < this.children.Count; c = c + 1) {
-                var child = this.children[c]
+                any child = this.children[c]
                 if (!child.Visible) {
                     child.Measure(root, 0, 0)
                     continue
@@ -1062,7 +1062,7 @@ namespace UI {
         undefined ResolveAxis(Root root, any along, any other, int avail, bool isColumn) {
             var used = 0
             for (var i = 0; i < along.Count; i = i + 1) {
-                var t = along[i]
+                any t = along[i]
                 t.size = 0
                 if (t.mode == 1) { t.size = UI.M.Clamp(t.value, t.min, t.max) }
             }
@@ -1070,7 +1070,7 @@ namespace UI {
             var starsByContent = avail < 0
             for (var pass = 0; pass < 2; pass = pass + 1) {
                 for (var c = 0; c < this.children.Count; c = c + 1) {
-                    var child = this.children[c]
+                    any child = this.children[c]
                     if (!child.Visible) { continue }
                     var begin = 0
                     var span = 1
@@ -1101,15 +1101,15 @@ namespace UI {
                         cellW = this.CellSizeOther(other, child, true)
                     }
                     child.Measure(root, cellW, cellH)
-                    var want = child.dh
+                    any want = child.dh
                     if (isColumn) { want = child.dw }
                     // what is already fixed (fixed tracks in the range) does not have to be carried by the content any more
                     var have = 0
                     for (var k = begin; k < begin + span && k < along.Count; k = k + 1) { have = have + along[k].size }
-                    var missing = want - have
+                    any missing = want - have
                     if (missing > 0) {
-                        var each = missing / contentTracks
-                        var extra = missing - each * contentTracks
+                        any each = missing / contentTracks
+                        any extra = missing - each * contentTracks
                         for (var k = begin; k < begin + span && k < along.Count; k = k + 1) {
                             if (along[k].mode == 0 || (along[k].mode == 2 && starsByContent)) {
                                 along[k].size = along[k].size + each
@@ -1123,7 +1123,7 @@ namespace UI {
                 }
             }
             for (var i = 0; i < along.Count; i = i + 1) {
-                var t = along[i]
+                any t = along[i]
                 if (t.mode == 0) { t.size = UI.M.Clamp(t.size, t.min, t.max) }
                 if (t.mode == 2 && starsByContent) { t.size = UI.M.Clamp(t.size, t.min, t.max) }
                 if (t.mode != 2 || starsByContent) { used = used + t.size }
@@ -1157,12 +1157,12 @@ namespace UI {
             this.Restar(rows, h)
             this.Restar(cols, w)
             for (var c = 0; c < this.children.Count; c = c + 1) {
-                var child = this.children[c]
+                any child = this.children[c]
                 if (!child.Visible) { continue }
                 var r = this.Fit(rows, child.GridRow)
                 var k = this.Fit(cols, child.GridColumn)
-                var rs = child.GridRowSpan
-                var cs = child.GridColumnSpan
+                any rs = child.GridRowSpan
+                any cs = child.GridColumnSpan
                 if (rs < 1) { rs = 1 }
                 if (cs < 1) { cs = 1 }
                 var px = 0

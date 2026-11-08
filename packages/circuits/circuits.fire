@@ -489,7 +489,7 @@ namespace Circuits {
 
         override float Value(float t) {
             var cycles = t * this.frequency
-            var part = cycles - Math.Floor(cycles)
+            any part = cycles - Math.Floor(cycles)
             if (part < this.duty) { return this.high }
             return this.low
         }
@@ -628,7 +628,7 @@ namespace Circuits {
         }
 
         override float Value(float t) {
-            var f = this.function
+            any f = this.function
             return Circuits.Units.Volts(f(t))
         }
 
@@ -737,7 +737,7 @@ namespace Circuits {
         /// <summary>Sets a number by name (`Model.Get("1N4148").With("mine", 0, 3e-9).Set("CJO", 2e-12)`); returns the model.</summary>
         Circuits.Model Set(string name, float value : any) {
             var raw = Circuits.Units.Raw(value)
-            var key = name.ToUpper()
+            any key = name.ToUpper()
             var i = this.extraNames.IndexOf(key)
             if (i < 0) {
                 this.extraNames.Add(key)
@@ -1606,7 +1606,7 @@ namespace Circuits {
         }
 
         override bool Compile(Circuits.Solver solver) {
-            var to = this.ports[1]
+            any to = this.ports[1]
             if (this.pulled) { to = this.ports[2] }
             solver.Conductance(this.ports[0], to, 1.0 / this.ron)
             this.commitsInFire = true
@@ -1614,7 +1614,7 @@ namespace Circuits {
         }
         override undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
         override undefined Commit(Circuits.Solver solver) {
-            var i = Math.Abs(this.coil.CurrentRaw())
+            any i = Math.Abs(this.coil.CurrentRaw())
             if (!this.pulled && i >= this.onCurrent) {
                 this.pulled = true
                 this.InvalidateSoon()
@@ -1625,7 +1625,7 @@ namespace Circuits {
         }
         override undefined Reset() { this.pulled = false }
         override float CurrentRaw() {
-            var to = this.ports[1]
+            any to = this.ports[1]
             if (this.pulled) { to = this.ports[2] }
             return (this.ports[0].Raw() - to.Raw()) / this.ron
         }
@@ -1794,7 +1794,7 @@ namespace Circuits {
         /// <summary>The temperature of the filament in kelvin (300 cold).</summary>
         float Temperature {
             get {
-                var t = this.StateOf(0)
+                any t = this.StateOf(0)
                 if (t == undefined) { return 300.0 }
                 return t
             }
@@ -1820,7 +1820,7 @@ namespace Circuits {
 
         bool Blown {
             get {
-                var b = this.StateOf(1)
+                any b = this.StateOf(1)
                 return b != undefined && b != 0.0
             }
         }
@@ -1828,7 +1828,7 @@ namespace Circuits {
         /// <summary>How far it is to blowing: 0 cold, 1 blown.</summary>
         float Heat {
             get {
-                var h = this.StateOf(0)
+                any h = this.StateOf(0)
                 if (h == undefined) { return 0.0 }
                 if (this.Blown) { return 1.0 }
                 return h / this.p1
@@ -1851,7 +1851,7 @@ namespace Circuits {
         /// <summary>The resistance now.</summary>
         float:any Resistance {
             get {
-                var r = this.StateOf(1)
+                any r = this.StateOf(1)
                 if (r == undefined) { return this.p1 * 1Ohm }
                 return r * 1Ohm
             }
@@ -1866,7 +1866,7 @@ namespace Circuits {
 
         bool IsOn {
             get {
-                var s = this.StateOf(0)
+                any s = this.StateOf(0)
                 return s != undefined && s != 0.0
             }
         }
@@ -1927,8 +1927,8 @@ namespace Circuits {
             var nc = this.AddPort("nc")
             var control = this.AddPort("control")
             // (`swap`: NormallyOpen is on below the threshold, NormallyClosed above it)
-            var a = this.Add(new Circuits.AnalogSwitch(threshold, swap, onResistance, offResistance))
-            var b = this.Add(new Circuits.AnalogSwitch(threshold, !swap, onResistance, offResistance))
+            any a = this.Add(new Circuits.AnalogSwitch(threshold, swap, onResistance, offResistance))
+            any b = this.Add(new Circuits.AnalogSwitch(threshold, !swap, onResistance, offResistance))
             com.Connect(a.A)
             com.Connect(b.A)
             no.Connect(a.B)
@@ -2003,9 +2003,9 @@ namespace Circuits {
             var anode = this.AddPort("anode")
             var gate = this.AddPort("gate")
             var cathode = this.AddPort("cathode")
-            var s = this.Add(new Circuits.GateSwitch(12, Circuits.Units.Amps(triggerCurrent), Circuits.Units.Amps(holdingCurrent), Circuits.Units.Ohms(gateResistance)))
-            var d = this.Add(new Circuits.Diode())
-            var rg = this.Add(new Circuits.Resistor(gateResistance))
+            any s = this.Add(new Circuits.GateSwitch(12, Circuits.Units.Amps(triggerCurrent), Circuits.Units.Amps(holdingCurrent), Circuits.Units.Ohms(gateResistance)))
+            any d = this.Add(new Circuits.Diode())
+            any rg = this.Add(new Circuits.Resistor(gateResistance))
             anode.Connect(s.ports[0])
             s.ports[1].Connect(d.A)
             d.B.Connect(cathode)
@@ -2032,10 +2032,10 @@ namespace Circuits {
             var mt1 = this.AddPort("mt1")
             var mt2 = this.AddPort("mt2")
             var gate = this.AddPort("gate")
-            var s = this.Add(new Circuits.GateSwitch(13, Circuits.Units.Amps(triggerCurrent), Circuits.Units.Amps(holdingCurrent), Circuits.Units.Ohms(gateResistance)))
-            var d1 = this.Add(new Circuits.Diode())
-            var d2 = this.Add(new Circuits.Diode())
-            var rg = this.Add(new Circuits.Resistor(gateResistance))
+            any s = this.Add(new Circuits.GateSwitch(13, Circuits.Units.Amps(triggerCurrent), Circuits.Units.Amps(holdingCurrent), Circuits.Units.Ohms(gateResistance)))
+            any d1 = this.Add(new Circuits.Diode())
+            any d2 = this.Add(new Circuits.Diode())
+            any rg = this.Add(new Circuits.Resistor(gateResistance))
             mt2.Connect(d1.A)
             d1.B.Connect(s.ports[0])
             s.ports[0].Connect(d2.A)
@@ -2063,9 +2063,9 @@ namespace Circuits {
         construct(float breakdown : any = 30, float holdCurrent : any = 0.01, float onResistance : any = 500, float offResistance : any = 100000000) : base("diac") {
             var a = this.AddPort("a")
             var b = this.AddPort("b")
-            var g = this.Add(new Circuits.SparkGap(breakdown, holdCurrent, onResistance, offResistance))
-            var d1 = this.Add(new Circuits.Diode())
-            var d2 = this.Add(new Circuits.Diode())
+            any g = this.Add(new Circuits.SparkGap(breakdown, holdCurrent, onResistance, offResistance))
+            any d1 = this.Add(new Circuits.Diode())
+            any d2 = this.Add(new Circuits.Diode())
             a.Connect(g.A)
             g.B.Connect(d1.A)
             d1.B.Connect(b)
@@ -2094,8 +2094,8 @@ namespace Circuits {
             var vt = Circuits.Units.Volts(threshold)
             var name = "jfet " + kind + " " + vt + " " + beta
             if (!Circuits.Models.Has(name)) { Circuits.Models.Put(new Circuits.Model(name, kind, vt, beta, 0.0)) }
-            var m = this.Add(new Circuits.Mosfet(name))
-            var diode = this.Add(new Circuits.Diode())
+            any m = this.Add(new Circuits.Mosfet(name))
+            any diode = this.Add(new Circuits.Diode())
             d.Connect(m.D)
             g.Connect(m.G)
             s.Connect(m.S)
@@ -2125,8 +2125,8 @@ namespace Circuits {
             var c = this.AddPort("c")
             var b = this.AddPort("b")
             var e = this.AddPort("e")
-            var a = this.Add(new Circuits.Transistor(model))
-            var z = this.Add(new Circuits.Transistor(model))
+            any a = this.Add(new Circuits.Transistor(model))
+            any z = this.Add(new Circuits.Transistor(model))
             c.Connect(a.C)
             c.Connect(z.C)
             b.Connect(a.B)
@@ -2179,10 +2179,10 @@ namespace Circuits {
             this.nodes[15] = bias
             this.nodes[1] = iabc
             this.nodes[13] = output
-            var vn = this.Add(new Circuits.VoltageSource(negative))
+            any vn = this.Add(new Circuits.VoltageSource(negative))
             vn.B.Connect(this.Ground)
             this.Join(4, vn.A)
-            var vp = this.Add(new Circuits.VoltageSource(positive))
+            any vp = this.Add(new Circuits.VoltageSource(positive))
             vp.B.Connect(this.Ground)
             this.Join(10, vp.A)
             // Falstad's netlist: base, collector, emitter
@@ -2193,7 +2193,7 @@ namespace Circuits {
         }
 
         undefined Transistor(string model, int b, int c, int e) {
-            var q = this.Add(new Circuits.Transistor(model))
+            any q = this.Add(new Circuits.Transistor(model))
             this.Join(b, q.B)
             this.Join(c, q.C)
             this.Join(e, q.E)
@@ -2224,9 +2224,9 @@ namespace Circuits {
             var emitter = this.AddPort("emitter")
             if (!Circuits.Models.Has("opto-led")) { Circuits.Models.Put(new Circuits.Model("opto-led", "D", 0.0000001714, 4.077)) }
             if (!Circuits.Models.Has("opto-npn")) { Circuits.Models.Put(new Circuits.Model("opto-npn", "NPN", 0.00000000000001, 700.0, 1.0)) }
-            var led = this.Add(new Circuits.Diode("opto-led"))
-            var sense = this.Add(new Circuits.CCCS(ctr / 700.0))
-            var q = this.Add(new Circuits.Transistor("opto-npn"))
+            any led = this.Add(new Circuits.Diode("opto-led"))
+            any sense = this.Add(new Circuits.CCCS(ctr / 700.0))
+            any q = this.Add(new Circuits.Transistor("opto-npn"))
             anode.Connect(led.A)
             led.B.Connect(sense.InPlus)
             sense.InMinus.Connect(cathode)
@@ -2253,11 +2253,11 @@ namespace Circuits {
             if (!Circuits.Models.Has("ujt-emitter")) { Circuits.Models.Put(new Circuits.Model("ujt-emitter", "D", 0.0000000000213, 1.8)) }
             // as Falstad's netlist: the emitter diode into the inner node x, its current sensed (1000 V per ampere on the node ctl against ref), and
             // the conductance from x to ref (the foot of B1) growing with it
-            var d = this.Add(new Circuits.Diode("ujt-emitter"))
-            var sense = this.Add(new Circuits.CCVS(1000))
-            var core = this.Add(new Circuits.Formula3("(g0 + k*V2)*V1", "0", "g0=0.00028 k=0.00575"))
-            var rb1 = this.Add(new Circuits.Resistor(38.15Ohm))
-            var rb2 = this.Add(new Circuits.Resistor(2518Ohm))
+            any d = this.Add(new Circuits.Diode("ujt-emitter"))
+            any sense = this.Add(new Circuits.CCVS(1000))
+            any core = this.Add(new Circuits.Formula3("(g0 + k*V2)*V1", "0", "g0=0.00028 k=0.00575"))
+            any rb1 = this.Add(new Circuits.Resistor(38.15Ohm))
+            any rb2 = this.Add(new Circuits.Resistor(2518Ohm))
             e.Connect(d.A)
             d.B.Connect(sense.InPlus)
             sense.InMinus.Connect(core.ports[0])
@@ -2296,13 +2296,13 @@ namespace Circuits {
 
         // parameters of a tube: "name=value" pairs (a prefix after the number: 2.3p), every value above zero
         static undefined Check(string text) {
-            var message = __CirCheckFormula("0", text, false)
+            any message = __CirCheckFormula("0", text, false)
             if (message != "") { throw new ArgumentException(message) }
             foreach (pair in text.Replace(",", " ").Replace(";", " ").Split(" ")) {
-                var p = pair.Trim()
+                any p = pair.Trim()
                 if (p == "") { continue }
-                var at = p.IndexOf("=")
-                var number = Circuits.Symbols.Number(p.Substring(at + 1))
+                any at = p.IndexOf("=")
+                any number = Circuits.Symbols.Number(p.Substring(at + 1))
                 if (number == undefined || number <= 0.0) { throw new ArgumentException("The parameter " + p.Substring(0, at) + " of a tube must be above zero.") }
             }
         }
@@ -2834,13 +2834,13 @@ namespace Circuits {
         /// (`c.Bind(c => r.Resistance = c.Get("R") * 2)`).</summary>
         undefined Bind(any action) {
             this.bindings.Add(action)
-            var f = action
+            any f = action
             f(this)
         }
 
         undefined ApplyBindings() {
             foreach (b in this.bindings) {
-                var f = b
+                any f = b
                 f(this)
             }
             if (this.schematic != undefined) { this.schematic.ParametersChanged() }
@@ -3096,7 +3096,7 @@ namespace Circuits {
             this.commitParts.Clear()
             var i = 0
             while (i < this.external.Count) {
-                var p = this.external[i]
+                any p = this.external[i]
                 if (p.stepsInFire) { this.stepParts.Add(p) }
                 if (p.commitsInFire) { this.commitParts.Add(p) }
                 if (!p.stepsInFire && !p.commitsInFire) { this.external.RemoveAt(i) } else { i = i + 1 }
@@ -3144,7 +3144,7 @@ namespace Circuits {
             this.Collect(leaves)
             foreach (p in leaves) { p.Save(s) }
             foreach (port in this.AllPorts(leaves)) {
-                var root = port.Root()
+                any root = port.Root()
                 if (root.node >= -1) { root.v = s.NodeVoltage(root.node) }
             }
             this.solver = undefined
@@ -3259,7 +3259,7 @@ namespace Circuits {
             groundRoot.node = -1
             var nodes = 0
             foreach (port in ports) {
-                var root = port.Root()
+                any root = port.Root()
                 if (root.node == -2) {
                     root.node = nodes
                     nodes = nodes + 1
@@ -3312,7 +3312,7 @@ namespace Circuits {
             }
             // the voltages the nodes had before the change are where the new plan starts
             foreach (port in ports) {
-                var root = port.Root()
+                any root = port.Root()
                 if (root.node >= 0 && root.v != 0.0) { s.SetNode(root.node, root.v) }
             }
             this.solver = s
@@ -3395,7 +3395,7 @@ namespace Circuits {
             if (!top.fireSteps) {
                 var refNode = -1
                 if (reference != undefined) { refNode = reference.Root().node }
-                var clipped = __CirProcess(top.solver.handle, input.index, data, offset, frames, channels, input.amplitude, oversample, output.Root().node, refNode,
+                any clipped = __CirProcess(top.solver.handle, input.index, data, offset, frames, channels, input.amplitude, oversample, output.Root().node, refNode,
                                            scale, result, 0)
                 if (clipped < 0) { throw new ArgumentException(top.solver.Error()) }
                 this.clipped = clipped
@@ -3498,7 +3498,7 @@ namespace Circuits {
             this.minDt = minDt
             this.maxDt = Math.Max(maxDt, minDt)
             var c = this.circuit
-            var dt = Math.Min(Math.Max(c.dt, this.minDt), this.maxDt)
+            any dt = Math.Min(Math.Max(c.dt, this.minDt), this.maxDt)
             if (dt != c.dt) { this.SetStep(dt) }
             this.slowFor = 0.0
             this.fastFor = 0.0
@@ -3523,26 +3523,26 @@ namespace Circuits {
             if (wall <= 0.0) { return }
             // after a long pause (the program was busy, a window was dragged) at most a quarter of a second is made up; Speed scales the clock
             var c = this.circuit
-            var want = Math.Min(wall, 0.25) * c.speed
+            any want = Math.Min(wall, 0.25) * c.speed
             var dt = c.dt
             this.owed = this.owed + want
             var needed = Math.Floor(this.owed / dt)!int
             var possible = needed
             if (this.stepCost > 0.0) { possible = Math.Max(1, Math.Floor(budget / this.stepCost)!int) }
             else { possible = Math.Min(needed, 16) }            // the first time: a few steps to measure
-            var steps = Math.Min(needed, possible)
+            any steps = Math.Min(needed, possible)
             var used = 0.0
             if (steps > 0) {
                 var t0 = DateTime.UtcNow.Ticks
                 c.Run(steps * dt)
                 used = (DateTime.UtcNow.Ticks - t0) / 10000000.0
-                var cost = used / steps
+                any cost = used / steps
                 if (this.rebuilt) { this.rebuilt = false }       // that time includes compiling the circuit
                 else if (this.stepCost <= 0.0) { this.stepCost = cost }
                 else { this.stepCost = this.stepCost * 0.7 + cost * 0.3 }
             }
             this.owed = this.owed - steps * dt
-            var done = steps * dt / want
+            any done = steps * dt / want
             if (steps < needed) {
                 // behind: what is not done is given up (the share tells), the step becomes coarser after a while
                 this.owed = this.owed - Math.Floor(this.owed / dt) * dt
@@ -3631,7 +3631,7 @@ namespace Circuits {
             if (row >= 0 && col >= 0) { __CirEntry(this.handle, row, col, value) }
         }
         int AddLine(Port a1, Port b1, Port a2, Port b2, float z, float delay) {
-            var index = __CirAddLine(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, z, delay)
+            any index = __CirAddLine(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, z, delay)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
@@ -3639,14 +3639,14 @@ namespace Circuits {
         int AddTube(int kind, List ports, string parameters) {
             var n = [-2, -2, -2, -2]
             for (int i = 0; i < ports.Count; i++) { n[i] = ports[i].Root().node }
-            var index = __CirAddTube(this.handle, kind, n[0], n[1], n[2], n[3], parameters)
+            any index = __CirAddTube(this.handle, kind, n[0], n[1], n[2], n[3], parameters)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
         int AddFormula(Port a, Port b, Port c, string current1, string current2, string parameters) {
             var n2 = -2
             if (c != undefined) { n2 = c.Root().node }
-            var index = __CirAddFormula(this.handle, a.Root().node, b.Root().node, n2, current1, current2, parameters)
+            any index = __CirAddFormula(this.handle, a.Root().node, b.Root().node, n2, current1, current2, parameters)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
@@ -3661,7 +3661,7 @@ namespace Circuits {
         undefined ChipSet(int index, int what, int k, float value) { __CirChipSet(this.handle, index, what, k, value) }
         undefined GateExtra(int index, float low, bool falling) { __CirGateExtra(this.handle, index, low, falling) }
         int AddCoupled(Port a1, Port b1, Port a2, Port b2, float l1, float l2, float k, float i1, float i2, float v1, float v2) {
-            var index = __CirAddCoupled(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, l1, l2, k, i1, i2, v1, v2)
+            any index = __CirAddCoupled(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, l1, l2, k, i1, i2, v1, v2)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
@@ -3704,35 +3704,35 @@ namespace Circuits {
             var reset = this.AddPort("reset")
             Port vccNode = undefined
             if (vccPin) { vccNode = this.AddPort("vcc") } else {
-                var vcc = this.Add(new Circuits.VoltageSource(s))
+                any vcc = this.Add(new Circuits.VoltageSource(s))
                 vcc.B.Connect(this.Ground)
                 vccNode = vcc.A
             }
-            var r1 = this.Add(new Circuits.Resistor(5kOhm))
-            var r2 = this.Add(new Circuits.Resistor(5kOhm))
-            var r3 = this.Add(new Circuits.Resistor(5kOhm))
+            any r1 = this.Add(new Circuits.Resistor(5kOhm))
+            any r2 = this.Add(new Circuits.Resistor(5kOhm))
+            any r3 = this.Add(new Circuits.Resistor(5kOhm))
             vccNode.Connect(r1.A)
             r1.B.Connect(r2.A)
             r2.B.Connect(r3.A)
             r3.B.Connect(this.Ground)
             control.Connect(r1.B)
-            var high = this.Add(new Circuits.Comparator(s))
-            var low = this.Add(new Circuits.Comparator(s))
+            any high = this.Add(new Circuits.Comparator(s))
+            any low = this.Add(new Circuits.Comparator(s))
             threshold.Connect(high.Plus)
             high.Minus.Connect(r1.B)
             low.Plus.Connect(r2.B)
             low.Minus.Connect(trigger)
-            var latch = this.Add(new Circuits.SRLatch(s, true))
+            any latch = this.Add(new Circuits.SRLatch(s, true))
             low.Out.Connect(latch.S)
             high.Out.Connect(latch.R)
-            var pull = this.Add(new Circuits.Resistor(100kOhm))
+            any pull = this.Add(new Circuits.Resistor(100kOhm))
             vccNode.Connect(pull.A)
             pull.B.Connect(latch.Reset)
             reset.Connect(latch.Reset)
             if (vccPin) {
                 // the output stage between Vcc and ground, switched by the latch
-                var up = this.Add(new Circuits.AnalogSwitch(s / 2.0, false, 10Ohm, 1000000000Ohm))
-                var down = this.Add(new Circuits.AnalogSwitch(s / 2.0, true, 10Ohm, 1000000000Ohm))
+                any up = this.Add(new Circuits.AnalogSwitch(s / 2.0, false, 10Ohm, 1000000000Ohm))
+                any down = this.Add(new Circuits.AnalogSwitch(s / 2.0, true, 10Ohm, 1000000000Ohm))
                 vccNode.Connect(up.A)
                 up.B.Connect(output)
                 output.Connect(down.A)
@@ -3740,7 +3740,7 @@ namespace Circuits {
                 latch.Q.Connect(up.Control)
                 latch.Q.Connect(down.Control)
             } else { output.Connect(latch.Q) }
-            var dis = this.Add(new Circuits.Mosfet(Circuits.Timer555.DischargeModel()))
+            any dis = this.Add(new Circuits.Mosfet(Circuits.Timer555.DischargeModel()))
             latch.NotQ.Connect(dis.G)
             dis.D.Connect(discharge)
             dis.S.Connect(this.Ground)
@@ -3774,7 +3774,7 @@ namespace Circuits {
             for (int i = 0; i < bits; i++) { this.AddPort("q" + i) }
             Port previous = clock
             for (int i = 0; i < bits; i++) {
-                var ff = this.Add(new Circuits.FlipFlop(supply))
+                any ff = this.Add(new Circuits.FlipFlop(supply))
                 this.flops.Add(ff)
                 ff.NotQ.Connect(ff.D)
                 previous.Connect(ff.Clock)
@@ -3838,11 +3838,11 @@ namespace Circuits {
             foreach (p in layout.Split("|")[1].Split(";")) {
                 string pin = p
                 if (pin == "") { continue }
-                var f = pin.Split(":")
+                any f = pin.Split(":")
                 this.AddPort(f[2])
                 var mode = 0
                 if (f.length > 4) {
-                    var m = f[4].TryToInt()
+                    any m = f[4].TryToInt()
                     if (m != undefined) { mode = m }
                 }
                 this.modes.Add(mode)
@@ -4321,8 +4321,8 @@ namespace Circuits {
             var i2 = this.AddPort("i2")
             var o = this.AddPort("o")
             var layout = Circuits.Chip.Layout("PhaseComparator", 0, 0) + ";X:0:EN:3:1"
-            var chip = this.Add(new Circuits.Chip("PhaseComparator", layout, 0, 0, supply))
-            var sw = this.Add(new Circuits.AnalogSwitch(Circuits.Units.Volts(supply) / 2, false, 0.1, 10000000000.0))
+            any chip = this.Add(new Circuits.Chip("PhaseComparator", layout, 0, 0, supply))
+            any sw = this.Add(new Circuits.AnalogSwitch(Circuits.Units.Volts(supply) / 2, false, 0.1, 10000000000.0))
             i1.Connect(chip.ports[0])
             i2.Connect(chip.ports[1])
             chip.ports[2].Connect(sw.A)
@@ -4346,8 +4346,8 @@ namespace Circuits {
             var c2 = this.AddPort("c2")
             var r1 = this.AddPort("r1")
             var r2 = this.AddPort("r2")
-            var chip = this.Add(new Circuits.Chip("Vco", Circuits.Chip.Layout("Vco", 0, 0), 0, 0, supply))
-            var leak = this.Add(new Circuits.Resistor(1000000))
+            any chip = this.Add(new Circuits.Chip("Vco", Circuits.Chip.Layout("Vco", 0, 0), 0, 0, supply))
+            any leak = this.Add(new Circuits.Resistor(1000000))
             vi.Connect(chip.ports[0])
             vo.Connect(chip.ports[1])
             c1.Connect(chip.ports[2])
@@ -4373,15 +4373,15 @@ namespace Circuits {
             var a = this.AddPort("in")
             var b = this.AddPort("out")
             var ctl = this.AddPort("control")
-            var buffer = this.Add(new Circuits.Gate("BUFFER", 1, supply, 1))
-            var sw = this.Add(new Circuits.AnalogSwitch(Circuits.Units.Volts(supply) / 2, false, onResistance, offResistance))
+            any buffer = this.Add(new Circuits.Gate("BUFFER", 1, supply, 1))
+            any sw = this.Add(new Circuits.AnalogSwitch(Circuits.Units.Volts(supply) / 2, false, onResistance, offResistance))
             a.Connect(buffer.In(0))
             buffer.Out.Connect(sw.A)
             sw.B.Connect(b)
             ctl.Connect(sw.Control)
             var rg = Circuits.Units.Ohms(offGroundResistance)
             if (rg > 0.0) {
-                var r = this.Add(new Circuits.Resistor(rg))
+                any r = this.Add(new Circuits.Resistor(rg))
                 b.Connect(r.A)
                 r.B.Connect(this.Ground)
             }
@@ -4441,13 +4441,13 @@ namespace Circuits {
             var com = this.AddPort("com")
             var nc = this.AddPort("nc")
             var no = this.AddPort("no")
-            var l = this.Add(new Circuits.Inductor(inductance))
-            var r = this.Add(new Circuits.Resistor(coilResistance))
+            any l = this.Add(new Circuits.Inductor(inductance))
+            any r = this.Add(new Circuits.Resistor(coilResistance))
             c1.Connect(l.A)
             l.B.Connect(r.A)
             r.B.Connect(c2)
             this.coil = l
-            var k = this.Add(new Circuits.RelayContact(l, Circuits.Units.Amps(onCurrent), Circuits.Units.Amps(offCurrent), Circuits.Units.Ohms(onResistance)))
+            any k = this.Add(new Circuits.RelayContact(l, Circuits.Units.Amps(onCurrent), Circuits.Units.Amps(offCurrent), Circuits.Units.Ohms(onResistance)))
             com.Connect(k.ports[0])
             nc.Connect(k.ports[1])
             no.Connect(k.ports[2])
@@ -4474,12 +4474,12 @@ namespace Circuits {
                   float resistance : any = 6.4) : base("crystal") {
             var a = this.AddPort("a")
             var b = this.AddPort("b")
-            var cp = this.Add(new Circuits.Capacitor(parallelCapacitance))
+            any cp = this.Add(new Circuits.Capacitor(parallelCapacitance))
             a.Connect(cp.A)
             cp.B.Connect(b)
-            var r = this.Add(new Circuits.Resistor(resistance))
-            var l = this.Add(new Circuits.Inductor(inductance))
-            var cs = this.Add(new Circuits.Capacitor(seriesCapacitance))
+            any r = this.Add(new Circuits.Resistor(resistance))
+            any l = this.Add(new Circuits.Inductor(inductance))
+            any cs = this.Add(new Circuits.Capacitor(seriesCapacitance))
             a.Connect(r.A)
             r.B.Connect(l.A)
             l.B.Connect(cs.A)
@@ -4566,8 +4566,8 @@ namespace Circuits {
                   float delay : any = 0) : base("coil") {
             var c1 = this.AddPort("coil1")
             var c2 = this.AddPort("coil2")
-            var l = this.Add(new Circuits.Inductor(inductance))
-            var r = this.Add(new Circuits.Resistor(coilResistance))
+            any l = this.Add(new Circuits.Inductor(inductance))
+            any r = this.Add(new Circuits.Resistor(coilResistance))
             c1.Connect(l.A)
             l.B.Connect(r.A)
             r.B.Connect(c2)
@@ -4688,7 +4688,7 @@ namespace Circuits {
         /// <summary>Puts 16 bit samples (little endian, `channels` interleaved and mixed to one) from `offset` of `data` into the stream; a full-scale sample is
         /// `fullScale` volts. How many frames it took.</summary>
         int WritePcm(byte data[], int offset, int frames, int channels = 1, float fullScale : any = 1) {
-            var n = __CirStreamWritePcm(this.handle, data, offset, frames, channels, Circuits.Units.Volts(fullScale))
+            any n = __CirStreamWritePcm(this.handle, data, offset, frames, channels, Circuits.Units.Volts(fullScale))
             if (n < 0) { throw new ArgumentException(__CirLastError()) }
             return n
         }
@@ -4807,7 +4807,7 @@ namespace Circuits {
             this.fireChannels = 0
             this.kernelChannels = false
             for (int i = 0; i < this.sources.Count; i++) {
-                var src = this.sources[i]
+                any src = this.sources[i]
                 var done = false
                 if (src is of List) {
                     var b = -1
@@ -4965,7 +4965,7 @@ namespace Circuits {
             var half = n / 2 + 1
             var mags = new float[half]
             for (int k = 0; k < half; k++) {
-                var m = Math.Sqrt(re[k] * re[k] + im[k] * im[k]) / samples.length
+                any m = Math.Sqrt(re[k] * re[k] + im[k] * im[k]) / samples.length
                 if (k > 0 && k < n / 2) { m = m * 2.0 }
                 mags[k] = m
             }

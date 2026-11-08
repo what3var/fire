@@ -175,7 +175,18 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
 * **TypeChecking mode `lax` | `strict`.** Project-wide (project setting), per file (`#lax` / `#strict`), or by compiler switch. `lax`: an incompatible assignment, argument or return between two
   known types is a warning; `strict`: an error. `dynamic` values never report in either mode.
 * **`var` is inferred from the initializer only.** The initializer may be a value, another variable, a return value, or `undefined!TypeName` (a typed null). `var` without an initializer is
-  illegal (unlike a declaration with a type). The type of a target never changes.
+  illegal (unlike a declaration with a type). The type of a target never changes - at run time either: an assignment the type checker cannot prove
+  (or a conflict it reported, a warning in lax mode) is guarded like one into a declared local (`GuardTop`/`GuardTopType`), so `var x = 0; x += 0.5`
+  is TC001 and an `ArgumentException`, never a float in an int. `0.` is a float literal (the fraction digits may be left out), `0` an int.
+  Where the type does not come from the initializer:
+  - `var x = undefined` takes the type of its first assignment (in the order of the source) - `TC020`, always a warning: the declaration should say it;
+  - an initializer whose type the checker does not know (an `any[i]`, a call on an `any`), or `undefined` that no assignment types, is `TC019`: an
+    error in strict mode, in lax mode a loud warning and the variable is `any`;
+  - an initializer declared `any` (an `any` field, parameter or return value), or values of unrelated types (`c ? 1 : "one"`, `[1, "one"]`) make `any`
+    with `TC020`; `any x = ...` says it on purpose and is quiet.
+  Values of related types join: `int`/`float` to `float` (the whole number is converted at run time), objects to the nearest class or interface all of
+  them are (`c ? new Dog() : new Cat()` is an `Animal`). The point of all this is that every variable has one static type the backend can lay out (a
+  narrow value where it is known, the wide one only for `any`).
 * **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;
   same dimension -> `a * factor`; otherwise `UnitMismatchException`. The factor is cached per (source unit, target unit) at the site; where the source unit is also static the whole thing

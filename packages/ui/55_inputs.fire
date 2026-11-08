@@ -219,13 +219,13 @@ namespace UI {
             var found = new List()
             var make = this.provider
             if (make != undefined) {
-                var list = make(this.Text)
+                any list = make(this.Text)
                 for (var i = 0; i < list.Count && i < this.MaxSuggestions; i = i + 1) { found.Add(list[i]) }
                 return found
             }
-            var needle = this.Text.ToLower()
+            any needle = this.Text.ToLower()
             for (var i = 0; i < this.suggestions.Count && found.Count < this.MaxSuggestions; i = i + 1) {
-                var item = this.suggestions[i]
+                any item = this.suggestions[i]
                 if (this.TextOf(item).ToLower().Contains(needle)) { found.Add(item) }
             }
             return found
@@ -442,7 +442,7 @@ namespace UI {
         // The text of the selected element ("" without a selection).
         string Text {
             get {
-                var item = this.selectedItem
+                any item = this.selectedItem
                 if (item == undefined) { return "" }
                 return this.ItemText(item)
             }
@@ -559,7 +559,7 @@ namespace UI {
             var mx = bx + bw / 2
             var my = ay + this.actualHeight / 2
             r.FillTriangle(mx - 4, my - 2, mx + 4, my - 2, mx, my + 3, color)
-            var item = this.selectedItem
+            any item = this.selectedItem
             if (item != undefined) {
                 root.PushClip(ax + 1, ay + 1, this.actualWidth - bw - 2, this.actualHeight - 2)
                 this.DrawString(root, ax + 5, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.ItemText(item), color)
@@ -625,7 +625,7 @@ namespace UI {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var pen = this.Pen
             if (pen == undefined) { pen = root.theme.border }
-            if (this.parent != undefined && this.parent is of StackPanel && this.parent.Horizontal) {
+            if (this.parent != undefined && this.parent is of StackPanel && (this.parent!StackPanel).Horizontal) {
                 root.renderer.DrawLine(ax + 2, ay + 2, ax + 2, ay + this.actualHeight - 3, pen)
             } else {
                 root.renderer.DrawLine(ax + 2, ay + 2, ax + this.actualWidth - 3, ay + 2, pen)

@@ -30,7 +30,7 @@ namespace UI.Docking {
             var scale = size * 1.0 / box
             var pen = new Pen(__GRPHBshGetColor(brush.id), UI.M.Max(1, size / 8))
             for (var i = 0; i < icon.figures.Count; i = i + 1) {
-                var f = icon.figures[i]
+                any f = icon.figures[i]
                 if (f.Count() < 2) { continue }
                 var pts = new float[f.points.Count]
                 for (var k = 0; k < f.points.Count; k = k + 2) {
@@ -139,7 +139,7 @@ namespace UI.Docking {
             var theme = root.theme
             var h = this.actualHeight
             var corner = UI.M.Min(theme.radius, 4)
-            var edge = undefined
+            Pen edge = undefined
             if (this.IsChecked) { edge = theme.border }
             if (this.Pressed && this.Hover) { root.Box(ax, ay, w, h, theme.facePressed, edge, corner) }
             else if (this.Hover || this.IsChecked) { root.Box(ax, ay, w, h, theme.faceHover, edge, corner) }
@@ -406,7 +406,7 @@ namespace UI.Docking {
             if (this.strip != undefined) {
                 var items = this.strip.overflowItems
                 for (var i = 0; i < items.Count; i = i + 1) {
-                    var item = items[i]
+                    any item = items[i]
                     item.Measure(root, -1, -1)
                     w = UI.M.Max(w, this.RowWidth(root, item))
                     h = h + item.dh
@@ -421,7 +421,7 @@ namespace UI.Docking {
             var items = this.strip.overflowItems
             var y = 2
             for (var i = 0; i < items.Count; i = i + 1) {
-                var item = items[i]
+                any item = items[i]
                 item.Arrange(root, 2, y, w - 4, item.dh)
                 y = y + item.dh
             }
@@ -437,7 +437,7 @@ namespace UI.Docking {
             if (this.strip == undefined) { return }
             var items = this.strip.overflowItems
             for (var i = 0; i < items.Count; i = i + 1) {
-                var item = items[i]
+                any item = items[i]
                 if (item.Visible) { item.Draw(root, ax + item.rx, ay + item.ry) }
             }
         }
@@ -448,7 +448,7 @@ namespace UI.Docking {
                 var items = this.strip.overflowItems
                 var i = items.Count - 1
                 while (i >= 0) {
-                    var hit = items[i].HitTest(px, py)
+                    any hit = items[i].HitTest(px, py)
                     if (hit != undefined) { return hit }
                     i = i - 1
                 }
@@ -590,7 +590,7 @@ namespace UI.Docking {
             var length = this.GripSize() + 4
             if (this.CanOverflowNow()) { length = length + this.OverflowSize() }
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var c = this.children[i]
+                any c = this.children[i]
                 if (c.Visible && (UI.Docking.ToolStrip.ModeOf(c) == UI.Docking.Overflow.Never || !this.CanOverflowNow())) { length = length + this.Along(c) + this.Spacing }
             }
             return length
@@ -601,7 +601,7 @@ namespace UI.Docking {
             var across = 16
             var always = false
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var c = this.children[i]
+                any c = this.children[i]
                 c.Measure(root, -1, -1)
                 if (!c.Visible) { continue }
                 across = UI.M.Max(across, this.Across(c))
@@ -641,7 +641,7 @@ namespace UI.Docking {
             var always = false
             var fixedLength = 0
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var c = this.children[i]
+                any c = this.children[i]
                 if (!c.Visible) { continue }
                 var mode = UI.Docking.ToolStrip.ModeOf(c)
                 if (mode == UI.Docking.Overflow.Always) {
@@ -657,7 +657,7 @@ namespace UI.Docking {
             var used = fixedLength
             var full = false
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                var c = this.children[i]
+                any c = this.children[i]
                 if (!c.Visible) { continue }
                 var mode = UI.Docking.ToolStrip.ModeOf(c)
                 var keep = true
@@ -682,7 +682,7 @@ namespace UI.Docking {
             var pos = start
             var given = 0
             for (var i = 0; i < shown.Count; i = i + 1) {
-                var c = shown[i]
+                any c = shown[i]
                 var len = this.Along(c)
                 if (springs > 0 && UI.Docking.ToolStrip.SpringOf(c)) {
                     var share = extra / springs
@@ -805,7 +805,7 @@ namespace UI.Docking {
                 }
             }
             for (var i = 0; i < this.shown.Count; i = i + 1) {
-                var c = this.shown[i]
+                any c = this.shown[i]
                 if (c.Visible) { c.Draw(root, ax + c.rx, ay + c.ry) }
             }
         }
@@ -814,7 +814,7 @@ namespace UI.Docking {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.shown.Count - 1
             while (i >= 0) {
-                var hit = this.shown[i].HitTest(px, py)
+                any hit = this.shown[i].HitTest(px, py)
                 if (hit != undefined) { return hit }
                 i = i - 1
             }
@@ -932,7 +932,7 @@ namespace UI.Docking {
         int RowEnd(int row) {
             var end = 0
             for (var i = 0; i < this.strips.Count; i = i + 1) {
-                var s = this.strips[i]
+                any s = this.strips[i]
                 if (s.row == row) { end = UI.M.Max(end, s.offset + this.Along(s)) }
             }
             return end
@@ -955,7 +955,7 @@ namespace UI.Docking {
             for (var r = 0; r < max; r = r + 1) {
                 var found = false
                 for (var i = 0; i < this.strips.Count; i = i + 1) {
-                    var s = this.strips[i]
+                    any s = this.strips[i]
                     if (s.row == r) {
                         s.row = -1 - next
                         found = true
@@ -964,7 +964,7 @@ namespace UI.Docking {
                 if (found) { next = next + 1 }
             }
             for (var i = 0; i < this.strips.Count; i = i + 1) {
-                var s = this.strips[i]
+                any s = this.strips[i]
                 if (s.row < 0) { s.row = -1 - s.row }
             }
         }
@@ -972,7 +972,7 @@ namespace UI.Docking {
         // Makes room for a new row before `row` (the rows from there on move one further).
         undefined InsertRow(int row) {
             for (var i = 0; i < this.strips.Count; i = i + 1) {
-                var s = this.strips[i]
+                any s = this.strips[i]
                 if (s.row >= row) { s.row = s.row + 1 }
             }
         }
@@ -981,7 +981,7 @@ namespace UI.Docking {
         List RowStrips(int row) {
             var list = new List()
             for (var i = 0; i < this.strips.Count; i = i + 1) {
-                var s = this.strips[i]
+                any s = this.strips[i]
                 if (s.row != row || !s.Visible) { continue }
                 var at = list.Count
                 while (at > 0 && list[at - 1].offset > s.offset) { at = at - 1 }
@@ -993,7 +993,7 @@ namespace UI.Docking {
         int RowThickness(int row) {
             var t = 0
             for (var i = 0; i < this.strips.Count; i = i + 1) {
-                var s = this.strips[i]
+                any s = this.strips[i]
                 if (s.row == row && s.Visible) { t = UI.M.Max(t, this.Across(s)) }
             }
             return t
@@ -1098,7 +1098,7 @@ namespace UI.Docking {
                 root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             }
             for (var i = 0; i < this.strips.Count; i = i + 1) {
-                var s = this.strips[i]
+                any s = this.strips[i]
                 if (s.Visible) { s.Draw(root, ax + s.rx, ay + s.ry) }
             }
         }
@@ -1107,7 +1107,7 @@ namespace UI.Docking {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.strips.Count - 1
             while (i >= 0) {
-                var hit = this.strips[i].HitTest(px, py)
+                any hit = this.strips[i].HitTest(px, py)
                 if (hit != undefined) { return hit }
                 i = i - 1
             }
@@ -1121,7 +1121,7 @@ namespace UI.Docking {
         override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             for (var i = 0; i < this.strips.Count; i = i + 1) {
-                var found = this.strips[i].FindName(name)
+                any found = this.strips[i].FindName(name)
                 if (found != undefined) { return found }
             }
             return undefined

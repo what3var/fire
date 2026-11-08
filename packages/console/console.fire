@@ -64,7 +64,7 @@ class Console {
 
     // The colours of what is written from now on; `background` left out: the one the console had at the start.
     static undefined SetColor(ConsoleColor foreground, ConsoleColor background = (-1)!ConsoleColor) {
-        var bg = background! < 0 ? undefined : background!
+        any bg = background! < 0 ? undefined : background!
         __ConSetColor(foreground!, bg)
     }
     // The colours the console had at the start.
@@ -77,7 +77,7 @@ class Console {
     static bool KeyAvailable() { return __ConKeyAvailable() }
     // The next key, without showing it (waits for it); undefined when no more keys can come (the end of a redirected input).
     static ConsoleKeyInfo ReadKey() {
-        var code = __ConReadKey()
+        any code = __ConReadKey()
         if (code < 0) { return undefined }
         return new ConsoleKeyInfo(code)
     }

@@ -13,7 +13,7 @@ class LinqWhereEnumerator : IEnumerator {
     bool MoveNext() {
         var p = this.pred
         while (this.inner.MoveNext()) {
-            var item = this.inner.GetCurrent()
+            any item = this.inner.GetCurrent()
             if (p(item)) { this.current = item; return true }
         }
         return false
@@ -93,7 +93,7 @@ class LinqTakeWhileEnumerator : IEnumerator {
         if (this.done) { return false }
         var p = this.pred
         if (this.inner.MoveNext()) {
-            var item = this.inner.GetCurrent()
+            any item = this.inner.GetCurrent()
             if (p(item)) { this.current = item; return true }
         }
         this.done = true
@@ -175,10 +175,10 @@ class Linq {
     // Reads the member chain `path` (names from outside to inside) from `obj` - via reflection, i.e. with its access rules;
     // the last member must match `kind` ("field", "property" or "member")
     static any GetPath(any obj, any path, string kind) {
-        var o = obj
+        any o = obj
         for (var i = 0; i < path.length; i = i + 1) {
             if (i == path.length - 1) {
-                var actual = __refl_member_kind(o, path[i])
+                any actual = __refl_member_kind(o, path[i])
                 if (!Reflect.KindAllowed(actual, kind)) { throw new ReflectionException(Reflect.KindMessage(path[i], actual, kind)) }
             }
             o = Reflect.Get(o, path[i])
@@ -214,7 +214,7 @@ class Linq {
 
     // Stable sorting (merge sort): returns the `items` in the order of the `keys` (arrays of equal length)
     static any Sort(any items, any keys, bool desc) {
-        var n = items.length
+        any n = items.length
         var idx = new int[n]
         var tmp = new int[n]
         for (var i = 0; i < n; i = i + 1) { idx[i] = i }
@@ -273,21 +273,21 @@ class Query<T> : IEnumerable<T> {
     // `Select(fn)` the access goes via reflection (with its access rules) and a member of the wrong kind is a ReflectionException.
     Query SelectField(lambda field<class> sel) {
         var f = this.factory
-        var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
+        any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
         var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "field")))
         path.TakeTo(query)
         return query
     }
     Query SelectProperty(lambda property<class> sel) {
         var f = this.factory
-        var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
+        any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
         var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "property")))
         path.TakeTo(query)
         return query
     }
     Query SelectMember(lambda member<class> sel) {
         var f = this.factory
-        var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
+        any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
         var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "member")))
         path.TakeTo(query)
         return query
@@ -377,7 +377,7 @@ class Query<T> : IEnumerable<T> {
     }
     T Last() {
         var found = false
-        var last = undefined
+        any last = undefined
         foreach (x in this) { last = x; found = true }
         if (!found) { throw new LinqEmptyException("The sequence contains no element") }
         return last
@@ -428,7 +428,7 @@ class Query<T> : IEnumerable<T> {
     R Max<R>(R lambda<T> fn) { return this.Select(fn).Extreme(false) }
     any Extreme(bool smallest) {
         var found = false
-        var best = undefined
+        any best = undefined
         foreach (x in this) {
             if (!found) { best = x; found = true }
             else if (smallest) { if (x < best) { best = x } }

@@ -7,7 +7,7 @@ var song = Tracker.Song.Load(data)
 print(song.Title + ": " + song.Channels + " channels, " + song.Orders + " orders, " + (song.Milliseconds / 1000) + " s")
 
 // the default sound device; a machine without one gets the simulated device "sim"
-var player = undefined
+Tracker.Player player = undefined
 try {
     player = Tracker.Player.Open(song, "default")
 } catch (Audio.AudioException e) {

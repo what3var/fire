@@ -400,7 +400,9 @@ return value, `undefined!Type`); `var x` without an initializer is an error (dec
 
 **`any`** is the type that accepts every value (also in strict mode); use it where every type is really allowed - everywhere else a declaration says what it holds. **`class`** holds object
 instances only (not an `int`, a `string`, an array or a lambda); `undefined` goes to every type (it is the typed null). **A field and a property always have a type** (`int count`, `lambda<int> onTick`,
-`any value`): `var` is for local variables, because their type comes from the initializer (error `E4059`/`E4060`). A parameter without a type is taken as `any` and said so (`TC004`: a warning in lax
+`any value`): `var` is for local variables, because their type comes from the initializer (error `E4059`/`E4060`). That type is fixed for good, at run time
+too (`var n = 0; n += 0.5` is `TC001` and an `ArgumentException`; `var n = 0.` is a float); an initializer that says no type (`undefined`, a value of a type
+the compiler does not know) is `TC019`, a type taken from the first assignment or an `any` by accident `TC020` (docs/spec/TYPES.md, "Decisions"). A parameter without a type is taken as `any` and said so (`TC004`: a warning in lax
 mode, an error in strict mode). **A method says what it returns** (`int Area()`, `Shape[] Parts()`, `undefined Draw()`): a method without a return type is taken as returning `any` and said so
 (`TC005`, a warning in lax mode, an error in strict mode; constructors, destructors and operators need none). A method that returns nothing is declared `undefined`; one that sometimes returns a
 value and sometimes nothing declares the type of the value, because `undefined` fits every type (a bare `return` is `return undefined`) - `any` is for methods that return values of different

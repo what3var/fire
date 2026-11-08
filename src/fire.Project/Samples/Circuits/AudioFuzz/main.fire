@@ -5,7 +5,7 @@
 // so a melody can go through tone by tone. Open Fuzz.biscuit to see the circuit (run it there to watch the scopes).
 
 int rate = 22050
-var out = undefined
+Audio.Output out = undefined
 try {
     out = new Audio.Output("default", rate, 1)
 } catch (Audio.AudioException e) {

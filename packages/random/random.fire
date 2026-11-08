@@ -124,7 +124,7 @@ class PseudoRandom {
         var i = this.CountOf(list) - 1
         while (i > 0) {
             var j = this.Next(i + 1)
-            var tmp = list[i]
+            any tmp = list[i]
             list[i] = list[j]
             list[j] = tmp
             i = i - 1

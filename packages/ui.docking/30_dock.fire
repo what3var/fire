@@ -442,7 +442,7 @@ namespace UI.Docking {
         override UI.Element FindName(string name) {
             if (this.Name == name) { return this }
             for (var i = 0; i < this.windows.Count; i = i + 1) {
-                var found = this.windows[i].FindName(name)
+                any found = this.windows[i].FindName(name)
                 if (found != undefined) { return found }
             }
             return undefined
@@ -948,7 +948,7 @@ namespace UI.Docking {
                 for (var i = 0; i < panel.strips.Count; i = i + 1) { list.Add(panel.strips[i]) }
             }
             for (var i = 0; i < this.floats.Count; i = i + 1) {
-                var f = this.floats[i]
+                any f = this.floats[i]
                 if (f.HoldsStrip()) { list.Add(f.body) }
             }
             return list
@@ -1055,7 +1055,7 @@ namespace UI.Docking {
             if (index < 0 || index > list.Count) { index = list.Count }
             list.Insert(index, pane)
             for (var i = 0; i < pane.windows.Count; i = i + 1) {
-                var w = pane.windows[i]
+                any w = pane.windows[i]
                 w.lastSide = side
                 w.wasFloating = false
             }
@@ -1220,12 +1220,12 @@ namespace UI.Docking {
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 for (var i = 0; i < panes.Count; i = i + 1) {
-                    var p = panes[i]
+                    any p = panes[i]
                     for (var k = 0; k < p.windows.Count; k = k + 1) { list.Add(p.windows[k]) }
                 }
             }
             for (var i = 0; i < this.floats.Count; i = i + 1) {
-                var f = this.floats[i]
+                any f = this.floats[i]
                 if (f.body != undefined && f.body is of UI.Docking.DockPane) {
                     any p = f.body
                     for (var k = 0; k < p.windows.Count; k = k + 1) { list.Add(p.windows[k]) }
@@ -1362,7 +1362,7 @@ namespace UI.Docking {
             }
             // the floating frames: inside the manager as far as possible
             for (var i = 0; i < this.floats.Count; i = i + 1) {
-                var f = this.floats[i]
+                any f = this.floats[i]
                 f.Measure(root, -1, -1)
                 f.Left = UI.M.Clamp(f.Left, 0, UI.M.Max(0, w - f.dw))
                 f.Top = UI.M.Clamp(f.Top, 0, UI.M.Max(0, h - f.dh))
@@ -1388,7 +1388,7 @@ namespace UI.Docking {
             length = UI.M.Max(0, length - this.splitter * (n - 1))
             var pos = 0
             for (var i = 0; i < n; i = i + 1) {
-                var p = panes[i]
+                any p = panes[i]
                 var len = length * UI.M.Max(1, p.weight) / total
                 if (i == n - 1) { len = length - pos }
                 if (vertical) {
@@ -1450,7 +1450,7 @@ namespace UI.Docking {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.floats.Count - 1
             while (i >= 0) {
-                var hit = this.floats[i].HitTest(px, py)
+                any hit = this.floats[i].HitTest(px, py)
                 if (hit != undefined) { return hit }
                 i = i - 1
             }
@@ -1463,7 +1463,7 @@ namespace UI.Docking {
                 if (hp != undefined) { return hp }
                 var panes = this.PanesOf(side)
                 for (var k = 0; k < panes.Count; k = k + 1) {
-                    var hit = panes[k].HitTest(px, py)
+                    any hit = panes[k].HitTest(px, py)
                     if (hit != undefined) { return hit }
                 }
             }
@@ -1539,7 +1539,7 @@ namespace UI.Docking {
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 if (panes.Count == 0) { continue }
-                var i0 = side * 4
+                any i0 = side * 4
                 var rx = this.sideRects[i0]
                 var ry = this.sideRects[i0 + 1]
                 var rw = this.sideRects[i0 + 2]
@@ -1556,8 +1556,8 @@ namespace UI.Docking {
                     return true
                 }
                 for (var i = 0; i + 1 < panes.Count; i = i + 1) {
-                    var a = panes[i]
-                    var b = panes[i + 1]
+                    any a = panes[i]
+                    any b = panes[i + 1]
                     if (vertical) { hit = x >= rx && x < rx + rw && y >= a.ry + a.actualHeight && y < b.ry }
                     else { hit = y >= ry && y < ry + rh && x >= a.rx + a.actualWidth && x < b.rx }
                     if (hit) {
@@ -1580,8 +1580,8 @@ namespace UI.Docking {
             if (this.dragKind == 3) { this.startSize = this.SizeOf(this.dragSide) }
             else {
                 var panes = this.PanesOf(this.dragSide)
-                var a = panes[this.dragIndex]
-                var b = panes[this.dragIndex + 1]
+                any a = panes[this.dragIndex]
+                any b = panes[this.dragIndex + 1]
                 this.startA = a.weight
                 this.startB = b.weight
                 var vertical = this.dragSide == UI.Dock.Left || this.dragSide == UI.Dock.Right
@@ -1695,7 +1695,7 @@ namespace UI.Docking {
                     var gy = UI.M.Clamp(this.pressY - pane.ay, 4, 12)
                     if (this.dragTab >= 0 && pane.windows.Count > 1) {
                         // one tab leaves the pane
-                        var win = pane.windows[this.dragTab]
+                        any win = pane.windows[this.dragTab]
                         win.lastPane = pane
                         pane.RemoveWindow(win)
                         var single = this.NewPane()
@@ -1724,7 +1724,7 @@ namespace UI.Docking {
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 for (var i = 0; i < panes.Count; i = i + 1) {
-                    var p = panes[i]
+                    any p = panes[i]
                     if (x >= p.rx && x < p.rx + p.actualWidth && y >= p.ry && y < p.ry + p.actualHeight) { return p }
                 }
             }
@@ -1806,7 +1806,7 @@ namespace UI.Docking {
                 this.hotGuide = side
                 this.dropKind = UI.Docking.Drop.Side
                 this.dropSide = side
-                var i0 = side * 4
+                any i0 = side * 4
                 var rx = this.sideRects[i0]
                 var ry = this.sideRects[i0 + 1]
                 var rw = this.sideRects[i0 + 2]
@@ -1841,7 +1841,7 @@ namespace UI.Docking {
                 var target = this.dropPane
                 var first = target.windows.Count
                 while (pane.windows.Count > 0) {
-                    var w = pane.windows[0]
+                    any w = pane.windows[0]
                     pane.RemoveWindow(w)
                     target.AddWindow(w)
                     w.lastSide = target.side
@@ -1969,8 +1969,8 @@ namespace UI.Docking {
             var r = root.renderer
             var theme = root.theme
             if (this.dropKind != UI.Docking.Drop.None) {
-                var color = __GRPHBshGetColor(theme.accent.id)
-                var rgb = color % 16777216
+                any color = __GRPHBshGetColor(theme.accent.id)
+                any rgb = color % 16777216
                 if (rgb < 0) { rgb = rgb + 16777216 }
                 var shade = new SolidBrush(rgb + 1342177280)
                 var blending = r.AlphaBlending

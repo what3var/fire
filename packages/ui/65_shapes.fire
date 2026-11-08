@@ -125,7 +125,7 @@ namespace UI {
         int Width() {
             var w = 0
             for (var i = 0; i < this.figures.Count; i = i + 1) {
-                var p = this.figures[i].points
+                any p = this.figures[i].points
                 for (var k = 0; k < p.Count; k = k + 2) { w = UI.M.Max(w, p[k]) }
             }
             return w
@@ -134,7 +134,7 @@ namespace UI {
         int Height() {
             var h = 0
             for (var i = 0; i < this.figures.Count; i = i + 1) {
-                var p = this.figures[i].points
+                any p = this.figures[i].points
                 for (var k = 1; k < p.Count; k = k + 2) { h = UI.M.Max(h, p[k]) }
             }
             return h
@@ -148,7 +148,7 @@ namespace UI {
             var n = data.Length
             var args = new List()
             while (pos < n) {
-                var c = data.CharAt(pos).ToInt()
+                any c = data.CharAt(pos).ToInt()
                 if (c == 32 || c == 44 || c == 9 || c == 10 || c == 13) {
                     pos = pos + 1
                     continue
@@ -168,7 +168,7 @@ namespace UI {
                 }
                 var value = 0
                 while (pos < n) {
-                    var d = data.CharAt(pos).ToInt() - 48
+                    any d = data.CharAt(pos).ToInt() - 48
                     if (d < 0 || d > 9) { break }
                     value = value * 10 + d
                     pos = pos + 1
@@ -176,7 +176,7 @@ namespace UI {
                 if (pos < n && data.CharAt(pos).ToInt() == 46) {
                     pos = pos + 1
                     while (pos < n) {
-                        var d2 = data.CharAt(pos).ToInt() - 48
+                        any d2 = data.CharAt(pos).ToInt() - 48
                         if (d2 < 0 || d2 > 9) { break }
                         pos = pos + 1
                     }
@@ -332,9 +332,9 @@ namespace UI {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.data == undefined) { return }
             for (var i = 0; i < this.data.figures.Count; i = i + 1) {
-                var f = this.data.figures[i]
+                any f = this.data.figures[i]
                 if (f.Count() < 2) { continue }
-                var pts = f.ToArray()
+                any pts = f.ToArray()
                 for (var k = 0; k < pts.length; k = k + 2) {
                     pts[k] = pts[k] + ax
                     pts[k + 1] = pts[k + 1] + ay

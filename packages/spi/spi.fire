@@ -38,8 +38,8 @@ namespace Spi {
     class Errors {
         // Throws the exception that fits the last error of a native function.
         static undefined Throw() {
-            var code = __SpiLastError()
-            var message = __SpiLastErrorMessage()
+            any code = __SpiLastError()
+            any message = __SpiLastErrorMessage()
             if (code == 3) { throw new NotFoundException(message) }
             if (code == 4) { throw new BusyException(message) }
             if (code == 5) { throw new PermissionException(message) }
@@ -61,7 +61,7 @@ namespace Spi {
 
         // The names of the devices: "sim" first, then the real ones ("spidev0.0", ... on Linux, "spi-2" and "spi-3" on an ESP32).
         static List Devices() {
-            var all = __SpiDevices()
+            any all = __SpiDevices()
             if (all == undefined) { Spi.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
@@ -199,7 +199,7 @@ namespace Spi {
 
         // The bytes the program sent to the device since the start or the last Clear.
         static byte[] Sent() {
-            var n = __SpiSimSentCount()
+            any n = __SpiSimSentCount()
             var data = new byte[n]
             for (var i = 0; i < n; i++) { data[i] = __SpiSimSentByte(i) }
             return data

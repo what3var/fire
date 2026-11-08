@@ -43,8 +43,8 @@ namespace I2c {
     class Errors {
         // Throws the exception that fits the last error of a native function.
         static undefined Throw() {
-            var code = __I2cLastError()
-            var message = __I2cLastErrorMessage()
+            any code = __I2cLastError()
+            any message = __I2cLastErrorMessage()
             if (code == 3) { throw new NotFoundException(message) }
             if (code == 4) { throw new BusyException(message) }
             if (code == 5) { throw new PermissionException(message) }
@@ -67,7 +67,7 @@ namespace I2c {
 
         // The names of the buses: "sim" first, then the real ones ("i2c-1", ... on Linux, "i2c-0" on an ESP32).
         static List Buses() {
-            var all = __I2cBuses()
+            any all = __I2cBuses()
             if (all == undefined) { I2c.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
@@ -180,7 +180,7 @@ namespace I2c {
         // true if a device answers at the address.
         bool Probe(int address) {
             this.Check()
-            var r = __I2cProbe(this.handle, address)
+            any r = __I2cProbe(this.handle, address)
             if (r < 0) { I2c.Errors.Throw() }
             return r == 1
         }
@@ -219,7 +219,7 @@ namespace I2c {
 
         // A register of a device (what a program wrote there).
         static int GetRegister(int address, int register) {
-            var v = __I2cSimGetRegister(address, register)
+            any v = __I2cSimGetRegister(address, register)
             if (v < 0) { I2c.Errors.Throw() }
             return v
         }
@@ -352,7 +352,7 @@ class I2cDriver : Driver {
 
     /// <summary>A bus by its name, or a device `bus/0x48` (also `bus/72`).</summary>
     override Device Find(string name) {
-        var slash = name.IndexOf("/")
+        any slash = name.IndexOf("/")
         if (slash < 0) {
             foreach (d in this.devices) {
                 if (d.Name == name) { return d }
@@ -361,7 +361,7 @@ class I2cDriver : Driver {
         }
         var bus = this.Find(name.Substring(0, slash))
         if (bus == undefined || !(bus is of I2c.BusDevice)) { return undefined }
-        var text = name.Substring(slash + 1)
+        any text = name.Substring(slash + 1)
         var address = 0
         var start = 0
         var radix = 10
@@ -371,7 +371,7 @@ class I2cDriver : Driver {
         }
         if (start >= text.Length) { return undefined }
         for (int i = start; i < text.Length; i++) {
-            var digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
+            any digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
             if (digit < 0 || digit >= radix) { return undefined }
             address = address * radix + digit
         }

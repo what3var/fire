@@ -65,13 +65,13 @@ namespace fire.Standard
                 }
                 /// The average of the numbers of an array or a List, a float in the unit of the first value (an ArgumentException for an empty one).
                 static any Average(any values) {
-                    var numbers = Math.Numbers(values, "Average")
+                    any numbers = Math.Numbers(values, "Average")
                     if (numbers.length == 0) { throw new ArgumentException("Math.Average of an empty array or List.") }
                     return Math.Sum(numbers) / (numbers.length * 1.0)
                 }
                 /// The smallest number of an array or a List (an ArgumentException for an empty one); units are converted for the comparison.
                 static any Min(any values) {
-                    var numbers = Math.Numbers(values, "Min")
+                    any numbers = Math.Numbers(values, "Min")
                     if (numbers.length == 0) { throw new ArgumentException("Math.Min of an empty array or List.") }
                     any best = numbers[0]
                     foreach (v in numbers) { if (v < best) { best = v } }
@@ -79,7 +79,7 @@ namespace fire.Standard
                 }
                 /// The largest number of an array or a List (an ArgumentException for an empty one).
                 static any Max(any values) {
-                    var numbers = Math.Numbers(values, "Max")
+                    any numbers = Math.Numbers(values, "Max")
                     if (numbers.length == 0) { throw new ArgumentException("Math.Max of an empty array or List.") }
                     any best = numbers[0]
                     foreach (v in numbers) { if (v > best) { best = v } }

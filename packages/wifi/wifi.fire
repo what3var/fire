@@ -47,8 +47,8 @@ namespace WiFi {
     class Errors {
         // Throws the exception that fits the last error of a native function.
         static undefined Throw() {
-            var code = __WiFiLastError()
-            var message = __WiFiLastErrorMessage()
+            any code = __WiFiLastError()
+            any message = __WiFiLastErrorMessage()
             if (code == 3) { throw new NotFoundException(message) }
             if (code == 4) { throw new BusyException(message) }
             if (code == 6) { throw new UnsupportedException(message) }
@@ -106,7 +106,7 @@ namespace WiFi {
 
         // The names of the interfaces: "sim" first, then the real ones ("wifi" on an ESP32).
         static List Interfaces() {
-            var all = __WiFiInterfaces()
+            any all = __WiFiInterfaces()
             if (all == undefined) { WiFi.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
@@ -115,7 +115,7 @@ namespace WiFi {
 
         // The first real interface, or "sim" when there is none.
         static string DefaultInterface() {
-            var all = __WiFiInterfaces()
+            any all = __WiFiInterfaces()
             if (all == undefined) { WiFi.Errors.Throw() }
             if (all.length > 1) { return all[1] }
             return "sim"
@@ -176,7 +176,7 @@ namespace WiFi {
             var deadline = WiFi.Clock.Deadline(WiFi.Clock.Millis(timeout))
             var tries = 0
             while (true) {
-                var done = __WiFiScanStep(this.handle)
+                any done = __WiFiScanStep(this.handle)
                 if (done == 1) { break }
                 if (done < 0) { WiFi.Errors.Throw() }
                 if (WiFi.Clock.Expired(deadline)) { throw new TimeoutException("The scan did not finish in time.") }
@@ -184,7 +184,7 @@ namespace WiFi {
                 tries = tries + 1
             }
             var list = new List()
-            var count = __WiFiScanCount(this.handle)
+            any count = __WiFiScanCount(this.handle)
             for (var i = 0; i < count; i++) {
                 var n = new WiFi.Network(__WiFiScanSsid(this.handle, i), __WiFiScanBssid(this.handle, i), __WiFiScanInfo(this.handle, i, 0), __WiFiScanInfo(this.handle, i, 1), __WiFiScanInfo(this.handle, i, 2))
                 n.TakeTo(list)
@@ -204,7 +204,7 @@ namespace WiFi {
             var deadline = WiFi.Clock.Deadline(WiFi.Clock.Millis(timeout))
             var tries = 0
             while (true) {
-                var s = __WiFiConnectState(this.handle)
+                any s = __WiFiConnectState(this.handle)
                 if (s == 2) { this.lastState = 2; return }
                 if (s < 0) { WiFi.Errors.Throw() }
                 if (s == 0) { throw new NotConnectedException("The connection was lost while joining.") }
@@ -228,7 +228,7 @@ namespace WiFi {
         int State {
             get {
                 this.Check()
-                var s = __WiFiConnectState(this.handle)
+                any s = __WiFiConnectState(this.handle)
                 if (s < 0) { WiFi.Errors.Throw() }
                 return s
             }
@@ -265,7 +265,7 @@ namespace WiFi {
         int Rssi {
             get {
                 this.Check()
-                var r = __WiFiStationRssi(this.handle)
+                any r = __WiFiStationRssi(this.handle)
                 if (r == -1000) { WiFi.Errors.Throw() }
                 return r
             }
@@ -273,7 +273,7 @@ namespace WiFi {
 
         string Text(int which) {
             this.Check()
-            var t = __WiFiStationText(this.handle, which)
+            any t = __WiFiStationText(this.handle, which)
             if (t == undefined) { WiFi.Errors.Throw() }
             return t
         }
@@ -322,7 +322,7 @@ namespace WiFi {
         bool IsRunning {
             get {
                 this.Check()
-                var r = __WiFiApRunning(this.handle)
+                any r = __WiFiApRunning(this.handle)
                 if (r < 0) { WiFi.Errors.Throw() }
                 return r == 1
             }
@@ -336,7 +336,7 @@ namespace WiFi {
         int Clients {
             get {
                 this.Check()
-                var n = __WiFiApClients(this.handle)
+                any n = __WiFiApClients(this.handle)
                 if (n < 0) { WiFi.Errors.Throw() }
                 return n
             }
@@ -344,7 +344,7 @@ namespace WiFi {
 
         string Text(int which) {
             this.Check()
-            var t = __WiFiApText(this.handle, which)
+            any t = __WiFiApText(this.handle, which)
             if (t == undefined) { WiFi.Errors.Throw() }
             return t
         }
@@ -376,13 +376,13 @@ namespace WiFi {
 
         // A station joins the simulated access point; returns how many are joined now.
         static int ClientJoins() {
-            var n = __WiFiSimApClients(1)
+            any n = __WiFiSimApClients(1)
             if (n < 0) { WiFi.Errors.Throw() }
             return n
         }
 
         static int ClientLeaves() {
-            var n = __WiFiSimApClients(-1)
+            any n = __WiFiSimApClients(-1)
             if (n < 0) { WiFi.Errors.Throw() }
             return n
         }

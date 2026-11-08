@@ -59,7 +59,7 @@ class Window {
     // One cycle of the manager for this window: events in (callbacks, queue), onCycle, frame out. false once the window is closed.
     bool Cycle() {
         if (this.IsClosed) { return false }
-        var open = __GRPHWinPump(this.id)
+        any open = __GRPHWinPump(this.id)
         var hook = this.onCycle
         if (hook != undefined) { hook() }
         __GRPHWinPresent(this.id)
@@ -71,7 +71,7 @@ class Window {
     // the window whose event opened the modal one, and that is still running.
     bool Idle() {
         if (this.IsClosed) { return false }
-        var open = __GRPHWinPump(this.id)
+        any open = __GRPHWinPump(this.id)
         __GRPHWinPresent(this.id)
         if (!open) { this.IsClosed = true }
         return !this.IsClosed
@@ -82,7 +82,7 @@ class Window {
     // but a drawing loop with one tick per pass then takes 256 x 16.7 ms = 4.3 s. Whoever draws a lot and only wants to
     // show now and then calls Tick less often or sets `win.VSync = false` (Tick then returns immediately).
     bool Tick() {
-        var open = __GRPHWinTick(this.id)
+        any open = __GRPHWinTick(this.id)
         if (!open) { this.IsClosed = true }
         return open
     }
@@ -302,7 +302,7 @@ class SystemTheme {
     static SystemTheme Current() {
         if (SystemTheme.cached != undefined) { return SystemTheme.cached }
         var t = new SystemTheme()
-        var info = __GRPHWinSystemTheme()
+        any info = __GRPHWinSystemTheme()
         t.embedded = info[0]
         t.scale = info[1]
         t.dark = info[2]
@@ -311,7 +311,7 @@ class SystemTheme {
         if (info.length > 6) { t.transparency = info[6] }
         string candidates = info[4]
         if (candidates != "") {
-            var names = candidates.Split(";")
+            any names = candidates.Split(";")
             for (int i = 0; i < names.length; i++) {
                 if (names[i] != "" && Fonts.Has(names[i])) {
                     t.font = names[i]
@@ -410,7 +410,7 @@ class WindowManager {
         this.ticking = true
         var i = 0
         while (i < this.windows.Count) {
-            var window = this.windows[i]
+            any window = this.windows[i]
             if (!window.Cycle()) {
                 this.Detach(window)
                 continue
@@ -448,7 +448,7 @@ class WindowManager {
         this.modals = this.modals + 1
         var depth = this.modals
         for (var i = 0; i < this.windows.Count; i = i + 1) {
-            var other = this.windows[i]
+            any other = this.windows[i]
             if (other != modal && other.blockedBy == 0) {
                 other.blockedBy = depth
                 __GRPHWinSetBlocked(other.id, true)
@@ -459,8 +459,8 @@ class WindowManager {
         while (!modal.IsClosed && modal.Manager == this) {
             var i = 0
             while (i < this.windows.Count) {
-                var window = this.windows[i]
-                var open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
+                any window = this.windows[i]
+                any open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
                 if (!open) {
                     this.Detach(window)
                     continue
@@ -472,7 +472,7 @@ class WindowManager {
         if (modal.Manager == this) { this.Detach(modal) }
         this.ticking = wasTicking
         for (var i = 0; i < this.windows.Count; i = i + 1) {
-            var other = this.windows[i]
+            any other = this.windows[i]
             if (other.blockedBy == depth) {
                 other.blockedBy = 0
                 __GRPHWinSetBlocked(other.id, false)
@@ -532,7 +532,7 @@ enum Backdrop
 class Clipboard {
     // The text on the clipboard, "" when there is none (or the clipboard holds something else, e.g. a picture).
     static string GetText() {
-        var text = __GRPHWinClipboardGetText()
+        any text = __GRPHWinClipboardGetText()
         if (text == undefined) { return "" }
         return text
     }
@@ -545,7 +545,7 @@ class Clipboard {
 
     // The picture on the clipboard as a new framebuffer (RGBA, or with the palette of the file), undefined when there is none (or it cannot be read).
     static Framebuffer GetImage() {
-        var data = __GRPHWinClipboardGetImage()
+        any data = __GRPHWinClipboardGetImage()
         if (data == undefined) { return undefined }
         try { return Framebuffer.FromImage(data) }
         catch (ImageException e) { return undefined }

@@ -8,7 +8,7 @@ var identifier = "loopback:echo"
 // the serial driver brings the serial ports (and the loopback device); `DeviceManager.AddDriver(new GpioDriver())` would add GPIO ports, and so on
 DeviceManager.AddDriver(new SerialDriver())
 print("known devices: " + DeviceManager.Devices().Count)
-var d = undefined
+Device d = undefined
 try {
     d = DeviceManager.Get(identifier)
 } catch (DeviceNotFoundException e) {

@@ -76,7 +76,7 @@ class ProcessStream : IO.Stream {
         if (this.which == 0) { throw new IO.IOException("The input of a process cannot be read.", 8) }
         var tries = 0
         while (true) {
-            var n = __ProcRead(this.owner.handle, this.which, buffer, offset, count)
+            any n = __ProcRead(this.owner.handle, this.which, buffer, offset, count)
             if (n >= 0) { return n }
             if (n == -1) { ProcessCodes.Throw() }
             Process.Pause(tries)
@@ -87,7 +87,7 @@ class ProcessStream : IO.Stream {
     // Reads what is there now without waiting: the bytes read, 0 at the end, -1 when nothing is there yet.
     int ReadAvailable(byte buffer[], int offset, int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
-        var n = __ProcRead(this.owner.handle, this.which, buffer, offset, count)
+        any n = __ProcRead(this.owner.handle, this.which, buffer, offset, count)
         if (n == -1) { ProcessCodes.Throw() }
         if (n == -3) { return -1 }
         return n
@@ -99,7 +99,7 @@ class ProcessStream : IO.Stream {
         var done = 0
         var tries = 0
         while (done < count) {
-            var n = __ProcWrite(this.owner.handle, buffer, offset + done, count - done)
+            any n = __ProcWrite(this.owner.handle, buffer, offset + done, count - done)
             if (n < 0) { ProcessCodes.Throw() }
             if (n == 0) {
                 Process.Pause(tries)
@@ -177,7 +177,7 @@ class Process {
             env[i + 1] = pair.Value
             i = i + 2
         }
-        var h = __ProcStart(file, args, options.WorkingDirectory, env, flags)
+        any h = __ProcStart(file, args, options.WorkingDirectory, env, flags)
         if (h < 0) { ProcessCodes.Throw() }
         var p = new Process()
         p.handle = h
@@ -263,7 +263,7 @@ class Process {
     int ExitCode {
         get {
             this.Check()
-            var code = __ProcExitCode(this.handle)
+            any code = __ProcExitCode(this.handle)
             if (code == undefined) { ProcessCodes.Throw() }
             return code
         }
@@ -305,7 +305,7 @@ class Process {
             } else { this.errEnded = true }
         }
         if (!this.endedRead) {
-            var state = __ProcPoll(this.handle)
+            any state = __ProcPoll(this.handle)
             if (state < 0) { ProcessCodes.Throw() }
             if (state == 1) {
                 this.endedRead = true

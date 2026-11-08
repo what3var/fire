@@ -1990,6 +1990,7 @@ namespace fire.Compiler
 
                 case AssignExpr { Target: IdentifierExpr assignTarget, Value: BinaryExpr { Op: BinaryOp.Add or BinaryOp.Sub, Left: IdentifierExpr left, Right: LiteralExpr literal } binary }
                     when left.Name == assignTarget.Name && literal.Value.Kind is ValueKind.Int or ValueKind.Float
+                         && s_localGuards?.ContainsKey(binary) != true && s_unitChecks?.ContainsKey(binary) != true   // (`x += 0.5` on an int: the guard throws)
                          && _refs.TryGetValue(left, out var leftRef) && _refs.TryGetValue(assignTarget, out var targetRef) && leftRef.Equals(targetRef):
                     target = assignTarget;
                     constant = literal.Value;

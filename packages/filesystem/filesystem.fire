@@ -58,7 +58,7 @@ namespace IO {
         // "dir/name.txt", ".md" -> "dir/name.md"; "md" works too; "" or undefined removes the extension.
         static string ChangeExtension(string path, any extension) {
             var old = IO.Path.GetExtension(path)
-            var stem = path.Substring(0, path.length - old.length)
+            any stem = path.Substring(0, path.length - old.length)
             if (stem.EndsWith(".")) { stem = stem.Substring(0, stem.length - 1) }
             if (extension == undefined || extension == "") { return stem }
             if (extension.StartsWith(".")) { return stem + extension }
@@ -133,7 +133,7 @@ namespace IO {
             var parts = new List()
             var root = IO.Path.GetPathRoot(full)
             parts.Add(root.Replace("\\", "").Replace("/", "") == "" ? "/" : root.Replace("\\", "").Replace("/", ""))
-            var rest = full.Substring(root.length).Replace("\\", "/")
+            any rest = full.Substring(root.length).Replace("\\", "/")
             foreach (part in rest.Split("/")) {
                 if (part != "") { parts.Add(part) }
             }
@@ -155,14 +155,14 @@ namespace IO {
     // Files as a whole. Text is UTF-8; lines are written with "\n" and read with \n, \r\n or \r.
     class File {
         static bool Exists(string path) {
-            var r = __IOFileExists(path)
+            any r = __IOFileExists(path)
             if (r < 0) { IO.IOErrors.Throw() }
             return r == 1
         }
 
         // The size in bytes.
         static int Size(string path) {
-            var n = __IOFileSize(path)
+            any n = __IOFileSize(path)
             if (n < 0) { IO.IOErrors.Throw() }
             return n
         }
@@ -170,7 +170,7 @@ namespace IO {
         // The time of the last change (local time).
         static DateTime GetLastWriteTime(string path) { return IO.File.GetLastWriteTimeUtc(path).ToLocal() }
         static DateTime GetLastWriteTimeUtc(string path) {
-            var t = __IOFileTime(path)
+            any t = __IOFileTime(path)
             if (t == undefined) { IO.IOErrors.Throw() }
             return DateTime.FromUnixSeconds(t)
         }
@@ -263,7 +263,7 @@ namespace IO {
     // Directories. The lists are full paths, sorted.
     class Directory {
         static bool Exists(string path) {
-            var r = __IODirExists(path)
+            any r = __IODirExists(path)
             if (r < 0) { IO.IOErrors.Throw() }
             return r == 1
         }
@@ -301,8 +301,8 @@ namespace IO {
         }
 
         static List Entries(string path, string pattern, any searchOption, int kind) {
-            var recursive = searchOption is of bool ? searchOption : searchOption == IO.SearchOption.AllDirectories
-            var list = __IODirList(path, pattern, recursive, kind)
+            any recursive = searchOption is of bool ? searchOption : searchOption == IO.SearchOption.AllDirectories
+            any list = __IODirList(path, pattern, recursive, kind)
             if (list == undefined) { IO.IOErrors.Throw() }
             return new List(list)
         }
@@ -324,7 +324,7 @@ namespace IO {
         // The time of the last change (local time).
         static DateTime GetLastWriteTime(string path) { return IO.Directory.GetLastWriteTimeUtc(path).ToLocal() }
         static DateTime GetLastWriteTimeUtc(string path) {
-            var t = __IOEntryTime(path)
+            any t = __IOEntryTime(path)
             if (t == undefined) { IO.IOErrors.Throw() }
             return DateTime.FromUnixSeconds(t)
         }

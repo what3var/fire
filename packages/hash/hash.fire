@@ -161,7 +161,7 @@ namespace Hash {
         construct(Hash.Algorithm algorithm, any key) {
             if (algorithm == Hash.Algorithm.Crc32 || algorithm == Hash.Algorithm.Adler32) { throw new ArgumentException("HMAC needs a hash function (MD5, SHA-1, SHA-256, SHA-384 or SHA-512), not a checksum.") }
             var block = Hash.Hasher.BlockSizeOf(algorithm)
-            var k = key
+            any k = key
             if (key is of string) { k = IO.Utf8.GetBytes(key) }
             if (k.length > block) { k = Hash.Hasher.Compute(algorithm, k) }
             var ipad = new byte[block]

@@ -22,7 +22,7 @@ class X86Registers {
 
 class X86 {
     static undefined Check() {
-        var why = __X86Unavailable()
+        any why = __X86Unavailable()
         if (why != undefined) { throw new X86Exception(why) }
     }
 
@@ -43,8 +43,8 @@ class X86 {
     static X86Registers RunProtected(byte code[], X86Registers r) {
         X86.Check()
         if (code.length == 0) { throw new ArgumentException("The routine has no bytes.") }
-        var at = __X86LinearOf(code, 0)
-        var out = __X86Run(at, r.eax, r.ebx, r.ecx, r.edx, r.esi, r.edi)
+        any at = __X86LinearOf(code, 0)
+        any out = __X86Run(at, r.eax, r.ebx, r.ecx, r.edx, r.esi, r.edi)
         if (!out[0]) { throw new X86Exception("The switch into the protected mode failed (A20 could not be turned on, or no memory for the switch).") }
         r.eax = out[1]
         r.ebx = out[2]
@@ -64,7 +64,7 @@ class X86 {
         X86.Check()
         if (!__X86CanLong()) { throw new X86Exception("This processor has no long mode (64 bit).") }
         if (code.length == 0) { throw new ArgumentException("The routine has no bytes.") }
-        var out = __X86RunLong(__X86LinearOf(code, 0), r.eax, r.ebx, r.ecx, r.edx, r.esi, r.edi)
+        any out = __X86RunLong(__X86LinearOf(code, 0), r.eax, r.ebx, r.ecx, r.edx, r.esi, r.edi)
         if (!out[0]) { throw new X86Exception("The switch into the long mode failed (A20 could not be turned on, or no memory for the switch).") }
         r.eax = out[1]
         r.ebx = out[2]
@@ -79,7 +79,7 @@ class X86 {
     // lives and keeps its size).
     static int LinearOf(byte buffer[], int offset = 0) {
         X86.Check()
-        var at = __X86LinearOf(buffer, offset)
+        any at = __X86LinearOf(buffer, offset)
         if (at == undefined) { throw new ArgumentException("No such place in the buffer: " + offset + ".") }
         return at
     }

@@ -52,8 +52,8 @@ namespace Usb {
 
     class Errors {
         static undefined Throw() {
-            var code = __UsbLastError()
-            var message = __UsbLastErrorMessage()
+            any code = __UsbLastError()
+            any message = __UsbLastErrorMessage()
             if (code == 3) { throw new NotFoundException(message) }
             if (code == 4) { throw new BusyException(message) }
             if (code == 5) { throw new PermissionException(message) }
@@ -109,7 +109,7 @@ namespace Usb {
         int address
 
         construct(string line) {
-            var f = line.Split("|")
+            any f = line.Split("|")
             this.id = f[0]
             this.vendorId = f[1].ToInt()
             this.productId = f[2].ToInt()
@@ -148,7 +148,7 @@ namespace Usb {
         int interfaceClass
 
         construct(string line) {
-            var f = line.Split("|")
+            any f = line.Split("|")
             this.interfaceNumber = f[0].ToInt()
             this.alternate = f[1].ToInt()
             this.address = f[2].ToInt()
@@ -182,7 +182,7 @@ namespace Usb {
 
         // The devices: "sim" first, then those of the machine.
         static List Devices() {
-            var all = __UsbDevices()
+            any all = __UsbDevices()
             if (all == undefined) { Usb.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(new Usb.DeviceInfo(all[i])) }
@@ -243,7 +243,7 @@ namespace Usb {
         // The endpoints of all interfaces and alternate settings.
         List Endpoints() {
             this.CheckOpen()
-            var all = __UsbEndpoints(this.handle)
+            any all = __UsbEndpoints(this.handle)
             if (all == undefined) { Usb.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(new Usb.Endpoint(all[i])) }
@@ -307,7 +307,7 @@ namespace Usb {
                     if (left <= 0) { throw new TimeoutException("The USB transfer on endpoint 0x" + Usb.Format.Hex(endpoint, 2) + " did not finish in time.") }
                     if (left < slice) { slice = left }
                 }
-                var n = __UsbTransfer(this.handle, type, endpoint, buffer, offset + done, count - done, slice)
+                any n = __UsbTransfer(this.handle, type, endpoint, buffer, offset + done, count - done, slice)
                 if (n < 0) {
                     if (__UsbLastError() != 8) { Usb.Errors.Throw() }
                     Sleep(1)
@@ -457,7 +457,7 @@ namespace Usb {
 
         // Writes text (UTF-8).
         undefined WriteText(string text) {
-            var bytes = text.ToBytes()
+            any bytes = text.ToBytes()
             this.Write(bytes, 0, bytes.length)
         }
 
@@ -486,7 +486,7 @@ namespace Usb {
 
         override string Description() {
             var text = Usb.Format.Hex(this.info.VendorId) + ":" + Usb.Format.Hex(this.info.ProductId)
-            var names = (this.info.Manufacturer + " " + this.info.Product).Trim()
+            any names = (this.info.Manufacturer + " " + this.info.Product).Trim()
             if (names != "") { text = text + " " + names }
             if (this.info.Id == "sim") { text = "simulated USB device (echo)" }
             return text

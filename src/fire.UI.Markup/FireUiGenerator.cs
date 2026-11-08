@@ -237,7 +237,7 @@ namespace fire.UI.Markup
                 code.Line();
                 code.Line("// opens another window (another object of a window of the markup, or a UI.Root): this window's Run/Tick works it off from now on until its window is closed");
                 code.Line("undefined Open(any other) {");
-                code.Line("    var root = other");
+                code.Line("    any root = other");
                 code.Line("    if (!(other is of UI.Root)) {");
                 code.Line("        root = other.ui");
                 code.Line("        other.TakeTo(this)");
@@ -662,7 +662,7 @@ namespace fire.UI.Markup
                 // unbind: silence every probe of the binding
                 code.Line($"undefined fxUnbind{b.Index}() {{");
                 code.Line($"    for (var i = 0; i < this.fxHandles{b.Index}.Count; i = i + 1) {{");
-                code.Line($"        var h = this.fxHandles{b.Index}[i]");
+                code.Line($"        any h = this.fxHandles{b.Index}[i]");
                 code.Line("        silence h");
                 code.Line("    }");
                 code.Line($"    this.fxHandles{b.Index} = new List()");
@@ -675,16 +675,16 @@ namespace fire.UI.Markup
                 code.Line($"this.fxUnbind{b.Index}()");
                 if (b.Value.Mode != BindingMode.OneTime)
                 {
-                    code.Line($"var o0 = {b.Source}");
+                    code.Line($"any o0 = {b.Source}");
                     for (int i = 0; i < path.Length; i++)
                     {
                         string handler = i == path.Length - 1 ? $"fxUpdate{b.Index}()" : $"fxBind{b.Index}()";
                         code.Line($"if (o{i} != undefined) {{");
                         code.Indent++;
                         code.Line($"var f{i} = func (o, v) on this => {{ {handler} }}");
-                        code.Line($"var p{i} = probe o{i}.{path[i]} changed f{i}");
+                        code.Line($"any p{i} = probe o{i}.{path[i]} changed f{i}");
                         code.Line($"this.fxHandles{b.Index}.Add(p{i})");
-                        if (i < path.Length - 1) code.Line($"var o{i + 1} = o{i}.{path[i]}");
+                        if (i < path.Length - 1) code.Line($"any o{i + 1} = o{i}.{path[i]}");
                     }
                     for (int i = path.Length - 1; i >= 0; i--)
                     {
@@ -694,7 +694,7 @@ namespace fire.UI.Markup
                     if (b.Value.Mode == BindingMode.TwoWay)
                     {
                         code.Line($"var g = func (o, v) on this => {{ fxPush{b.Index}(v) }}");
-                        code.Line($"var pg = probe {target}.{b.Property.FieldName} changed g");
+                        code.Line($"any pg = probe {target}.{b.Property.FieldName} changed g");
                         code.Line($"this.fxHandles{b.Index}.Add(pg)");
                     }
                 }
@@ -707,7 +707,7 @@ namespace fire.UI.Markup
                 code.Line($"undefined fxUpdate{b.Index}() {{");
                 code.Indent++;
                 code.Line($"if (this.fxBusy{b.Index}) {{ return }}");
-                code.Line($"var v = {b.Source}");
+                code.Line($"any v = {b.Source}");
                 code.Line("if (v == undefined) { return }");
                 foreach (var segment in path)
                 {
@@ -728,7 +728,7 @@ namespace fire.UI.Markup
                     code.Line($"undefined fxPush{b.Index}(any value) {{");
                     code.Indent++;
                     code.Line($"if (this.fxBusy{b.Index}) {{ return }}");
-                    code.Line($"var o = {b.Source}");
+                    code.Line($"any o = {b.Source}");
                     code.Line("if (o == undefined) { return }");
                     foreach (var segment in path.Take(path.Length - 1))
                     {

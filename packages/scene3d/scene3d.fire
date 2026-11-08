@@ -14,17 +14,17 @@ class Scene3DException : Exception {
 class S3D {
     static float Length(any v) {
         if (!(v is in m)) { throw new Scene3DException("A length needs a unit of length (m, cm, mm, ...), got: " + v) }
-        var f = v * 1.0
+        any f = v * 1.0
         return (f:m) / 1m
     }
 
     static float Angle(any v) {
         if (v is in deg) {
-            var d = v * 1.0
+            any d = v * 1.0
             return ((d:deg) / 1deg) * 0.017453292519943295
         }
         if (v is in rad) {
-            var r = v * 1.0
+            any r = v * 1.0
             return (r:rad) / 1rad
         }
         throw new Scene3DException("An angle needs a unit (deg or rad), got: " + v)
@@ -64,21 +64,21 @@ class Model {
 
     // `v`, `vt` and `f` lines (polygons are cut into triangles); the normals are computed. The unit of the coordinates is the meter.
     static Model FromObj(string text) {
-        var h = __S3DMeshFromObj(text)
+        any h = __S3DMeshFromObj(text)
         if (h == 0) { throw new Scene3DException("The text holds no triangles (a Wavefront OBJ file with v and f lines is expected).") }
         return new Model(h)
     }
 
     // Positions: x, y, z per vertex (meters); uvs: u, v per vertex (or an empty array); indices: three per triangle, counter clockwise seen from outside.
     static Model FromArrays(float positions[], float uvs[], int indices[]) {
-        var h = __S3DMeshNew(positions, uvs, indices)
+        any h = __S3DMeshNew(positions, uvs, indices)
         if (h == 0) { throw new Scene3DException("The arrays do not make a mesh (3 numbers per vertex, 2 per texture coordinate, 3 indices per triangle, indices below the number of vertices).") }
         return new Model(h)
     }
 
     // A box, sphere, cylinder, cone, plane or quad of the size 1m (a plane is 1m x 1m lying down, a quad 1m x 1m standing, facing +Z); `detail` is the number of segments around a round shape.
     static Model FromTemplate(Template template, int detail = 24) {
-        var h = __S3DMeshTemplate(template!int, detail)
+        any h = __S3DMeshTemplate(template!int, detail)
         if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
         return new Model(h)
     }
@@ -152,7 +152,7 @@ class Texture {
 
     // A checker board of cells x cells squares (the colours are 0xAABBGGRR) in a picture of size x size pixels.
     static Texture Checker(int size = 64, int cells = 8, int colorA = 4294967295, int colorB = 4282400832) {
-        var h = __S3DTexChecker(size, cells, colorA, colorB)
+        any h = __S3DTexChecker(size, cells, colorA, colorB)
         if (h == 0) { throw new Scene3DException("A checker board needs 1 <= cells <= size <= 4096.") }
         var t = new Texture(h, size, size, true)
         return t
@@ -324,7 +324,7 @@ class Object {
     // An object from a model (or from the text of a Wavefront OBJ file): at the origin, in the size of the model.
     construct(any modelData) {
         this.Init()
-        var model = modelData
+        any model = modelData
         if (modelData is of string) { model = Model.FromObj(modelData) }
         if (!(model is of Model)) { throw new Scene3DException("An object is made from a Model or the text of an OBJ file.") }
         this.UseMesh(model.handle)
@@ -334,7 +334,7 @@ class Object {
     // From a template (Template.Box, Sphere, Cylinder, Cone, Plane, Quad): at (x, y, z), the outer dimensions width, height and depth (a plane has no height, a quad no depth: pass 0m).
     construct(Template template, float x : any m, float y : any m, float z : any m, float width : any m, float height : any m, float depth : any m, int detail = 24) {
         this.Init()
-        var h = __S3DMeshTemplate(template!int, detail)
+        any h = __S3DMeshTemplate(template!int, detail)
         if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
         this.UseMesh(h)
         if (template == Template.Plane || template == Template.Quad) { this.twoSided = true }
@@ -384,7 +384,7 @@ class Object {
 
     undefined UseMesh(int handle) {
         this.mesh = handle
-        var b = __S3DMeshBounds(handle)
+        any b = __S3DMeshBounds(handle)
         this.minX = b[0]
         this.minY = b[1]
         this.minZ = b[2]
@@ -547,7 +547,7 @@ class Object {
         for (var i = 0; i < this.uvList.Count; i++) { t[i] = this.uvList[i] }
         var ix = new int[this.idxList.Count]
         for (var i = 0; i < this.idxList.Count; i++) { ix[i] = this.idxList[i] }
-        var h = __S3DMeshNew(p, t, ix)
+        any h = __S3DMeshNew(p, t, ix)
         if (h == 0) { throw new Scene3DException("The triangles do not make a mesh.") }
         this.UseMesh(h)
     }
@@ -699,7 +699,7 @@ class Camera {
 
     // Turns the camera (pitch and yaw, no roll) towards a point.
     undefined LookAt(float x : any m, float y : any m, float z : any m) {
-        var a = __S3DLookAt(this.x, this.y, this.z, S3D.Length(x), S3D.Length(y), S3D.Length(z))
+        any a = __S3DLookAt(this.x, this.y, this.z, S3D.Length(x), S3D.Length(y), S3D.Length(z))
         this.rx = a[0]
         this.ry = a[1]
         this.rz = 0.0
@@ -858,7 +858,7 @@ class Scene {
         var n = 1
         for (var i = 0; i < this.Lights.Count; i++) {
             if (!this.Lights[i].Enabled) { continue }
-            var p = this.Lights[i].Parameters()
+            any p = this.Lights[i].Parameters()
             for (var k = 0; k < 14; k++) { all[n * 14 + k] = p[k] }
             n++
         }

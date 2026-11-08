@@ -75,7 +75,7 @@ namespace fire.Standard
                 /// All environment variables by name (sorted by name).
                 static Dictionary<string, string> Variables {
                     get {
-                        var raw = {{NativeName}}({{(int)EnvironmentMethod.Variables}})
+                        any raw = {{NativeName}}({{(int)EnvironmentMethod.Variables}})
                         var all = new Dictionary<string, string>()
                         for (var i = 0; i + 1 < raw.length; i = i + 2) { all[raw[i]] = raw[i + 1] }
                         return all

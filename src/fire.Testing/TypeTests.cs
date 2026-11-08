@@ -10,8 +10,12 @@ static class TypeTests
     private static void Check(string title, bool ok, string? detail = null)
     {
         if (!ok) _failures++;
-        Console.WriteLine(ok ? $"OK: Typen: {title}" : $"FEHLER: Typen: {title}" + (detail == null ? "" : $"\n{detail}"));
+        Console.WriteLine(ok ? $"OK: Typen: {title}" : $"FEHLER: Typen: {title}" + (detail == null ? "" : $"\n{detail}") + (detail == null && _lastRun != null ? $"\n(zuletzt: {_lastRun})" : ""));
+        _lastRun = null;
     }
+
+    /// <summary>The result of the last Run (shown with a failed check that names no detail of its own).</summary>
+    private static string? _lastRun;
 
     /// <summary>The codes of the warnings, then `|`, then the output or the errors of a build.</summary>
     private static string Run(string source, TypeCheckMode? mode = null) => Run(source, mode, false);
@@ -36,7 +40,7 @@ static class TypeTests
             errors = "ERROR " + string.Join(" ", CompileDiagnostics.Of(ex).Select(d => verbose ? $"{d.Code} {d.File}:{d.Line} {d.Message}\n" : d.Code));
         }
         finally { Linker.ProcessDefaultTypeChecking = null; Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false; }
-        return string.Join(" ", warnings.Items.Select(d => verbose ? $"{d.Code} {d.File}:{d.Line} {d.Message}\n" : d.Code)) + "|" + errors + string.Join("\n", lines);
+        return _lastRun = string.Join(" ", warnings.Items.Select(d => verbose ? $"{d.Code} {d.File}:{d.Line} {d.Message}\n" : d.Code)) + "|" + errors + string.Join("\n", lines);
     }
 
     /// <summary>The messages of the errors of a strict build ("" when it compiles).</summary>
@@ -58,7 +62,8 @@ static class TypeTests
     {
         Console.WriteLine("=== Typen: Typpruefung (lax/strict) und var ===");
 
-        Check("lax: eine Zuweisung an einen anderen Typ ist eine Warnung, das Programm laeuft", Run("int x = 3\nx = \"hello\"\nprint(x)") == "TC001|hello");
+        Check("lax: eine Zuweisung an einen anderen Typ ist eine Warnung, das Programm laeuft - der Typ bleibt (zur Laufzeit eine ArgumentException)",
+            Run("int x = 3\ntry { x = \"hello\" } catch (ArgumentException e) { print(e.message) }\nprint(x)") == "TC001|Variable 'x' is an int, not String.\n3");
         Check("lax: Initialisierer, Argument und Rueckgabe", Run("""
             class A { int f(int a) { return a } }
             int y = 2.5
@@ -67,7 +72,7 @@ static class TypeTests
             """) == "TC001 TC002|");
         Check("strict (Schalter): derselbe Konflikt ist ein Fehler", Run("int x = 3\nx = \"hello\"", TypeCheckMode.Strict) == "|ERROR TC001");
         Check("#strict in der Datei", Run("#strict\nint x = \"a\"") == "|ERROR TC001");
-        Check("#lax in der Datei schlaegt den Schalter strict", Run("#lax\nint x = \"a\"\nprint(x)", TypeCheckMode.Strict) == "TC001|a");
+        Check("#lax in der Datei schlaegt den Schalter strict", Run("#lax\nint x = 1\ntry { x = \"a\" } catch (ArgumentException e) { print(\"guard\") }\nprint(x)", TypeCheckMode.Strict) == "TC001|guard\n1");
         Check("int geht implizit an float, alles geht an string, undefined an alles", Run("float f = 2\nstring s = 12\nint u = undefined\nprint(f)\nprint(s)") == "|2\n12");
         Check("ein Objekt geht an seine Basisklasse, ein Downcast bleibt erlaubt, Unverwandtes nicht", Run("""
             class Animal { }
@@ -78,6 +83,47 @@ static class TypeTests
             Rock r = a
             """) == "TC001|");
         Check("var hat den Typ des Initialisierers fuer immer", Run("var v = 1\nv = \"t\"") == "TC001|");
+        // the type of a `var` holds at run time too (a reported conflict is guarded), `0.` is a float literal
+        Check("var: int bleibt int auch zur Laufzeit (x += 0.5 ist TC001 und eine ArgumentException), 0. ist ein float",
+            Run("var x = 0\ntry { x += 0.5 } catch (ArgumentException e) { print(e.message) }\nprint(x)\nvar f = 0.\nf += 0.5\nprint(f)\nvar g = 3.\nprint(g / 2)") is var keep
+            && keep == "TC001|Variable 'x' is an int, not Float.\n0\n0.5\n1.5", keep);
+        Check("var = undefined: der Typ kommt aus der ersten Zuweisung (TC020, auch strikt nur eine Warnung) und bleibt",
+            Run("var z = undefined\nz = 4\ntry { z = \"s\" } catch (ArgumentException e) { print(\"kept\") }\nprint(z)") is var late && late == "TC020 TC001|kept\n4"
+            && Run("var z = undefined\nz = 4\nprint(z)", TypeCheckMode.Strict) == "TC020|4", late);
+        Check("var ohne ableitbaren Typ (undefined ohne Zuweisung, Wert unbekannten Typs): TC019 - lax laute Warnung (any), strikt ein Fehler; any x ist still",
+            Run("var w = undefined\nprint(1)") == "TC019|1" && Run("var w = undefined\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC019"
+            && Run("any a = [1]\nvar e = a[0]\nprint(e)") == "TC019|1" && Run("any a = [1]\nvar e = a[0]\nprint(e)", TypeCheckMode.Strict) == "|ERROR TC019"
+            && Run("any a = [1]\nany e = a[0]\nprint(e)", TypeCheckMode.Strict) == "|1");
+        Check("var aus einem als any deklarierten Wert: TC020 (eine Warnung, auch strikt)",
+            Run("class K { static any G() { return 1 } }\nvar v = K.G()\nprint(v)", TypeCheckMode.Strict) == "TC020|1");
+        Check("var aus verwandten Typen: int/float wird float, Klassen die naechste gemeinsame Basis; unverwandte werden any (TC020)", Run("""
+            class Animal { }
+            class Dog : Animal { }
+            class Cat : Animal { }
+            bool yes = 1 > 0
+            var m = yes ? 1 : 2.5
+            print(m / 2)
+            var a = yes ? new Dog() : new Cat()
+            a = new Cat()
+            Animal back = a
+            var u = yes ? 1 : "one"
+            var arr = [1, "one"]
+            print(u)
+            """, TypeCheckMode.Strict) is var joined && joined == "TC020 TC020|0.5\n1", joined);
+        Check("int / int ist ein int (7 / 2 ist 3), int ^ nicht negatives Literal ein int",
+            Run("var q = 7 / 2\nvar p = 2 ^ 3\nint both = q + p\nprint(both)", TypeCheckMode.Strict) == "|11");
+        Check("Namen im eigenen Namespace: Parameter, Felder und Aufrufe (UI.M.Max) haben ihren Typ", Run("""
+            namespace Cx {
+                class Port { string n
+                    construct(string n) { this.n = n } }
+                class Circuit { Port AddPort(string name) { return new Port(name) } }
+                class M { static int Max(int a, int b) { if (a > b) { return a } return b } }
+                class Sw : Circuit {
+                    construct() : base() { var com = this.AddPort("com"); print(com.n + Cx.M.Max(1, 2)) }
+                }
+            }
+            new Cx.Sw()
+            """, TypeCheckMode.Strict) is var ns && ns == "|com2", ns);
         Check("var aus einer Variablen, einem Rueckgabewert und undefined!Typ", Run("""
             class A { int f() { return 1 } }
             int k = 5
@@ -123,10 +169,10 @@ static class TypeTests
         Check("Arrays: Elemente, Literale, new, length, foreach haben den Typ der Elemente", Run("""
             int a[] = [1, 2, 3]
             try { a[0] = "x" } catch (ArgumentException e) { print("A") }
-            int whole = a
+            try { int whole = a } catch (ArgumentException e) { }
             var b = new float[3]
             bool flag = b[0]
-            foreach (x in a) { bool q = x }
+            foreach (x in a) { try { bool q = x } catch (ArgumentException e) { } }
             int n = a.length + "abc".Length
             float f[] = [1, 2.5]
             print(n)
@@ -138,19 +184,19 @@ static class TypeTests
                 int operator[](int i) { return this.v }
             }
             string t = "abc"
-            int c = t[0]
+            try { int c = t[0] } catch (ArgumentException e) { }
             var bx = new Box(3)
-            bool w = bx[0]
+            try { bool w = bx[0] } catch (ArgumentException e) { }
             print(bx[1])
             """) == "TC001 TC001|3");
         Check("Lambdas: Typen aus dem Ziel (Parameter, Variable, Feld), aus den eigenen Parametern (var), sonst any mit Hinweis", Run("""
             int lambda<int, int> add = (x, y) => x + y
-            bool r = add(1, 2)
+            try { bool r = add(1, 2) } catch (ArgumentException e) { }
             lambda<string> wrong = (int z) => z
             int lambda<int> sq = x => "s"
             var u = (p) => p
             var f = (int k, string m) => k
-            bool g = f(1, "a")
+            try { bool g = f(1, "a") } catch (ArgumentException e) { }
             class Box { int v
                 construct(int v) { this.v = v }
                 int Twice(int lambda<int> fn) { return fn(this.v) }
@@ -161,10 +207,10 @@ static class TypeTests
             List<int> xs = new List<int>()
             xs.Add(1)
             try { xs.Add("zwei") } catch (ArgumentException ex) { print(ex.message) }
-            bool wrong = xs[0]
-            foreach (x in xs) { bool b = x }
+            try { bool wrong = xs[0] } catch (ArgumentException e) { }
+            foreach (x in xs) { try { bool b = x } catch (ArgumentException e) { } }
             List<string> names = new List<string>()
-            names = xs
+            try { names = xs } catch (ArgumentException e) { }
             List raw = new List()
             raw.Add("a")
             xs = raw
@@ -173,17 +219,17 @@ static class TypeTests
                 T Get() { return this.item }
             }
             var bi = new Box<int>(4)
-            bool bb = bi.Get()
+            try { bool bb = bi.Get() } catch (ArgumentException e) { }
             try { var bad = new Box<int>("x") } catch (ArgumentException ex) { print(ex.message) }
             List<List<int>> nested = new List<List<int>>()
             nested.Add(xs)
-            bool deep = nested[0][0]
+            try { bool deep = nested[0][0] } catch (ArgumentException e) { }
             class Bag : IEnumerable<float> {
                 List<float> items
                 construct() { this.items = new List<float>() }
                 IEnumerator<float> GetEnumerator() { return this.items.GetEnumerator() }
             }
-            foreach (f in new Bag()) { bool fb = f }
+            foreach (f in new Bag()) { try { bool fb = f } catch (ArgumentException e) { } }
             IEnumerable<int> e = xs
             print(xs.Count)
             """) == "TC002 TC001 TC001 TC001 TC001 TC002 TC001 TC001|Parameter 'value' is a T (int), not String.\nParameter 'item' is a T (int), not String.\n1");
@@ -350,12 +396,12 @@ static class TypeTests
             class Util { static T Id<T>(T x) { return x } static T FirstOf<T>(IEnumerable<T> items) { foreach (x in items) { return x } return undefined } }
             var b = Box.Of(3)
             var c = b.Map(x => x * 2.5)
-            bool w1 = c.item
-            bool w2 = Util.Id("hi")
-            bool w3 = Util.FirstOf([1, 2])
+            try { bool w1 = c.item } catch (ArgumentException e) { }
+            try { bool w2 = Util.Id("hi") } catch (ArgumentException e) { }
+            try { bool w3 = Util.FirstOf([1, 2]) } catch (ArgumentException e) { }
             var l = new List<string>()
             l.Add("a")
-            bool w4 = Util.FirstOf(l)
+            try { bool w4 = Util.FirstOf(l) } catch (ArgumentException e) { }
             print(c.item)
             """) == "TC001 TC001 TC001 TC001|7.5");
         Check("Linq: Query<T> aus List<T> und Arrays, Select<R>, Aggregate<A>; ohne bekannten Typ bleibt es any", Run("""
@@ -364,8 +410,8 @@ static class TypeTests
             nums.Add(3)
             nums.Add(4)
             var q = nums.Where(x => x > 3).Select(x => "n" + x)
-            bool w1 = q.First()
-            bool w2 = Linq.From([1.5, 2.5]).Sum()
+            try { bool w1 = q.First() } catch (ArgumentException e) { }
+            try { bool w2 = Linq.From([1.5, 2.5]).Sum() } catch (ArgumentException e) { }
             int total = nums.Aggregate(0, (acc, x) => acc + x)
             List<string> names = q.ToList()
             any raw = nums
@@ -468,11 +514,12 @@ static class TypeTests
                     static string Of(string s) { return "string" }
                 }
                 int x = 3
-                x = "text"
+                try { x = "text" } catch (ArgumentException e) { print("kept") }
                 print(Show.Of(x))
                 """);
-            Check("Ueberladung vorab gewaehlt: passt der Wert nicht zur Annahme (lax), waehlt die Laufzeit richtig",
-                output == "TC001|string" && VM.HintsMissed - missed == 1, $"{output} missed {VM.HintsMissed - missed}");
+            // (a conflict in lax mode is a warning, and the value does not get in - the variable stays an int, the hint holds)
+            Check("Ueberladung vorab gewaehlt: ein Konflikt (lax) kommt nicht in die Variable, der Hinweis bleibt richtig",
+                output == "TC001|kept\nint" && VM.HintsMissed - missed == 0, $"{output} missed {VM.HintsMissed - missed}");
             Check("Rueckgabewert: ein unbewiesener Wert wird gegen den deklarierten Typ geprueft", Run("""
                 class U { static int F() { any v = "s"; return v } }
                 try { int z = U.F() } catch (ArgumentException e) { print(e.message) }
@@ -718,7 +765,7 @@ static class TypeTests
                 print(s.Extra())
                 var f = s.Extra
                 print(s.Read(1))
-                """) is var laxReach && laxReach.StartsWith("TC008 TC008 TC008 TC002|5\n9"), laxReach);
+                """) is var laxReach && laxReach.StartsWith("TC008 TC008 TC008 TC019 TC002|5\n9"), laxReach);
             Check("Interface-Typ: nicht deklarierte Mitglieder sind strikt Fehler (TC008)", Run(reach + "IReader r = s\nprint(r.Size)\nprint(s.Extra())", TypeCheckMode.Strict) == "|ERROR TC008 TC008");
             Check("Interface-Typ: geerbte Interface-Mitglieder, Property, Besitz-Methoden und Cast strikt ohne Befund", Run(reach + """
                 s.Write(3)
@@ -908,7 +955,7 @@ static class TypeTests
                 print(w + " " + f + " " + b + " " + j + " " + y + " " + (x is of word) + " " + (-x is of word) + " " + (~x is of word) + " " + ((x + 0.5) is of float))
                 """) is var wordOk && wordOk == "|3 3 3 3 12 True True True True", wordOk);
             Check("word: int i = w und word v = 2.5 sind TC001 (lax: zur Laufzeit eine ArgumentException); strikt ein Fehler",
-                Run("word w = 5\nint i = w\nword v = 1\ntry { v = 2.5\nprint(0) } catch (ArgumentException e) { print(1) }") is var wordBad && wordBad == "TC001 TC001|1"
+                Run("word w = 5\ntry { int i = w\nprint(0) } catch (ArgumentException e) { print(1) }\nword v = 1\ntry { v = 2.5\nprint(0) } catch (ArgumentException e) { print(1) }") is var wordBad && wordBad == "TC001 TC001|1\n1"
                 && Run("word w = 5\nint i = w\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC001", wordBad);
             Check("word: 'word' mit Breite ist ein Syntaxfehler", CompileText("word[16] w = 1") is var wordWidth && wordWidth.Contains("'word' has the width of the target's machine word"), wordWidth);
         }

@@ -32,11 +32,11 @@ namespace UI {
 
         // Rebuilds `items`: filter, then sort stably; the current element stays current if it is still there.
         undefined Refresh() {
-            var keep = this.CurrentItem()
+            any keep = this.CurrentItem()
             this.items = new List()
             var test = this.Filter
             for (var i = 0; this.Source != undefined && i < this.Source.Count; i = i + 1) {
-                var item = this.Source[i]
+                any item = this.Source[i]
                 if (test == undefined || test(item)) { this.items.Add(item) }
             }
             if (this.Comparer != undefined || this.sortMember != "") { this.items = this.Sorted(this.items) }
@@ -266,14 +266,14 @@ namespace UI {
                 this.Invalidate()
             }
             for (var i = 0; i < this.rowElements.Count; i = i + 1) {
-                var row = this.rowElements[i]
+                any row = this.rowElements[i]
                 if (row != undefined) { row.Poll(root) }
             }
         }
 
         undefined DropRows() {
             for (var i = 0; i < this.rowElements.Count; i = i + 1) {
-                var row = this.rowElements[i]
+                any row = this.rowElements[i]
                 if (row != undefined) { delete row }
             }
             this.rowElements = new List()
@@ -371,7 +371,7 @@ namespace UI {
             var last = UI.M.Min(rows.Count - 1, (this.scroller.offset + this.viewH) / rh)
             var tpl = this.ItemTemplate
             for (var i = first; i <= last; i = i + 1) {
-                var row = this.rowElements[i]
+                any row = this.rowElements[i]
                 if (row == undefined) {
                     row = tpl.Build(rows[i])
                     row.TakeTo(this)
@@ -387,7 +387,7 @@ namespace UI {
         // Draw a row: (x, y) is its top left corner, w x h the size; `textColor` the colour of the text.
         undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, Brush textColor) {
             if (this.ItemTemplate != undefined) {
-                var row = this.rowElements[index]
+                any row = this.rowElements[index]
                 if (row != undefined && row.Visible) { row.Draw(root, x + row.rx, y + row.ry) }
                 return
             }
@@ -572,7 +572,7 @@ namespace UI {
 
         // The width of the column `index` (the last one with -1 takes the rest).
         int ColumnWidth(int index, int total) {
-            var w = this.columns[index].width
+            any w = this.columns[index].width
             if (w >= 0) { return w }
             var used = 0
             for (var i = 0; i < this.columns.Count; i = i + 1) { used = used + UI.M.Max(this.columns[i].width, 0) }
@@ -586,7 +586,7 @@ namespace UI {
             r.FillRect(x, y, w, h, theme.face)
             var cx = x
             for (var i = 0; i < this.columns.Count; i = i + 1) {
-                var column = this.columns[i]
+                any column = this.columns[i]
                 var cwid = this.ColumnWidth(i, w)
                 root.PushClip(cx, y, cwid, h)
                 var tcolor = theme.text
@@ -612,7 +612,7 @@ namespace UI {
             }
             var cx = x
             for (var i = 0; i < this.columns.Count; i = i + 1) {
-                var column = this.columns[i]
+                any column = this.columns[i]
                 var cwid = this.ColumnWidth(i, w)
                 root.PushClip(cx, y, cwid, h)
                 this.DrawString(root, cx + 4, y + (h - this.TextHeight(root)) / 2, UI.M.Text(UI.M.Member(item, column.member)), textColor)

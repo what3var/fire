@@ -19,11 +19,11 @@ namespace Http {
     class Num {
         // A whole number in decimal digits, -1 if there are none or something else is in the text.
         static int Parse(string text) {
-            var t = text.Trim()
+            any t = text.Trim()
             if (t.Length == 0 || t.Length > 15) { return -1 }
             var n = 0
             for (var i = 0; i < t.Length; i++) {
-                var d = t.CharAt(i).ToInt() - 48
+                any d = t.CharAt(i).ToInt() - 48
                 if (d < 0 || d > 9) { return -1 }
                 n = n * 10 + d
             }
@@ -40,8 +40,8 @@ namespace Http {
 
         // A number in hexadecimal digits (the size of a chunk; a ";extension" after it is ignored), -1 if it is not one.
         static int ParseHex(string text) {
-            var t = text.Trim()
-            var semi = t.IndexOf(";")
+            any t = text.Trim()
+            any semi = t.IndexOf(";")
             if (semi >= 0) { t = t.Substring(0, semi).Trim() }
             if (t.Length == 0 || t.Length > 8) { return -1 }
             var n = 0
@@ -84,7 +84,7 @@ namespace Http {
             var sink = new IO.MemoryStream()
             var i = 0
             while (i < text.Length) {
-                var c = text.CharAt(i).ToInt()
+                any c = text.CharAt(i).ToInt()
                 var hi = -1
                 var lo = -1
                 if (c == 37 && i + 2 < text.Length) {
@@ -125,18 +125,18 @@ namespace Http {
 
         // Reads an absolute http:// or https:// URL; Http.HttpException (code 1) for anything else.
         static Http.Url Parse(string text) {
-            var t = text.Trim()
-            var sep = t.IndexOf("://")
+            any t = text.Trim()
+            any sep = t.IndexOf("://")
             if (sep <= 0) { throw new Http.HttpException("Not an absolute URL: '" + text + "'.", 1) }
-            var scheme = t.Substring(0, sep).ToLower()
+            any scheme = t.Substring(0, sep).ToLower()
             if (scheme != "http" && scheme != "https") { throw new Http.HttpException("Unsupported URL scheme '" + scheme + "'.", 1) }
-            var rest = t.Substring(sep + 3)
-            var hash = rest.IndexOf("#")
+            any rest = t.Substring(sep + 3)
+            any hash = rest.IndexOf("#")
             if (hash >= 0) { rest = rest.Substring(0, hash) }
-            var slash = rest.IndexOf("/")
-            var question = rest.IndexOf("?")
+            any slash = rest.IndexOf("/")
+            any question = rest.IndexOf("?")
             if (question >= 0 && (slash < 0 || question < slash)) { slash = question }
-            var authority = rest
+            any authority = rest
             var path = "/"
             if (slash >= 0) {
                 authority = rest.Substring(0, slash)
@@ -146,15 +146,15 @@ namespace Http {
             if (authority.IndexOf("@") >= 0) { authority = authority.Substring(authority.IndexOf("@") + 1) }
             var port = 80
             if (scheme == "https") { port = 443 }
-            var host = authority
+            any host = authority
             if (authority.StartsWith("[")) {
-                var close = authority.IndexOf("]")
+                any close = authority.IndexOf("]")
                 if (close < 0) { throw new Http.HttpException("Bad host in '" + text + "'.", 1) }
                 host = authority.Substring(1, close - 1)
-                var after = authority.Substring(close + 1)
+                any after = authority.Substring(close + 1)
                 if (after.StartsWith(":")) { port = Http.Num.Parse(after.Substring(1)) }
             } else {
-                var colon = authority.LastIndexOf(":")
+                any colon = authority.LastIndexOf(":")
                 if (colon >= 0) {
                     host = authority.Substring(0, colon)
                     port = Http.Num.Parse(authority.Substring(colon + 1))
@@ -181,9 +181,9 @@ namespace Http {
             if (location.StartsWith("//")) { return this.scheme + ":" + location }
             if (location.StartsWith("/")) { return origin + location }
             var dir = this.path
-            var q = dir.IndexOf("?")
+            any q = dir.IndexOf("?")
             if (q >= 0) { dir = dir.Substring(0, q) }
-            var last = dir.LastIndexOf("/")
+            any last = dir.LastIndexOf("/")
             if (last >= 0) { dir = dir.Substring(0, last + 1) } else { dir = "/" }
             return origin + dir + location
         }
@@ -204,7 +204,7 @@ namespace Http {
         int Count { get { return this.names.Count } }
 
         int IndexOf(string name) {
-            var lower = name.ToLower()
+            any lower = name.ToLower()
             for (var i = 0; i < this.names.Count; i++) {
                 if (this.names[i].ToLower() == lower) { return i }
             }
@@ -236,7 +236,7 @@ namespace Http {
         }
 
         undefined Remove(string name) {
-            var lower = name.ToLower()
+            any lower = name.ToLower()
             var i = this.names.Count - 1
             while (i >= 0) {
                 if (this.names[i].ToLower() == lower) {
@@ -373,7 +373,7 @@ namespace Http {
             this.headers = new Http.Headers()
             this.body = new byte[0]
             this.remoteHost = ""
-            var q = target.IndexOf("?")
+            any q = target.IndexOf("?")
             if (q < 0) {
                 this.path = Http.Uri.Decode(target)
                 this.queryText = ""
@@ -386,11 +386,11 @@ namespace Http {
         // The value of a query parameter (`?name=value&...`, percent decoded), `fallback` if it is not there.
         any Query(string name, any fallback = undefined) {
             if (this.queryText.Length == 0) { return fallback }
-            var pairs = this.queryText.Split("&")
+            any pairs = this.queryText.Split("&")
             for (var i = 0; i < pairs.length; i++) {
-                var pair = pairs[i]
-                var eq = pair.IndexOf("=")
-                var key = pair
+                any pair = pairs[i]
+                any eq = pair.IndexOf("=")
+                any key = pair
                 var value = ""
                 if (eq >= 0) {
                     key = pair.Substring(0, eq)
@@ -441,24 +441,24 @@ namespace Http {
 
         // The next line without its line break, undefined at the end of the stream (a line longer than `limit` bytes is an error, code 4).
         string ReadLine(int limit = 8192) {
-            var pending = undefined
+            IO.MemoryStream pending = undefined
             var total = 0
             while (this.Fill()) {
-                var nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
+                any nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
                 var upto = this.len
                 if (nl >= 0) { upto = nl }
                 total = total + (upto - this.pos)
                 if (total > limit) { throw new Http.HttpException("A line is longer than " + limit + " bytes.", 4) }
                 if (nl >= 0) {
-                    var text = undefined
+                    string text = undefined
                     if (pending == undefined) {
-                        var count = nl - this.pos
+                        any count = nl - this.pos
                         if (count > 0 && this.chunk[nl - 1] == 13) { count = count - 1 }
                         text = IO.Utf8.GetString(this.chunk, this.pos, count)
                     } else {
                         pending.Write(this.chunk, this.pos, nl - this.pos)
-                        var bytes = pending.ToBuffer()
-                        var count2 = bytes.length
+                        any bytes = pending.ToBuffer()
+                        any count2 = bytes.length
                         if (count2 > 0 && bytes[count2 - 1] == 13) { count2 = count2 - 1 }
                         text = IO.Utf8.GetString(bytes, 0, count2)
                         pending.Close()
@@ -527,7 +527,7 @@ namespace Http {
                 if (line.Length == 0) { return }
                 count = count + 1
                 if (count > 100) { throw new Http.HttpException("Too many header fields.", 4) }
-                var colon = line.IndexOf(":")
+                any colon = line.IndexOf(":")
                 if (colon <= 0) { throw new Http.HttpException("A header field without a name: '" + line + "'.", 2) }
                 headers.Add(line.Substring(0, colon).Trim(), line.Substring(colon + 1).Trim())
             }
@@ -640,7 +640,7 @@ namespace Http {
         Http.Response Request(string method, string url, any body, Headers headers) {
             var current = url
             var verb = method
-            var payload = body
+            any payload = body
             var redirects = 0
             while (true) {
                 var parsed = Http.Url.Parse(current)
@@ -665,7 +665,7 @@ namespace Http {
 
         // One request and its response over a connection of its own.
         Http.Response Once(string method, Url url, any body, Headers headers) {
-            var bytes = undefined
+            byte bytes[] = undefined
             if (body != undefined) { bytes = Http.Response.Bytes(body) }
             var h = new Http.Headers()
             h.Set("Host", url.HostHeader())
@@ -687,7 +687,7 @@ namespace Http {
                 var line = reader.ReadLine(8192)
                 while (line != undefined && line.Length == 0) { line = reader.ReadLine(8192) }
                 if (line == undefined) { throw new Http.HttpException("The server closed the connection without an answer.", 2) }
-                var parts = line.Split(" ")
+                any parts = line.Split(" ")
                 if (parts.length < 2 || !parts[0].StartsWith("HTTP/")) { throw new Http.HttpException("Not an HTTP answer: '" + line + "'.", 2) }
                 var status = Http.Num.Parse(parts[1])
                 if (status < 100 || status > 599) { throw new Http.HttpException("A bad status code: '" + parts[1] + "'.", 2) }
@@ -803,7 +803,7 @@ namespace Http {
             try {
                 connection.ReadTimeout = this.readTimeout
                 connection.WriteTimeout = this.readTimeout
-                var response = undefined
+                Http.Response response = undefined
                 var head = false
                 try {
                     var request = this.ReadRequest(connection)
@@ -830,7 +830,7 @@ namespace Http {
             var line = reader.ReadLine(8192)
             while (line != undefined && line.Length == 0) { line = reader.ReadLine(8192) }
             if (line == undefined) { return undefined }
-            var parts = line.Split(" ")
+            any parts = line.Split(" ")
             if (parts.length != 3 || !parts[2].StartsWith("HTTP/")) { throw new Http.HttpException("A bad request line: '" + line + "'.", 2) }
             var request = new Http.Request(parts[0], parts[1])
             request.version = parts[2]
@@ -841,11 +841,11 @@ namespace Http {
         }
 
         Http.Response Dispatch(Http.Request request) {
-            var result = undefined
+            any result = undefined
             try {
                 var handler = this.fallback
                 for (var i = 0; i < this.routes.Count; i++) {
-                    var route = this.routes[i]
+                    any route = this.routes[i]
                     if (route.Matches(request.method, request.path)) {
                         handler = route.handler
                         break

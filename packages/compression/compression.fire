@@ -16,8 +16,8 @@ namespace Compression {
 
     class Errors {
         static undefined Throw() {
-            var code = __CmpLastError()
-            var message = __CmpLastErrorMessage()
+            any code = __CmpLastError()
+            any message = __CmpLastErrorMessage()
             if (code == 1) { throw new Compression.InvalidDataException(message) }
             if (code == 2) { throw new IO.StreamClosedException(message) }
             if (code == 3) { throw new ArgumentException(message) }
@@ -140,12 +140,12 @@ namespace Compression {
         static string DecompressText(byte data[]) { return IO.Utf8.GetString(Compression.Deflate.Undo(data, Compression.Format.Raw)) }
 
         static byte[] Run(any data, Compression.Format format, int level) {
-            var result = __CmpCompress(Compression.Errors.Bytes(data), format, level)
+            any result = __CmpCompress(Compression.Errors.Bytes(data), format, level)
             if (result == undefined) { Compression.Errors.Throw() }
             return result
         }
         static byte[] Undo(byte data[], Compression.Format format) {
-            var result = __CmpDecompress(data, format)
+            any result = __CmpDecompress(data, format)
             if (result == undefined) { Compression.Errors.Throw() }
             return result
         }
@@ -239,7 +239,7 @@ namespace Zip {
         // The last part of the path ("readme.txt"; "" for a folder).
         string Name {
             get {
-                var cut = this.fullName.LastIndexOf("/")
+                any cut = this.fullName.LastIndexOf("/")
                 if (cut < 0) { return this.fullName }
                 return this.fullName.Substring(cut + 1)
             }
@@ -460,7 +460,7 @@ namespace Zip {
             var tailLength = size
             if (tailLength > 65557) { tailLength = 65557 }
             var tail = this.ReadAt(size - tailLength, tailLength)
-            var end = __CmpFindLast(tail, 0x06054b50)
+            any end = __CmpFindLast(tail, 0x06054b50)
             if (end < 0 || end + 22 > tail.length) { throw new Zip.ZipException("This is not a Zip archive (the end of the central directory is missing).") }
             var count = Zip.Bytes.U16(tail, end + 10)
             var dirSize = Zip.Bytes.U32(tail, end + 12)
@@ -546,7 +546,7 @@ namespace Zip {
 
         // Where an entry goes inside `root` (a full path); a ZipException for a name that leaves it.
         static string TargetOf(string root, string name) {
-            var relative = name.Replace("\\", "/")
+            any relative = name.Replace("\\", "/")
             if (relative.StartsWith("/") || (relative.Length >= 2 && relative[1] == ':')) { throw new Zip.ZipException("The entry '" + name + "' has an absolute path: it is not extracted.") }
             foreach (part in relative.Split("/")) {
                 if (part == "..") { throw new Zip.ZipException("The entry '" + name + "' would land outside of the target folder: it is not extracted.") }
@@ -662,7 +662,7 @@ namespace Zip {
 
         // Adds an empty folder entry ("name/").
         Zip.Entry AddDirectory(string name, DateTime time = undefined) {
-            var n = name.Replace("\\", "/")
+            any n = name.Replace("\\", "/")
             if (!n.EndsWith("/")) { n = n + "/" }
             return this.Add(n, new byte[0], 0, time)
         }
@@ -827,7 +827,7 @@ namespace Zip {
 
         // The path below `root` with "/" between the parts.
         static string Relative(string root, string path) {
-            var r = path.Substring(root.Length)
+            any r = path.Substring(root.Length)
             r = r.Replace("\\", "/")
             while (r.StartsWith("/")) { r = r.Substring(1) }
             return r

@@ -327,6 +327,13 @@ namespace fire.Compiler
                 Advance(); // '.'
                 SkipDigits(char.IsDigit);
             }
+            // `0.`: a float without the digits of its fraction (not a suffix: `var x = 0.` is a float, `var x = 0` an int) - not before a name (`5.ToString()`),
+            // a digit or a second dot (`0..5`)
+            else if (!IsAtEnd && Peek() == '.' && !(char.IsLetterOrDigit(PeekNext()) || PeekNext() is '_' or '.' or '$'))
+            {
+                isFloat = true;
+                Advance(); // '.'
+            }
 
             // Scientific notation (`1e3`, `2.5E-3`): the syntax of the number wins over a unit `e` with a power - always a float
             if (!IsAtEnd && Peek() is 'e' or 'E' && (char.IsDigit(PeekNext()) || PeekNext() is '+' or '-' && char.IsDigit(PeekAt(2))))

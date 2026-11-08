@@ -37,7 +37,7 @@ class DosRegisters {
 
 class Dos {
     static undefined Check() {
-        var why = __DosUnavailable()
+        any why = __DosUnavailable()
         if (why != undefined) { throw new DosException(why) }
     }
 
@@ -45,7 +45,7 @@ class Dos {
     static DosRegisters Interrupt(int number, DosRegisters r) {
         Dos.Check()
         if (number < 0 || number > 255) { throw new ArgumentException("An interrupt is 0 to 255, not " + number + ".") }
-        var out = __DosInt(number, r.ax, r.bx, r.cx, r.dx, r.si, r.di, r.ds, r.es)
+        any out = __DosInt(number, r.ax, r.bx, r.cx, r.dx, r.si, r.di, r.ds, r.es)
         r.ax = out[0]
         r.bx = out[1]
         r.cx = out[2]
@@ -110,7 +110,7 @@ class Dos {
     // (valid while the buffer lives).
     static int FarOf(byte buffer[], int offset = 0) {
         Dos.Check()
-        var at = __DosFarOf(buffer, offset)
+        any at = __DosFarOf(buffer, offset)
         if (at == undefined) { throw new ArgumentException("No such place in the buffer: " + offset + ".") }
         if (at == -1) { throw new DosException("The buffer lies above the first megabyte (dos32): DOS cannot reach it - take DOS memory (Dos.Alloc) and fill it with Machine.Memory.") }
         return at

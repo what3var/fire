@@ -231,8 +231,10 @@ static class DiagnosticTests
             Check("nativer Build: die Fehler und Warnungen des Compilers sind im Ergebnis (mit Codes), der Log nennt den Fehler",
                 !failed.Ok && failed.Diagnostics is { Count: 2 } && failed.Diagnostics.Count(d => d.IsError && d.Code.StartsWith("E4")) == 1 && failed.Diagnostics.Count(d => d.Code == "W3") == 1 && failed.Log.Contains("Unknown identifier"),
                 string.Join("\n", failed.Diagnostics?.Select(d => d.ToLogLine()) ?? Array.Empty<string>()) + "\n" + failed.Log);
-            var unsupported = NativeBuilder.BuildSafe(new[] { "fire { print(1) }" }, config, TargetProfile.Wasm, config.ResolveToolchain(TargetProfile.Wasm), tmp);
-            Check("nativer Build: etwas, das das Ziel nicht kann (Threads im Browser), ist ein Fehler E7001", !unsupported.Ok && unsupported.Diagnostics is { Count: 1 } && unsupported.Diagnostics[0].Code == ErrorCatalog.NativeUnsupported, string.Join("\n", unsupported.Diagnostics?.Select(d => d.ToLogLine()) ?? Array.Empty<string>()));
+            // (every built-in target has fire threads now - over fire's own scheduler where the system has none: a target without them, made for the test)
+            var noThreads = TargetProfile.Wasm with { Native = TargetProfile.Wasm.Native with { SupportsThreads = false } };
+            var unsupported = NativeBuilder.BuildSafe(new[] { "fire { print(1) }" }, config, noThreads, config.ResolveToolchain(noThreads), tmp);
+            Check("nativer Build: etwas, das das Ziel nicht kann (Threads auf einem Ziel ohne), ist ein Fehler E7001", !unsupported.Ok && unsupported.Diagnostics is { Count: 1 } && unsupported.Diagnostics[0].Code == ErrorCatalog.NativeUnsupported, string.Join("\n", unsupported.Diagnostics?.Select(d => d.ToLogLine()) ?? Array.Empty<string>()));
         }
 
         Console.WriteLine(_failures == 0 ? "Alle Diagnose-Pruefungen bestanden." : $"FEHLER: {_failures} Diagnose-Pruefung(en) fehlgeschlagen.");

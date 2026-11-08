@@ -35,8 +35,8 @@ namespace IO {
     class IOErrors {
         // Throws the exception matching the last error of a native IO function.
         static undefined Throw() {
-            var code = __IOLastError()
-            var message = __IOLastErrorMessage()
+            any code = __IOLastError()
+            any message = __IOLastErrorMessage()
             if (code == 2) { throw new StreamClosedException(message) }
             if (code == 3) { throw new FileNotFoundException(message) }
             if (code == 4) { throw new DirectoryNotFoundException(message) }
@@ -183,7 +183,7 @@ namespace IO {
         override int Position {
             get {
                 this.Check()
-                var p = __IOPosition(this.handle)
+                any p = __IOPosition(this.handle)
                 if (p < 0) { IO.IOErrors.Throw() }
                 return p
             }
@@ -196,7 +196,7 @@ namespace IO {
         override int Length {
             get {
                 this.Check()
-                var n = __IOLength(this.handle)
+                any n = __IOLength(this.handle)
                 if (n < 0) { IO.IOErrors.Throw() }
                 return n
             }
@@ -209,28 +209,28 @@ namespace IO {
         // New position (from the start), `origin`: IO.SeekOrigin.
         override int Seek(int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
             this.Check()
-            var p = __IOSeek(this.handle, offset, origin)
+            any p = __IOSeek(this.handle, offset, origin)
             if (p < 0) { IO.IOErrors.Throw() }
             return p
         }
 
         override int Read(byte buffer[], int offset, int count) {
             this.Check()
-            var n = __IORead(this.handle, buffer, offset, count)
+            any n = __IORead(this.handle, buffer, offset, count)
             if (n < 0) { IO.IOErrors.Throw() }
             return n
         }
 
         override int Write(byte buffer[], int offset, int count) {
             this.Check()
-            var n = __IOWrite(this.handle, buffer, offset, count)
+            any n = __IOWrite(this.handle, buffer, offset, count)
             if (n < 0) { IO.IOErrors.Throw() }
             return n
         }
 
         override int ReadByte() {
             this.Check()
-            var b = __IOReadByte(this.handle)
+            any b = __IOReadByte(this.handle)
             if (b == -1) { IO.IOErrors.Throw() }
             if (b == -2) { return -1 }
             return b
@@ -243,7 +243,7 @@ namespace IO {
 
         override byte[] ReadAll() {
             this.Check()
-            var all = __IOReadRest(this.handle)
+            any all = __IOReadRest(this.handle)
             if (all == undefined) { IO.IOErrors.Throw() }
             return all
         }
@@ -268,7 +268,7 @@ namespace IO {
         // The entire content (regardless of position) as a new buffer.
         byte[] ToBuffer() {
             this.Check()
-            var all = __IOMemToBuffer(this.handle)
+            any all = __IOMemToBuffer(this.handle)
             if (all == undefined) { IO.IOErrors.Throw() }
             return all
         }
@@ -283,7 +283,7 @@ namespace IO {
         // become U+FFFD. Without count: up to the end of the buffer.
         static string GetString(byte buffer[], int offset = 0, int count = -1) {
             if (count == -1) { count = buffer.length - offset }
-            var text = __IOUtf8Decode(buffer, offset, count)
+            any text = __IOUtf8Decode(buffer, offset, count)
             if (text == undefined) { IO.IOErrors.Throw() }
             return text
         }
@@ -371,11 +371,11 @@ namespace IO {
         string ReadLine() {
             this.Check()
             while (this.Fill()) {
-                var nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
+                any nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
                 if (nl >= 0) {
                     if (this.pending.Length == 0) {
                         // Whole line in the buffer - decode directly.
-                        var count = nl - this.pos
+                        any count = nl - this.pos
                         if (count > 0 && this.chunk[nl - 1] == 13) { count = count - 1 }
                         var text = IO.Utf8.GetString(this.chunk, this.pos, count)
                         this.pos = nl + 1
@@ -551,14 +551,14 @@ namespace IO {
 
         // The next line of standard input, or undefined at the end.
         static string ReadLine() {
-            var line = __IOStdReadLine()
+            any line = __IOStdReadLine()
             if (line == undefined && __IOLastError() != 0) { IO.IOErrors.Throw() }
             return line
         }
 
         // Everything still coming on standard input, as one string.
         static string ReadAll() {
-            var text = __IOStdReadAll()
+            any text = __IOStdReadAll()
             if (text == undefined) { IO.IOErrors.Throw() }
             return text
         }

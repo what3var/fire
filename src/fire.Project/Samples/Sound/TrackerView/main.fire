@@ -4,7 +4,7 @@
 // Keys 1-4 mute a channel, Space pauses, Escape ends.
 var song = Tracker.Song.Load(new Resource("tune.mod").Bytes())
 // the default sound device; a machine without one gets the simulated device "sim"
-var player = undefined
+Tracker.Player player = undefined
 try {
     player = Tracker.Player.Open(song, "default")
 } catch (Audio.AudioException e) {
@@ -25,12 +25,12 @@ var mark = new SolidBrush(0xFF503820)
 var paused = false
 
 while (win.Tick()) {
-    var e = win.NextEvent()
+    any e = win.NextEvent()
     while (e != undefined) {
         // key down events are [type, key, scancode, mods, repeat]: the keys 1-4 mute, the space bar pauses
         if (e[0] == 24) {
             if (e[1] >= 49 && e[1] <= 52) {
-                var c = e[1] - 49
+                int c = e[1] - 49
                 song.Mute(c, !song.IsMuted(c))
             }
             if (e[1] == 32) { paused = !paused }

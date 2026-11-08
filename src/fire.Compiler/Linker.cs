@@ -583,6 +583,24 @@ namespace fire.Compiler
                 TypeChecker.MemberLog = null;
                 lock (typeof(Linker)) File.AppendAllText(memberLogFile, lines.ToString());
             }
+            string? varLogFile = Environment.GetEnvironmentVariable("FIRE_VAR_LOG");
+            if (varLogFile != null)
+            {
+                // a migration tool: every `var` without a type of its own (TC019/TC020), in every source (the libraries too), with the text of its line
+                TypeChecker.VarLog = new();
+                try { TypeChecker.Check(program, resolveResult, TypeCheckMode.Strict, 0); }
+                catch (Exception) { }
+                var lines = new System.Text.StringBuilder();
+                foreach (var e in TypeChecker.VarLog)
+                {
+                    if (e.Source < 0 || e.Source >= processedSources.Count) continue;
+                    var text = processedSources[e.Source].Source.Split('\n');
+                    if (e.Line < 1 || e.Line > text.Length) continue;
+                    lines.Append(processedSources[e.Source].Module ?? processedSources[e.Source].Name ?? "?").Append('\t').Append(e.Line).Append('\t').Append(e.Name).Append('\t').Append(e.Code).Append('\t').Append(e.Type).Append('\t').Append(text[e.Line - 1].TrimEnd('\r')).Append('\n');
+                }
+                TypeChecker.VarLog = null;
+                lock (typeof(Linker)) File.AppendAllText(varLogFile, lines.ToString());
+            }
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
