@@ -78,7 +78,8 @@ try {
   `UnitMismatchException`; the type checker reports both already where it can see them (`TC001`, `TC006`).
 - An assignment yields the stored value: `print(a[0] = 300)` prints `44` for an `int[8]` array.
 - The array becomes typed where it is stored: the declaration's initializer, a declaration with a size (`int a[10]`), a later assignment to the
-  variable or field. Its elements are converted then. An array typed already for another element type is an `ArgumentException`.
+  variable or field. Its elements are converted then. An array typed already for another element type is an `ArgumentException`, and so is a value
+  that is no array at all (`int a[] = 5`): a typed array declaration holds an array or `undefined`, like `int x` holds an int.
 - Parameters do not type what they receive. Copies (`copy`, `flat`, [`taking`](15-threads-and-actors.md)) of a typed array are typed.
 - `int m[3][4]` types the inner arrays. `var`, `any`, strings, classes and pointers declare no element type: such an array takes any value.
 - **A declaration with a size makes the array** - a local or global where it is declared, a field together with its object

@@ -4908,7 +4908,14 @@ FIRE_COLD FIRE_FN bool typeArrayWrong(Value v, uint8_t elem) {
     fireError("ArgumentException", text);
     return false;
 }
-FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
+FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth);
+/* (the common case - an array that has this type already, `int b[] = this.buckets` - embedded: one look at its type) */
+FIRE_ALWAYS_INLINE FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
+    if (FIRE_LIKELY(rank == 1 && v.kind == K_Array && leafAlive(v) && arrOf(v)->typed && arrOf(v)->typed->elem == elem && arrOf(v)->typed->flags == flags
+                    && (!(flags & TU_UNIT) || arrOf(v)->typed->unit == unit))) return true;
+    return typeArraySlow(v, elem, rank, unit, flags, unitText, depth);
+}
+FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
     Arr* a;
     char text[160];
     if (v.kind == K_Undefined) return true;
