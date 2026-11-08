@@ -27,7 +27,7 @@
 #if defined(FIRE_S3D_NO_GPU) || defined(__EMSCRIPTEN__) || defined(ESP_PLATFORM) || !(defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__))
 
 /* ---- no hardware backend on this target ---- */
-static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     (void)rgba; (void)f; (void)cam; (void)lights; (void)lightCount; (void)st;
     return 0;
 }
@@ -1358,7 +1358,7 @@ static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
 }
 
 /* Draws the queue: 1 when the picture is in `rgba`, 2 when it stays on the GPU for the windows of the camera (DirectDrawing), 0 when the GPU cannot draw it. */
-static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     S3dGpuFrame* target;
     S3dGpuTarget* direct = (S3dGpuTarget*)f->direct;
     int readBack = !(direct != NULL && direct->attached && direct->works == 1 && g_s3dVk.wsi);
@@ -1485,7 +1485,7 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     memcpy(rgba, target->readback.map, (size_t)f->w * (size_t)f->h * 4);
     return 1;
 }
-static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     int r;
     s3d_gpu_lock();
     r = s3d_gpu_flushLocked(rgba, f, cam, lights, lightCount, st);

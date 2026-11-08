@@ -119,6 +119,7 @@ static void* fire_cc_bigAlloc(uint32_t bytes) {
 }
 static int fire_cc_bigFree(void* p) {
     int i;
+    if (p == NULL) return 1;   /* (nothing to give back - and an empty place of the table is NULL too: hfree(NULL) asked DOS to free segment 0) */
     for (i = 0; i < FIRE_CC_BIG_KEEP; i++)
         if (fire_cc_bigBlocks[i] == (void __huge*)p) { hfree(fire_cc_bigBlocks[i]); fire_cc_bigBlocks[i] = 0; return 1; }
     return 0;

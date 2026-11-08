@@ -27625,6 +27625,51 @@ else
                 CheckNat("dos16: Arrays und Puffer ueber 64 KB (100000 Bytes, int[30000], any[9000]; kopieren ueber Segmentgrenzen, eine Datei mit 100000 Bytes)",
                     bigRun.Ok && bigRun.Text == dosBigExpected, $"  erwartet:\n{dosBigExpected}\n  DOS:\n{bigRun.Text}");
 
+                // scene3d in the huge model (its buffers over s3d_size and the allocator of the runtime): a small picture - the conventional memory holds the
+                // program (about 500 KB with scene3d), the framebuffer, the depth buffer and the camera's pixels only for small frames. Counted, not summed: the
+                // x87 rounds a colour here and there differently from the SSE of the VM (by 1), the coverage is the same
+                const string dosScene3d = """
+                    #import "graphics"
+                    #import "scene3d"
+                    // the pixels that are not the background, above and below the first 64 KB of the picture (row 102 of 640 bytes)
+                    class H {
+                        static string Count(Framebuffer f) {
+                            var b = f.ReadBytes()
+                            var top = 0
+                            var low = 0
+                            for (var i = 0; i < b.length; i += 4) {
+                                if (b[i] != 24 || b[i + 1] != 42 || b[i + 2] != 61) { if (i < 65536) { top++ } else { low++ } }
+                            }
+                            return top + " " + low
+                        }
+                    }
+                    var frame = new Framebuffer({SIZE})
+                    var scene = new Scene()
+                    var box = new Object(Template.Box, 0m, 0.5m, 0m, 1m, 1m, 1m)
+                    box.RotationY = 30deg
+                    scene.Add(box, "crate")
+                    var floor = new Object(Template.Plane, 0m, 0m, 0m, 6m, 0m, 6m)
+                    floor.Texture = Texture.Checker(32, 4)
+                    scene.Add(floor, "floor")
+                    scene.Add(Light.Directional(-0.4, -1.0, -0.6))
+                    var cam = new Camera(frame)
+                    cam.Y = 1.5m
+                    cam.Z = 3m
+                    cam.RotationX = -25deg
+                    scene.Add(cam)
+                    cam.Render()
+                    print("drawn " + H.Count(frame))
+                    var px = frame.ReadBytes()
+                    print("corner " + px[0] + "," + px[1] + "," + px[2] + "," + px[3])
+                    scene.Remove(box)
+                    cam.Render()
+                    print("floor " + H.Count(frame))
+                    """;
+                var s3dRun = BuildAndRunDos(dosScene3d.Replace("{SIZE}", "64, 48"), "dos16s3d");
+                const string dosScene3dExpected = "drawn 2059 0\ncorner 24,42,61,255\nfloor 1978 0\n";
+                CheckNat("dos16: scene3d - eine Szene mit Box, Boden und Licht gerendert (wie in der VM)",
+                    s3dRun.Ok && s3dRun.Text == dosScene3dExpected, $"  erwartet:\n{dosScene3dExpected}\n  DOS:\n{s3dRun.Text}");
+
                 // the hardware (#import "machine"): CPU and CPUID, the BIOS data area and the video memory (physical addresses), PCI over 32-bit ports, the CMOS
                 // clock, IRQ 0 (the clock, chained: DOS keeps its time), the speaker; the arguments and an address out of reach are exceptions
                 const string dosMachine = """
@@ -28183,6 +28228,11 @@ else
                     var w16Big = RunWin16(win16Big, "win16big");
                     CheckNat("win16: grosse Arrays (3 MB, int[40000]) im Huge Model von Windows, die Argumente (WinMain)",
                         w16Big.Ok && w16Big.Text == "big 3000000 7 42\nargs 0\n", $"  Wine:\n{w16Big.Text}");
+                    // scene3d with a picture of 160 x 120: the framebuffer, the depth buffer and the camera's pixels pass 64 KB each
+                    var w16S3d = RunWin16(dosScene3d.Replace("{SIZE}", "160, 120"), "win16s3d");
+                    const string w16S3dExpected = "drawn 10047 2816\ncorner 24,42,61,255\nfloor 9538 2816\n";
+                    CheckNat("win16: scene3d - 160 x 120 Pixel, die Puffer der Engine ueber 64 KB (wie in der VM)",
+                        w16S3d.Ok && w16S3d.Text == w16S3dExpected, $"  erwartet:\n{w16S3dExpected}\n  Wine:\n{w16S3d.Text}");
                     // the window through GDI (#import "windows"): a palette framebuffer stretched into the client area (read back with GetPixel), a key posted to the
                     // window arrives as KeyDown with its scan code
                     const string win16Window = """

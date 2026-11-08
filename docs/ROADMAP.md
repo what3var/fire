@@ -643,6 +643,13 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Bändern unter 64 KB, Palette als 8-Bit-DIB, RGBA als 24-Bit), Tasten aus `WM_KEYDOWN` (Scancode wie unter Win32), Text aus `WM_CHAR`, Maus, Größe, Schließen.
    Getestet unter Wine (sein 32-Bit-Teil führt 16-Bit-Programme aus) in Xvfb: dieselbe Ausgabe wie die VM, große Arrays, ein Fenster (Pixel mit `GetPixel`
    zurückgelesen, Tasten). Offen: die Zwischenablage von Windows, Ausgabe live in einem Fenster statt am Ende, Dateidialoge.
+   **scene3d auf 16 Bit** (win16, dos16): die Engine zählt ihre Puffer mit `s3d_size` (32 Bit unter Watcom/16 Bit, sonst `size_t`) und holt sie über die Blöcke
+   der Runtime (`S3D_MALLOC`/`S3D_FREE`/`S3D_COPY`/`S3D_ZERO` -> `dataAlloc`/`dataFree`/`dataCopy`/`dataZero`; außerhalb von fire die C-Bibliothek); `realloc`
+   gibt es dafür nicht mehr (`s3d_grow` holt einen neuen Block und kopiert). Ein Tiefenpuffer, eine Schattenkarte oder eine Textur darf damit über 64 KB groß
+   sein. Auf win16 läuft das Beispiel `Scene3D` (640x480); getestet mit 160x120 unter Wine (dieselben Zahlen wie die VM; einzelne Farben weichen um 1 ab - der
+   x87 rundet anders als SSE). Auf dos16 reicht der konventionelle Speicher neben dem Programm (~500 KB mit scene3d) nur für kleine Bilder (getestet 64x48;
+   Framebuffer, Tiefenpuffer und die Pixel der Kamera nehmen je 4 Byte pro Pixel). dos16 übersetzt dafür wie win16 mit `-zt=16` (DGROUP war mit scene3d zu
+   voll). Dabei gefunden: `dataFree(NULL)` gab unter Watcom/Huge `hfree(0)` an DOS weiter (ein freier Platz der Tabelle großer Blöcke ist auch NULL).
 8. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
    `CONDITION_VARIABLE`), `GetTickCount` statt `GetTickCount64`, ANSI/Unicode-Schicht für 9x, `inet_addr` statt `inet_pton` (NT 3.51: Winsock 1.1), TLS über
    mbedTLS statt Schannel, kein USB, GDI aus dem laufenden Umbau.

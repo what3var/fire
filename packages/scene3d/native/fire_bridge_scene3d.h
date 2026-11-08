@@ -18,18 +18,18 @@
 #endif
 
 /* ---- the tables: slot 0 is never used (handle 0 is "none"), a free slot is used again ---- */
-typedef struct FireS3dTable { void** items; size_t count, cap; } FireS3dTable;
+typedef struct FireS3dTable { void** items; s3d_size count, cap; } FireS3dTable;
 static FireS3dTable g_s3dMeshes, g_s3dTextures, g_s3dFrames;
 
 static void* fire_s3d_find(FireS3dTable* t, Value h) {
     int64_t i = h.i;
-    if (i <= 0 || (size_t)i >= t->count) return NULL;
+    if (i <= 0 || (s3d_size)i >= t->count) return NULL;
     return t->items[i];
 }
 
 /* The handle of `item` (0 when the memory is gone: the caller frees the item then). */
 static int64_t fire_s3d_add(FireS3dTable* t, void* item) {
-    size_t i;
+    s3d_size i;
     if (item == NULL) return 0;
     for (i = 1; i < t->count; i++)
         if (t->items[i] == NULL) { t->items[i] = item; return (int64_t)i; }
@@ -44,7 +44,7 @@ static int64_t fire_s3d_add(FireS3dTable* t, void* item) {
 }
 
 static void fire_s3d_reset(void) {
-    size_t i;
+    s3d_size i;
     for (i = 1; i < g_s3dFrames.count; i++) s3d_frameFree((S3dFrame*)g_s3dFrames.items[i]);
     for (i = 1; i < g_s3dMeshes.count; i++) s3d_meshFree((S3dMesh*)g_s3dMeshes.items[i]);
     for (i = 1; i < g_s3dTextures.count; i++) s3d_texFree((S3dTexture*)g_s3dTextures.items[i]);
@@ -72,11 +72,11 @@ static Value fire_s3d_MeshNew(Value positions, Value uvs, Value indices) {
     if (t->length != 0 && t->length != vertices * 2) return Int(0);
     mesh = s3d_meshNew();
     if (mesh == NULL) return Int(0);
-    if (!S3D_GROW(mesh->pos, mesh->posCap, p->length) || !S3D_GROW(mesh->uv, mesh->uvCap, (size_t)vertices * 2) || !S3D_GROW(mesh->idx, mesh->idxCap, ix->length)) { s3d_meshFree(mesh); return Int(0); }
+    if (!S3D_GROW(mesh->pos, mesh->posCap, p->length) || !S3D_GROW(mesh->uv, mesh->uvCap, (s3d_size)vertices * 2) || !S3D_GROW(mesh->idx, mesh->idxCap, ix->length)) { s3d_meshFree(mesh); return Int(0); }
     for (i = 0; i < p->length; i++) mesh->pos[i] = fire_s3d_F(arrItems(p)[i]);
     mesh->posN = p->length;
     for (i = 0; i < vertices * 2; i++) mesh->uv[i] = i < t->length ? fire_s3d_F(arrItems(t)[i]) : 0.0f;
-    mesh->uvN = (size_t)vertices * 2;
+    mesh->uvN = (s3d_size)vertices * 2;
     for (i = 0; i < ix->length; i++) {
         int64_t k = arrItems(ix)[i].i;
         if (k < 0 || (uint64_t)k >= vertices) { s3d_meshFree(mesh); return Int(0); }
@@ -103,12 +103,12 @@ static Value fire_s3d_MeshFromObj(Value text) {
     S3dMesh* m;
     if (text.kind != K_String) return Int(0);
     s = strOf(text);
-    ascii = (char*)malloc((size_t)s->length + 1);
+    ascii = (char*)S3D_MALLOC((s3d_size)s->length + 1);
     if (ascii == NULL) return Int(0);
     for (i = 0; i < s->length; i++) ascii[i] = s->data[i] < 128 ? (char)s->data[i] : '?';
     ascii[s->length] = 0;
     m = s3d_parseObj(ascii, s->length);
-    free(ascii);
+    S3D_FREE(ascii);
     return m ? fire_s3d_meshHandle(m) : Int(0);
 }
 
@@ -162,19 +162,19 @@ static Value fire_s3d_texHandle(S3dTexture* t) {
 
 /* A texture from `width * height * 4` bytes (R, G, B, A); copied. Returns the handle, 0 on bad data. */
 static Value fire_s3d_TexNew(Value width, Value height, Value buffer) {
-    size_t n;
+    s3d_size n;
     S3dTexture* tex;
     FireBytes in;
     if (!bytesArg(buffer, "Scene3D.Texture", &in)) return Undef();
     if (width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(0);
-    n = (size_t)width.i * (size_t)height.i * 4;
-    if ((size_t)in.length < n) return Int(0);
-    tex = (S3dTexture*)calloc(1, sizeof(S3dTexture));
+    n = (s3d_size)width.i * (s3d_size)height.i * 4;
+    if ((s3d_size)in.length < n) return Int(0);
+    tex = (S3dTexture*)s3d_calloc(1, sizeof(S3dTexture));
     if (tex == NULL) return Int(0);
-    tex->rgba = (uint8_t*)malloc(n);
-    if (tex->rgba == NULL) { free(tex); return Int(0); }
+    tex->rgba = (uint8_t*)S3D_MALLOC(n);
+    if (tex->rgba == NULL) { S3D_FREE(tex); return Int(0); }
     tex->w = (int)width.i; tex->h = (int)height.i;
-    memcpy(tex->rgba, in.data, n);
+    S3D_COPY(tex->rgba, in.data, n);
     return fire_s3d_texHandle(tex);
 }
 
@@ -183,16 +183,16 @@ static Value fire_s3d_TexChecker(Value size, Value cells, Value colorA, Value co
     S3dTexture* tex;
     int n, x, y;
     if (size.i <= 0 || size.i > 4096 || cells.i <= 0 || cells.i > size.i) return Int(0);
-    tex = (S3dTexture*)calloc(1, sizeof(S3dTexture));
+    tex = (S3dTexture*)s3d_calloc(1, sizeof(S3dTexture));
     if (tex == NULL) return Int(0);
     n = (int)size.i;
     tex->w = tex->h = n;
-    tex->rgba = (uint8_t*)malloc((size_t)n * (size_t)n * 4);
-    if (tex->rgba == NULL) { free(tex); return Int(0); }
+    tex->rgba = (uint8_t*)S3D_MALLOC((s3d_size)n * (s3d_size)n * 4);
+    if (tex->rgba == NULL) { S3D_FREE(tex); return Int(0); }
     for (y = 0; y < n; y++)
         for (x = 0; x < n; x++) {
             uint32_t c = ((x * cells.i / n + y * cells.i / n) & 1) ? (uint32_t)colorB.i : (uint32_t)colorA.i;
-            uint8_t* p = &tex->rgba[((size_t)y * (size_t)n + (size_t)x) * 4];
+            uint8_t* p = &tex->rgba[((s3d_size)y * (s3d_size)n + (s3d_size)x) * 4];
             p[0] = (uint8_t)(c & 255); p[1] = (uint8_t)((c >> 8) & 255); p[2] = (uint8_t)((c >> 16) & 255); p[3] = (uint8_t)((c >> 24) & 255);
         }
     return fire_s3d_texHandle(tex);
@@ -211,7 +211,7 @@ static Value fire_s3d_TexBump(Value h, Value width, Value height, Value channels
     if (!bytesArg(buffer, "Scene3D.Texture.SetBump", &in)) return Undef();
     t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
     if (!t || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384 || (channels.i != 1 && channels.i != 3 && channels.i != 4)) return Bool(false);
-    if ((size_t)in.length < (size_t)width.i * (size_t)height.i * (size_t)channels.i) return Bool(false);
+    if ((s3d_size)in.length < (s3d_size)width.i * (s3d_size)height.i * (s3d_size)channels.i) return Bool(false);
     return Bool(s3d_texSetBump(t, in.data, (int)width.i, (int)height.i, (int)channels.i) != 0);
 }
 
@@ -252,7 +252,7 @@ static Value fire_s3d_FrameClear(Value h, Value buffer, Value width, Value heigh
     if (b == NULL) return Undef();
     f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, h);
     if (!f || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Bool(false);
-    if ((size_t)b->length < (size_t)width.i * (size_t)height.i * 4) return Bool(false);
+    if ((s3d_size)b->length < (s3d_size)width.i * (s3d_size)height.i * 4) return Bool(false);
     if (f->w != width.i || f->h != height.i) { if (!s3d_frameResize(f, (int)width.i, (int)height.i)) return Bool(false); }
     else s3d_frameClearDepth(f);
     f->clearColor = (uint32_t)color.i;
@@ -320,7 +320,7 @@ static Value fire_s3d_Flush(Value frame, Value buffer, Value camera, Value light
     S3dFrame* f;
     Arr *c, *l, *st;
     S3dLight* ls;
-    size_t n = 0;
+    s3d_size n = 0;
     uint32_t i;
     S3dFlushSettings fs;
     S3dCamera cam;
@@ -330,8 +330,8 @@ static Value fire_s3d_Flush(Value frame, Value buffer, Value camera, Value light
     if (!f || camera.kind != K_Array || lights.kind != K_Array || settings.kind != K_Array) return Bool(false);
     c = arrOf(camera); l = arrOf(lights); st = arrOf(settings);
     if (c->length < (uint32_t)FIRE_S3D_CAMERA_PARAMS || l->length % FIRE_S3D_LIGHT_PARAMS != 0 || st->length < (uint32_t)FIRE_S3D_SETTING_PARAMS) return Bool(false);
-    if ((size_t)b->length < (size_t)f->w * (size_t)f->h * 4) return Bool(false);
-    ls = (S3dLight*)malloc(sizeof(S3dLight) * (l->length / FIRE_S3D_LIGHT_PARAMS + 1));
+    if ((s3d_size)b->length < (s3d_size)f->w * (s3d_size)f->h * 4) return Bool(false);
+    ls = (S3dLight*)S3D_MALLOC(sizeof(S3dLight) * (l->length / FIRE_S3D_LIGHT_PARAMS + 1));
     if (ls == NULL) return Bool(false);
     for (i = 0; i < l->length; i += FIRE_S3D_LIGHT_PARAMS) {
         const Value* L = arrItems(l) + i;
@@ -351,7 +351,7 @@ static Value fire_s3d_Flush(Value frame, Value buffer, Value camera, Value light
     fs.backend = st->length > 3 && (int)fire_s3d_F(arrItems(st)[3]) == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
     cam = fire_s3d_cameraOf(c);
     s3d_flush(b->data, f, &cam, ls, n, &fs);
-    free(ls);
+    S3D_FREE(ls);
     return Bool(true);
 }
 
@@ -374,7 +374,7 @@ static Value fire_s3d_FrameRenderer(Value h) {
 /* The GPU the hardware renderer uses ("" when there is none: no Vulkan, no device, or it is switched off); asking for it starts the backend. */
 static Value fire_s3d_HardwareName(OwnList* list) {
     const char* name = s3d_gpu_deviceName();
-    size_t len = strlen(name), i;
+    s3d_size len = strlen(name), i;
     Str* s = allocStr((uint32_t)len, list);
     for (i = 0; i < len; i++) strChars(s)[i] = (fire_char16)(uint8_t)name[i];
     return StrV(s);
@@ -383,7 +383,7 @@ static Value fire_s3d_HardwareName(OwnList* list) {
 /* Why there is no GPU ("" when there is one, or when nobody asked yet). */
 static Value fire_s3d_HardwareError(OwnList* list) {
     const char* text = s3d_gpu_error();
-    size_t len = strlen(text), i;
+    s3d_size len = strlen(text), i;
     Str* s = allocStr((uint32_t)len, list);
     for (i = 0; i < len; i++) strChars(s)[i] = (fire_char16)(uint8_t)text[i];
     return StrV(s);

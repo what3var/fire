@@ -7,8 +7,8 @@ namespace fire.Runtime
         /// <summary>The targets of Open Watcom: only it builds for them.</summary>
         private static readonly string[] Watcom = { "watcom" };
 
-        /// <summary>DOS in real mode from the 8086 on (ROADMAP 13.3): Open Watcom, large model (far pointers: 32 bits, so with `int` and `float` of 32 bits a
-        /// value takes 8 bytes), the machine word has 16 bits. fire threads are tasks of fire's own scheduler (std/fire_sched.h, switched at the safepoints, the timer
+        /// <summary>DOS in real mode from the 8086 on (ROADMAP 13.3): Open Watcom, large model (far pointers: 32 bits), `int` and `float` of 32 bits, the
+        /// machine word has 16 bits. fire threads are tasks of fire's own scheduler (std/fire_sched.h, switched at the safepoints, the timer
         /// interrupt asks for it); no windows; the console is DOS's.</summary>
         public static readonly TargetProfile Dos16 = new()
         {
@@ -24,8 +24,9 @@ namespace fire.Runtime
                 // fire threads lie outside DGROUP: SS is not DS (-zu) and no stack checks - they compare with the program's own stack.
                 // Linked with the C library of the large model: the code of the library lies in one segment `_TEXT` of at most 64 KB, and the one of the huge model
                 // does not fit (it is about 30 % larger); the calling convention is the same, and the runtime never hands the library a block that passes the end
-                // of a segment (fire_cc_watcom.h copies and clears big blocks piece by piece))
-                CompileArgs = new[] { "-bdos", "-mcmodel=h", "-march=i86", "-mstack-size=32768", "-Wc,-oe=20", "-Wc,-zu", "-fno-stack-check",
+                // of a segment (fire_cc_watcom.h copies and clears big blocks piece by piece); -zt=16 as on win16: data from 16 bytes on gets far segments of its
+                // own - DGROUP (64 KB) holds the stack and the small data, and a program with scene3d had more)
+                CompileArgs = new[] { "-bdos", "-mcmodel=h", "-march=i86", "-mstack-size=32768", "-Wc,-oe=20", "-Wc,-zt=16", "-Wc,-zu", "-fno-stack-check",
                     "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87" },
             },
         };
