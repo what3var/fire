@@ -611,6 +611,10 @@ namespace fire.Native
         // known where the generator made the value itself (a conversion into a word, newBuffer, an element of a known buffer) - word arithmetic, comparisons and
         // element accesses of known buffers are then written out in C (TypedWord, the ArrayGet/ArraySet cases).
         private const byte KindWord = 5, KindBuf = 6;
+        // KindArr: a typed array (OpCode.TypeArray, newTypedArray) whose elements have no unit demand - its "unit" is the element (ArrayElem, the E_* of the
+        // runtime). Known only where TypeArray checked the value right there (it lets an array of that element or `undefined` through): elements of int, float
+        // or bool are then read and written in place (with Optimize speed), their kind is known.
+        private const byte KindArr = 7;
         private const int BufBytes = 1, BufWords = 2;
         // TypeNone: nothing yet - the result of a call of a function none of whose `return`s was seen yet (in the last round: one that never returns,
         // the code after the call does not run); it joins to the other side, and whatever is computed from it is TypeNone, too.
@@ -623,6 +627,15 @@ namespace fire.Native
         private static bool IsNullable(int type) => (type & NullableBit) != 0;
         private static int UnitOfType(int type) => type >> 8;
         /// <summary>A number, a bool, undefined or nothing yet: a value that belongs to no scope (no ownership bookkeeping).</summary>
+        /// <summary>The kind of an element of a typed array (ArrayElem): int, float or bool; KindUnknown for a char or another element.</summary>
+        private static byte ArrElemKind(int elem) => elem switch
+        {
+            ArrayElem.I8 or ArrayElem.I16 or ArrayElem.I32 or ArrayElem.I64 => KindInt,
+            ArrayElem.F8 or ArrayElem.F16 or ArrayElem.F32 or ArrayElem.F64 => KindFloat,
+            ArrayElem.Bool => KindBool,
+            _ => KindUnknown,
+        };
+        private static int ArrElemBits(int elem) => elem switch { ArrayElem.I8 => 8, ArrayElem.I16 => 16, ArrayElem.I32 => 32, _ => 64 };
         private static bool IsPlainType(int type) => type is TypeNone or TypeUndefined || BaseKindOfType(type) is KindInt or KindFloat or KindBool or KindWord;
 
         private readonly List<string> _objTypeNames = new();
@@ -1847,6 +1860,7 @@ namespace fire.Native
             if (_usesElementPointers && _program.ExecutionMode != VmExecutionMode.Performance) sb.AppendLine("#define FIRE_PTRBOUNDS 1 // pointers into arrays and buffers (`ref a[i]`, `p + n`) know the bounds");
             if (_usesElementPointers) sb.AppendLine("#define FIRE_ELEMPTRS 1 // pointers into arrays find their array (a typed one converts what is written through them)");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
+            if (_program.Optimize == OptimizeFor.Size) sb.AppendLine("#define FIRE_OPTIMIZE_SIZE 1 // optimised for size (--optimize, the project, the target): the runtime embeds nothing beyond what the compiler chooses");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             if (_program.IntWidth == 16) sb.AppendLine("#define FIRE_INT16 1 // #intwidth 16: every int is cut to 16 bits, like in the VM (its storage stays 32 bits)");
             if (_program.IntWidth == 32) sb.AppendLine("#define FIRE_INT32 1 // #intwidth 32: int is a 32-bit int, like in the VM (with FIRE_FLOAT32 and 32-bit pointers a value takes 8 bytes)");
@@ -3702,6 +3716,8 @@ namespace fire.Native
             bool IsNum(byte kind) => kind is KindInt or KindFloat;
             // A number of known kind (or undefined, see the guards of TypedArith) as a C++ Real / double.
             byte BK(int k) => BaseKindOfType(Ty(k));
+            // the element of the typed array in slot k (KindArr, maybe undefined), 0: none known
+            int ArrSlot(int k) => BK(k) == KindArr && (Ty(k) & TypeNone) == 0 ? U(k) : 0;
             string Num(int k) => BK(k) == KindFloat ? $"{S(k)}.f" : $"(Real){S(k)}.i";
             string Dbl(int k) => BK(k) == KindFloat ? $"(double){S(k)}.f" : $"(double){S(k)}.i";
             // A parameter in the prologue before its GuardLocal still holds what the caller passed.
@@ -4487,6 +4503,17 @@ namespace fire.Native
                     SetR(d, IsExtensionMethod(f.Proto));
                     if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } thisClass) { SetT(d, ObjType(thisClass)); _kindsKept = true; }
                     d++; return Next();
+                case OpCode.GetField when ArrSlot(d - 1) != 0 && Str(ins.A[0]) == "length" && !HasProperty("length") && !RestrictedField("length") && _program.Optimize == OptimizeFor.Speed:
+                {
+                    // the length of a typed array the generator knows; the generic access for anything else (undefined, a destroyed array: it throws)
+                    Need(1);
+                    string field = Str(ins.A[0]), s0 = S(d - 1);
+                    _fieldNames.Add(field);
+                    E($"{s0} = FIRE_LIKELY({s0}.kind == K_Array && leafAlive({s0})) ? Int(arrOf({s0})->length) : {FieldFn("gf", field)}({s0}{(Modular ? FieldTail(field, f, () => "&" + OwnerList()) : "")});");
+                    Check();
+                    SetR(d - 1, false); SetT(d - 1, TypeOf(KindInt, 0)); _kindsKept = true;
+                    return Next();
+                }
                 case OpCode.GetField when K(d - 1) == KindBuf && Str(ins.A[0]) is "length" or "Length":
                 {
                     // the length of a buffer the generator knows (elements: bytes or words); a destroyed one throws
@@ -5107,7 +5134,12 @@ namespace fire.Native
                         SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufWords)); _kindsKept = true; return Next();
                     }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
+                    {
                         E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {typed.A[0]}, {TypeArrayUnitArgs(chunk, typed.A[2])}, &{OwnerList()});");
+                        SetR(d - 1, true);
+                        if (typed.A[2] == 0xFFFF) { SetT(d - 1, TypeOf(KindArr, typed.A[0])); _kindsKept = true; }
+                        return Next();
+                    }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArrayOfParam } ofParam)
                         // `new T[n]` (TypeArrayOfParam right after): packed at once when the type argument that runs has an element type (`List<int>`)
                         E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ofParam.A[0]))}; {S(d - 1)} = ta_ && ta_[0] && ta_[0]->arrElem ? newTypedArray({S(d - 1)}, (uint8_t)(ta_[0]->arrElem - 1), {TypeArrayUnitArgs(chunk, 0xFFFF)}, &{OwnerList()}) : newArray({S(d - 1)}, &{OwnerList()}); }}");
@@ -5125,7 +5157,17 @@ namespace fire.Native
                     // a `word` declaration holds a buffer of machine words (SPEC 8.10)
                     Need(1); E($"{S(d - 1)} = typeWordBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
                 case OpCode.TypeArray:
-                    Need(1); E($"typeArray({S(d - 1)}, {ins.A[0]}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2])}, 1);"); Check(); return Next();
+                {
+                    Need(1);
+                    bool known = ins.A[1] == 1 && ins.A[2] == 0xFFFF;
+                    // (an array typed so already - newTypedArray right before, a variable of that type: nothing to do)
+                    if (known && Ty(d - 1) is var had && BK(d - 1) == KindArr && U(d - 1) == ins.A[0] && (had & TypeNone) == 0) { _kindsKept = true; return Next(); }
+                    E($"typeArray({S(d - 1)}, {ins.A[0]}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2])}, 1);");
+                    Check();
+                    // what TypeArray lets through: an array of this element, or undefined
+                    if (known) { SetT(d - 1, TypeOf(KindArr, ins.A[0]) | NullableBit); _kindsKept = true; }
+                    return Next();
+                }
                 case OpCode.TypeArrayOfParam:
                 {
                     // `new T[n]`: typed by the type argument that runs (TArg.arrElem; `List<int>`: raw ints)
@@ -5296,6 +5338,29 @@ namespace fire.Native
                         E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()});");
                     Check();
                     int storedType = wordsSet ? TypeOf(KindWord, 0) : Ty(d - 1);
+                    E($"{a} = {v};");
+                    d -= 2; SetR(d - 1, false); SetT(d - 1, storedType); _kindsKept = true; return Next();
+                }
+                case OpCode.ArrayGet when ArrSlot(d - 2) is var getElem and not 0 && ArrElemKind(getElem) != KindUnknown && _program.Optimize == OptimizeFor.Speed:
+                {
+                    // an element of a typed array the generator knows (TypeArray let it through): read in place (arrPackedAt with a constant element folds to one
+                    // load) - the generic access for undefined, a destroyed array, an index out of range or an unpacked array; an int, float or bool, or undefined
+                    Need(2);
+                    string a = S(d - 2), i = S(d - 1);
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else {a} = {Px}aget_g({a}, {i}, &{OwnerList()}); }}");
+                    Check();
+                    d--; SetR(d - 1, false); SetT(d - 1, TypeOf(ArrElemKind(getElem), 0) | NullableBit); _kindsKept = true; return Next();
+                }
+                case OpCode.ArraySet when !_usesThreads && ArrSlot(d - 3) is var setElem and not 0 && ArrElemKind(setElem) is KindInt or KindBool && K(d - 1) == ArrElemKind(setElem) && U(d - 1) == 0
+                    && _program.Optimize == OptimizeFor.Speed:
+                {
+                    // a store into an element of a known typed array: in place - what arraySet does for it (arrElemConvert: an int cut to the width of the element)
+                    Need(3);
+                    string a = S(d - 3), i = S(d - 2), v = S(d - 1);
+                    string convert = ArrElemKind(setElem) == KindInt ? $"{v}.reserved = 0; {v} = intToWidth({v}, {ArrElemBits(setElem)}, false); " : "";
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()}); }}");
+                    Check();
+                    int storedType = Ty(d - 1);
                     E($"{a} = {v};");
                     d -= 2; SetR(d - 1, false); SetT(d - 1, storedType); _kindsKept = true; return Next();
                 }
@@ -5757,7 +5822,7 @@ namespace fire.Native
             }
             // The run-time test that the operands that may be undefined are not ("" when none may be).
             string KindGuard(params int[] slots) => string.Join(" && ", slots.Where(k => IsNullable(Ty(k)))
-                .Select(k => $"{S(k)}.kind == {(BK(k) switch { KindInt => "K_Int", KindFloat => "K_Float", KindWord => "K_Word", KindBuf => "K_Buffer", _ => "K_Bool" })}"));
+                .Select(k => $"{S(k)}.kind == {(BK(k) switch { KindInt => "K_Int", KindFloat => "K_Float", KindWord => "K_Word", KindBuf => "K_Buffer", KindArr => "K_Array", _ => "K_Bool" })}"));
             // The C++ condition of `a op b` for two slots of known kind (numbers of the same unit, or two bools for == and !=), null when the kinds
             // are not known. With a float they compare like compareNumeric (NaN sorts below everything, like double.CompareTo in the VM). An operand
             // that may be undefined is tested; when it is, the generic comparison decides (`==` is false, `<` throws). `mayThrow`: the generic one can throw.
@@ -5768,7 +5833,7 @@ namespace fire.Native
                 string a = S(ia), b = S(ib);
                 // `x == undefined` where x is a number, a bool or an object of a known class: its kind decides (unless a class overloads the operator)
                 if (op is "==" or "!=" && (Ty(ia) == TypeUndefined) != (Ty(ib) == TypeUndefined)
-                    && (Ty(ia) == TypeUndefined ? Ty(ib) : Ty(ia)) is var other && (other & TypeNone) == 0 && BaseKindOfType(other) != KindUnknown
+                    && (Ty(ia) == TypeUndefined ? Ty(ib) : Ty(ia)) is var other && (other & TypeNone) == 0 && BaseKindOfType(other) is not (KindUnknown or KindArr)
                     && !_classList.Any(c => c.Rc.FindMethodWithAccess("operator" + op, 1).Proto != null))
                     return $"{(Ty(ia) == TypeUndefined ? b : a)}.kind {op} K_Undefined";
                 string? fast;

@@ -39,6 +39,9 @@ namespace fire.Runtime
         /// Win9x), 64 (x86-64, ARM64: the desktop targets). `wordWidth` in a target of fire.native.json changes it; `#if word16|word32|word64` sees it.</summary>
         public int WordWidth { get; init; } = 64;
 
+        /// <summary>The direction a native build for the target is optimised in when nothing else says (OptimizeFor: `"optimize"` of a target in fire.native.json).</summary>
+        public OptimizeFor Optimize { get; init; } = OptimizeFor.Speed;
+
         /// <summary>Default stack size of a fire thread in bytes (used when `#stacksize` is not given and cannot be derived).</summary>
         public int DefaultStackBytes { get; init; } = 64 * 1024;
 

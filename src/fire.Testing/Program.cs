@@ -27190,6 +27190,40 @@ else
                 CheckNat("Weglassen (stripping): ein Debug-Build behaelt alles; \"stripping\" als Zahl und Name, \"trim\" und --keep-all als Aliase, --stripping, das Projekt",
                     trAliasChecks.All(c => c.Ok), string.Join(", ", trAliasChecks.Where(c => !c.Ok).Select(c => c.Name)));
 
+                // the direction (docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"): --optimize, the project, fire.native.json, the target; the flags of the toolchain and the define
+                {
+                    var optSpeed = fire.Runtime.OptimizeFor.Speed;
+                    var optSize = fire.Runtime.OptimizeFor.Size;
+                    var linux = TargetProfile.TryGet("linux", out var lx) ? lx : TargetProfile.Host;
+                    var optCli = fire.Native.NativeConfig.Parse("{\"optimize\": \"speed\"}");
+                    optCli.Optimize = "size"; optCli.OptimizeFromCommandLine = true;
+                    var optPlan = new fire.Projects.ProjectSettings { Optimize = "speed" };
+                    var gccTc = fire.Native.ToolchainDef.BuiltIn["gcc"];
+                    var watcomTc = fire.Native.ToolchainDef.BuiltIn["watcom"];
+                    var optLinked = new Linker { Optimize = optSize }.CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release);
+                    var optChecks = new (string Name, bool Ok)[]
+                    {
+                        ("--optimize", CommandLineParser.Parse(new[] { "build", "a.fire", "--optimize", "size" }).Optimize == optSize
+                            && CommandLineParser.Parse(new[] { "native", "a.fire", "--optimize", "SPEED" }).Optimize == optSpeed
+                            && CommandLineParser.Parse(new[] { "build", "a.fire", "--optimize", "fast" }).Error != null && CommandLineParser.Parse(new[] { "run", "a.fire", "--optimize", "size" }).Error != null),
+                        ("targets", linux.Optimize == optSpeed && TargetProfile.Dos16.Optimize == optSize && TargetProfile.Win16.Optimize == optSize && TargetProfile.Dos32.Optimize == optSize && TargetProfile.Bios16.Optimize == optSize),
+                        ("target of the file", fire.Native.NativeConfig.Parse("{\"targets\": {\"small\": {\"extends\": \"linux\", \"optimize\": \"size\"}}}").ResolveTarget("small").Optimize == optSize
+                            && trThrows(() => fire.Native.NativeConfig.Parse("{\"targets\": {\"small\": {\"extends\": \"linux\", \"optimize\": \"tiny\"}}}").ResolveTarget("small"))),
+                        ("order", fire.Compiler.NativeBuilder.OptimizeOf(optCli, optPlan, linux) == optSize
+                            && fire.Compiler.NativeBuilder.OptimizeOf(fire.Native.NativeConfig.Parse("{\"optimize\": \"size\"}"), optPlan, linux) == optSpeed
+                            && fire.Compiler.NativeBuilder.OptimizeOf(fire.Native.NativeConfig.Parse("{\"optimize\": \"size\"}"), (fire.Projects.ProjectSettings?)null, linux) == optSize
+                            && fire.Compiler.NativeBuilder.OptimizeOf(null, (fire.Projects.ProjectSettings?)null, TargetProfile.Dos16) == optSize && fire.Compiler.NativeBuilder.OptimizeOf(null, (fire.Projects.ProjectSettings?)null, linux) == optSpeed),
+                        ("wrong", trThrows(() => fire.Native.NativeConfig.Parse("{\"optimize\": \"tiny\"}")) && new fire.Projects.ProjectSettings { Optimize = "tiny" }.Validate().Count == 1),
+                        ("flags", fire.Compiler.NativeBuilder.WithDirection(gccTc, optSize).Optimization == "size" && fire.Compiler.NativeBuilder.WithDirection(gccTc, optSpeed).Optimization == "-O2"
+                            && fire.Compiler.NativeBuilder.WithDirection(new fire.Native.ToolchainDef { Kind = "gcc", Optimization = "-O3" }, optSpeed).Optimization == "-O3"
+                            && fire.Compiler.NativeBuilder.WithDirection(watcomTc, optSize).Optimization == "size" && fire.Compiler.NativeBuilder.WithDirection(watcomTc, optSpeed).Optimization == "-Ot"
+                            && gccTc.Optimization == "-O2"),
+                        ("define", fire.Native.CppGenerator.Generate(optLinked).Contains("#define FIRE_OPTIMIZE_SIZE 1") && !fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release)).Contains("#define FIRE_OPTIMIZE_SIZE")),
+                    };
+                    CheckNat("Optimierungsrichtung: --optimize, Projekt, fire.native.json, Ziel (Watcom-Ziele: size); Flags der Toolchain (-Os/-O2, Watcom -Os/-Ot) und FIRE_OPTIMIZE_SIZE",
+                        optChecks.All(c => c.Ok), string.Join(", ", optChecks.Where(c => !c.Ok).Select(c => c.Name)));
+                }
+
                 // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11 (the style of part 3 - corners,
                 // shadows, the surfaces of popups, docs/spec/UI_PLATFORM.md - added about 25 KB; up to 4 MB is fine)
                 const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";

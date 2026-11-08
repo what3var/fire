@@ -36,6 +36,9 @@ namespace fire.Editor
             "2 - methods: every class with constructors, fields and properties stays", "3 - all: only what the program reaches",
         };
         private readonly ComboBox cmbStripping = Combo();
+        // (the direction of a build, docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"; the first entry: not set - the target's)
+        private static readonly string[] OptimizeChoices = { "Default (the target's)", "speed", "size" };
+        private readonly ComboBox cmbOptimize = Combo();
         // target
         private readonly ComboBox cmbTarget = Combo();
         private readonly TextBlock txtTargetHint = Hint("");
@@ -43,6 +46,7 @@ namespace fire.Editor
         private readonly TextBox txtPlatformPath = TextField("(the platform package of the runtime)");
         private readonly Segmented segFloat = new("32 bit", "64 bit");
         private readonly TextBox txtStack = TextField(width: 120);
+        private readonly Segmented segTargetOptimize = new("Speed", "Size");
         private readonly CheckBox chkThreads = new() { Content = "The platform package implements fire threads" };
         private readonly CheckBox chkEmbedded = new() { Content = "A board without an operating system shell" };
         private readonly TextBox txtEntryName = TextField(mono: true);
@@ -112,6 +116,8 @@ namespace fire.Editor
             segEngine.SelectedIndex = _config.Engine?.ToLowerInvariant() == "native" ? 1 : 0;
             cmbStripping.ItemsSource = StrippingChoices;
             cmbStripping.SelectedIndex = _config.Stripping is { } level ? (int)level + 1 : 0;
+            cmbOptimize.ItemsSource = OptimizeChoices;
+            cmbOptimize.SelectedIndex = _config.OptimizeValue is { } direction ? (int)direction + 1 : 0;
             segKind.SelectionChanged += Kind_SelectionChanged;
             cmbTarget.SelectionChanged += Target_SelectionChanged;
             cmbToolchain.SelectionChanged += Toolchain_SelectionChanged;
@@ -138,7 +144,10 @@ namespace fire.Editor
             Group("Size",
                 Row("Stripping", cmbStripping),
                 Hint("What a native build leaves out of what the program does not reach (\"stripping\" in fire.native.json; a project can decide for itself, the command line "
-                    + "with --stripping). Names given as literals to reflection always stay, [Keep] keeps a class or member; a debug build keeps everything.")),
+                    + "with --stripping). Names given as literals to reflection always stay, [Keep] keeps a class or member; a debug build keeps everything."),
+                Row("Optimize for", cmbOptimize),
+                Hint("The direction of a native build (\"optimize\"): speed or size - the flags of the C compiler and what the runtime embeds. A project can decide for itself, "
+                    + "the command line with --optimize; by default the target's (Target > Optimize for).")),
             Group("File",
                 Row("Settings file", new SelectableTextBlock { Text = _config.Path, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center }),
                 Hint("The targets and toolchains below are kept in this file (fire.native.json); the built-in ones need no file.")));
@@ -158,6 +167,7 @@ namespace fire.Editor
                     Row("Own platform folder", WithButton(txtPlatformPath, browse)),
                     Row("Float precision", segFloat),
                     Row("Thread stack (bytes)", txtStack),
+                    Row("Optimize for", segTargetOptimize),
                     Row("", chkThreads),
                     Row("", chkEmbedded)),
                 Group("Entry point",
@@ -257,6 +267,7 @@ namespace fire.Editor
             txtPlatformPath.Text = t.Native.PlatformPath ?? "";
             segFloat.SelectedIndex = t.FloatWidth == 32 ? 0 : 1;
             txtStack.Text = t.DefaultStackBytes.ToString();
+            segTargetOptimize.SelectedIndex = t.Optimize == fire.Runtime.OptimizeFor.Size ? 1 : 0;
             chkThreads.IsChecked = t.Native.SupportsThreads;
             chkEmbedded.IsChecked = t.IsEmbedded;
             txtEntryName.Text = t.Native.Entry.Name;
@@ -298,6 +309,7 @@ namespace fire.Editor
                 Platform = (cmbPlatform.Text ?? "").Trim(),
                 PlatformPath = OrNull(txtPlatformPath.Text),
                 FloatWidth = segFloat.SelectedIndex == 0 ? 32 : 64,
+                Optimize = segTargetOptimize.SelectedIndex == 1 ? "size" : "speed",
                 SupportsThreads = chkThreads.IsChecked == true,
                 Embedded = chkEmbedded.IsChecked == true,
                 Entry = new EntryDef { Name = (txtEntryName.Text ?? "").Trim(), Kind = segEntryKind.SelectedIndex == 1 ? EntryKind.Function : EntryKind.Process, ExternC = chkExternC.IsChecked == true },
@@ -475,6 +487,7 @@ namespace fire.Editor
             StoreToolchain();
             _config.Engine = segEngine.SelectedIndex == 1 ? "native" : "vm";
             _config.Stripping = cmbStripping.SelectedIndex > 0 ? (StrippingLevel)(cmbStripping.SelectedIndex - 1) : null;
+            _config.Optimize = cmbOptimize.SelectedIndex > 0 ? OptimizeChoices[cmbOptimize.SelectedIndex] : null;
             _config.Target = SelectedTargetName();
             _config.Toolchain = cmbToolchain.SelectedItem as string;
             Close(true);

@@ -54,6 +54,10 @@ namespace fire.Runtime
         /// the ESP32). The VM and the native backend compute with the same precision (SPEC 8.2.1).</summary>
         public int FloatWidth { get; init; } = 64;
 
+        /// <summary>The direction of a native build (<see cref="OptimizeFor"/>): the generator writes `FIRE_OPTIMIZE_SIZE` for size. Only known while linking (not serialized).</summary>
+        [MemoryPackIgnore]
+        public OptimizeFor Optimize { get; init; }
+
         /// <summary>The natives of graphics and windows in registration order when the program runs them through their C implementation (docs/spec/UI_PLATFORM.md, part 2): a packed program
         /// binds them to the library of both in its payload (null: the C# implementation, or no graphics).</summary>
         public List<string>? GraphicsNatives { get; init; }

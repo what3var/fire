@@ -34,9 +34,10 @@ namespace fire.Compiler
 
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
         public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null,
-            StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null, string? toolchainKind = null)
+            StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null, string? toolchainKind = null, fire.Runtime.OptimizeFor? optimize = null)
         {
-            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchainKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = globalJobs }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchainKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = globalJobs,
+                Optimize = optimize ?? OptimizeOf(null, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program");
             var generated = CppGenerator.GenerateSources(linked, target, stripping);
             return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
@@ -91,6 +92,31 @@ namespace fire.Compiler
         public static StrippingLevel? StrippingOf(NativeConfig config, fire.Projects.BuildPlan? plan) =>
             !config.StrippingFromCommandLine && Strippings.Parse(plan?.Settings.Stripping) is { } fromProject ? fromProject : config.Stripping;
 
+        /// <summary>The direction of a build (OptimizeFor, docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"): `--optimize`, then the project's setting, then fire.native.json,
+        /// then the target's (the PC targets of Open Watcom: size).</summary>
+        public static fire.Runtime.OptimizeFor OptimizeOf(NativeConfig? config, fire.Projects.BuildPlan? plan, TargetProfile target) => OptimizeOf(config, plan?.Settings, target);
+
+        /// <summary><see cref="OptimizeOf(NativeConfig?, fire.Projects.BuildPlan?, TargetProfile)"/> with the settings of the project.</summary>
+        public static fire.Runtime.OptimizeFor OptimizeOf(NativeConfig? config, fire.Projects.ProjectSettings? settings, TargetProfile target)
+        {
+            if (config is { OptimizeFromCommandLine: true, OptimizeValue: { } forced }) return forced;
+            return fire.Runtime.OptimizeFors.Parse(settings?.Optimize) ?? config?.OptimizeValue ?? target.Optimize;
+        }
+
+        /// <summary>The toolchain with the flags of the direction: size is the small-program profile ("size"); speed keeps a flag of its own (`-O3`) and otherwise is the
+        /// default of the kind (Open Watcom: -Ot).</summary>
+        public static ToolchainDef WithDirection(ToolchainDef toolchain, fire.Runtime.OptimizeFor direction)
+        {
+            if (toolchain.EffectiveKind is "files" or "custom") return toolchain;
+            string? flags = direction == fire.Runtime.OptimizeFor.Size ? "size"
+                : !IsSizeProfile(toolchain.Optimization) && toolchain.Optimization != null ? toolchain.Optimization
+                : toolchain.EffectiveKind == "watcom" ? "-Ot" : null;
+            if (flags == toolchain.Optimization) return toolchain;
+            var copy = new ToolchainDef { Extends = toolchain.Extends }.WithBase(toolchain);   // (a copy: the definition of the machine stays as it is)
+            copy.Optimization = flags;
+            return copy;
+        }
+
         /// <summary>Translates and builds. <paramref name="output"/> is the program, or the folder for a toolchain that only writes files. <paramref name="monitor"/> (else the
         /// <see cref="BuildMonitor.Current"/> one) gets the progress and the commands as they run; when it is cancelled the build throws <see cref="OperationCanceledException"/>
         /// (<see cref="BuildSafe"/> returns a result with <see cref="NativeBuildResult.Cancelled"/> instead).</summary>
@@ -99,6 +125,7 @@ namespace fire.Compiler
             IReadOnlyList<string?>? sourcePaths = null, BuildMonitor? monitor = null)
         {
             using var watching = BuildMonitor.Use(monitor);
+            toolchain = WithDirection(toolchain, OptimizeOf(config, plan, target));
             // linkage "shared" (ROADMAP 9, phase C): Linux and macOS with gcc or clang, Windows with MinGW (gcc, clang; DLLs - also built on Linux); elsewhere (msvc, the
             // boards, wasm, TinyCC) it is "static" and the log says so
             if (string.Equals(config.Linkage, "shared", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
@@ -118,7 +145,7 @@ namespace fire.Compiler
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
                 return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
-            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind);
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, OptimizeOf(config, plan, target));
             string cpp = program.C;
             bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
@@ -204,7 +231,7 @@ namespace fire.Compiler
                 finally { config.Linkage = linkage; }
             }
             if (ToolchainDetector.Find(toolchain) == null) return AsSource(null);   // (no compiler: the normal build offers one)
-            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchain.EffectiveKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchain.EffectiveKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue, Optimize = OptimizeOf(config, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             var watch = Stopwatch.StartNew();
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
@@ -394,7 +421,7 @@ namespace fire.Compiler
         private static NativeBuildResult WriteStaticFiles(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode, int? floatWidth, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths)
         {
-            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchain.EffectiveKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchain.EffectiveKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue, Optimize = OptimizeOf(config, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
             try { staticPlan = CppGenerator.GenerateStatic(linked, target, $"files|{toolchain.Layout}", StrippingOf(config, plan)); }

@@ -43,6 +43,8 @@ namespace fire.Projects
         /// in the file a number or a name.</summary>
         [JsonConverter(typeof(StrippingTextConverter))]
         public string? Stripping { get; set; }
+        /// <summary>The direction a native build is optimised in: `speed` or `size` (docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"); null: the target's.</summary>
+        public string? Optimize { get; set; }
         /// <summary>Where the result of a build is written (a path relative to the file that holds the setting; for a library the folder of the package).</summary>
         public string? Output { get; set; }
         /// <summary>`lax` (a type conflict is a warning, the default) or `strict` (an error); docs/spec/TYPES.md. A `#lax` / `#strict` in a file decides for that file.</summary>
@@ -59,7 +61,7 @@ namespace fire.Projects
 
         [JsonIgnore]
         public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && IntWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
-            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Stripping == null && Output == null && TypeChecking == null && GlobalJobs == null && Arguments == null && Port == null && Baud == null;
+            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Stripping == null && Optimize == null && Output == null && TypeChecking == null && GlobalJobs == null && Arguments == null && Port == null && Baud == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
@@ -67,6 +69,7 @@ namespace fire.Projects
         public static readonly IReadOnlyList<string> TypeCheckings = new[] { "lax", "strict" };
         public static readonly IReadOnlyList<string> GlobalJobsModes = new[] { "safepoints", "sleep", "sync" };
         public static readonly IReadOnlyList<string> Linkages = new[] { "source", "static", "shared" };
+        public static readonly IReadOnlyList<string> Optimizations = new[] { "speed", "size" };
         /// <summary>The stripping levels by their names (index = number; fire.Native.Strippings has the same).</summary>
         public static readonly IReadOnlyList<string> Strippings = new[] { "none", "protected", "methods", "all" };
 
@@ -92,6 +95,7 @@ namespace fire.Projects
             r.Toolchain = high?.Toolchain ?? low?.Toolchain;
             r.Linkage = high?.Linkage ?? low?.Linkage;
             r.Stripping = high?.Stripping ?? low?.Stripping;
+            r.Optimize = high?.Optimize ?? low?.Optimize;
             r.Output = high?.Output ?? low?.Output;
             r.TypeChecking = high?.TypeChecking ?? low?.TypeChecking;
             r.GlobalJobs = high?.GlobalJobs ?? low?.GlobalJobs;
@@ -147,6 +151,7 @@ namespace fire.Projects
             if (Engine != null && !Engines.Contains(Engine)) problems.Add($"settings.engine '{Engine}' is not one of: {string.Join(", ", Engines)}.");
             if (Stripping != null && !(Stripping.Length == 1 && Stripping[0] is >= '0' and <= '3') && !Strippings.Contains(Stripping.ToLowerInvariant()))
                 problems.Add($"settings.stripping '{Stripping}' is not one of: 0, 1, 2, 3, {string.Join(", ", Strippings)}.");
+            if (Optimize != null && !Optimizations.Contains(Optimize.ToLowerInvariant())) problems.Add($"settings.optimize '{Optimize}' is not one of: {string.Join(", ", Optimizations)}.");
             if (Baud != null && Baud <= 0) problems.Add("settings.baud must be a positive number (e.g. 115200).");
             foreach (var d in Defines ?? new List<string>()) if (string.IsNullOrWhiteSpace(d) || d.Any(char.IsWhiteSpace)) problems.Add($"settings.defines: '{d}' is not a symbol name.");
             return problems;
