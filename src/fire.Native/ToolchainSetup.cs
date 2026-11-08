@@ -32,8 +32,15 @@ namespace fire.Native
             if (Directory.Exists(Root))
                 foreach (var dir in Directory.GetDirectories(Root))
                 {
+                    if (string.Equals(dir, W64devkitDirectory, StringComparison.OrdinalIgnoreCase)) continue;
+                    // Open Watcom has no bin: its compilers are in binnt64/binnt (Windows) or binl64/binl (Linux) - the portable archive brings only the 32-bit ones
+                    if (string.Equals(dir, WatcomSetup.Directory, StringComparison.OrdinalIgnoreCase))
+                    {
+                        foreach (string ow in WatcomToolchain.CompilerFolders.Select(b => Path.Combine(dir, b)).Where(Directory.Exists)) yield return ow;
+                        continue;
+                    }
                     string bin = Path.Combine(dir, "bin");
-                    if (!string.Equals(dir, W64devkitDirectory, StringComparison.OrdinalIgnoreCase) && Directory.Exists(bin)) yield return bin;
+                    if (Directory.Exists(bin)) yield return bin;
                 }
             if (OperatingSystem.IsWindows())
             {
@@ -250,13 +257,9 @@ namespace fire.Native
                 log?.Invoke($"Unpacking to {Directory} ...");
                 ZipFile.ExtractToDirectory(zip, temp, overwriteFiles: true);
                 // the WATCOM folder of the archive: the one with h\ and the compilers (the zip may hold it directly or in a folder of its own)
-                string root = FindRoot(temp) ?? throw new InvalidOperationException("The archive holds no Open Watcom (no folder with h and binnt64/binl64).");
+                string root = FindRoot(temp) ?? throw new InvalidOperationException("The archive holds no Open Watcom (no folder with h and binnt64/binnt/binl64/binl).");
                 if (System.IO.Directory.Exists(Directory)) System.IO.Directory.Delete(Directory, recursive: true);
                 System.IO.Directory.Move(root, Directory);
-
-                var has64 = System.IO.Directory.Exists(Path.Combine(Directory, "binw64")) || System.IO.Directory.Exists(Path.Combine(Directory, "binl64"));
-
-                log?.Invoke($"Found 64-bit compilers: {has64}");
 
                 if (!OperatingSystem.IsWindows())
                     foreach (string bin in new[] { "binl64", "binl" })
@@ -267,11 +270,10 @@ namespace fire.Native
                             File.SetUnixFileMode(f, File.GetUnixFileMode(f) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
                     }
 
-                var exeSuffix = has64 ? "64" : "";
-                var pathRoot = OperatingSystem.IsWindows() ? $"binnt{exeSuffix}" : $"binl{exeSuffix}";
-
-                string owcc = Path.Combine(Directory, pathRoot, OperatingSystem.IsWindows() ? "owcc.exe" : "owcc");
-                if (!File.Exists(owcc)) throw new InvalidOperationException($"Open Watcom was unpacked, but '{owcc}' is not there.");
+                // the compilers for this machine: 64-bit if the archive has them, else the 32-bit ones (the portable archive has only binnt/binl)
+                string owcc = WatcomToolchain.CompilerIn(Directory)
+                    ?? throw new InvalidOperationException($"Open Watcom was unpacked to '{Directory}', but owcc is in none of {string.Join(", ", WatcomToolchain.CompilerFolders)}.");
+                log?.Invoke("Compiler: " + owcc);
                 log?.Invoke("Open Watcom is ready: " + Directory);
                 return Directory;
             }
@@ -412,6 +414,13 @@ namespace fire.Native
                             else work(m => Log?.Invoke(m));
                         }
                         catch (InvalidOperationException ex) { Log?.Invoke(ex.Message); return null; }
+                        // installed, but the build does not find it: say where it looked (instead of asking again without a reason)
+                        if (ToolchainDetector.Find(wanted) == null)
+                        {
+                            Log?.Invoke($"Open Watcom was installed to '{WatcomSetup.Directory}', but '{wanted.Compiler ?? "owcc"}' was not found on the PATH or in: "
+                                + string.Join(", ", WatcomToolchain.SearchedFolders()));
+                            return null;
+                        }
                         break;
                 }
             }

@@ -655,7 +655,8 @@ Drei Achsen, jede mit einer Datei pro Fall - keine große Datei voller `#ifdef`:
   `CompileRequest`, Suche des Compilers, Umgebung seiner Programme) und steht in `ToolchainDrivers`; ihr Standard (`Default`) wird ein eingebauter Name
   (`"toolchain": "watcom"`). `NativeBuilder.CompilerCommand` fragt zuerst die Treiber - gcc, clang, msvc, tcc und emscripten stehen (noch) dort selbst.
   `WatcomToolchain`: `owcc` übersetzt und bindet in einem Schritt (C99, jede Funktion in einem eigenen Segment - ein Segment des Real Mode fasst 64 KB),
-  gefunden auf dem PATH, unter `%WATCOM%`, `Toolchain/watcom` oder `/opt/watcom`; es setzt `WATCOM` und `INCLUDE` für seine Programme.
+  gefunden auf dem PATH, unter `%WATCOM%`, `Toolchain/watcom` oder `/opt/watcom` - dort in `binnt64`/`binnt` (Windows) bzw. `binl64`/`binl` (Linux), die
+  64-Bit-Compiler zuerst (das portable Archiv, das spark herunterlädt, bringt nur die 32-Bit-Compiler `binnt`/`binl`); es setzt `WATCOM` und `INCLUDE` für seine Programme.
 * **Ziel und Plattform**: das Zielprofil (`TargetProfile`; die alten PCs in `TargetProfile.Pc.cs`, eine Familie je Datei) nennt Plattformpaket, Toolchain,
   Breiten und die Schalter des Ziels für den Compiler (`dos16`: `-bdos -mcmodel=h -march=i86 -mstack-size=...`). Das Plattformpaket ist ein Ordner aus kleinen
   Auswahl-Headern je Teil (`fire_platform.h`), die auf gemeinsame Umsetzungen in `std/` zeigen (`fire_platform_dos.h`,

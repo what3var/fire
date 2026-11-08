@@ -81,6 +81,28 @@ static class BiosTests
             CheckNat("Open Watcom portable: das Archiv wird entpackt (der WATCOM-Ordner darin wird Toolchain/watcom, h und lib286 dabei)",
                 unpacked == target && File.Exists(Path.Combine(target, "h", "stdio.h")) && File.Exists(Path.Combine(target, "lib286", "dos", "clibl.lib"))
                 && (OperatingSystem.IsWindows() || (File.GetUnixFileMode(Path.Combine(target, "binl64", "owcc")) & UnixFileMode.UserExecute) != 0), error);
+            // the portable archive as it is downloaded: only the 32-bit compilers (binnt, binl) - unpacked, owcc found there, and through WATCOM by the driver
+            string zip32 = Path.Combine(owDir, "ow32.zip");
+            using (var z = System.IO.Compression.ZipFile.Open(zip32, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                z.CreateEntry("h/stdio.h").Open().Dispose();
+                z.CreateEntry("binl/owcc").Open().Dispose();
+                z.CreateEntry("binnt/owcc.exe").Open().Dispose();
+                z.CreateEntry("binw/dos32a.exe").Open().Dispose();
+            }
+            string target32 = Path.Combine(owDir, "watcom32");
+            string? unpacked32 = null, error32 = null, located32 = null;
+            try { unpacked32 = fire.Native.WatcomSetup.Unpack(zip32, null, target32); } catch (InvalidOperationException e) { error32 = e.Message; }
+            string? oldWatcom = Environment.GetEnvironmentVariable("WATCOM");
+            try
+            {
+                Environment.SetEnvironmentVariable("WATCOM", target32);
+                located32 = new fire.Native.WatcomToolchain().Locate(new fire.Native.ToolchainDef { Kind = "watcom", Compiler = "owcc" });
+            }
+            finally { Environment.SetEnvironmentVariable("WATCOM", oldWatcom); }
+            string expected32 = Path.Combine(target32, OperatingSystem.IsWindows() ? "binnt" : "binl", OperatingSystem.IsWindows() ? "owcc.exe" : "owcc");
+            CheckNat("Open Watcom portable: nur 32-Bit-Compiler (binnt, binl) - entpackt und gefunden (binnt64/binl64 zuerst, sonst binnt/binl)",
+                unpacked32 == target32 && located32 == expected32, error32 ?? located32 ?? "not found");
             var missing = new fire.Native.ToolchainDef { Kind = "watcom", Compiler = Path.Combine(owDir, "nowhere", "owcc") };
             fire.Native.ToolchainRequest? asked = null;
             var oldAsk = fire.Native.ToolchainProvider.Ask;

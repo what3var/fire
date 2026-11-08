@@ -7,7 +7,7 @@ namespace fire.Native
     /// (`wcc386`: -bdos4g), Windows 3.x and the old 32-bit Windows. What the target needs (system, memory model, processor, stack) comes from the target's
     /// compile arguments; this driver adds what every build needs: C99, every function in its own segment (a segment of the real mode holds 64 KB, the runtime
     /// is more), the optimization, the include folders.
-    /// The compiler is found on the PATH, in %WATCOM%\binl64 (binnt64, binl, binnt) or in Toolchain\watcom next to the compiler.
+    /// The compiler is found on the PATH, in %WATCOM% or in Toolchain\watcom next to the compiler - in binnt64/binnt (Windows) or binl64/binl (Linux) of that tree.
     /// </summary>
     public sealed class WatcomToolchain : IToolchainDriver
     {
@@ -42,13 +42,27 @@ namespace fire.Native
             string name = toolchain.Compiler ?? "owcc";
             if (ToolchainSetup.FindProgram(name) is { } onPath) return onPath;
             foreach (string root in Roots())
-                foreach (string bin in new[] { "binl64", "binnt64", "binl", "binnt" })
-                {
-                    string candidate = Path.Combine(root, bin, OperatingSystem.IsWindows() ? name + ".exe" : name);
-                    if (File.Exists(candidate)) return candidate;
-                }
+                if (CompilerIn(root, name) is { } found) return found;
             return null;
         }
+
+        /// <summary>The folders of an Open Watcom tree that hold the compilers for this machine, in the order they are tried: the 64-bit ones first
+        /// (Windows: binnt64, binnt; Linux: binl64, binl). The portable archive brings only the 32-bit ones (binnt, binl).</summary>
+        public static IReadOnlyList<string> CompilerFolders { get; } = OperatingSystem.IsWindows() ? new[] { "binnt64", "binnt" } : new[] { "binl64", "binl" };
+
+        /// <summary>The compiler <paramref name="name"/> (default owcc) in the Open Watcom tree <paramref name="root"/>, or null.</summary>
+        public static string? CompilerIn(string root, string name = "owcc")
+        {
+            foreach (string bin in CompilerFolders)
+            {
+                string candidate = Path.Combine(root, bin, OperatingSystem.IsWindows() ? name + ".exe" : name);
+                if (File.Exists(candidate)) return candidate;
+            }
+            return null;
+        }
+
+        /// <summary>Where <see cref="Locate"/> looks for an Open Watcom tree (for a message that says where nothing was found).</summary>
+        public static IEnumerable<string> SearchedFolders() => Roots().SelectMany(r => CompilerFolders.Select(b => Path.Combine(r, b)));
 
         public void PrepareEnvironment(string executable, IDictionary<string, string?> environment)
         {
