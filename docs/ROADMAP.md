@@ -795,6 +795,14 @@ nach Arbeiten auf `targets`).
    * Ein zweiter, schlanker Rasterizer (`Scene.Quality`, eigene Quelle, nur gelinkt, wenn benutzt): 8 Bit mit Palette und Schattierungstabellen direkt in
      einen Paletten-Framebuffer, Tiefe als `uint16`, Licht pro Vertex (Gouraud), Festkomma-Spans mit perspektivischer Korrektur alle 8-16 Pixel. Der
      heutige Renderer bleibt für den Desktop (bytegleiche Tests).
+   * **Umgesetzt** (`native/s3d_lean.h`, `RenderMode.Fast`): Licht pro Ecke, Bänder mit `uint16`-Tiefe (24 KB je Band auf 16 Bit), Texturen nearest mit
+     perspektivischer Korrektur alle 16 Pixel, Paletten-Framebuffer in ihrer Palette (32 Stufen je Farbe, Tabelle der nächsten Farbe 16x16x16, Texel einmal je
+     Palette als Indizes), Transparenz als Dither, Schatten des ersten Richtungslichts (Schattenkarte mit 16-Bit-Tiefen, auf 16 Bit höchstens 128x128 = 32 KB, harte
+     Kante); im nativen Build gehen die Bänder direkt in den Framebuffer (keine Kamera-Pixel), in der VM über einen Puffer. VM == nativ, die Bandgröße ändert die
+     Pixel nicht. Auf dos16/bios16 ist er der einzige Renderer (`FIRE_S3D_LEAN_ONLY` im Plattformpaket: der volle Renderer wird nicht gebaut). Noch in Festkomma
+     nur pro Pixel (die Schritte zwischen den Ecken, Zeilen und 16-Pixel-Stücken sind float).
+     **Offen:** 640x480 auf dos16 - der Paletten-Framebuffer selbst hat 300 KB und passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher; dafür
+     der Framebuffer in XMS/EMS (nach den Arbeiten auf `targets`) oder eine Kamera, die direkt in den Videospeicher zeichnet (VESA mit Bänken).
    * In Bändern zeichnen: die Dreiecke einmal nach Bändern sortiert, Tiefenpuffer nur für ein Band (640x32 x 2 Byte = 40 KB), das fertige Band geht gleich
      in den Videospeicher (VESA mit Bänken) - so passt 640x480 auch neben ein dos16-Programm.
    * Weniger Code: Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn benutzt (Stripping / Defines).

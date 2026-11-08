@@ -453,6 +453,7 @@ typedef struct S3dFrame {
     void* direct;              /* DirectDrawing: the windows the camera draws into (s3d_gpu_attach), or NULL */
 } S3dFrame;
 
+#ifndef FIRE_S3D_LEAN_ONLY   /* (a build with the lean renderer only, s3d_lean.h: the frames, shadows and rows of the full renderer are not in it) */
 static void s3d_gpu_releaseFrame(S3dFrame* f);
 
 static void s3d_frameEmpty(S3dFrame* f) { f->batchN = 0; f->opaqueN = 0; f->blendedN = 0; }
@@ -745,6 +746,8 @@ static int s3d_setupTri(S3dTri* t, const S3dScreenVertex* a, const S3dScreenVert
     return 1;
 }
 
+#endif /* FIRE_S3D_LEAN_ONLY */
+
 /* The view and projection of a camera for a picture of w x h (OpenGL style clip space: -w <= z <= w). */
 static S3dMat4 s3d_viewProjection(const S3dCamera* cam, int w, int h) {
     /* view = inverse(T(cam) * R) = R^-1 * T(-cam) */
@@ -762,8 +765,6 @@ static S3dMat4 s3d_viewProjection(const S3dCamera* cam, int w, int h) {
     return s3d_mul(proj, view);
 }
 
-/* Queues one mesh for the frame: its matrices and its look; nothing is transformed or drawn before `s3d_flush`. The camera places the mesh (and a billboard faces it). The mesh and the
- * texture have to live until the flush. */
 /* The matrices of an object: model = T(pos) * R * S * T(-pivot) (a billboard replaces R by a turn towards the camera) and the normal matrix (R * S^-1, the inverse transpose of the
  * model's 3x3 part for a rotation and a non uniform scale). Both renderers place an object with them. */
 static void s3d_objectMatrices(const S3dCamera* cam, const S3dObjectParams* obj, const S3dSurface* surf, S3dMat4* model, S3dMat4* normalM) {
@@ -787,6 +788,7 @@ static void s3d_objectMatrices(const S3dCamera* cam, const S3dObjectParams* obj,
     *normalM = s3d_mul(rotation, s3d_scaling(invS));
 }
 
+#ifndef FIRE_S3D_LEAN_ONLY   /* (the full renderer: queueing, set-up, threads) */
 /* Queues one mesh for the frame: its matrices and its look; nothing is transformed or drawn before `s3d_flush`. The camera places the mesh (and a billboard faces it). The mesh and the
  * texture have to live until the flush. */
 static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh, const S3dObjectParams* obj, const S3dSurface* surf, const S3dTexture* tex) {
@@ -1027,6 +1029,8 @@ static void s3d_parallelFor(int count, int workers, S3dTask fn, void* arg) {
     for (q.next = 0; q.next < count; q.next++) fn(arg, q.next);
 }
 
+#endif /* FIRE_S3D_LEAN_ONLY */
+
 /* ---------------------------------------------------------------------------------------------------------------------------------------------
  * Shadow maps: the depth of what casts a shadow, seen from the light (an orthographic view for a directional light, six views for a point light)
  * --------------------------------------------------------------------------------------------------------------------------------------------- */
@@ -1043,6 +1047,7 @@ static S3dMat4 s3d_lookAtMatrix(S3dVec3 eye, S3dVec3 forward, S3dVec3 upHint) {
     return r;
 }
 
+#ifndef FIRE_S3D_LEAN_ONLY   /* (the full renderer: shadow maps, lights, flush) */
 typedef struct S3dDepthVertex { float sx, sy, d; } S3dDepthVertex;
 
 static void s3d_rasterDepth(S3dShadowMap* m, const S3dDepthVertex* a, const S3dDepthVertex* b, const S3dDepthVertex* c) {
@@ -1312,6 +1317,8 @@ static void s3d_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3
     else { s3d_flushSoftware(rgba, f, cam, lights, lightCount, st); f->lastBackend = S3D_BACKEND_SOFTWARE; }
     s3d_frameEmpty(f);
 }
+
+#endif /* FIRE_S3D_LEAN_ONLY */
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------------
  * Meshes: the templates (a unit size, centred on the origin) and the Wavefront OBJ reader

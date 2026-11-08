@@ -272,7 +272,9 @@ static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     fire_s3d_texRelease(it->tex);
     if (it->mat) fire_s3d_itemRelease(it->mat);
     if (it->tris) s3d_meshFree(it->tris);
+#ifndef FIRE_S3D_LEAN_ONLY
     if (it->frame) s3d_frameFree(it->frame);
+#endif
     if (it->lean) s3d_leanFree(it->lean);
     for (i = 0; i < it->objectN; i++) fire_s3d_itemRelease(it->objects[i]);
     for (i = 0; i < it->lightN; i++) fire_s3d_itemRelease(it->lights[i]);
@@ -567,8 +569,13 @@ static void fire_s3d_queueObject(S3dFrame* f, S3dLean* L, const S3dCamera* cam, 
     S3dObjectParams op;
     S3dSurface s;
     if (!fire_s3d_objectOf(o, &m, &tex, &op, &s)) return;
+#ifdef FIRE_S3D_LEAN_ONLY
+    (void)f; (void)cam;
+    if (L) s3d_leanObject(L, m, &op, &s, tex);
+#else
     if (L) s3d_leanObject(L, m, &op, &s, tex);
     else s3d_queueMesh(f, cam, m, &op, &s, tex);
+#endif
 }
 
 /* The lean renderer's shadow map covers the objects that cast shadows (their boxes in the world). */
@@ -635,6 +642,10 @@ static S3dLight* fire_s3d_lightsOf(const FireS3dItem* s, s3d_size* n) {
 /* Draws the scene as the camera sees it into `buffer` (width * height * 4 bytes, the picture of the camera's framebuffer `fb`). Returns who drew (0 software, 1 the GPU, 2 the GPU
  * straight into the windows of the framebuffer), -1 when the size is not usable, -2 when the frame cannot be cleared (the memory). */
 static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value width, Value height, Value fb) {
+#ifdef FIRE_S3D_LEAN_ONLY
+    (void)camera; (void)scene; (void)buffer; (void)width; (void)height; (void)fb;
+    return Int(-1);   /* (only the lean renderer here: the camera asks it) */
+#else
     FireS3dItem* c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
     FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
     Buf* b = bufferArg(buffer, "Scene3D.Camera.Render");
@@ -673,6 +684,7 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
     S3D_FREE(ls);
     c->n[CN_LAST] = f->lastBackend;
     return Int(f->lastBackend);
+#endif
 }
 
 /* ---- the lean renderer (RenderMode.Fast, s3d_lean.h) ---- */
