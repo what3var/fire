@@ -1,4 +1,4 @@
-/* fire audio package: audio part in C on macOS: Audio Queue Services of AudioToolbox (a C interface - no SDL, no Objective-C). The interface is described in
+/* fire audio package: audio part in C on macOS: Audio Queue Services of AudioToolbox (a C interface - no Objective-C). The interface is described in
  * fire_audio_c.h; the program links the framework AudioToolbox (`framework:AudioToolbox` in the audio package's link libraries for macOS).
  *
  * An output is an audio queue with three buffers of about 20 ms that its own thread (the queue's) fills from a ring of half a second: `write` puts into the ring and

@@ -308,7 +308,7 @@ namespace fire.Native
     /// <param name="Reason">Why it is needed.</param>
     /// <param name="CanInstall">Can fire provide it itself (download)?</param>
     /// <param name="InstallDirectory">Where a download is kept.</param>
-    /// <param name="Component">What is missing: the C++ toolchain, or a library of the build (SDL2, SDL3).</param>
+    /// <param name="Component">What is missing: the C++ toolchain, or the compiler of a target (Open Watcom).</param>
     /// <param name="AllowChange">Is there a settings page to change it (the toolchain has one)?</param>
     public sealed record ToolchainRequest(string Reason, bool CanInstall, string InstallDirectory, string Component = "C++ toolchain", bool AllowChange = true)
     {
@@ -323,25 +323,17 @@ namespace fire.Native
               (CanInstall
                   ? $"fire can download the portable Open Watcom ({WatcomSetup.DownloadSizeHint}) and keep it in '{InstallDirectory}'. Nothing is installed on the system; it is only used by fire."
                   : "Install Open Watcom v2 (open-watcom.github.io) and set WATCOM to its folder.")
-            : IsToolchain
-            ? Reason + "\n\nA C++ toolchain (compiler) is needed for that, and none was found on this machine.\n\n" +
+            : Reason + "\n\nA C++ toolchain (compiler) is needed for that, and none was found on this machine.\n\n" +
               (CanInstall
                   ? $"fire can download the portable w64devkit ({ToolchainSetup.DownloadSizeHint}, a GCC for Windows) and keep it in '{InstallDirectory}'. Nothing is installed on the system; it is only used by fire."
-                  : "Install a C++ compiler with the package manager of your system (Linux: g++ or clang++, macOS: `xcode-select --install`), or name the compiler yourself.")
-            : Reason + $"\n\n{Component} was not found on this machine.\n\n" +
-              (CanInstall
-                  ? $"fire can download {Component} ({SdlSetup.DownloadSizeHint}) and keep it in '{InstallDirectory}'. Nothing is installed on the system; it is only used by fire."
-                  : SdlSetup.HelpTextFor(Component == "SDL3" ? 3 : 2));
+                  : "Install a C++ compiler with the package manager of your system (Linux: g++ or clang++, macOS: `xcode-select --install`), or name the compiler yourself.");
 
         /// <summary>The line below the button "install automatically".</summary>
         public string InstallHint => IsWatcom
             ? (CanInstall ? $"Open Watcom is downloaded ({WatcomSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
                           : "Only available on Windows and Linux (x64). Install Open Watcom v2 yourself.")
-            : IsToolchain
-            ? (CanInstall ? $"w64devkit is downloaded ({ToolchainSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
-                          : "Only available on Windows. Install a C++ compiler with the package manager of your system.")
-            : (CanInstall ? $"{Component} is downloaded ({SdlSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
-                          : "Only available on Windows. Install the development package of your system (see above).");
+            : (CanInstall ? $"w64devkit is downloaded ({ToolchainSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
+                          : "Only available on Windows. Install a C++ compiler with the package manager of your system.");
     }
 
     /// <summary>
@@ -425,31 +417,6 @@ namespace fire.Native
                 }
             }
             return null;
-        }
-
-        /// <summary>The libraries that the generated program asks for (<c>// fire-link:</c>) and the machine may lack: today SDL3 or SDL2 for a window. Looks for the development files;
-        /// if they are missing the user is asked (download on Windows). Returns null when everything is there, else the reason why the build cannot go on.</summary>
-        public static string? RequireLibraries(ToolchainDef toolchain, string cppFile)
-        {
-            int version = SdlSetup.RequiredVersion(cppFile);
-            if (toolchain.EffectiveKind is "custom" or "files" or "emscripten" || version == 0) return null;
-            string reason = $"The program shows a window on the desktop (#import \"windows\"), which is built against SDL{version}.";
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                if (SdlSetup.Locate(toolchain, version) != null) return null;
-                if (Ask == null || !SdlSetup.CanInstall) break;
-                var choice = Ask(new ToolchainRequest(reason, SdlSetup.CanInstall, SdlSetup.RootFor(version), "SDL" + version, AllowChange: false));
-                if (choice != ToolchainChoice.Install) break;
-                try
-                {
-                    Action<Action<string>> work = log => SdlSetup.InstallMingw(log, version);
-                    if (RunInstall != null) { if (!RunInstall(work)) break; }
-                    else work(m => Log?.Invoke(m));
-                }
-                catch (InvalidOperationException ex) { Log?.Invoke(ex.Message); break; }
-            }
-            if (SdlSetup.Locate(toolchain, version) != null) return null;
-            return reason + "\n" + SdlSetup.HelpTextFor(version);
         }
     }
 }

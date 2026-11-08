@@ -56,8 +56,6 @@
       "native/fire_display_joystick.h",
       "native/fire_display_keys.h",
       "native/fire_display_none.h",
-      "native/fire_display_sdl.h",
-      "native/fire_display_sdl3.h",
       "native/fire_display_wayland.h",
       "native/fire_display_web.h",
       "native/fire_display_win32.h",

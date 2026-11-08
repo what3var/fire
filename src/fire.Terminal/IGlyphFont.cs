@@ -6,7 +6,7 @@ namespace fire.Terminal
     /// bitmaps of a monospace font - exchangeable (see GdiGlyphFont
     /// for the current, GDI+-based implementation), so that later e.g.
     /// an embedded bitmap font (for platform independence) or
-    /// SDL_ttf can be used without touching the renderer -
+    /// a font library can be used without touching the renderer -
     /// the renderer only knows this interface, never a concrete
     /// implementation.</summary>
     public interface IGlyphFont

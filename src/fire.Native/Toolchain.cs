@@ -36,8 +36,6 @@ namespace fire.Native
         public string? Layout { get; set; }
         /// <summary>A command that runs in the output folder after the files are written (e.g. <c>idf.py build</c>).</summary>
         public string? BuildCommand { get; set; }
-        /// <summary>The SDL a window is built with when the target does not say: 2 or 3 (null: SDL3 when this toolchain can compile and link it, else SDL2).</summary>
-        public int? Sdl { get; set; }
 
         [System.Text.Json.Serialization.JsonIgnore]
         public string EffectiveKind => Kind ?? "gcc";
@@ -73,7 +71,7 @@ namespace fire.Native
                 Extends = Extends, Kind = Kind ?? b.Kind, Compiler = Compiler ?? b.Compiler, Std = Std ?? b.Std, CStd = CStd ?? b.CStd,
                 CCompiler = CCompiler ?? (Compiler != null ? null : b.CCompiler), Optimization = Optimization ?? b.Optimization, Strip = Strip ?? b.Strip,
                 Args = Args ?? b.Args, Libs = Libs ?? b.Libs, IncludeDirs = IncludeDirs ?? b.IncludeDirs, Command = Command ?? b.Command,
-                Layout = Layout ?? b.Layout, BuildCommand = BuildCommand ?? b.BuildCommand, Sdl = Sdl ?? b.Sdl,
+                Layout = Layout ?? b.Layout, BuildCommand = BuildCommand ?? b.BuildCommand,
             };
         }
 

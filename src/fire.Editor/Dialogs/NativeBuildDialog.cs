@@ -306,7 +306,6 @@ namespace fire.Editor
                 CompileArgs = Lines(txtTargetArgs.Text),
                 LinkLibs = Lines(txtTargetLibs.Text),
                 Toolchain = current.Native.Toolchain,
-                Sdl = current.Native.Sdl,
                 LineDirectives = current.Native.LineDirectives ? null : false,
                 Port = _targetPort,
                 Baud = _targetBaud,

@@ -1,4 +1,4 @@
-/* fire native platform package "std": a window in the browser (fire_dweb_*, one of the displays of fire_display_desktop.h) - without SDL: a <canvas> of the page,
+/* fire native platform package "std": a window in the browser (fire_dweb_*, one of the displays of fire_display_desktop.h): a <canvas> of the page,
  * driven by a few functions of JavaScript in this file (EM_JS of Emscripten).
  *
  * The first window takes the canvas the page has for the program (Module.canvas - the canvas of Emscripten's page -, else the element with the id "fire"); a page

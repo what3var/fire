@@ -1,7 +1,7 @@
 /* fire native bridge "windows" (C): the natives behind `#import "windows"` - a window that shows a framebuffer of the graphics bridge, and the events of that window.
  * The fire side (Window, EventType - fire source) is the same as in the VM; this file is what its `__GRPHWin...` functions do (the generator calls `__GRPHWinName` as
  * fire_win_WinName). Putting the pixels on the screen and collecting the events is the display that comes with the package, one per platform (platformSources of windows.fireproj: FireDisplayWindow and the
- * fire_display_* functions; fire's own or SDL3/SDL2 on the desktop - fire_display_select.h -, VGA on DOS, none on a board).
+ * fire_display_* functions; fire's own on the desktop - fire_display_select.h -, VGA on DOS, none on a board).
  *
  * C99, part of the generated file after fire_bridge_graphics.h when the program imports "windows". As in the VM, `Tick` collects the events, shows the framebuffer and then
  * runs the callbacks (registered lambdas) on the calling thread with the real global variables; an exception that a callback does not catch is reported and ends only the callback.
@@ -39,7 +39,7 @@ static void fire_winb_unlock(FireWinMutex* m) { (void)m; }
 #endif
 
 /* What the program and the thread of a window manager share of one window. The OS window (display) belongs to the thread that opens and pumps it: the
- * program's thread (Tick, a manager that runs there) or the manager's thread (Window.Show) - SDL serves a window only on the thread that created it. */
+ * program's thread (Tick, a manager that runs there) or the manager's thread (Window.Show) - a window system serves a window only on the thread that created it. */
 typedef struct FireWinShared {
     FireWinMutex m;
     FireDisplayWindow display;
@@ -123,7 +123,7 @@ static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, 
 #ifdef FIRE_DISPLAY_PRESENT_AREA
     if (area != NULL && fn == NULL) { fire_display_presentArea(&s->display, pixels, width, height, area[0], area[1], area[2], area[3]); return; }
 #else
-    (void)area;   /* (a display without partial present - SDL - shows the whole frame) */
+    (void)area;   /* (a display without partial present shows the whole frame) */
 #endif
     fire_display_present(&s->display, pixels, width, height);
 }
@@ -1217,7 +1217,7 @@ static Value fire_win_WinSetSize(Value id, Value width, Value height) {
     else fire_display_setSize(&s->display, wd, ht);
     return Bool(true);
 }
-/* Window.Cursor: the system cursor over the window (SDL numbering; the thread of a managed window sets it at its next cycle). */
+/* Window.Cursor: the system cursor over the window (FIRE_CURSOR_* numbering of fire_display_keys.h; the thread of a managed window sets it at its next cycle). */
 static Value fire_win_WinSetCursor(Value id, Value cursor) {
     FireWinState* w = fire_winb_windowOf(id);
     FireWinShared* s = w->sh;

@@ -47,7 +47,7 @@ print(add(40, 2))                                   // 42
 #### Freeing what a library returns: `release:`
 
 Many C functions return memory or a resource that the caller must give back with another function of the same library (`fopen`/`fclose`, `strdup`/`free`,
-`sqlite3_mprintf`/`sqlite3_free`, `SDL_GetClipboardText`/`SDL_free`). `Get(name, signature, release: "freeFunction")` names it - the library's own
+`sqlite3_mprintf`/`sqlite3_free`, `curl_easy_escape`/`curl_free`). `Get(name, signature, release: "freeFunction")` names it - the library's own
 function, looked up in the same library (a `void(void*)`; each Windows DLL may have its own C runtime, so it is never the program's `free`):
 
 ```fire

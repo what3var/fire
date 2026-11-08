@@ -18,7 +18,6 @@ namespace fire.Native
         public int Format { get; set; } = CppGenerator.PluginFormat;
         public string Target { get; set; } = "";
         public string Flags { get; set; } = "";
-        public int? Sdl { get; set; }
         public string Head { get; set; } = "";
         /// <summary>Windows: the file of the runtime's DLL.</summary>
         public string? Runtime { get; set; }
@@ -104,7 +103,7 @@ namespace fire.Native
             string flags = (_forced ?? CurrentFlags).ToString();
             return new PluginHostInfo
             {
-                Target = _target.Name, Flags = flags, Sdl = _sdlChosen ?? _target.Native.Sdl, Head = PluginHeadKey(_libraryHead, flags), Runtime = runtimeFile,
+                Target = _target.Name, Flags = flags, Head = PluginHeadKey(_libraryHead, flags), Runtime = runtimeFile,
                 Modules = _sharedAbis.Select(kv => new PluginHostModule { Name = kv.Key.Name, Abi = kv.Value, Library = libraryFiles.TryGetValue(kv.Key, out var f) ? f : "" }).ToList(),
             };
         }
@@ -297,7 +296,7 @@ namespace fire.Native
         /// <summary>A plugin (`--linkage plugin`, ROADMAP 9 phase D b): the classes of the program's own sources as a library module of their own, against the library
         /// modules of the program (core, the imports, the libraries of the project) - the program that loads it must have these with the same interfaces. The switches
         /// are those of that program (<paramref name="host"/>, its `.firehost` file), else those of the plugin and its modules.</summary>
-        public static PluginBuildPlan GeneratePlugin(LinkedProgram program, TargetProfile target, string name, PluginHostInfo? host, StrippingLevel? stripping, Func<int>? chooseSdl,
+        public static PluginBuildPlan GeneratePlugin(LinkedProgram program, TargetProfile target, string name, PluginHostInfo? host, StrippingLevel? stripping,
             string toolchainStamp, string? cacheRoot = null)
         {
             bool dll = target.Native.Platform == "windows";
@@ -332,7 +331,7 @@ namespace fire.Native
                 string root = Path.Combine(cacheRoot ?? NativeLibraryCache.Root, target.Name);
                 foreach (var spec in specs)
                 {
-                    string depKey = LibraryKey(program, spec, abi, target, toolchainStamp + "|shared" + (dll ? "|dll" : ""), null, target.Native.Sdl, LibraryStripping(program, stripping));
+                    string depKey = LibraryKey(program, spec, abi, target, toolchainStamp + "|shared" + (dll ? "|dll" : ""), null, LibraryStripping(program, stripping));
                     union = union.Or(ReadInterface(Path.Combine(root, depKey, spec.Id + NativeLibraryCache.InterfaceExtension), depKey) is { } known ? ParseFlags(known.Flags)
                         : GenerateLibrary(program, spec, specs, target, stripping, null, separate: true, dll: dll).Flags);
                 }
@@ -349,10 +348,9 @@ namespace fire.Native
                 flags = union;
             }
             // the head of its file: the configuration of the runtime of the program (the same switches), the key the runtime compares
-            var headGen = new CppGenerator(program, target) { _role = ModuleRole.Program, _forced = flags, _separate = true, _dll = dll, _chooseSdl = chooseSdl, _strip = LibraryStripping(program, stripping) };
+            var headGen = new CppGenerator(program, target) { _role = ModuleRole.Program, _forced = flags, _separate = true, _dll = dll, _strip = LibraryStripping(program, stripping) };
             headGen.CollectPackages();
             headGen.ApplyForcedFlags();
-            if (headGen._usesWindows && target.Native.Platform is "posix" or "windows") headGen._sdlChosen = target.Native.Sdl ?? host?.Sdl ?? chooseSdl?.Invoke() ?? 2;
             string head = headGen.LibraryHeadOf(headGen.HeadDefines() + headGen.HeadTail(0));
             string key = PluginHeadKey(head, flags.Value.ToString());
             if (output.JsonEngine) head = head.Replace("#include \"fire_json.h\"", "#define FIRE_JSON_IMPLEMENTATION 1   // (the JSON engine: in the file of the module that calls it)\n#include \"fire_json.h\"");

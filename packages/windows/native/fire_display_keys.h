@@ -1,6 +1,6 @@
 /* fire native platform package "std": the numbers of keys, modifiers, mouse buttons and cursors that a display reports (part of the HAL, fire_display_c.h).
  *
- * The numbers are those programs already know (UI.Keys, the `windows` prelude): they were SDL3's, and they stay - every display of fire translates what its window
+ * The numbers are those programs already know (UI.Keys, the `windows` prelude), and they stay - every display of fire translates what its window
  * system says into them, so that a program sees the same key on every platform:
  *   scan code  the position of the key on the keyboard, as the USB HID usage table numbers it (A = 4, Enter = 40, Right = 79, Left Ctrl = 224, ...);
  *   key code   what the key means on the keyboard layout of the user: the character it types without shift (lower case: 'a', '1', '-'; 13 Enter, 27 Escape, 8 Backspace,
@@ -69,7 +69,7 @@ static int32_t fire_key_fromScan(int sc) {
 }
 
 /* The key code from the character the layout gives the key without shift (`unshifted`, a code point; 0: none) - only keys of the main block take a character (the
- * number block, the function keys and the arrows keep their own code even when the layout names a character, as in SDL). */
+ * number block, the function keys and the arrows keep their own code even when the layout names a character). */
 static int32_t fire_key_code(int sc, uint32_t unshifted) {
     int mainBlock = (sc >= FIRE_SC_A && sc <= FIRE_SC_0) || (sc >= FIRE_SC_MINUS && sc <= FIRE_SC_SLASH) || sc == FIRE_SC_NONUSBACKSLASH;
     if (mainBlock && unshifted >= 32 && unshifted != 127) {

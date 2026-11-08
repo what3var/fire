@@ -127,8 +127,8 @@ namespace fire.Runtime
             },
         };
 
-        /// <summary>A program in the browser (WebAssembly, built with Emscripten): one thread (fire threads are tasks of fire's own scheduler on the fibers of Emscripten), `Sleep` hands the thread back to the page, the window is the canvas of the page (SDL2 of
-        /// Emscripten), the files are in memory, there are no sockets. The result is a single `.html` file that opens as it is.</summary>
+        /// <summary>A program in the browser (WebAssembly, built with Emscripten): one thread (fire threads are tasks of fire's own scheduler on the fibers of Emscripten), `Sleep` hands the thread back to the page, the window is the canvas of the page (fire's
+        /// own display), the files are in memory, there are no sockets. The result is a single `.html` file that opens as it is.</summary>
         public static readonly TargetProfile Wasm = new()
         {
             Name = "wasm", Symbols = new[] { "wasm", "browser" }, HalPackage = "wasm", WordWidth = 32,
@@ -198,11 +198,6 @@ namespace fire.Runtime
 
         /// <summary>The platform package implements fire threads.</summary>
         public bool SupportsThreads { get; init; } = true;
-
-        /// <summary>The SDL a window on the desktop (`#import "windows"` on posix and windows) is built with: 2 or 3; 0: the build decides - SDL3 when the toolchain
-        /// can compile and link it (a probe that is remembered), else SDL2; null (the default): no SDL - fire's own display (docs/spec/UI_PLATFORM.md), unless the environment
-        /// variable FIRE_SDL=2|3|auto asks for SDL.</summary>
-        public int? Sdl { get; init; }
 
         /// <summary>`#line` directives in the generated C (fire file and line of every instruction): gdb/lldb, the messages of the C compiler and crash reports name
         /// fire lines. `"lineDirectives": false` in the target of fire.native.json switches them off (the C file is then read as C).</summary>

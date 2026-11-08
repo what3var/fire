@@ -290,8 +290,6 @@ namespace fire.Native
         public List<string>? LinkLibs { get; set; }
         public bool? SupportsThreads { get; set; }
         public string? Toolchain { get; set; }
-        /// <summary>The SDL of a window on the desktop: 2 or 3 (null: the build decides, SDL3 when the toolchain has it).</summary>
-        public int? Sdl { get; set; }
         /// <summary>`#line` directives in the generated C (null: on, see NativeTarget.LineDirectives).</summary>
         public bool? LineDirectives { get; set; }
         /// <summary>A board: its serial port (ESP32: Run and Debug in spark).</summary>
@@ -311,7 +309,6 @@ namespace fire.Native
                 LinkLibs = LinkLibs ?? b.Native.LinkLibs,
                 SupportsThreads = SupportsThreads ?? b.Native.SupportsThreads,
                 Toolchain = Toolchain ?? b.Native.Toolchain,
-                Sdl = Sdl ?? b.Native.Sdl,
                 LineDirectives = LineDirectives ?? b.Native.LineDirectives,
                 Port = Port ?? b.Native.Port,
                 Baud = Baud ?? b.Native.Baud,

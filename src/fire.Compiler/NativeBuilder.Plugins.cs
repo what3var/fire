@@ -59,7 +59,7 @@ namespace fire.Compiler
         /// (`<output>.so`/`.dll`) that a program with linkage "shared" loads with `Library.Load`, and its bytecode for the VM (`<output>.fireplugin`). With `--host <program>`
         /// it is built for that program (its switches, the files of its libraries - on Windows needed: the DLL imports from them).</summary>
         private static NativeBuildResult BuildPlugin(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
-            VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths, Func<int>? chooseSdl)
+            VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths)
         {
             var log = new StringBuilder();
             NativeBuildResult Fail(string text) => new(false, output, log + text, new[] { new Diagnostic(0, text, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
@@ -86,7 +86,7 @@ namespace fire.Compiler
             string name = plan?.Project.Name ?? Path.GetFileName(full);
             var watch = Stopwatch.StartNew();
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the plugin");
-            var pluginPlan = CppGenerator.GeneratePlugin(linked, target, name, host, StrippingOf(config, plan), chooseSdl, ToolchainStamp(toolchain));
+            var pluginPlan = CppGenerator.GeneratePlugin(linked, target, name, host, StrippingOf(config, plan), ToolchainStamp(toolchain));
             log.Append(pluginPlan.Log);
             log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);

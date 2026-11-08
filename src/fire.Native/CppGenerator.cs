@@ -206,11 +206,8 @@ namespace fire.Native
         private bool _needsTimeObj;
         private bool _usesGraphics;
         private bool _usesWindows;
-        /// <summary>Which SDL the window is built with when the target does not say (see <see cref="GenerateSources"/>).</summary>
-        private Func<int>? _chooseSdl;
         /// <summary>How much is left out (see <see cref="EffectiveStripping"/>).</summary>
         private StrippingLevel _strip;
-        private int? _sdlChosen;
         /// <summary>A `Takes` mode is used: `Takes.Children` needs the enumerator of the IEnumerable classes (fire_enumerateItems).</summary>
         private bool _usesTakeEnumerate;
 
@@ -238,18 +235,6 @@ namespace fire.Native
             ["FntLoad"] = (1, false), ["FntAdd"] = (2, false), ["FntOpen"] = (1, false), ["FntDestroy"] = (1, false), ["FntName"] = (1, true), ["FntIsBitmap"] = (1, false),
             ["FntAscent"] = (2, false), ["FntHeight"] = (2, false), ["FntMeasure"] = (3, false),
         };
-        /// <summary>The SDL a window is built with, or null for fire's own display (the default): the target's `sdl` (2 or 3; 0: the build probes the toolchain, SDL3 when it
-        /// has it), else the environment variable FIRE_SDL (2, 3, or "auto" like 0).</summary>
-        private int? SdlOfTarget()
-        {
-            if (_target.Native.Sdl is int fixedSdl and (2 or 3)) return fixedSdl;
-            string? env = _target.Native.Sdl == 0 ? "auto" : Environment.GetEnvironmentVariable("FIRE_SDL");
-            if (env == "2") return 2;
-            if (env == "3") return 3;
-            if (env == "auto") return _sdlChosen ??= _chooseSdl?.Invoke() ?? 2;
-            return null;
-        }
-
         /// <summary>What fire's own display links: Linux loads its window systems at run time (dl, pthread for the clipboard's thread); Windows links what every Windows has;
         /// macOS its frameworks (`framework:` - the build makes `-framework` of it).</summary>
         private IEnumerable<string> OwnDisplayLibraries() => DisplayLibraries(_target);
@@ -346,23 +331,21 @@ namespace fire.Native
 
         /// <summary>The program as C (<see cref="NativeSources.Program"/>) and its natives in C++ (<see cref="NativeSources.Natives"/>, null when it has none; written as
         /// <see cref="NativesFileName"/> next to the program, compiled with a C++ compiler and linked with it).</summary>
-        /// <param name="chooseSdl">Asked once when the program shows a window on a desktop and the target does not name the SDL (<see cref="NativeTarget.Sdl"/>): 2 or 3
-        /// (the build probes the toolchain); null: SDL2.</param>
         /// <param name="stripping">How much is left out (<see cref="StrippingLevel"/>); null: level 3, what the program does not reach - a debug build (`#debug`, `-m DEBUG`)
         /// keeps everything.</param>
-        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, Func<int>? chooseSdl = null, StrippingLevel? stripping = null)
+        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, StrippingLevel? stripping = null)
         {
             if (ModulesFromEnvironment && program.SourceModules != null)
             {
                 // (tests, ROADMAP 9 phase A: the same program from modules; a program that cannot be split - it declares a class a library declares too - is built whole)
-                try { return GenerateModular(program, target, chooseSdl, stripping); }
+                try { return GenerateModular(program, target, stripping); }
                 catch (NativeNotSupportedException ex) when (ex.Message.StartsWith("module '", StringComparison.Ordinal))
                 {
                     if (Environment.GetEnvironmentVariable("FIRE_MODULES_LOG") is { Length: > 0 } logFile)
                         lock (typeof(CppGenerator)) File.AppendAllText(logFile, ex.Message + Environment.NewLine);
                 }
             }
-            var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _chooseSdl = chooseSdl, _strip = EffectiveStripping(program, stripping) };
+            var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _strip = EffectiveStripping(program, stripping) };
             string c = generator.Run();
             return new NativeSources(c, generator._nativesCode);
         }
@@ -1507,19 +1490,10 @@ namespace fire.Native
             foreach (var (import, _) in _packageImports)
                 if (import.Import.Native is { } packageNative)
                     foreach (string lib in packageNative.LinkLibrariesFor(new[] { _target.Native.Platform, _target.Name })) sb.AppendLine($"// fire-link: {lib}");
-            // the display of these platforms: fire's own (native/platform/std/fire_display_desktop.h - what it links is what the operating system always has), or SDL3/SDL2
-            // when the target or FIRE_SDL asks for it (fire_display.h of the platform picks it by FIRE_DISPLAY_SDL and FIRE_SDL3): the build links it
-            if (_usesWindows && _target.Native.Platform == "wasm") { if (SdlOfTarget() is int) { sb.AppendLine("#define FIRE_DISPLAY_SDL 1"); sb.AppendLine("// fire-link: SDL2"); } }   // (Emscripten's own SDL2: -sUSE_SDL=2; fire's own display: the canvas, nothing to link)
-            else if (_usesWindows && _target.Native.Platform is "posix" or "windows")
-            {
-                if (SdlOfTarget() is int sdl)
-                {
-                    sb.AppendLine("#define FIRE_DISPLAY_SDL 1");
-                    if (sdl == 3) { sb.AppendLine("// fire-link: SDL3"); sb.AppendLine("#define FIRE_SDL3 1"); }
-                    else sb.AppendLine("// fire-link: SDL2");
-                }
-                else foreach (string lib in OwnDisplayLibraries()) sb.AppendLine($"// fire-link: {lib}");
-            }
+            // the display of these platforms: fire's own (native/platform/std/fire_display_desktop.h - what it links is what the operating system always has; in the browser
+            // the canvas of the page, nothing to link)
+            if (_usesWindows && _target.Native.Platform is "posix" or "windows")
+                foreach (string lib in OwnDisplayLibraries()) sb.AppendLine($"// fire-link: {lib}");
             if (DebugBuild && DebugAgent && _target.Native.Platform == "windows") sb.AppendLine("// fire-link: ws2_32");   // (the debug agent talks TCP)
             if (_separate)
             {
@@ -1880,8 +1854,6 @@ namespace fire.Native
         private string LibraryHeadOf(string prelude)
         {
             var head = new StringBuilder(prelude);
-            // (SDL only when the target or FIRE_SDL asks for it - else the own display layer, see the program head)
-            if (_usesWindows && _target.Native.Platform is "posix" or "windows" && SdlOfTarget() is int headSdl) { head.AppendLine("#define FIRE_DISPLAY_SDL 1"); if (headSdl == 3) head.AppendLine("#define FIRE_SDL3 1"); }
             head.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
             if (_dll) head.Append(DllHead());
             head.AppendLine("#include \"fire_rt.h\"");
@@ -2823,7 +2795,7 @@ namespace fire.Native
             _version++;
         }
 
-        /// <summary>`#import "windows"`: the window shows a framebuffer of the graphics bridge; on the desktop it needs SDL3 or SDL2 (the build links it, see `fire-link:`).</summary>
+        /// <summary>`#import "windows"`: the window shows a framebuffer of the graphics bridge; on the desktop fire's own display shows it (the build links what it needs, see `fire-link:`).</summary>
         private void UseWindows()
         {
             if (_usesWindows) return;

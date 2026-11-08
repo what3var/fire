@@ -310,7 +310,7 @@ namespace fire.Native
 
         /// <summary>The program built from modules, in one file (phase A of ROADMAP 9: the same code as separate libraries, only not compiled apart): the library
         /// modules in dependency order, then the program, which defines what they declare. The switches every module is generated with are those of all of them.</summary>
-        public static NativeSources GenerateModular(LinkedProgram program, TargetProfile? target = null, Func<int>? chooseSdl = null, StrippingLevel? stripping = null)
+        public static NativeSources GenerateModular(LinkedProgram program, TargetProfile? target = null, StrippingLevel? stripping = null)
         {
             target ??= TargetProfile.Host;
             var specs = ModulesOf(program);
@@ -327,7 +327,7 @@ namespace fire.Native
                 }
                 var main = new CppGenerator(program, target)
                 {
-                    _chooseSdl = chooseSdl, _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs,
+                    _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs,
                     _moduleBodies = string.Concat(outputs.Select(o => o.Body)),
                 };
                 main.SetModules(specs, null);

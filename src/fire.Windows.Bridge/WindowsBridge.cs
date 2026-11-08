@@ -10,7 +10,7 @@ using System.Collections.Generic;
 namespace fire.Windows.Bridge
 {
     /// <summary>
-    /// The window bridge (`#import "windows"`): the SDL window in which a framebuffer of the graphics bridge (`#import "graphics"`) is shown -
+    /// The window bridge (`#import "windows"`): the window in which a framebuffer of the graphics bridge (`#import "graphics"`) is shown -
     /// separate from `graphics`, so that a program for a platform without a window (embedded) imports only `graphics` and plugs in another
     /// output device (e.g. a display) instead. Registers the <see cref="WindowManager"/> as native functions (prefix <see cref="WindowPrefix"/>)
     /// and supplies the classes `Window` and `EventType` as fire source (the prelude of the standard package). Requires `graphics`

@@ -23,7 +23,7 @@ Leitlinien:
 | 3 | [Zip / Deflate](#7-zip--deflate) | 0, 6 (CRC/Hash-Infrastruktur) | `.fpk` ist ein Zip |
 | 4 | [Debugging nativer Builds](#8-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
-| 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
+| 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht und VM-Seite |
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
 | 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
 | 6 | [UI-Markup: fehlende Eigenschaften](#14-ui-markup-fehlende-eigenschaften) | - | klein; `.fxml` ist der Hauptweg für Oberflächen, dort fehlen ToolTip, Cursor und Drag & Drop |
@@ -291,19 +291,19 @@ Dynamisches Laden:
 
 ## 10. Clipboard, Drag & Drop
 
-Stand: **umgesetzt** ([fire.Terminal – Framebuffer, Zeichnen und Fenster](spec/GRAPHICS_LAYER.md) "Drag & Drop aus anderen Programmen, Zwischenablage", [User interfaces](ui/README.md) "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "SDL3 oder SDL2"):
+Stand: **umgesetzt** ([fire.Terminal – Framebuffer, Zeichnen und Fenster](spec/GRAPHICS_LAYER.md) "Drag & Drop aus anderen Programmen, Zwischenablage", [User interfaces](ui/README.md) "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Die eigene Anzeige"):
 `Clipboard.GetText`/`SetText`/`HasText`, `GetImage`/`SetImage`/`HasImage` (PNG über `Framebuffer.ToPng`, unter Windows auch `CF_DIB`) und `GetFiles`/`SetFiles`/`HasFiles` (`text/uri-list`, unter
-Windows `CF_HDROP`, nativ und in der VM) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms, unter X11 auch mit dem, was vor dem Start kopiert wurde (SDL 3.2 sähe es nicht); die Ereignisse `DropFiles`/`DropText` mit Position
-und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
+Windows `CF_HDROP`, nativ und in der VM) - VM und nativ über fire's eigene Anzeige, ohne Desktop eine eigene Zwischenablage des Programms, unter X11 auch mit dem, was vor dem Start kopiert wurde; die Ereignisse `DropFiles`/`DropText` mit Position
+und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt; im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
 Dreifachklick alles bzw. die Zeile (`root.clickCount`), das mehrzeilige Textfeld `UI.TextArea`, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`,
 `OnDragDone`, `UI.DropEffect`) mit einem Bild am Zeiger (`DragData.ShowImage`: `DragData.Image`, ein durchscheinender Schnappschuss des Quellelements oder ein Schild mit dem Text), Drops aus
 anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`); Ziehen aus dem Fenster heraus in andere Programme (`Window.StartDrag`: Text und Dateien, die Antwort
-Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11 (XDND), in der VM und nativ mit SDL3 und SDL2, unter Wayland (`wl_data_device.start_drag`) nativ mit SDL3 - das `ui` übergibt ein Ziehen mit Text oder Dateien,
+Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11 (XDND), in der VM und nativ, unter Wayland (`wl_data_device.start_drag`) nativ - das `ui` übergibt ein Ziehen mit Text oder Dateien,
 sobald der Zeiger das Fenster verlässt (`UI.DragData.AllowExternal`); wo die Plattform das nicht kann (`Window.CanStartDrag()`), bleibt das Ziehen im Fenster. Rückgängig/Wiederholen in `TextBox`
 und `TextArea`, Ziehen der Markierung (verschieben, mit Ctrl kopieren, in andere Felder und Programme), Doppelklick in `ListBox`/`ListView`/`TreeView` über `root.clickCount` (`OnActivate`).
 
 **Offen:**
-- Ziehen aus dem Fenster heraus unter macOS (`NSDraggingSession`) und in der VM unter Wayland (die VM bräuchte dasselbe wie nativ in `SdlDragOut.cs`); dort bleibt ein Ziehen im `ui`
+- Ziehen aus dem Fenster heraus unter macOS (`NSDraggingSession`) und in der VM unter Wayland; dort bleibt ein Ziehen im `ui`
   im Fenster (`Window.CanStartDrag()` sagt `false`).
 - Wayland-Ziehen nur mit weston (X11-Backend unter Xvfb) getestet, nicht mit GNOME/KDE.
 - Das Bild am Zeiger gibt es nur im Fenster: draußen zeigt der Desktop sein eigenes Zeichen (ein Bild für OLE/XDND fehlt).
@@ -315,7 +315,7 @@ Ursprünglicher Plan:
 * `Clipboard.GetText`/`SetText`, `GetImage`/`SetImage` (`graphics.Image`), `GetFiles`; im `ui`: Kopieren/Einfügen in `TextBox` und eigenen Elementen.
 * Drag & Drop: Dateien aus dem Betriebssystem in ein Fenster (`windows`: Ereignis `Drop`), innerhalb des `ui` zwischen Elementen (`DragStart`,
   `DragOver`, `Drop` mit Daten und Effekt); Drag aus dem Programm heraus später (jetzt: Windows und X11).
-* Nativ über SDL (Clipboard, `SDL_EVENT_DROP_*`), in der VM über die C#-Natives von `windows`/`ui`.
+* Nativ über die Anzeige der Plattform (Clipboard, Drop-Ereignisse), in der VM über die C#-Natives von `windows`/`ui`.
 
 ## 11. Ungenutzten Code weglassen
 

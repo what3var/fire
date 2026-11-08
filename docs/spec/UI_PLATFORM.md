@@ -1,24 +1,24 @@
-# Eigene Plattformschicht statt SDL, Effekte und ein modernerer Stil
+# Eigene Plattformschicht, Effekte und ein modernerer Stil
 
-Status: **Teil 1 umgesetzt**, **Teil 2 zum großen Teil** (Branch `ui-platform`, siehe [Stand Teil 1](#stand-teil-1) und [Stand Teil 2](#stand-teil-2)); Teile 3-4 sind Entwurf. Dieses Dokument legt fest, wie fire Fenster, Eingaben und Grafik ohne SDL auf allen Zielen
+Status: **Teil 1 umgesetzt**, **Teil 2 zum großen Teil** (Branch `ui-platform`, siehe [Stand Teil 1](#stand-teil-1) und [Stand Teil 2](#stand-teil-2)); Teile 3-4 sind Entwurf. Dieses Dokument legt fest, wie fire Fenster, Eingaben und Grafik mit einer eigenen Plattformschicht auf allen Zielen
 betreibt, wie Glas und Acryl hineinkommen und in welcher Reihenfolge das gebaut wird.
 
 Inspiration: [Raven](https://github.com/oscar-soirey/Raven) (Apache-2.0) - wir haben uns dort die Aufteilung der Plattformschichten,
 das Laden optionaler Bibliotheken zur Laufzeit und die Blur-Pyramide angesehen. **Code wird nicht übernommen**; die Umsetzung ist eigene
 und folgt unserer Struktur (die HAL `fire_display_c.h`, die Anzeigen je Plattform im Paket `windows`). Raven wird in der About-Box genannt.
 
-## Ausgangslage
+## Ausgangslage (vor Teil 1)
 
 * **Nativ (C):** `packages/windows/native/fire_bridge_windows.h` spricht nur mit der HAL `packages/windows/native/fire_display_c.h`
-  (~25 Funktionen, ein Ereignis-Struct mit 24 Typen). Dahinter steht heute SDL2 oder SDL3 (`fire_display_sdl.h`, `fire_display_sdl3.h`),
-  gelinkt beim Bau (`// fire-link: SDL2|SDL3`), auf wasm Emscriptens SDL2. Ohne Bildschirm: `fire_display_none.h`.
-* **VM (C#):** eine zweite Implementierung - `WindowsBridge` -> `WindowManager` -> `ConsoleWindow` -> `SdlFramebufferRenderer`
-  (SDL3-CS) - und ein C#-Zwilling des Grafik-Pakets (`src/fire.Terminal`, ~6600 Zeilen), der pixelgleich zu `fire_gfx*.h` sein muss.
-* **Gezeichnet wird überall in Software** in einen RGBA-Framebuffer; SDL lädt ihn nur als Textur hoch. `ui` zeichnet mit `FillRect`/`DrawRect`,
+  (~25 Funktionen, ein Ereignis-Struct mit 24 Typen). Dahinter stand eine fremde Fensterbibliothek, gelinkt beim Bau, auf wasm deren Port
+  von Emscripten. Ohne Bildschirm: `fire_display_none.h`.
+* **VM (C#):** eine zweite Implementierung - `WindowsBridge` -> `WindowManager` -> `ConsoleWindow` -> ein Renderer über
+  dieselbe Fremdbibliothek - und ein C#-Zwilling des Grafik-Pakets (`src/fire.Terminal`, ~6600 Zeilen), der pixelgleich zu `fire_gfx*.h` sein muss.
+* **Gezeichnet wird überall in Software** in einen RGBA-Framebuffer; die Fensterbibliothek lud ihn nur als Textur hoch. `ui` zeichnet mit `FillRect`/`DrawRect`,
   ohne Antialiasing, Rundungen, Schatten oder Blur. scene3d hat schon ein Vulkan-Backend (zur Laufzeit geladen) mit Rücklesen in den
   Framebuffer oder eigenem Swapchain über `fire_display_native`.
-* SDL bleibt sonst nur für Audio unter macOS und wasm (`fire_audio_sdl.h`). Systemthema, DPI und Drag-out kommen schon ohne SDL aus.
-* Öffentliche Nummern stammen von SDL: Tasten- und Scancodes, Modifier-Bits, Maustasten, System-Cursor 0..11 (`UI.Keys`).
+* Audio unter macOS und wasm lief ebenfalls über sie. Systemthema, DPI und Drag-out waren schon eigene.
+* Die öffentlichen Nummern bleiben, wie sie sind: Tasten- und Scancodes, Modifier-Bits, Maustasten, System-Cursor 0..11 (`UI.Keys`, `UI.Cursor`).
 
 ## Leitlinien
 
@@ -61,17 +61,17 @@ Die HAL `fire_display_c.h` bleibt die Grenze. Neue Backends in `packages/windows
   Auswahl), fertiger Text wie bisher als `FIRE_EV_TEXT_INPUT`; das Programm meldet die Position des Eingabecursors
   (`fire_display_setTextInputRect`), damit das Kandidatenfenster dort erscheint. Win32: IMM32 (`WM_IME_COMPOSITION`), X11: XIM/XIC mit
   Preedit-Callbacks, Wayland: `text-input-v3`, macOS: `NSTextInputClient`, Web: `compositionstart/update/end`.
-* **Was SDL sonst noch liefert und ersetzt werden muss:**
+* **Was die Fremdbibliothek sonst noch lieferte und ersetzt werden musste:**
   * Joysticks: evdev (Linux), XInput + Raw Input (Windows), GameController (macOS), Gamepad-API (Web).
-  * Audio unter macOS (AudioQueue) und wasm (WebAudio) - danach ist SDL ganz raus.
-  * System-Cursor, Clipboard (Text, Bild, Dateien) und Drop-Ereignisse je Backend; Drag-out (`fire_dragout.h`) gibt es schon ohne SDL.
+  * Audio unter macOS (AudioQueue) und wasm (WebAudio).
+  * System-Cursor, Clipboard (Text, Bild, Dateien) und Drop-Ereignisse je Backend; Drag-out (`fire_dragout.h`) war schon eigenes.
 
 ## Die VM über C
 
 Heute hat die VM eine eigene C#-Kette für Fenster und Grafik. Künftig benutzt sie die C-Bibliotheken von `windows` und `graphics`:
 
 * `windows` und `graphics` werden in der VM wie die übrigen C-Packages als Shared Library gebaut; die `__GRPH*`-Natives kommen von dort.
-* Damit entfallen `fire.Terminal.Sdl` (SDL3-CS), `SdlFramebufferRenderer`, die SDL-Bibliothek im Payload und - für Programme - der
+* Damit entfallen das C#-Fensterprojekt mit seinem Renderer, die Fremdbibliothek im Payload und - für Programme - der
   C#-Zwilling in `fire.Terminal`. Die Tests "VM == nativ" für Pixel werden zur Selbstverständlichkeit.
 * **Was in C# bleibt oder umzieht:**
   * `UiPreview` (UI-Designer) und `LiveSession` (Circuit-Editor) zeichnen heute mit dem C#-Renderer in Avalonia. Sie bekommen den Framebuffer
@@ -128,14 +128,14 @@ Neu in `packages/graphics/native/` (C, für VM und nativ):
 
 | Teil | Inhalt | Ergebnis |
 |---|---|---|
-| 1 | Plattformschicht: headless, Win32, X11, Wayland (eigene Titelleiste ohne Server-Deko), Cocoa, Web; HAL-Erweiterungen inkl. IME; Joysticks; Audio macOS/wasm ohne SDL. Das SDL-Backend bleibt zum Vergleich wählbar. | native Programme ohne SDL |
-| 2 | VM über C: `windows`/`graphics` als C-Bibliotheken in der VM, `UiPreview`/`LiveSession`, Tests auf headless; SDL3-CS und SDL-Backends entfernen | SDL ist raus, eine Implementierung |
+| 1 | Plattformschicht: headless, Win32, X11, Wayland (eigene Titelleiste ohne Server-Deko), Cocoa, Web; HAL-Erweiterungen inkl. IME; Joysticks; Audio macOS/wasm. | native Programme mit eigener Anzeige |
+| 2 | VM über C: `windows`/`graphics` als C-Bibliotheken in der VM, `UiPreview`/`LiveSession`, Tests auf headless; die alten Anzeigen entfernen | eine Implementierung |
 | 3 | Helfer und Effekte (Software), Materialien, Schalter, Fenster-Hintergrund, Stil-Überarbeitung von `ui`, Raven in der About-Box | Glas/Acryl, modernerer Stil |
 | 4 | GPU-2D mit Vulkan, Rücklesen nur bei Bedarf | Beschleunigung |
 
 ## Stand Teil 1
 
-Umgesetzt - native Programme brauchen kein SDL mehr (SDL bleibt mit `"sdl": 2|3` oder `FIRE_SDL` wählbar):
+Umgesetzt - native Programme haben ihre eigene Anzeige:
 
 | Teil | Datei | Geprüft |
 |---|---|---|
@@ -147,7 +147,7 @@ Umgesetzt - native Programme brauchen kein SDL mehr (SDL bleibt mit `"sdl": 2|3`
 | Cocoa | `fire_display_cocoa.h` | nur Syntax (gcc, clang) - **auf einem Mac noch nicht gelaufen** |
 | Web | `fire_display_web.h` | Chromium headless: Pixel, Klick, Tasten, Text, IME-Komposition, Rad, Datei-Drop |
 | Joysticks | `fire_display_joystick.h` (Linux js, XInput, GameController, Gamepad-API) | nur übersetzt (kein Gerät hier) |
-| Audio ohne SDL | `fire_audio_coreaudio.h` (macOS), `fire_audio_web.h` (Browser) | Web: Chromium spielt ab; macOS: nur Syntax |
+| Audio | `fire_audio_coreaudio.h` (macOS), `fire_audio_web.h` (Browser) | Web: Chromium spielt ab; macOS: nur Syntax |
 
 Offen in Teil 1:
 
@@ -155,7 +155,7 @@ Offen in Teil 1:
 * Wayland: Drag-out (`fire_dragout.h`) hört auf einer Verbindung - mit mehreren Fenstern auf verschiedenen Threads nur für das erste.
 * Win32: während der Nutzer das Fenster zieht oder seine Größe ändert (modale Schleife von Windows), zeichnet das Programm nicht nach.
 * Mit dem Emscripten 3.1.6 von Ubuntu laufen die wasm-Prüfungen der Suite nicht (schon ein Programm ohne Fenster startet nicht) - mit einem aktuellen emsdk prüfen.
-* Die VM benutzte noch SDL3-CS - in Teil 2 entfernt.
+* Die VM benutzte noch die alte C#-Kette - in Teil 2 entfernt.
 
 ## Stand Teil 2
 
@@ -168,7 +168,7 @@ Die VM benutzt für `graphics` und `windows` die C-Implementierung (Standard; `F
 * **Eine Bibliothek für beide** (`PackageLibrary.EnsureGraphics`, `libfire_gfx`): die Bridges von graphics und windows und die eigene Anzeige, die Natives aus
   den Tabellen des Generators, Host-Funktionen in `native/abi/fire_gfx_host.h` (Pixel eines Framebuffers, Presenter für scene3d, Zurücksetzen am Programmende).
   Die Fenster-Manager haben ihre Threads auch in der Bibliothek (die Thread-Dienste der Runtime kommen im Bibliotheksmodus vom Host).
-* **Gepackte Programme** (`forge build`) tragen die Bibliothek in ihrer Payload; SDL3 und die C#-Grafik kommen nicht mehr mit (ein Fensterprogramm: ~0,8 MB).
+* **Gepackte Programme** (`forge build`) tragen die Bibliothek in ihrer Payload; die C#-Grafik kommt nicht mehr mit (ein Fensterprogramm: ~0,8 MB).
 * Was der Host an Umgebungsvariablen für das Programm setzt (`FIRE_*`, `DISPLAY`, ...), bekommt auch die C-Laufzeit des Prozesses.
 
 * **Editor-Werkzeuge auf der C-Schicht:** der UI-Designer (`UiPreview`) und der Circuit-Editor (`LiveSession`) lassen ihre Programme auf einer **Kopie** der
@@ -180,7 +180,7 @@ Die VM benutzt für `graphics` und `windows` die C-Implementierung (Standard; `F
   Bibliothek benutzt; am Programmende werden nur die Bibliotheken des Programms zurückgesetzt (`PackageHost.Begin(..., libraries)`), Lambdas laufender Programme
   bleiben gültig. **Holds gehören dem Programm** (`VM.AddHostHold` seiner Haupt-VM; die C-Bibliothek meldet sie über ihren eigenen `fire_host.hold`
   an die VM, die sie benutzt): ein Fenster der Live-Ansicht hält kein Programm daneben auf, und nach dem Ende eines Programms hält nichts mehr.
-* **SDL3-CS ist entfernt** (`fire.Terminal.Sdl`, `SdlFramebufferRenderer`, `SdlClipboard`): die Fenster des Desktops zeigt in der VM nur noch die C-Bibliothek. Die
+* **Die alte C#-Fensterkette ist entfernt** (Renderer, Zwischenablage): die Fenster des Desktops zeigt in der VM nur noch die C-Bibliothek. Die
   C#-Implementierung (`fire.Terminal`, `fire.Terminal.Windows`) bleibt als Rückfall, wo die Bibliothek nicht gebaut werden kann (kein C-Compiler) oder
   `FIRE_VM_GRAPHICS=cs` sie wählt: Grafik geht, Fenster nur mit einem Renderer des Hosts (die Tests, der Editor über `HostRenderer`); sonst wirft `new Window`
   eine Ausnahme mit dem Grund (`No display: ...`, bei einem gescheiterten Bau der Bibliothek mit der Ausgabe des Compilers) - nie ein Fenster, das stumm als

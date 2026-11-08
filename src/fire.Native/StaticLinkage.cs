@@ -208,14 +208,14 @@ namespace fire.Native
 
         /// <summary>The key of a module's library in the cache: the generator, the toolchain, the target and the mode, the module's sources, the interfaces of the modules
         /// it needs and the switches it is built with (ROADMAP 9.4: a variant per set; null - the module's own switches, only its interface is kept).</summary>
-        internal static string LibraryKey(LinkedProgram program, ModuleSpec spec, IReadOnlyDictionary<ModuleSpec, string> abi, TargetProfile target, string toolchainStamp, ModuleFlags? flags, int? sdl,
+        internal static string LibraryKey(LinkedProgram program, ModuleSpec spec, IReadOnlyDictionary<ModuleSpec, string> abi, TargetProfile target, string toolchainStamp, ModuleFlags? flags,
             StrippingLevel stripping = StrippingLevel.Protected)
         {
             var sb = new StringBuilder();
             sb.Append("fire-static ").Append(InterfaceFormat).Append(' ').Append(typeof(CppGenerator).Assembly.ManifestModule.ModuleVersionId).Append('\n');
             sb.Append("toolchain ").Append(toolchainStamp).Append('\n');
             sb.Append("target ").Append(target.Name).Append(' ').Append(JsonSerializer.Serialize(target.Native)).Append(' ').Append(target.FloatWidth).Append('\n');
-            sb.Append("mode ").Append(program.ExecutionMode).Append(" float ").Append(program.FloatWidth).Append(" int ").Append(program.IntWidth).Append(" word ").Append(program.WordWidth).Append(" sdl ").Append(sdl).Append('\n');
+            sb.Append("mode ").Append(program.ExecutionMode).Append(" float ").Append(program.FloatWidth).Append(" int ").Append(program.IntWidth).Append(" word ").Append(program.WordWidth).Append('\n');
             sb.Append("module ").Append(spec.Name).Append('\n');
             foreach (int s in spec.Sources.OrderBy(s => s)) sb.Append(" source ").Append(program.SourceTextHashes?[s]).Append('\n');
             foreach (var dep in spec.Deps) sb.Append(" needs ").Append(dep.Name).Append(' ').Append(abi[dep]).Append('\n');
@@ -344,7 +344,7 @@ namespace fire.Native
         /// <param name="toolchainStamp">What identifies the compiler (its kind, path, version, arguments): part of every key.</param>
         /// <param name="shared">Linkage "shared" (ROADMAP 9, phase C): the libraries are shared libraries (position-independent code, a variant of their own in the cache); each
         /// says the interface it was built with, the program checks it when it starts.</param>
-        public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, Func<int>? chooseSdl = null, StrippingLevel? stripping = null, string? cacheRoot = null,
+        public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, StrippingLevel? stripping = null, string? cacheRoot = null,
             bool shared = false)
         {
             // (linkage "shared" for Windows: DLLs - the runtime a DLL of its own, what a DLL uses of the program through pointers)
@@ -354,7 +354,6 @@ namespace fire.Native
             var abi = specs.ToDictionary(s => s, s => AbiHash(program, s));
             string root = Path.Combine(cacheRoot ?? NativeLibraryCache.Root, target.Name);
             var log = new StringBuilder();
-            int? sdl = target.Native.Sdl;
             ModuleFlags? flags = null;
             for (int round = 0; ; round++)
             {
@@ -364,7 +363,7 @@ namespace fire.Native
                 var union = flags ?? default;
                 foreach (var spec in specs)
                 {
-                    string key = LibraryKey(program, spec, abi, target, toolchainStamp, flags, sdl, LibraryStripping(program, stripping));
+                    string key = LibraryKey(program, spec, abi, target, toolchainStamp, flags, LibraryStripping(program, stripping));
                     keys[spec] = key;
                     string iface = Path.Combine(root, key, spec.Id + NativeLibraryCache.InterfaceExtension);
                     ModuleOutput output;
@@ -387,14 +386,13 @@ namespace fire.Native
                 }
                 var main = new CppGenerator(program, target)
                 {
-                    _chooseSdl = chooseSdl, _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
+                    _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
                     _sharedAbis = shared ? specs.ToDictionary(s => s, s => $"{InterfaceFormat}:{abi[s]}") : null, _dll = dll, _dllModules = dll ? outputs : null, _toolchainStamp = toolchainStamp,
                     _openWorld = shared,
                 };
                 main.SetModules(specs, null);
                 string c = main.Run();
                 union = union.Or(main.CurrentFlags);
-                if (main._sdlChosen is int chosen && sdl == null) sdl = chosen;
                 if (flags is { } final && final.Equals(union))
                 {
                     var libraries = new List<StaticLibrary>();

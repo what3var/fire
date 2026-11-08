@@ -37,7 +37,7 @@ static void fire_display_queueFree(FireDisplayQueue* q) {
 /* Puts an event into the queue; its `data` (malloc) belongs to the queue then (fire_display_push keeps a copy of its own). */
 static void fire_display_queuePush(FireDisplayQueue* q, const FireDisplayEvent* e) {
 #if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT) || defined(FIRE_DISPLAY_SELFTEST_DROP) || defined(FIRE_DISPLAY_SELFTEST_HOVER)
-    /* (the tests compare the events with those of the SDL displays: what a real window adds of its own - the keyboard, the mouse coming in - is left out) */
+    /* (the tests compare the events with a fixed expected series: what a real window adds of its own - the keyboard, the mouse coming in - is left out) */
     if (e->type == FIRE_EV_FOCUS_GAINED || e->type == FIRE_EV_FOCUS_LOST || e->type == FIRE_EV_MOUSE_ENTER || e->type == FIRE_EV_MOUSE_LEAVE || e->type == FIRE_EV_SCALE) { free(e->data); return; }
 #endif
     if (e->type == FIRE_EV_CLOSE) q->quit = 1;
@@ -259,7 +259,7 @@ static void fire_display_dropLeave(FireDisplayQueue* q) {
 #if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT) || defined(FIRE_DISPLAY_SELFTEST_DROP) || defined(FIRE_DISPLAY_SELFTEST_HOVER)
 #define FIRE_DISPLAY_HAS_SELFTEST 1
 /* The tests (and nobody else) get a fixed series of events when a window opens (winW x winH): keys, a click, motion, the wheel, text and the close - the same events,
- * in the same order and with the same values, as the SDL displays gave (fire_display_sdl3.h), so that the output of the tests stays what it was. */
+ * in the same order and with the same values on every display, so that the output of the tests stays what it was. */
 static void fire_display_selftest(FireDisplayQueue* q, int winW, int winH) {
     FireDisplayEvent e;
     (void)winW; (void)winH;

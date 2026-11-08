@@ -560,63 +560,39 @@ Callbacks aus (auf dem aufrufenden Thread mit den echten Globals; eine nicht gef
 Das Fenster selbst ist die **Anzeige**, die das Paket `windows` je Plattform mitbringt (`platformSources` von `windows.fireproj`: `fire_display_select.h` für `posix` und `windows`, `fire_display_wasm.h`, `fire_display_dos.h`, sonst `fire_display_none.h`; die Dateien liegen in `packages/windows/native/`; die Schnittstelle, die Ereignisse und das
 Systemaussehen: `fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`.
 
-**Die eigene Anzeige (Standard, ohne SDL).** `fire_display_desktop.h` wählt beim ersten Fenster, mit welchem Fenstersystem es spricht: Wayland (`fire_display_wayland.h`, wenn
+**Die eigene Anzeige.** `fire_display_desktop.h` wählt beim ersten Fenster, mit welchem Fenstersystem es spricht: Wayland (`fire_display_wayland.h`, wenn
 `WAYLAND_DISPLAY` gesetzt ist und libwayland-client lädt), sonst X11 (`fire_display_x11.h`), Win32 (`fire_display_win32.h`), Cocoa (`fire_display_cocoa.h`, aus C über die
-Objective-C-Runtime), das Canvas der Seite (`fire_display_web.h`), oder ohne Bildschirm (`fire_display_headless.h`, `FIRE_DISPLAY=headless`; `SDL_VIDEODRIVER=dummy` wird
-ebenso verstanden). `FIRE_DISPLAY=x11|wayland|win32|cocoa|web|headless` fragt nach einer. Gelinkt wird nur, was das Betriebssystem immer hat: Linux lädt libX11/libwayland-client/libxkbcommon
+Objective-C-Runtime), das Canvas der Seite (`fire_display_web.h`), oder ohne Bildschirm (`fire_display_headless.h`, `FIRE_DISPLAY=headless`).
+`FIRE_DISPLAY=x11|wayland|win32|cocoa|web|headless` fragt nach einer. Gelinkt wird nur, was das Betriebssystem immer hat: Linux lädt libX11/libwayland-client/libxkbcommon
 zur Laufzeit (`-ldl -lpthread`), Windows linkt user32 und gdi32 (imm32, dwmapi, ole32 werden geladen), macOS die Frameworks Cocoa, QuartzCore und GameController; der Browser nichts.
-Gemeinsam: `fire_display_keys.h` (die Nummern der Tasten, Modifier, Maustasten, Cursor - die von SDL3, die Programme kennen sie), `fire_display_common.h` (die Warteschlange
-eines Fensters, Drops, Kompositionen, die Ereignisse der Tests), `fire_display_joystick.h` (Joysticks: `/dev/input/js*`, XInput, GameController, Gamepad-API). Neu gegenüber den
-SDL-Anzeigen: Kompositionen einer Eingabemethode (`FIRE_EV_TEXT_EDITING`, `Window.SetTextInputArea`), `FIRE_EV_SCALE`, Maus herein/hinaus, Fokus, und was hinter dem Fenster liegt
-(`Window.Backdrop`: transparent, Blur, Acryl, Mica - je nach System). Entwurf und Stand: [Eigene Plattformschicht statt SDL, Effekte und ein modernerer Stil](UI_PLATFORM.md).
+Gemeinsam: `fire_display_keys.h` (die Nummern der Tasten, Modifier, Maustasten, Cursor - die Programme kennen sie als `UI.Keys`/`UI.Cursor`), `fire_display_common.h` (die Warteschlange
+eines Fensters, Drops, Kompositionen, die Ereignisse der Tests), `fire_display_joystick.h` (Joysticks: `/dev/input/js*`, XInput, GameController, Gamepad-API), das Systemaussehen aus
+`fire_systheme.h`. Dazu Kompositionen einer Eingabemethode (`FIRE_EV_TEXT_EDITING`, `Window.SetTextInputArea`), `FIRE_EV_SCALE`, Maus herein/hinaus, Fokus, und was hinter dem Fenster liegt
+(`Window.Backdrop`: transparent, Blur, Acryl, Mica - je nach System). Entwurf und Stand: [Eigene Plattformschicht, Effekte und ein modernerer Stil](UI_PLATFORM.md).
+`fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der
+Fenstermanager an und die Fenster schließen sich. Die VM nutzt dieselbe Anzeige (die C-Bibliothek von graphics und windows), die Tasten- und Maus-Werte sind dieselben. Die Tests laufen ohne
+Bildschirm (`FIRE_DISPLAY=headless`) mit `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist (jede Anzeige speist dieselbe Folge ein und liefert dieselbe
+Ausgabe); die UI-Bibliothek (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
 
-**SDL (wählbar).** `"sdl": 2|3` des Ziels (0: der Build probiert) oder `FIRE_SDL=2|3|auto` nehmen statt der eigenen Anzeige SDL (das Programm sagt dann `#define FIRE_DISPLAY_SDL 1`).
-Mitgeliefert: `fire_display_sdl3.h` (SDL3, für `posix` und `windows`, wenn
-der Build `FIRE_SDL3` definiert; das Programm bittet dann mit der Zeile `// fire-link: SDL3` um `-lSDL3` bzw. `SDL3.lib`), `fire_display_sdl.h` (SDL2, für `posix` und `windows` sonst und immer für `wasm`;
-`// fire-link: SDL2`, `-lSDL2`; beide mit dem Systemaussehen aus `fire_systheme.h`)
-und `fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der
-Fenstermanager an und die Fenster schließen sich. Die VM nutzt SDL3, die Tasten- und
-Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist (beide
-Anzeigen speisen dieselbe Folge ein und liefern dieselbe Ausgabe); die UI-Bibliothek (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
+Das **Schweben** eines Zugs aus einem anderen Programm meldet die Anzeige als `FIRE_EV_DRAG_HOVER` 42 (mit `x`, `y`) und `FIRE_EV_DRAG_LEAVE` 43, wenn er das Fenster ohne Drop verlässt.
+**Bilder und Dateien in der Zwischenablage**: `fire_display_clipboardGetImage/SetImage/HasImage` (PNG- oder BMP-Datei; gesetzt als `image/png` und `image/bmp`, unter Windows `CF_DIB`) und
+`fire_display_clipboardGetFiles/SetFiles/HasFiles` (Pfade zeilenweise; `text/uri-list` und `x-special/gnome-copied-files`, unter Windows `CF_HDROP`); `fire_display_none.h` hat für alle Arten
+eine Zwischenablage im Programm (`fire_display_memClipboard`). `-DFIRE_DISPLAY_SELFTEST_HOVER` speist ein Schweben mit Verlassen und eines mit Drop ein. Was ein anderes Programm vor dem Start
+kopiert hat, ist beim ersten Zugriff auf die Zwischenablage da.
 
-**SDL3 oder SDL2.** Welche SDL ein Programm mit Fenster bekommt, entscheidet der Build (`NativeBuilder.ChooseSdl`), und zwar erst, wenn das Programm wirklich ein Fenster hat: zuerst die
-Umgebungsvariable `FIRE_SDL=2|3`, dann `"sdl": 2|3` des Ziels in `fire.native.json`, dann `"sdl"` der Toolchain; sagt niemand etwas, probiert der Build, ob die Toolchain SDL3 für das Ziel übersetzen
-und binden kann (ein winziges Programm mit `<SDL3/SDL.h>` und `SDL_Init`, mit denselben `-I`/`-L` wie der Build) - SDL3, wenn ja, sonst SDL2. Die Antwort wird gemerkt (`NativeProbeCache`: im Speicher und in
-`native-probes.json` im Ordner der lokalen Daten von fire, `FIRE_PROBE_CACHE=0` schaltet die Datei ab), unter dem Compiler (Pfad und Zeit), dem Ziel und dem Ort von SDL3 (Ordner, Zeit des Headers):
-wer SDL3 nachinstalliert, wird neu gefragt. Ohne Toolchain (`files`, `forge native`) gilt SDL2, außer `FIRE_SDL`/`sdl` sagen 3; `wasm` bleibt bei SDL2 von Emscripten. Das erzeugte Programm sagt
-`// fire-link: SDL3` und `#define FIRE_SDL3 1` (`fire_display_select.h` nimmt dann `fire_display_sdl3.h`) bzw. `// fire-link: SDL2`. TinyCC übersetzt beide (ohne `__has_include`:
-SDL3 liegt immer unter `<SDL3/SDL.h>`; `SDL_DISABLE_IMMINTRIN_H` wie bei SDL2). Was nur SDL3 hat: das **Schweben** eines Zugs aus einem anderen Programm (`FIRE_EV_DRAG_HOVER` 42 mit `x`, `y` aus
-`SDL_EVENT_DROP_POSITION`, `FIRE_EV_DRAG_LEAVE` 43 bei `SDL_EVENT_DROP_COMPLETE` ohne Datei und Text; die Stelle eines Drops nennt SDL3 selbst), und **Bilder und Dateien in der Zwischenablage**:
-`fire_display_clipboardGetImage/SetImage/HasImage` (PNG- oder BMP-Datei; gesetzt als `image/png` und `image/bmp` - SDL3 legt `image/bmp` unter Windows als `CF_DIB` ab) und
-`fire_display_clipboardGetFiles/SetFiles/HasFiles` (Pfade zeilenweise; `text/uri-list` und `x-special/gnome-copied-files`, unter Windows `CF_HDROP` - das hat SDL3 nicht, die Anzeige spricht dafür selbst
-mit der Zwischenablage von Windows). Die SDL2-Anzeige sagt dort "nicht vorhanden" (`GetImage` undefined, `SetImage` false, keine Dateien), `fire_display_none.h` hat für alle Arten eine Zwischenablage im
-Programm (`fire_display_memClipboard`). `-DFIRE_DISPLAY_SELFTEST_HOVER` speist ein Schweben mit Verlassen und eines mit Drop ein. SDL 3.2 unter X11 kennt die Arten in der Zwischenablage
-erst, wenn ihr Besitzer wechselt, während es läuft (XFixes meldet es, dann fragt SDL nach `TARGETS`; `SDL_GetClipboardData` lehnt jede Art ab, die es nicht kennt) - was ein anderes Programm vor dem
-Start kopiert hat, sähe ein SDL3-Programm nicht. Deshalb schickt `fire_display_x11ClipboardRefresh` beim ersten Zugriff auf die Zwischenablage, wenn SDL keine Art kennt, CLIPBOARD aber einen
-Besitzer hat, über SDLs eigene Verbindung ein `XFixesSelectionNotify` an ein verstecktes Fenster von SDL (libX11 per `dlopen` aus `fire_dragout.h`); SDL bekommt es zurück, fragt selbst nach
-`TARGETS`, und die Anzeige holt Ereignisse ab, bis es die Arten kennt (höchstens eine halbe Sekunde). Die VM macht dasselbe (`X11Refresh` in `SdlClipboard.cs`). SDL2 fragt jedes Mal neu.
-
-**Ziehen aus dem Fenster** (`Window.StartDrag`) können weder SDL2 noch SDL3 beginnen: `fire_display_startDrag` beider Anzeigen holt sich das Fenster des Betriebssystems (SDL3: die Eigenschaften
-`SDL_PROP_WINDOW_WIN32_HWND_POINTER` bzw. `..._X11_DISPLAY_POINTER`/`..._X11_WINDOW_NUMBER`; SDL2: `SDL_GetWindowWMInfo`, dessen Struktur `fire_display_sdl.h` selbst beschreibt, damit
-`SDL_syswm.h` nicht die Header von X11 verlangt) und gibt es an `fire_dragout.h`: unter Windows OLE (`DoDragDrop`, `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP` und `IDropSource` in C,
-`ole32.dll` zur Laufzeit), unter X11 die Quelle von XDND (libX11 per `dlopen`, die Typen von Xlib selbst beschrieben - kein Header, keine Link-Bibliothek; die Schleife hält `fire_display_lockSdl`).
-Unter Wayland (nur SDL3: `SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER`/`..._SURFACE_POINTER`) `fire_dragout_wayland`: auf SDLs `wl_display` eine eigene Warteschlange mit eigener
+**Ziehen aus dem Fenster** (`Window.StartDrag`): `fire_display_startDrag` der Anzeige gibt das Fenster des Betriebssystems an `fire_dragout.h`: unter Windows OLE (`DoDragDrop`, `IDataObject`
+mit `CF_UNICODETEXT`/`CF_HDROP` und `IDropSource` in C, `ole32.dll` zur Laufzeit), unter X11 die Quelle von XDND (libX11 per `dlopen`, die Typen von Xlib selbst beschrieben - kein Header,
+keine Link-Bibliothek). Unter Wayland `fire_dragout_wayland`: auf dem `wl_display` der Anzeige eine eigene Warteschlange mit eigener
 Registry, `wl_seat` (bis Version 5), `wl_data_device_manager` (Version 3) und einem eigenen `wl_pointer`, der die Seriennummer des Tastendrucks für `start_drag` lernt (`fire_dragout_wlPump` nach jedem
-`fire_display_pump`, unter `fire_display_lockSdl`); fürs Ziehen eine `wl_data_source` und ein `wl_data_device`, dann wird die eigene Warteschlange abgearbeitet, bis `dnd_finished` (die letzte
+`fire_display_pump`); fürs Ziehen eine `wl_data_source` und ein `wl_data_device`, dann wird die eigene Warteschlange abgearbeitet, bis `dnd_finished` (die letzte
 `action`: Kopie/Verschieben) oder `cancelled` kommt - `send` wird in den Deskriptor geschrieben (ohne SIGPIPE). libwayland-client per `dlopen`, die nötigen Signaturen selbst beschrieben (kein Header).
-macOS, der Browser und `fire_display_none.h` sagen 0; `fire_display_canStartDrag` (`Window.CanStartDrag`) sagt das vorher (der Videotreiber `windows`, `x11`, oder `wayland` nativ mit SDL3, sobald die eigene Warteschlange bereit ist), und das `ui` lässt ein Ziehen sonst im Fenster. Zeigt der Thread eines Managers das Fenster, bekommt er den Auftrag (`FireWinShared.dragReq`) und zieht dort; das Programm wartet
-ohne die GIL. Die Tests ziehen unter Xvfb mit einer "Hand" aus XTest aus einem Fenster (SDL2, SDL3, `Window.Show`, die VM) in ein natives SDL3-Programm und unter Wine (OLE, zwei Prozesse) genauso; Wayland
-mit weston (X11-Backend unter Xvfb), die Hand findet die Fenster dort an ihrer Farbe (ein SDL3 mit Wayland-Treiber: das des Systems oder der Ordner `FIRE_TEST_SDL3_WAYLAND`).
+macOS, der Browser und `fire_display_none.h` sagen 0; `fire_display_canStartDrag` (`Window.CanStartDrag`) sagt das vorher (die Anzeigen `win32`, `x11` und `wayland`, diese, sobald die eigene Warteschlange bereit ist), und das `ui` lässt ein Ziehen sonst im Fenster. Zeigt der Thread eines Managers das Fenster, bekommt er den Auftrag (`FireWinShared.dragReq`) und zieht dort; das Programm wartet
+ohne die GIL. Die Tests ziehen unter Xvfb mit einer "Hand" aus XTest aus einem Fenster (nativ, `Window.Show`, die VM) in ein natives Programm und unter Wine (OLE, zwei Prozesse) genauso; Wayland
+mit weston (X11-Backend unter Xvfb), die Hand findet die Fenster dort an ihrer Farbe.
 
-**SDL finden (`SdlSetup`).** Das Programm mit Fenster wird gegen die Entwicklungsdateien von SDL3 oder SDL2 übersetzt (`SDL3/SDL.h` bzw. `SDL.h`, Import-Bibliothek). Der Build sucht sie in dieser Reihenfolge:
-die Umgebungsvariable `SDL3_DIR` bzw. `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW z.B. `SDL3-3.2.26\x86_64-w64-mingw32` oder `SDL2-2.30.9\x86_64-w64-mingw32`), der Ordner `Toolchain\SDL3`
-bzw. `Toolchain\SDL2` neben dem Programm, das Präfix des Compilers (MSYS2: `ucrt64\include\SDL3`), das System (`/usr/include/SDL3`, `/usr/local`, Homebrew) und `pkg-config sdl3`/`sdl2`. Für einen
-Windows-Build unter Linux (MinGW) zeigt `SDL3_DIR` auf das MinGW-Paket (auf dieser Maschine: `/opt/sdl-mingw/SDL3-3.2.26`, daneben `SDL2-2.30.12`). Fehlt die SDL unter Windows (das portable w64devkit bringt sie nicht mit), fragt der Build wie bei der Toolchain
-(Editor: Dialog, Konsole: `[F]ix / [C]ancel`) und lädt das MinGW-Entwicklungspaket (etwa 7 MB) nach `Toolchain\SDL3` bzw. `Toolchain\SDL2`; es wird nichts im System installiert. Danach liegt `SDL3.dll` bzw. `SDL2.dll` neben dem gebauten Programm.
-Unter Linux und macOS gibt es keinen Download: die Meldung nennt das Paket (`sudo apt install libsdl2-dev`, `brew install sdl2`). Das Programm definiert `SDL_MAIN_HANDLED`, braucht also weder `SDL2main` noch `-lmingw32`.
 Ändert der Nutzer die Fenstergröße, liefert `pump` das Ereignis `FIRE_EV_RESIZE` (4, mit `width`/`height`; nur wenn sich die Größe wirklich geändert hat); `Window.AutoResize` bringt dann den Framebuffer
 (`fire_gfx_fbResize`, gleiche Gültigkeitsgrenzen wie in der VM) auf diese Größe. `-DFIRE_DISPLAY_SELFTEST_RESIZE` speist stattdessen ein Resize auf 90x70 ein.
-Finger und Joysticks meldet die Anzeige als `FIRE_EV_TOUCH_DOWN/MOVE/UP` (16-18; `finger`, `x`, `y` in Framebuffer-Pixeln, `pressure`) und `FIRE_EV_JOY_AXIS/BUTTON_DOWN/BUTTON_UP/HAT/ADDED/REMOVED` (32-37; `joystick`, `index`, `value`); `fire_display_setTouchMouse`/`fire_display_touchMouse` schalten SDLs Mausereignisse aus Fingern (Window.TouchMouse). Die SDL2-Anzeige öffnet jeden angesteckten Joystick (`SDL_JOYDEVICEADDED`). `-DFIRE_DISPLAY_SELFTEST_INPUT` speist eine feste Folge solcher Ereignisse ein.
+Finger und Joysticks meldet die Anzeige als `FIRE_EV_TOUCH_DOWN/MOVE/UP` (16-18; `finger`, `x`, `y` in Framebuffer-Pixeln, `pressure`) und `FIRE_EV_JOY_AXIS/BUTTON_DOWN/BUTTON_UP/HAT/ADDED/REMOVED` (32-37; `joystick`, `index`, `value`); `fire_display_setTouchMouse`/`fire_display_touchMouse` schalten die Mausereignisse aus Fingern (Window.TouchMouse). `-DFIRE_DISPLAY_SELFTEST_INPUT` speist eine feste Folge solcher Ereignisse ein.
 
 **Zeiger** (`unsafe`, SPEC 8.3): ein Zeiger ist ein `K_Pointer`-Wert auf die Speicherstelle einer Variablen, eines Feldes oder eines Array-/Puffer-Elements (`ref`-Argumente). `&`, `*`, `*p = v`,
 Zeiger auf Zeiger, der Vergleich, `p + n`, `p - n` und `p - q` laufen wie in der VM. `width` sagt, wohin er zeigt: 0 eine Variable oder ein Feld (der Versatz in Elementen steckt in `unit`: ein Zeiger darauf ist ein
@@ -973,7 +949,7 @@ C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich se
 3. ~~**Ausnahmen mit Resume**~~ - umgesetzt, siehe "Ausnahmen".
 4. ~~**Threads, `sync`, Safe-Points** (`leave`/`terminate`)~~ - umgesetzt (`std::thread` oder FreeRTOS-Tasks + GIL), siehe "Threads" und "Plattformschicht".
 5. **Bridges** (Variante A): eine C++-Implementierung mit C-ABI, die auch der C#-Editor per P/Invoke nutzt - IO und Time zuerst,
-   dann Graphics (mit der Anzeige über SDL2/SDL3), zuletzt Devices.
+   dann Graphics (mit der eigenen Anzeige), zuletzt Devices.
 6. **Optimierungen**: Typinferenz und Einheiten-Folding, Devirtualisierung (geschlossene Welt), Inlining, Scope-Elision.
 7. **Zielprofil und ESP32**: Ziele (`--target`), `#if`, Stack-Analyse, Plattformpakete, ESP-IDF-Komponente.
 8. **Editor**: `Run -> Build Native`, Toolchain-Erkennung.
@@ -1086,7 +1062,7 @@ fire-Programm  ->  Natives der Bridges (IO, Time, Devices, Graphics, später Har
         +------------+-------------+-----------------+
         v            v             v                 v
    platform/posix  platform/windows  platform/esp32   platform/mock (Tests)
-                                  (SDL3 für Fenster und Eingabe auf dem Desktop)
+                                  (die eigene Anzeige für Fenster und Eingabe auf dem Desktop)
 ```
 
 * Die **Bridges** enthalten die Sprachanbindung und alles Plattformunabhängige; sie sehen nur die HAL-Schnittstellen.
@@ -1263,7 +1239,7 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   (`FIRE_PROG_END`) die Runtime; jede Klasse der Libraries hat ihren vollen Deskriptor (ein Plugin kann Objekte jeder Klasse anlegen), die Tabellen der eigenen
   Klassen nennen jeden Member (ein Plugin ruft sie beim Namen), `makeClassError` kennt jede Ausnahme der Libraries. Es sagt der Runtime, wogegen sie prüft
   (`g_pluginHost`: der Schlüssel der Konfiguration, die Schnittstellen seiner Module, die Namen seiner Typen von `catch`, unter Windows `fire_hostFind`), und
-  `rf_find`/`rf_classes`/`rf_new` sehen die Klassen der Plugins. Neben das Programm schreibt der Bau `<programm>.firehost` (JSON: Ziel, Schalter, SDL, Schlüssel der
+  `rf_find`/`rf_classes`/`rf_new` sehen die Klassen der Plugins. Neben das Programm schreibt der Bau `<programm>.firehost` (JSON: Ziel, Schalter, Schlüssel der
   Runtime, die Module mit Schnittstelle und Datei ihrer Bibliothek); `--host <programm>` baut ein Plugin mit diesen Schaltern (braucht das Plugin einen weiteren,
   sagt es der Bau). Ein Programm ohne `"shared"` exportiert nichts, was ein Plugin braucht: `Load` sagt, dass es keine Plugins laden kann.
 * **Natives in C++** (der Ordner `native/` des Projekts des Plugins, ein Package in C++, das es importiert): eine Datei für sich (`fire_plugin_natives.cpp`: der
@@ -1386,10 +1362,7 @@ oder einer LTO.
 `out.html` (Standard), die sich so öffnen lässt - auch per Doppelklick aus einem Ordner, ohne Webserver: die WebAssembly-Binärdatei steckt in der Seite (`-sSINGLE_FILE=1`).
 
 **Werkzeug:** Emscripten (emsdk; das Programm ist C: `emcc` mit `-std=gnu11`, denn `EM_ASM` braucht den GNU-Modus). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-fexceptions` (fire-Ausnahmen sind C++-Ausnahmen), `-sASYNCIFY` (siehe unten),
-`-sALLOW_MEMORY_GROWTH=1`, `-sSINGLE_FILE=1`, `-sMINIFY_HTML=0`; `// fire-link: SDL2` wird zu `-sUSE_SDL=2` (SDL2 bringt Emscripten selbst mit, es gibt nichts zu installieren).
-Den SDL2-Port lädt Emscripten beim ersten Bau eines Programms mit Fenster von GitHub (als Zip) und übersetzt ihn einmal (danach im Cache von emsdk); ohne
-Zugang zu diesem Download nimmt es einen Ordner mit den Quellen: `git clone --branch release-2.32.10 https://github.com/libsdl-org/SDL` und
-`EMCC_LOCAL_PORTS=sdl2=<Ordner>`. Geprüft mit Emscripten 6.0 (Testgruppe `packer`: ein Programm unter node wie die VM, ein Fenster im Chromium der Testmaschine, headless).
+`-sALLOW_MEMORY_GROWTH=1`, `-sSINGLE_FILE=1`, `-sMINIFY_HTML=0`. Geprüft mit Emscripten 6.0 (Testgruppe `packer`: ein Programm unter node wie die VM, ein Fenster im Chromium der Testmaschine, headless).
 Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emscripten"` und `args` bzw. `--shell-file`.
 
 **Plattformpaket `native/platform/wasm/`:**
@@ -1397,8 +1370,8 @@ Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emsc
 | | im Browser |
 |---|---|
 | Takt/`Sleep` | `Sleep` gibt den Thread mit `emscripten_sleep` (ASYNCIFY) an den Browser zurück: die Seite zeichnet und liefert Ereignisse, solange das Programm wartet. Eine Schleife ohne `Sleep`/Fenster-Ereignisse hält die Seite an, wie überall im Browser |
-| Fenster (`windows`, `ui`) | SDL2 von Emscripten zeichnet in das Canvas der Seite; `Window.Tick`/`PollEvents` und das Zeichnen geben den Thread ebenfalls kurz zurück |
-| Ton | die SDL2-Audio von Emscripten (Web Audio) |
+| Fenster (`windows`, `ui`) | fire's eigene Anzeige (`fire_display_web.h`) zeichnet in das Canvas der Seite; `Window.Tick`/`PollEvents` und das Zeichnen geben den Thread ebenfalls kurz zurück |
+| Ton | Web Audio (`fire_audio_web.h`) |
 | Dateien | das virtuelle Dateisystem von Emscripten (im Speicher; es lebt, solange die Seite offen ist) |
 | Ausgabe (`print`) | in das Textfeld der Seite und in die Konsole des Browsers |
 | Threads (`fire { }`, Actors) | nicht vorhanden: der Generator meldet es beim Übersetzen (`fire threads are not supported by the platform 'wasm'`) |
@@ -1421,5 +1394,5 @@ Die C++-Natives eines Packages ([Packages and ember](../packages/README.md), [Wr
 Wrapper (`native/abi/fire_pkg_wrapper.hpp` + je Funktion ein Thunk), kompiliert ihn zusammen mit `fire_rt.h` (als C++, über `fire_rt_cpp.hpp`) in dem Modus `FIRE_LIBRARY` (`fatal`/`unsupported` werfen eine `FireFatalError`, statt das
 Programm zu beenden; `runDestructors` ist leer) und den Quellen des Packages für die Plattform dieses Rechners (`platformSources`) mit dem Toolchain-Aufruf von `NativeBuilder.CompilerCommand(sharedLibrary: true)`.
 Die Bibliothek exportiert die C-Schnittstelle aus `native/abi/fire_pkg_abi.h` (`fire_pkg_call` mit `fire_val`: Zahlen, Text als UTF-16, Arrays und Puffer werden kopiert). `PackageNativeBinding` (fire.Runtime) lädt sie
-(`NativeLibrary`, im gepackten Programm über den Payload wie SDL) und übersetzt `Value` <-> `fire_val`. Ein Package kann fertige Bibliotheken je Runtime-Identifier mitbringen (`native.libraries`).
+(`NativeLibrary`, im gepackten Programm über den Payload) und übersetzt `Value` <-> `fire_val`. Ein Package kann fertige Bibliotheken je Runtime-Identifier mitbringen (`native.libraries`).
 Aufrufe in eine Bibliothek laufen unter einem Mutex (die Runtime darin ist nicht threadsicher). Nicht geprüft ist der Aufbau mit MSVC und auf macOS.

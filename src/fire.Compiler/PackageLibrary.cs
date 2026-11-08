@@ -124,12 +124,6 @@ namespace fire.Compiler
                 bool isC = import.Import.Native.IsC;
                 string cpp = Path.Combine(work, isC ? "wrapper.c" : "wrapper.cpp");
                 File.WriteAllText(cpp, isC ? GenerateCWrapper(import) : GenerateWrapper(import));
-                if (ToolchainProvider.RequireLibraries(toolchain, cpp) is { } missingLibrary)
-                {
-                    string message = $"Building the native part of the package '{import.Package.Name}' needs a library that is missing:\n{missingLibrary}";
-                    RememberFailure(import, message);
-                    throw new PackageException(message);
-                }
                 string outFile = Path.Combine(work, FileNameFor(import));
                 var (exe, args) = NativeBuilder.CompilerCommand(toolchain, target, cpp, work, outFile, sharedLibrary: true, extraIncludeDirs: new[] { Path.Combine(work, "abi") }, language: isC ? "c" : "c++");
                 var (ok, text) = NativeBuilder.Run(exe, args, work);   // (cancelled: OperationCanceledException - nothing is remembered as a failure, the folder goes)
@@ -304,7 +298,7 @@ namespace fire.Compiler
         }
 
         /// <summary>The C of the library of `graphics` and `windows` for the VM: the runtime in library mode, the sources of both imports (the bridges, the display of the platform
-        /// - fire's own, without SDL), the entry points of the ABI around every `__GRPH...` native the native backend knows (CppGenerator's tables: the same names, arguments and
+        /// - fire's own), the entry points of the ABI around every `__GRPH...` native the native backend knows (CppGenerator's tables: the same names, arguments and
         /// lists), and the host's own functions (the pixels of a framebuffer, a presenter for scene3d, the windows without a screen for the editor).</summary>
         /// <param name="target">The machine the library is for (default: this one; the tests generate the one of Windows to build it with MinGW).</param>
         public static string GenerateGraphicsWrapper(InstalledImport graphics, InstalledImport windows, TargetProfile? target = null)

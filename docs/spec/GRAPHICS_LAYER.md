@@ -11,28 +11,28 @@ fire.Terminal                  (net10.0, plattformunabhängig)
   Blitter, Bilder (PNG/BMP/GIF), Schriften (IntegratedGlyphFont, TrueType), Slicer,
   IGlyphFont, IFramebufferRenderer, IdManager, FramebufferManager, RendererManager
 
-(fire.Terminal.Sdl mit SDL3-CS gibt es nicht mehr: die Fenster des Desktops zeigt die VM über die C-Bibliothek von graphics und windows,
+(Die Fenster des Desktops zeigt die VM über die C-Bibliothek von graphics und windows - fire's eigene Anzeige, dieselbe wie im nativen Build,
 docs/spec/UI_PLATFORM.md "Stand Teil 2"; die C#-Fenster brauchen einen Renderer des Hosts.)
 
 fire.Terminal.Windows          (net10.0, referenziert .Terminal)
   ConsoleWindow                   – zeigt EINEN Framebuffer in einem Fenster an
   WindowManager                   – verwaltet ConsoleWindow-Instanzen über IDs
 
-fire.Terminal.Bridge           (referenziert fire + .Terminal - KEIN Fenster, kein SDL)
+fire.Terminal.Bridge           (referenziert fire + .Terminal - KEIN Fenster)
   GraphicsBridge.cs                – Framebuffer, Renderer, Brush, Pen, Slicer: native Funktionen + fire-Prelude (`#import "graphics"`)
 
 fire.Windows.Bridge            (referenziert fire + .Terminal + .Windows)
   WindowsBridge.cs                 – `Window`, `EventType` und der WindowManager als native Funktionen (`#import "windows"`)
 ```
 
-**Warum diese Trennung**: `fire.Terminal` selbst enthält keine SDL- oder Fenster-Abhängigkeit. Ein Programm, das nur `graphics` importiert,
+**Warum diese Trennung**: `fire.Terminal` selbst enthält keine Fenster-Abhängigkeit. Ein Programm, das nur `graphics` importiert,
 läuft auch dort, wo es kein Fenster gibt (ein Display auf einem Board, eine Datei als Ausgabe).
 
 ## Die Brücke zur Skriptsprache (`fire.Terminal.Bridge`)
 
 **Grafik und Fenster sind getrennt** (`#import "graphics"` und `#import "windows"`): `graphics` bringt `Framebuffer`, `Renderer`, `Brush`, `Pen` und `Slicer` und braucht
-weder SDL noch ein Fenster - auf einer Plattform ohne Fenster (Embedded) importiert ein Programm nur `graphics` und bindet statt `Window` ein Display ein.
-`#import "windows"` bringt `Window` und `EventType` (SDL, eigene Assembly `fire.Windows.Bridge`) und schaltet `graphics` mit zu; `#import "ui"` schaltet beide zu.
+kein Fenster - auf einer Plattform ohne Fenster (Embedded) importiert ein Programm nur `graphics` und bindet statt `Window` ein Display ein.
+`#import "windows"` bringt `Window` und `EventType` (eigene Assembly `fire.Windows.Bridge`) und schaltet `graphics` mit zu; `#import "ui"` schaltet beide zu.
 `GraphicsBridge.RegisterAll(natives, framebuffers, consoles, readFile)` und `WindowsBridge.RegisterAll(natives, windows)`
 registrieren die Manager als native Funktionen - über
 `NativeRegistry.RegisterGroup(prefix, functions)` (SPEC 8.1.6): jede
@@ -93,14 +93,14 @@ Grafik-Brücke, und das eigentliche Nutzer-Skript.
 - **`Renderer`-Methoden mit Pixel-Koordinaten** (Bridge): `SetPixel`, `FillRect`, `DrawRect`, `DrawLine`, `DrawText(x, y, text, color, background)`, `CellWidth()`, `CellHeight()` und die Formen des Abschnitts "Mehr Zeichenfunktionen".
   Eine Farbe ist eine Zahl: **0 bis 255 ist ein Palette-Index, jede andere ein direkter Wert** (`r + g*256 + b*65536 + a*16777216`, Alpha 255 = deckend) - siehe "Farbmodi und Farbangaben". Beim HINTERGRUND von `DrawText` ist `0`
   (und jeder direkte Wert mit Alpha 0) "transparent"; einen Palette-Index als Textuntergrund gibt es dort nicht (vorher ein Rechteck füllen). `GetPixel` liefert die Farbe als 32-Bit-Zahl MIT Vorzeichen (deckende Farben also negativ).
-- **Mausposition in Framebuffer-Pixeln:** SDL meldet Fenster-Koordinaten, das Fenster darf aber skaliert werden (der Framebuffer wird gestreckt); `SdlFramebufferRenderer` rechnet Position und Bewegung
-  auf Framebuffer-Pixel um. Texteingabe (`SDL.StartTextInput`) ist eingeschaltet.
+- **Mausposition in Framebuffer-Pixeln:** das Fenstersystem meldet Fenster-Koordinaten, das Fenster darf aber skaliert werden (der Framebuffer wird gestreckt); die Anzeige rechnet Position und
+  Bewegung auf Framebuffer-Pixel um. Texteingabe ist eingeschaltet.
 - **Ereignisse abfragen statt Callback:** Ein `Window`-Callback läuft auf einer eigenen VM mit einer ISOLIERTEN KOPIE der globalen Variablen (SPEC 8.1.4) - Objekte mit Lambdas oder Verweisen auf
   fremde Objekte lassen sich dabei nicht kopieren, und Änderungen am Original gehen verloren. Deshalb gibt es daneben `Window.EnableEvents()` und `Window.NextEvent()`: die Ereignisse, die `Tick`
   abholt, landen zusätzlich in einer Warteschlange (`WindowManager.EnableEventQueue`/`NextEvent`, höchstens 4096), und das Skript holt sie im Hauptprogramm ab. Ein Ereignis ist ein Array: `[0]` der
   Typ (`EventType`), der Rest je Typ - `MouseDown`/`MouseUp` `[typ, taste, x, y]`, `MouseMove` `[typ, x, y, tasten]`, `MouseScroll` `[typ, scrollX, scrollY, x, y]`, `KeyDown`/`KeyUp`
   `[typ, keycode, scancode, modifier, wiederholt]`, `TextInput` `[typ, text]`, `Close` `[typ]`; Positionen sind ganze Pixel. `WindowManager` nimmt dafür optional eine Renderer-Fabrik entgegen
-  (`Func<IFramebufferRenderer>`, Vorgabe SDL) - so lassen sich Fenster ohne SDL testen.
+  (`Func<IFramebufferRenderer>`) - so lassen sich Fenster ohne Bildschirm testen.
 - Die Oberflächen-Bibliothek `#import "ui"` baut darauf auf, siehe [User interfaces](../ui/README.md).
 
 ## Drei unabhängig verwaltete Ressourcenarten, jede über eine eigene ID
@@ -168,10 +168,10 @@ Ein Framebuffer hat einen **Farbmodus** (`new Framebuffer(w, h, ColorMode.Rgba |
 
 - **`Rgba`** (Vorgabe): 4 Byte je Pixel (R, G, B, A), jede Farbe direkt.
 - **`Palette`** (`ColorMode.Indexed`): 1 Byte je Pixel, ein Index in die 256-Farben-`Palette` des Framebuffers (wie VGA-Modus 13h). Wer einen Palette-Eintrag ändert, ändert die Farbe ALLER Pixel mit diesem Index
-  (Paletten-Animation). Das sichtbare Abbild (`Framebuffer.Pixels`, was die Renderer lesen) wird erst bei Bedarf aus den Indizes und der Palette berechnet (`Framebuffer.Resolve()`, vom Fenster und vom SDL-Renderer vor
+  (Paletten-Animation). Das sichtbare Abbild (`Framebuffer.Pixels`, was die Renderer lesen) wird erst bei Bedarf aus den Indizes und der Palette berechnet (`Framebuffer.Resolve()`, vom Fenster und vom Renderer vor
   dem Anzeigen aufgerufen, nur wenn sich etwas geändert hat); `Framebuffer.Indices` ist die Index-Ebene (nach direktem Schreiben `MarkDirty()`). `Framebuffer.TransparentIndex` merkt den durchsichtigen Index eines geladenen Bildes.
 
-**Speicherlayout und Palette-Index.** Ein Pixel ist ein 32-Bit-Wort `r + g*256 + b*65536 + a*16777216`, im Speicher die Bytes R, G, B, A (SDL: `ABGR8888` = `RGBA32` auf Little-Endian). Ein Palette-Index (0-255) belegt dabei nur das unterste Byte, also den **R-Kanal**; G, B und **Alpha bleiben 0** - der Index überschreibt den Alpha-Kanal nie, ein Wechsel des Kanals oder des SDL-Formats ist nicht nötig. Die einzige Kollision sind durchsichtige Farben mit G = B = 0 (vor allem `0` = durchsichtiges Schwarz, das als QBasic-Schwarz, Index 0, gelesen würde). Darum ist die **kanonische durchsichtige Farbe `(0, 1, 0, 0)` = 256** (`PixelColor.Transparent`, `Paint.Transparent`, `UI.Color.Transparent()`): komplett durchsichtig, aber kein Index. `GetPixel` gibt ein Pixel, das als Index gelesen würde (also immer ein durchsichtiges), als 256 zurück - so bleibt ein gelesenes und wieder geschriebenes Pixel durchsichtig (`Paint.ToArgument`).
+**Speicherlayout und Palette-Index.** Ein Pixel ist ein 32-Bit-Wort `r + g*256 + b*65536 + a*16777216`, im Speicher die Bytes R, G, B, A (`RGBA32`). Ein Palette-Index (0-255) belegt dabei nur das unterste Byte, also den **R-Kanal**; G, B und **Alpha bleiben 0** - der Index überschreibt den Alpha-Kanal nie, ein Wechsel des Kanals oder des Formats ist nicht nötig. Die einzige Kollision sind durchsichtige Farben mit G = B = 0 (vor allem `0` = durchsichtiges Schwarz, das als QBasic-Schwarz, Index 0, gelesen würde). Darum ist die **kanonische durchsichtige Farbe `(0, 1, 0, 0)` = 256** (`PixelColor.Transparent`, `Paint.Transparent`, `UI.Color.Transparent()`): komplett durchsichtig, aber kein Index. `GetPixel` gibt ein Pixel, das als Index gelesen würde (also immer ein durchsichtiges), als 256 zurück - so bleibt ein gelesenes und wieder geschriebenes Pixel durchsichtig (`Paint.ToArgument`).
 
 Welche Farbe ein Aufruf meint, sagt die **Farbangabe** (`Paint`): **eine Zahl von 0 bis 255 ist ein Palette-Index, jede andere ein direkter RGBA-Wert** - dieselbe Regel wie schon bei `Renderer.SetColor`. Der Framebuffer löst sie für sich auf (`ResolvePixel`
 -> `Pixel`): in einem RGBA-Framebuffer wird ein Index über die Palette zur Farbe, in einem Palette-Framebuffer ein direkter Wert auf den nächsten Eintrag der Palette abgebildet (kleinster Abstand in R, G, B; Alpha zählt nicht,
@@ -272,7 +272,7 @@ foreach (b in bahnen) { print(b.kind + " " + b.closed + " " + b.Count()) ; print
   `Slice(maske)` nimmt jeden Framebuffer als Maske (Palette: Index ungleich 0; RGBA: sichtbar und nicht schwarz) und liefert eine `List` von `ToolPath` - leer, wenn keine Stelle breit genug für die Linienstärke ist. Bei `Contour` kommen die Innenringe von innen nach außen, bei `ZigZag` waagerechte Zweipunktbahnen (abwechselnd links/rechts), zuletzt immer die Randkontur als Schlichtbahn.
 - `ToolPath`: `kind` (`PathKind.Fill`/`PathKind.Outline`), `closed`, `points` (flaches Array `[x0, y0, x1, y1, ...]`), `Count()`, `X(i)`, `Y(i)`.
 - Ein Wert außerhalb des Bereichs (Linienstärke/Pixelgröße <= 0, Überlappung außerhalb von 0 bis 0.95) ist eine `GraphicsException`.
-- Der frühere `SdlMaskLoader` entfällt: geladen wird mit `Framebuffer.FromFile`/`FromImage` (PNG, BMP, GIF), die Maske kommt aus `ToMask`.
+- Geladen wird mit `Framebuffer.FromFile`/`FromImage` (PNG, BMP, GIF), die Maske kommt aus `ToMask`.
 
 ## Byteweiser Framebuffer-Zugriff
 
@@ -315,13 +315,12 @@ auf die rohen Pixel-Daten:
 - **Kein Scrollback.** Erreicht der Cursor das Bildschirmende, verschiebt
   `Framebuffer.ScrollUp` den gesamten Inhalt eine Zellenhöhe nach oben; was
   oben herausfällt, ist unwiderruflich verloren.
-- **Fenstergröße ist unabhängig vom Zeichenraster.** `SdlFramebufferRenderer`
+- **Fenstergröße ist unabhängig vom Zeichenraster.** Die Anzeige
   zeichnet den Framebuffer immer auf die gesamte aktuelle Fenstergröße
   gestreckt/gestaucht.
 - **Kein eigenes Alpha-Blending.** `Framebuffer.SetPixel`/`FillRect`
   schreiben ein Zielpixel immer vollständig, es wird nichts gemischt.
-- **SDL-Texturformat passend zu `PixelColor`.** `SDL.PixelFormat.ABGR8888` (SDL nennt gepackte Formate nach der Bit-Reihenfolge des Worts; auf Little-Endian ist das die Byte-Reihenfolge R,G,B,A, früher stand hier ARGB8888 und vertauschte Rot und Blau)
-  (in SDL3 der Name für das gepackte 32-Bit-RGBA-Format) - "R,G,B,A in genau
+- **Pixelformat passend zu `PixelColor`.** Die Anzeige liest "R,G,B,A in genau
   dieser Byte-Reihenfolge im Speicher", passend zu `PixelColor.Packed`.
 
 ## Zwei Nutzungsarten von `ConsoleWindow`/`WindowManager`
@@ -352,7 +351,7 @@ Im Skript (`#import "windows"`) taktet ein **`WindowManager`** die Fenster, die 
 | `manager.Run()`, `manager.Tick()` | alle Fenster bis zum Schließen bzw. ein Zyklus aller Fenster auf dem aufrufenden Thread (die Regeln von `window.Run()`); `Run` auf einem gestarteten Manager wartet, bis seine Fenster zu sind |
 | `manager.IsStarted`, `manager.IsRunning`, `manager.Count` | läuft der Thread? betreibt jemand die Fenster (Thread, `Run`, ein modales Fenster)? wie viele Fenster sind noch offen? |
 
-**Was auf welchem Thread läuft.** Der Thread des Managers besitzt nur die Fenster des Betriebssystems (SDL bedient ein Fenster nur auf dem Thread, der es erzeugt hat - daher
+**Was auf welchem Thread läuft.** Der Thread des Managers besitzt nur die Fenster des Betriebssystems (ein Fenstersystem bedient ein Fenster nur auf dem Thread, der es erzeugt hat - daher
 öffnet sich ein Fenster erst, wenn der Thread, der es zeigt, es zum ersten Mal pumpt). Alles, was das Programm berührt - Callbacks, `NextEvent`, `onCycle`, das Zeichnen -
 läuft weiter auf dem Programm-Thread: der Thread des Managers bittet das Hauptprogramm nach jedem Zyklus um einen Lauf von `manager.Tick()`, das Hauptprogramm macht ihn an
 seinem nächsten sicheren Punkt (wie Host-Callbacks: nach einem nativen Aufruf, in Schleifen, in `Sleep`, bei `sync globals`; mit `#nosync` nur bei `sync globals`). Das Bild
@@ -408,7 +407,7 @@ Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe [User interfaces](../u
 
 ## Touchscreen und Joystick
 
-Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM und natives Backend gleich). Die Ereignisse kommen wie die anderen über die Warteschlange (`window.EnableEvents()`, `NextEvent()`) oder als Callback
+Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (VM und natives Backend gleich: fire's eigene Anzeige). Die Ereignisse kommen wie die anderen über die Warteschlange (`window.EnableEvents()`, `NextEvent()`) oder als Callback
 (`RegisterTouchDown(...)` usw.):
 
 | Ereignis | `EventType` | Warteschlange | Callback |
@@ -422,7 +421,7 @@ Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM un
 - Fingerpositionen sind Pixel des Framebuffers (wie die Maus); `finger` unterscheidet mehrere gleichzeitige Finger, `druck` geht von 0 bis 1 (Geräte ohne Druckmessung melden 1).
 - Eine Achse steht von -1 bis 1 (0 ist die Mitte; die Ruhelage kann um ein paar Prozent daneben liegen - eine Totzone ist Sache des Programms). `richtungen` beim Kreuz ist eine Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links, 0 Mitte.
 - `joystick` ist die Nummer des Geräts, solange es angesteckt ist. Alle Geräte, die schon beim Start da sind (und später angesteckte), werden geöffnet und melden `JoystickAdded`. Ohne Joystick-Treiber öffnet sich das Fenster trotzdem.
-- `window.TouchMouse` (Vorgabe `true`): SDL macht aus einem Finger zusätzlich Mausereignisse, ein Programm, das nur auf die Maus hört, ist so auch mit dem Finger bedienbar. Mit `false` kommen nur die Touch-Ereignisse
+- `window.TouchMouse` (Vorgabe `true`): die Anzeige macht aus einem Finger zusätzlich Mausereignisse, ein Programm, das nur auf die Maus hört, ist so auch mit dem Finger bedienbar. Mit `false` kommen nur die Touch-Ereignisse
   (die UI-Bibliothek schaltet es aus und wertet die Finger selbst aus, siehe [User interfaces](../ui/README.md) "Bedienung").
 - Im nativen Backend liefert die Anzeige `EV_TOUCH_*` und `EV_JOY_*` (Felder `finger`, `pressure`, `joystick`, `index`, `value`, `x`, `y`); ein Board-Paket ohne Touchscreen oder Joystick meldet sie einfach nicht.
 
@@ -437,14 +436,13 @@ Was der Nutzer aus einem anderen Programm auf das Fenster zieht (Dateien aus dem
 | etwas wird über das Fenster gezogen | `DragHover` 42 | `[typ, x, y]` | `window.RegisterDragHover(func (float x, float y) => ...)` |
 | es verlässt das Fenster, ohne fallen gelassen zu werden | `DragLeave` 43 | `[typ]` | `window.RegisterDragLeave(func () => ...)` |
 
-- Mehrere Dateien eines Zugs kommen in einem Ereignis (SDL: `DROPBEGIN` .. `DROPCOMPLETE`); die Position ist in Pixeln des Framebuffers. SDL3 (die VM, native Builds mit SDL3) nennt sie selbst,
-  SDL2 (native Builds ohne SDL3) nicht: dort ist es die Stelle des Mauszeigers beim Loslassen.
-- `DragHover` kommt, solange etwas aus einem anderen Programm über dem Fenster ist (bei jeder Bewegung; SDL3: `SDL_EVENT_DROP_POSITION`), `DragLeave`, wenn es das Fenster wieder verlässt, ohne fallen
-  gelassen zu werden. Was gezogen wird, sagt das Betriebssystem erst beim Drop. Ein nativer Build mit SDL2 meldet beides nicht.
+- Mehrere Dateien eines Zugs kommen in einem Ereignis; die Position ist in Pixeln des Framebuffers.
+- `DragHover` kommt, solange etwas aus einem anderen Programm über dem Fenster ist (bei jeder Bewegung), `DragLeave`, wenn es das Fenster wieder verlässt, ohne fallen
+  gelassen zu werden. Was gezogen wird, sagt das Betriebssystem erst beim Drop.
 - Die UI-Bibliothek reicht die Drops an das Element darunter weiter ([User interfaces](../ui/README.md) "Drag & Drop").
 
 **Aus dem Fenster heraus** zieht `window.StartDrag(text, dateien)` einen Text und/oder Dateien (ihre Pfade: `string[]` oder eine `List`; `undefined`: keine) in ein anderes Programm - einen
-Dateimanager, einen Editor, einen Browser. Das Programm ruft es auf, während eine Maustaste gehalten wird (typisch: der Zeiger verlässt bei einem eigenen Ziehen das Fenster - SDL meldet die Maus
+Dateimanager, einen Editor, einen Browser. Das Programm ruft es auf, während eine Maustaste gehalten wird (typisch: der Zeiger verlässt bei einem eigenen Ziehen das Fenster - die Anzeige meldet die Maus
 außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das von selbst, [User interfaces](../ui/README.md) "Drag & Drop"). Der Aufruf kehrt zurück, wenn der Nutzer loslässt:
 
 | Rückgabe | |
@@ -453,8 +451,8 @@ außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das vo
 | `1` | das andere Programm hat es kopiert |
 | `2` | es hat es verschoben (ein Dateimanager hat die Dateien verschoben: das Programm kann sie vergessen) |
 
-`window.CanStartDrag()` sagt vorher, ob die Plattform ein solches Ziehen überhaupt übernehmen kann: `true` unter Windows und X11 (der Videotreiber `windows` bzw. `x11` - in der VM gefragt in
-`SdlDragOut.CanStart`, nativ `fire_display_canStartDrag` der Anzeige), `false` in der VM unter Wayland, unter macOS, mit dem Dummy-/Offscreen-Treiber, ohne Desktop (`fire_display_none.h`) und solange das Fenster nicht
+`window.CanStartDrag()` sagt vorher, ob die Plattform ein solches Ziehen überhaupt übernehmen kann: `true` unter Windows und X11 (die Anzeige `win32` bzw. `x11` - in der VM wie nativ
+`fire_display_canStartDrag` der Anzeige), `false` in der VM unter Wayland, unter macOS, ohne Bildschirm (`FIRE_DISPLAY=headless`), ohne Desktop (`fire_display_none.h`) und solange das Fenster nicht
 offen ist; ein eigenes Board-Package ohne `FIRE_DISPLAY_CAN_START_DRAG` sagt ebenfalls `false`. Die UI-Bibliothek lässt ein Ziehen dann im Fenster weiterlaufen, statt es beim Verlassen zu beenden.
 
 - **Windows**: OLE (`DoDragDrop`) mit einem eigenen `IDataObject` - der Text als `CF_UNICODETEXT`, die Dateien als `CF_HDROP` - und einer `IDropSource`; nativ in C (die COM-Objekte als
@@ -462,20 +460,20 @@ offen ist; ein eigenes Board-Package ohne `FIRE_DISPLAY_CAN_START_DRAG` sagt ebe
   holt die Nachrichten des Threads selbst ab, bis losgelassen wird. Angeboten werden Kopieren und Verschieben; welches, entscheidet das Ziel (und die Tasten).
 - **X11**: das XDND-Protokoll als Quelle (Version 5: `XdndEnter`/`XdndPosition`/`XdndLeave`/`XdndDrop` an das Fenster mit `XdndAware` unter dem Zeiger, `XdndStatus`/`XdndFinished` zurück; die
   Auswahl `XdndSelection` gehört dem Fenster und liefert `text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING` und `text/plain`). Kopieren, mit Umschalt Verschieben. libX11 wird zur Laufzeit
-  geladen (ohne X11 - ein Board - gibt es eben kein Ziehen). Die Schleife benutzt die Verbindung von SDL und hält dabei die Sperre, unter der auch die Fenster ihre Ereignisse abholen: sie
-  nimmt nur die Antworten des Ziels und die Anfragen nach den Daten aus der Warteschlange, alles andere bleibt für SDL. Den Zeiger hält der Druck, mit dem das Ziehen begann (der implizite Grab der
-  Taste bzw. das Festhalten der Maus durch SDL; ein eigener Grab scheitert, solange SDL3 die Maus über XInput2 hält): die Schleife fragt den Server, wo der Zeiger ist und welche Tasten gedrückt
+  geladen (ohne X11 - ein Board - gibt es eben kein Ziehen). Die Schleife benutzt die Verbindung der Anzeige, während die Fenster keine Ereignisse abholen: sie
+  nimmt nur die Antworten des Ziels und die Anfragen nach den Daten aus der Warteschlange, alles andere bleibt für die Anzeige. Den Zeiger hält der Druck, mit dem das Ziehen begann (der implizite
+  Grab der Taste): die Schleife fragt den Server, wo der Zeiger ist und welche Tasten gedrückt
   sind, bis losgelassen wird; Escape bricht ab.
-- **Wayland** (nur nativ mit SDL3): `wl_data_device.start_drag` mit einer eigenen `wl_data_source` (`text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING`, `text/plain`; Kopieren und
-  Verschieben, welches, entscheidet das Ziel bzw. der Compositor). Den Zug kann nur beginnen, wer die Seriennummer des Tastendrucks kennt, der den Zeiger hält - SDL gibt sie nicht heraus. Deshalb hört
-  fire auf SDLs Verbindung (`wl_display`) mit einer eigenen Warteschlange selbst mit: ein eigener `wl_seat`, ein eigener `wl_pointer` (der Compositor meldet jeden Tastendruck allen Zeigern des
-  Programms) und der `wl_data_device_manager`; nach jedem Abholen der Ereignisse durch SDL nimmt die Anzeige ihre Warteschlange dran. libwayland-client wird zur Laufzeit geladen. Während des Ziehens
-  gehört der Zeiger dem Compositor (SDL bekommt ein Verlassen und lässt seine Tasten los). Die VM kann unter Wayland noch nicht nach außen ziehen (`0`).
+- **Wayland** (nativ): `wl_data_device.start_drag` mit einer eigenen `wl_data_source` (`text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING`, `text/plain`; Kopieren und
+  Verschieben, welches, entscheidet das Ziel bzw. der Compositor). Den Zug kann nur beginnen, wer die Seriennummer des Tastendrucks kennt, der den Zeiger hält. Deshalb hört
+  fire auf der Verbindung der Anzeige (`wl_display`) mit einer eigenen Warteschlange selbst mit: ein eigener `wl_seat`, ein eigener `wl_pointer` (der Compositor meldet jeden Tastendruck allen Zeigern des
+  Programms) und der `wl_data_device_manager`; nach jedem Abholen der Ereignisse nimmt die Anzeige diese Warteschlange dran. libwayland-client wird zur Laufzeit geladen. Während des Ziehens
+  gehört der Zeiger dem Compositor (die Anzeige bekommt ein Verlassen und lässt ihre Tasten los). Die VM kann unter Wayland noch nicht nach außen ziehen (`0`).
 - **macOS**, der Browser, Boards: noch kein Ziehen nach außen (`0`).
 - Ein Fenster, das der Thread seines Managers zeigt (`Show`), zieht auf diesem Thread - dem, dem das Fenster des Betriebssystems gehört; das Programm wartet auf die Antwort (nativ ohne die GIL,
   die anderen Threads des Programms laufen weiter).
-- Im nativen Backend: `fire_display_startDrag(fenster, text, pfade)` der Anzeige (`fire_display_c.h`; die Pfade zeilenweise), umgesetzt in `platform/std/fire_dragout.h` für SDL3 und SDL2
-  (das Fenster des Betriebssystems: SDL3 über die Eigenschaften des Fensters, SDL2 über `SDL_GetWindowWMInfo`); eine Anzeige ohne Desktop sagt `0`. Ein eigenes Board-Paket, das die Funktion
+- Im nativen Backend: `fire_display_startDrag(fenster, text, pfade)` der Anzeige (`fire_display_c.h`; die Pfade zeilenweise), umgesetzt in `fire_dragout.h` für die Anzeigen
+  von Win32, X11 und Wayland (mit dem Fenster des Betriebssystems); eine Anzeige ohne Desktop sagt `0`. Ein eigenes Board-Paket, das die Funktion
   nicht hat, bekommt ebenfalls `0`.
 
 Die **Zwischenablage** des Desktops (Text, Bilder, Dateien) gehört zu `#import "windows"`. Sie hält eine Sache zur Zeit: ein Bild hineinlegen nimmt den Text heraus.
@@ -486,19 +484,18 @@ Die **Zwischenablage** des Desktops (Text, Bilder, Dateien) gehört zu `#import 
 | `Clipboard.SetText(text)` | legt Text hinein; `false`, wenn der Desktop ablehnt |
 | `Clipboard.HasText` | liegt Text darin? |
 | `Clipboard.GetImage()` | das Bild darin als neuer Framebuffer (RGBA, oder mit der Palette der Datei), `undefined`, wenn keins da ist |
-| `Clipboard.SetImage(fb)` | legt den Framebuffer als Bild hinein (als PNG, unter Windows auch als BMP/`CF_DIB`); `false`, wenn der Desktop ablehnt - oder ein nativer Build mit SDL2 (nur Text) |
+| `Clipboard.SetImage(fb)` | legt den Framebuffer als Bild hinein (als PNG, unter Windows auch als BMP/`CF_DIB`); `false`, wenn der Desktop ablehnt |
 | `Clipboard.HasImage` | liegt ein Bild darin? |
 | `Clipboard.GetFiles()` | die Pfade der Dateien darin (was ein Dateimanager kopiert; `text/uri-list`, unter Windows `CF_HDROP`), ein leeres Array, wenn keine da sind |
 | `Clipboard.SetFiles(pfade)` | legt Pfade hinein (`string[]` oder eine `List`), zum Einfügen in einem Dateimanager |
 | `Clipboard.HasFiles` | liegen Dateien darin? |
 
-Sie braucht kein offenes Fenster (SDL startet seinen Video-Teil dafür einmal). Ohne Desktop - ein Board, die Tests mit einem Ersatz-Renderer - hat das Programm eine eigene Zwischenablage,
-die innerhalb des Programms genauso funktioniert. Zugriffe auf die Zwischenablage und das Abholen der Fenster-Ereignisse schließen sich gegenseitig aus (unter X11 wartet SDL auf die Antwort des
-Besitzers der Zwischenablage, indem es selbst Ereignisse abholt). Ein Programm ohne Fenster beantwortet die Fragen anderer Programme nach dem, was es hineingelegt hat, während es `Clipboard`
-aufruft (dort holt SDL die Ereignisse der Zwischenablage ab). SDL 3.2 unter X11 fragt nach den Arten in der Zwischenablage nur, wenn ihr Besitzer wechselt, während das Programm läuft; damit auch
-da ist, was ein anderes Programm vor dem Start kopiert hat, sagt fire SDL beim ersten Zugriff einmal, der Besitzer habe gewechselt (VM und nativ; danach fragt SDL selbst). Unter Windows hat SDL3 keine Dateilisten: VM und nativer Build sprechen dafür selbst mit der Zwischenablage von Windows
-(`CF_HDROP`, wie der Explorer beim Kopieren von Dateien).
+Sie braucht kein offenes Fenster. Ohne Desktop - ein Board, die Tests mit einem Ersatz-Renderer - hat das Programm eine eigene Zwischenablage,
+die innerhalb des Programms genauso funktioniert. Zugriffe auf die Zwischenablage und das Abholen der Fenster-Ereignisse schließen sich gegenseitig aus (unter X11 wartet die Anzeige auf die Antwort des
+Besitzers der Zwischenablage, indem sie selbst Ereignisse abholt). Ein Programm ohne Fenster beantwortet die Fragen anderer Programme nach dem, was es hineingelegt hat, während es `Clipboard`
+aufruft (dort holt die Anzeige die Ereignisse der Zwischenablage ab). Was ein anderes Programm vor dem Start kopiert hat, ist beim ersten Zugriff da (VM und nativ). Unter Windows
+sprechen VM und nativer Build für Dateilisten mit der Zwischenablage von Windows (`CF_HDROP`, wie der Explorer beim Kopieren von Dateien).
 
-Im nativen Backend: `fire_display_clipboardSet/Get/Has` (Text), `fire_display_clipboardGetImage/SetImage/HasImage` und `GetFiles/SetFiles/HasFiles` der Anzeige (`fire_display_c.h`; SDL3, SDL2 sagt "nicht
-vorhanden", ohne Desktop die eigene des Programms), die Drops als `EV_DROP_FILES`/`EV_DROP_TEXT` mit `data` (Pfade zeilenweise bzw. der Text), das Schweben als `EV_DRAG_HOVER`/`EV_DRAG_LEAVE`
-(siehe [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "SDL3 oder SDL2").
+Im nativen Backend: `fire_display_clipboardSet/Get/Has` (Text), `fire_display_clipboardGetImage/SetImage/HasImage` und `GetFiles/SetFiles/HasFiles` der Anzeige (`fire_display_c.h`; ohne Desktop die eigene
+des Programms), die Drops als `EV_DROP_FILES`/`EV_DROP_TEXT` mit `data` (Pfade zeilenweise bzw. der Text), das Schweben als `EV_DRAG_HOVER`/`EV_DRAG_LEAVE`
+(siehe [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "Die eigene Anzeige").

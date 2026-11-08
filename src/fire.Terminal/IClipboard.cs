@@ -1,6 +1,6 @@
 namespace fire.Terminal
 {
-    /// <summary>The clipboard of the desktop (text, pictures, files) as `Clipboard` of `#import "windows"` sees it. The VM uses SDL's (fire.Terminal.Sdl.SdlClipboard);
+    /// <summary>The clipboard of the desktop (text, pictures, files) as `Clipboard` of `#import "windows"` sees it. The VM uses the one of the C library of graphics and windows;
     /// <see cref="MemoryClipboard"/> keeps everything in the program (tests, a host without a desktop). It holds one thing at a time, as a desktop does: putting a picture
     /// there takes the text away.</summary>
     public interface IClipboard

@@ -207,7 +207,6 @@
       "native/fire_audio_esp32.h",
       "native/fire_audio_linux.h",
       "native/fire_audio_none.h",
-      "native/fire_audio_sdl.h",
       "native/fire_audio_web.h",
       "native/fire_audio_win32.h"
     ]

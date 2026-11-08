@@ -1,12 +1,12 @@
 /* fire windows package: display part in C (the HAL of the windows bridge): the events a display delivers, a list of them, and what the desktop says about how
  * programs should look (the system theme).
  *
- * The windows package brings, one file per platform (platformSources of windows.fireproj: fire_display_select.h - fire's own or SDL -, _wasm.h, _dos.h, _none.h), with:
+ * The windows package brings, one file per platform (platformSources of windows.fireproj: fire_display_select.h - fire's own display -, _wasm.h, _dos.h, _none.h), with:
  *   FIRE_DISPLAY_AVAILABLE                                    1: a window can be shown; 0: `new Window(...)` throws a HandleUnavailableException
  *   FireDisplayWindow                                         one window (a struct of the implementation)
  *   void fire_display_init(FireDisplayWindow*)                an unopened window (VSync and TouchMouse on)
  *   int  fire_display_open(w, title (UTF-8), width, height, vsync)    1: it is open
- *   void fire_display_setVSync / setSize(w, width, height) / setCursor(w, SDL system cursor) / setTouchMouse; int fire_display_vsync / touchMouse
+ *   void fire_display_setVSync / setSize(w, width, height) / setCursor(w, system cursor, FIRE_CURSOR_* of fire_display_keys.h) / setTouchMouse; int fire_display_vsync / touchMouse
  *   int  fire_display_pump(w, FireDisplayEvents* out, fbWidth, fbHeight)    takes the pending events (positions in framebuffer pixels); 0 once the window was closed
  *   void fire_display_present(w, const uint32_t* rgba, width, height)       shows the pixels (R,G,B,A per 32-bit word), stretched to the window
  *   void fire_display_close(w)                                closes it (again: nothing)
@@ -33,7 +33,7 @@
  * (A display without such a clipboard returns NULL / 0; one without a desktop keeps all kinds itself: fire_display_memClipboard below.)
  * A desktop also reports what the user drops onto a window: FIRE_EV_DROP_FILES (`data`: the paths, one per line) and FIRE_EV_DROP_TEXT (`data`: the text), at
  * the position of the drop; while something of another program is dragged over the window, FIRE_EV_DRAG_HOVER (x, y), and FIRE_EV_DRAG_LEAVE when it leaves
- * without being dropped (SDL3; SDL2 sends neither).
+ * without being dropped.
  * Optional (a display that has them defines the name in brackets; the windows bridge does without them otherwise):
  *   void fire_display_setTextInputRect(w, x, y, width, height)   [FIRE_DISPLAY_TEXT_INPUT_RECT] where the text cursor of the program is (framebuffer pixels): the input
  *                                                             method opens its window there

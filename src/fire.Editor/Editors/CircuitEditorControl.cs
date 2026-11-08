@@ -159,7 +159,7 @@ namespace fire.Editor
                 Session?.Resize(w, h);
             }
 
-            /// <summary>The key as SDL names it (letters: their lower case character; see UI.Keys); null for keys the view does not use.</summary>
+            /// <summary>The key as UI.Keys names it (letters: their lower case character; see UI.Keys); null for keys the view does not use.</summary>
             internal static int? KeyCode(Key key)
             {
                 if (key >= Key.A && key <= Key.Z) return 'a' + (key - Key.A);
@@ -480,7 +480,7 @@ namespace fire.Editor
             }
             """;
 
-        /// <summary>The Avalonia pointer for a cursor of the program (UI.Cursor / SDL numbering).</summary>
+        /// <summary>The Avalonia pointer for a cursor of the program (the numbering of UI.Cursor).</summary>
         internal static Cursor PointerFor(int cursor) => new(cursor switch
         {
             1 => StandardCursorType.Ibeam,

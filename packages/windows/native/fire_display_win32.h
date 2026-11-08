@@ -1,4 +1,4 @@
-/* fire native platform package "std": a window on Windows (fire_dw32_*, one of the displays of fire_display_desktop.h) - without SDL. It links user32 and gdi32 (what
+/* fire native platform package "std": a window on Windows (fire_dw32_*, one of the displays of fire_display_desktop.h). It links user32 and gdi32 (what
  * every Windows has); the input method (imm32), the compositor (dwmapi), OLE (ole32: what other programs drop) and the version of Windows (ntdll) are loaded when
  * they are needed - a toolchain without their headers or import libraries (TinyCC) builds it all the same.
  *

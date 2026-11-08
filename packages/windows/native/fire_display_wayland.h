@@ -1,4 +1,4 @@
-/* fire native platform package "std": a window on a Wayland desktop (fire_dwl_*, one of the displays of fire_display_desktop.h) - without SDL and without the headers of
+/* fire native platform package "std": a window on a Wayland desktop (fire_dwl_*, one of the displays of fire_display_desktop.h) - without the headers of
  * Wayland: libwayland-client and libxkbcommon are loaded when the first window opens (dlopen; libwayland-cursor is optional), the protocols beyond the core
  * (xdg-shell, xdg-decoration, viewporter, fractional-scale, text-input-v3, cursor-shape, ext-background-effect, KDE's blur) are described by tables of our own.
  *

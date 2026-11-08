@@ -154,10 +154,9 @@ quickly:
 | `FIRE_TEST_JOBS=<n>` | how many native builds and test programs at a time (default: the cores of the machine); `1` builds and runs one case after the other |
 | `FIRE_TEST_OPT=<flags>` | the optimization of the native test builds (default `-O1`; e.g. `-O2` for a run that looks for the warnings only `-O2` finds) |
 
-The window cases of the native group (filter `Fenster`) run every window program with SDL2 and, when the machine has it, SDL3 (dummy driver); the clipboard of X11 needs `xvfb-run` (one program,
-two programs, the VM with SDL3 as the other one), the Windows cases MinGW, Wine and the MinGW package of SDL3 (`SDL3_DIR`, else `/opt/sdl-mingw/SDL3-*`); the VM's Windows clipboard a `dotnet publish -r win-x64` (the runtime
-pack for win-x64 comes from NuGet once). Drag-out on Wayland needs `weston` (it runs with its X11 backend under Xvfb) and an SDL3 with the Wayland driver - the system's, or a folder with such a
-`libSDL3.so` in `FIRE_TEST_SDL3_WAYLAND`. A case whose tools are missing is skipped with a note.
+The window cases of the native group (filter `Fenster`) run every window program with fire's own display without a screen (`FIRE_DISPLAY=headless`) and on Wayland (`weston`); the
+clipboard of X11 needs `xvfb-run` (one program, two programs, the VM as the other one), the Windows cases MinGW and Wine; the VM's Windows clipboard a `dotnet publish -r win-x64` (the runtime
+pack for win-x64 comes from NuGet once). Drag-out on Wayland needs `weston` (it runs with its X11 backend under Xvfb). A case whose tools are missing is skipped with a note.
 
 When `ccache` is installed, the native builds of the tests go through it: a case whose generated program did not change is not compiled again (a run of the native group
 with an unchanged program takes seconds per case instead of a minute). Example: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="Drop|Compression:"` runs the native checks of
@@ -170,7 +169,7 @@ AddressSanitizer a compiler needs hundreds of MB; the biggest program first, a c
 The parts after that - the debugger, the devices, the windows with the UI, the cases under Wine, FreeRTOS - run at the same time, too. The output does not change: every
 part prints its checks in the order of its cases, a part's lines are held back until the parts before it are done, and `OK:`/`FEHLER:` come in the same order as with
 `FIRE_TEST_JOBS=1`. What cannot run at the same time takes turns: the cases under Wine share one prefix, every `xvfb-run` gets an X server of its own (`-n`, a number
-far from those of `-a`), a test program gets its variables (`SDL_VIDEODRIVER`, `LSAN_OPTIONS`) per process. The cases are built with `-O1` (`FIRE_TEST_OPT`) - with
+far from those of `-a`), a test program gets its variables (`FIRE_DISPLAY`, `LSAN_OPTIONS`) per process. The cases are built with `-O1` (`FIRE_TEST_OPT`) - with
 the sanitizers 20-30 % less compile time than `-O2` (a case of 1.3 MB C: 33 s instead of 48 s) and the same memory errors; a few warnings of gcc appear only with
 `-O2` (`FIRE_TEST_OPT=-O2` looks for them), the checks that are about `-O2` itself name it.
 

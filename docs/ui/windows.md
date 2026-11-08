@@ -141,7 +141,7 @@ any program, see [graphics](../graphics/README.md#rounded-shapes-shadows-and-mat
 
 ## Where the windows come from
 
-fire draws its windows itself, without SDL. The display is chosen when the first window opens:
+fire draws its windows itself, with its own display layer. The display is chosen when the first window opens:
 
 | System | Display |
 | --- | --- |

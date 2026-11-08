@@ -12,7 +12,7 @@ namespace fire.Runtime
     /// <summary>
     /// Execution environment of the packed runtime (the variant with editor/debugger lies in fire.Compiler).
     ///
-    /// IMPORTANT for the lean output file: the bridges (terminal/SDL, devices, IO) are NO longer embedded in every
+    /// IMPORTANT for the lean output file: the bridges (terminal/windows, devices, IO) are NO longer embedded in every
     /// packed file, but only if the program needs them via `#import` (see Packer,
     /// PackagePlan). If a bridge DLL is missing, it must therefore never be loaded either - the JIT resolves a type
     /// already when compiling a method that mentions it in a signature, local variable or call.
@@ -149,7 +149,7 @@ namespace fire.Runtime
             return fbManager;
         }
 
-        /// <summary>`#import "windows"`: the SDL window (own assembly together with SDL - a program with only `graphics` never loads it).</summary>
+        /// <summary>`#import "windows"`: the window (an assembly of its own - a program with only `graphics` never loads it).</summary>
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RegisterWindows(Session session, NativeRegistry natives, object framebuffers)
         {

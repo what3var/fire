@@ -1,5 +1,5 @@
 /* fire windows package: part of the display: dragging text and files out of a window into other programs (Window.StartDrag, fire_display_startDrag of
- * fire_display_sdl3.h and fire_display_sdl.h). Neither SDL2 nor SDL3 can start such a drag, so it is written here per platform, for the OS window that SDL made:
+ * the displays fire_display_win32.h, fire_display_x11.h and fire_display_wayland.h), written here per platform, for the OS window of the display:
  *
  *   Windows  fire_dragout_win32(hwnd, text, files): OLE's DoDragDrop with an IDataObject of this file (CF_UNICODETEXT for the text, CF_HDROP for the files) and an
  *            IDropSource, in C (the COM objects are structs with their tables of functions). ole32.dll is loaded when the first drag starts (no link library);
@@ -8,13 +8,12 @@
  *            the pointer that has XdndAware (or its XdndProxy), XdndStatus and XdndFinished back, the selection XdndSelection owned by the window and its
  *            SelectionRequests answered with text/uri-list, text/plain;charset=utf-8, UTF8_STRING, text/plain (and TARGETS). libX11 is loaded with dlopen (no
  *            headers, no link library): a build or a run without X11 (Wayland only, a board) simply has no drag. It runs on the thread that pumps the window,
- *            with the connection of SDL: the caller holds the lock of SDL's events, so nobody else reads the events of the connection meanwhile - the loop takes
- *            only the XDND messages and the selection requests out of the queue (everything else stays there for SDL). The pointer stays grabbed by the press
- *            that started the drag (the implicit grab of the button, SDL's capture: a grab of our own would fail while SDL3's XInput2 holds it); the loop asks the
+ *            with the connection of the display: nobody else reads the events of the connection meanwhile - the loop takes
+ *            only the XDND messages and the selection requests out of the queue (everything else stays there for the display). The pointer stays grabbed by the
+ *            press that started the drag (the implicit grab of the button: a grab of our own could fail while another grab holds it); the loop asks the
  *            server where the pointer is and which buttons are held (XQueryPointer) until the button is let go - Escape cancels.
- *   Wayland  fire_dragout_wayland(display, surface, text, files): a wl_data_source and start_drag on SDL's wl_display, with a queue, a seat and a pointer of
- *            fire's own (the pointer learns the serial of the press that a drag needs - SDL does not give it out; fire_dragout_wlPump after every pump of
- *            SDL). libwayland-client is loaded with dlopen, the few signatures are declared below (no headers).
+ *   Wayland  fire_dragout_wayland(display, surface, text, files): a wl_data_source and start_drag on the display's wl_display, with a queue, a seat and a
+ *            pointer of its own (the pointer learns the serial of the press that a drag needs; fire_dragout_wlPump after every pump of the display). libwayland-client is loaded with dlopen, the few signatures are declared below (no headers).
  *   others   (macOS, the browser, boards) no drag: 0.
  *
  * `files`: the paths, one per line (UTF-8); `text`: UTF-8. The result: 0 nothing happened (no target, refused, cancelled), 1 the other program copied, 2 it moved. */
@@ -364,7 +363,7 @@ typedef struct FireXClient { int type; unsigned long serial; int send_event; voi
 typedef struct FireXSelRequest { int type; unsigned long serial; int send_event; void* display; FireXId owner, requestor, selection, target, property, time; } FireXSelRequest;
 typedef struct FireXSelNotify { int type; unsigned long serial; int send_event; void* display; FireXId requestor, selection, target, property, time; } FireXSelNotify;
 typedef struct FireXProperty { int type; unsigned long serial; int send_event; void* display; FireXId window, atom, time; int state; } FireXProperty;
-/* (XFixesSelectionNotifyEvent: fire_display_sdl3.h tells SDL that the owner of the clipboard changed) */
+/* (XFixesSelectionNotifyEvent: the notice that the owner of the clipboard changed) */
 typedef struct FireXFixesNotify { int type; unsigned long serial; int send_event; void* display; FireXId window; int subtype; FireXId owner, selection, time, selectionTime; } FireXFixesNotify;
 typedef union FireXEvent { int type; FireXClient xclient; FireXSelRequest xselectionrequest; FireXSelNotify xselection; FireXProperty xproperty; FireXFixesNotify xfixes; long pad[24]; } FireXEvent;
 enum { FIRE_X_PROPERTY_NOTIFY = 28, FIRE_X_SELECTION_REQUEST = 30, FIRE_X_SELECTION_NOTIFY = 31, FIRE_X_CLIENT_MESSAGE = 33 };
@@ -611,7 +610,7 @@ static void fire_xdrag_handle(FireXDrag* d, const FireXEvent* e) {
     }
 }
 
-/* Drags the text and/or the files out of `window` (on `display`, the connection of SDL - the caller holds the lock of SDL's events) until the user lets go;
+/* Drags the text and/or the files out of `window` (on `display`, the connection of the display - it pumps no events meanwhile) until the user lets go;
  * 0 / 1 copy / 2 move. A drag needs a mouse button that is held: without one there is none (0). */
 static int fire_dragout_x11(void* display, unsigned long window, const char* text, const char* files) {
     FireX11* x = fire_x11_load();
@@ -703,19 +702,18 @@ static int fire_dragout_x11(void* display, unsigned long window, const char* tex
 }
 
 /* ======================================================================================================================================================
- * Wayland: the source side of wl_data_device (start_drag with a wl_data_source), next to SDL on SDL's own connection
+ * Wayland: the source side of wl_data_device (start_drag with a wl_data_source), on the display's own connection
  * ====================================================================================================================================================== */
-/* A drag on Wayland needs the serial of the button press that holds the pointer (the implicit grab), and SDL does not give it out. So fire listens itself:
- * on SDL's wl_display (SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER) it makes an event queue of its own, binds wl_seat and wl_data_device_manager (version 3:
+/* A drag on Wayland needs the serial of the button press that holds the pointer (the implicit grab). So this part listens itself:
+ * on the display's wl_display it makes an event queue of its own, binds wl_seat and wl_data_device_manager (version 3:
  * the actions) through a registry on that queue and asks the seat for a wl_pointer of its own - the compositor tells every wl_pointer of the client about the
- * button presses, so this one learns the serials. SDL reads the events of the connection into both queues when it pumps; the display dispatches fire's queue
- * right after (fire_dragout_wlPump, under the lock of SDL's events). The drag itself: a wl_data_source offering text/uri-list and/or text/plain;charset=utf-8
- * (also UTF8_STRING, text/plain), the actions copy and move, a wl_data_device of the seat made for the drag, start_drag with the origin surface (the window's,
- * SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER) and the serial of the press; then fire's queue is dispatched until the source says dnd_finished (the last
+ * button presses, so this one learns the serials. The display reads the events of the connection into both queues when it pumps and dispatches fire's queue
+ * right after (fire_dragout_wlPump). The drag itself: a wl_data_source offering text/uri-list and/or text/plain;charset=utf-8
+ * (also UTF8_STRING, text/plain), the actions copy and move, a wl_data_device of the seat made for the drag, start_drag with the origin surface (the window's) and the serial of the press; then fire's queue is dispatched until the source says dnd_finished (the last
  * `action`: copy 1, move 2) or cancelled (0) - the `send` requests are answered by writing to the descriptor. The compositor takes the pointer for the drag
- * (SDL gets a leave and raises its buttons). libwayland-client is loaded with dlopen (SDL has loaded it already: the same library, the same interfaces); the
+ * (the display gets a leave and raises its buttons). libwayland-client is loaded with dlopen (the display has loaded it already: the same library, the same interfaces); the
  * few signatures it needs are declared here (no headers). A release that reaches fire's pointer during the loop means the compositor did not take the drag. */
-#ifdef FIRE_DRAGOUT_WANT_WAYLAND   /* (fire_display_sdl3.h: SDL3 gives out the wl_display and the wl_surface; SDL2's display has no use for it) */
+#ifdef FIRE_DRAGOUT_WANT_WAYLAND   /* (fire_display_desktop.h asks for it when it has the Wayland display) */
 #define FIRE_DRAGOUT_WAYLAND 1
 #include <fcntl.h>
 #include <signal.h>
@@ -752,7 +750,7 @@ static int fire_wl_bind(FireWlLib* l, const char* name, void* fn) {
     memcpy(fn, &p, sizeof p);
     return p != NULL;
 }
-/* libwayland-client, loaded once (NULL: not there). The caller holds the lock of SDL's events. */
+/* libwayland-client, loaded once (NULL: not there). */
 static FireWlLib* fire_wl_load(void) {
     static FireWlLib l;
     if (!l.tried) {
@@ -787,7 +785,7 @@ static FireWlLib* fire_wl_load(void) {
 static const char* fire_wl_name(const void* iface) { return *(const char* const*)iface; }
 static uint32_t fire_wl_version(const void* iface) { return (uint32_t)*(const int*)((const char*)iface + sizeof(const char*)); }
 
-/* What fire keeps of the connection (one: SDL has one wl_display); made once by fire_dragout_wlWatch. */
+/* What fire keeps of the connection (one: the display has one wl_display); made once by fire_dragout_wlWatch. */
 typedef struct FireWlState {
     FireWlLib* l;
     void* display;
@@ -874,8 +872,8 @@ static void fire_wl_globalRemove(void* data, void* registry, uint32_t name) {
 }
 static const struct { void (*global)(void*, void*, uint32_t, const char*, uint32_t); void (*remove)(void*, void*, uint32_t); } fire_wl_registryListener = { fire_wl_global, fire_wl_globalRemove };
 
-/* Starts listening on `display` (SDL's wl_display) the first time; then dispatches fire's queue (what SDL has read for it). The caller holds the lock of SDL's
- * events - and calls it after SDL pumped, so that the press that starts a drag is known. */
+/* Starts listening on `display` (the display's wl_display) the first time; then dispatches fire's queue (what the display has read for it). The display calls
+ * it after it pumped, so that the press that starts a drag is known. */
 static void fire_dragout_wlPump(void* display) {
     FireWlState* s = &fire_wl;
     if (display == NULL || s->failed) return;
@@ -900,8 +898,8 @@ static void fire_dragout_wlPump(void* display) {
     if (display == s->display) s->l->dispatchQueuePending(display, s->queue);
 }
 
-/* The last window of SDL closes (SDL may close its wl_display right after): everything fire made on the connection is given back while it is still there;
- * the next window starts afresh. The caller holds the lock of SDL's events. */
+/* The last window of the display closes (it may close its wl_display right after): everything fire made on the connection is given back while it is still
+ * there; the next window starts afresh. */
 static void fire_dragout_wlForget(void) {
     FireWlState* s = &fire_wl;
     FireWlLib* l = s->l;
@@ -1016,7 +1014,7 @@ static int fire_dragout_wlReady(void* display) {
     return display != NULL && !fire_wl.failed && fire_wl.display == display && fire_wl.seat != NULL && fire_wl.pointer != NULL && fire_wl.ddm != NULL;
 }
 
-/* Drags the text and/or the files out of the window with `surface` (on `display`, SDL's - the caller holds the lock of SDL's events) until the user lets go;
+/* Drags the text and/or the files out of the window with `surface` (on `display`, the display's) until the user lets go;
  * 0 / 1 copy / 2 move. Without a button that is held (or before fire listens on the connection) there is no drag. */
 static int fire_dragout_wayland(void* display, void* surface, const char* text, const char* files) {
     FireWlState* s = &fire_wl;

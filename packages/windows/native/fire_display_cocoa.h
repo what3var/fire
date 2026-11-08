@@ -1,4 +1,4 @@
-/* fire native platform package "std": a window on macOS (fire_dns_*, one of the displays of fire_display_desktop.h) - without SDL and without Objective-C: AppKit is
+/* fire native platform package "std": a window on macOS (fire_dns_*, one of the displays of fire_display_desktop.h) - without Objective-C: AppKit is
  * driven from C through the Objective-C runtime (objc_msgSend, cast to the exact type of every call - the calling convention of arm64 does not allow variadic
  * calls), the classes this needs (the view, the window's delegate, the application's delegate) are made at run time. No header of Apple is included: the few
  * types and functions are declared here. The program links the frameworks Cocoa and QuartzCore (`// fire-link: framework:...`).

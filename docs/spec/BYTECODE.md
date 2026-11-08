@@ -1509,11 +1509,11 @@ Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschrit
    eingetragenen Header-Offset, Daten dahinter stören nicht. Es läuft weiterhin eine installierte .NET-8-Runtime vor (framework-abhängig).
 2. dem **Payload** dahinter (`PayloadFile`): Programm (MemoryPack), Kern (`fire.dll`, `MemoryPack.Core`) und - NUR bei entsprechendem `#import` - die Bridge-DLLs samt Abhängigkeiten und nativen Bibliotheken. Jeder
    Eintrag ist einzeln Brotli-gepackt (nur wenn es etwas bringt) und trägt eine SHA-256-Prüfsumme. Stufe: das Programm mit `Optimal` (Millisekunden), die DLLs mit `SmallestSize`
-   (Qualität 11, für SDL3-CS.dll ~3 s) - aber nur einmal: das Ergebnis liegt im Cache `%TEMP%/fire-pack-cache/<SHA-256 der DLL>.br`, jeder weitere Build liest es nur (Build ~0,3 s statt 1,6-5 s). Ohne Schreibrecht
+   (Qualität 11, für eine große DLL ~3 s) - aber nur einmal: das Ergebnis liegt im Cache `%TEMP%/fire-pack-cache/<SHA-256 der DLL>.br`, jeder weitere Build liest es nur (Build ~0,3 s statt 1,6-5 s). Ohne Schreibrecht
    auf den Cache wird schnell (`Optimal`) gepackt. Layout: `[Einträge][Index][Fuß: int64 Index-Offset, int32 Index-Länge, "FIREPAK1"]` - gelesen wird über den
    Fuß, die frühere Marker-Suche (`DA 1D`) gibt es nicht mehr.
 
-**Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices` (Paket `pkg:devices`): 
+**Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`, in C die Bibliothek von graphics und windows; `devices` (Paket `pkg:devices`): 
 `fire.Device.Manager` (+ `libSystem.IO.Ports.Native` außerhalb von Windows); `print`: nichts). Der Rest folgt aus den Assembly-Verweisen der DLLs (System.Reflection.Metadata): alles, was neben
 dem Compiler liegt und nicht zum .NET-Framework gehört, kommt mit. Plattform-Unterordner (`runtimes/win/lib/...`, `runtimes/unix/lib/...`) haben Vorrang vor dem Hauptordner (System.IO.Ports liefert dort
 nur eine Attrappe). `PackagePlan.Unresolved` (Verweis ohne Datei und nicht im Framework) lässt `Packer.PackProgram` mit einer Fehlermeldung abbrechen statt eine kaputte Datei zu erzeugen. Native Bibliotheken
@@ -1532,7 +1532,7 @@ darf `Main` keinen Typ aus `fire.dll` erwähnen. Neue Bridge = Eintrag in `Packa
 **Icon/Version.** `PeResourceEditor` ändert die PE-Ressourcen und verschiebt damit Dateiinhalt: das geschieht jetzt auf einer Kopie des apphost VOR dem Bündeln (`PackProgram(..., customizeApphost)`), sonst wäre
 der Header-Offset des Bundles ungültig. Geschrieben wird erst in `<outname>.tmp`, dann umbenannt. Die Runtime liest ihr Programm aus der eigenen Datei (früher hart `tempout.exe` neben der Runtime).
 
-**Größen (Linux-Build, Richtwerte).** Nur `print` ~300 KB, `io` ~320 KB, `devices` ~350 KB, `graphics` ~700 KB (Windows zusätzlich komprimiertes SDL3.dll). Noch kleiner ginge es, wenn auch die VM (`fire.Runtime.dll`,
+**Größen (Linux-Build, Richtwerte).** Nur `print` ~300 KB, `io` ~320 KB, `devices` ~350 KB, `graphics` ~700 KB. Noch kleiner ginge es, wenn auch die VM (`fire.Runtime.dll`,
 ~80-100 KB, im Bundle unkomprimiert) in den Payload wanderte und das Start-Stück nur aus einer winzigen Bootstrap-Assembly bestünde.
 
 **Tests.** Suite-Block "Packer / Payload / Lader": Plan je Import, Payload-Rundlauf inkl. Marker-Bytes im Inhalt, Kompression, Prüfsummenfehler, nativer Lader (Linux), Ende-zu-Ende (packen, außerhalb des
@@ -1555,8 +1555,8 @@ opak 370 -> 32 ns/Zeichen, transparent 270 -> 26 ns/Zeichen. Der Test-Block "Fon
 
 **Pixel-Text.** `Renderer.DrawText/MeasureText`, `RendererManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Renderer.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (inzwischen mit Brush/Pen statt rohen Farben).
 
-**Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe [fire.Terminal – Framebuffer, Zeichnen und Fenster](GRAPHICS_LAYER.md)), `Window.EnableEvents()/NextEvent()`. `SdlFramebufferRenderer` rechnet die Mausposition von Fenster- auf
-Framebuffer-Koordinaten um (`SDL.GetWindowSize`) und startet die Texteingabe. `WindowManager(framebuffers, runner, rendererFactory)`.
+**Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe [fire.Terminal – Framebuffer, Zeichnen und Fenster](GRAPHICS_LAYER.md)), `Window.EnableEvents()/NextEvent()`. Die Anzeige rechnet die Mausposition von Fenster- auf
+Framebuffer-Koordinaten um und startet die Texteingabe. `WindowManager(framebuffers, runner, rendererFactory)`.
 
 **Warum Abfrage statt Callback.** `Session.CallLambda` -> `FireRuntime.CallCallback` kopiert für JEDES Ereignis alle globalen Objekte (`ObjectCopier.Take`, außerdem wird dabei auf deren Baum
 Thread-Sharing aktiviert); ein Objekt mit Lambda-Feld oder mit einem Verweis auf ein fremdes Objekt wirft dabei `TakingViolationException` (der Callback schlägt fehl, SPEC 8.1.4 beschreibt das so). Ein Widget-Baum

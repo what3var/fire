@@ -1,11 +1,11 @@
-/* fire native platform package "std": fire's own display of a desktop - no SDL. It picks, when the first window opens, which window system it talks to, and forwards
+/* fire native platform package "std": fire's own display of a desktop. It picks, when the first window opens, which window system it talks to, and forwards
  * the functions of the HAL (fire_display_c.h) to that display:
  *   Linux and the BSDs   Wayland (fire_display_wayland.h) when WAYLAND_DISPLAY is set and libwayland-client loads, else X11 (fire_display_x11.h) when DISPLAY is set
  *   Windows              Win32 (fire_display_win32.h)
  *   macOS                Cocoa (fire_display_cocoa.h)
  *   the browser          the canvas of the page (fire_display_web.h)
  *   everywhere           no screen (fire_display_headless.h): FIRE_DISPLAY=headless - the tests, a server
- * FIRE_DISPLAY=x11|wayland|win32|cocoa|web|headless asks for one (SDL_VIDEODRIVER=dummy|offscreen|x11|wayland is understood as well, as the SDL displays did). Nothing
+ * FIRE_DISPLAY=x11|wayland|win32|cocoa|web|headless asks for one. Nothing
  * of a window system is linked that the operating system does not always have: Linux loads its libraries when it needs them (dlopen); Windows links user32/gdi32 and
  * loads the rest; macOS links its frameworks.
  * The numbers of keys, modifiers, buttons and cursors are fire_display_keys.h's; the look of the desktop comes from fire_systheme.h; joysticks and gamepads from
@@ -71,12 +71,7 @@ static int fire_display_kind(void) {
     if (g_fireDisplayHosted) return FIRE_DD_HEADLESS;   /* (a host drives the windows: fire_display_host) */
     if (kind < 0) {
         const char* want = getenv("FIRE_DISPLAY");
-        const char* sdl = getenv("SDL_VIDEODRIVER");
         int k = FIRE_DD_NONE;
-        if ((want == NULL || want[0] == 0) && sdl != NULL) {
-            if (strcmp(sdl, "dummy") == 0 || strcmp(sdl, "offscreen") == 0) want = "headless";
-            else if (strcmp(sdl, "x11") == 0 || strcmp(sdl, "wayland") == 0 || strcmp(sdl, "windows") == 0 || strcmp(sdl, "cocoa") == 0) want = strcmp(sdl, "windows") == 0 ? "win32" : sdl;
-        }
         if (want != NULL && strcmp(want, "headless") == 0) k = FIRE_DD_HEADLESS;
 #ifdef FIRE_DD_WAYLAND
         else if (want != NULL && strcmp(want, "wayland") == 0) k = fire_dwl_available() ? FIRE_DD_KIND_WAYLAND : FIRE_DD_NONE;

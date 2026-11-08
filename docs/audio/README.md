@@ -68,8 +68,8 @@ print(back.rate + " Hz, " + back.channels + " channel(s)")   // 8000 Hz, 1 chann
 **Linux** needs nothing to *build* a program: PulseAudio (`libpulse-simple.so.0`) and ALSA (`libasound.so.2`) are loaded with `dlopen` when they are first needed, so one binary runs on a machine with either, both or none (then
 `Audio.UnsupportedException`). The package asks for `-ldl` only. **Windows** links `winmm` (part of Windows). **macOS** plays through **Audio Queue Services** of AudioToolbox (a C interface: `fire_audio_coreaudio.h`; the package links the framework AudioToolbox): three
 buffers of 20 ms that the queue's own thread fills from a ring of half a second, the device is the system's default (`"default"`). **The browser** plays through **Web Audio**
-(`fire_audio_web.h`: every write becomes an AudioBuffer planned after the last one; sound starts with the user's first click or key on the page). Any platform can choose the SDL2
-backend instead by defining `FIRE_AUDIO_SDL` (and linking SDL2). (The macOS backend is syntax-checked, not yet tried on a Mac.)
+(`fire_audio_web.h`: every write becomes an AudioBuffer planned after the last one; sound starts with the user's first click or key on the page). (The macOS backend is syntax-checked,
+not yet tried on a Mac.)
 
 **ESP32 (PWM):** a LEDC channel with a 78 kHz carrier and 8 bit resolution drives the pin; a timer interrupt sets the duty cycle once per sample (rates 2000..48000 Hz; 8000..22050 are plenty for beeps, speech and
 melodies). Connect the pin through a small RC low-pass filter (for example 1 kOhm + 100 nF) to an amplifier, or drive a piezo; a speaker needs a transistor or an amplifier - never connect it to the pin directly. One output
@@ -114,7 +114,7 @@ out.Drain()
 ```
 
 The platform layers: ALSA in non-blocking mode (`snd_pcm_readi`, an overrun is recovered); PulseAudio's blocking read in a thread of the input that fills a ring (fragments of 10 ms);
-Windows: 16 blocks of 20 ms handed to `waveInAddBuffer`, read when the driver has filled them; macOS: an input audio queue into a ring of a second; the browser: the microphone (getUserMedia, the user is asked); SDL2: a capture device in queue mode (`SDL_DequeueAudio`); no input on the ESP32 yet.
+Windows: 16 blocks of 20 ms handed to `waveInAddBuffer`, read when the driver has filled them; macOS: an input audio queue into a ring of a second; the browser: the microphone (getUserMedia, the user is asked); no input on the ESP32 yet.
 
 ## Errors
 
@@ -132,5 +132,5 @@ it sound, which an `Audio.Input("sim", ...)` then reads (in the channels of that
 
 `fire_audio_*` (`packages/audio/native/fire_audio_c.h` describes the interface; it compiles as C++ as well): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close` -
 and for inputs `inputDevices`, `openInput`, `read` (takes what was recorded, never blocks), `available`, `closeInput`. The package `circuits` uses the same layer for its fast way to a device. The bridge keeps the handle table, applies
-the volume and generates the waves. macOS: the ring and the buffers on their way are `queued`; the browser: the planned time not played yet; SDL2 (`FIRE_AUDIO_SDL`): `SDL_QueueAudio`, kept to half a second ahead, `SDL_GetQueuedAudioSize` for `queued`. Linux: ALSA runs non-blocking (`snd_pcm_writei`, `-EAGAIN` means full, an underrun is recovered); PulseAudio's simple API only blocks, so each output has a thread that plays a ring buffer
+the volume and generates the waves. macOS: the ring and the buffers on their way are `queued`; the browser: the planned time not played yet. Linux: ALSA runs non-blocking (`snd_pcm_writei`, `-EAGAIN` means full, an underrun is recovered); PulseAudio's simple API only blocks, so each output has a thread that plays a ring buffer
 (all calls into PulseAudio are made by that thread, with a 200 ms buffer on the server and playback starting at once). Windows: blocks of 50 ms handed to `waveOutWrite`, free again when the driver sets the DONE flag.

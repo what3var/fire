@@ -1,11 +1,9 @@
 /* fire audio package: audio part in C for the hosted platforms: PulseAudio or ALSA on Linux (loaded at run time), winmm on Windows, Audio Queue Services on macOS,
- * Web Audio in the browser - and SDL2 everywhere with FIRE_AUDIO_SDL; nothing with FIRE_NO_AUDIO. */
+ * Web Audio in the browser; nothing with FIRE_NO_AUDIO. */
 #ifndef FIRE_AUDIO_DESKTOP_H
 #define FIRE_AUDIO_DESKTOP_H
 
-#if defined(FIRE_AUDIO_SDL) && !defined(FIRE_NO_AUDIO)
-#include "fire_audio_sdl.h"
-#elif defined(__EMSCRIPTEN__) && !defined(FIRE_NO_AUDIO)
+#if defined(__EMSCRIPTEN__) && !defined(FIRE_NO_AUDIO)
 #include "fire_audio_web.h"
 #elif defined(__APPLE__) && !defined(FIRE_NO_AUDIO)
 #include "fire_audio_coreaudio.h"

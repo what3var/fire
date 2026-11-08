@@ -1,4 +1,4 @@
-/* fire audio package: audio part in C in the browser: Web Audio, driven by a few functions of JavaScript in this file (EM_JS of Emscripten) - no SDL. The
+/* fire audio package: audio part in C in the browser: Web Audio, driven by a few functions of JavaScript in this file (EM_JS of Emscripten). The
  * interface is described in fire_audio_c.h.
  *
  * An output is an AudioContext: every `write` becomes an AudioBuffer (16 bit samples to floats, channel by channel) played right after what was written before;

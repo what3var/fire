@@ -14,7 +14,7 @@ namespace fire.Runtime
         Program = 0,
         /// <summary>Managed DLL, loaded on demand via AssemblyLoadContext.Resolving. Name = assembly name.</summary>
         Assembly = 1,
-        /// <summary>Native library (e.g. SDL3.dll), unpacked to disk and loaded on first access.
+        /// <summary>Native library (e.g. libSystem.IO.Ports.Native.so), unpacked to disk and loaded on first access.
         /// Name = file name.</summary>
         Native = 2,
     }
@@ -105,7 +105,7 @@ namespace fire.Runtime
         }
 
         /// <summary>Brotli packing. `Optimal` needs a few milliseconds for a DLL, `SmallestSize` (quality 11), by contrast,
-        /// seconds (SDL3-CS.dll: ~3 s instead of ~40 ms) for only about 15-20 % less size - hence the default `Optimal`; the
+        /// seconds (a large DLL: ~3 s instead of ~40 ms) for only about 15-20 % less size - hence the default `Optimal`; the
         /// packer uses `SmallestSize` only together with a cache (see Packer.CompressCached).</summary>
         public static byte[] Compress(byte[] data, CompressionLevel level)
         {

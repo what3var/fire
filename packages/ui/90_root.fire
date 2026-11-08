@@ -258,7 +258,7 @@ namespace UI {
             // If the user drags the window to another size, the framebuffer gets it (as long as it is valid) and the interface arranges itself anew - instead of its image being stretched.
             // `window.AutoResize = false` leaves it at stretching.
             window.AutoResize = true
-            // The finger guides the interface itself (tapping, dragging, swiping, see TouchDown): SDL should not additionally make mouse events out of it.
+            // The finger guides the interface itself (tapping, dragging, swiping, see TouchDown): the display should not additionally make mouse events out of it.
             window.TouchMouse = false
 
             // Every change of a field of an element (and of the theme) is reported by a probe (see SPEC 8.14): the elements call Touched as soon as they are arranged for the first time (Watch)
@@ -1336,7 +1336,7 @@ namespace UI {
             else { this.dragEffect = target.DragOver(this, this.dragData, px, py) }
         }
 
-        // The pointer left the window during a drag (SDL keeps reporting the mouse while the button is held): when the data is something other programs can
+        // The pointer left the window during a drag (the display keeps reporting the mouse while the button is held): when the data is something other programs can
         // take (Text or Files) and may leave (AllowExternal), the drag goes on in the desktop (Window.StartDrag) - the target it was over is left, the program
         // waits until the user lets go, and the source hears in OnDragDone what the other program did (None, Copy or Move). False: the drag stays inside.
         // Where the desktop cannot take a drag (Window.CanStartDrag: Wayland, macOS, no desktop) it stays inside as well: the user can come back into the window.

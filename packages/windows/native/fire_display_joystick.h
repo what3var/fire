@@ -1,6 +1,6 @@
-/* fire native platform package "std": joysticks and gamepads for fire's own displays (fire_display_desktop.h) - without SDL.
+/* fire native platform package "std": joysticks and gamepads for fire's own displays (fire_display_desktop.h).
  *
- * Every pump of a window asks the devices (fire_joy_poll): what changed since the last time comes as FIRE_EV_JOY_* events, as with the SDL displays - to the window
+ * Every pump of a window asks the devices (fire_joy_poll): what changed since the last time comes as FIRE_EV_JOY_* events - to the window
  * that pumps first (the devices belong to the program, not to a window). A device that is there when the first window pumps reports itself with FIRE_EV_JOY_ADDED.
  * Axes go from -1 to 1, buttons are numbered from 0, a hat is a mask (1 up, 2 right, 4 down, 8 left); a device keeps its number while it is plugged in.
  *   Linux    the joystick devices of the kernel (/dev/input/js*: axes, buttons; axes that are a hat - ABS_HAT* in the axis map - as hats), looked for again every second

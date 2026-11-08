@@ -285,7 +285,7 @@ word buffers as `FIRE_WORDS` and words as `FIRE_WORD`).
   which includes common parts. List such files in `native.headers`: they are files of every build (`pkg/<import>/` next to the generated program, the headers of a
   used import there as well), and an `#include` of a header in a source names that file - so the selector works as written, also inside `#if`, and the program only
   gets the text it compiles. A header that is a source of the build is taken out as before (it is in the file already). Give every header an include guard. The
-  windows package is the example: `platformSources` names one file per platform (`fire_display_select.h` for `posix` and `windows`: SDL3, SDL2 or fire's own display,
+  windows package is the example: `platformSources` names one file per platform (`fire_display_select.h` for `posix` and `windows`: fire's own display,
   which picks X11, Wayland, Win32 or Cocoa), `headers` all the others. Headers are packed with the package. (In a project that is not installed, the headers are
   put in where they are included.)
 
@@ -373,7 +373,7 @@ int fire_pkg_call(int index, const fire_val* args, int argc, fire_val* result, c
 ```
 
 A **packed standalone program** (`fire.Compiler build`, the VM inside) carries the libraries of its packages in its payload and unpacks them when it starts - on every operating system, the same way as the
-libraries of the built-in bridges (SDL, serial ports). A program is packed for the machine that packs it: pack on the system you want to run it on, or build natively
+libraries of the built-in bridges (graphics and windows, serial ports). A program is packed for the machine that packs it: pack on the system you want to run it on, or build natively
 (`--engine native`), which needs no libraries at all.
 
 ### Tracing calls (measuring a native outside the VM)

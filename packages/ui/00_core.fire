@@ -221,7 +221,7 @@ namespace UI {
         }
     }
 
-    // Key codes as KeyDown delivers them (SDL3 keycodes).
+    // Key codes as KeyDown delivers them (the codes of UI.Keys, the same on every display).
     class Keys {
         static int Backspace() { return 8 }
         static int Tab() { return 9 }

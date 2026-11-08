@@ -1,4 +1,4 @@
-/* fire native platform package "std": a window on an X11 desktop (fire_dx11_*, one of the displays of fire_display_desktop.h) - without SDL and without the headers of
+/* fire native platform package "std": a window on an X11 desktop (fire_dx11_*, one of the displays of fire_display_desktop.h) - without the headers of
  * X11: libX11 is loaded when the first window opens (dlopen; libXext for MIT-SHM, libXi for touch, libXcursor for the cursors of the theme are optional).
  *
  * Every window has its own connection to the X server (it belongs to the thread that opened it, as the HAL wants; nothing is shared between threads except libX11,

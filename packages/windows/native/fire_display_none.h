@@ -1,5 +1,5 @@
 /* fire native platform package "std": no display (a board without a screen, or one whose package you write yourself). A window cannot be created - `new Window(...)` throws a
- * HandleUnavailableException. A board package of your own provides its own fire_display.h (see fire_display_c.h for the functions, fire_display_sdl.h for what they do) and puts
+ * HandleUnavailableException. A board package of your own provides its own fire_display.h (see fire_display_c.h for the functions and what they do) and puts
  * the pixels on its screen. */
 #ifndef FIRE_DISPLAY_NONE_H
 #define FIRE_DISPLAY_NONE_H
