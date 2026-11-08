@@ -2904,6 +2904,30 @@ FIRE_FN Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, 
     return guardKindSlow(v, kind, unitless, what, unitlessText);
 }
 
+/* `int!`, `float!`, `bool!`, `word!`, `char!` (SPEC 8.11): undefined is an ArgumentException, a value of an enum becomes its number. */
+FIRE_COLD FIRE_FN Value guardKindNNSlow(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
+    if (v.kind == K_Undefined) {
+        char text[200];
+        snprintf(text, sizeof text, "%s is %s and never undefined.", what,
+            kind == K_Int ? "an int" : kind == K_Float ? "a float" : kind == K_Word ? "a word" : kind == K_Char ? "a char" : "a bool");
+        fireError("ArgumentException", text);
+        return Undef();
+    }
+    if (v.kind == K_Int) v.reserved = 0;
+    if (kind == K_Word || kind == K_Char) {
+        if (v.kind == kind) return v;
+        char text[200];
+        snprintf(text, sizeof text, "%s is %s, not %s.", what, kind == K_Word ? "a word" : "a char", coerceKindName(v.kind));
+        fireError("ArgumentException", text);
+        return Undef();
+    }
+    return guardKindSlow(v, kind, unitless, what, unitlessText);
+}
+FIRE_FN Value guardKindNN(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
+    if (FIRE_LIKELY(v.kind == kind) && (!unitless || v.unit == 0) && (kind != K_Int || v.reserved == 0)) return v;
+    return guardKindNNSlow(v, kind, unitless, what, unitlessText);
+}
+
 /* A declaration `int` (not `int[32]`/`int[64]`): it holds the program's int - with `#intwidth 32`/`16` an int that keeps a wider width is cut when it goes in
  * (DeclaredKind.CutsWide of the VM; a narrow field stores 32 bits anyway). */
 #ifdef FIRE_INT32

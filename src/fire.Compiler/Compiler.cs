@@ -1031,7 +1031,7 @@ namespace fire.Compiler
                         }
 
                         case MethodDecl md:
-                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams));
+                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams, returnType: md.ReturnType, name: md.Name));
                             break;
 
                         case ConstructorDecl ctor:
@@ -1053,7 +1053,7 @@ namespace fire.Compiler
                             // no mixed static/non-static accessors).
                             if (pd.Getter != null)
                             {
-                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand, accessor: 1);
+                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand, accessor: 1, returnType: pd.Type, name: pd.Name);
                                 // `int Count { get { return this.count } }`: the VM reads the field directly (FunctionProto.FieldGetterOf)
                                 if (!pd.IsStatic && pd.Type?.UnitDemand == null && pd.Getter.Statements is [ReturnStmt { Value: MemberExpr { Target: ThisExpr, Name: var backing } }])
                                     getterProto.FieldGetterOf = backing;
@@ -1172,6 +1172,9 @@ namespace fire.Compiler
                 if (!isStatic) inner._chunk.EmitOp(OpCode.ClaimToObject);
                 else inner.EmitClaimToScope(0xFFFF, unclaimed: true, hoist: false);
             }
+            // `int! count` (SPEC 8.11): a field that never holds undefined starts at zero (in the unit it demands)
+            else if (arrayRanks is not { Count: > 0 } && type is { NonNull: true } && DeclaredKind.Of(type) is var nonNullKind and not 0)
+                inner.EmitLoadConst(DeclaredKind.ZeroOf(nonNullKind, type.RequiredUnit is { } zeroUnit && !zeroUnit.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(zeroUnit) : null));
             else inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
             return new FunctionProto(inner._chunk, 0, AccessModifier.Private);
@@ -1464,7 +1467,7 @@ namespace fire.Compiler
         }
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false, string? returnUnit = null,
-            IReadOnlyList<TypeParam>? typeParams = null, int accessor = 0)
+            IReadOnlyList<TypeParam>? typeParams = null, int accessor = 0, TypeRef? returnType = null, string? name = null)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
             inner._accessor = isStatic ? 0 : accessor;
@@ -1473,6 +1476,8 @@ namespace fire.Compiler
             inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
+            // `int! Count()` (SPEC 8.11): every value it returns is checked - undefined (also the end of the body) is an ArgumentException
+            if (returnType is { NonNull: true } && DeclaredKind.Of(returnType) is var returnKind and not 0) { inner._returnKind = returnKind; inner._returnWhat = $"The return value of '{name}'"; }
             // SPEC "Static members": a static method has no
             // bound 'this' - the inner compiler remembers that in order to
             // reject 'this'/'super' in the body (see resolver instead of
@@ -1485,6 +1490,7 @@ namespace fire.Compiler
             EmitLambdaParamChecks(inner, parms);
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
+            inner.EmitReturnGuard();
             inner._chunk.EmitOp(OpCode.Return);
             return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic)
             {
@@ -1738,6 +1744,7 @@ namespace fire.Compiler
                         if (_returnUnit != null) EmitCheckUnitIfNeeded(this, _returnUnit);
                     }
                     else EmitLoadConst(Value.MakeUndefined());
+                    EmitReturnGuard();
                     // A `return` in the `catch`: the throw site frozen on throwing (see ClearPendingResume) is discarded, as at the normal end
                     // of the catch block - otherwise it would stay lying around together with its scopes. The exception variable lies in the catch scope (slot 0).
                     for (int k = _tryStack.Count - 1; k >= 0; k--)
@@ -2434,6 +2441,18 @@ namespace fire.Compiler
         /// <summary>The unit a method with a unit at its return type (`float:m Len()`) or the getter of a property with a unit (`float X : m { get ... }`)
         /// converts its return values into, otherwise null.</summary>
         private string? _returnUnit;
+        /// <summary>`int! Count()`: the DeclaredKind its return values are checked against (GuardTop), 0: none; and how the error names the value.</summary>
+        private byte _returnKind;
+        private string _returnWhat = "";
+
+        /// <summary>The value on top of the stack goes back from a method declared `int!` (`float!`, ...): it is checked like a parameter (GuardTop).</summary>
+        private void EmitReturnGuard()
+        {
+            if (_returnKind == 0) return;
+            _chunk.EmitOp(OpCode.GuardTop);
+            _chunk.EmitByte((byte)((_returnKind & 0x7F) - 1));
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_returnWhat)));
+        }
         /// <summary>The body of a property accessor of an object (SPEC 2.2 "Ownership in property accessors"): 1 a getter, 2 a setter, 0 anything else - its
         /// assignments to members take SetFieldAccessor.</summary>
         private int _accessor;

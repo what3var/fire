@@ -1093,7 +1093,21 @@ namespace fire.Compiler
                 throw new ResolverException($"'{plain}' is not generic, so it does not accept type arguments in angle brackets", line);
             if (parameters != typeArgs.Count)
                 throw new ResolverException($"'{plain}' is generic with {parameters} type parameter(s), not {typeArgs.Count}", line);
-            foreach (var arg in typeArgs) ValidateTypeRef(arg, line);
+            foreach (var arg in typeArgs)
+            {
+                if (arg.NonNull) throw new ResolverException($"'{arg.BaseName}!' cannot be a type argument - the '!' belongs to parameters, fields, properties and return types", line);
+                ValidateTypeRef(arg, line);
+            }
+        }
+
+        /// <summary>`int!` (SPEC 8.11) stands at a parameter, a field, a property or a return type - not at a variable or an array.</summary>
+        private static void ValidateNonNull(TypeRef? type, int arrayRanks, int line, bool allowed = true)
+        {
+            if (type is not { NonNull: true }) return;
+            if (!allowed)
+                throw new ResolverException($"'{type.BaseName}!' is for parameters, fields, properties and return types - a variable declared '{type.BaseName}' already holds what it is given", line);
+            if (arrayRanks > 0 || type.ArrayRank > 0)
+                throw new ResolverException($"'{type.BaseName}!' cannot be an array - the elements of a typed array are never undefined anyway", line);
         }
 
         /// <summary>Validates a complete TypeRef: base name like
@@ -1363,6 +1377,7 @@ namespace fire.Compiler
                 case VarDeclStmt vd:
                     if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
+                    ValidateNonNull(vd.Type, vd.ArrayRanks.Count, vd.Line, allowed: false);
                     ResolveArrayRanks(vd.ArrayRanks);
                     if (vd.Initializer == null && vd.ArrayRanks.Count == 0 && (vd.Type == null || vd.Type.IsInferred))
                         throw new ResolverException($"'var {vd.Name}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {vd.Name}')", vd.Line);
@@ -1683,6 +1698,7 @@ namespace fire.Compiler
                             else if (fd.Type == null || fd.Type.IsInferred)
                                 AddError(new ResolverException($"Field '{fd.Name}' of class '{cd.Name}' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed)", fd.Line));
                             else Guard(() => ValidateTypeRef(fd.Type, fd.Line));
+                            Guard(() => ValidateNonNull(fd.Type, fd.ArrayRanks.Count, fd.Line));
                             ResolveArrayRanks(fd.ArrayRanks);
                             ResolveFieldInitializer(fd);
                             break;
@@ -1707,7 +1723,10 @@ namespace fire.Compiler
                             try
                             {
                                 if (md.ReturnType != null)
+                                {
                                     Guard(() => ValidateTypeRef(md.ReturnType, md.Line));
+                                    Guard(() => ValidateNonNull(md.ReturnType, 0, md.Line));
+                                }
                                 var methodTypes = SignatureKeys(md.Params, classTypeParamNames.Concat(methodTypeParamNames).ToList());
                                 if (seenMethodSignatures.Any(m => m.Name == md.Name && SameSignature(m.Types, methodTypes)))
                                     AddError(new ResolverException(
@@ -1725,7 +1744,11 @@ namespace fire.Compiler
                         case PropertyDecl pd:
                             if (pd.Type == null || pd.Type.IsInferred)
                                 AddError(new ResolverException($"Property '{pd.Name}' of class '{cd.Name}' needs a type (use the type it holds, or 'any' if every type is allowed)", pd.Line));
-                            else Guard(() => ValidateTypeRef(pd.Type, pd.Line));
+                            else
+                            {
+                                Guard(() => ValidateTypeRef(pd.Type, pd.Line));
+                                Guard(() => ValidateNonNull(pd.Type, 0, pd.Line));
+                            }
                             // Getter: like a parameterless method. Setter: like
                             // a method with exactly one parameter 'value' of the
                             // property type (implicit, like C#'s setter parameter) -
@@ -1813,6 +1836,7 @@ namespace fire.Compiler
             foreach (var p in parms)
             {
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
+                Guard(() => ValidateNonNull(p.Type, p.ArrayRanks.Count, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
                 Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.UnitDemand, isRef: p.ByRef, width: p.ArrayRanks.Count == 0 ? p.Type?.WidthCode ?? 0 : 0));
                 if (KnownClassOf(p.Type, null, p.ArrayRanks.Count > 0) is { } parameterClass) _current.KnownClasses[p.Name] = parameterClass;
@@ -2554,6 +2578,7 @@ namespace fire.Compiler
             foreach (var p in lambda.Params)
             {
                 if (p.Type != null) ValidateTypeRef(p.Type, lambda.Line);
+                ValidateNonNull(p.Type, p.ArrayRanks.Count, lambda.Line);
                 ResolveArrayRanks(p.ArrayRanks);
                 Define(p.Name, lambda.Line, requiredUnit: p.Type?.UnitDemand);
             }

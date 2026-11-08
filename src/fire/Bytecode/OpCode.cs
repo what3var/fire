@@ -265,5 +265,5 @@ namespace fire.Bytecode
     /// base types the parser permits as the optional postfix '!' target
     /// (bool/int/float/char/string; 'class'/'undefined' are deliberately
     /// excluded there, see SPEC 3.1).</summary>
-    public enum TypeTag : byte { Bool, Int, Float, Char, String }
+    public enum TypeTag : byte { Bool, Int, Float, Char, String, Word }
 }

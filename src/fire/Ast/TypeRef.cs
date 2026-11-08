@@ -49,8 +49,13 @@ namespace fire.Ast
     /// see LambdaSignature docs and SPEC "Lambda types with signature".
     /// </summary>
     [MemoryPackable]
-    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0, IReadOnlyList<TypeRef>? TypeArgs = null, bool Unsigned = false)
+    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0, IReadOnlyList<TypeRef>? TypeArgs = null, bool Unsigned = false, bool NonNull = false)
     {
+        /// <summary>`int!`, `float[32]!`, `bool!`, `word!`, `char!` (SPEC 8.11): a value type that never holds `undefined` - a parameter, field, property or
+        /// return value declared with it takes only a value of that kind (undefined is an ArgumentException, a value of an enum becomes its number);
+        /// a field starts at 0 (false, '\0').</summary>
+        public static bool CanBeNonNull(string baseName) => baseName is "int" or "float" or "bool" or "word" or "char";
+
         /// <summary>The declared width as the operand of an implicit OpCode.ConvertWidth (0: nothing to cut): the bits | 0x100 for a float | 0x200 for
         /// `byte` (unsigned); <see cref="WordWidthCode"/> for `word`. `int[8]`, `int[16]`, `int[32]`, `byte`, `float[32]`, `float[16]` and `float[8]` cut a value on every assignment (SPEC 8.2); 64 bits, arrays, pointers
         /// and other types have nothing to cut.</summary>

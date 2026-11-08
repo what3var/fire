@@ -1280,17 +1280,19 @@ namespace fire.Compiler
             {
                 if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
                     throw Error("'word' has the width of the target's machine word - no '[...]' may follow (use int[16], int[32] or int for a fixed width)", Peek());
+                bool wordNonNull = ParseNonNullMark("word");
                 int wordPointerDepth = 0;
                 while (Match(TokenType.Star)) wordPointerDepth++;
-                return new TypeRef("word", null, wordPointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+                return new TypeRef("word", null, wordPointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray), NonNull: wordNonNull);
             }
             if (baseName == "byte")
             {
                 if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
                     throw Error("'byte' already has a fixed width of 8 bits - no additional '[...]' may follow", Peek());
+                bool byteNonNull = ParseNonNullMark("byte");
                 int bytePointerDepth = 0;
                 while (Match(TokenType.Star)) bytePointerDepth++;
-                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray), Unsigned: true);
+                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray), Unsigned: true, NonNull: byteNonNull);
             }
 
             // `[8]` = bit width; empty brackets `[]` belong to the array return type (see below).
@@ -1308,14 +1310,31 @@ namespace fire.Compiler
             if (width == null && !TypeKeywords.Contains(Previous().Type) && Check(TokenType.Lt) && TypeArgListEnd(0) > 0)
                 typeArgs = ParseTypeArgRefs();
 
+            // `int! n`, `float[32]! x`: a value type without undefined (SPEC 8.11) - the mark comes after the width, before the unit
+            bool nonNull = typeArgs == null && ParseNonNullMark(baseName);
+
             // `float:m Len()`, `int : mm count`: the unit at the type (a number type only; a name has to follow the unit)
             string? unit = baseName is "int" or "float" ? ParseUnitAtType() : null;
 
             int pointerDepth = 0;
             while (Match(TokenType.Star)) pointerDepth++;
+            if (nonNull && pointerDepth > 0) throw Error($"'{baseName}!' is a value without undefined - a pointer to it is written '{baseName}*'", Previous());
 
             return new TypeRef(baseName, width, pointerDepth, Unit: unit, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray),
-                TypeArgCount: typeArgs?.Count ?? 0, TypeArgs: typeArgs);
+                TypeArgCount: typeArgs?.Count ?? 0, TypeArgs: typeArgs, NonNull: nonNull);
+        }
+
+        /// <summary>The `!` behind a value type (`int!`, SPEC 8.11): it is followed by the name of the declaration, its unit (`float! : m x`) or the empty
+        /// brackets of an array return type. Behind any other type it is an error.</summary>
+        private bool ParseNonNullMark(string baseName)
+        {
+            if (!Check(TokenType.Bang) || Peek().NewlineBefore) return false;
+            var next = PeekAt(1).Type;
+            if (next is not (TokenType.Identifier or TokenType.Colon or TokenType.LBracket or TokenType.Star) && !IsCustomUnitWordAt(1)) return false;
+            var bang = Advance();
+            if (!TypeRef.CanBeNonNull(baseName))
+                throw Error($"'!' marks a value type that never holds undefined (int!, float!, bool!, word!, char!, byte!) - '{baseName}' is not one", bang);
+            return true;
         }
 
         /// <summary>`&lt;T1, ..., Tn&gt;` with full type references (nested ones included).</summary>
