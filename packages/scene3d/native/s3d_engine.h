@@ -138,7 +138,11 @@ static int s3d_grow(void** data, s3d_size* cap, s3d_size need, s3d_size elem) {
 
 /* ---- meshes and textures ----------------------------------------------------------------------------------------------------------------- */
 /* A triangle mesh: positions, texture coordinates, and the vertex normals (computed here as the area weighted average of the faces around a vertex). A mesh does not change after
- * s3d_meshFinish (the hardware backend keeps a copy of it on the GPU). */
+ * s3d_meshFinish (the hardware backend keeps a copy of it on the GPU).
+ * It is built with floats (s3d_addVertex, s3d_addTriangle, or the arrays directly); s3d_meshFinish makes it COMPACT and lets the floats go: positions as 16-bit numbers in the
+ * box of the mesh, normals in two bytes (octahedral), texture coordinates as 16-bit numbers (none when they are all 0), indices of 16 bits when there are fewer than 65536
+ * corners - 8 to 12 bytes a corner and 2 an index instead of 32 and 4 (ROADMAP 16.1 A). The renderers read a finished mesh through s3d_meshPos, s3d_meshNrm, s3d_meshUv and
+ * s3d_meshIdx. (Where the memory for the compact form is missing, the floats stay; S3D_MESH_FLOAT keeps them always.) */
 typedef struct S3dMesh {
     float* pos; s3d_size posN, posCap;      /* 3 per vertex */
     float* uv; s3d_size uvN, uvCap;         /* 2 per vertex */
@@ -149,6 +153,13 @@ typedef struct S3dMesh {
     int bad;                              /* the memory ran out while it was made */
     int nrmGiven;                         /* the normals came with the mesh (a model file): s3d_meshFinish keeps them */
     void* gpu;                            /* the copy of the hardware backend, or NULL */
+    /* the compact form (compact = 1 after s3d_meshFinish) */
+    int compact;
+    int16_t* qpos;                        /* 3 per vertex: bmin + (q + 32768) * qstep */
+    int8_t* qnrm;                         /* 2 per vertex: octahedral, / 127 */
+    int16_t* quv;                         /* 2 per vertex: q * uvStep (NULL: all 0) */
+    uint16_t* idx16;                      /* the indices, when they fit 16 bits (else `idx` stays) */
+    float qstep[3], uvStep;
 } S3dMesh;
 
 typedef struct S3dTexture S3dTexture;
@@ -165,6 +176,7 @@ static void s3d_meshFree(S3dMesh* m) {
     if (m == NULL) return;
     s3d_gpu_releaseMesh(m);
     S3D_FREE(m->pos); S3D_FREE(m->uv); S3D_FREE(m->nrm); S3D_FREE(m->idx);
+    S3D_FREE(m->qpos); S3D_FREE(m->qnrm); S3D_FREE(m->quv); S3D_FREE(m->idx16);
     S3D_FREE(m);
 }
 static void s3d_addVertex(S3dMesh* m, float x, float y, float z, float u, float v) {
@@ -177,8 +189,105 @@ static void s3d_addTriangle(S3dMesh* m, uint32_t a, uint32_t b, uint32_t c) {
     m->idx[m->idxN++] = a; m->idx[m->idxN++] = b; m->idx[m->idxN++] = c;
 }
 
-/* The bounds and the vertex normals; the texture coordinates get one pair per vertex. 0 when the memory is gone. */
+/* ---- the compact form ---- */
+static inline S3dVec3 s3d_meshPos(const S3dMesh* m, s3d_size i) {
+    if (m->compact) {
+        const int16_t* q = m->qpos + i * 3;
+        return s3d_v3(m->bmin.x + (float)((int32_t)q[0] + 32768) * m->qstep[0], m->bmin.y + (float)((int32_t)q[1] + 32768) * m->qstep[1],
+                      m->bmin.z + (float)((int32_t)q[2] + 32768) * m->qstep[2]);
+    }
+    return s3d_v3(m->pos[i * 3], m->pos[i * 3 + 1], m->pos[i * 3 + 2]);
+}
+/* The normal (unit length) of an octahedral pair. */
+static inline S3dVec3 s3d_octDecode(int32_t a, int32_t b) {
+    float x = (float)a / 127.0f, y = (float)b / 127.0f, z = 1.0f - fabsf(x) - fabsf(y);
+    if (z < 0) {
+        float ox = x;
+        x = (1.0f - fabsf(y)) * (ox >= 0 ? 1.0f : -1.0f);
+        y = (1.0f - fabsf(ox)) * (y >= 0 ? 1.0f : -1.0f);
+    }
+    return s3d_normalize(s3d_v3(x, y, z));
+}
+static inline void s3d_octEncode(S3dVec3 n, int8_t* out) {
+    float l = fabsf(n.x) + fabsf(n.y) + fabsf(n.z), x, y;
+    if (l < 1e-20f) { out[0] = 0; out[1] = 127; return; }
+    x = n.x / l; y = n.y / l;
+    if (n.z < 0) { float ox = x; x = (1.0f - fabsf(y)) * (ox >= 0 ? 1.0f : -1.0f); y = (1.0f - fabsf(ox)) * (y >= 0 ? 1.0f : -1.0f); }
+    out[0] = (int8_t)(x * 127.0f + (x >= 0 ? 0.5f : -0.5f));
+    out[1] = (int8_t)(y * 127.0f + (y >= 0 ? 0.5f : -0.5f));
+}
+static inline S3dVec3 s3d_meshNrm(const S3dMesh* m, s3d_size i) {
+    if (m->compact) return s3d_octDecode(m->qnrm[i * 2], m->qnrm[i * 2 + 1]);
+    return s3d_v3(m->nrm[i * 3], m->nrm[i * 3 + 1], m->nrm[i * 3 + 2]);
+}
+static inline void s3d_meshUv(const S3dMesh* m, s3d_size i, float* u, float* v) {
+    if (m->compact) {
+        if (m->quv == NULL) { *u = 0; *v = 0; return; }
+        *u = (float)m->quv[i * 2] * m->uvStep; *v = (float)m->quv[i * 2 + 1] * m->uvStep;
+        return;
+    }
+    *u = m->uv[i * 2]; *v = m->uv[i * 2 + 1];
+}
+static inline uint32_t s3d_meshIdx(const S3dMesh* m, s3d_size k) { return m->idx16 ? (uint32_t)m->idx16[k] : m->idx[k]; }
+
+/* Makes a finished mesh compact (its bounds and normals are there) and lets the floats go; without the memory it stays as it is. */
+static void s3d_meshCompact(S3dMesh* m) {
+#ifdef S3D_MESH_FLOAT
+    (void)m;
+#else
+    s3d_size n = m->posN / 3, i, k;
+    float ext[3], uvMax = 0;
+    int16_t* qpos;
+    int8_t* qnrm;
+    int16_t* quv = NULL;
+    uint16_t* idx16 = NULL;
+    if (m->compact || n == 0) return;
+    ext[0] = m->bmax.x - m->bmin.x; ext[1] = m->bmax.y - m->bmin.y; ext[2] = m->bmax.z - m->bmin.z;
+    for (i = 0; i < n * 2; i++) { float a = fabsf(m->uv[i]); if (a > uvMax) uvMax = a; }
+    qpos = (int16_t*)S3D_MALLOC(n * 3 * sizeof(int16_t));
+    qnrm = (int8_t*)S3D_MALLOC(n * 2);
+    if (uvMax > 0) quv = (int16_t*)S3D_MALLOC(n * 2 * sizeof(int16_t));
+    if (n < 65536) idx16 = (uint16_t*)S3D_MALLOC(m->idxN * sizeof(uint16_t) + 2);
+    if (qpos == NULL || qnrm == NULL || (uvMax > 0 && quv == NULL) || (n < 65536 && idx16 == NULL)) { S3D_FREE(qpos); S3D_FREE(qnrm); S3D_FREE(quv); S3D_FREE(idx16); return; }
+    for (k = 0; k < 3; k++) m->qstep[k] = ext[k] > 0 ? ext[k] / 65535.0f : 0.0f;
+    for (i = 0; i < n; i++) {
+        const float* p = m->pos + i * 3;
+        float lo[3];
+        lo[0] = m->bmin.x; lo[1] = m->bmin.y; lo[2] = m->bmin.z;
+        for (k = 0; k < 3; k++) {
+            float q = ext[k] > 0 ? (p[k] - lo[k]) / ext[k] * 65535.0f + 0.5f : 0.0f;
+            int32_t v = (int32_t)q;
+            qpos[i * 3 + k] = (int16_t)((v < 0 ? 0 : v > 65535 ? 65535 : v) - 32768);
+        }
+        s3d_octEncode(s3d_v3(m->nrm[i * 3], m->nrm[i * 3 + 1], m->nrm[i * 3 + 2]), qnrm + i * 2);
+    }
+    if (quv) {
+        m->uvStep = uvMax <= 32.0f ? 1.0f / 1024.0f : uvMax / 32767.0f;
+        for (i = 0; i < n * 2; i++) { float q = m->uv[i] / m->uvStep; quv[i] = (int16_t)(q >= 0 ? q + 0.5f : q - 0.5f); }
+    }
+    if (idx16) { for (i = 0; i < m->idxN; i++) idx16[i] = (uint16_t)m->idx[i]; S3D_FREE(m->idx); m->idx = NULL; m->idxCap = 0; }
+    S3D_FREE(m->pos); S3D_FREE(m->uv); S3D_FREE(m->nrm);
+    m->pos = NULL; m->uv = NULL; m->nrm = NULL; m->posCap = m->uvCap = 0;
+    m->qpos = qpos; m->qnrm = qnrm; m->quv = quv; m->idx16 = idx16;
+    m->compact = 1;
+#endif
+}
+
+/* The bytes a mesh takes (its arrays; for the measurements). */
+static s3d_size s3d_meshBytes(const S3dMesh* m) {
+    s3d_size n = m->posN / 3;
+    if (m->compact) return n * 3 * 2 + n * 2 + (m->quv ? n * 4 : 0) + m->idxN * (m->idx16 ? 2 : 4);
+    return n * 32 + m->idxN * 4;
+}
+
+/* The bounds and the vertex normals; the texture coordinates get one pair per vertex; then the mesh is made compact. 0 when the memory is gone. */
+static int s3d_meshFinishFloats(S3dMesh* m);
 static int s3d_meshFinish(S3dMesh* m) {
+    if (!s3d_meshFinishFloats(m)) return 0;
+    s3d_meshCompact(m);
+    return 1;
+}
+static int s3d_meshFinishFloats(S3dMesh* m) {
     s3d_size n = m->posN / 3, i, t;
     if (m->bad) return 0;
     if (!S3D_GROW(m->uv, m->uvCap, n * 2)) return 0;
@@ -859,10 +968,11 @@ static int s3d_transformBatch(S3dBatch* batch) {
     if (!S3D_GROW(batch->cv, batch->cvCap, vertexCount + 1)) return 0;
     batch->cvN = vertexCount;
     for (i = 0; i < vertexCount; i++) {
-        S3dVec3 wp = s3d_transformPoint(&batch->model, s3d_v3(mesh->pos[i * 3], mesh->pos[i * 3 + 1], mesh->pos[i * 3 + 2]));
-        S3dVec3 wn = s3d_normalize(s3d_transformDir(&batch->normalM, s3d_v3(mesh->nrm[i * 3], mesh->nrm[i * 3 + 1], mesh->nrm[i * 3 + 2])));
+        S3dVec3 wp = s3d_transformPoint(&batch->model, s3d_meshPos(mesh, i));
+        S3dVec3 wn = s3d_normalize(s3d_transformDir(&batch->normalM, s3d_meshNrm(mesh, i)));
         S3dClipVertex* c = &batch->cv[i];
-        float u = mesh->uv[i * 2], v = mesh->uv[i * 2 + 1];
+        float u, v;
+        s3d_meshUv(mesh, i, &u, &v);
         c->wx = wp.x; c->wy = wp.y; c->wz = wp.z; c->nx = wn.x; c->ny = wn.y; c->nz = wn.z;
         c->u = surf->tm[0] * u + surf->tm[1] * v + surf->tm[2];   /* the texture mapping is applied to the corners: the rest is interpolated */
         c->v = surf->tm[3] * u + surf->tm[4] * v + surf->tm[5];
@@ -886,7 +996,7 @@ static void s3d_setupBatch(S3dFrame* f, int batchIndex) {
     int sweeps = (batch->blended && surf->twoSided) ? 2 : 1, sweep;
     for (sweep = 0; sweep < sweeps; sweep++)
         for (t = 0; t + 2 < mesh->idxN; t += 3) {
-            uint32_t i0 = mesh->idx[t], i1 = mesh->idx[t + 1], i2 = mesh->idx[t + 2];
+            uint32_t i0 = s3d_meshIdx(mesh, t), i1 = s3d_meshIdx(mesh, t + 1), i2 = s3d_meshIdx(mesh, t + 2);
             S3dVec3 wa, wb, wc, fn, tangent, bitangent;
             int facing, count = 0, e, i, constNormal;
             S3dClipVertex poly[4];
@@ -1113,7 +1223,7 @@ static void s3d_renderShadowMap(S3dShadowMap* m, const S3dFrame* f, float nearPl
             S3dVec3 poly[4];
             S3dDepthVertex dv[4];
             int count = 0, e, k;
-            ix[0] = mesh->idx[t]; ix[1] = mesh->idx[t + 1]; ix[2] = mesh->idx[t + 2];
+            ix[0] = s3d_meshIdx(mesh, t); ix[1] = s3d_meshIdx(mesh, t + 1); ix[2] = s3d_meshIdx(mesh, t + 2);
             if (ix[0] >= b->cvN || ix[1] >= b->cvN || ix[2] >= b->cvN) continue;
             for (e = 0; e < 3; e++) {
                 S3dVec3 cur = view[ix[e]], nxt = view[ix[(e + 1) % 3]];

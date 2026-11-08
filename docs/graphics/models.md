@@ -51,5 +51,5 @@ part, the normal in two bytes), 12 with texture coordinates; indices are 16 bit 
 The robot of the tests - two parts, 24 triangles, two clips - is 3 KB (1.9 KB at 15 frames per second). Parts are **rigid**: an animation moves, turns and
 scales whole parts - the way games of the 90s animated their figures, and cheap to compute on a small machine (also with the lean renderer, also on DOS).
 
-Planned (ROADMAP §16): the parts' meshes kept in this compact form in memory too (today they are read into the renderer's meshes), textures in the file,
+Planned (ROADMAP §16): textures in the file,
 blending from one clip into the next, the block editor in spark that writes `.f3d`.

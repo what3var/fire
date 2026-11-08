@@ -335,12 +335,13 @@ static void s3d_leanObject(S3dLean* L, const S3dMesh* mesh, const S3dObjectParam
     cv = (S3dLeanClip*)S3D_MALLOC(n * sizeof(S3dLeanClip));
     if (cv == NULL) return;
     for (i = 0; i < n; i++) {
-        S3dVec3 wp = s3d_transformPoint(&model, s3d_v3(mesh->pos[i * 3], mesh->pos[i * 3 + 1], mesh->pos[i * 3 + 2]));
-        S3dVec3 wn = s3d_normalize(s3d_transformDir(&normalM, s3d_v3(mesh->nrm[i * 3], mesh->nrm[i * 3 + 1], mesh->nrm[i * 3 + 2])));
+        S3dVec3 wp = s3d_transformPoint(&model, s3d_meshPos(mesh, i));
+        S3dVec3 wn = s3d_normalize(s3d_transformDir(&normalM, s3d_meshNrm(mesh, i)));
         S3dLeanClip* c = &cv[i];
-        float u = mesh->uv[i * 2], v = mesh->uv[i * 2 + 1];
+        float u, v;
         S3dVec3 light = L->ambient, sun = s3d_v3(0, 0, 0), col;
         float em = (surf->emissive.x + surf->emissive.y + surf->emissive.z) / 3;
+        s3d_meshUv(mesh, i, &u, &v);
         if (surf->twoSided && s3d_dot(wn, s3d_sub(L->cam.pos, wp)) < 0) wn = s3d_scale(wn, -1.0f);
         if (surf->lit) {
             for (k = 0; k < L->lightN; k++) {
@@ -386,18 +387,18 @@ static void s3d_leanObject(S3dLean* L, const S3dMesh* mesh, const S3dObjectParam
         float* sp = (float*)S3D_MALLOC(n * 3 * sizeof(float));
         if (sp != NULL) {
             for (i = 0; i < n; i++) {
-                S3dVec3 wp = s3d_transformPoint(&model, s3d_v3(mesh->pos[i * 3], mesh->pos[i * 3 + 1], mesh->pos[i * 3 + 2]));
+                S3dVec3 wp = s3d_transformPoint(&model, s3d_meshPos(mesh, i));
                 s3d_leanShadowPoint(L, wp, &sp[i * 3], &sp[i * 3 + 1], &sp[i * 3 + 2]);
             }
             for (k = 0; k + 2 < mesh->idxN; k += 3) {
-                uint32_t i0 = mesh->idx[k], i1 = mesh->idx[k + 1], i2 = mesh->idx[k + 2];
+                uint32_t i0 = s3d_meshIdx(mesh, k), i1 = s3d_meshIdx(mesh, k + 1), i2 = s3d_meshIdx(mesh, k + 2);
                 if (i0 < n && i1 < n && i2 < n) s3d_leanShadowTri(L, &sp[i0 * 3], &sp[i1 * 3], &sp[i2 * 3]);
             }
             S3D_FREE(sp);
         }
     }
     for (k = 0; k + 2 < mesh->idxN; k += 3) {
-        uint32_t i0 = mesh->idx[k], i1 = mesh->idx[k + 1], i2 = mesh->idx[k + 2];
+        uint32_t i0 = s3d_meshIdx(mesh, k), i1 = s3d_meshIdx(mesh, k + 1), i2 = s3d_meshIdx(mesh, k + 2);
         const S3dLeanClip* in[3];
         S3dLeanClip poly[4];
         uint32_t out[4];

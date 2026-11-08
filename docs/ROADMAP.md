@@ -850,6 +850,14 @@ nach Arbeiten auf `targets`).
 ### 16.1 Offen nach Meilenstein 1 und 2 (Stand `scene-revamp`)
 
 **A. Kompakte Meshes** (Wunsch des Benutzers: festhalten; vor oder mit Meilenstein 3, weil das Modellformat dieselbe Form bekommt):
+* **Umgesetzt** (nach Meilenstein 3): `s3d_meshFinish` packt jedes Mesh (`s3d_meshCompact`): Positionen `int16` in der Box, Normalen oktaedrisch in 2 Byte,
+  UV `int16` (1/1024; bei größeren Werten skaliert; keine, wenn alle 0), Indizes `uint16` unter 65536 Ecken; die `float`-Arrays gehen. Gelesen über
+  `s3d_meshPos/Nrm/Uv/Idx` (voller und schlanker Renderer, Schattenkarten, GPU-Upload entpackt in einen Puffer). Fehlt der Speicher fürs Packen, bleiben die
+  floats; `S3D_MESH_FLOAT` behält sie immer. **Gemessen:** Box 912 -> 360 Byte, Kugel (24) 16,7 -> 7,1 KB, Zylinder 4,4 -> 1,8 KB, Terrain 32x32 56 -> 24 KB,
+  64x64 226 -> 97 KB (je Ecke 12 Byte plus ~12 Byte Indizes statt 32 + 24). **Pixel:** gegen die float-Meshes in der Testszene (160x120) weichen im
+  Software-Renderer 70 von 19200 Pixeln um höchstens 2/255 ab, im schlanken 52 (höchstens 2), im Palettenbild 4 um eine Schattierungsstufe; die
+  Prüfsummen der Scene3DTests sind damit bewusst neu (VM == nativ), die Zählungen des dos16-Tests bleiben gleich.
+* Noch offen aus A: Texturen mit Palette (8 Bit) und Mipmaps.
 * **Heute:** `S3dMesh` hat je Ecke `float` Position (12 Byte), UV (8) und Normale (12) und je Dreieck drei `uint32_t` (12 Byte) - 32 Byte je Ecke plus
   Indizes. Ein Terrain 64x64 (geglättet) braucht so ~220 KB, eine Kugel mit 24 Segmenten ~20 KB; auf dos16 passt davon wenig neben das Programm.
 * **Ziel - 8 bis 10 Byte je Ecke:**
