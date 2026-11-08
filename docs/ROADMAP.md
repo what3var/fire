@@ -838,8 +838,7 @@ nach Arbeiten auf `targets`).
    als inverse Transponierte; beide Renderer), `Play`/`Advance`/`AnimationTime`/`Stop`. Test: ein glTF-Roboter (Körper, Arm als Kind, "wave"/"jump"),
    VM == nativ; dos16 baut. **Offen:** die Meshes auch im Speicher kompakt (heute zu `float` entpackt, siehe 16.1 A), Texturen in der Datei, Überblenden
    zwischen Clips, Ereignisse am Ende eines Clips, Skins (Knochen) bewusst nicht.
-   **Gefunden** (auf `targets`): seit den "Scalars"-Commits (2f8b4cc/6a6c387) stürzt der Generator bei einem Array-Literal mit mehr als ~60 Elementen ab
-   (`var b = [0, 1, ..., 99]` -> IndexOutOfRangeException in `CppGenerator.ScalarName`).
+   (Zwischendurch stürzte der Generator bei Array-Literalen mit mehr als ~60 Elementen ab - 2f8b4cc/6a6c387 auf `targets`; mit 3f14d20 behoben.)
 4. **Partikel und Effekte** (`scene3d.effects`): Partikel aus einem festen Pool, als Sprites im Rasterizer (Tiefentest, additiv/Alpha), einfache Parameter
    und Vorgaben (`Fire`, `Smoke`, `Sparks`, `Rain`, `Snow`, `Explosion`). Statt programmierbarer Pixel-Shader Materialeffekte zum Einschalten (laufende UVs,
    Farbrotation über die Palette, Flackern, Wellen auf den Vertices, Toon) und Effekte auf das ganze Bild (Abblenden, Tönung, Nebel); später evtl. eine
