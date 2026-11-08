@@ -8,7 +8,9 @@
 #define FIRE_FS_DOS 1
 #include <ctype.h>
 #include <direct.h>
-#include <dirent.h>
+#ifndef FIRE_CC_WATCOM_OLD_LIBC
+#include <dirent.h>   /* (an older C library of Open Watcom has opendir/readdir in direct.h: fire_cc_watcom.h) */
+#endif
 #include <dos.h>
 #include <errno.h>
 #include <io.h>

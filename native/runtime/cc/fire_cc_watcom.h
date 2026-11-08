@@ -40,9 +40,64 @@ static double fire_cc_fixedHalfEven(double d, int places) {
     return d;
 }
 #define FIRE_CC_FIXED(d, places) fire_cc_fixedHalfEven(d, places)
+/* An older C library of Open Watcom - 1.9 (__WATCOMC__ 1290) and the "2.0beta1" of the old Perforce line (__WATCOMC__ 2000, the portable archive of
+ * openwatcom.org) - is told by its math.h (no FP_ILOGB0; the open-watcom-v2 of GitHub, 1300, has it): its math.h lacks a few functions of C99 the runtime
+ * uses (a stand-in each), its opendir/readdir are in direct.h (no dirent.h: fire_fs_dos.h). */
+#ifndef FP_ILOGB0
+#define FIRE_CC_WATCOM_OLD_LIBC 1
+#endif
+#ifdef FIRE_CC_WATCOM_OLD_LIBC
+static double fire_cc_fmax(double a, double b) { return isnan(a) ? b : isnan(b) ? a : a > b ? a : b; }
+static double fire_cc_fmin(double a, double b) { return isnan(a) ? b : isnan(b) ? a : a < b ? a : b; }
+static double fire_cc_trunc(double x) { return x < 0 ? ceil(x) : floor(x); }
+static double fire_cc_round(double x) { return x < 0 ? -floor(-x + 0.5) : floor(x + 0.5); }
+static double fire_cc_copysign(double x, double y) { double m = fabs(x); return (y < 0 || (y == 0 && 1.0 / y < 0)) ? -m : m; }
+static int fire_cc_ilogb(double x) { int e; if (x == 0) return -2147483647 - 1; frexp(x, &e); return e - 1; }
+static double fire_cc_nextafter(double x, double y) {
+    union { double d; uint64_t u; } v;
+    if (isnan(x) || isnan(y)) return x + y;
+    if (x == y) return y;
+    if (x == 0) { v.u = 1; return y > 0 ? v.d : -v.d; }   /* (the smallest subnormal toward y) */
+    v.d = x;
+    if ((x < y) == (x > 0)) v.u++; else v.u--;            /* (one step of the bits: away from or toward zero) */
+    return v.d;
+}
+#define fmax(a, b) fire_cc_fmax(a, b)
+#define fmin(a, b) fire_cc_fmin(a, b)
+#define trunc(x) fire_cc_trunc(x)
+#define round(x) fire_cc_round(x)
+#define copysign(x, y) fire_cc_copysign(x, y)
+#define ilogb(x) fire_cc_ilogb(x)
+#define nextafter(x, y) fire_cc_nextafter(x, y)
+#endif
 /* A comparison with NaN on the 8087 (and its emulation) sets "less" and "equal" at once: == checks for NaN first. */
 #define FIRE_CC_FEQ(x, y) (!isnan(x) && !isnan(y) && (x) == (y))
 #if defined(_M_I86)
+/* 16-bit x86 (wcc): the libraries of Open Watcom have no float functions of C99 (sqrtf, cosf, ...: the linker does not find them) - the double ones, with
+ * the result made a float again (the 8087 computes in 80 bits either way) */
+#define sqrtf(x) ((float)sqrt(x))
+#define sinf(x) ((float)sin(x))
+#define cosf(x) ((float)cos(x))
+#define tanf(x) ((float)tan(x))
+#define asinf(x) ((float)asin(x))
+#define acosf(x) ((float)acos(x))
+#define atanf(x) ((float)atan(x))
+#define atan2f(y, x) ((float)atan2(y, x))
+#define fabsf(x) ((float)fabs(x))
+#define floorf(x) ((float)floor(x))
+#define ceilf(x) ((float)ceil(x))
+#define powf(x, y) ((float)pow(x, y))
+#define expf(x) ((float)exp(x))
+#define logf(x) ((float)log(x))
+#define log10f(x) ((float)log10(x))
+#define fmodf(x, y) ((float)fmod(x, y))
+#define sinhf(x) ((float)sinh(x))
+#define coshf(x) ((float)cosh(x))
+#define tanhf(x) ((float)tanh(x))
+#define truncf(x) ((float)trunc(x))
+#define roundf(x) ((float)round(x))
+#define fminf(a, b) ((float)fmin(a, b))
+#define fmaxf(a, b) ((float)fmax(a, b))
 /* 16-bit x86 (wcc): the large model has far pointers already; the data of arrays and buffers may pass 64 KB (FIRE_HUGE: the compiler normalizes the segment) */
 #define FIRE_FAR __far
 #define FIRE_HUGE __huge

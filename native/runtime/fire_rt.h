@@ -1928,7 +1928,7 @@ FIRE_COLD FIRE_FN Value wordOp(int op, Value a, Value b) {
         /* with a float: a float operation (the word as its unsigned value, without a unit) */
         if (a.kind == K_Word) a = Float(wordReal(a));
         if (b.kind == K_Word) b = Float(wordReal(b));
-        switch (op) {
+        switch ((int)op) {
             case W_ADD: return add(a, b);
             case W_SUB: return sub(a, b);
             case W_MUL: return mul(a, b);
@@ -1939,7 +1939,7 @@ FIRE_COLD FIRE_FN Value wordOp(int op, Value a, Value b) {
     }
     if (op == W_POW && b.kind == K_Int && b.i < 0 && a.kind == K_Word) return Float((Real)pow((double)(uint64_t)a.w, (double)b.i));   /* (a negative exponent: like int ^ int) */
     if (!wordOperand(a, op, &x) || !wordOperand(b, op, &y)) return Undef();
-    switch (op) {
+    switch ((int)op) {
         case W_ADD: r = x + y; break;
         case W_SUB: r = x - y; break;
         case W_MUL: r = x * y; break;
@@ -3409,7 +3409,7 @@ FIRE_FN Value stringCall(int64_t method, Value text, int argc, Value a0, Value a
     if (text.kind != K_String) fatal("The string method was called on something that is not a string.");
     s = strOf(text)->data;
     len = strOf(text)->length;
-    switch (method) {
+    switch ((int)method) {
         case 1: {  /* IndexOf(value[, start]) */
             Chars v = charsOf(a0);
             int64_t start = argc == 2 ? a1.i : 0;
@@ -3564,7 +3564,7 @@ FIRE_FN Value charCall(int64_t method, Value ch, OwnList* list) {
     uint32_t c;
     if (ch.kind != K_Char) fatal("The char method was called on something that is not a char.");
     c = (uint32_t)ch.i;
-    switch (method) {
+    switch ((int)method) {
         case 1: return Bool(c >= '0' && c <= '9');
         case 2: return Bool(isLetterC(c));
         case 3: return Bool(isLetterC(c) || (c >= '0' && c <= '9'));
@@ -3692,7 +3692,7 @@ FIRE_FN bool fire_envName(Value v, char* out, uint32_t cap) {
 FIRE_FN Value envCall(int64_t id, Value a, Value b, OwnList* list) {
     char name[1024];
     char text[1200];
-    switch (id) {
+    switch ((int)id) {
         case 1: {   /* Args */
             FireEnvList l;
             Arr* arr;
@@ -3777,7 +3777,7 @@ FIRE_FN Value resourceCall(int64_t op, Value id, OwnList* list) {
     if (id.kind != K_Int) fatal("A Resource needs a path that is a string literal: new Resource(\"images/logo.png\") - the compiler embeds the file.");
     if (id.i < 0 || id.i >= g_resourceCount) fatal("No resource with that number.");
     r = &g_resources[id.i];
-    switch (op) {
+    switch ((int)op) {
         case 1: return Int((int64_t)r->length);
         case 2: { Buf* b = allocBuf(r->length, list); if (r->length) dataCopy(b->data, r->data, r->length); return BufV(b); }
         case 3: return newStrFromUtf8((const uint8_t*)r->name, strlen(r->name), list);
@@ -4013,7 +4013,7 @@ FIRE_FN Value mathCall(int64_t method, Value x, Value y) {
         return fireError("ArgumentException", text);
     }
     v = toR(x);
-    switch (method) {
+    switch ((int)method) {
         case 1: {
             uint32_t root;
             if (!unitSqrt(x.unit, &root)) {
@@ -4043,7 +4043,7 @@ FIRE_FN Value mathCall(int64_t method, Value x, Value y) {
         snprintf(text, sizeof text, "Math.%s expects a number without unit, not one in '%s'.", name, g_ud[x.unit].name);
         return fireError("ArgumentException", text);
     }
-    switch (method) {
+    switch ((int)method) {
         case 5: return Float((Real)sin(v));
         case 6: return Float((Real)cos(v));
         case 7: return Float((Real)tan(v));
@@ -6073,7 +6073,7 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
     Owned* o = ownedOf(self);
     if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
     if (o->flags & 1) fatal("A destroyed value cannot change its owner.");
-    switch (method) {
+    switch ((int)method) {
         case OM_TakeLocal:
             if (here->home) here = here->home;   /* (the scope itself, not its statement temporaries) */
             if (o->owner) ownUnlink(o);
@@ -6665,7 +6665,7 @@ FIRE_FN int fire_libSigShape(const char* s) {
  * 6 the shape of a signature, 7 a NativeHandle's release). */
 FIRE_FN Value libCall(Value id, Value a, Value b, Value c, Value d, OwnList* list) {
     char text[512];
-    switch (id.i) {
+    switch ((int)id.i) {
         case 1: {
             void* h;
             if (a.kind != K_String) return Int(0);
