@@ -2651,9 +2651,13 @@ FIRE_FN void destroyLeaf(Owned* o) {
 }
 
 /* Leaving a scope: destroys what it owns and lets go of the strings/arrays it created. */
-FIRE_FN void leave(OwnList* list) {
+FIRE_FN void leaveSlow(OwnList* list) {
     if (list->head) destroyList(list);
     if (g_pool.top > list->mark) poolRelease(list->mark);
+}
+/* (after nearly every statement - mostly with nothing to do: the test embedded, the work called) */
+FIRE_ALWAYS_INLINE FIRE_FN void leave(OwnList* list) {
+    if (FIRE_UNLIKELY(list->head != NULL) || FIRE_UNLIKELY(g_pool.top > list->mark)) leaveSlow(list);
 }
 
 /* The header of an object, an array or a buffer (null for any other value, and for an array or buffer that is already destroyed). */

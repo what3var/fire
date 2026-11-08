@@ -1,6 +1,7 @@
 /* fire: the dialect of Microsoft's C/C++ compiler (fire_cc.h). */
 #define FIRE_CC_NAME "msvc"
 #define FIRE_COLD __declspec(noinline)
+#define FIRE_ALWAYS_INLINE
 #define FIRE_UNUSED_LABEL
 #define FIRE_MAYBE_UNUSED
 #define FIRE_LIKELY(x) (x)

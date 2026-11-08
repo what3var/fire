@@ -2,6 +2,7 @@
  * bios-x86 (ROADMAP 13). C99 in part (-za99): no _Static_assert, no thread-local storage (no fire threads on these targets). */
 #define FIRE_CC_NAME "watcom"
 #define FIRE_COLD
+#define FIRE_ALWAYS_INLINE
 #define FIRE_UNUSED_LABEL
 #define FIRE_MAYBE_UNUSED
 #define FIRE_LIKELY(x) (x)

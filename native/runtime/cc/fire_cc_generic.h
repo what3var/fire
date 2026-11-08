@@ -5,6 +5,7 @@
 #define FIRE_CC_NAME "generic"
 #endif
 #define FIRE_COLD
+#define FIRE_ALWAYS_INLINE
 #define FIRE_UNUSED_LABEL
 #define FIRE_MAYBE_UNUSED
 #define FIRE_LIKELY(x) (x)
