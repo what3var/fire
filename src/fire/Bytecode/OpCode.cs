@@ -256,6 +256,9 @@ namespace fire.Bytecode
         // `obj.name = value` that claims (SPEC 2.1): like SetField, and a claimable value - unclaimed (in the temporaries); with bit 1 of flags: a claim site of a
         // setter, the value still belongs to the setter call - goes to the setter call when `name` is a property of `obj`, else to `obj` after the store.
         SetFieldClaim,       // u16 fieldNameIdx, u8 flags
+        // `new T[n]` with T a type parameter (the inner array of `List<T>`): the array on top becomes typed when the type argument that runs is `int`,
+        // `float`, `bool` or `char` (without a unit) - `List<int>` keeps its numbers raw; anything else stays an array of values.
+        TypeArrayOfParam,    // u16 typeParamTextIdx (`$k@Class` of the class, `$k@` of the method)
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

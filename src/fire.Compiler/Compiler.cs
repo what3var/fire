@@ -2638,6 +2638,13 @@ namespace fire.Compiler
 
                 case NewArrayExpr na:
                     CompileArrayAlloc(na.SizeExprs, 0);
+                    // `new T[n]` of a type parameter: typed by the type argument at run time (`List<int>`: raw ints)
+                    if (na.SizeExprs.Count == 1 && na.ElementType is { ArrayRank: 0, PointerDepth: 0, TypeArgs: null } elementType
+                        && TypeArgText(elementType, _enclosingClass, null, 0) is ['$', ..] paramText)
+                    {
+                        _chunk.EmitOp(OpCode.TypeArrayOfParam);
+                        _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(paramText)));
+                    }
                     break;
 
                 case NewBufferExpr { Words: true } nw:

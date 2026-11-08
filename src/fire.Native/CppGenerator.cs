@@ -1062,7 +1062,8 @@ namespace fire.Native
                     }
                 }
                 sb.AppendLine($"static bool {Px}tah_{id}(Value v) {{ return {holds}; }}");
-                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}}};");
+                int arrElem = DeclaredType.TypedElementOf(text) is int code ? (code & 0xFF) + 1 : 0;
+                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}}};");
             }
             foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
                 sb.AppendLine($"static const TArg* const {Px}tl_{id}[] = {{{string.Join(", ", text.Split('|').Select(TArgRef))}}};");
@@ -5146,6 +5147,14 @@ namespace fire.Native
                     Need(1); E($"{S(d - 1)} = typeWordBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
                 case OpCode.TypeArray:
                     Need(1); E($"typeArray({S(d - 1)}, {ins.A[0]}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2])}, 1);"); Check(); return Next();
+                case OpCode.TypeArrayOfParam:
+                {
+                    // `new T[n]`: typed by the type argument that runs (TArg.arrElem; `List<int>`: raw ints)
+                    Need(1);
+                    E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ins.A[0]))}; if (ta_ && ta_[0] && ta_[0]->arrElem) typeArray({S(d - 1)}, ta_[0]->arrElem - 1, 1, {TypeArrayUnitArgs(chunk, 0xFFFF)}, 1); }}");
+                    Check();
+                    return Next();
+                }
                 case OpCode.MakeBuffer:
                     Need(1); E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});"); SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufBytes)); _kindsKept = true; return Next();
                 case OpCode.MakeArrayLiteral:

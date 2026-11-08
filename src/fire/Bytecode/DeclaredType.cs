@@ -33,6 +33,11 @@ namespace fire.Bytecode
         public static string OfName(string name) => GenericClassNames.PlainName(name) + DisplayEnd + name;
 
         /// <summary>The k-th type parameter of class `owner` (its `where` conditions, OR of ANDs, check it when the type argument is not known).</summary>
+        /// <summary>The width code of a typed array (TypeRef.ArrayWidthCode) for the type argument `int`, `float`, `bool` or `char` without a unit (`new T[n]`,
+        /// OpCode.TypeArrayOfParam); null for any other.</summary>
+        public static int? TypedElementOf(string typeArg) =>
+            typeArg is "int" or "float" or "bool" or "char" && new fire.Ast.TypeRef(typeArg, null, 0).ArrayWidthCode(1) is var code and not 0 ? code : null;
+
         public static string OfTypeParam(TypeParam tp, int index, string owner, Func<string, string> resolveName)
         {
             string Text(TypeConstraint c) => c.Kind == TypeConstraintKind.IsOf ? "is of " + c.Name : "is in " + c.Name;

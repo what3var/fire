@@ -23020,6 +23020,39 @@ else
             }
             print("end")
             """),
+        ("Listen mit Typargument: List<int>/<float>/<bool> halten ihre Elemente roh (new T[n]), List<string> und List ohne Typ nicht, Wachstum, Entfernen, foreach", """
+            class Box<T> {
+                any items
+                construct() { this.items = new T[4] }
+            }
+            var xs = new List<int>()
+            for (int i = 0; i < 40; i++) { xs.Add(i * i) }
+            xs.RemoveAt(0)
+            xs.Insert(2, -7)
+            print(xs.Count + " " + xs[0] + " " + xs[2] + " " + xs[38])
+            var fs = new List<float>()
+            fs.Add(1)
+            fs.Add(2.5)
+            print(fs[0] + fs[1])
+            var bs = new List<bool>()
+            bs.Add(true)
+            bs.Add(false)
+            print(bs[0] + " " + bs[1] + " " + bs.IndexOf(false))
+            var ss = new List<string>()
+            ss.Add("a")
+            var raw = new List()
+            raw.Add("x")
+            raw.Add(3)
+            print(ss[0] + raw[0] + raw[1])
+            var sum = 0
+            foreach (x in xs) { sum = sum + x }
+            print(sum)
+            var b = new Box<int>()
+            try { b.items[0] = "x"; print("untyped") } catch (ArgumentException e) { print("typed") }
+            var bf = new Box<string>()
+            bf.items[0] = "ok"
+            print(bf.items[0])
+            """),
         ("Schmale Felder (#intwidth 32, #floatwidth 32): int/float/bool teilen sich einen Wert, Vererbung mit freier Haelfte, undefined, Einheiten, int[64] bleibt breit, Kopie, Schneiden", """
             #intwidth 32
             #floatwidth 32

@@ -139,6 +139,10 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Generation, jeder Zugriff vergleicht (`leafAlive`: eine Ladung und ein Vergleich) und meldet sonst die fangbare `DestroyedException`, bevor freigegebener
   Speicher berührt wird. Mit `#performance` definiert der Generator `FIRE_UNCHECKED`: keine Tabelle, keine Prüfung (undefiniert, wie in der VM-Doku).
   **Objekte** haben dasselbe Handle (siehe oben).
+* **`new T[n]`** mit einem Typparameter `T` (das innere Array von `List<T>`): `OpCode.TypeArrayOfParam` typisiert es nach dem Typargument, das läuft -
+  `int`, `float`, `bool`, `char` ohne Einheit werden ein gepacktes Array (`TArg.arrElem`, in der VM `DeclaredType.TypedElementOf`), alles andere bleibt
+  ein Array von Werten. `List<int>` hält seine Zahlen also roh (8 bzw. mit `#intwidth 32` 4 Byte statt 16 je Element); `Dictionary`/`HashSet` (ihre
+  Tabelle ist nicht generisch) noch nicht.
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit

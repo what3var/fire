@@ -4270,6 +4270,12 @@ namespace fire.Runtime
                     TypeArrayValue(Peek(), elemType, rank, unitIdx == 0xFFFF ? null : _constants[unitIdx].AsString(), 1);
                     break;
                 }
+                case OpCode.TypeArrayOfParam:
+                {
+                    string paramText = _constants[ReadU16()].AsString();
+                    if (DeclaredType.TypedElementOf(TypeArgOfParam(paramText)) is int code) TypeArrayValue(Peek(), (byte)(code & 0xFF), 1, null, 1);
+                    break;
+                }
                 case OpCode.ConvertWidth:
                 {
                     int bits = ReadByte();
@@ -6842,6 +6848,16 @@ namespace fire.Runtime
             if (DeclaredKind.Accept(ref value, required, what) is not { } message) return true;
             ThrowArgumentError(message);
             return false;
+        }
+
+        /// <summary>The type argument a type parameter of the running code stands for (`$k@Class`: of `this`, `$k@`: of the call of the generic method); "" when
+        /// it is not known.</summary>
+        private string TypeArgOfParam(string text)
+        {
+            int at = text.IndexOf('@');
+            int k = int.Parse(text.AsSpan(1, at - 1));
+            if (at == text.Length - 1) { var call = CallScopeTypeArgs(); return call != null && k < call.Length ? call[k] : ""; }
+            return DeclaredType.TypeArgOf(_currentThis as ObjectInstance, text.Substring(at + 1), k) ?? "";
         }
 
         /// <summary>OpCode.TypeArray: the array `value` (at depth `rank` its inner arrays) becomes typed. False when that is the exception: an element that

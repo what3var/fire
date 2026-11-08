@@ -255,7 +255,7 @@ namespace fire.Standard
                 int Count { get { return this.count } }
 
                 construct() {
-                    this.items = new class[8]
+                    this.items = new T[8]
                     this.count = 0
                 }
 
@@ -272,7 +272,7 @@ namespace fire.Standard
                 // `new List<Node>(Owns.Values)`: a list that owns every element that comes in and destroys it when it falls out (RemoveAt, Remove,
                 // overwriting, Clear) - unless it is taken out with TakeAt (see Owns).
                 construct(any initial) {
-                    this.items = new class[8]
+                    this.items = new T[8]
                     this.count = 0
                     if (initial is of Owns) {
                         this.owns = initial
@@ -387,7 +387,7 @@ namespace fire.Standard
                 }
 
                 undefined Grow() {
-                    var newItems = new class[this.items.length * 2]
+                    var newItems = new T[this.items.length * 2]
                     var i = 0
                     while (i < this.count) {
                         newItems[i] = this.items[i]

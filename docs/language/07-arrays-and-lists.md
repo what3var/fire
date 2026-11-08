@@ -159,7 +159,9 @@ print(names[2])
 
 A list owns the objects that are handed over to `Add`: one made in the argument (`list.Add(new Item())`) or given with `take` (`list.Add(take item)`).
 An object that `Add` only gets a reference to (`list.Add(item)`) keeps its owner and dies with it (see [Ownership](13-ownership.md)). `List<int>` and `List<string>` are
-checked by the type checker: `list.Add("x")` on a `List<int>` is reported. `new List()` without a type argument takes everything.
+checked by the type checker: `list.Add("x")` on a `List<int>` is reported. `new List()` without a type argument takes everything. A `List<int>`,
+`List<float>`, `List<bool>` or `List<char>` keeps its elements in a typed array (like `int a[]`: raw numbers, natively 8 bytes or less each) - inside a
+generic class `new T[n]` makes such an array for the type argument it runs with.
 
 ## Dictionaries and sets: `Dictionary<K, V>`, `HashSet<T>`
 

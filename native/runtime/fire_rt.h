@@ -1232,7 +1232,9 @@ typedef struct Str {
 /* A type argument (`int`, `Dog`, `in cm`) of an object (`new Box<int>()`) or of a call of a generic method: what a declaration with that type parameter takes
  * (generated once per text, see DeclaredType of the VM). A number type argument also has its kind and the conversion into its unit (`int`: into no unit,
  * `int : cm`: into cm; null for `int : any`). */
-typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); } TArg;
+/* `arrElem`: the element type + 1 of a typed array for this type argument (`int`, `float`, `bool`, `char` without a unit: `new T[n]` of `List<int>` is
+ * raw, OpCode.TypeArrayOfParam); 0 for any other. */
+typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; } TArg;
 /* The type arguments of an object or a call, one per type parameter (null: not known); interned, never freed. */
 typedef const TArg* const* TArgs;
 
