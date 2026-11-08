@@ -137,9 +137,11 @@ enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_
 #endif
 #ifdef FIRE_INT32
 typedef int32_t FireInt;
+typedef uint32_t FireUInt;   /* (the arithmetic of the generator's scalar ints: it wraps like FIRE_INT_CUT) */
 #define FIRE_INT_UNDEF INT32_MIN   /* (an `undefined` element of a packed int array; a real INT32_MIN is marked in `real`) */
 #else
 typedef int64_t FireInt;
+typedef uint64_t FireUInt;
 #define FIRE_INT_UNDEF INT64_MIN
 #endif
 
