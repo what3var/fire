@@ -165,8 +165,11 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   kein Wert eines Enums: eine Konstante der Programmbreite (ohne Enum), eine Rechnung auf solchen Zahlen (`+ - * % & | # << >>`), ein Element eines
   typisierten int-Arrays oder eines Bytepuffers, `length`, ein Schnitt auf eine Breite (`ConvertWidth`: `int[8]`, `int[16]`, `int[32]` bis zur
   Programmbreite, ein Byte); `CutBit` - von der Programmbreite, aber vielleicht ein Enum-Wert: ein `int`-Parameter oder -Feld (jeder Weg hinein schneidet).
-  Zusammengeführt bleibt ein Merkmal nur, wo beide Seiten es haben. Ein Platz mit einer schmalen Zahl ohne Einheit, einem float ohne Einheit, einem
-  bool eines Vergleichs oder einem `word` lebt dann in seinem **Schatten** (`s0_n` ein `FireInt`, `s0_f` ein `Real`, `s0_b` ein `bool`, `s0_w` ein
+  Zusammengeführt bleibt ein Merkmal nur, wo beide Seiten es haben. Ein Platz mit einer schmalen Zahl, einem float, einem bool eines Vergleichs oder
+  einem `word` lebt dann in seinem **Schatten** (die **Einheit** ist statisch: sie steht im Typ, der Schatten hält die Zahl, ein Value entsteht als
+  `Int(x, unit)`/`Float(x, unit)`; die Regeln des typisierten Rechnens: `+ - %` bei gleicher Einheit, `*` wenn eine Seite keine hat, `/` durch eine Zahl
+  ohne Einheit, `+ -` zweier umrechenbarer Einheiten mit dem Faktor in die linke, Vergleiche bei gleicher Einheit, ein Byte und ein `word` lassen sie
+  fallen; `x++` zählt in der Einheit von x - die Schrittweite bekommt sie -, `CheckUnit` auf eine Zahl, die die Einheit schon hat, lässt den Platz, wie er ist) (`s0_n` ein `FireInt`, `s0_f` ein `Real`, `s0_b` ein `bool`, `s0_w` ein
   `FireWord`; `Flow.Scalar`): Konstanten, Laden
   skalarer Variablen, die Rechnungen und Vergleiche (auch gegen einen `int`-Parameter, der `undefined` sein kann: dessen Art wird geprüft, sonst
   entscheidet der allgemeine Vergleich), `JumpIfFalse`, die verschmolzenen `JumpIfNot*`, `ConvertWidth` und das Lesen aus Puffern arbeiten in C.
@@ -177,7 +180,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   (`FIRE_SCALAR_SHL/SHR`: eine Verschiebung um die volle Breite ist in C undefiniert), Wörter laufen an ihrer Breite über. Jede allgemeine Benutzung
   eines Platzes (`S(k)`) macht ihn vorher zum Value, ebenso jede Operation, die Skalare nicht kennt, jeder Sprung und jeder Übergang in ein Sprungziel:
   an einem Sprungziel ist nie ein Platz skalar (die Zustände werden mit UND zusammengeführt). **Variablen**, deren jede Speicherung eine schmale Zahl
-  ohne Einheit (ein float ohne Einheit, ein `word`) ist, sind C-Zahlen (kein Parameter, kein globaler, keine Variable eines Threads, nichts zeigt auf sie; in einer
+  (in ihrer Einheit; ein float, ein `word`) ist, sind C-Zahlen (kein Parameter, kein globaler, keine Variable eines Threads, nichts zeigt auf sie; in einer
   Funktion mit catch-Blöcken im Rahmen); `x += c` auf ihnen ist C. Nicht in Debug-Builds (der Debugger liest die Values) und nicht mit `#intwidth 16`.
   Gemessen auf dos16 (Open Watcom, `-Os`): eine Schleife `s = (s * 31 + i) % 1000003` mit `i < n` gegen den Parameter 1012 -> 334 Byte, eine
   Float-Schleife `a = a + x * x; x = x + 0.25` 1001 -> 351 Byte. Mit gcc `-O2` gleich schnell wie vorher (gcc hielt die Values schon in Registern).
