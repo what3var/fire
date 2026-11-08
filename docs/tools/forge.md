@@ -35,6 +35,7 @@ forge test All.firesln --filter MathTests
 | `-f 32\|64`, `-i 32\|64` | width of `float` / `int` (default: `#floatwidth` / `#intwidth` in the source, else 64) |
 | `--types lax\|strict` | type conflicts are warnings (lax, default) or errors ([types](../language/02-types.md#the-type-checker-lax-and-strict)) |
 | `--stripping 0-3`, `--keep-all` | how much a native build leaves out of what the program does not reach (3, all, is the default; `--keep-all` = 0) |
+| `--optimize speed\|size` | the direction of a native build: compiler flags and what the runtime embeds (before the project and `fire.native.json`; default: the target's - size for the Open Watcom targets) |
 | `--linkage source\|static\|shared\|plugin`, `--host <program>` | how libraries are linked; a plugin and the program it is for ([libraries](../libraries/README.md)) |
 | `--global-jobs safepoints\|sleep\|sync` | when the main program runs `fire global` jobs ([threads](../language/15-threads-and-actors.md)) |
 | `-D name` | defines a symbol for `#if` (repeatable) |

@@ -48,6 +48,9 @@ namespace fire.Compiler
         /// <summary>`"globalJobs"` of fire.native.json (a native build): used when neither the command line, the project nor `#globaljobs`/`#nosync` say anything.</summary>
         public GlobalJobsMode? GlobalJobsDefault { get; set; }
 
+        /// <summary>The direction of a native build (NativeBuilder.OptimizeOf): carried by the linked program for the generator.</summary>
+        public OptimizeFor Optimize { get; set; }
+
         /// <summary>The command line, then the project (`settings.globalJobs`); null: the source decides (`#globaljobs`, then <see cref="GlobalJobsDefault"/>).</summary>
         private GlobalJobsMode? ForcedGlobalJobs => ProcessGlobalJobs ?? GlobalJobsModes.Parse(Plan?.Settings?.GlobalJobs);
 
@@ -638,7 +641,7 @@ namespace fire.Compiler
                 graphicsNatives = natives.Names.Where(n => n.StartsWith("__GRPH", StringComparison.Ordinal)).OrderBy(natives.IndexOf).ToList();
                 (packageLibraryFiles ??= new List<string>()).Add(gfxLibrary);
             }
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, IntWidth = intWidth, WordWidth = target?.WordWidth ?? 64, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, IntWidth = intWidth, WordWidth = target?.WordWidth ?? 64, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, Optimize = Optimize, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
                 SourceHashes = SourceHashesOf(processedSources.Count - driverSources, sources).Concat(new string?[driverSources]).ToList(),
                 SourceModules = processedSources.Select((p, i) => i == 0 ? "core" : p.Module).ToList(), ModuleDeps = ModuleDependencies(processedSources),
                 SourceTextHashes = processedSources.Select(p => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(p.Source))).ToLowerInvariant()).ToList() };

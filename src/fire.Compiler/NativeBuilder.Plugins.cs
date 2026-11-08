@@ -82,7 +82,7 @@ namespace fire.Compiler
                 hostDir = Path.GetDirectoryName(file);
             }
             else if (dll) return Fail("A plugin for Windows is built for a program (--host <program>): its DLL imports from the DLLs of the program's libraries.");
-            var linked = new Linker { ClassMeta = true, BasePath = basePath, Engine = "native", ToolchainKind = toolchain.EffectiveKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { ClassMeta = true, BasePath = basePath, Engine = "native", ToolchainKind = toolchain.EffectiveKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue, Optimize = OptimizeOf(config, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             string name = plan?.Project.Name ?? Path.GetFileName(full);
             var watch = Stopwatch.StartNew();
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the plugin");

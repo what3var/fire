@@ -38,6 +38,21 @@ namespace fire.Native
         private bool _strippingFromTrim;
         /// <summary><see cref="Stripping"/> was given on the command line (`--stripping`, `--keep-all`): it goes before the project's setting. Not saved.</summary>
         [JsonIgnore] public bool StrippingFromCommandLine { get; set; }
+        /// <summary>The direction of the build (`"optimize"`: `speed` or `size`, OptimizeFor; docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"); null: the target's. The project and
+        /// `--optimize` go before it (`--optimize` before the project: <see cref="OptimizeFromCommandLine"/>).</summary>
+        public string? Optimize
+        {
+            get => _optimize;
+            set
+            {
+                if (value != null && OptimizeFors.Parse(value) == null)
+                    throw new NativeConfigException($"{FileName}: \"optimize\": '{value}' is not one of: {string.Join(", ", OptimizeFors.Names)}.");
+                _optimize = value;
+            }
+        }
+        private string? _optimize;
+        [JsonIgnore] public OptimizeFor? OptimizeValue => OptimizeFors.Parse(_optimize);
+        [JsonIgnore] public bool OptimizeFromCommandLine { get; set; }
         /// <summary>(`"stripping"` was given: it goes before `"trim"`, whatever comes first in the file)</summary>
         private bool StrippingExplicit => Stripping != null && !_strippingFromTrim;
         /// <summary>When the main program runs the `fire global` jobs by itself (`"globalJobs"`: `safepoints`, `sleep` or `sync`; docs/spec/THREADING_DESIGN.md section 7): the default of a
@@ -268,6 +283,8 @@ namespace fire.Native
         public int? IntWidth { get; set; }
         /// <summary>Width of `word`, the machine word (16, 32 or 64; default: the base target's - 64 on the desktop, 32 on esp32/freertos/wasm).</summary>
         public int? WordWidth { get; set; }
+        /// <summary>The direction a build for the target is optimised in by default: `speed` or `size` (OptimizeFor).</summary>
+        public string? Optimize { get; set; }
         /// <summary>Stack of a fire thread in bytes.</summary>
         public int? StackBytes { get; set; }
         /// <summary>The `#import` libraries that exist on the target; null: as the base.</summary>
@@ -327,6 +344,8 @@ namespace fire.Native
                 IntWidth = IntWidth ?? b.IntWidth,
                 WordWidth = WordWidth is null or 16 or 32 or 64 ? WordWidth ?? b.WordWidth : throw new NativeConfigException($"Target '{name}': \"wordWidth\" must be 16, 32 or 64, not {WordWidth}."),
                 DefaultStackBytes = StackBytes ?? b.DefaultStackBytes,
+                Optimize = Optimize == null ? b.Optimize : OptimizeFors.Parse(Optimize)
+                    ?? throw new NativeConfigException($"Target '{name}': \"optimize\" must be \"speed\" or \"size\", not \"{Optimize}\"."),
                 Imports = Imports ?? b.Imports,
                 IsEmbedded = Embedded ?? b.IsEmbedded,
                 DisplayName = DisplayName ?? (string.Equals(name, b.Name, StringComparison.OrdinalIgnoreCase) ? b.DisplayName : null),

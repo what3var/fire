@@ -13,7 +13,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Dos16 = new()
         {
             Name = "dos16", Symbols = new[] { "dos16", "dos" }, HalPackage = "dos16",
-            DisplayName = "DOS (16 bit, real mode)", Category = TargetCategory.Os, Toolchains = Watcom,
+            DisplayName = "DOS (16 bit, real mode)", Category = TargetCategory.Os, Toolchains = Watcom, Optimize = OptimizeFor.Size,
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
@@ -37,7 +37,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Dos32 = new()
         {
             Name = "dos32", Symbols = new[] { "dos32", "dos" }, HalPackage = "dos32",
-            DisplayName = "DOS (32 bit, DOS/32A)", Category = TargetCategory.Os, Toolchains = Watcom,
+            DisplayName = "DOS (32 bit, DOS/32A)", Category = TargetCategory.Os, Toolchains = Watcom, Optimize = OptimizeFor.Size,
             FloatWidth = 64, IntWidth = 64, WordWidth = 32, DefaultStackBytes = 65536,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
@@ -54,7 +54,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Win16 = new()
         {
             Name = "win16", Symbols = new[] { "win16", "windows3" }, HalPackage = "win16",
-            DisplayName = "Windows 3.x", Category = TargetCategory.Os, Toolchains = Watcom,
+            DisplayName = "Windows 3.x", Category = TargetCategory.Os, Toolchains = Watcom, Optimize = OptimizeFor.Size,
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
             Imports = new[] { NativeImports.Print, "io", "filesystem", "time", "random", "hash", "json", "compression", "graphics", "windows", "ui", "dialogs",
                 NativeImports.Reflection, NativeImports.Linq },
@@ -78,7 +78,7 @@ namespace fire.Runtime
         public static readonly TargetProfile Bios16 = new()
         {
             Name = "bios16", Symbols = new[] { "bios16", "bios" }, HalPackage = "bios16",
-            DisplayName = "BIOS16", Category = TargetCategory.Native, Toolchains = Watcom,
+            DisplayName = "BIOS16", Category = TargetCategory.Native, Toolchains = Watcom, Optimize = OptimizeFor.Size,
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
             Imports = new[] { NativeImports.Print, "time", "console", "machine", "graphics", "windows", NativeImports.Devices, NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget

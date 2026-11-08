@@ -2651,9 +2651,13 @@ FIRE_FN void destroyLeaf(Owned* o) {
 }
 
 /* Leaving a scope: destroys what it owns and lets go of the strings/arrays it created. */
-FIRE_FN void leave(OwnList* list) {
+FIRE_FN void leaveSlow(OwnList* list) {
     if (list->head) destroyList(list);
     if (g_pool.top > list->mark) poolRelease(list->mark);
+}
+/* (after nearly every statement - mostly with nothing to do: the test embedded, the work called) */
+FIRE_ALWAYS_INLINE FIRE_FN void leave(OwnList* list) {
+    if (FIRE_UNLIKELY(list->head != NULL) || FIRE_UNLIKELY(g_pool.top > list->mark)) leaveSlow(list);
 }
 
 /* The header of an object, an array or a buffer (null for any other value, and for an array or buffer that is already destroyed). */
@@ -4761,11 +4765,11 @@ FIRE_FN void arrSetReal(ArrTyped* t, uint32_t i, uint32_t length, bool real) {
     if (real) t->real[i >> 3] |= (uint8_t)(1u << (i & 7)); else t->real[i >> 3] &= (uint8_t)~(1u << (i & 7));
 }
 
-/* Element i of a packed array. */
-FIRE_FN Value arrPackedGet(const Arr* a, uint32_t i) {
+/* Element i of a packed array of the element `elem` (the generated code gives a constant: the switch folds - see arrPackedGet). */
+FIRE_ALWAYS_INLINE FIRE_FN Value arrPackedAt(const Arr* a, uint32_t i, uint8_t elem) {
     const ArrTyped* t = a->typed;
     uint32_t u = (t->flags & TU_UNIT) ? t->unit : 0;
-    switch (t->elem) {
+    switch (elem) {
         case E_I8: { int8_t x = ((const int8_t*)t->data)[i]; if (FIRE_LIKELY(x != INT8_MIN) || arrIsReal(t, i)) return Int(x, u); break; }
         case E_I16: { int16_t x = ((const int16_t*)t->data)[i]; if (FIRE_LIKELY(x != INT16_MIN) || arrIsReal(t, i)) return Int(x, u); break; }
         case E_I32: { int32_t x = ((const int32_t*)t->data)[i]; if (FIRE_LIKELY(x != INT32_MIN) || arrIsReal(t, i)) return Int(x, u); break; }
@@ -4794,6 +4798,8 @@ FIRE_FN Value arrPackedGet(const Arr* a, uint32_t i) {
     }
     return UndefU(u);   /* (`undefined` of an array with a unit carries it, like in the VM: it prints as `undefined:mm`) */
 }
+/* Element i of a packed array. */
+FIRE_FN Value arrPackedGet(const Arr* a, uint32_t i) { return arrPackedAt(a, i, a->typed->elem); }
 
 /* Element i of a packed array = `v` (converted already, see arrElemConvert). */
 FIRE_FN void arrPackedSet(Arr* a, uint32_t i, Value v) {
@@ -4896,10 +4902,19 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
 }
 
 /* OpCode.TypeArray: the array `v` (at depth `rank` its inner arrays) goes into a declaration of a typed array. False: the exception was thrown. */
+FIRE_COLD FIRE_FN bool typeArrayWrong(Value v, uint8_t elem) {
+    char text[160];
+    snprintf(text, sizeof text, "An array of %s is declared here, not %s.", arrElemName(elem), coerceKindName(v.kind));
+    fireError("ArgumentException", text);
+    return false;
+}
 FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
     Arr* a;
     char text[160];
-    if (v.kind != K_Array || !leafAlive(v) || depth > 64) return true;
+    if (v.kind == K_Undefined) return true;
+    /* (a declaration of a typed array holds an array or nothing - like `int x` holds an int) */
+    if (v.kind != K_Array) return typeArrayWrong(v, elem);
+    if (!leafAlive(v) || depth > 64) return true;
     a = arrOf(v);
     if (depth < rank) {
         uint32_t i;

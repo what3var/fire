@@ -70,6 +70,7 @@ The native build reads its settings from the nearest `fire.native.json` (in the 
   "target": "my-board",          // the default target; otherwise this machine
   "toolchain": "gcc",            // for targets that name none; otherwise the first compiler found
   "stripping": 3,                // how much is left out that the program does not reach: 0 "none" .. 3 "all" (default)
+  "optimize": "speed",           // the direction: "speed" or "size"; without it the target's
   "targets": {
     "my-board": {
       "extends": "freertos",     // a built-in target or another of this file; only what differs
@@ -87,18 +88,24 @@ The native build reads its settings from the nearest `fire.native.json` (in the 
 
 - **Target fields:** `extends`, `platform` (the platform layer: `windows`, `posix`, `esp32`, `freertos`, `wasm`), `platformPath` (your own), `includes`,
   `defines`, `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`, `supportsThreads`, `floatWidth`, `intWidth`,
-  `stackBytes`, `symbols` (for `#if`), `imports`, `embedded`, `toolchain`, `port`/`baud` (a board's serial port).
+  `stackBytes`, `symbols` (for `#if`), `imports`, `embedded`, `toolchain`, `port`/`baud` (a board's serial port), `optimize` (`speed` or `size`: the
+  direction a build for the target takes by default; the PC targets of Open Watcom - `dos16`, `dos32`, `win16`, `bios16` - are `size`, the others `speed`).
 - **Toolchains** (`kind`): `gcc`, `clang`, `msvc`, `tcc`, `emscripten`, `files` (writes the sources only; `layout: "idf-component"` adds the files of an
   ESP-IDF component, `buildCommand` runs afterwards), `custom` (`command` with `{cpp}`, `{dir}`, `{out}`, `{args}`, `{libs}`). Fields: `compiler`,
   `cCompiler`, `std`, `cStd`, `optimization` (`-O2`, or `"size"` for the small profile), `args`, `libs`, `includeDirs`, `strip` (default true).
-- A **project** can set `engine`, `target`, `toolchain`, `linkage`, `stripping`, `floatWidth`, `intWidth`, `defines` in its settings
+- A **project** can set `engine`, `target`, `toolchain`, `linkage`, `stripping`, `optimize`, `floatWidth`, `intWidth`, `defines` in its settings
   ([projects](../tools/projects.md)); the command line goes before both.
 
 ## Modes and size
 
 `-m DEBUG|RELEASE|PERFORMANCE`: a debug build has no optimisation, keeps everything and carries the debug agent (spark connects to it); release is
-the default; performance leaves out run-time checks. A native program is stripped of symbols; `"optimization": "size"` makes it smaller still. The
-generator leaves out what the program does not reach (`stripping`; names given to reflection as literals and `[Keep]` stay).
+the default; performance leaves out run-time checks. A native program is stripped of symbols. The generator leaves out what the program does not reach
+(`stripping`; names given to reflection as literals and `[Keep]` stay).
+
+**Optimize for speed or size** (`--optimize speed|size`, `"optimize"` in the project or in `fire.native.json`, else the target's): speed compiles with
+`-O2` (msvc `/O2`, Watcom `-Ot`; a toolchain's own flag such as `-O3` stays) and lets the runtime embed its small hot functions; size compiles with `-Os`
+and sections the linker drops when nothing uses them (msvc `/O1` and `/OPT:REF`, Watcom `-Os`) and embeds nothing beyond what the compiler chooses
+(`FIRE_OPTIMIZE_SIZE`). A Dictionary benchmark on Linux: 178 KB and 0.49 s for speed, 121 KB and 0.93 s for size.
 
 `linkage` builds the libraries once instead of with every build: [libraries](../libraries/README.md#binary-libraries-linkage).
 

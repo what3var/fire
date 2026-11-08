@@ -711,6 +711,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
   "target": "my-board",          // Standardziel; sonst dieser Rechner
   "toolchain": "gcc",            // Standard-Toolchain für Ziele ohne eigene; sonst die erste gefundene
   "stripping": 3,                // was wegfällt: 0 "none" .. 3 "all" (Standard), Zahl oder Name (siehe "Größe des Programms")
+  "optimize": "speed",           // die Richtung: "speed" oder "size"; ohne Angabe die des Ziels (siehe "Optimierungsrichtung")
   "globalJobs": "safepoints",    // wann das Hauptprogramm `fire global`-Aufträge abarbeitet: "safepoints" (Standard), "sleep", "sync" (THREADING_DESIGN.md 7)
   "targets": {
     "my-board": {
@@ -728,7 +729,7 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
 ```
 
 Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines` (`NAME` oder `NAME=WERT`), `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`,
-`supportsThreads`, `floatWidth`, `intWidth`, `wordWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+`supportsThreads`, `floatWidth`, `intWidth`, `wordWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`, `optimize`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
 `wordWidth` (16, 32 oder 64) ist die Breite von `word`, dem vorzeichenlosen Maschinenwort des Ziels (SPEC 8.10a); ohne Angabe die des Ziels, von dem es erbt: 64 Bit auf `windows`,
 `linux`, `macos`, 32 auf `esp32`, `freertos`, `wasm`. Das generierte C bekommt `#define FIRE_WORD_BITS N` (`#if word16|word32|word64`, `Word.Bits`); ein Wort ist ein Wert der Art
 `K_Word` (die Bits in `v.w`, oberhalb der Breite 0), ein Wortpuffer ein `Buf` mit `elem = sizeof(FireWord)` (`bufWords`, `allocBufOf`). **Schmales C:** wo der Generator ein Wort oder einen Puffer selbst gemacht hat (eine Umwandlung nach `word`, `byte a[n]`/`new byte[n]`, `word a[n]`/
@@ -750,6 +751,17 @@ Toolchains (`kind`): `gcc`, `clang`, `msvc` (Compiler, Standard, Optimierung, Ar
 Profil: gcc/clang `-Os -ffunction-sections -fdata-sections` und beim Linken `--gc-sections` (macOS `-dead_strip`), msvc `/O1 /Gy /Gw` und `/OPT:REF /OPT:ICF` (Beispiel 3D-Szene unter Linux:
 464 KB → 404 KB gestrippt → 285 KB mit `size`). Was der Generator gar nicht erst übersetzt, steht im folgenden Abschnitt. Der Editor kennt beides im Dialog „Toolchain Settings“
 (Toolchain: Optimization, Strip symbols).
+
+### Optimierungsrichtung (`--optimize speed|size`)
+
+Ein nativer Build hat eine Richtung (`OptimizeFor`): die Befehlszeile (`--optimize`), dann das Projekt (`settings.optimize`), dann `fire.native.json` (`"optimize"`), dann
+das Ziel (`TargetProfile.Optimize`, `"optimize"` eines Ziels in der Datei; die PC-Ziele von Open Watcom - `dos16`, `dos32`, `win16`, `bios16` - sind `size`, alle anderen
+`speed`). Sie bestimmt die **Flags des C-Compilers** (`NativeBuilder.WithDirection`): `size` ist das kleine Profil (gcc/clang `-Os` mit Sektionen, die der Linker
+wegwirft, msvc `/O1 /Gy /Gw` und `/OPT:REF`, Watcom `-Os`), `speed` das Flag der Toolchain (`-O2`, `/O2`; ein eigenes wie `-O3` bleibt; Watcom `-Ot`). Ein Debug-Build
+bleibt ohne Optimierung. Das Programm trägt sie (`LinkedProgram.Optimize`): bei `size` schreibt der Generator `#define FIRE_OPTIMIZE_SIZE 1`, und die Runtime bettet
+dann nichts über die Wahl des Compilers hinaus ein (`FIRE_ALWAYS_INLINE` ist leer; bei `speed` unter gcc/clang `always_inline` - z.B. `leave`, das nach fast jeder
+Anweisung läuft). Wo sich ein Umbau des Generators in eine der beiden Richtungen trimmen lässt, fragt er `_program.Optimize`. Gemessen (Dictionary-Benchmark, gcc,
+Linux): `speed` 178 KB und 0,49 s, `size` 121 KB und 0,93 s.
 
 ### Größe des Programms: was der Generator weglässt
 

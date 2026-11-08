@@ -396,6 +396,11 @@ namespace fire.Editor
             string? strippingInh = Level(InheritedOf(x => x.Stripping, null, out string strippingFrom));
             var stripping = Choice(new[] { ("0 none", "0"), ("1 protected", "1"), ("2 methods", "2"), ("3 all", "3") }, () => Level(s.Stripping), v => s.Stripping = v,
                 strippingInh, strippingFrom, "default: 3");
+            string defaultDirection;
+            try { defaultDirection = fire.Runtime.OptimizeFors.Name(_native.OptimizeValue ?? _native.ResolveTarget(s.Target ?? _inherited?.Target).Optimize); }
+            catch (fire.Native.NativeConfigException) { defaultDirection = "?"; }
+            var optimize = Choice(new[] { ("speed", "speed"), ("size", "size") }, () => s.Optimize?.ToLowerInvariant(), v => s.Optimize = v,
+                InheritedOf(x => x.Optimize, null, out string optimizeFrom), optimizeFrom, $"default: {defaultDirection}");
             return Page("Native & Toolchain", "The target a native build runs on and the C++ toolchain that compiles it. Used when General > Runs as is Native.",
                 Group("Target", Row("Target", target), Hint("The built-in targets and those of fire.native.json.")),
                 Group("Toolchain", Row("Toolchain", toolchain), Row("", edit)),
@@ -407,7 +412,10 @@ namespace fire.Editor
                     BoardFields.IdfStatus(fire.Projects.EditorSettings.Load().IdfPath)),
                 Group("Size", Row("Stripping", stripping),
                     Hint("What a native build leaves out of what the program does not reach: 0 nothing (like the VM), 1 private and protected members nothing uses, 2 also methods "
-                        + "nothing uses, 3 also classes the program never makes (the default). Names given as literals to reflection and [Keep] always stay; a debug build keeps everything.")),
+                        + "nothing uses, 3 also classes the program never makes (the default). Names given as literals to reflection and [Keep] always stay; a debug build keeps everything."),
+                    Row("Optimize for", optimize),
+                    Hint("The direction of a native build: speed (the C compiler's -O2, code embedded where it pays) or size (-Os, unused code dropped by the linker, nothing "
+                        + "embedded beyond what the compiler chooses). By default the target's: the PC targets of Open Watcom are built for size, the others for speed.")),
                 Group("Natives", natives));
         }
 

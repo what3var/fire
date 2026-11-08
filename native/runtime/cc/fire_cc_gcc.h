@@ -5,6 +5,12 @@
 #define FIRE_CC_NAME "gcc"
 #endif
 #define FIRE_COLD __attribute__((noinline, cold))
+/* (a small function the hot paths call everywhere: embedded even where the compiler would not) */
+#ifdef FIRE_OPTIMIZE_SIZE
+#define FIRE_ALWAYS_INLINE
+#else
+#define FIRE_ALWAYS_INLINE __attribute__((always_inline))
+#endif
 #define FIRE_UNUSED_LABEL __attribute__((unused))
 #define FIRE_MAYBE_UNUSED __attribute__((unused))
 #define FIRE_LIKELY(x) __builtin_expect(!!(x), 1)

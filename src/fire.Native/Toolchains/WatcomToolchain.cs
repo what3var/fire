@@ -13,7 +13,7 @@ namespace fire.Native
     {
         public string Kind => "watcom";
 
-        public ToolchainDef Default { get; } = new() { Kind = "watcom", Compiler = "owcc", CCompiler = "owcc", CStd = "c99", Optimization = "-Os" };
+        public ToolchainDef Default { get; } = new() { Kind = "watcom", Compiler = "owcc", CCompiler = "owcc", CStd = "c99" };   // (the direction - -Os or -Ot - comes from the build: the PC targets are optimised for size, TargetProfile.Optimize)
 
         public bool CompilesCpp => false;   // (the programs for these targets are C; packages with natives in C++ are not for them)
 

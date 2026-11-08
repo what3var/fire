@@ -6864,7 +6864,13 @@ namespace fire.Runtime
         /// does not fit, or an array of another element type.</summary>
         private bool TypeArrayValue(Value value, byte elemType, int rank, string? unit, int depth)
         {
-            if (value.Kind != ValueKind.Array) return true;
+            if (value.Kind == ValueKind.Undefined) return true;
+            if (value.Kind != ValueKind.Array)
+            {
+                // a declaration of a typed array holds an array or nothing - like `int x` holds an int (the same text natively)
+                ThrowArgumentError($"An array of {ArrayElem.Name(elemType)} is declared here, not {value.Kind}.");
+                return false;
+            }
             var array = value.AsArray();
             if (array.IsDestroyed || depth > 64) return true;   // (a destroyed array is reported where it is used)
             if (depth < rank)
