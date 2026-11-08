@@ -49,7 +49,7 @@ namespace fire.Runtime
 
         /// <summary>Windows 3.x (ROADMAP 13.7): Open Watcom (wcc, -bwindows), the huge model of the 16-bit protected mode as dos16 (arrays over 64 KB), the widths of
         /// dos16. The program starts in WinMain (std/fire_platform_win16.h) and calls the generated main; sleep keeps the messages flowing (the multitasking of
-        /// Windows 3.x is cooperative). No fire threads.</summary>
+        /// Windows 3.x is cooperative). fire threads are tasks of fire's own scheduler (std/sched/fire_ctx_win16.h: a stack segment each, -zu).</summary>
         public static readonly TargetProfile Win16 = new()
         {
             Name = "win16", Symbols = new[] { "win16", "windows3" }, HalPackage = "win16",
@@ -59,13 +59,13 @@ namespace fire.Runtime
                 NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
-                Platform = "win16", Toolchain = "watcom", SupportsThreads = false,
+                Platform = "win16", Toolchain = "watcom",
                 Entry = new EntryPoint { Name = "fire_win16_main" },
                 // (as dos16: the huge model linked with the C library of the large model - here the one of Windows; the 286 is the least Windows 3.x runs on;
                 // -zt=16: data from 16 bytes on gets far segments of its own - the stack and the small data share DGROUP, 64 KB, and the UI library has much of it;
                 // the stack of 32 KB is wlink's `option stack` - `-mstack-size` does not reach the header of a Windows program, which kept 8 KB: the layout of the UI
                 // overflowed it, and the check of the stack then waited in a message box nobody saw)
-                CompileArgs = new[] { "-bwindows", "-mcmodel=h", "-march=i286", "-Wc,-oe=20", "-Wc,-zt=16",
+                CompileArgs = new[] { "-bwindows", "-mcmodel=h", "-march=i286", "-Wc,-oe=20", "-Wc,-zt=16", "-Wc,-zu", "-fno-stack-check",
                     "-Wl,option", "-Wl,stack=32768", "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87", "-Wl,library", "-Wl,windows", "-Wl,library", "-Wl,shell" },
             },
         };

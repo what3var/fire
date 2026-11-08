@@ -7765,7 +7765,7 @@ packerTests:
         // the target wasm (WebAssembly in the browser, Emscripten)
         {
             bool known = TargetProfile.TryGet("wasm", out var wasm);
-            SfCheck(known && wasm!.Native.Platform == "wasm" && !wasm.Native.SupportsThreads && wasm.Native.Toolchain == "emscripten" && wasm.Symbols.Contains("browser") && wasm.Symbols.Contains("wasm"), "wasm: das Ziel gibt es (Plattform wasm, Toolchain emscripten, keine Threads, Symbole wasm und browser)");
+            SfCheck(known && wasm!.Native.Platform == "wasm" && wasm.Native.SupportsThreads && wasm.Native.Toolchain == "emscripten" && wasm.Symbols.Contains("browser") && wasm.Symbols.Contains("wasm"), "wasm: das Ziel gibt es (Plattform wasm, Toolchain emscripten, Threads ueber den eigenen Scheduler, Symbole wasm und browser)");
             var wasmCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm!, "p.cpp", sfDir, "p.html");
             SfCheck(wasmCmd.Executable.EndsWith("em++") && wasmCmd.Arguments.Contains("-fexceptions") && wasmCmd.Arguments.Contains("-sASYNCIFY") && wasmCmd.Arguments.Contains("-sSINGLE_FILE=1") && wasmCmd.Arguments.Contains("p.html"),
                 "wasm: der Aufruf von em++ (Ausnahmen, ASYNCIFY, eine Datei, Ausgabe .html)");
@@ -7810,6 +7810,28 @@ packerTests:
                     RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
                     Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
+                    // fire threads: tasks of fire's own scheduler on the fibers of Emscripten (std/sched/fire_ctx_emscripten.h)
+                    const string wasmThreads = """
+                        #import "time"
+                        var done = 0
+                        fire { var t = 0
+                          for (var i = 0; i < 200000; i++) { t = t + i }
+                          Sleep(20ms)
+                          sync global { done = t } }
+                        var n = 0
+                        while (done == 0) { n++; Sleep(1ms) }
+                        print("thread " + done + " " + (n > 0))
+                        """;
+                    string thrJs = EmBuild(wasmThreads, "pthr", out string thrLog);
+                    string thrOut = "";
+                    if (thrJs != "")
+                    {
+                        using var tn = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{thrJs}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                        tn.StandardError.ReadToEndAsync();
+                        thrOut = tn.StandardOutput.ReadToEnd().Replace("\r\n", "\n");
+                        tn.WaitForExit();
+                    }
+                    SfCheck(thrOut == "thread 19999900000 True\n", "wasm: ein fire-Thread (eigener Scheduler auf den Fibers von Emscripten), Sleep in Thread und Hauptprogramm, sync global" + (thrJs == "" ? "\n" + thrLog : "\n  node: " + thrOut));
                     // linkage "static" (ROADMAP 9): the modules as static libraries of Emscripten (emar), in a cache of their own; the same output
                     string? cacheBefore = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
                     Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", Path.Combine(wasmDir, "cache"));
@@ -28054,9 +28076,9 @@ else
                 // FIRE_STDOUT into a file (a Windows program has no console)
                 string? wine = fire.Native.ToolchainSetup.FindProgram("wine"), xvfbRunW = fire.Native.ToolchainSetup.FindProgram("xvfb-run");
                 var win16 = TargetProfile.Win16;
-                CheckNat("win16: Zielprofil (Plattform win16, Toolchain watcom, -bwindows, Einstieg ueber WinMain, int/float 32, word 16, keine Threads)",
+                CheckNat("win16: Zielprofil (Plattform win16, Toolchain watcom, -bwindows, Einstieg ueber WinMain, int/float 32, word 16, Threads ueber den eigenen Scheduler mit -zu)",
                     win16.Native.Platform == "win16" && win16.Native.Toolchain == "watcom" && win16.Native.CompileArgs.Contains("-bwindows") && win16.Native.Entry.Name == "fire_win16_main"
-                    && win16.IntWidth == 32 && win16.WordWidth == 16 && !win16.Native.SupportsThreads);
+                    && win16.IntWidth == 32 && win16.WordWidth == 16 && win16.Native.SupportsThreads && win16.Native.CompileArgs.Contains("-Wc,-zu"));
                 if (wine == null || xvfbRunW == null) Console.WriteLine("(win16: uebersprungen - wine (mit seinem 32-Bit-Teil) oder xvfb-run fehlen)");
                 else
                 {
@@ -28074,10 +28096,11 @@ else
                         string text = File.Exists(outFile) ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)\n" + run.Stdout + run.Stderr;
                         return (true, run.Exit == -1 ? text + "(Wine nach 2 Minuten beendet)" : text);
                     }
-                    string win16Source = dosSource.Substring(0, dosSource.IndexOf("var done = 0", StringComparison.Ordinal));
+                    // (the whole program of dos16, its fire thread included: fire's own scheduler, a stack segment per task - std/sched/fire_ctx_win16.h)
+                    string win16Source = dosSource;
                     string win16Vm = VmOf(win16Source, win16);
                     var w16Run = RunWin16(win16Source, "win16");
-                    CheckNat("win16: mit Open Watcom fuer Windows 3.x gebaut, unter Wine gelaufen - dieselbe Ausgabe wie die VM mit den Breiten von win16",
+                    CheckNat("win16: mit Open Watcom fuer Windows 3.x gebaut, unter Wine gelaufen - dieselbe Ausgabe wie die VM mit den Breiten von win16 (mit einem fire-Thread)",
                         w16Run.Ok && w16Run.Text == win16Vm && win16Vm.Length > 0, $"  VM:\n{win16Vm}\n  Wine:\n{w16Run.Text}");
                     const string win16Big = """
                         var big = new byte[3000000]

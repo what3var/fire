@@ -673,7 +673,11 @@ DOSBox-X mit den Programmen von dos16 (dieselbe Ausgabe wie die VM mit den Breit
 **`win16`** (Windows 3.x, ROADMAP 13.7): Open Watcom über `owcc -bwindows`, Huge Model, gelinkt mit der C-Bibliothek des Large Model für Windows
 (`clibl`, `math87l`, `emu87`, `windows`); der Treiber nimmt `h/win` in INCLUDE. Der Einstieg heißt `fire_win16_main` (`EntryPoint.Name`), `WinMain` in
 `std/fire_platform_win16.h` ruft ihn. Ausgabe: `FIRE_STDOUT` (eine Datei) oder ein Fenster am Ende. Achtung im Huge Model: `NULL` ist ein `__huge`-Zeiger -
-Handles (HWND, ...) mit 0 vergleichen, Zeiger an Windows mit `(LPCSTR)` / `FAR` übergeben. Getestet unter Wine. Der Stack (32 KB) kommt über `option stack=` von wlink in den
+Handles (HWND, ...) mit 0 vergleichen, Zeiger an Windows mit `(LPCSTR)` / `FAR` übergeben. Getestet unter Wine. fire-Threads: Aufgaben des eigenen Schedulers
+(`std/sched/fire_ctx_win16.h`): jede Aufgabe hat ein eigenes Stack-Segment (`GlobalAlloc`, Offset 0, die 16 Bytes Stack-Kopf von Windows bei SS:0), darum `-zu`
+und keine Stack-Prüfung; Windows und Wine rufen Fensterprozeduren mit DS = SS auf, die von fire laden ihr DGROUP selbst (`__loadds`); ohne Timer-Interrupt
+fragt jeder 256. Safepoint `GetTickCount` (Zeitscheibe 55 ms). **wasm**: dieselben Aufgaben auf den Fibers von Emscripten (`fire_ctx_emscripten.h`,
+über `FIRE_GREEN_THREADS` in `fire_platform_posix.h`); wartet jede Aufgabe, bekommt die Seite den Thread (`emscripten_sleep`). Der Stack (32 KB) kommt über `option stack=` von wlink in den
 NE-Header - `-mstack-size` erreicht ihn bei `-bwindows` nicht (es blieben 8 KB; ein Überlauf endet in einer Messagebox der Stack-Prüfung).
 
 **`bios16`** (ein PC ohne Betriebssystem im Real Mode, ROADMAP 13.5): dieselbe Runtime und dieselben Breiten wie dos16, aber kein DOS darunter. Der Treiber

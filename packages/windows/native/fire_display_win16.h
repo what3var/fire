@@ -75,7 +75,7 @@ static void fire_w16_mouse(FireDisplayWindow* w, int type, int button, LPARAM lp
 static int fire_w16_mods(void) {
     return ((GetKeyState(VK_SHIFT) & 0x8000) ? 0x1 : 0) | ((GetKeyState(VK_CONTROL) & 0x8000) ? 0x40 : 0) | ((GetKeyState(VK_MENU) & 0x8000) ? 0x100 : 0);
 }
-LRESULT CALLBACK __export fire_w16_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+LRESULT CALLBACK __export __loadds fire_w16_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     FireDisplayWindow* w = fire_w16_of(h);
     FireDisplayEvent e;
     if (w == NULL) return DefWindowProc(h, msg, wp, lp);

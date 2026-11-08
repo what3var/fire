@@ -636,7 +636,8 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Gemeinsam für `bios16`, `bios32` und `efi-x64`: eine kleine freistehende C-Bibliothek für die Runtime (Heap aus der Speicherkarte - E820 bzw. die der Firmware -,
    `snprintf`, Strings, Mathe, `setjmp`).
 7. **`win16`** - Windows 3.x (**umgesetzt**, Grundstock): Open Watcom `wcc -bwindows`, das Huge Model wie dos16 (Arrays über 64 KB), die Breiten von dos16,
-   keine fire-Threads. `std/fire_platform_win16.h`: das Programm beginnt in `WinMain` (Argumente aus der Befehlszeile, dann der erzeugte Einstieg
+   fire-Threads als Aufgaben des eigenen Schedulers (`std/sched/fire_ctx_win16.h`: ein Stack-Segment je Aufgabe über `GlobalAlloc` mit dem Stack-Kopf von
+   Windows, `-zu`, Fensterprozeduren mit `__loadds`, Zeitscheiben über `GetTickCount`; sie laufen, solange das Programm an der Reihe ist). `std/fire_platform_win16.h`: das Programm beginnt in `WinMain` (Argumente aus der Befehlszeile, dann der erzeugte Einstieg
    `fire_win16_main`), Uhr über `GetTickCount`, Schlafen hält die Nachrichten am Laufen (kooperatives Multitasking), die Ausgabe geht in die Datei aus
    `FIRE_STDOUT` oder wird am Ende in einem Fenster gezeigt. Das Paket `windows` hat `fire_display_win16.h`: ein eigenes Fenster über GDI (`StretchDIBits` in
    Bändern unter 64 KB, Palette als 8-Bit-DIB, RGBA als 24-Bit), Tasten aus `WM_KEYDOWN` (Scancode wie unter Win32), Text aus `WM_CHAR`, Maus, Größe, Schließen.

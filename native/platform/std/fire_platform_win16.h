@@ -6,7 +6,7 @@
  *   - Output: a Windows program has no console. With the environment variable FIRE_STDOUT standard output goes into that file (the tests); else into a file next
  *     to the program that a window of text shows as the program goes - each time it takes its messages (Sleep, Tick of a window), at most every 100 ms; at the end
  *     the window stays until it is closed (the program's name in its title; a program that writes nothing opens none).
- * No fire threads: Windows 3.x has one thread per program. */
+ * fire threads: tasks of fire's own scheduler (Windows 3.x has one thread per program; see FIRE_THREADS below). */
 #ifndef FIRE_PLATFORM_WIN16_H
 #define FIRE_PLATFORM_WIN16_H
 
@@ -47,7 +47,7 @@ static HWND g_win16OutWnd = 0, g_win16OutEdit = 0;
 static HINSTANCE g_win16Instance = 0;   /* (the windows of the display: their class belongs to the program's instance) */
 static char g_win16Path[144];
 
-LRESULT CALLBACK __export fire_win16_outProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+LRESULT CALLBACK __export __loadds fire_win16_outProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_SIZE: if (g_win16OutEdit != 0) MoveWindow(g_win16OutEdit, 0, 0, LOWORD(lp), HIWORD(lp), TRUE); return 0;
     case WM_SETFOCUS: if (g_win16OutEdit != 0) SetFocus(g_win16OutEdit); return 0;
@@ -118,13 +118,28 @@ static void fire_win16_pump(void) {
         DispatchMessage(&m);
     }
 }
-static inline void fire_plat_sleepMs(int64_t ms) {
+/* waiting for real: the messages keep flowing, the other programs of Windows get their turn */
+static void fire_win16_waitMs(int64_t ms) {
     int64_t end = fire_plat_nowMs() + ms;
     do {
         fire_win16_pump();
         Yield();
     } while (fire_plat_nowMs() < end);
 }
+
+#ifdef FIRE_THREADS
+/* fire threads are tasks of fire's own scheduler (std/fire_sched.h; ROADMAP 13.2b), as on DOS: switched at the safepoints and while waiting; the slices are
+ * measured with the clock of Windows (sched/fire_ctx_win16.h). They run while the program has the turn - Windows 3.x itself switches only between programs. */
+#ifndef FIRE_SCHED_STACK_BYTES
+#define FIRE_SCHED_STACK_BYTES 16384
+#endif
+#define FIRE_SCHED_IDLE(ms) fire_win16_waitMs(ms)
+#include "sched/fire_ctx_win16.h"
+#include "fire_sched.h"
+static inline void fire_plat_sleepMs(int64_t ms) { fire_sched_sleepMs(ms); }
+#else
+static inline void fire_plat_sleepMs(int64_t ms) { fire_win16_waitMs(ms); }
+#endif
 
 FIRE_NORETURN static inline void fire_plat_exit(int code) {
     exit(code);

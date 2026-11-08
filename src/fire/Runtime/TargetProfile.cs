@@ -127,13 +127,13 @@ namespace fire.Runtime
             },
         };
 
-        /// <summary>A program in the browser (WebAssembly, built with Emscripten): one thread (no fire threads), `Sleep` hands the thread back to the page, the window is the canvas of the page (SDL2 of
+        /// <summary>A program in the browser (WebAssembly, built with Emscripten): one thread (fire threads are tasks of fire's own scheduler on the fibers of Emscripten), `Sleep` hands the thread back to the page, the window is the canvas of the page (SDL2 of
         /// Emscripten), the files are in memory, there are no sockets. The result is a single `.html` file that opens as it is.</summary>
         public static readonly TargetProfile Wasm = new()
         {
             Name = "wasm", Symbols = new[] { "wasm", "browser" }, HalPackage = "wasm", WordWidth = 32,
             DisplayName = "WebAssembly (browser)", Category = TargetCategory.Os, Toolchains = new[] { "emscripten" },
-            Native = new NativeTarget { Platform = "wasm", SupportsThreads = false, Toolchain = "emscripten" },
+            Native = new NativeTarget { Platform = "wasm", Toolchain = "emscripten" },
         };
 
         /// <summary>The built-in targets: the desktop and the boards here, the old PCs (DOS, BIOS, UEFI, old Windows) in TargetProfile.Pc.cs - a family of targets

@@ -58,7 +58,8 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 }
 
 #ifdef FIRE_GREEN_THREADS
-/* the waiting of the scheduler when nobody can run: the real sleep */
+/* the waiting of the scheduler when nobody can run: the real sleep (a platform may wait its own way: the browser, FIRE_SCHED_IDLE before this header) */
+#ifndef FIRE_SCHED_IDLE
 static inline void fire_posix_idleMs(int64_t ms) {
     struct timespec t;
     t.tv_sec = (time_t)(ms / 1000);
@@ -66,7 +67,13 @@ static inline void fire_posix_idleMs(int64_t ms) {
     while (nanosleep(&t, &t) != 0) {}
 }
 #define FIRE_SCHED_IDLE(ms) fire_posix_idleMs(ms)
+#endif
+/* the switch of the context: ucontext, or the platform's (the browser: the fibers of Emscripten) */
+#ifdef FIRE_SCHED_CTX_HEADER
+#include FIRE_SCHED_CTX_HEADER
+#else
 #include "sched/fire_ctx_ucontext.h"
+#endif
 #include "fire_sched.h"
 static inline void fire_plat_sleepMs(int64_t ms) { fire_sched_sleepMs(ms); }
 #elif defined(FIRE_THREADS) || defined(FIRE_LIBRARY)

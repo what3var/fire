@@ -54,6 +54,11 @@ static fire_task* fire_sched_dead = NULL;   /* a finished task whose stack is fr
 #ifndef FIRE_SCHED_WANT_DECLARED   /* (a context that has a timer of its own declares it: the interrupt sets it) */
 static volatile int fire_sched_wantSwitch = 0;
 #endif
+/* the stack of a task: the platform may allocate it itself (Windows 3.x: a segment of its own with the header of a stack) */
+#ifndef FIRE_SCHED_STACK_ALLOC
+#define FIRE_SCHED_STACK_ALLOC(size) malloc(size)
+#define FIRE_SCHED_STACK_FREE(p) free(p)
+#endif
 #ifndef FIRE_SCHED_ON_FIRST_THREAD
 #define FIRE_SCHED_ON_FIRST_THREAD() ((void)0)   /* (DOS: the timer interrupt is installed then) */
 #endif
@@ -130,7 +135,7 @@ static inline void fire_sched_switch(void) {
     fire_sched_cur = next;
     fire_ctx_swap(&self->ctx, &next->ctx);
     /* (back here: this task runs again) */
-    if (fire_sched_dead) { free(fire_sched_dead->stack); free(fire_sched_dead); fire_sched_dead = NULL; }
+    if (fire_sched_dead) { FIRE_SCHED_STACK_FREE(fire_sched_dead->stack); free(fire_sched_dead); fire_sched_dead = NULL; }
 }
 
 /* Gives the turn to the others (at a safepoint, or when a timer asked for it): the running task goes to the end of the queue. */
@@ -209,7 +214,7 @@ static inline fire_thread* fire_thread_start(fire_thread_fn fn, void* arg, uint3
     size_t size = stackBytes ? stackBytes : FIRE_SCHED_STACK_BYTES;
     fire_sched_self();
     FIRE_SCHED_ON_FIRST_THREAD();
-    if (!t || !k || !(k->stack = malloc(size))) { fputs("fire runtime error: Out of memory (the stack of a thread).\n", stderr); exit(1); }
+    if (!t || !k || !(k->stack = FIRE_SCHED_STACK_ALLOC(size))) { fputs("fire runtime error: Out of memory (the stack of a thread).\n", stderr); exit(1); }
     k->fn = fn;
     k->arg = arg;
     k->wakeAt = -1;
@@ -225,7 +230,7 @@ static inline void fire_thread_join(fire_thread* t) {
         k->joiner = self;
         fire_sched_switch();   /* (the end of k wakes it: fire_sched_entry) */
     }
-    if (k != fire_sched_cur) { if (fire_sched_dead == k) fire_sched_dead = NULL; free(k->stack); free(k); }
+    if (k != fire_sched_cur) { if (fire_sched_dead == k) fire_sched_dead = NULL; FIRE_SCHED_STACK_FREE(k->stack); free(k); }
     free(t);
 }
 
@@ -247,6 +252,10 @@ static inline int fire_sched_wanted(void) { return fire_sched_wantSwitch; }
 #undef FIRE_PLAT_YIELD
 #undef FIRE_PLAT_PREEMPTED
 #define FIRE_PLAT_YIELD() fire_sched_yield()
+#ifdef FIRE_SCHED_PREEMPTED
+#define FIRE_PLAT_PREEMPTED() FIRE_SCHED_PREEMPTED()   /* (a platform without a timer interrupt asks its clock) */
+#else
 #define FIRE_PLAT_PREEMPTED() fire_sched_wantSwitch
+#endif
 
 #endif
