@@ -147,6 +147,15 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   legt der Generator das gepackte Array gleich an (`newTypedArray`, wie bei `int a[] = new int[n]`) statt erst ein Array von Werten umzuwandeln - das
   hätte die 16 Byte je Element zusätzlich zu den gepackten Zahlen behalten. Gemessen (200 000 Einträge `Dictionary<int, int>`, 1,5 Mio. Abfragen,
   `HashSet<int>`): 18 statt 39 MB, etwas schneller.
+* **Typisierte Arrays im Generator** (Ebene 2, Stufe 1): `TypeArray` lässt nur ein Array oder `undefined` durch (VM und Runtime: "An array of int is
+  declared here, not String."). Danach kennt der Generator den Wert als `KindArr` (sein Element als "unit"; nach `newTypedArray` sicher ein Array, nach
+  `TypeArray` ein Array oder `undefined`) - auch über Variablen, deren Speicherungen alle so typisiert sind (`int b[] = this.buckets`). Mit der Richtung
+  `speed` liest er ein Element von `int`/`float`/`bool` an Ort und Stelle (`arrPackedAt` mit festem Element: eine Ladung) und kennt dessen Art (oder
+  `undefined`, das die geschützten Schnellwege der Arithmetik prüfen), schreibt ein `int`/`bool` an Ort und Stelle (ohne Threads: `aset_g` betritt sonst
+  einen Abschnitt) und liest `length` direkt; sonst, bei einem zerstörten Array, einem Index außerhalb oder `size`, der allgemeine Zugriff. Ein `TypeArray`
+  auf einen Platz, der schon so typisiert ist, entfällt; sonst prüft `typeArray` eingebettet zuerst, ob das Array den Typ schon hat. Felder (`this.hashes`)
+  gelten noch nicht als bekannt: Reflection und JSON setzen sie ohne `TypeArray`. Gemessen (Dictionary-Benchmark wie oben, `__HashTable.Find`/`Insert`
+  über typisierte Locals): 4,34 -> 3,62 Mrd. Instruktionen, 0,46 -> 0,32 s gegenüber dem Stand vor den typisierten Tabellen, 39 -> 18 MB.
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
