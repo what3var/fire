@@ -3,8 +3,8 @@
  *
  * This file is the one implementation, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine runs it in a shared library built from it
  * (native/abi/fire_pkg_abi.h). The renderer itself is s3d_engine.h (plain C; the software renderer) with its hardware backend s3d_gpu_vk.h (Vulkan, loaded when it is first asked for).
- * Meshes, textures and frames (the depth buffer of a camera) live here and are used by handle; the pixels are a byte buffer of the fire program (the camera copies it into its framebuffer
- * with `WriteBytes`). */
+ * Meshes, textures and the scene itself (objects, lights, cameras, materials, scenes: "items") live here and are used by handle - the fire classes are thin, their properties read
+ * and write the items, and `Render` draws a scene in one call. The pixels are a byte buffer of the fire program (the camera copies it into its framebuffer with `WriteBytes`). */
 #ifndef FIRE_BRIDGE_SCENE3D_H
 #define FIRE_BRIDGE_SCENE3D_H
 
@@ -19,7 +19,7 @@
 
 /* ---- the tables: slot 0 is never used (handle 0 is "none"), a free slot is used again ---- */
 typedef struct FireS3dTable { void** items; s3d_size count, cap; } FireS3dTable;
-static FireS3dTable g_s3dMeshes, g_s3dTextures, g_s3dFrames;
+static FireS3dTable g_s3dMeshes, g_s3dTextures;
 
 static void* fire_s3d_find(FireS3dTable* t, Value h) {
     int64_t i = h.i;
@@ -41,15 +41,6 @@ static int64_t fire_s3d_add(FireS3dTable* t, void* item) {
     if (!S3D_GROW(t->items, t->cap, t->count + 1)) return 0;
     t->items[t->count] = item;
     return (int64_t)t->count++;
-}
-
-static void fire_s3d_reset(void) {
-    s3d_size i;
-    for (i = 1; i < g_s3dFrames.count; i++) s3d_frameFree((S3dFrame*)g_s3dFrames.items[i]);
-    for (i = 1; i < g_s3dMeshes.count; i++) s3d_meshFree((S3dMesh*)g_s3dMeshes.items[i]);
-    for (i = 1; i < g_s3dTextures.count; i++) s3d_texFree((S3dTexture*)g_s3dTextures.items[i]);
-    g_s3dFrames.count = g_s3dMeshes.count = g_s3dTextures.count = 0;
-    s3d_gpu_shutdown();
 }
 
 static float fire_s3d_F(Value v) { return (float)toR(v); }
@@ -112,17 +103,6 @@ static Value fire_s3d_MeshFromObj(Value text) {
     return m ? fire_s3d_meshHandle(m) : Int(0);
 }
 
-/* The pitch and yaw (radians, an array of two floats) of a camera at (fx, fy, fz) that looks at (tx, ty, tz). */
-static Value fire_s3d_LookAt(Value fx, Value fy, Value fz, Value tx, Value ty, Value tz, OwnList* list) {
-    float rx, ry;
-    Arr* a;
-    s3d_lookAngles(s3d_v3(fire_s3d_F(fx), fire_s3d_F(fy), fire_s3d_F(fz)), s3d_v3(fire_s3d_F(tx), fire_s3d_F(ty), fire_s3d_F(tz)), &rx, &ry);
-    a = allocArr(2, list);
-    arrItems(a)[0] = Float((Real)rx);
-    arrItems(a)[1] = Float((Real)ry);
-    return ArrV(a);
-}
-
 /* Another user of the mesh (an object that shares the mesh of a model): the mesh lives until every user has released it. */
 static Value fire_s3d_MeshRetain(Value h) {
     S3dMesh* m = (S3dMesh*)fire_s3d_find(&g_s3dMeshes, h);
@@ -136,17 +116,6 @@ static Value fire_s3d_MeshFree(Value h) {
     return Bool(true);
 }
 
-/* min x, y, z and max x, y, z of the mesh (an array of six floats). */
-static Value fire_s3d_MeshBounds(Value h, OwnList* list) {
-    S3dMesh* m = (S3dMesh*)fire_s3d_find(&g_s3dMeshes, h);
-    Arr* a = allocArr(6, list);
-    float v[6] = {0, 0, 0, 0, 0, 0};
-    int i;
-    if (m) { v[0] = m->bmin.x; v[1] = m->bmin.y; v[2] = m->bmin.z; v[3] = m->bmax.x; v[4] = m->bmax.y; v[5] = m->bmax.z; }
-    for (i = 0; i < 6; i++) arrItems(a)[i] = Float((Real)v[i]);
-    return ArrV(a);
-}
-
 static Value fire_s3d_MeshTriangleCount(Value h) {
     S3dMesh* m = (S3dMesh*)fire_s3d_find(&g_s3dMeshes, h);
     return Int(m ? (int64_t)(m->idxN / 3) : 0);
@@ -155,6 +124,8 @@ static Value fire_s3d_MeshTriangleCount(Value h) {
 static Value fire_s3d_texHandle(S3dTexture* t) {
     int64_t h;
     s3d_texPrepare(t);
+    t->refs = 1;
+    t->strength = 1.0f;
     h = fire_s3d_add(&g_s3dTextures, t);
     if (h == 0) s3d_texFree(t);
     return Int(h);
@@ -223,152 +194,437 @@ static Value fire_s3d_TexBumpClear(Value h) {
     return Bool(true);
 }
 
-static Value fire_s3d_TexFree(Value h) {
+/* A user of the texture lets go of it (its fire object, or an object that showed it): it goes with the last one. */
+static void fire_s3d_texRelease(int64_t h) {
+    S3dTexture* t = h > 0 && (s3d_size)h < g_s3dTextures.count ? (S3dTexture*)g_s3dTextures.items[h] : NULL;
+    if (t && --t->refs <= 0) { s3d_texFree(t); g_s3dTextures.items[h] = NULL; }
+}
+static Value fire_s3d_TexFree(Value h) { fire_s3d_texRelease(h.i); return Bool(true); }
+
+/* Whether the texture has a bump map; its strength (Texture.BumpStrength). */
+static Value fire_s3d_TexHasBump(Value h) {
     S3dTexture* t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
-    if (t) { s3d_texFree(t); g_s3dTextures.items[h.i] = NULL; }
-    return Bool(true);
+    return Bool(t != NULL && t->bump != NULL);
+}
+static Value fire_s3d_TexStrength(Value h) {
+    S3dTexture* t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
+    return Float(t ? (Real)t->strength : (Real)1);
+}
+static Value fire_s3d_TexSetStrength(Value h, Value v) {
+    S3dTexture* t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
+    if (t) t->strength = (float)toR(v);
+    return Bool(t != NULL);
 }
 
-static Value fire_s3d_FrameNew(Value width, Value height) {
-    S3dFrame* f;
+/* ---- the scene: objects, lights, cameras, materials and scenes live here as items (the fire objects hold their handles) --------------------------------------------------------
+ * An item is a block of numbers (`f`: floats, `n`: integers and flags; the slots are listed below and in the prelude) and what its kind needs besides. The properties of the fire
+ * classes read and write the slots; Render draws a scene in one call: the objects, lights and settings are taken from here, nothing is put together in fire for every picture.
+ * An item lives while someone uses it: its fire object (until its destructor: FIRE_S3D_ITEM_ALIVE is cleared, a scene skips it), the scenes it is in, the objects that use a
+ * material. A mesh and a texture are counted the same way (an object that shows them is a user). */
+enum { FIRE_S3D_OBJECT = 1, FIRE_S3D_LIGHT = 2, FIRE_S3D_CAMERA = 3, FIRE_S3D_SCENE = 4, FIRE_S3D_MATERIAL = 5 };
+#define FIRE_S3D_FLOATS 19
+#define FIRE_S3D_INTS 8
+
+/* object: f = x, y, z, rotation x, y, z, scale x, y, z, anchor x, y, z, texture x, y, width, height, rotation, opacity, alpha cutoff;
+ *         n = colour, visible, two sided, lit, casts shadows, receives shadows, layers, billboard */
+enum { OF_PX = 0, OF_RX = 3, OF_SX = 6, OF_AX = 9, OF_TX = 12, OF_TY, OF_TW, OF_TH, OF_TROT, OF_OPACITY, OF_CUTOFF };
+enum { ON_COLOR = 0, ON_VISIBLE, ON_TWOSIDED, ON_LIT, ON_CAST, ON_RECEIVE, ON_LAYERS, ON_BILLBOARD };
+/* light: f = intensity, x, y, z, direction x, y, z, range; n = kind, colour, enabled, casts shadows, layers */
+enum { LF_INTENSITY = 0, LF_X, LF_Y, LF_Z, LF_DX, LF_DY, LF_DZ, LF_RANGE };
+enum { LN_KIND = 0, LN_COLOR, LN_ENABLED, LN_CAST, LN_LAYERS };
+/* camera: f = x, y, z, rotation x, y, z, field of view, near, far; n = background, direct drawing */
+enum { CF_X = 0, CF_RX = 3, CF_FOV = 6, CF_NEAR, CF_FAR };
+enum { CN_BACKGROUND = 0, CN_DIRECT };
+/* scene: f = ambient intensity; n = ambient colour, shadows, shadow resolution, threads, renderer */
+enum { SN_AMBIENT = 0, SN_SHADOWS, SN_SHADOWRES, SN_THREADS, SN_RENDERER };
+/* material: f = specular, shininess; n = smooth, two sided, emissive */
+enum { MN_SMOOTH = 0, MN_TWOSIDED, MN_EMISSIVE };
+
+typedef struct FireS3dItem {
+    int kind, refs, alive;
+    Real f[FIRE_S3D_FLOATS];
+    int64_t n[FIRE_S3D_INTS];
+    int64_t mesh, tex, mat;          /* object: the handles it uses (it is one of their users) */
+    S3dMesh* tris; int trisDirty;    /* object: the triangles of AddTriangle (made into its mesh when it is needed) */
+    S3dFrame* frame; int directOn;   /* camera: its depth buffer and queue; whether it draws straight into the windows */
+    int64_t* objects; s3d_size objectN, objectCap;   /* scene: its objects and lights, in the order they were added */
+    int64_t* lights; s3d_size lightN, lightCap;
+} FireS3dItem;
+static FireS3dTable g_s3dItems;
+
+static FireS3dItem* fire_s3d_itemAt(int64_t h, int kind) {
+    FireS3dItem* it = h > 0 && (s3d_size)h < g_s3dItems.count ? (FireS3dItem*)g_s3dItems.items[h] : NULL;
+    return it && (kind == 0 || it->kind == kind) ? it : NULL;
+}
+static void fire_s3d_meshRelease(int64_t h) {
+    S3dMesh* m = h > 0 && (s3d_size)h < g_s3dMeshes.count ? (S3dMesh*)g_s3dMeshes.items[h] : NULL;
+    if (m && --m->refs <= 0) { s3d_meshFree(m); g_s3dMeshes.items[h] = NULL; }
+}
+static void fire_s3d_itemRelease(int64_t h);
+static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
+    s3d_size i;
+    g_s3dItems.items[h] = NULL;
+    fire_s3d_meshRelease(it->mesh);
+    fire_s3d_texRelease(it->tex);
+    if (it->mat) fire_s3d_itemRelease(it->mat);
+    if (it->tris) s3d_meshFree(it->tris);
+    if (it->frame) s3d_frameFree(it->frame);
+    for (i = 0; i < it->objectN; i++) fire_s3d_itemRelease(it->objects[i]);
+    for (i = 0; i < it->lightN; i++) fire_s3d_itemRelease(it->lights[i]);
+    S3D_FREE(it->objects); S3D_FREE(it->lights);
+    S3D_FREE(it);
+}
+static void fire_s3d_itemRelease(int64_t h) {
+    FireS3dItem* it = fire_s3d_itemAt(h, 0);
+    if (it && --it->refs <= 0) fire_s3d_itemDestroy(h, it);
+}
+
+/* A new item of a kind (FIRE_S3D_*) with the defaults of its fire class; 0 when the memory is gone. */
+static Value fire_s3d_New(Value kind) {
+    FireS3dItem* it;
     int64_t h;
-    if (width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(0);
-    f = s3d_frameNew((int)width.i, (int)height.i);
-    h = fire_s3d_add(&g_s3dFrames, f);
-    if (h == 0) s3d_frameFree(f);
+    if (kind.i < FIRE_S3D_OBJECT || kind.i > FIRE_S3D_MATERIAL) return Int(0);
+    it = (FireS3dItem*)s3d_calloc(1, sizeof(FireS3dItem));
+    if (it == NULL) return Int(0);
+    it->kind = (int)kind.i; it->refs = 1; it->alive = 1;
+    switch (it->kind) {
+        case FIRE_S3D_OBJECT:
+            it->f[OF_SX] = it->f[OF_SX + 1] = it->f[OF_SX + 2] = 1;
+            it->f[OF_AX] = it->f[OF_AX + 1] = it->f[OF_AX + 2] = (Real)0.5;
+            it->f[OF_OPACITY] = 1;
+            it->n[ON_COLOR] = 4291611852LL; it->n[ON_VISIBLE] = 1; it->n[ON_LIT] = 1; it->n[ON_CAST] = 1; it->n[ON_RECEIVE] = 1; it->n[ON_LAYERS] = 16777215;
+            break;
+        case FIRE_S3D_LIGHT:
+            it->f[LF_INTENSITY] = 1; it->f[LF_Y] = 2; it->f[LF_DX] = (Real)-0.5; it->f[LF_DY] = -1; it->f[LF_DZ] = (Real)-0.5; it->f[LF_RANGE] = 10;
+            it->n[LN_KIND] = S3D_LIGHT_POINT; it->n[LN_COLOR] = 4294967295LL; it->n[LN_ENABLED] = 1; it->n[LN_CAST] = 1; it->n[LN_LAYERS] = 16777215;
+            break;
+        case FIRE_S3D_CAMERA:
+            it->f[CF_FOV] = (Real)1.0471975511965976; it->f[CF_NEAR] = (Real)0.1; it->f[CF_FAR] = 500;
+            it->n[CN_BACKGROUND] = 4282198552LL;
+            break;
+        case FIRE_S3D_SCENE:
+            it->f[0] = (Real)0.25;
+            it->n[SN_AMBIENT] = 4294967295LL; it->n[SN_SHADOWS] = 1; it->n[SN_SHADOWRES] = 1024;
+            break;
+        default:   /* material */
+            it->f[1] = 32; it->n[MN_SMOOTH] = 1;
+            break;
+    }
+    h = fire_s3d_add(&g_s3dItems, it);
+    if (h == 0) S3D_FREE(it);
     return Int(h);
 }
 
-static Value fire_s3d_FrameFree(Value h) {
-    S3dFrame* f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, h);
-    if (f) { s3d_frameFree(f); g_s3dFrames.items[h.i] = NULL; }
+/* The fire object is gone: the item is no longer drawn, and it goes when nobody else uses it. */
+static Value fire_s3d_Free(Value h) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
+    if (it) { it->alive = 0; fire_s3d_itemRelease(h.i); }
     return Bool(true);
 }
 
-/* Fills the pixels with `color` (0xAABBGGRR) and clears the depth buffer; `width`/`height` give the new size of the frame (the buffer must hold width * height * 4 bytes). */
-static Value fire_s3d_FrameClear(Value h, Value buffer, Value width, Value height, Value color) {
-    S3dFrame* f;
-    Buf* b = bufferArg(buffer, "Scene3D.Camera.Render");
-    if (b == NULL) return Undef();
-    f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, h);
-    if (!f || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Bool(false);
-    if ((s3d_size)b->length < (s3d_size)width.i * (s3d_size)height.i * 4) return Bool(false);
-    if (f->w != width.i || f->h != height.i) { if (!s3d_frameResize(f, (int)width.i, (int)height.i)) return Bool(false); }
-    else s3d_frameClearDepth(f);
-    f->clearColor = (uint32_t)color.i;
-    s3d_clearPixels(b->data, (int)width.i, (int)height.i, (uint32_t)color.i);
+static Value fire_s3d_GetF(Value h, Value slot) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
+    return Float(it && slot.i >= 0 && slot.i < FIRE_S3D_FLOATS ? it->f[slot.i] : (Real)0);
+}
+static Value fire_s3d_SetF(Value h, Value slot, Value v) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
+    if (!it || slot.i < 0 || slot.i >= FIRE_S3D_FLOATS) return Bool(false);
+    it->f[slot.i] = toR(v);
+    return Bool(true);
+}
+/* Three slots at once (a position, a rotation, ...); `add`: added to them. */
+static Value fire_s3d_SetF3(Value h, Value slot, Value x, Value y, Value z, Value add) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
+    if (!it || slot.i < 0 || slot.i + 3 > FIRE_S3D_FLOATS) return Bool(false);
+    if (add.i) { it->f[slot.i] = it->f[slot.i] + toR(x); it->f[slot.i + 1] = it->f[slot.i + 1] + toR(y); it->f[slot.i + 2] = it->f[slot.i + 2] + toR(z); }
+    else { it->f[slot.i] = toR(x); it->f[slot.i + 1] = toR(y); it->f[slot.i + 2] = toR(z); }
+    return Bool(true);
+}
+static Value fire_s3d_GetI(Value h, Value slot) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
+    return Int(it && slot.i >= 0 && slot.i < FIRE_S3D_INTS ? it->n[slot.i] : 0);
+}
+static Value fire_s3d_GetB(Value h, Value slot) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
+    return Bool(it && slot.i >= 0 && slot.i < FIRE_S3D_INTS && it->n[slot.i] != 0);
+}
+static Value fire_s3d_SetI(Value h, Value slot, Value v) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
+    if (!it || slot.i < 0 || slot.i >= FIRE_S3D_INTS) return Bool(false);
+    it->n[slot.i] = v.kind == K_Float ? (int64_t)v.f : v.kind == K_Bool ? (v.i ? 1 : 0) : v.i;
     return Bool(true);
 }
 
-/* The layout of the arrays: see Object.Parameters, Light.Parameters and Scene.Settings in the prelude. */
-#define FIRE_S3D_OBJECT_PARAMS 36
-#define FIRE_S3D_CAMERA_PARAMS 9
-#define FIRE_S3D_LIGHT_PARAMS 14
-#define FIRE_S3D_SETTING_PARAMS 3   /* (a fourth, the renderer, is optional) */
-
-static S3dCamera fire_s3d_cameraOf(Arr* c) {
-    S3dCamera cp;
-    Value* v = arrItems(c);
-    cp.pos = s3d_v3(fire_s3d_F(v[0]), fire_s3d_F(v[1]), fire_s3d_F(v[2]));
-    cp.rx = fire_s3d_F(v[3]); cp.ry = fire_s3d_F(v[4]); cp.rz = fire_s3d_F(v[5]);
-    cp.fovY = fire_s3d_F(v[6]); cp.nearPlane = fire_s3d_F(v[7]); cp.farPlane = fire_s3d_F(v[8]);
-    return cp;
+/* ---- objects ---- */
+/* The mesh of an object: it becomes one of the mesh's users (0: none). */
+static Value fire_s3d_ObjMesh(Value h, Value mesh) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dMesh* m = mesh.i > 0 ? (S3dMesh*)fire_s3d_find(&g_s3dMeshes, mesh) : NULL;
+    if (!it || (mesh.i > 0 && !m)) return Bool(false);
+    if (m) m->refs++;
+    fire_s3d_meshRelease(it->mesh);
+    it->mesh = m ? mesh.i : 0;
+    return Bool(true);
+}
+static Value fire_s3d_ObjTexture(Value h, Value tex) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dTexture* t = tex.i > 0 ? (S3dTexture*)fire_s3d_find(&g_s3dTextures, tex) : NULL;
+    if (!it) return Bool(false);
+    if (t) t->refs++;
+    fire_s3d_texRelease(it->tex);
+    it->tex = t ? tex.i : 0;
+    return Bool(true);
+}
+static Value fire_s3d_ObjMaterial(Value h, Value mat) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    FireS3dItem* m = fire_s3d_itemAt(mat.i, FIRE_S3D_MATERIAL);
+    if (!it) return Bool(false);
+    if (m) m->refs++;
+    if (it->mat) fire_s3d_itemRelease(it->mat);
+    it->mat = m ? mat.i : 0;
+    return Bool(true);
 }
 
-/* Queues a mesh for the frame (nothing is drawn until `Flush`): `object` has FIRE_S3D_OBJECT_PARAMS floats, `camera` FIRE_S3D_CAMERA_PARAMS. false on bad handles or arrays. */
-static Value fire_s3d_Draw(Value frame, Value mesh, Value texture, Value object, Value camera) {
-    S3dFrame* f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, frame);
-    S3dMesh* m = (S3dMesh*)fire_s3d_find(&g_s3dMeshes, mesh);
-    S3dTexture* tex;
-    Arr *o, *c;
+/* The triangles of AddTriangle become the mesh of the object (when they changed). */
+static S3dMesh* fire_s3d_objMesh(FireS3dItem* it) {
+    if (it->trisDirty && it->tris) {
+        S3dMesh* src = it->tris;
+        S3dMesh* m = s3d_meshNew();
+        int64_t h;
+        it->trisDirty = 0;
+        if (m == NULL || !S3D_GROW(m->pos, m->posCap, src->posN) || !S3D_GROW(m->uv, m->uvCap, src->uvN) || !S3D_GROW(m->idx, m->idxCap, src->idxN)) { s3d_meshFree(m); return NULL; }
+        S3D_COPY(m->pos, src->pos, src->posN * sizeof(float)); m->posN = src->posN;
+        S3D_COPY(m->uv, src->uv, src->uvN * sizeof(float)); m->uvN = src->uvN;
+        S3D_COPY(m->idx, src->idx, src->idxN * sizeof(uint32_t)); m->idxN = src->idxN;
+        if (!s3d_meshFinish(m)) { s3d_meshFree(m); return NULL; }
+        h = fire_s3d_add(&g_s3dMeshes, m);
+        if (h == 0) { s3d_meshFree(m); return NULL; }
+        fire_s3d_meshRelease(it->mesh);
+        it->mesh = h;
+    }
+    return it->mesh > 0 ? (S3dMesh*)g_s3dMeshes.items[it->mesh] : NULL;
+}
+
+/* A triangle of an empty object (meters; counter clockwise seen from outside): a corner at a time, every third one closes a triangle. */
+static Value fire_s3d_ObjCorner(Value h, Value x, Value y, Value z) {
+    static const float uv[6] = { 0, 1, 1, 1, 0, 0 };
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dMesh* m;
+    s3d_size k;
+    if (!it || (it->mesh != 0 && it->tris == NULL)) return Bool(false);   /* (only an empty object takes triangles) */
+    if (it->tris == NULL && (it->tris = s3d_meshNew()) == NULL) return Bool(false);
+    m = it->tris;
+    k = m->posN / 3;
+    s3d_addVertex(m, (float)toR(x), (float)toR(y), (float)toR(z), uv[(k % 3) * 2], uv[(k % 3) * 2 + 1]);
+    if (k % 3 == 2) s3d_addTriangle(m, (uint32_t)(k - 2), (uint32_t)(k - 1), (uint32_t)k);
+    it->trisDirty = 1;
+    return Bool(!m->bad);
+}
+static Value fire_s3d_ObjTriangles(Value h) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dMesh* m = it ? fire_s3d_objMesh(it) : NULL;
+    return Int(m ? (int64_t)(m->idxN / 3) : 0);
+}
+
+static Real fire_s3d_extent(FireS3dItem* it, int axis) {
+    S3dMesh* m = fire_s3d_objMesh(it);
+    if (m == NULL) return 0;
+    return axis == 0 ? (Real)m->bmax.x - (Real)m->bmin.x : axis == 1 ? (Real)m->bmax.y - (Real)m->bmin.y : (Real)m->bmax.z - (Real)m->bmin.z;
+}
+/* The size of the mesh along an axis (0 x, 1 y, 2 z) - `scaled`: times the scale of the object (its outer dimension, meters). */
+static Value fire_s3d_ObjExtent(Value h, Value axis, Value scaled) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    Real e;
+    if (!it || axis.i < 0 || axis.i > 2) return Float((Real)0);
+    e = fire_s3d_extent(it, (int)axis.i);
+    return Float(scaled.i ? it->f[OF_SX + axis.i] * e : e);
+}
+/* The outer dimension along an axis becomes the scale of that axis; false when the mesh has no extent there. */
+static Value fire_s3d_ObjSize(Value h, Value axis, Value meters) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    Real e;
+    if (!it || axis.i < 0 || axis.i > 2) return Bool(false);
+    e = fire_s3d_extent(it, (int)axis.i);
+    if (e < (Real)0.000001) return Bool(false);
+    it->f[OF_SX + axis.i] = toR(meters) / e;
+    return Bool(true);
+}
+
+/* ---- cameras and scenes ---- */
+static Value fire_s3d_CamLookAt(Value h, Value x, Value y, Value z) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_CAMERA);
+    float rx, ry;
+    if (!it) return Bool(false);
+    s3d_lookAngles(s3d_v3((float)it->f[CF_X], (float)it->f[CF_X + 1], (float)it->f[CF_X + 2]), s3d_v3((float)toR(x), (float)toR(y), (float)toR(z)), &rx, &ry);
+    it->f[CF_RX] = (Real)rx; it->f[CF_RX + 1] = (Real)ry; it->f[CF_RX + 2] = 0;
+    return Bool(true);
+}
+static Value fire_s3d_CamRenderer(Value h) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_CAMERA);
+    return Int(it && it->frame ? it->frame->lastBackend : 0);
+}
+
+/* Adds an object or a light to a scene (the scene becomes one of its users; cameras and textures need nothing here). */
+static Value fire_s3d_SceneAdd(Value scene, Value item) {
+    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
+    FireS3dItem* it = fire_s3d_itemAt(item.i, 0);
+    if (!s || !it) return Bool(false);
+    if (it->kind == FIRE_S3D_OBJECT) { if (!S3D_GROW(s->objects, s->objectCap, s->objectN + 1)) return Bool(false); s->objects[s->objectN++] = item.i; }
+    else if (it->kind == FIRE_S3D_LIGHT) { if (!S3D_GROW(s->lights, s->lightCap, s->lightN + 1)) return Bool(false); s->lights[s->lightN++] = item.i; }
+    else return Bool(true);
+    it->refs++;
+    return Bool(true);
+}
+static int fire_s3d_listRemove(int64_t* list, s3d_size* n, int64_t h) {
+    s3d_size i;
+    for (i = 0; i < *n; i++)
+        if (list[i] == h) {
+            for (; i + 1 < *n; i++) list[i] = list[i + 1];
+            (*n)--;
+            return 1;
+        }
+    return 0;
+}
+static Value fire_s3d_SceneRemove(Value scene, Value item) {
+    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
+    if (!s) return Bool(false);
+    if (fire_s3d_listRemove(s->objects, &s->objectN, item.i) || fire_s3d_listRemove(s->lights, &s->lightN, item.i)) fire_s3d_itemRelease(item.i);
+    return Bool(true);
+}
+
+static Real fire_s3d_channel(int64_t c, int shift) { return (Real)((c >> shift) & 255) / (Real)255.0; }
+
+/* What the renderer takes for an object (the numbers are worked out as the fire side did before, in Real, and then made floats - the pictures stay the same). */
+static void fire_s3d_queueObject(S3dFrame* f, const S3dCamera* cam, FireS3dItem* o) {
+    const Real* F = o->f;
+    const int64_t* N = o->n;
+    S3dMesh* m = fire_s3d_objMesh(o);
+    S3dTexture* tex = o->tex > 0 ? (S3dTexture*)g_s3dTextures.items[o->tex] : NULL;
+    FireS3dItem* mat = o->mat ? fire_s3d_itemAt(o->mat, FIRE_S3D_MATERIAL) : NULL;
+    Real minX, minY, minZ, w, hgt, d;
+    Real spec = 0, shin = 32, opacity, repU = 1, repV = 1, offU = 0, offV = 0;
+    int smooth = 1, two = N[ON_TWOSIDED] != 0;
+    int64_t emissive = 0;
     S3dObjectParams op;
     S3dSurface s;
-    S3dCamera cam;
-    float O[FIRE_S3D_OBJECT_PARAMS];
-    int i;
-    if (!f || !m || object.kind != K_Array || camera.kind != K_Array) return Bool(false);
-    o = arrOf(object); c = arrOf(camera);
-    if (o->length < (uint32_t)FIRE_S3D_OBJECT_PARAMS || c->length < (uint32_t)FIRE_S3D_CAMERA_PARAMS) return Bool(false);
-    tex = texture.i > 0 ? (S3dTexture*)fire_s3d_find(&g_s3dTextures, texture) : NULL;
-    for (i = 0; i < FIRE_S3D_OBJECT_PARAMS; i++) O[i] = fire_s3d_F(arrItems(o)[i]);
-    op.pos = s3d_v3(O[0], O[1], O[2]); op.rx = O[3]; op.ry = O[4]; op.rz = O[5]; op.scale = s3d_v3(O[6], O[7], O[8]); op.pivot = s3d_v3(O[9], O[10], O[11]);
+    if (m == NULL) return;
+    minX = (Real)m->bmin.x; minY = (Real)m->bmin.y; minZ = (Real)m->bmin.z;
+    w = (Real)m->bmax.x - minX; hgt = (Real)m->bmax.y - minY; d = (Real)m->bmax.z - minZ;
+    if (mat) {
+        spec = mat->f[0]; shin = mat->f[1];
+        if (!mat->n[MN_SMOOTH]) smooth = 0;
+        if (mat->n[MN_TWOSIDED]) two = 1;
+        emissive = mat->n[MN_EMISSIVE];
+    }
+    if (tex) {
+        Real objectWidth = F[OF_SX] * w, objectHeight = F[OF_SX + 1] * hgt, tileW, tileH;
+        if (objectHeight < (Real)0.000001) objectHeight = F[OF_SX + 2] * d;
+        tileW = objectWidth; tileH = objectHeight;
+        if (F[OF_TW] > 0) tileW = F[OF_TW];
+        if (F[OF_TH] > 0) tileH = F[OF_TH];
+        if (F[OF_TW] > 0 && objectWidth > (Real)0.000001) repU = objectWidth / F[OF_TW];
+        if (F[OF_TH] > 0 && objectHeight > (Real)0.000001) repV = objectHeight / F[OF_TH];
+        if (tileW > (Real)0.000001) offU = F[OF_TX] / tileW;
+        if (tileH > (Real)0.000001) offV = F[OF_TY] / tileH;
+    }
+    opacity = F[OF_OPACITY];
+    if (opacity < 0) opacity = 0;
+    if (opacity > 1) opacity = 1;
+    op.pos = s3d_v3((float)F[OF_PX], (float)F[OF_PX + 1], (float)F[OF_PX + 2]);
+    op.rx = (float)F[OF_RX]; op.ry = (float)F[OF_RX + 1]; op.rz = (float)F[OF_RX + 2];
+    op.scale = s3d_v3((float)F[OF_SX], (float)F[OF_SX + 1], (float)F[OF_SX + 2]);
+    op.pivot = s3d_v3((float)(minX + F[OF_AX] * w), (float)(minY + F[OF_AX + 1] * hgt), (float)(minZ + F[OF_AX + 2] * d));
     s = s3d_surfaceDefault();
-    s.color = s3d_v3(O[12], O[13], O[14]);
-    s.specular = O[15]; s.shininess = O[16];
-    s.smooth = O[17] != 0; s.twoSided = O[18] != 0;
-    s.emissive = s3d_v3(O[19], O[20], O[21]);
-    s.useTexture = O[22] != 0 && tex != NULL;
+    s.color = s3d_v3((float)fire_s3d_channel(N[ON_COLOR], 0), (float)fire_s3d_channel(N[ON_COLOR], 8), (float)fire_s3d_channel(N[ON_COLOR], 16));
+    s.specular = (float)spec; s.shininess = (float)shin;
+    s.smooth = smooth; s.twoSided = two;
+    s.emissive = s3d_v3((float)fire_s3d_channel(emissive, 0), (float)fire_s3d_channel(emissive, 8), (float)fire_s3d_channel(emissive, 16));
+    s.useTexture = tex != NULL;
     {   /* the texture mapping: scale by the repeats, rotate, move: u' = c*ru*u - s*rv*v + ou ; v' = s*ru*u + c*rv*v + ov */
-        float ru = O[23], rv = O[24], rot = O[25], ou = O[26], ov = O[27];
+        float ru = (float)repU, rv = (float)repV, rot = (float)F[OF_TROT], ou = (float)offU, ov = (float)offV;
         float cs = cosf(rot), sn = sinf(rot);
         s.tm[0] = cs * ru; s.tm[1] = -sn * rv; s.tm[2] = ou;
         s.tm[3] = sn * ru; s.tm[4] = cs * rv; s.tm[5] = ov;
     }
-    s.opacity = O[28]; s.cutoff = O[29];
-    s.lit = O[30] != 0; s.castShadows = O[31] != 0; s.receiveShadows = O[32] != 0;
-    s.layers = (int)O[33];
-    s.bump = O[34];
-    s.billboard = (int)O[35];
-    cam = fire_s3d_cameraOf(c);
-    s3d_queueMesh(f, &cam, m, &op, &s, tex);
-    return Bool(true);
+    s.opacity = (float)opacity; s.cutoff = (float)F[OF_CUTOFF];
+    s.lit = N[ON_LIT] != 0; s.castShadows = N[ON_CAST] != 0; s.receiveShadows = N[ON_RECEIVE] != 0;
+    s.layers = (int)(float)N[ON_LAYERS];
+    s.bump = tex && tex->bump ? tex->strength : 0.0f;
+    s.billboard = (int)N[ON_BILLBOARD];
+    s3d_queueMesh(f, cam, m, &op, &s, tex);
 }
 
-/* Draws what was queued into the pixels of the camera. `lights` has FIRE_S3D_LIGHT_PARAMS per light, `settings` FIRE_S3D_SETTING_PARAMS (shadows on/off, shadow map size, threads)
- * and optionally the renderer (0 software, 1 hardware: the GPU when there is one, else the software renderer). */
-static Value fire_s3d_Flush(Value frame, Value buffer, Value camera, Value lights, Value settings) {
-    S3dFrame* f;
-    Arr *c, *l, *st;
-    S3dLight* ls;
-    s3d_size n = 0;
-    uint32_t i;
-    S3dFlushSettings fs;
-    S3dCamera cam;
+static void fire_s3d_lightOf(S3dLight* light, int64_t kind, int64_t color, Real intensity, const Real* pos, const Real* dir, Real range, int shadows, int64_t layers) {
+    light->kind = (int)kind;
+    light->color = s3d_v3((float)fire_s3d_channel(color, 0), (float)fire_s3d_channel(color, 8), (float)fire_s3d_channel(color, 16));
+    light->intensity = (float)intensity;
+    light->pos = s3d_v3((float)pos[0], (float)pos[1], (float)pos[2]);
+    light->dir = s3d_normalize(s3d_v3((float)dir[0], (float)dir[1], (float)dir[2]));
+    light->range = (float)range;
+    light->castShadows = shadows;
+    light->mask = (int)(float)layers;
+}
+
+/* Draws the scene as the camera sees it into `buffer` (width * height * 4 bytes, the picture of the camera's framebuffer `fb`). Returns who drew (0 software, 1 the GPU, 2 the GPU
+ * straight into the windows of the framebuffer), -1 when the size is not usable, -2 when the frame cannot be cleared (the memory). */
+static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value width, Value height, Value fb) {
+    FireS3dItem* c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
+    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
     Buf* b = bufferArg(buffer, "Scene3D.Camera.Render");
+    S3dFrame* f;
+    S3dCamera cam;
+    S3dLight* ls;
+    S3dFlushSettings fs;
+    s3d_size i, n = 0;
+    int direct;
+    static const Real zero3[3] = { 0, 0, 0 };
     if (b == NULL) return Undef();
-    f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, frame);
-    if (!f || camera.kind != K_Array || lights.kind != K_Array || settings.kind != K_Array) return Bool(false);
-    c = arrOf(camera); l = arrOf(lights); st = arrOf(settings);
-    if (c->length < (uint32_t)FIRE_S3D_CAMERA_PARAMS || l->length % FIRE_S3D_LIGHT_PARAMS != 0 || st->length < (uint32_t)FIRE_S3D_SETTING_PARAMS) return Bool(false);
-    if ((s3d_size)b->length < (s3d_size)f->w * (s3d_size)f->h * 4) return Bool(false);
-    ls = (S3dLight*)S3D_MALLOC(sizeof(S3dLight) * (l->length / FIRE_S3D_LIGHT_PARAMS + 1));
-    if (ls == NULL) return Bool(false);
-    for (i = 0; i < l->length; i += FIRE_S3D_LIGHT_PARAMS) {
-        const Value* L = arrItems(l) + i;
-        S3dLight* light = &ls[n++];
-        light->kind = (int)fire_s3d_F(L[0]);
-        light->color = s3d_v3(fire_s3d_F(L[1]), fire_s3d_F(L[2]), fire_s3d_F(L[3]));
-        light->intensity = fire_s3d_F(L[4]);
-        light->pos = s3d_v3(fire_s3d_F(L[5]), fire_s3d_F(L[6]), fire_s3d_F(L[7]));
-        light->dir = s3d_normalize(s3d_v3(fire_s3d_F(L[8]), fire_s3d_F(L[9]), fire_s3d_F(L[10])));
-        light->range = fire_s3d_F(L[11]);
-        light->castShadows = fire_s3d_F(L[12]) != 0;
-        light->mask = (int)fire_s3d_F(L[13]);
+    if (!c || !s || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(-1);
+    if ((s3d_size)b->length < (s3d_size)width.i * (s3d_size)height.i * 4) return Int(-1);
+    if (c->frame == NULL && (c->frame = s3d_frameNew((int)width.i, (int)height.i)) == NULL) return Int(-1);
+    f = c->frame;
+    /* DirectDrawing: the frame draws into the windows of the framebuffer (or no longer) */
+    direct = c->n[CN_DIRECT] != 0 && s->n[SN_RENDERER] == S3D_BACKEND_HARDWARE;
+    if (direct != c->directOn) {
+        if (direct) c->directOn = s3d_gpu_attach(f, fb.i) != 0;
+        else { s3d_gpu_detach(f); c->directOn = 0; }
     }
-    fs.shadows = fire_s3d_F(arrItems(st)[0]) != 0;
-    fs.shadowResolution = (int)fire_s3d_F(arrItems(st)[1]);
-    fs.threads = (int)fire_s3d_F(arrItems(st)[2]);
-    fs.backend = st->length > 3 && (int)fire_s3d_F(arrItems(st)[3]) == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
-    cam = fire_s3d_cameraOf(c);
+    if (f->w != width.i || f->h != height.i) { if (!s3d_frameResize(f, (int)width.i, (int)height.i)) return Int(-2); }
+    else s3d_frameClearDepth(f);
+    f->clearColor = (uint32_t)c->n[CN_BACKGROUND];
+    s3d_clearPixels(b->data, (int)width.i, (int)height.i, (uint32_t)c->n[CN_BACKGROUND]);
+    cam.pos = s3d_v3((float)c->f[CF_X], (float)c->f[CF_X + 1], (float)c->f[CF_X + 2]);
+    cam.rx = (float)c->f[CF_RX]; cam.ry = (float)c->f[CF_RX + 1]; cam.rz = (float)c->f[CF_RX + 2];
+    cam.fovY = (float)c->f[CF_FOV]; cam.nearPlane = (float)c->f[CF_NEAR]; cam.farPlane = (float)c->f[CF_FAR];
+    for (i = 0; i < s->objectN; i++) {
+        FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
+        if (o && o->alive && o->n[ON_VISIBLE]) fire_s3d_queueObject(f, &cam, o);
+    }
+    /* the lights: the ambient light of the scene first, then the ones that are on */
+    ls = (S3dLight*)S3D_MALLOC(sizeof(S3dLight) * (s->lightN + 1));
+    if (ls == NULL) return Int(-2);
+    fire_s3d_lightOf(&ls[n++], S3D_LIGHT_AMBIENT, s->n[SN_AMBIENT], s->f[0], zero3, zero3, 1, 0, 16777215);
+    for (i = 0; i < s->lightN; i++) {
+        FireS3dItem* L = fire_s3d_itemAt(s->lights[i], FIRE_S3D_LIGHT);
+        if (!L || !L->alive || !L->n[LN_ENABLED]) continue;
+        fire_s3d_lightOf(&ls[n++], L->n[LN_KIND], L->n[LN_COLOR], L->f[LF_INTENSITY], &L->f[LF_X], &L->f[LF_DX], L->f[LF_RANGE], L->n[LN_CAST] && L->n[LN_KIND] != S3D_LIGHT_AMBIENT, L->n[LN_LAYERS]);
+    }
+    fs.shadows = s->n[SN_SHADOWS] != 0;
+    fs.shadowResolution = (int)(float)s->n[SN_SHADOWRES];
+    fs.threads = (int)(float)s->n[SN_THREADS];
+    fs.backend = s->n[SN_RENDERER] == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
     s3d_flush(b->data, f, &cam, ls, n, &fs);
     S3D_FREE(ls);
-    return Bool(true);
+    return Int(f->lastBackend);
 }
 
-/* DirectDrawing: the frame's pictures go straight from the GPU into the windows that show the framebuffer `framebuffer` (on), or no longer (off). Returns whether it is attached
- * (false: no GPU, no swap chains, or no such framebuffer - the camera then works as without). */
-static Value fire_s3d_FrameDirect(Value h, Value framebuffer, Value on) {
-    S3dFrame* f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, h);
-    if (f == NULL) return Bool(false);
-    if (on.i) return Bool(s3d_gpu_attach(f, framebuffer.i) != 0);
-    s3d_gpu_detach(f);
-    return Bool(false);
-}
-
-/* Who drew the last picture of the frame: 0 the software renderer, 1 the GPU (the picture is in the pixels), 2 the GPU straight into the windows (DirectDrawing: not in the pixels). */
-static Value fire_s3d_FrameRenderer(Value h) {
-    S3dFrame* f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, h);
-    return Int(f ? f->lastBackend : 0);
+static void fire_s3d_reset(void) {
+    s3d_size i;
+    for (i = 1; i < g_s3dItems.count; i++) if (g_s3dItems.items[i]) fire_s3d_itemDestroy((int64_t)i, (FireS3dItem*)g_s3dItems.items[i]);
+    for (i = 1; i < g_s3dMeshes.count; i++) s3d_meshFree((S3dMesh*)g_s3dMeshes.items[i]);
+    for (i = 1; i < g_s3dTextures.count; i++) s3d_texFree((S3dTexture*)g_s3dTextures.items[i]);
+    g_s3dItems.count = g_s3dMeshes.count = g_s3dTextures.count = 0;
+    s3d_gpu_shutdown();
 }
 
 /* The GPU the hardware renderer uses ("" when there is none: no Vulkan, no device, or it is switched off); asking for it starts the backend. */

@@ -45,14 +45,6 @@
         "c": "fire_s3d_MeshFromObj"
       },
       {
-        "name": "__S3DLookAt",
-        "returns": "any[]",
-        "arguments": 6,
-        "c": "fire_s3d_LookAt",
-        "needsList": true,
-        "returnsReference": true
-      },
-      {
         "name": "__S3DMeshRetain",
         "returns": "bool",
         "arguments": 1,
@@ -63,14 +55,6 @@
         "returns": "bool",
         "arguments": 1,
         "c": "fire_s3d_MeshFree"
-      },
-      {
-        "name": "__S3DMeshBounds",
-        "returns": "any[]",
-        "arguments": 1,
-        "c": "fire_s3d_MeshBounds",
-        "needsList": true,
-        "returnsReference": true
       },
       {
         "name": "__S3DMeshTriangleCount",
@@ -115,48 +99,6 @@
         "c": "fire_s3d_TexBumpClear"
       },
       {
-        "name": "__S3DFrameNew",
-        "returns": "int",
-        "arguments": 2,
-        "c": "fire_s3d_FrameNew"
-      },
-      {
-        "name": "__S3DFrameFree",
-        "returns": "bool",
-        "arguments": 1,
-        "c": "fire_s3d_FrameFree"
-      },
-      {
-        "name": "__S3DFrameClear",
-        "returns": "bool",
-        "arguments": 5,
-        "c": "fire_s3d_FrameClear"
-      },
-      {
-        "name": "__S3DDraw",
-        "returns": "bool",
-        "arguments": 5,
-        "c": "fire_s3d_Draw"
-      },
-      {
-        "name": "__S3DFlush",
-        "returns": "bool",
-        "arguments": 5,
-        "c": "fire_s3d_Flush"
-      },
-      {
-        "name": "__S3DFrameDirect",
-        "returns": "bool",
-        "arguments": 3,
-        "c": "fire_s3d_FrameDirect"
-      },
-      {
-        "name": "__S3DFrameRenderer",
-        "returns": "int",
-        "arguments": 1,
-        "c": "fire_s3d_FrameRenderer"
-      },
-      {
         "name": "__S3DHardwareName",
         "returns": "string",
         "arguments": 0,
@@ -171,6 +113,144 @@
         "c": "fire_s3d_HardwareError",
         "needsList": true,
         "returnsReference": true
+      },
+      {
+        "name": "__S3DTexHasBump",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_s3d_TexHasBump"
+      },
+      {
+        "name": "__S3DTexStrength",
+        "returns": "float",
+        "arguments": 1,
+        "c": "fire_s3d_TexStrength"
+      },
+      {
+        "name": "__S3DTexSetStrength",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_TexSetStrength"
+      },
+      {
+        "name": "__S3DNew",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_s3d_New"
+      },
+      {
+        "name": "__S3DFree",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_s3d_Free"
+      },
+      {
+        "name": "__S3DGetF",
+        "returns": "float",
+        "arguments": 2,
+        "c": "fire_s3d_GetF"
+      },
+      {
+        "name": "__S3DSetF",
+        "returns": "bool",
+        "arguments": 3,
+        "c": "fire_s3d_SetF"
+      },
+      {
+        "name": "__S3DSetF3",
+        "returns": "bool",
+        "arguments": 6,
+        "c": "fire_s3d_SetF3"
+      },
+      {
+        "name": "__S3DGetI",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_s3d_GetI"
+      },
+      {
+        "name": "__S3DGetB",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_GetB"
+      },
+      {
+        "name": "__S3DSetI",
+        "returns": "bool",
+        "arguments": 3,
+        "c": "fire_s3d_SetI"
+      },
+      {
+        "name": "__S3DObjMesh",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_ObjMesh"
+      },
+      {
+        "name": "__S3DObjTexture",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_ObjTexture"
+      },
+      {
+        "name": "__S3DObjMaterial",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_ObjMaterial"
+      },
+      {
+        "name": "__S3DObjCorner",
+        "returns": "bool",
+        "arguments": 4,
+        "c": "fire_s3d_ObjCorner"
+      },
+      {
+        "name": "__S3DObjTriangles",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_s3d_ObjTriangles"
+      },
+      {
+        "name": "__S3DObjExtent",
+        "returns": "float",
+        "arguments": 3,
+        "c": "fire_s3d_ObjExtent"
+      },
+      {
+        "name": "__S3DObjSize",
+        "returns": "bool",
+        "arguments": 3,
+        "c": "fire_s3d_ObjSize"
+      },
+      {
+        "name": "__S3DCamLookAt",
+        "returns": "bool",
+        "arguments": 4,
+        "c": "fire_s3d_CamLookAt"
+      },
+      {
+        "name": "__S3DCamRenderer",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_s3d_CamRenderer"
+      },
+      {
+        "name": "__S3DSceneAdd",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_SceneAdd"
+      },
+      {
+        "name": "__S3DSceneRemove",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_SceneRemove"
+      },
+      {
+        "name": "__S3DRender",
+        "returns": "int",
+        "arguments": 6,
+        "c": "fire_s3d_Render"
       }
     ],
     "reset": "fire_s3d_reset",

@@ -219,6 +219,8 @@ struct S3dTexture {
     int hasAlpha;      /* some texel is not opaque (see s3d_texPrepare) */
     uint32_t version;  /* counts the changes (the bump map): the hardware backend loads the texture again */
     void* gpu;         /* the copy of the hardware backend, or NULL */
+    int refs;          /* (the bridge: the users of the texture - its fire object and the objects that show it) */
+    float strength;    /* (the bridge: how strongly the bump map tilts the light, Texture.BumpStrength) */
 };
 
 static void s3d_texFree(S3dTexture* t) {

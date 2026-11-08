@@ -783,6 +783,14 @@ nach Arbeiten auf `targets`).
    * **Die Szene lebt in C** (der größte Gewinn): Objekte, Lichter, Kamera und Szene sind Handles auf C-Strukturen, Eigenschaften lesen und schreiben sie
      direkt; `Render` ist ein Aufruf, der in C über die Objekte läuft - keine `float[]` pro Objekt und Bild, kein `Parameters()`, kein `LightParameters()`.
      Die API bleibt gleich; was ein Programm nicht benutzt, fällt beim Weglassen (§11) heraus.
+     **Umgesetzt:** Einträge mit Referenzzählern in `fire_bridge_scene3d.h` (Objekt, Licht, Kamera, Szene, Material; Meshes und Texturen gezählt wie sie;
+     `__S3DGetF/SetF/SetF3/GetI/GetB/SetI` für die Eigenschaften, `__S3DRender` zeichnet), die Klassen halten nur ihr Handle. Die Bilder sind dieselben (alle
+     Prüfsummen von Scene3DTests unverändert, VM == nativ). dos16 (64x48-Szene): Ladegröße 421 KB -> 345 KB (-76 KB), das Prelude von scene3d 122 KB -> 50 KB.
+     Unterschied: ein zerstörtes Objekt in einer Szene wird übersprungen; `scene.Objects`/`Lights` sind nur noch zum Lesen.
+     **Gefunden** (auf `targets`, nicht scene3d): seit 8ab2aa2 ("Native values: 16 bytes everywhere") stürzen dos16-Programme mit Open Watcom 2.0 beta (portabel,
+     Stand 2026-04-23) in DOSBox-X 2024.03 je nach Code mit "Invalid Opcode" (INT 6) ab (`#import "dos"` + `print("free " + Dos.LargestFree() * 16)`; Scene + Object)
+     - mit 02e959e laufen dieselben Programme. Außerdem erzeugt der Generator für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit
+     ablehnt (E1078) - das dos16-Programm des Tests baut so nicht.
    * Die Kamera zeichnet direkt in die Pixel des Framebuffers (heute ein eigenes `byte[w*h*4]` und eine Kopie: 4 Byte pro Pixel weniger).
    * Ein zweiter, schlanker Rasterizer (`Scene.Quality`, eigene Quelle, nur gelinkt, wenn benutzt): 8 Bit mit Palette und Schattierungstabellen direkt in
      einen Paletten-Framebuffer, Tiefe als `uint16`, Licht pro Vertex (Gouraud), Festkomma-Spans mit perspektivischer Korrektur alle 8-16 Pixel. Der
