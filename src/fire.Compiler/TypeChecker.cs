@@ -127,6 +127,8 @@ namespace fire.Compiler
         public const string WideIntCode = "TC021";
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
         [ThreadStatic] public static int ProgramIntWidth;
+        /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
+        [ThreadStatic] public static Dictionary<string, string>? NativeReturns;
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -2123,6 +2125,15 @@ namespace fire.Compiler
                     if (candidates.Count == 0 && FindMember(target, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
                 }
             }
+            else if (c.Callee is IdentifierExpr nativeId && _refs.TryGetValue(nativeId, out var nativeRef) && nativeRef is ResolvedRef.Native
+                     && NativeReturns != null && NativeReturns.TryGetValue(nativeId.Name, out var returnsText) && NativeTypeRef(returnsText) is var (returnsRef, ranks))
+            {
+                // a native of a package: what its manifest says it returns (`"returns"`); an int, a float or a bool is checked at run time
+                foreach (var a in c.Args) Infer(a);
+                var returned = Declared(returnsRef, ranks) ?? StaticType.Dynamic;
+                if (ranks == 0 && returnsRef.BaseName is "int" or "float" or "bool") _localGuards[c] = (returnsRef, $"The result of '{nativeId.Name}'");
+                return returned.IsNumber && returned.Unit == null ? returned.WithUnit(Unit.Unitless) : returned;
+            }
             else if (c.Callee is IdentifierExpr id)
             {
                 if (_class != null && !IsLocal(id.Name))
@@ -2322,6 +2333,20 @@ namespace fire.Compiler
             if (lambda.ParamCount >= 0 && args.Count != lambda.ParamCount)
                 Report(ArgumentCode, $"'{name}' ({lambda}) takes {lambda.ParamCount} argument(s), not {args.Count}", c.Line);
             return lambda.Return is { Kind: not StaticKind.Undefined } returns ? returns : StaticType.Dynamic;
+        }
+
+        /// <summary>The type of a native's `returns` (`int`, `int[64]`, `byte[]`, `string[]`, `Http.Response`): the declaration and its array ranks; null for
+        /// `any` and what cannot be read.</summary>
+        private static (TypeRef, int)? NativeTypeRef(string text)
+        {
+            int ranks = 0;
+            while (text.EndsWith("[]", StringComparison.Ordinal)) { ranks++; text = text[..^2].TrimEnd(); }
+            int? bits = null;
+            var width = System.Text.RegularExpressions.Regex.Match(text, @"^(int|float)\[(8|16|32|64)\]$");
+            if (width.Success) { bits = int.Parse(width.Groups[2].Value); text = width.Groups[1].Value; }
+            if (text == "any" && ranks == 0 || text.Length == 0) return null;
+            if (text == "byte") return (new TypeRef("int", 8, 0) { Unsigned = true }, ranks);
+            return (new TypeRef(text, bits, 0), ranks);
         }
 
         /// <summary>`A.B.C` as the text "A.B.C"; null for an expression that is not a chain of names.</summary>

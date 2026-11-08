@@ -16,8 +16,8 @@ namespace Compression {
 
     class Errors {
         static undefined Throw() {
-            any code = __CmpLastError()
-            any message = __CmpLastErrorMessage()
+            var code = __CmpLastError()
+            var message = __CmpLastErrorMessage()
             if (code == 1) { throw new Compression.InvalidDataException(message) }
             if (code == 2) { throw new IO.StreamClosedException(message) }
             if (code == 3) { throw new ArgumentException(message) }
@@ -140,12 +140,12 @@ namespace Compression {
         static string DecompressText(byte data[]) { return IO.Utf8.GetString(Compression.Deflate.Undo(data, Compression.Format.Raw)) }
 
         static byte[] Run(any data, Compression.Format format, int level) {
-            any result = __CmpCompress(Compression.Errors.Bytes(data), format, level)
+            var result = __CmpCompress(Compression.Errors.Bytes(data), format, level)
             if (result == undefined) { Compression.Errors.Throw() }
             return result
         }
         static byte[] Undo(byte data[], Compression.Format format) {
-            any result = __CmpDecompress(data, format)
+            var result = __CmpDecompress(data, format)
             if (result == undefined) { Compression.Errors.Throw() }
             return result
         }
@@ -460,7 +460,7 @@ namespace Zip {
             var tailLength = size
             if (tailLength > 65557) { tailLength = 65557 }
             var tail = this.ReadAt(size - tailLength, tailLength)
-            any end = __CmpFindLast(tail, 0x06054b50)
+            var end = __CmpFindLast(tail, 0x06054b50)
             if (end < 0 || end + 22 > tail.length) { throw new Zip.ZipException("This is not a Zip archive (the end of the central directory is missing).") }
             var count = Zip.Bytes.U16(tail, end + 10)
             var dirSize = Zip.Bytes.U32(tail, end + 12)

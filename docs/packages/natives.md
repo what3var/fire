@@ -176,8 +176,8 @@ class SensorKit {
       "native": {
         "sources": [ "C:/work/sensorkit/sensorkit.hpp" ],
         "functions": [
-          { "name": "__sk_crc8", "arguments": 1, "cpp": "sk_crc8" },
-          { "name": "__sk_hex",  "arguments": 1, "cpp": "sk_hex", "needsList": true, "returnsReference": true }
+          { "name": "__sk_crc8", "arguments": 1, "returns": "int", "cpp": "sk_crc8" },
+          { "name": "__sk_hex",  "arguments": 1, "returns": "string", "cpp": "sk_hex", "needsList": true, "returnsReference": true }
         ]
       }
     }
@@ -186,6 +186,10 @@ class SensorKit {
 ```
 
 * `name` is what fire code calls, `cpp` the C++ function, `arguments` how many `Value`s it takes.
+* `returns`: what the function gives back, as a type of fire - `int`, `int[64]` (a number that may need more than 32 bits: ticks, file sizes),
+  `float`, `bool`, `string`, `byte[]`, `any[]`, a class, `undefined` (nothing); without it (or `any`) the result has no type. The type checker gives a
+  call this type (`var n = __sk_crc8(frame)` is an `int`; without `returns` it would be TC019), and a result declared `int`, `float` or `bool` is
+  checked where it is used (an ArgumentException when the function returns something else). `undefined` always fits (a failure).
 * `needsList: true`: the function gets `OwnList* list` as an extra **last** parameter. Everything you allocate for the result (`allocStr`, `allocArr`, `allocBuf`)
   is allocated in that list: it belongs to the scope of the caller, like any value a fire function creates. `returnsReference: true`: the result is such a value.
 * `linkLibraries` (in `native`, optional): system libraries the C++ needs on one platform or target, by the same keys as `platformSources`, e.g. `"linkLibraries": { "windows": [ "ws2_32" ] }` - the build links them (`-lws2_32`, `ws2_32.lib`).

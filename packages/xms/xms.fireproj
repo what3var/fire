@@ -22,6 +22,7 @@
     "functions": [
       {
         "name": "__XmsUnavailable",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -29,6 +30,7 @@
       },
       {
         "name": "__XmsCall",
+        "returns": "any[]",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -36,16 +38,19 @@
       },
       {
         "name": "__XmsAlloc",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_xms_Alloc"
       },
       {
         "name": "__XmsFree",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_xms_Free"
       },
       {
         "name": "__XmsMove",
+        "returns": "int",
         "arguments": 6,
         "c": "fire_xms_Move"
       }

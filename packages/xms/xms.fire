@@ -12,7 +12,7 @@ class XmsException : Exception {
 
 class Xms {
     static undefined Check() {
-        any why = __XmsUnavailable()
+        var why = __XmsUnavailable()
         if (why != undefined) { throw new XmsException(why) }
     }
     // Is there an XMS driver?
@@ -20,7 +20,7 @@ class Xms {
     // The version of the XMS specification the driver follows (3.0: [3, 0]).
     static int[] Version() {
         Xms.Check()
-        any r = __XmsCall(0, 0)
+        var r = __XmsCall(0, 0)
         int v[] = new int[2]
         v[0] = (r[0] >> 8) & 255
         v[1] = r[0] & 255
@@ -54,7 +54,7 @@ class XmsBlock {
     construct(int kb) {
         Xms.Check()
         if (kb <= 0 || kb > 65535) { throw new ArgumentException("A block has 1 to 65535 KB, not " + kb + ".") }
-        any h = __XmsAlloc(kb)
+        var h = __XmsAlloc(kb)
         if (h <= 0) { throw new XmsException("No block of " + kb + " KB: " + Xms.ErrorText(-h) + ".", -h) }
         this.handle = h
         this.kb = kb
@@ -84,7 +84,7 @@ class XmsBlock {
     undefined Move(int offset, byte data[], int at, int count, bool toBlock) {
         if (this.handle == 0) { throw new XmsException("The block is closed.") }
         if (offset < 0 || count < 0 || offset + count > this.kb * 1024) { throw new ArgumentException("Bytes " + offset + " to " + (offset + count) + " are outside the block (" + this.kb * 1024 + " bytes).") }
-        any err = __XmsMove(this.handle, offset, data, at, count, toBlock)
+        var err = __XmsMove(this.handle, offset, data, at, count, toBlock)
         if (err == -1) { throw new ArgumentException("Bytes " + at + " to " + (at + count) + " are outside the buffer (" + data.length + " bytes).") }
         if (err != 0) { throw new XmsException("The driver could not move the bytes: " + Xms.ErrorText(err) + ".", err) }
     }

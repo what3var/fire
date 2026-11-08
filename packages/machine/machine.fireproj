@@ -22,6 +22,7 @@
     "functions": [
       {
         "name": "__MachUnavailable",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -29,26 +30,31 @@
       },
       {
         "name": "__MachIn",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_machine_In"
       },
       {
         "name": "__MachOut",
+        "returns": "undefined",
         "arguments": 3,
         "c": "fire_machine_Out"
       },
       {
         "name": "__MachPeek",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_machine_Peek"
       },
       {
         "name": "__MachPoke",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_machine_Poke"
       },
       {
         "name": "__MachRead",
+        "returns": "byte[]",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -56,16 +62,19 @@
       },
       {
         "name": "__MachWrite",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_machine_Write"
       },
       {
         "name": "__MachCpuLevel",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_machine_CpuLevel"
       },
       {
         "name": "__MachCpuid",
+        "returns": "any[]",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -73,26 +82,31 @@
       },
       {
         "name": "__MachInterrupts",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_machine_Interrupts"
       },
       {
         "name": "__MachIrqOpen",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_machine_IrqOpen"
       },
       {
         "name": "__MachIrqClose",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_machine_IrqClose"
       },
       {
         "name": "__MachIrqTake",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_machine_IrqTake"
       },
       {
         "name": "__MachIrqWait",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_machine_IrqWait"
       }

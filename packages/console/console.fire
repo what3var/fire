@@ -77,7 +77,7 @@ class Console {
     static bool KeyAvailable() { return __ConKeyAvailable() }
     // The next key, without showing it (waits for it); undefined when no more keys can come (the end of a redirected input).
     static ConsoleKeyInfo ReadKey() {
-        any code = __ConReadKey()
+        var code = __ConReadKey()
         if (code < 0) { return undefined }
         return new ConsoleKeyInfo(code)
     }

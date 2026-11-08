@@ -18,6 +18,7 @@
     "functions": [
       {
         "name": "__HashInit",
+        "returns": "byte[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -25,16 +26,19 @@
       },
       {
         "name": "__HashUpdate",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_hash_Update"
       },
       {
         "name": "__HashUpdateText",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_hash_UpdateText"
       },
       {
         "name": "__HashFinal",
+        "returns": "byte[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -42,6 +46,7 @@
       },
       {
         "name": "__HashToHex",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -49,6 +54,7 @@
       },
       {
         "name": "__HashFromHex",
+        "returns": "byte[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -56,6 +62,7 @@
       },
       {
         "name": "__HashEqual",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_hash_Equal"
       }

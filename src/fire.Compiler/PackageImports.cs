@@ -23,6 +23,17 @@ namespace fire.Compiler
             return (names, libraries);
         }
 
+        /// <summary>What the natives of the packages among <paramref name="nativeImports"/> return (their `returns`): name -> type text.</summary>
+        public static Dictionary<string, string> NativeReturnTypes(IEnumerable<string> nativeImports)
+        {
+            var types = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var key in nativeImports.Where(IsPackageKey))
+                if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native != null)
+                    foreach (var function in import.Import.Native.Functions)
+                        if (!string.IsNullOrWhiteSpace(function.Returns)) types.TryAdd(function.Name, function.Returns!.Trim());
+            return types;
+        }
+
         /// <summary>Builds (if needed) the libraries of the natives of the imports of packages that a program uses and returns their paths. A failure to build is a <see cref="PackageException"/>.</summary>
         public static List<string> EnsureLibraries(IEnumerable<string> nativeImports, Action<string>? log = null)
         {

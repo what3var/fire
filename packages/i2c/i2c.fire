@@ -43,8 +43,8 @@ namespace I2c {
     class Errors {
         // Throws the exception that fits the last error of a native function.
         static undefined Throw() {
-            any code = __I2cLastError()
-            any message = __I2cLastErrorMessage()
+            var code = __I2cLastError()
+            var message = __I2cLastErrorMessage()
             if (code == 3) { throw new NotFoundException(message) }
             if (code == 4) { throw new BusyException(message) }
             if (code == 5) { throw new PermissionException(message) }
@@ -67,7 +67,7 @@ namespace I2c {
 
         // The names of the buses: "sim" first, then the real ones ("i2c-1", ... on Linux, "i2c-0" on an ESP32).
         static List Buses() {
-            any all = __I2cBuses()
+            var all = __I2cBuses()
             if (all == undefined) { I2c.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
@@ -180,7 +180,7 @@ namespace I2c {
         // true if a device answers at the address.
         bool Probe(int address) {
             this.Check()
-            any r = __I2cProbe(this.handle, address)
+            var r = __I2cProbe(this.handle, address)
             if (r < 0) { I2c.Errors.Throw() }
             return r == 1
         }
@@ -219,7 +219,7 @@ namespace I2c {
 
         // A register of a device (what a program wrote there).
         static int GetRegister(int address, int register) {
-            any v = __I2cSimGetRegister(address, register)
+            var v = __I2cSimGetRegister(address, register)
             if (v < 0) { I2c.Errors.Throw() }
             return v
         }

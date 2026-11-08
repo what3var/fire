@@ -117,6 +117,9 @@ static class TypeTests
             Run("#intwidth 32\nint[64] t = 864000000000\nint x = t + 0\nvar y = t + 1\nint z = (t + 2)!int\nclass B { int v\n  static int Id(int p) { return p } }\nvar b = new B()\nb.v = t\nprint(x)\nprint(y)\nprint(z)\nprint(b.v)\nprint(B.Id(t))")
                 is var cut && cut == "TC021 TC021 TC021|711573504\n864000000001\n711573506\n711573504\n711573504"
             && Run("int[64] t = 864000000000\nint x = t\nprint(x)") == "|864000000000", cut);
+        Check("Natives der Pakete haben den Typ ihres Manifests (\"returns\"): var aus einem Native ist strikt still, int[64]-Ticks sind TC021 an einem int (#intwidth 32)",
+            Run("#import \"io\"\nvar e = __IOLastError()\nint x = e + 1\nprint(x > -100)", TypeCheckMode.Strict) is var nat && nat == "|True"
+            && Run("#intwidth 32\n#import \"time\"\nvar now = __time_now()\nint[64] t = now\nint small = now\nprint(t > 0)") == "TC021|True", nat);
         Check("var a = [] hat keine Elementtypen: TC020 (any[]), int a[] = [] ist still",
             Run("var a = []\nprint(a.length)", TypeCheckMode.Strict) == "TC020|0" && Run("int a[] = []\nprint(a.length)", TypeCheckMode.Strict) == "|0");
         Check("Namen im eigenen Namespace: Parameter, Felder und Aufrufe (UI.M.Max) haben ihren Typ", Run("""

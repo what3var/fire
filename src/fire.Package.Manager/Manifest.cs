@@ -253,6 +253,9 @@ namespace fire.Package.Manager
         /// <summary>In the virtual machine the host runs this function itself (a function that has to wait or be aborted, like `Sleep`: it is registered by the VM, not taken from the library).
         /// A native build uses <see cref="Cpp"/> as always.</summary>
         public bool Host { get; set; }
+        /// <summary>What the function returns, as a type of fire (`int`, `int[64]`, `float`, `bool`, `string`, `byte[]`, `any[]`, `undefined`, a class; null or
+        /// `any`: not said) - the type checker gives a call this type, a result of `int`/`float`/`bool` is checked at run time (docs/packages/README.md).</summary>
+        public string? Returns { get; set; }
     }
 
     public sealed class PackageException : Exception

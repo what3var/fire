@@ -18,11 +18,13 @@
     "functions": [
       {
         "name": "__WiFiLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_wifi_LastError"
       },
       {
         "name": "__WiFiLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -30,16 +32,19 @@
       },
       {
         "name": "__WiFiOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_wifi_OpenCount"
       },
       {
         "name": "__WiFiSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_wifi_Supported"
       },
       {
         "name": "__WiFiInterfaces",
+        "returns": "any[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -47,31 +52,37 @@
       },
       {
         "name": "__WiFiOpen",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_wifi_Open"
       },
       {
         "name": "__WiFiClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_wifi_Close"
       },
       {
         "name": "__WiFiScanBegin",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_wifi_ScanBegin"
       },
       {
         "name": "__WiFiScanStep",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_wifi_ScanStep"
       },
       {
         "name": "__WiFiScanCount",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_wifi_ScanCount"
       },
       {
         "name": "__WiFiScanSsid",
+        "returns": "string",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -79,6 +90,7 @@
       },
       {
         "name": "__WiFiScanBssid",
+        "returns": "string",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -86,26 +98,31 @@
       },
       {
         "name": "__WiFiScanInfo",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_wifi_ScanInfo"
       },
       {
         "name": "__WiFiConnectBegin",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_wifi_ConnectBegin"
       },
       {
         "name": "__WiFiConnectState",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_wifi_ConnectState"
       },
       {
         "name": "__WiFiDisconnect",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_wifi_Disconnect"
       },
       {
         "name": "__WiFiStationText",
+        "returns": "string",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -113,26 +130,31 @@
       },
       {
         "name": "__WiFiStationRssi",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_wifi_StationRssi"
       },
       {
         "name": "__WiFiApStart",
+        "returns": "bool",
         "arguments": 5,
         "c": "fire_wifi_ApStart"
       },
       {
         "name": "__WiFiApStop",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_wifi_ApStop"
       },
       {
         "name": "__WiFiApRunning",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_wifi_ApRunning"
       },
       {
         "name": "__WiFiApText",
+        "returns": "string",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -140,36 +162,43 @@
       },
       {
         "name": "__WiFiApClients",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_wifi_ApClients"
       },
       {
         "name": "__WiFiSimAddNetwork",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_wifi_SimAddNetwork"
       },
       {
         "name": "__WiFiSimRemoveNetwork",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_wifi_SimRemoveNetwork"
       },
       {
         "name": "__WiFiSimDrop",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_wifi_SimDrop"
       },
       {
         "name": "__WiFiSimDelays",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_wifi_SimDelays"
       },
       {
         "name": "__WiFiSimApClients",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_wifi_SimApClients"
       },
       {
         "name": "__WiFiSimReset",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_wifi_SimReset"
       }

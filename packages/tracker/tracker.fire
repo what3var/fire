@@ -22,8 +22,8 @@ namespace Tracker {
 
     class Errors {
         static undefined Throw() {
-            any code = __TrackerLastError()
-            any message = __TrackerLastErrorMessage()
+            var code = __TrackerLastError()
+            var message = __TrackerLastErrorMessage()
             if (code == 8) { throw new BadFormatException(message) }
             if (code == 6) { throw new UnsupportedException(message) }
             throw new TrackerException(message, code)
@@ -76,7 +76,7 @@ namespace Tracker {
 
         int Get(int what) {
             this.Check()
-            any v = __TrackerGet(this.handle, what)
+            var v = __TrackerGet(this.handle, what)
             if (v < 0) { Tracker.Errors.Throw() }
             return v
         }
@@ -161,7 +161,7 @@ namespace Tracker {
 
         int SampleInfo(int index, int what) {
             this.Check()
-            any v = __TrackerSampleInfo(this.handle, index, what)
+            var v = __TrackerSampleInfo(this.handle, index, what)
             if (v < 0) { Tracker.Errors.Throw() }
             return v
         }
@@ -187,7 +187,7 @@ namespace Tracker {
 
         int Cell(int order, int row, int channel, int what) {
             this.Check()
-            any v = __TrackerPatternCell(this.handle, order, row, channel, what)
+            var v = __TrackerPatternCell(this.handle, order, row, channel, what)
             if (v < 0) { Tracker.Errors.Throw() }
             return v
         }
@@ -207,7 +207,7 @@ namespace Tracker {
         // Goes to a position without sound (speed, tempo and volumes are those of the song there). Returns false if the song never gets there.
         bool Seek(int order, int row = 0) {
             this.Check()
-            any r = __TrackerSeek(this.handle, order, row)
+            var r = __TrackerSeek(this.handle, order, row)
             return r
         }
 
@@ -215,7 +215,7 @@ namespace Tracker {
         // fewer than asked only at the end of the song, 0 when it is over.
         int Render(byte buffer[], int offset, int frames, int channels = 2) {
             this.Check()
-            any n = __TrackerRender(this.handle, buffer, offset, frames, channels)
+            var n = __TrackerRender(this.handle, buffer, offset, frames, channels)
             if (n < 0) { Tracker.Errors.Throw() }
             return n
         }

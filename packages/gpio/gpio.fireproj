@@ -21,11 +21,13 @@
     "functions": [
       {
         "name": "__GpioLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_gpio_LastError"
       },
       {
         "name": "__GpioLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -33,16 +35,19 @@
       },
       {
         "name": "__GpioOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_gpio_OpenCount"
       },
       {
         "name": "__GpioSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_gpio_Supported"
       },
       {
         "name": "__GpioChips",
+        "returns": "any[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -50,66 +55,79 @@
       },
       {
         "name": "__GpioOpen",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_gpio_Open"
       },
       {
         "name": "__GpioConfigure",
+        "returns": "bool",
         "arguments": 5,
         "c": "fire_gpio_Configure"
       },
       {
         "name": "__GpioRead",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_gpio_Read"
       },
       {
         "name": "__GpioWrite",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_gpio_Write"
       },
       {
         "name": "__GpioPollEdge",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_gpio_PollEdge"
       },
       {
         "name": "__GpioEdgeTime",
+        "returns": "int[64]",
         "arguments": 1,
         "c": "fire_gpio_EdgeTime"
       },
       {
         "name": "__GpioClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_gpio_Close"
       },
       {
         "name": "__GpioSimWire",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_gpio_SimWire"
       },
       {
         "name": "__GpioSimUnwire",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_gpio_SimUnwire"
       },
       {
         "name": "__GpioSimDrive",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_gpio_SimDrive"
       },
       {
         "name": "__GpioSimLevel",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_gpio_SimLevel"
       },
       {
         "name": "__GpioSimOutput",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_gpio_SimOutput"
       },
       {
         "name": "__GpioSimReset",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_gpio_SimReset"
       }

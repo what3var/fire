@@ -23,11 +23,13 @@
     "functions": [
       {
         "name": "__NetLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_net_LastError"
       },
       {
         "name": "__NetLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -35,66 +37,79 @@
       },
       {
         "name": "__NetOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_net_OpenCount"
       },
       {
         "name": "__NetSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_net_Supported"
       },
       {
         "name": "__NetNativeHandle",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_net_NativeHandle"
       },
       {
         "name": "__NetConnectBegin",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_net_ConnectBegin"
       },
       {
         "name": "__NetConnectStep",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_net_ConnectStep"
       },
       {
         "name": "__NetTcpListen",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_net_TcpListen"
       },
       {
         "name": "__NetAccept",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_net_Accept"
       },
       {
         "name": "__NetSend",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_net_Send"
       },
       {
         "name": "__NetRecv",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_net_Recv"
       },
       {
         "name": "__NetUdpOpen",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_net_UdpOpen"
       },
       {
         "name": "__NetSendTo",
+        "returns": "int",
         "arguments": 6,
         "c": "fire_net_SendTo"
       },
       {
         "name": "__NetRecvFrom",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_net_RecvFrom"
       },
       {
         "name": "__NetPeerHost",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -102,11 +117,13 @@
       },
       {
         "name": "__NetPeerPort",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_net_PeerPort"
       },
       {
         "name": "__NetLocalHost",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -114,36 +131,43 @@
       },
       {
         "name": "__NetLocalPort",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_net_LocalPort"
       },
       {
         "name": "__NetAvailable",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_net_Available"
       },
       {
         "name": "__NetPoll",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_net_Poll"
       },
       {
         "name": "__NetSetOption",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_net_SetOption"
       },
       {
         "name": "__NetShutdown",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_net_Shutdown"
       },
       {
         "name": "__NetClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_net_Close"
       },
       {
         "name": "__NetResolve",
+        "returns": "any[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,

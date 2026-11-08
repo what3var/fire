@@ -392,7 +392,7 @@ namespace Circuits {
         static string TubeParameters(string text) {
             any t = text.Trim()
             if (t == "") { return "" }
-            any message = __CirCheckFormula("0", t, false)
+            var message = __CirCheckFormula("0", t, false)
             if (message != "") { throw new ArgumentException(message) }
             return t
         }

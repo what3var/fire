@@ -18,11 +18,13 @@
     "functions": [
       {
         "name": "__ProcLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_proc_LastError"
       },
       {
         "name": "__ProcLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -30,56 +32,67 @@
       },
       {
         "name": "__ProcOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_proc_OpenCount"
       },
       {
         "name": "__ProcSupported",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_proc_Supported"
       },
       {
         "name": "__ProcStart",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_proc_Start"
       },
       {
         "name": "__ProcId",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_proc_Id"
       },
       {
         "name": "__ProcPoll",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_proc_Poll"
       },
       {
         "name": "__ProcExitCode",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_proc_ExitCode"
       },
       {
         "name": "__ProcRead",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_proc_Read"
       },
       {
         "name": "__ProcWrite",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_proc_Write"
       },
       {
         "name": "__ProcCloseInput",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_proc_CloseInput"
       },
       {
         "name": "__ProcKill",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_proc_Kill"
       },
       {
         "name": "__ProcClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_proc_Close"
       }

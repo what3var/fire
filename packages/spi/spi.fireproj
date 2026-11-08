@@ -21,11 +21,13 @@
     "functions": [
       {
         "name": "__SpiLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_spi_LastError"
       },
       {
         "name": "__SpiLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -33,16 +35,19 @@
       },
       {
         "name": "__SpiOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_spi_OpenCount"
       },
       {
         "name": "__SpiSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_spi_Supported"
       },
       {
         "name": "__SpiDevices",
+        "returns": "any[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -50,66 +55,79 @@
       },
       {
         "name": "__SpiOpen",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_spi_Open"
       },
       {
         "name": "__SpiConfigure",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_spi_Configure"
       },
       {
         "name": "__SpiTransfer",
+        "returns": "int",
         "arguments": 6,
         "c": "fire_spi_Transfer"
       },
       {
         "name": "__SpiWrite",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_spi_Write"
       },
       {
         "name": "__SpiRead",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_spi_Read"
       },
       {
         "name": "__SpiClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_spi_Close"
       },
       {
         "name": "__SpiSimReply",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_spi_SimReply"
       },
       {
         "name": "__SpiSimSetReply",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_spi_SimSetReply"
       },
       {
         "name": "__SpiSimLoopback",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_spi_SimLoopback"
       },
       {
         "name": "__SpiSimSentCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_spi_SimSentCount"
       },
       {
         "name": "__SpiSimSentByte",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_spi_SimSentByte"
       },
       {
         "name": "__SpiSimInfo",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_spi_SimInfo"
       },
       {
         "name": "__SpiSimClear",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_spi_SimClear"
       }

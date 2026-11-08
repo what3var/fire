@@ -475,12 +475,12 @@ class SerialPort : Device {
     /// <summary>Waits until the characters appear in the receive buffer (also across packets) and cuts the buffer behind them. Without a time limit the program's
     /// `#timeout` applies, otherwise 30 seconds.</summary>
     override bool WaitForString(string text, any timeout = undefined) {
-        any r = __DEVWaitForString(this.handle, text, timeout)
+        var r = __DEVWaitForString(this.handle, text, timeout)
         if (r < 0) { throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)") }
         return r == 1
     }
     override bool WaitFor(any data, any timeout = undefined) {
-        any r = __DEVWaitFor(this.handle, data, timeout)
+        var r = __DEVWaitFor(this.handle, data, timeout)
         if (r < 0) { throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)") }
         return r == 1
     }
@@ -493,9 +493,9 @@ class SerialDriver : Driver {
 
     override undefined Refresh(bool fastScan = true) {
         __DEVMgrRefresh(fastScan)
-        any n = __DEVMgrCount()
+        var n = __DEVMgrCount()
         for (int i = 0; i < n; i++) {
-            any h = __DEVMgrHandleAt(i)
+            var h = __DEVMgrHandleAt(i)
             if (h < 0) { continue }
             var known = false
             foreach (d in this.devices) {

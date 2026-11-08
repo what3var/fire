@@ -10,7 +10,7 @@ namespace Machine {
     // (the hardware is there - else the MachineException that says why)
     class Check {
         static undefined Hardware() {
-            any why = __MachUnavailable()
+            var why = __MachUnavailable()
             if (why != undefined) { throw new Machine.MachineException(why) }
         }
         static undefined Bits(int bits) {
@@ -49,7 +49,7 @@ namespace Machine {
         static int Peek(int address, int bits) {
             Machine.Check.Hardware()
             if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
-            any v = __MachPeek(address, bits)
+            var v = __MachPeek(address, bits)
             if (v == undefined) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
             return v
         }
@@ -68,7 +68,7 @@ namespace Machine {
         static byte[] Read(int address, int count) {
             Machine.Check.Hardware()
             if (count < 0) { throw new ArgumentException("A count is not negative.") }
-            any data = __MachRead(address, count)
+            var data = __MachRead(address, count)
             if (data == undefined) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
             return data
         }
@@ -83,7 +83,7 @@ namespace Machine {
         // 86 (8086/8088), 286, 386, 486, or 586 for one with CPUID (a Pentium or later: Id/Vendor say more).
         static int Level() {
             Machine.Check.Hardware()
-            any l = __MachCpuLevel()
+            var l = __MachCpuLevel()
             if (l == 0) { return 86 }
             if (l == 5) { return 586 }
             return l * 100 + 86
@@ -100,7 +100,7 @@ namespace Machine {
         // "GenuineIntel", "AuthenticAMD", ... (undefined without CPUID)
         static string Vendor() {
             if (!Machine.Cpu.HasCpuid()) { return undefined }
-            any r = __MachCpuid(0, 0)
+            var r = __MachCpuid(0, 0)
             return Machine.Cpu.Text(r[1]) + Machine.Cpu.Text(r[3]) + Machine.Cpu.Text(r[2])
         }
         static string Text(int v) {

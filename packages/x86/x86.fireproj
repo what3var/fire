@@ -22,6 +22,7 @@
     "functions": [
       {
         "name": "__X86Unavailable",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -29,6 +30,7 @@
       },
       {
         "name": "__X86Mode",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -36,11 +38,13 @@
       },
       {
         "name": "__X86A20",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_x86_A20"
       },
       {
         "name": "__X86Run",
+        "returns": "any[]",
         "arguments": 7,
         "needsList": true,
         "returnsReference": true,
@@ -48,16 +52,19 @@
       },
       {
         "name": "__X86LinearOf",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_x86_LinearOf"
       },
       {
         "name": "__X86CanLong",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_x86_CanLong"
       },
       {
         "name": "__X86RunLong",
+        "returns": "any[]",
         "arguments": 7,
         "needsList": true,
         "returnsReference": true,

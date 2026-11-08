@@ -34,8 +34,8 @@ namespace Audio {
     class Errors {
         // Throws the exception that fits the last error of a native function.
         static undefined Throw() {
-            any code = __AudioLastError()
-            any message = __AudioLastErrorMessage()
+            var code = __AudioLastError()
+            var message = __AudioLastErrorMessage()
             if (code == 3) { throw new NotFoundException(message) }
             if (code == 4) { throw new BusyException(message) }
             if (code == 5) { throw new PermissionException(message) }
@@ -56,7 +56,7 @@ namespace Audio {
 
         // The names of the devices: "sim" first, then the real ones ("default", "pulse", "alsa" on Linux, "default" and the names of the devices on Windows, "pwm" on an ESP32 - there with a pin: "pwm:25").
         static List Devices() {
-            any all = __AudioDevices()
+            var all = __AudioDevices()
             if (all == undefined) { Audio.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
@@ -68,7 +68,7 @@ namespace Audio {
 
         // The names of the inputs: "sim" first, then the real ones ("default", "pulse", "alsa" on Linux, "default" and the names of the devices on Windows and macOS).
         static List Inputs() {
-            any all = __AudioInDevices()
+            var all = __AudioInDevices()
             if (all == undefined) { Audio.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
@@ -247,7 +247,7 @@ namespace Audio {
         int Queued {
             get {
                 this.Check()
-                any q = __AudioQueued(this.handle)
+                var q = __AudioQueued(this.handle)
                 if (q < 0) { Audio.Errors.Throw() }
                 return q
             }
@@ -264,7 +264,7 @@ namespace Audio {
         int Offer(byte buffer[], int offset = 0, int count = -1) {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
-            any n = __AudioWrite(this.handle, buffer, offset, count)
+            var n = __AudioWrite(this.handle, buffer, offset, count)
             if (n < 0) { Audio.Errors.Throw() }
             return n
         }
@@ -274,7 +274,7 @@ namespace Audio {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
             while (count > 0) {
-                any n = __AudioWrite(this.handle, buffer, offset, count)
+                var n = __AudioWrite(this.handle, buffer, offset, count)
                 if (n < 0) { Audio.Errors.Throw() }
                 if (n == 0) { Sleep(5) }
                 offset = offset + n
@@ -321,7 +321,7 @@ namespace Audio {
             this.Check()
             var waited = 0
             while (true) {
-                any q = __AudioQueued(this.handle)
+                var q = __AudioQueued(this.handle)
                 if (q < 0) { Audio.Errors.Throw() }
                 if (q == 0) { return true }
                 if (timeoutMs >= 0 && waited >= timeoutMs) { return false }
@@ -377,7 +377,7 @@ namespace Audio {
         int Available {
             get {
                 this.Check()
-                any n = __AudioInAvailable(this.handle)
+                var n = __AudioInAvailable(this.handle)
                 if (n < 0) { Audio.Errors.Throw() }
                 return n
             }
@@ -391,7 +391,7 @@ namespace Audio {
         int Read(byte buffer[], int offset = 0, int count = -1) {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
-            any n = __AudioInRead(this.handle, buffer, offset, count)
+            var n = __AudioInRead(this.handle, buffer, offset, count)
             if (n < 0) { Audio.Errors.Throw() }
             return n
         }
@@ -406,7 +406,7 @@ namespace Audio {
             var waited = 0
             if (timeoutMs < 0) { timeoutMs = milliseconds * 2 + 1000 }
             while (have < total) {
-                any n = __AudioInRead(this.handle, data, have, total - have)
+                var n = __AudioInRead(this.handle, data, have, total - have)
                 if (n < 0) { Audio.Errors.Throw() }
                 have = have + n
                 if (have < total) {

@@ -2296,7 +2296,7 @@ namespace Circuits {
 
         // parameters of a tube: "name=value" pairs (a prefix after the number: 2.3p), every value above zero
         static undefined Check(string text) {
-            any message = __CirCheckFormula("0", text, false)
+            var message = __CirCheckFormula("0", text, false)
             if (message != "") { throw new ArgumentException(message) }
             foreach (pair in text.Replace(",", " ").Replace(";", " ").Split(" ")) {
                 any p = pair.Trim()
@@ -3395,7 +3395,7 @@ namespace Circuits {
             if (!top.fireSteps) {
                 var refNode = -1
                 if (reference != undefined) { refNode = reference.Root().node }
-                any clipped = __CirProcess(top.solver.handle, input.index, data, offset, frames, channels, input.amplitude, oversample, output.Root().node, refNode,
+                var clipped = __CirProcess(top.solver.handle, input.index, data, offset, frames, channels, input.amplitude, oversample, output.Root().node, refNode,
                                            scale, result, 0)
                 if (clipped < 0) { throw new ArgumentException(top.solver.Error()) }
                 this.clipped = clipped
@@ -3631,7 +3631,7 @@ namespace Circuits {
             if (row >= 0 && col >= 0) { __CirEntry(this.handle, row, col, value) }
         }
         int AddLine(Port a1, Port b1, Port a2, Port b2, float z, float delay) {
-            any index = __CirAddLine(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, z, delay)
+            var index = __CirAddLine(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, z, delay)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
@@ -3639,14 +3639,14 @@ namespace Circuits {
         int AddTube(int kind, List ports, string parameters) {
             var n = [-2, -2, -2, -2]
             for (int i = 0; i < ports.Count; i++) { n[i] = ports[i].Root().node }
-            any index = __CirAddTube(this.handle, kind, n[0], n[1], n[2], n[3], parameters)
+            var index = __CirAddTube(this.handle, kind, n[0], n[1], n[2], n[3], parameters)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
         int AddFormula(Port a, Port b, Port c, string current1, string current2, string parameters) {
             var n2 = -2
             if (c != undefined) { n2 = c.Root().node }
-            any index = __CirAddFormula(this.handle, a.Root().node, b.Root().node, n2, current1, current2, parameters)
+            var index = __CirAddFormula(this.handle, a.Root().node, b.Root().node, n2, current1, current2, parameters)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
@@ -3661,7 +3661,7 @@ namespace Circuits {
         undefined ChipSet(int index, int what, int k, float value) { __CirChipSet(this.handle, index, what, k, value) }
         undefined GateExtra(int index, float low, bool falling) { __CirGateExtra(this.handle, index, low, falling) }
         int AddCoupled(Port a1, Port b1, Port a2, Port b2, float l1, float l2, float k, float i1, float i2, float v1, float v2) {
-            any index = __CirAddCoupled(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, l1, l2, k, i1, i2, v1, v2)
+            var index = __CirAddCoupled(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, l1, l2, k, i1, i2, v1, v2)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
@@ -4688,7 +4688,7 @@ namespace Circuits {
         /// <summary>Puts 16 bit samples (little endian, `channels` interleaved and mixed to one) from `offset` of `data` into the stream; a full-scale sample is
         /// `fullScale` volts. How many frames it took.</summary>
         int WritePcm(byte data[], int offset, int frames, int channels = 1, float fullScale : any = 1) {
-            any n = __CirStreamWritePcm(this.handle, data, offset, frames, channels, Circuits.Units.Volts(fullScale))
+            var n = __CirStreamWritePcm(this.handle, data, offset, frames, channels, Circuits.Units.Volts(fullScale))
             if (n < 0) { throw new ArgumentException(__CirLastError()) }
             return n
         }

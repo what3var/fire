@@ -52,8 +52,8 @@ namespace Usb {
 
     class Errors {
         static undefined Throw() {
-            any code = __UsbLastError()
-            any message = __UsbLastErrorMessage()
+            var code = __UsbLastError()
+            var message = __UsbLastErrorMessage()
             if (code == 3) { throw new NotFoundException(message) }
             if (code == 4) { throw new BusyException(message) }
             if (code == 5) { throw new PermissionException(message) }
@@ -182,7 +182,7 @@ namespace Usb {
 
         // The devices: "sim" first, then those of the machine.
         static List Devices() {
-            any all = __UsbDevices()
+            var all = __UsbDevices()
             if (all == undefined) { Usb.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(new Usb.DeviceInfo(all[i])) }
@@ -243,7 +243,7 @@ namespace Usb {
         // The endpoints of all interfaces and alternate settings.
         List Endpoints() {
             this.CheckOpen()
-            any all = __UsbEndpoints(this.handle)
+            var all = __UsbEndpoints(this.handle)
             if (all == undefined) { Usb.Errors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(new Usb.Endpoint(all[i])) }
@@ -307,7 +307,7 @@ namespace Usb {
                     if (left <= 0) { throw new TimeoutException("The USB transfer on endpoint 0x" + Usb.Format.Hex(endpoint, 2) + " did not finish in time.") }
                     if (left < slice) { slice = left }
                 }
-                any n = __UsbTransfer(this.handle, type, endpoint, buffer, offset + done, count - done, slice)
+                var n = __UsbTransfer(this.handle, type, endpoint, buffer, offset + done, count - done, slice)
                 if (n < 0) {
                     if (__UsbLastError() != 8) { Usb.Errors.Throw() }
                     Sleep(1)

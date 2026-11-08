@@ -444,7 +444,7 @@ namespace Http {
             IO.MemoryStream pending = undefined
             var total = 0
             while (this.Fill()) {
-                any nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
+                var nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
                 var upto = this.len
                 if (nl >= 0) { upto = nl }
                 total = total + (upto - this.pos)

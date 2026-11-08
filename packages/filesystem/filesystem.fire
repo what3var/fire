@@ -155,14 +155,14 @@ namespace IO {
     // Files as a whole. Text is UTF-8; lines are written with "\n" and read with \n, \r\n or \r.
     class File {
         static bool Exists(string path) {
-            any r = __IOFileExists(path)
+            var r = __IOFileExists(path)
             if (r < 0) { IO.IOErrors.Throw() }
             return r == 1
         }
 
         // The size in bytes.
         static int Size(string path) {
-            any n = __IOFileSize(path)
+            var n = __IOFileSize(path)
             if (n < 0) { IO.IOErrors.Throw() }
             return n
         }
@@ -170,7 +170,7 @@ namespace IO {
         // The time of the last change (local time).
         static DateTime GetLastWriteTime(string path) { return IO.File.GetLastWriteTimeUtc(path).ToLocal() }
         static DateTime GetLastWriteTimeUtc(string path) {
-            any t = __IOFileTime(path)
+            var t = __IOFileTime(path)
             if (t == undefined) { IO.IOErrors.Throw() }
             return DateTime.FromUnixSeconds(t)
         }
@@ -263,7 +263,7 @@ namespace IO {
     // Directories. The lists are full paths, sorted.
     class Directory {
         static bool Exists(string path) {
-            any r = __IODirExists(path)
+            var r = __IODirExists(path)
             if (r < 0) { IO.IOErrors.Throw() }
             return r == 1
         }
@@ -302,7 +302,7 @@ namespace IO {
 
         static List Entries(string path, string pattern, any searchOption, int kind) {
             any recursive = searchOption is of bool ? searchOption : searchOption == IO.SearchOption.AllDirectories
-            any list = __IODirList(path, pattern, recursive, kind)
+            var list = __IODirList(path, pattern, recursive, kind)
             if (list == undefined) { IO.IOErrors.Throw() }
             return new List(list)
         }
@@ -324,7 +324,7 @@ namespace IO {
         // The time of the last change (local time).
         static DateTime GetLastWriteTime(string path) { return IO.Directory.GetLastWriteTimeUtc(path).ToLocal() }
         static DateTime GetLastWriteTimeUtc(string path) {
-            any t = __IOEntryTime(path)
+            var t = __IOEntryTime(path)
             if (t == undefined) { IO.IOErrors.Throw() }
             return DateTime.FromUnixSeconds(t)
         }

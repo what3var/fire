@@ -59,8 +59,8 @@ namespace Net {
     class NetErrors {
         // Throws the exception that fits the last error of a native function.
         static undefined Throw() {
-            any code = __NetLastError()
-            any message = __NetLastErrorMessage()
+            var code = __NetLastError()
+            var message = __NetLastErrorMessage()
             if (code == 2 || code == 7 || code == 12) { throw new ClosedException(message, code) }
             if (code == 3) { throw new RefusedException(message) }
             if (code == 4) { throw new TimeoutException(message) }
@@ -118,7 +118,7 @@ namespace Net {
     class Dns {
         // The addresses of a name as text (IPv4 and IPv6); a literal address gives itself.
         static List Resolve(string host) {
-            any all = __NetResolve(host)
+            var all = __NetResolve(host)
             if (all == undefined) { Net.NetErrors.Throw() }
             var list = new List()
             for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
@@ -159,7 +159,7 @@ namespace Net {
             var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
             var tries = 0
             while (true) {
-                any state = __NetConnectStep(this.handle)
+                var state = __NetConnectStep(this.handle)
                 if (state == 1) { break }
                 if (state < 0) { Net.NetErrors.Throw() }
                 if (Net.Clock.Expired(deadline)) { throw new TimeoutException("Connecting to " + host + ":" + port + " timed out.") }
@@ -201,7 +201,7 @@ namespace Net {
         string RemoteHost {
             get {
                 this.Check()
-                any h = __NetPeerHost(this.handle)
+                var h = __NetPeerHost(this.handle)
                 if (h == undefined) { Net.NetErrors.Throw() }
                 return h
             }
@@ -217,7 +217,7 @@ namespace Net {
         string LocalHost {
             get {
                 this.Check()
-                any h = __NetLocalHost(this.handle)
+                var h = __NetLocalHost(this.handle)
                 if (h == undefined) { Net.NetErrors.Throw() }
                 return h
             }
@@ -253,7 +253,7 @@ namespace Net {
             var deadline = Net.Clock.Deadline(ms)
             var tries = 0
             while (true) {
-                any bits = __NetPoll(this.handle, 1, 0, 0)
+                var bits = __NetPoll(this.handle, 1, 0, 0)
                 if (bits < 0) { Net.NetErrors.Throw() }
                 if ((bits & 1) != 0) { return true }
                 if (Net.Clock.Expired(deadline)) { return false }
@@ -286,7 +286,7 @@ namespace Net {
             var deadline = Net.Clock.Deadline(this.readLimit)
             var tries = 0
             while (true) {
-                any n = __NetRecv(this.handle, buffer, offset, count, 0)
+                var n = __NetRecv(this.handle, buffer, offset, count, 0)
                 if (n >= 0) { return n }
                 if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                 if (Net.Clock.Expired(deadline)) { throw new TimeoutException("Nothing was received in time.") }
@@ -368,7 +368,7 @@ namespace Net {
         string Host {
             get {
                 this.Check()
-                any h = __NetLocalHost(this.handle)
+                var h = __NetLocalHost(this.handle)
                 if (h == undefined) { Net.NetErrors.Throw() }
                 return h
             }
@@ -380,7 +380,7 @@ namespace Net {
             var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
             var tries = 0
             while (true) {
-                any bits = __NetPoll(this.handle, 1, 0, 0)
+                var bits = __NetPoll(this.handle, 1, 0, 0)
                 if (bits < 0) { Net.NetErrors.Throw() }
                 if ((bits & 1) != 0) { return true }
                 if (Net.Clock.Expired(deadline)) { return false }
@@ -402,7 +402,7 @@ namespace Net {
             var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
             var tries = 0
             while (true) {
-                any h = __NetAccept(this.handle, 0)
+                var h = __NetAccept(this.handle, 0)
                 if (h >= 0) { return new TcpClient(h) }
                 if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                 if (Net.Clock.Expired(deadline)) { return undefined }
@@ -490,7 +490,7 @@ namespace Net {
             var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
             var tries = 0
             while (true) {
-                any bits = __NetPoll(this.handle, 1, 0, 0)
+                var bits = __NetPoll(this.handle, 1, 0, 0)
                 if (bits < 0) { Net.NetErrors.Throw() }
                 if ((bits & 1) != 0) { return true }
                 if (Net.Clock.Expired(deadline)) { return false }
@@ -505,7 +505,7 @@ namespace Net {
             var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
             var tries = 0
             while (true) {
-                any n = __NetRecvFrom(this.handle, buffer, offset, count, 0)
+                var n = __NetRecvFrom(this.handle, buffer, offset, count, 0)
                 if (n >= 0) {
                     this.fromHost = __NetPeerHost(this.handle)
                     this.fromPort = __NetPeerPort(this.handle)

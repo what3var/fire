@@ -24,16 +24,19 @@
       },
       {
         "name": "__time_now",
+        "returns": "int[64]",
         "arguments": 0,
         "c": "fire_tm_now"
       },
       {
         "name": "__time_local_offset",
+        "returns": "int[64]",
         "arguments": 1,
         "c": "fire_tm_localOffset"
       },
       {
         "name": "__time_parts",
+        "returns": "any[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -41,16 +44,19 @@
       },
       {
         "name": "__time_make",
+        "returns": "int[64]",
         "arguments": 7,
         "c": "fire_tm_make"
       },
       {
         "name": "__time_parse",
+        "returns": "int[64]",
         "arguments": 1,
         "c": "fire_tm_parse"
       },
       {
         "name": "__time_format",
+        "returns": "string",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -58,27 +64,32 @@
       },
       {
         "name": "__time_add_months",
+        "returns": "int[64]",
         "arguments": 2,
         "c": "fire_tm_addMonths"
       },
       {
         "name": "__time_days_in_month",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_tm_daysInMonth"
       },
       {
         "name": "__time_to_ticks",
+        "returns": "int[64]",
         "arguments": 2,
         "c": "fire_tm_toTicks"
       },
       {
         "name": "__time_unit_ticks",
+        "returns": "int[64]",
         "arguments": 1,
         "host": true,
         "c": "fire_tm_unitTicks"
       },
       {
         "name": "__time_span_text",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,

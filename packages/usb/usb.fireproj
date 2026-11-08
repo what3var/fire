@@ -26,11 +26,13 @@
     "functions": [
       {
         "name": "__UsbLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_usb_LastError"
       },
       {
         "name": "__UsbLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -38,16 +40,19 @@
       },
       {
         "name": "__UsbOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_usb_OpenCount"
       },
       {
         "name": "__UsbSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_usb_Supported"
       },
       {
         "name": "__UsbDevices",
+        "returns": "any[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -55,11 +60,13 @@
       },
       {
         "name": "__UsbOpen",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_usb_Open"
       },
       {
         "name": "__UsbEndpoints",
+        "returns": "any[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -67,36 +74,43 @@
       },
       {
         "name": "__UsbInterface",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_usb_Interface"
       },
       {
         "name": "__UsbControl",
+        "returns": "int",
         "arguments": 9,
         "c": "fire_usb_Control"
       },
       {
         "name": "__UsbTransfer",
+        "returns": "int",
         "arguments": 7,
         "c": "fire_usb_Transfer"
       },
       {
         "name": "__UsbClearHalt",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_usb_ClearHalt"
       },
       {
         "name": "__UsbClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_usb_Close"
       },
       {
         "name": "__UsbSimInfo",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_usb_SimInfo"
       },
       {
         "name": "__UsbSimClear",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_usb_SimClear"
       }
