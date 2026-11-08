@@ -922,11 +922,8 @@ namespace fire.Native
                     result = objType;
                     continue;
                 }
-                byte kind = KindOfDeclared(declared);
-                int unit = kind == KindBool ? 0 : cls.Rc.FindFieldRequiredUnit(name) is { } demand ? DemandedUnitId(demand) : DeclaredKind.IsUnitless(declared) ? 0 : -1;
-                if (unit < 0) return TypeUnknown;
-                // (a plain `int` field holds the program's int - every way in cuts to it - but maybe a value of an enum: CutBit)
-                int type = TypeOf(kind, unit) | NullableBit | (kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? CutBit : 0);
+                int type = DeclaredValueType(declared, cls.Rc.FindFieldRequiredUnit(name));
+                if (type == TypeUnknown) return TypeUnknown;
                 if (result is { } r && r != type) return TypeUnknown;
                 result = type;
             }
@@ -2485,14 +2482,34 @@ namespace fire.Native
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray): what is assigned is typed like by OpCode.TypeArray ("" for any other field).</summary>
         private string FieldArrayCheck(RuntimeClass rc, string name) => rc.FindFieldRequiredArray(name) is var arr and not 0
             ? $"typeArray(x, {arr & 0xFF}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name))}, 1);" : "";
-        private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch { TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", _ => "K_Bool" };
+        private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch
+        {
+            TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Word => "K_Word", TypeTag.Char => "K_Char", _ => "K_Bool",
+        };
         private string GuardKindCall(string value, byte declared, string what)
         {
-            string call = $"guardKind({value}, {KindConstant(declared)}, {(DeclaredKind.IsUnitless(declared) ? "true" : "false")}, {CString(what)}, {Constant(Value.MakeString(Unit.DemandDisplay("unitless")))})";
+            string call = $"guardKind{(DeclaredKind.IsNonNull(declared) ? "NN" : "")}({value}, {KindConstant(declared)}, {(DeclaredKind.IsUnitless(declared) ? "true" : "false")}, {CString(what)}, {Constant(Value.MakeString(Unit.DemandDisplay("unitless")))})";
             // (a plain `int` holds the program's int: a wider one is cut, DeclaredKind.CutsWide)
             return DeclaredKind.TagOf(declared) == TypeTag.Int && !DeclaredKind.KeepsWidth(declared) && _program.IntWidth < 64 ? $"intProgram({call})" : call;
         }
-        private static byte KindOfDeclared(byte declared) => DeclaredKind.TagOf(declared) switch { TypeTag.Int => KindInt, TypeTag.Float => KindFloat, _ => KindBool };
+        /// <summary>What a parameter, field or return value declared int/float/bool (DeclaredKind) certainly holds after its check: that kind (or undefined) in
+        /// the unit it demands (`demand`: its unit demand, null: none). A plain `int` holds the program's int - but maybe a value of an enum (CutBit); `int!`
+        /// (SPEC 8.11) neither undefined nor an enum (NarrowBit). TypeUnknown when the unit is open.</summary>
+        private int DeclaredValueType(byte declared, string? demand)
+        {
+            byte kind = KindOfDeclared(declared);
+            if (kind == KindUnknown) return TypeUnknown;
+            bool nonNull = DeclaredKind.IsNonNull(declared);
+            int nullable = nonNull ? 0 : NullableBit;
+            if (kind is KindBool or KindWord) return TypeOf(kind, 0) | nullable;
+            int unit = demand != null ? DemandedUnitId(demand) : DeclaredKind.IsUnitless(declared) ? 0 : -1;
+            if (unit < 0) return TypeUnknown;
+            return TypeOf(kind, unit) | nullable | (kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? nonNull ? NarrowBit : CutBit : 0);
+        }
+        private static byte KindOfDeclared(byte declared) => DeclaredKind.TagOf(declared) switch
+        {
+            TypeTag.Int => KindInt, TypeTag.Float => KindFloat, TypeTag.Word => KindWord, TypeTag.Char => KindUnknown, _ => KindBool,
+        };
 
         private HashSet<FunctionProto>? _setterProtos;
         /// <summary>Is the function the setter of a property (`set_name`)? It takes what a property assignment of an accessor hands to it (SPEC 2.2).</summary>
@@ -5289,11 +5306,9 @@ namespace fire.Native
                     byte declared = (byte)((ins.A[1] & 0x7F) + 1 | ins.A[1] & DeclaredKind.UnitlessBit);
                     E($"{v} = {GuardKindCall(v, declared, Str(ins.A[2]))};");
                     Check();
-                    int unit = ins.A[3] == 0xFFFF ? -1 : DemandedUnitId(Str(ins.A[3]));
-                    byte kind = KindOfDeclared(declared);
-                    // (a plain `int` is cut to the program's int - but it may hold a value of an enum: CutBit)
-                    int narrowParam = kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? CutBit : 0;
-                    JoinVarType(VarKey(f, v), kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : unit < 0 ? TypeUnknown : TypeOf(kind, unit) | NullableBit | narrowParam);
+                    // (the unit that was checked before it: GuardLocal names its demand, or 0xFFFF for an open one)
+                    JoinVarType(VarKey(f, v), KindOfDeclared(declared) is KindBool or KindWord ? DeclaredValueType(declared, null)
+                        : ins.A[3] == 0xFFFF ? TypeUnknown : DeclaredValueType((byte)(declared & ~DeclaredKind.UnitlessBit), Str(ins.A[3])));
                     _kindsKept = true;
                     return Next();
                 }
@@ -5328,7 +5343,10 @@ namespace fire.Native
                     E($"{S(d - 1)} = {GuardKindCall(S(d - 1), declared, Str(ins.A[1]))};");
                     Check();
                     byte kind = KindOfDeclared(declared);
-                    if (KindOfType(Ty(d - 1)) != kind) SetT(d - 1, kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : TypeUnknown);
+                    // (`int!` - a return value, SPEC 8.11: the number of the kind, in the unit the value had; a plain declaration only keeps a known kind)
+                    if (DeclaredKind.IsNonNull(declared) && kind is KindInt or KindFloat && KindOfType(Ty(d - 1)) == kind) SetT(d - 1, Ty(d - 1) & ~(NullableBit | TypeNone | CutBit) | (kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? NarrowBit : 0));
+                    else if (DeclaredKind.IsNonNull(declared) && kind is KindBool or KindWord) SetT(d - 1, TypeOf(kind, 0));
+                    else if (KindOfType(Ty(d - 1)) != kind) SetT(d - 1, kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : TypeUnknown);
                     _kindsKept = true;
                     return Next();
                 }
