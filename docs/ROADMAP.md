@@ -773,13 +773,25 @@ Kamera-Pixel (RGBA), Tiefenpuffer (`float`) und Framebuffer nehmen je 4 Byte pro
 Programm (~500 KB mit scene3d) nur Bilder um 64x48. Es fehlen: Frustum-Culling pro Objekt und eine Raumstruktur, Nebel/Sichtweite, Hierarchie
 (`Parent`), Raycast/Picking, Skybox, LOD, Mipmaps; `Object.Parameters()`/`LightParameters()` legen pro Bild und Objekt ein neues `float[]` an.
 
+**Messung dos16** (Open Watcom 2.0 beta portabel, die 64x48-Szene des Tests, `-Os`, Map von wlink): ~372 KB Code, ~42 KB Daten (Ladegröße 421 KB). Davon
+übersetzte fire-Methoden 159 KB - **das Prelude von scene3d allein 122 KB** (`Object.Parameters` 21 KB, `Camera.Render` 18 KB, `Scene.LightParameters` 9 KB,
+`Object.Init`/Konstruktoren je 5-8 KB), graphics-Prelude 22 KB; Runtime ~91 KB (Einheiten allein ~10 KB); die C-Engine 54 KB (`s3d_rasterTri` 5 KB,
+Schatten ~9 KB); graphics-C 11 KB. Der Speicher ging auf dos16 aus (Wunsch des Benutzers: Schatten auch unter DOS, gern grob aufgelöst; XMS/EMS für dos16 später,
+nach Arbeiten auf `targets`).
+
 1. **Größe** (zuerst):
+   * **Die Szene lebt in C** (der größte Gewinn): Objekte, Lichter, Kamera und Szene sind Handles auf C-Strukturen, Eigenschaften lesen und schreiben sie
+     direkt; `Render` ist ein Aufruf, der in C über die Objekte läuft - keine `float[]` pro Objekt und Bild, kein `Parameters()`, kein `LightParameters()`.
+     Die API bleibt gleich; was ein Programm nicht benutzt, fällt beim Weglassen (§11) heraus.
+   * Die Kamera zeichnet direkt in die Pixel des Framebuffers (heute ein eigenes `byte[w*h*4]` und eine Kopie: 4 Byte pro Pixel weniger).
    * Ein zweiter, schlanker Rasterizer (`Scene.Quality`, eigene Quelle, nur gelinkt, wenn benutzt): 8 Bit mit Palette und Schattierungstabellen direkt in
      einen Paletten-Framebuffer, Tiefe als `uint16`, Licht pro Vertex (Gouraud), Festkomma-Spans mit perspektivischer Korrektur alle 8-16 Pixel. Der
      heutige Renderer bleibt für den Desktop (bytegleiche Tests).
    * In Bändern zeichnen: die Dreiecke einmal nach Bändern sortiert, Tiefenpuffer nur für ein Band (640x32 x 2 Byte = 40 KB), das fertige Band geht gleich
      in den Videospeicher (VESA mit Bänken) - so passt 640x480 auch neben ein dos16-Programm.
-   * Weniger Code: Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn benutzt (Stripping / Defines); unter DOS Schatten standardmäßig aus.
+   * Weniger Code: Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn benutzt (Stripping / Defines).
+   * Schatten auch unter DOS: Schattenkarten mit `uint16`-Tiefe und kleiner Auflösung (z. B. 128² = 32 KB je Richtungslicht), im schlanken Rasterizer
+     pro Vertex oder pro Span abgefragt.
    * Kompakte Meshes: Positionen `int16` relativ zur Bounding-Box, Normale als Byte (Index in eine eigene Tabelle), Indizes `uint16`, UV `int16` (8-10 statt
      32 Byte je Vertex); Texturen mit Palette (8 Bit) und Mipmaps.
    * XMS (dos16): Ablage für Meshes und Texturen, pro Objekt eingeblendet. dos32 braucht es nicht (flacher Speicher).
