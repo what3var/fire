@@ -31,6 +31,13 @@ class S3D {
         throw new Scene3DException("An angle needs a unit (deg or rad), got: " + v)
     }
 
+    // A time in seconds (s, ms, min, ...: a number without a unit is refused).
+    static float Seconds(any v) {
+        if (!(v is in s)) { throw new Scene3DException("A time needs a unit of time (s, ms, ...), got: " + v) }
+        any f = v * 1.0
+        return (f:s) / 1s
+    }
+
     static float:m Meters(float m) { return m * 1m }
     static float:deg Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
 
@@ -52,15 +59,61 @@ class S3D {
     }
 }
 
-// The triangles of an object, to be shared by objects: from a template, from the text of a Wavefront OBJ file, or from arrays.
+// The triangles of an object, to be shared by objects: from a template, from the text of a Wavefront OBJ file, from arrays - or a model of fire's own file (.f3d,
+// docs/graphics/models.md): parts in a tree with their colours, and animations (Object.Play). forge makes .f3d from glTF 2.0 (a resource "x.gltf"/"x.glb" is
+// converted when the program is built, `forge model x.gltf`).
 class Model {
     int handle
+    int model
 
     // (the handle of a mesh: use FromObj, FromArrays or FromTemplate)
-    construct(int handle) { this.handle = handle }
+    construct(int handle) {
+        this.handle = handle
+        this.model = 0
+    }
 
     destruct() {
         if (this.handle > 0) { __S3DMeshFree(this.handle) }
+        if (this.model > 0) { __S3DModelFree(this.model) }
+    }
+
+    // A model from the bytes of an .f3d file.
+    static Model FromBytes(byte data[]) {
+        var h = __S3DModelRead(data)
+        if (h == 0) { throw new Scene3DException("The bytes are not a model (an .f3d file is expected - forge makes one from glTF: a resource \"x.gltf\" is converted when the program is built).") }
+        var m = new Model(0)
+        m.model = h
+        return m
+    }
+
+    // A model from a resource of the program (`Model.FromResource(new Resource("robot.gltf"))`: glTF is made an .f3d when the program is built).
+    static Model FromResource(any resource) { return Model.FromBytes(resource.Bytes()) }
+
+    // The parts of a model file (1 for a mesh), its animations and their lengths.
+    int Parts {
+        get {
+            if (this.model > 0) { return __S3DModelInfo(this.model, 0) }
+            return 1
+        }
+    }
+    List Animations {
+        get {
+            var list = new List()
+            if (this.model > 0) {
+                var n = __S3DModelInfo(this.model, 1)
+                for (var i = 0; i < n; i++) { list.Add(__S3DModelName(this.model, 0, i)) }
+            }
+            return list
+        }
+    }
+    float:s AnimationLength(string name) {
+        if (this.model > 0) {
+            var n = __S3DModelInfo(this.model, 1)
+            for (var i = 0; i < n; i++) {
+                if (__S3DModelName(this.model, 0, i) == name) { return __S3DModelClipLength(this.model, i) * 1s }
+            }
+        }
+        throw new Scene3DException("The model has no animation '" + name + "'.")
     }
 
     // `v`, `vt` and `f` lines (polygons are cut into triangles); the normals are computed. The unit of the coordinates is the meter.
@@ -84,7 +137,12 @@ class Model {
         return new Model(h)
     }
 
-    int Triangles { get { return __S3DMeshTriangleCount(this.handle) } }
+    int Triangles {
+        get {
+            if (this.model > 0) { return __S3DModelInfo(this.model, 2) }
+            return __S3DMeshTriangleCount(this.handle)
+        }
+    }
 }
 
 // How a surface answers to light: Specular is the strength of the highlights (0 = matt), Shininess how small they are, Smooth shades with the interpolated normals (false: every triangle
@@ -248,8 +306,32 @@ class Object {
         any model = modelData
         if (modelData is of string) { model = Model.FromObj(modelData) }
         if (!(model is of Model)) { throw new Scene3DException("An object is made from a Model or the text of an OBJ file.") }
-        __S3DObjMesh(this.h, model.handle)
+        if (model.model > 0) { __S3DObjModel(this.h, model.model) }
+        else { __S3DObjMesh(this.h, model.handle) }
     }
+
+    // ---- animations of a model (an object made from a model file with clips) ----
+    // Plays the animation from its start (looping as the model says, or as `loop` says); Play("") shows the rest pose.
+    undefined Play(string name) {
+        if (!__S3DObjPlay(this.h, name, -1)) { throw new Scene3DException("The object's model has no animation '" + name + "'.") }
+    }
+    undefined Play(string name, bool loop) {
+        var l = 0
+        if (loop) { l = 1 }
+        if (!__S3DObjPlay(this.h, name, l)) { throw new Scene3DException("The object's model has no animation '" + name + "'.") }
+    }
+    // Stops where it is (Play starts again; AnimationTime can still be set).
+    undefined Stop() { __S3DObjAnimate(this.h, 3, 0.0) }
+    // Moves the animation on (call it every frame with the time that passed: obj.Advance(16ms)).
+    undefined Advance(float time : any s) { __S3DObjAnimate(this.h, 0, S3D.Seconds(time)) }
+    // The time in the animation (set it to show a moment of it).
+    float AnimationTime : s {
+        get { return __S3DObjAnimate(this.h, 2, 0.0) * 1s }
+        set { __S3DObjAnimate(this.h, 1, S3D.Seconds(value)) }
+    }
+    // The name of the animation ("" none) and whether it runs (an animation that does not loop stops at its end).
+    string Animation { get { return __S3DObjClip(this.h, 0) } }
+    bool Playing { get { return __S3DObjClip(this.h, 1) != "" } }
 
     // From a template (Template.Box, Sphere, Cylinder, Cone, Plane, Quad): at (x, y, z), the outer dimensions width, height and depth (a plane has no height, a quad no depth: pass 0m).
     construct(Template template, float x : any m, float y : any m, float z : any m, float width : any m, float height : any m, float depth : any m, int detail = 24) {

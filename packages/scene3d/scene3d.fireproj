@@ -14,6 +14,7 @@
     "sources": [
       "native/s3d_engine.h",
       "native/s3d_lean.h",
+      "native/s3d_model.h",
       "native/s3d_vk.h",
       "native/s3d_shaders.h",
       "native/s3d_gpu_vk.h",
@@ -276,6 +277,64 @@
         "returns": "float",
         "arguments": 3,
         "c": "fire_s3d_TerrainHeight"
+      },
+      {
+        "name": "__S3DModelRead",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_s3d_ModelRead"
+      },
+      {
+        "name": "__S3DModelFree",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_s3d_ModelFree"
+      },
+      {
+        "name": "__S3DModelInfo",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_s3d_ModelInfo"
+      },
+      {
+        "name": "__S3DModelName",
+        "returns": "string",
+        "arguments": 3,
+        "c": "fire_s3d_ModelName",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__S3DModelClipLength",
+        "returns": "float",
+        "arguments": 2,
+        "c": "fire_s3d_ModelClipLength"
+      },
+      {
+        "name": "__S3DObjModel",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_ObjModel"
+      },
+      {
+        "name": "__S3DObjPlay",
+        "returns": "bool",
+        "arguments": 3,
+        "c": "fire_s3d_ObjPlay"
+      },
+      {
+        "name": "__S3DObjAnimate",
+        "returns": "float",
+        "arguments": 3,
+        "c": "fire_s3d_ObjAnimate"
+      },
+      {
+        "name": "__S3DObjClip",
+        "returns": "string",
+        "arguments": 2,
+        "c": "fire_s3d_ObjClip",
+        "needsList": true,
+        "returnsReference": true
       }
     ],
     "reset": "fire_s3d_reset",

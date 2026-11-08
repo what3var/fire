@@ -830,6 +830,16 @@ nach Arbeiten auf `targets`).
       verschmolzen) zuerst, danach **CAD** (2D-Ansichten und 3D, Vertex/Kante/Fläche, Extrudieren, Spiegeln).
    2. **Animationen:** ein Modell trägt mehrere benannte Clips (Frames, fps, Schleife), zwischen den Frames interpoliert. Vorschlag: Modelle aus starren
       Teilen mit Hierarchie, ein Frame speichert eine Transformation je Teil (klein, billig); Frames je Vertex optional.
+   **Umgesetzt (Format, Import, Animation):** das Format `.f3d` ([Models and animations](graphics/models.md), Byte für Byte in `s3d_model.h`): Teile im Baum
+   (Ruhepose T/R/S, Farbe, Mesh mit `int16`-Positionen in der Box des Teils, Normale oktaedrisch in 2 Byte, UV `int16`, Indizes `uint16`: 8/12 Byte je Ecke),
+   Clips mit Frames (26 Byte je Teil und Frame). forge macht es aus glTF 2.0 (`ModelConverter`: .gltf mit Data-URIs oder Dateien, .glb; Knoten -> Teile, Meshes,
+   Grundfarbe, Matrix zerlegt; Animationen bei 30 fps abgetastet - linear, step, cubic spline), als Ressource beim Bauen (`new Resource("x.glb")`) und mit
+   `forge model`. scene3d liest es (`Model.FromBytes/FromResource`), zeichnet die Teile mit der Pose des Clips (Objekt-Matrix mal Teil-Matrix, Normalen-Matrix
+   als inverse Transponierte; beide Renderer), `Play`/`Advance`/`AnimationTime`/`Stop`. Test: ein glTF-Roboter (Körper, Arm als Kind, "wave"/"jump"),
+   VM == nativ; dos16 baut. **Offen:** die Meshes auch im Speicher kompakt (heute zu `float` entpackt, siehe 16.1 A), Texturen in der Datei, Überblenden
+   zwischen Clips, Ereignisse am Ende eines Clips, Skins (Knochen) bewusst nicht.
+   **Gefunden** (auf `targets`): seit den "Scalars"-Commits (2f8b4cc/6a6c387) stürzt der Generator bei einem Array-Literal mit mehr als ~60 Elementen ab
+   (`var b = [0, 1, ..., 99]` -> IndexOutOfRangeException in `CppGenerator.ScalarName`).
 4. **Partikel und Effekte** (`scene3d.effects`): Partikel aus einem festen Pool, als Sprites im Rasterizer (Tiefentest, additiv/Alpha), einfache Parameter
    und Vorgaben (`Fire`, `Smoke`, `Sparks`, `Rain`, `Snow`, `Explosion`). Statt programmierbarer Pixel-Shader Materialeffekte zum Einschalten (laufende UVs,
    Farbrotation über die Palette, Flackern, Wellen auf den Vertices, Toon) und Effekte auf das ganze Bild (Abblenden, Tönung, Nebel); später evtl. eine

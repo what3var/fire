@@ -147,6 +147,7 @@ typedef struct S3dMesh {
     S3dVec3 bmin, bmax;
     int refs;                             /* the users of the mesh (see MeshFree) */
     int bad;                              /* the memory ran out while it was made */
+    int nrmGiven;                         /* the normals came with the mesh (a model file): s3d_meshFinish keeps them */
     void* gpu;                            /* the copy of the hardware backend, or NULL */
 } S3dMesh;
 
@@ -183,9 +184,12 @@ static int s3d_meshFinish(S3dMesh* m) {
     if (!S3D_GROW(m->uv, m->uvCap, n * 2)) return 0;
     for (i = m->uvN; i < n * 2; i++) m->uv[i] = 0.0f;
     m->uvN = n * 2;
-    S3D_FREE(m->nrm);
-    m->nrm = (float*)s3d_calloc(n * 3 + 1, sizeof(float));
-    if (m->nrm == NULL) return 0;
+    if (!m->nrmGiven || m->nrm == NULL) {
+        S3D_FREE(m->nrm);
+        m->nrm = (float*)s3d_calloc(n * 3 + 1, sizeof(float));
+        if (m->nrm == NULL) return 0;
+        m->nrmGiven = 0;
+    }
     if (n == 0) { m->bmin = m->bmax = s3d_v3(0, 0, 0); return 1; }
     m->bmin = m->bmax = s3d_v3(m->pos[0], m->pos[1], m->pos[2]);
     for (i = 0; i < n; i++) {
@@ -193,6 +197,7 @@ static int s3d_meshFinish(S3dMesh* m) {
         m->bmin = s3d_v3(s3d_minf(m->bmin.x, p[0]), s3d_minf(m->bmin.y, p[1]), s3d_minf(m->bmin.z, p[2]));
         m->bmax = s3d_v3(s3d_maxf(m->bmax.x, p[0]), s3d_maxf(m->bmax.y, p[1]), s3d_maxf(m->bmax.z, p[2]));
     }
+    if (m->nrmGiven) return 1;
     for (t = 0; t + 2 < m->idxN; t += 3) {
         uint32_t v[3];
         S3dVec3 pa, pb, pc, fn;
@@ -334,6 +339,8 @@ static S3dSurface s3d_surfaceDefault(void) {
 typedef struct S3dObjectParams {
     S3dVec3 pos, scale, pivot;   /* the pivot is a point of the mesh (in mesh space) that sits at `pos` */
     float rx, ry, rz;
+    int hasMatrix;               /* 1: `model` and `normalM` are given (a part of a model: the object's matrix times the part's) and the fields above are not used */
+    S3dMat4 model, normalM;
 } S3dObjectParams;
 
 static void s3d_clearPixels(uint8_t* rgba, int w, int h, uint32_t color) {
@@ -768,8 +775,10 @@ static S3dMat4 s3d_viewProjection(const S3dCamera* cam, int w, int h) {
 /* The matrices of an object: model = T(pos) * R * S * T(-pivot) (a billboard replaces R by a turn towards the camera) and the normal matrix (R * S^-1, the inverse transpose of the
  * model's 3x3 part for a rotation and a non uniform scale). Both renderers place an object with them. */
 static void s3d_objectMatrices(const S3dCamera* cam, const S3dObjectParams* obj, const S3dSurface* surf, S3dMat4* model, S3dMat4* normalM) {
-    S3dMat4 rotation = s3d_rotationXYZ(obj->rx, obj->ry, obj->rz);
+    S3dMat4 rotation;
     S3dVec3 invS;
+    if (obj->hasMatrix) { *model = obj->model; *normalM = obj->normalM; return; }
+    rotation = s3d_rotationXYZ(obj->rx, obj->ry, obj->rz);
     if (surf->billboard != 0) {
         S3dVec3 toCam = s3d_sub(cam->pos, obj->pos), zaxis, xaxis, yaxis;
         S3dMat4 b = s3d_identity();

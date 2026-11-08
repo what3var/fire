@@ -19,10 +19,13 @@
 #ifndef FIRE_S3D_LEAN_H
 #include "s3d_lean.h"
 #endif
+#ifndef FIRE_S3D_MODEL_H
+#include "s3d_model.h"
+#endif
 
 /* ---- the tables: slot 0 is never used (handle 0 is "none"), a free slot is used again ---- */
 typedef struct FireS3dTable { void** items; s3d_size count, cap; } FireS3dTable;
-static FireS3dTable g_s3dMeshes, g_s3dTextures;
+static FireS3dTable g_s3dMeshes, g_s3dTextures, g_s3dModels;
 
 static void* fire_s3d_find(FireS3dTable* t, Value h) {
     int64_t i = h.i;
@@ -254,6 +257,7 @@ typedef struct FireS3dItem {
     int64_t* objects; s3d_size objectN, objectCap;   /* scene: its objects and lights, in the order they were added */
     int64_t* lights; s3d_size lightN, lightCap;
     float* terrain; int tCols, tRows, tHard; float tCell, tStep;   /* object, a terrain: its heights (in steps), cells, how it is built */
+    int64_t model; int clip, playing, loop; Real time;             /* object of a model: the model (it is one of its users), the clip that plays and its time */
 } FireS3dItem;
 static FireS3dTable g_s3dItems;
 
@@ -264,6 +268,10 @@ static FireS3dItem* fire_s3d_itemAt(int64_t h, int kind) {
 static void fire_s3d_meshRelease(int64_t h) {
     S3dMesh* m = h > 0 && (s3d_size)h < g_s3dMeshes.count ? (S3dMesh*)g_s3dMeshes.items[h] : NULL;
     if (m && --m->refs <= 0) { s3d_meshFree(m); g_s3dMeshes.items[h] = NULL; }
+}
+static void fire_s3d_modelRelease(int64_t h) {
+    S3dModel* m = h > 0 && (s3d_size)h < g_s3dModels.count ? (S3dModel*)g_s3dModels.items[h] : NULL;
+    if (m && --m->refs <= 0) { s3d_modelFree(m); g_s3dModels.items[h] = NULL; }
 }
 static void fire_s3d_itemRelease(int64_t h);
 static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
@@ -280,6 +288,7 @@ static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     for (i = 0; i < it->objectN; i++) fire_s3d_itemRelease(it->objects[i]);
     for (i = 0; i < it->lightN; i++) fire_s3d_itemRelease(it->lights[i]);
     S3D_FREE(it->objects); S3D_FREE(it->lights); S3D_FREE(it->terrain);
+    fire_s3d_modelRelease(it->model);
     S3D_FREE(it);
 }
 static void fire_s3d_itemRelease(int64_t h) {
@@ -391,6 +400,108 @@ static Value fire_s3d_ObjMaterial(Value h, Value mat) {
     if (it->mat) fire_s3d_itemRelease(it->mat);
     it->mat = m ? mat.i : 0;
     return Bool(true);
+}
+
+/* ---- models (.f3d, s3d_model.h) ---- */
+static S3dModel* fire_s3d_objModel(const FireS3dItem* it);
+/* A model from the bytes of an .f3d file: its handle, 0 when they are not one. */
+static Value fire_s3d_ModelRead(Value bytes) {
+    FireBytes in;
+    S3dModel* m;
+    int64_t h;
+    if (!bytesArg(bytes, "Scene3D.Model", &in)) return Undef();
+    m = s3d_modelRead(in.data, (s3d_size)in.length);
+    if (m == NULL) return Int(0);
+    h = fire_s3d_add(&g_s3dModels, m);
+    if (h == 0) s3d_modelFree(m);
+    return Int(h);
+}
+static Value fire_s3d_ModelFree(Value h) { fire_s3d_modelRelease(h.i); return Bool(true); }
+static S3dModel* fire_s3d_modelAt(Value h) { return (S3dModel*)fire_s3d_find(&g_s3dModels, h); }
+/* 0 the parts, 1 the clips, 2 the triangles */
+static Value fire_s3d_ModelInfo(Value h, Value what) {
+    S3dModel* m = fire_s3d_modelAt(h);
+    if (m == NULL) return Int(0);
+    switch ((int)what.i) {
+        case 0: return Int(m->partN);
+        case 1: return Int(m->clipN);
+        case 2: return Int((int64_t)m->triangles);
+        default: return Int(0);
+    }
+}
+static Value fire_s3d_strOf(const char* text, OwnList* list) {
+    s3d_size len = strlen(text), i;
+    Str* str = allocStr((uint32_t)len, list);
+    for (i = 0; i < len; i++) strChars(str)[i] = (fire_char16)(uint8_t)text[i];
+    return StrV(str);
+}
+/* The name of clip `i` (kind 0), of part `i` (kind 1), or "" */
+static Value fire_s3d_ModelName(Value h, Value kind, Value i, OwnList* list) {
+    S3dModel* m = fire_s3d_modelAt(h);
+    if (m && kind.i == 0 && i.i >= 0 && i.i < m->clipN) return fire_s3d_strOf(m->clips[i.i].name, list);
+    if (m && kind.i == 1 && i.i >= 0 && i.i < m->partN) return fire_s3d_strOf(m->parts[i.i].name, list);
+    return fire_s3d_strOf("", list);
+}
+/* The length of clip `i` in seconds (0 when there is none). */
+static Value fire_s3d_ModelClipLength(Value h, Value i) {
+    S3dModel* m = fire_s3d_modelAt(h);
+    return Float(m && i.i >= 0 && i.i < m->clipN ? (Real)s3d_clipLength(&m->clips[i.i]) : (Real)0);
+}
+
+/* The object shows the model (it becomes one of its users; 0: none) - in its rest pose until a clip plays. */
+static Value fire_s3d_ObjModel(Value h, Value model) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dModel* m = model.i > 0 ? fire_s3d_modelAt(model) : NULL;
+    if (!it || (model.i > 0 && !m)) return Bool(false);
+    if (m) m->refs++;
+    fire_s3d_modelRelease(it->model);
+    it->model = m ? model.i : 0;
+    it->clip = -1; it->time = 0; it->playing = 0; it->loop = 0;
+    return Bool(true);
+}
+/* Plays the clip `name` from its start (`loop`: 1 repeats, 0 stops at the end, -1 as the clip says); "" stops and shows the rest pose. false: no such clip. */
+static Value fire_s3d_ObjPlay(Value h, Value name, Value loop) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dModel* m = it ? fire_s3d_objModel(it) : NULL;
+    char text[32];
+    const Str* str;
+    uint32_t i;
+    int clip;
+    if (!m || name.kind != K_String) return Bool(false);
+    str = strOf(name);
+    for (i = 0; i < str->length && i < 31; i++) text[i] = str->data[i] < 128 ? (char)str->data[i] : '?';
+    text[i] = 0;
+    if (str->length == 0) { it->clip = -1; it->time = 0; it->playing = 0; return Bool(true); }
+    if (str->length > 31 || (clip = s3d_modelClipIndex(m, text)) < 0) return Bool(false);
+    it->clip = clip; it->time = 0; it->playing = 1;
+    it->loop = loop.i < 0 ? m->clips[clip].loop : loop.i != 0;
+    return Bool(true);
+}
+/* The animation: mode 0 moves on by `value` seconds (when it plays), 1 sets the time, 2 only asks, 3 stops it where it is; returns the time. A clip that does not loop
+ * stops at its end. */
+static Value fire_s3d_ObjAnimate(Value h, Value mode, Value value) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dModel* m = it ? fire_s3d_objModel(it) : NULL;
+    Real len;
+    if (!m || it->clip < 0) return Float((Real)0);
+    len = (Real)s3d_clipLength(&m->clips[it->clip]);
+    if (mode.i == 0 && it->playing) it->time += toR(value);
+    else if (mode.i == 1) it->time = toR(value);
+    else if (mode.i == 3) it->playing = 0;
+    if (it->time < 0) it->time = 0;
+    if (len > 0 && it->time >= len) {
+        if (it->loop) it->time = it->time - (Real)floor((double)(it->time / len)) * len;
+        else { it->time = len; it->playing = 0; }
+    }
+    return Float(it->time);
+}
+/* The clip that plays ("" none) - kind 0 its name, 1 "playing" or "" */
+static Value fire_s3d_ObjClip(Value h, Value kind, OwnList* list) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dModel* m = it ? fire_s3d_objModel(it) : NULL;
+    if (!m || it->clip < 0) return fire_s3d_strOf("", list);
+    if (kind.i == 1) return fire_s3d_strOf(it->playing ? "playing" : "", list);
+    return fire_s3d_strOf(m->clips[it->clip].name, list);
 }
 
 /* The triangles of AddTriangle become the mesh of the object (when they changed). */
@@ -622,16 +733,32 @@ static Value fire_s3d_TerrainHeight(Value h, Value wx, Value wz) {
     return Float((Real)s3d_transformPoint(&model, s3d_v3(px, y, pz)).y);
 }
 
+static S3dModel* fire_s3d_objModel(const FireS3dItem* it) {
+    return it->model > 0 && (s3d_size)it->model < g_s3dModels.count ? (S3dModel*)g_s3dModels.items[it->model] : NULL;
+}
+
+/* The box of what an object shows in its own space (its mesh, or its model in the rest pose); 0: nothing. */
+static int fire_s3d_bounds(FireS3dItem* it, S3dVec3* lo, S3dVec3* hi) {
+    S3dModel* md = fire_s3d_objModel(it);
+    S3dMesh* m;
+    if (md) { *lo = md->bmin; *hi = md->bmax; return 1; }
+    m = fire_s3d_objMesh(it);
+    if (m == NULL) return 0;
+    *lo = m->bmin; *hi = m->bmax;
+    return 1;
+}
+
 static Value fire_s3d_ObjTriangles(Value h) {
     FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
-    S3dMesh* m = it ? fire_s3d_objMesh(it) : NULL;
-    return Int(m ? (int64_t)(m->idxN / 3) : 0);
+    S3dModel* md = it ? fire_s3d_objModel(it) : NULL;
+    S3dMesh* m = it && !md ? fire_s3d_objMesh(it) : NULL;
+    return Int(md ? (int64_t)md->triangles : m ? (int64_t)(m->idxN / 3) : 0);
 }
 
 static Real fire_s3d_extent(FireS3dItem* it, int axis) {
-    S3dMesh* m = fire_s3d_objMesh(it);
-    if (m == NULL) return 0;
-    return axis == 0 ? (Real)m->bmax.x - (Real)m->bmin.x : axis == 1 ? (Real)m->bmax.y - (Real)m->bmin.y : (Real)m->bmax.z - (Real)m->bmin.z;
+    S3dVec3 lo, hi;
+    if (!fire_s3d_bounds(it, &lo, &hi)) return 0;
+    return axis == 0 ? (Real)hi.x - (Real)lo.x : axis == 1 ? (Real)hi.y - (Real)lo.y : (Real)hi.z - (Real)lo.z;
 }
 /* The size of the mesh along an axis (0 x, 1 y, 2 z) - `scaled`: times the scale of the object (its outer dimension, meters). */
 static Value fire_s3d_ObjExtent(Value h, Value axis, Value scaled) {
@@ -700,18 +827,19 @@ static Real fire_s3d_channel(int64_t c, int shift) { return (Real)((c >> shift) 
 static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** texture, S3dObjectParams* opOut, S3dSurface* sOut) {
     const Real* F = o->f;
     const int64_t* N = o->n;
-    S3dMesh* m = fire_s3d_objMesh(o);
+    S3dMesh* m = fire_s3d_objModel(o) ? NULL : fire_s3d_objMesh(o);
     S3dTexture* tex = o->tex > 0 ? (S3dTexture*)g_s3dTextures.items[o->tex] : NULL;
     FireS3dItem* mat = o->mat ? fire_s3d_itemAt(o->mat, FIRE_S3D_MATERIAL) : NULL;
+    S3dVec3 blo, bhi;
     Real minX, minY, minZ, w, hgt, d;
     Real spec = 0, shin = 32, opacity, repU = 1, repV = 1, offU = 0, offV = 0;
     int smooth = 1, two = N[ON_TWOSIDED] != 0;
     int64_t emissive = 0;
     S3dObjectParams op;
     S3dSurface s;
-    if (m == NULL) return 0;
-    minX = (Real)m->bmin.x; minY = (Real)m->bmin.y; minZ = (Real)m->bmin.z;
-    w = (Real)m->bmax.x - minX; hgt = (Real)m->bmax.y - minY; d = (Real)m->bmax.z - minZ;
+    if (!fire_s3d_bounds(o, &blo, &bhi)) return 0;
+    minX = (Real)blo.x; minY = (Real)blo.y; minZ = (Real)blo.z;
+    w = (Real)bhi.x - minX; hgt = (Real)bhi.y - minY; d = (Real)bhi.z - minZ;
     if (mat) {
         spec = mat->f[0]; shin = mat->f[1];
         if (!mat->n[MN_SMOOTH]) smooth = 0;
@@ -732,6 +860,7 @@ static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** textur
     opacity = F[OF_OPACITY];
     if (opacity < 0) opacity = 0;
     if (opacity > 1) opacity = 1;
+    op.hasMatrix = 0;
     op.pos = s3d_v3((float)F[OF_PX], (float)F[OF_PX + 1], (float)F[OF_PX + 2]);
     op.rx = (float)F[OF_RX]; op.ry = (float)F[OF_RX + 1]; op.rz = (float)F[OF_RX + 2];
     op.scale = s3d_v3((float)F[OF_SX], (float)F[OF_SX + 1], (float)F[OF_SX + 2]);
@@ -757,20 +886,59 @@ static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** textur
     return 1;
 }
 
-/* The full renderer queues an object into `f`, the lean one (`L`) transforms and lights it at once. */
+/* One mesh of an object to a renderer: the full one queues it into `f`, the lean one (`L`) transforms and lights it at once. */
+static void fire_s3d_queueMesh(S3dFrame* f, S3dLean* L, const S3dCamera* cam, S3dMesh* m, const S3dObjectParams* op, const S3dSurface* s, S3dTexture* tex) {
+#ifdef FIRE_S3D_LEAN_ONLY
+    (void)f; (void)cam;
+    if (L) s3d_leanObject(L, m, op, s, tex);
+#else
+    if (L) s3d_leanObject(L, m, op, s, tex);
+    else s3d_queueMesh(f, cam, m, op, s, tex);
+#endif
+}
+
+/* The parts of an object's model in the world, as they stand now (its clip and time): `mats` partN matrices (the object's matrix times the part's). 0: the memory. */
+static S3dMat4* fire_s3d_partMatrices(FireS3dItem* o, S3dModel* md, const S3dCamera* cam, const S3dObjectParams* op, const S3dSurface* s) {
+    S3dMat4 objM, objN;
+    S3dMat4* mats = (S3dMat4*)S3D_MALLOC(sizeof(S3dMat4) * (s3d_size)md->partN);
+    S3dSurface plain = *s;
+    int i;
+    if (mats == NULL) return NULL;
+    plain.billboard = 0;
+    s3d_objectMatrices(cam, op, &plain, &objM, &objN);
+    s3d_modelPose(md, o->clip, (float)o->time, mats);
+    for (i = 0; i < md->partN; i++) mats[i] = s3d_mul(objM, mats[i]);
+    return mats;
+}
+
+/* An object to a renderer: its mesh, or the parts of its model (each with the object's look; a part with a colour of its own keeps it). */
 static void fire_s3d_queueObject(S3dFrame* f, S3dLean* L, const S3dCamera* cam, FireS3dItem* o) {
     S3dMesh* m;
     S3dTexture* tex;
     S3dObjectParams op;
     S3dSurface s;
+    S3dModel* md;
     if (!fire_s3d_objectOf(o, &m, &tex, &op, &s)) return;
-#ifdef FIRE_S3D_LEAN_ONLY
-    (void)f; (void)cam;
-    if (L) s3d_leanObject(L, m, &op, &s, tex);
-#else
-    if (L) s3d_leanObject(L, m, &op, &s, tex);
-    else s3d_queueMesh(f, cam, m, &op, &s, tex);
-#endif
+    md = fire_s3d_objModel(o);
+    if (md == NULL) { if (m) fire_s3d_queueMesh(f, L, cam, m, &op, &s, tex); return; }
+    {
+        S3dMat4* mats = fire_s3d_partMatrices(o, md, cam, &op, &s);
+        int i;
+        if (mats == NULL) return;
+        for (i = 0; i < md->partN; i++) {
+            const S3dModelPart* p = &md->parts[i];
+            S3dObjectParams pp = op;
+            S3dSurface ps = s;
+            if (p->mesh == NULL) continue;
+            pp.hasMatrix = 1;
+            pp.model = mats[i];
+            pp.normalM = s3d_normalMatrix(&mats[i]);
+            ps.billboard = 0;
+            if (p->hasColor) ps.color = p->color;
+            fire_s3d_queueMesh(f, L, cam, p->mesh, &pp, &ps, tex);
+        }
+        S3D_FREE(mats);
+    }
 }
 
 /* The lean renderer's shadow map covers the objects that cast shadows (their boxes in the world). */
@@ -786,10 +954,11 @@ static void fire_s3d_leanShadows(S3dLean* L, const S3dCamera* cam, const FireS3d
         S3dSurface s;
         S3dMat4 model, normalM;
         int c;
-        if (!o || !o->alive || !o->n[ON_VISIBLE] || !fire_s3d_objectOf(o, &m, &tex, &op, &s) || !s.castShadows || s.opacity < 1) continue;
+        S3dVec3 blo, bhi;
+        if (!o || !o->alive || !o->n[ON_VISIBLE] || !fire_s3d_objectOf(o, &m, &tex, &op, &s) || !s.castShadows || s.opacity < 1 || !fire_s3d_bounds(o, &blo, &bhi)) continue;
         s3d_objectMatrices(cam, &op, &s, &model, &normalM);
         for (c = 0; c < 8; c++) {
-            S3dVec3 q = s3d_transformPoint(&model, s3d_v3((c & 1) ? m->bmax.x : m->bmin.x, (c & 2) ? m->bmax.y : m->bmin.y, (c & 4) ? m->bmax.z : m->bmin.z));
+            S3dVec3 q = s3d_transformPoint(&model, s3d_v3((c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z));
             lo = s3d_v3(s3d_minf(lo.x, q.x), s3d_minf(lo.y, q.y), s3d_minf(lo.z, q.z));
             hi = s3d_v3(s3d_maxf(hi.x, q.x), s3d_maxf(hi.y, q.y), s3d_maxf(hi.z, q.z));
         }
@@ -972,7 +1141,8 @@ static void fire_s3d_reset(void) {
     for (i = 1; i < g_s3dItems.count; i++) if (g_s3dItems.items[i]) fire_s3d_itemDestroy((int64_t)i, (FireS3dItem*)g_s3dItems.items[i]);
     for (i = 1; i < g_s3dMeshes.count; i++) s3d_meshFree((S3dMesh*)g_s3dMeshes.items[i]);
     for (i = 1; i < g_s3dTextures.count; i++) s3d_texFree((S3dTexture*)g_s3dTextures.items[i]);
-    g_s3dItems.count = g_s3dMeshes.count = g_s3dTextures.count = 0;
+    for (i = 1; i < g_s3dModels.count; i++) s3d_modelFree((S3dModel*)g_s3dModels.items[i]);
+    g_s3dItems.count = g_s3dMeshes.count = g_s3dTextures.count = g_s3dModels.count = 0;
     s3d_gpu_shutdown();
 }
 

@@ -8,7 +8,18 @@ static class Scene3DTests
 {
     public const string Name = "Scene3D: Szene, Kamera, Objekte, Texturen, Licht, Einheiten - nativ == VM";
 
-    public const string Script = """
+    /// <summary>The test model as a glTF file in the temporary folder: the script embeds it as a resource, which forge makes an .f3d when the program is built.</summary>
+    private static string RobotFile()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "fire-scene3d-robot.gltf");
+        string text = ModelTestData.RobotGltf();
+        if (!File.Exists(path) || File.ReadAllText(path) != text) File.WriteAllText(path, text);
+        return path.Replace("\\", "/");
+    }
+
+    public static readonly string Script = ScriptText.Replace("{ROBOT}", RobotFile());
+
+    private const string ScriptText = """
         #import "graphics"
         #import "scene3d"
         #import "scene3d.terrain"
@@ -250,6 +261,46 @@ static class Scene3DTests
         scene.Renderer = RenderMode.Software
         try { var bad = new Terrain(hills, 3, 3) } catch (Scene3DException e) { print("error " + e.message) }
 
+        // a model file (.f3d, made from glTF by forge): parts in a tree with their colours, animations
+        var robotModel = Model.FromResource(new Resource("{ROBOT}"))
+        print("model " + robotModel.Parts + " " + robotModel.Triangles + " " + robotModel.Animations.Count + " " + robotModel.Animations[0] + " " + robotModel.Animations[1] + " " + robotModel.AnimationLength("wave") + " " + robotModel.AnimationLength("jump"))
+        var robot = new Object(robotModel)
+        robot.SetPosition(-1.5m, 0m, 1m)
+        robot.AnchorY = 0.0
+        scene.Add(robot)
+        print("robot " + robot.Width + " " + robot.Height + " " + robot.Triangles + " '" + robot.Animation + "' " + robot.Playing)
+        scene.Renderer = RenderMode.Software
+        cam.Render()
+        var rest = H.Sum(frame)
+        robot.Play("wave")
+        robot.Advance(500ms)
+        cam.Render()
+        var waved = H.Sum(frame)
+        print("wave " + robot.Animation + " " + robot.Playing + " " + robot.AnimationTime + " " + (waved != rest))
+        robot.Advance(0.75s)
+        print("loop " + robot.AnimationTime)
+        robot.Play("jump", false)
+        robot.AnimationTime = 250ms
+        cam.Render()
+        print("jump " + H.Sum(frame) + " " + robot.AnimationTime)
+        robot.Advance(1s)
+        print("end " + robot.Playing + " " + robot.AnimationTime)
+        robot.Play("")
+        cam.Render()
+        print("rest " + (H.Sum(frame) == rest))
+        robot.Play("wave")
+        robot.AnimationTime = 0.5s
+        robot.Stop()
+        robot.Advance(1s)
+        print("stopped " + robot.Playing + " " + robot.AnimationTime)
+        scene.Renderer = RenderMode.Fast
+        cam.Render()
+        print("model fast " + H.Sum(frame))
+        scene.Renderer = RenderMode.Software
+        try { robot.Play("dance") } catch (Scene3DException e) { print("error " + e.message) }
+        try { Model.FromBytes(new byte[10]) } catch (Scene3DException e) { print("error " + e.message) }
+        try { robot.Advance(3) } catch (UnitMismatchException e) { print("unit " + e.message) }
+
         // lengths and angles need units (a length property converts and refuses a number without a unit itself)
         try { box.X = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }
         try { box.RotationX = 1.5 } catch (Scene3DException e) { print("error " + e.message) }
@@ -272,6 +323,15 @@ static class Scene3DTests
     public static void Run()
     {
         if (Environment.GetEnvironmentVariable("FIRE_SCENE_FILE") is { Length: > 0 } file) { Console.WriteLine(Vm(File.ReadAllText(file))); return; }
+        // (FIRE_SCENE_DUMP=folder: writes the script and the test model there - scene3d.fire, robot.gltf, robot.f3d)
+        if (Environment.GetEnvironmentVariable("FIRE_SCENE_DUMP") is { Length: > 0 } dump)
+        {
+            Directory.CreateDirectory(dump);
+            File.WriteAllText(Path.Combine(dump, "scene3d.fire"), Script);
+            File.WriteAllText(Path.Combine(dump, "robot.gltf"), ModelTestData.RobotGltf());
+            File.WriteAllBytes(Path.Combine(dump, "robot.f3d"), ModelTestData.RobotF3d());
+            return;
+        }
         string vm = Vm(Script);
         Console.WriteLine("--- VM ---\n" + vm);
         string work = Path.Combine(Path.GetTempPath(), "fire-scene3d-" + Guid.NewGuid().ToString("N"));
