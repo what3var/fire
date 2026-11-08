@@ -428,8 +428,8 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 * Typisierte Arrays (SPEC 8.4.2): `int`, `int[N]`, `float`, `float[N]`, `bool`, `char`, `byte` als Elementtyp - strikt (falscher Typ: `ArgumentException`,
   andere Einheit: `UnitMismatchException`), `undefined` erlaubt; nativ gepackt (eine C-Zahl pro Element, `undefined` als Merker, Bitmaske erst bei Bedarf).
 * `int x[4]` legt das Array überall gleich an (Local, Global, Feld mit dem Objekt); `int x[]` bleibt `undefined`.
-* `#intwidth 32` (SPEC 8.2.2; `-i`, `intWidth` in Projekt und Ziel, `#if int32`); Standard bleibt 64 Bit, auch auf dem ESP32. Mit `#floatwidth 32` und 32-Bit-Zeigern
-  ist ein Wert 8 statt 16 Byte (`FIRE_COMPACT`).
+* `#intwidth 32` (SPEC 8.2.2; `-i`, `intWidth` in Projekt und Ziel, `#if int32`); Standard bleibt 64 Bit, auch auf dem ESP32. Ein Wert hat überall 16 Byte (auch `int[64]`, ohne Zeiger-Kästen);
+  mit `#intwidth 32`/`#floatwidth 32` teilen sich zwei Felder `int`/`float`/`bool` einen Wert (schmale Felder, NATIVE_BACKEND.md).
 
 **Reihenfolge des Rests** (nach dem Abschluss von Abschnitt 9 auf `native-c`):
 

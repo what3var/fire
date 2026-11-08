@@ -302,12 +302,15 @@ print(65536 * 65536)    // 0
 print(3000000000)       // -1294967296 - constants are cut, too
 ```
 
-- Every operation computes as before and its result is cut to 32 bits; explicit widths (`int[8]`, `int[64]`) keep their meaning - but an int
-  *constant* is cut before it is stored, so `int[64] big = 3000000000` holds `-1294967296` as well.
+- Every operation computes as before and its result is cut to 32 bits; explicit widths (`int[8]`, `int[64]`) keep their meaning - an `int[64]`
+  holds 64 bits (`int[64] big = 3000000000` is `3000000000`), and so does what is computed from it (`big * 2`).
 - Overrides: `-i 32|64` on the command line (wins), the project setting `intWidth`, a target's `intWidth` in `fire.native.json`.
 - `#if int32` sees the width that the command line or the target gives, not the directive (it is read after the symbols).
-- Natively, `#intwidth 32` together with `#floatwidth 32` on a target with 32-bit pointers makes every value 8 bytes instead of 16: fields, array
-  elements and variables need half the memory (without a limit on the objects, arrays and buffers alive at once).
+- A plain `int` holds the program's int: an `int[64]` value stored into an `int` field, parameter or variable is cut (warning `TC021`; declare
+  `int[64]`, or cut on purpose with `!int`). A `var` takes the width of its initializer.
+- Natively a value takes 16 bytes (it holds an `int[64]` too); with `#intwidth 32` and `#floatwidth 32` two fields declared `int`, `float` or
+  `bool` share the 16 bytes of one value, and typed arrays (`int a[]`) store their elements raw - the memory of numbers is halved where the
+  declarations say what they hold.
 
 ## Exercises
 

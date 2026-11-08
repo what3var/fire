@@ -25,8 +25,9 @@ namespace fire.Compiler
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
-        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false, bool DeclaredAny = false)
+        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false, bool DeclaredAny = false, byte Wide = 0)
     {
+        // (Wide: an int of an explicit width beyond the program's - `int[64]`, `int[32]` - and what is computed from one: Value.Wide; a plain `int` is 0)
         // (DeclaredAny: a `Dynamic` the code declared - `any x`, an `any` field, parameter or return value - not one the checker does not know: a `var`
         // initialized with it is `any` on purpose of someone (TC020), one of unknown type is TC019)
         // (Raw: a declaration `byte` or `word` - raw data without a unit, SPEC 8.10: a value with a unit does not go in, TC017)
@@ -121,6 +122,11 @@ namespace fire.Compiler
         /// <summary>A `var` whose type was found late or not really: taken from its first assignment (`var x = undefined; x = 5`) or `any` because its values
         /// are unrelated (`var x = c ? 1 : "one"`) - always a warning.</summary>
         public const string LateVarTypeCode = "TC020";
+        /// <summary>An int of a wider width (`int[64]`, and what is computed from one) into a plain `int` of a program whose int is narrower (`#intwidth 32`):
+        /// the value is cut (at run time too) - declare `int[64]`, or cut it on purpose (`x!int`).</summary>
+        public const string WideIntCode = "TC021";
+        /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
+        [ThreadStatic] public static int ProgramIntWidth;
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -238,6 +244,8 @@ namespace fire.Compiler
         private void CheckAssignable(StaticType value, StaticType target, int line, string what, string code = AssignCode, Expr? valueExpr = null)
         {
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
+            if (CutsWide(value, target))
+                Report(WideIntCode, $"An int[{value.Wide}] goes into {what}, a plain int of {ProgramIntWidth} bits in this program: it is cut - declare int[{value.Wide}], or cut it on purpose (!int)", line);
             CheckUnitAssignable(value, target, line, what, valueExpr);
         }
 
@@ -291,6 +299,10 @@ namespace fire.Compiler
             try { return Unit.Parse(text).Equals(unit) ? text : null; }
             catch (Exception) { return null; }
         }
+
+        /// <summary>A value of a wider width into a plain int of a narrower program (TC021: cut, at run time too).</summary>
+        private static bool CutsWide(StaticType value, StaticType target) =>
+            value.Kind == StaticKind.Int && target.Kind == StaticKind.Int && !target.Raw && value.Wide > target.Wide && ProgramIntWidth is > 0 and < 64 && value.Wide > ProgramIntWidth;
 
         private bool Assignable(StaticType value, StaticType target)
         {
@@ -464,6 +476,8 @@ namespace fire.Compiler
                 };
             // `byte` and `word` are raw data: never a unit (a unit written at them is TC017, see CheckRawUnit)
             if (IsRawType(type)) result = result with { Unit = Unit.Unitless, UnitIsDimension = false, Raw = true };
+            // `int[64]`, `int[32]`: keeps that width beyond the program's int (Value.Wide)
+            if (result.Kind == StaticKind.Int && type is { BaseName: "int", BitWidth: 32 or 64, Unsigned: false }) result = result with { Wide = (byte)type.BitWidth! };
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
             return result;
         }
@@ -686,7 +700,7 @@ namespace fire.Compiler
         /// guarded, LocalGuards): int, float, bool and a class or interface without type parameters; null for the rest (they need no guard, or have none yet).</summary>
         private TypeRef? GuardTypeOf(StaticType type) => type.Kind switch
         {
-            StaticKind.Int when !type.Raw => new TypeRef("int", null, 0),
+            StaticKind.Int when !type.Raw => new TypeRef("int", type.Wide == 0 ? null : type.Wide, 0),
             StaticKind.Float => new TypeRef("float", null, 0),
             StaticKind.Bool => new TypeRef("bool", null, 0),
             StaticKind.Class when type.Args == null && type.Class is { } name && (_classes.TryGetValue(name, out var decl) ? decl.TypeParams is not { Count: > 0 } : _interfaces.TryGetValue(name, out var iface) && iface.TypeParams is not { Count: > 0 })
@@ -711,7 +725,7 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Undefined) return;
             bool needed = target.Kind switch
             {
-                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word),
+                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word) || CutsWide(value, target),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
@@ -727,7 +741,7 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Undefined) return;   // (a reported conflict too: the declared type of a call holds for its result)
             bool needed = target.Kind switch
             {
-                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word),
+                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word) || CutsWide(value, target),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
@@ -1630,6 +1644,7 @@ namespace fire.Compiler
                 CheckLogicalOperand(right, op, b.Line);
             }
             var type = InferBinaryType(b, left, right);
+            if (type.Kind == StaticKind.Int && (left.Wide | right.Wide) != 0) type = type with { Wide = Math.Max(left.Wide, right.Wide) };
             var unit = BinaryUnit(b, left, right);
             return type.IsNumber ? type.WithUnit(unit) : type;
         }

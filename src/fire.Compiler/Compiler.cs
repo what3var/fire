@@ -3018,7 +3018,7 @@ namespace fire.Compiler
         private static bool MayBeUnclaimed(Expr e) => e switch
         {
             LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or AssignExpr or IncDecExpr or LambdaExpr or InterpolatedStringExpr
-                or IsOfExpr or IsInExpr or IsFromExpr or RangeExpr or TryProcessExpr => false,
+                or IsOfExpr or IsInExpr or IsFromExpr or TryProcessExpr => false,   // (`a..b` is a call of __Range.Of: a new array, claimed like one)
             UnaryExpr { Op: UnaryOp.Take } => false,
             ConditionalExpr c => MayBeUnclaimed(c.Then) || MayBeUnclaimed(c.Else),
             _ => true,

@@ -35,5 +35,5 @@ xTaskCreate(fireTask, "fire", 4096, NULL, tskIDLE_PRIORITY + 1, NULL);
 - `print` writes to `stdout` of the C library (retarget its `write` to a UART, as most board projects do); without files, network and devices of a board package the libraries say "not
   supported". A board package of your own (`platformPath`) brings them - the ESP32 target is one.
 - A debug build talks to spark framed over stdio.
-- **Small boards:** `#intwidth 32` and `#floatwidth 32` on a target with 32-bit pointers make every value 8 bytes instead of 16
-  ([types](../language/02-types.md#the-width-of-the-whole-program)).
+- **Small boards:** `#intwidth 32` and `#floatwidth 32` store fields declared `int`, `float` or `bool` in 8 bytes instead of 16, and typed
+  arrays raw ([types](../language/02-types.md#the-width-of-the-whole-program)).

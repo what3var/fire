@@ -130,8 +130,10 @@ enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_
 #define FIRE_INT32 1
 #endif
 #define FIRE_INT_CUT(v) ((int64_t)(int16_t)(v))
+#elif defined(FIRE_INT32)
+#define FIRE_INT_CUT(v) ((int64_t)(int32_t)(v))
 #else
-#define FIRE_INT_CUT(v) (v)
+#define FIRE_INT_CUT(v) ((int64_t)(v))
 #endif
 #ifdef FIRE_INT32
 typedef int32_t FireInt;
@@ -164,61 +166,25 @@ typedef uint64_t FireWord;
 #error "FIRE_WORD_BITS must be 16, 32 or 64"
 #endif
 
-/* A runtime value, trivially copyable. `kind` says what it is; `unit` indexes the program's unit table (0 = unitless) - for an object, array or buffer it
- * is the slot of its handle and `reserved` the generation (for an enum value `reserved` is its enum). Usually 16 bytes; with `#intwidth 32`,
- * `#floatwidth 32` and 32-bit pointers (FIRE_COMPACT: a microcontroller) 8 bytes - the head is packed into 32 bits (kind 4, reserved 12, unit 16 bits:
- * up to 65535 units, 4095 enums) and the payload has 32 bits. A compact value of an object, array or buffer (FIRE_SLOTREF: compact and checked) carries its
- * slot in the payload and its generation in the 28 bits of the head behind the kind (`reserved` + `unit`); the address is in the slot table, next to the
- * generation (one load). A pointer into an array or a buffer then points to a counted box (PtrBox: the address and the slot; the generation is in the head).
- * Without checks (`#performance`) a compact value carries its address directly, as a wide one does. */
-#if defined(FIRE_INT32) && defined(FIRE_FLOAT32) && UINTPTR_MAX == 0xFFFFFFFFu && !defined(FIRE_WIDE_VALUE) && FIRE_WORD_BITS <= 32
-#define FIRE_COMPACT 1
-#endif
-#if defined(FIRE_COMPACT) && !defined(FIRE_UNCHECKED)
-#define FIRE_SLOTREF 1
-#endif
-#ifdef FIRE_COMPACT
-typedef struct Value {
-    uint32_t kind : 4;
-    uint32_t reserved : 12;
-    uint32_t unit : 16;
-    union {
-        FireInt i;
-        Real f;
-        const void* p;
-        uint32_t s;     /* FIRE_SLOTREF: the slot of an object, array or buffer */
-        uint32_t w;     /* K_Word */
-    };
-} Value;
-FIRE_STATIC_ASSERT(sizeof(Value) == 8, "A compact Value takes 8 bytes");
-#define FIRE_PAD0(r)
-typedef uint32_t FireGen;
-#define FIRE_GEN_MASK 0x0FFFFFFFu
-#define FIRE_UNIT_MAX 0xFFFFu
-#define FIRE_UNIT_OFFSET(v) ((int32_t)(int16_t)(uint16_t)(v).unit)   /* (the offset of a K_PtrVar pointer: signed) */
-/* the 28 bits of the head behind the kind: the generation of an object, array or buffer (and of a pointer into one) */
-#define FIRE_VGEN(v) ((FireGen)(v).reserved | ((FireGen)(v).unit << 12))
-#define FIRE_SETGEN(r, g) do { FireGen fire_g_ = (FireGen)(g); (r).reserved = fire_g_ & 0xFFFu; (r).unit = (fire_g_ >> 12) & 0xFFFFu; } while (0)
-#ifdef FIRE_SLOTREF
-#define FIRE_SLOT_MAX 0xFFFFFFFEu
-#else
-#define FIRE_SLOT_MAX 0x0FFFFFFFu   /* (#performance: the slot of a pointer into an array travels in the head) */
-#endif
-#else
+/* A runtime value, trivially copyable, 16 bytes on every target: it holds whatever a variable of type `any` can hold - an int of 64 bits too (docs/spec/TYPES.md:
+ * the type of a variable is fixed, a value that is statically narrow is stored narrow where its declaration says so; the value itself is always the wide one).
+ * `kind` says what it is; `unit` indexes the program's unit table (0 = unitless) - for an object, array or buffer it is the slot of its handle and `reserved`
+ * the generation (for an enum value `reserved` is its enum). `wide`: an int of an explicit width beyond the program's `int` (SPEC 8.2.1: `int[64]` with
+ * `#intwidth 32`) - 64 or 32, 0 for an int of the program's width (Value._wide of the VM); an operation with such an operand computes in its width (IntOp). */
 typedef struct Value {
     uint8_t kind;
-    uint8_t pad;        /* unused, always 0 */
+    uint8_t wide;       /* K_Int: 0, 32 or 64 (see above); 0 for everything else */
     uint16_t reserved;
     uint32_t unit;
     union {
-        FireInt i;
+        int64_t i;      /* K_Int (cut to its width: FIRE_INT_CUT, IntW), K_Bool, K_Char */
         Real f;
         const void* p;
         uint64_t w;     /* K_Word */
     };
 } Value;
 FIRE_STATIC_ASSERT(sizeof(Value) == 16, "Value must stay 16 bytes");
-#define FIRE_PAD0(r) (r).pad = 0;
+#define FIRE_PAD0(r) (r).wide = 0;
 typedef uint16_t FireGen;
 #define FIRE_GEN_MASK 0xFFFFu
 #define FIRE_UNIT_MAX 0xFFFFFFFFu
@@ -226,7 +192,6 @@ typedef uint16_t FireGen;
 #define FIRE_UNIT_OFFSET(v) ((int32_t)(v).unit)
 #define FIRE_VGEN(v) ((FireGen)(v).reserved)
 #define FIRE_SETGEN(r, g) ((r).reserved = (FireGen)(g))
-#endif
 FIRE_FN bool isPtr(Value v) { return FIRE_IS_PTR_KIND(v.kind); }
 
 /* The size of a header that values follow (arrays, objects, lambdas): rounded up so that the values behind it are aligned. */
@@ -235,7 +200,28 @@ FIRE_FN bool isPtr(Value v) { return FIRE_IS_PTR_KIND(v.kind); }
 /* ---------------------------------------------------------------------------------------------------------------------
  * Construction
  * --------------------------------------------------------------------------------------------------------------------- */
-FIRE_FN Value fire_IntU(int64_t v, uint32_t unit) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.i = (FireInt)FIRE_INT_CUT(v); return r; }
+FIRE_FN Value fire_IntU(int64_t v, uint32_t unit) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.i = FIRE_INT_CUT(v); return r; }
+/* An int that keeps the width `wide` (64, 32; 0: the program's) - Value.CutInt of the VM. Without `#intwidth` every int has 64 bits and the mark says nothing. */
+#ifdef FIRE_INT32
+FIRE_FN Value IntW(int64_t v, uint32_t unit, uint8_t wide) {
+    Value r; r.kind = K_Int; r.wide = wide; r.reserved = 0; r.unit = unit;
+    r.i = wide >= 64 ? v : wide == 32 ? (int64_t)(int32_t)v : FIRE_INT_CUT(v);
+    return r;
+}
+/* The result of an operation on the ints `a` and `b`: in the wider of the widths they keep (Value.W). */
+#define FIRE_W2(a, b) ((a).wide >= (b).wide ? (a).wide : (b).wide)
+#define IntOp(v, unit, a, b) IntW((v), (unit), FIRE_W2(a, b))
+#define IntOp1(v, unit, a) IntW((v), (unit), (a).wide)
+/* A whole number from native code (a package; its ints have 64 bits): one that does not fit the program's int keeps its 64 bits (Value.MakeNativeInt) -
+ * the native meant it (the ticks of a clock, the size of a file). */
+FIRE_FN Value IntNativeU(int64_t v, uint32_t unit) { return IntW(v, unit, FIRE_INT_CUT(v) == v ? 0 : 64); }
+#else
+FIRE_FN Value IntW(int64_t v, uint32_t unit, uint8_t wide) { Value r = fire_IntU(v, unit); (void)wide; return r; }
+#define IntOp(v, unit, a, b) fire_IntU((v), (unit))
+#define IntOp1(v, unit, a) fire_IntU((v), (unit))
+#define IntNativeU(v, unit) fire_IntU((v), (unit))
+#endif
+#define IntNative(v) IntNativeU((v), 0)
 FIRE_FN Value fire_Int1(int64_t v) { return fire_IntU(v, 0); }
 FIRE_FN Value fire_FloatU(Real v, uint32_t unit) { Value r; r.kind = K_Float; FIRE_PAD0(r) r.reserved = 0; r.unit = unit; r.f = v; return r; }
 FIRE_FN Value fire_Float1(Real v) { return fire_FloatU(v, 0); }
@@ -253,16 +239,16 @@ typedef struct FireEnum { const char* name; uint8_t flags; const FireEnumMember*
 extern FIRE_RT_DATA const FireEnum* g_enums;
 extern FIRE_RT_DATA uint32_t g_enumCount;
 /* A value of the enum `index` (1-based, the generated table). */
-FIRE_FN Value EnumV(int64_t v, uint16_t index) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = index; r.unit = 0; r.i = (FireInt)FIRE_INT_CUT(v); return r; }
+FIRE_FN Value EnumV(int64_t v, uint16_t index) { Value r; r.kind = K_Int; FIRE_PAD0(r) r.reserved = index; r.unit = 0; r.i = FIRE_INT_CUT(v); return r; }
 /* The enum of a value (null: none). */
 FIRE_FN const FireEnum* enumOf(Value v) { return v.kind == K_Int && v.reserved != 0 && v.reserved <= g_enumCount ? &g_enums[v.reserved - 1] : NULL; }
 /* `undefined` as a constant initializer (a global or static of the generated program: C has no dynamic initialization) */
-#ifdef FIRE_COMPACT
-#define FIRE_UNDEF_INIT {K_Undefined, 0, 0, {0}}
-#else
 #define FIRE_UNDEF_INIT {K_Undefined, 0, 0, 0, {0}}
-#endif
-#define Int(...) FIRE_EXPAND(FIRE_PICK2(__VA_ARGS__, fire_IntU, fire_Int1, 0)(__VA_ARGS__))
+/* `Int(v)`, `Int(v, unit)`: an int of the program, cut to its width. Around the C of a package the generated file switches FIRE_INT_U/FIRE_INT_1 to the
+ * native ints (IntNative: one that does not fit keeps its 64 bits - what the VM does with every int a native of a package returns, Value.MakeNativeInt). */
+#define FIRE_INT_U fire_IntU
+#define FIRE_INT_1 fire_Int1
+#define Int(...) FIRE_EXPAND(FIRE_PICK2(__VA_ARGS__, FIRE_INT_U, FIRE_INT_1, 0)(__VA_ARGS__))
 #define Float(...) FIRE_EXPAND(FIRE_PICK2(__VA_ARGS__, fire_FloatU, fire_Float1, 0)(__VA_ARGS__))
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -351,9 +337,7 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
     X(BridgeError, g_ioError, FIRE_ZERO_INIT)      /* the IO bridge: the last error of this thread */ \
     X(BridgeError, g_deviceError, FIRE_ZERO_INIT)  /* the device bridge */ \
     X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */ \
-    X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */ \
-    X(void*, g_boxFree, NULL)                      /* FIRE_SLOTREF: the free boxes of pointers into arrays and buffers (PtrBox) */ \
-    X(uint32_t, g_boxFreeN, 0)
+    X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */
 
 #if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL))
 typedef struct ThreadLocals {
@@ -418,8 +402,6 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_deviceError FIRE_TLV(g_deviceError)
 #define g_gfxError FIRE_TLV(g_gfxError)
 #define g_acc FIRE_TLV(g_acc)
-#define g_boxFree FIRE_TLV(g_boxFree)
-#define g_boxFreeN FIRE_TLV(g_boxFreeN)
 #ifdef FIRE_DEBUG
 #define g_dbgTop FIRE_TLV(g_dbgTop)
 #define g_dbgNest FIRE_TLV(g_dbgNest)
@@ -739,7 +721,7 @@ FIRE_FN void unitsInit(const UnitInit* init, uint32_t count, const UnitConvFn* t
 /* A new unit at the end of the table. */
 FIRE_FN uint32_t unitAppend(const int32_t* dims, double scale, const char* display, double offset, int32_t conv, int32_t ulconv) {
     UnitDef* d;
-    if (FIRE_UNLIKELY(g_udCount >= FIRE_UNIT_MAX)) fatal("Too many units (a compact value holds 65535).");
+    if (FIRE_UNLIKELY(g_udCount >= FIRE_UNIT_MAX)) fatal("Too many units.");
     if (g_udCount == g_udCap) {
         g_udCap = g_udCap ? g_udCap * 2 : 32;
         g_ud = (UnitDef*)realloc(g_ud, sizeof(UnitDef) * g_udCap);
@@ -1233,11 +1215,11 @@ FIRE_FN bool unitOfText(const fire_char16* s, uint32_t n, uint32_t* out) {
  * Every heap value starts with its header (`h`): a pointer to the value is a pointer to its header.
  * --------------------------------------------------------------------------------------------------------------------- */
 #define IMMORTAL 0xFFFFFFFFu
-enum { R_Str, R_Lam, R_Box, R_Bytes };
+enum { R_Str, R_Lam, R_Bytes };
 
 struct Ref {
     uint32_t rc;     /* number of holders; IMMORTAL for constants */
-    uint8_t type;    /* R_Str / R_Lam / R_Box / R_Bytes (the temporary copy of bytesArg) */
+    uint8_t type;    /* R_Str / R_Lam / R_Bytes (the temporary copy of bytesArg) */
 };
 
 /* Immutable UTF-16 string. A heap string stores its characters right behind the header. */
@@ -1381,7 +1363,7 @@ FIRE_FN uint32_t bufSize(const Buf* b) { return b->length * (uint32_t)b->elem; }
 FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
 
 /* ---- Handles. A destroyed array or buffer must not be used any more (SPEC 2.5): in the checked modes a Value of an array or buffer carries the slot of its
- * header in a table of generations (wide: `unit` = slot, `reserved` = generation; compact: the payload is the slot, the head the generation); the slot of a
+ * header in a table of generations (`unit` = slot, `reserved` = generation); the slot of a
  * destroyed value gets a new generation, so a stale Value is recognized before the freed memory is touched. With FIRE_UNCHECKED (`#performance`) nothing
  * is checked and there is no table - unless the program takes pointers into arrays (FIRE_ELEMPTRS): those find their array in the table. */
 /* FIRE_ELEMPTRS: the program takes pointers into arrays (`ref a[i]`) - they find their array in the slot table (a typed array converts what is written
@@ -1392,7 +1374,7 @@ FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
 #if !defined(FIRE_UNCHECKED) || defined(FIRE_ELEMPTRS)
 #define FIRE_SLOTS 1
 #endif
-#if defined(FIRE_ELEMPTRS) || defined(FIRE_SLOTREF)
+#if defined(FIRE_ELEMPTRS)
 #define FIRE_SLOT_HDR 1   /* the table knows the header in each slot */
 #endif
 #ifdef FIRE_SLOTS
@@ -1435,9 +1417,6 @@ FIRE_FN void slotAcquire(Owned* o) {
     uint32_t slot;
     if (g_slots.nfree) slot = g_slots.freed[--g_slots.nfree];
     else {
-#ifdef FIRE_SLOTREF
-        if (FIRE_UNLIKELY(g_slots.count == 0)) g_slots.count = 1;   /* (slot 0 stays free: a compact handle 0 is no value) */
-#endif
         if (FIRE_UNLIKELY(g_slots.count >= g_slots.cap)) slotGrow();
         if (FIRE_UNLIKELY(g_slots.count >= FIRE_SLOT_MAX)) fatal("Too many objects, arrays and buffers at once.");
         slot = g_slots.count++;
@@ -1473,42 +1452,19 @@ FIRE_FN void slotRelease(Owned* o) { (void)o; }
 
 /* The handle of an object, array or buffer in a Value, and back. */
 FIRE_FN void leafSet(Value* r, const Owned* h) {
-#ifdef FIRE_SLOTREF
-    FIRE_SETGEN(*r, h->gen);
-    r->s = h->slot;
-#else
     r->reserved = h->gen;
     r->unit = h->slot;
     r->p = h;
-#endif
 }
 /* The slot of an object, array or buffer (or of the array or buffer of a pointer into it: wide only). */
-#ifdef FIRE_SLOTREF
-#define FIRE_VSLOT(v) ((v).s)
-#else
 #define FIRE_VSLOT(v) ((v).unit)
-#endif
-/* The header behind a Value of an object, array or buffer. (Compact: from the slot table - of a stale Value whatever lives in its slot now: check first.) */
+/* The header behind a Value of an object, array or buffer. */
 FIRE_FN Owned* leafOf(Value v) {
-#ifdef FIRE_SLOTREF
-    return slotHdr(v.s);
-#else
     return (Owned*)v.p;
-#endif
 }
-/* Do two Values of objects, arrays or buffers name the same one? Compact: the same slot and a generation of the same life of it - from when the value was
- * made (`born`) to now; a `fire handover` gives a value the next generation, and the sender's old reference still names it (`==` is true, as in the VM). */
+/* Do two Values of objects, arrays or buffers name the same one? (A `fire handover` gives a value the next generation; the address stays: `==` is true, as in the VM.) */
 FIRE_FN bool sameLeaf(Value a, Value b) {
-#ifdef FIRE_SLOTREF
-    FireGen ga = FIRE_VGEN(a), gb = FIRE_VGEN(b), born, life;
-    if (a.s != b.s) return false;
-    if (ga == gb) return true;
-    born = g_slots.born[a.s];
-    life = (slotGen(a.s) - born) & FIRE_GEN_MASK;
-    return ((ga - born) & FIRE_GEN_MASK) <= life && ((gb - born) & FIRE_GEN_MASK) <= life;
-#else
     return a.p == b.p;
-#endif
 }
 /* The same reference: the same object, array or buffer (sameLeaf), the same string or lambda (not the same text). */
 FIRE_FN bool sameRef(Value a, Value b) {
@@ -1516,13 +1472,9 @@ FIRE_FN bool sameRef(Value a, Value b) {
     if (a.kind == K_Class || a.kind == K_Array || a.kind == K_Buffer) return sameLeaf(a, b);
     return a.p == b.p;
 }
-/* What tells a live Value of an object, array or buffer apart (an address, compact its slot) - as a key. 0: none. */
+/* What tells a live Value of an object, array or buffer apart (its address) - as a key. 0: none. */
 FIRE_FN uintptr_t leafKey(Value v) {
-#ifdef FIRE_SLOTREF
-    return (uintptr_t)v.s;   /* (a stale Value is never asked: its slot may hold another value) */
-#else
     return (uintptr_t)v.p;
-#endif
 }
 
 /* Is the array or buffer behind this value still alive? */
@@ -1552,11 +1504,7 @@ FIRE_FN Value StrV(const Str* s) { Value r; r.kind = K_String; FIRE_PAD0(r) r.re
 FIRE_FN Value ArrV(Arr* a) { Value r; r.kind = K_Array; FIRE_PAD0(r) leafSet(&r, &a->h); return r; }
 FIRE_FN Value BufV(Buf* b) { Value r; r.kind = K_Buffer; FIRE_PAD0(r) leafSet(&r, &b->h); return r; }
 
-#ifdef FIRE_SLOTREF
-FIRE_FN bool isRef(Value v) { return ((0x350u >> v.kind) & 1u) != 0; }  /* String, Lambda, the box of a pointer into an array or buffer (counted values) */
-#else
 FIRE_FN bool isRef(Value v) { return ((0x50u >> v.kind) & 1u) != 0; }  /* String, Lambda (counted values) */
-#endif
 FIRE_FN Ref* refOf(Value v) { return (Ref*)v.p; }
 FIRE_FN const Str* strOf(Value v) { return (const Str*)v.p; }
 FIRE_FN Arr* arrOf(Value v) { return (Arr*)leafOf(v); }
@@ -1598,58 +1546,15 @@ FIRE_FN void poolRelease(uint32_t mark) {
     }
 }
 
-/* ---- Pointers into arrays and buffers (K_PtrByte, K_PtrElem; see "`ref` parameters"): the address of the element and the handle of the array or buffer.
- * Wide: the address in the payload, slot and generation in the head. Compact without checks: the address in the payload, the slot (for FIRE_ELEMPTRS) in the
- * 28 bits of the head. Compact and checked (FIRE_SLOTREF): the generation in the head, the payload points to a box with the address and the slot - 16 bytes
- * per live pointer (not per array or element), counted like a string, reused through a free list per thread. */
-#ifdef FIRE_SLOTREF
-typedef struct PtrBox {
-    Ref h;            /* (rc, R_Box - with the padding behind `type`: 8 bytes) */
-    void* addr;
-    uint32_t slot;
-} PtrBox;
-FIRE_STATIC_ASSERT(sizeof(PtrBox) <= 16, "A pointer box takes 16 bytes");
-#define FIRE_BOX_KEEP 64u   /* the free boxes a thread keeps */
-/* A fresh box (count 1, held by the temporary pool like a fresh string). */
-FIRE_FN PtrBox* boxNew(void* addr, uint32_t slot) {
-    PtrBox* b = (PtrBox*)g_boxFree;
-    if (FIRE_LIKELY(b != NULL)) { g_boxFree = b->addr; g_boxFreeN--; }
-    else {
-        b = (PtrBox*)malloc(sizeof(PtrBox));
-        if (FIRE_UNLIKELY(!b)) fatal("Out of memory.");
-        b->h.type = R_Box;
-    }
-    b->addr = addr;
-    b->slot = slot;
-    b->h.rc = 1;
-    poolPush(&b->h);
-    return b;
-}
-/* The last holder let go: back to the free list of this thread (`addr` links it), or to the heap when the list is full. */
-FIRE_FN void boxFree(PtrBox* b) {
-    if (g_boxFreeN >= FIRE_BOX_KEEP) { free(b); return; }
-    b->addr = g_boxFree;
-    g_boxFree = b;
-    g_boxFreeN++;
-}
-#endif
+/* ---- Pointers into arrays and buffers (K_PtrByte, K_PtrElem; see "`ref` parameters"): the address of the element in the payload, the slot and the
+ * generation of the array or buffer in the head - nothing counted, nothing on the heap. */
 /* The address of the element (K_PtrByte, K_PtrElem). */
 FIRE_FN void* ptrAddr(Value p) {
-#ifdef FIRE_SLOTREF
-    return ((const PtrBox*)p.p)->addr;
-#else
     return (void*)p.p;
-#endif
 }
 /* The slot of its array or buffer. */
 FIRE_FN uint32_t ptrSlot(Value p) {
-#if defined(FIRE_SLOTREF)
-    return ((const PtrBox*)p.p)->slot;
-#elif defined(FIRE_COMPACT)
-    return FIRE_VGEN(p);
-#else
     return p.unit;
-#endif
 }
 /* A condition that only the checked modes look at. */
 #ifdef FIRE_UNCHECKED
@@ -1661,27 +1566,14 @@ FIRE_FN uint32_t ptrSlot(Value p) {
 FIRE_FN Value leafPtrV(uint8_t kind, void* addr, const Owned* h) {
     Value r;
     r.kind = kind; FIRE_PAD0(r)
-#if defined(FIRE_SLOTREF)
-    FIRE_SETGEN(r, h->gen);
-    r.p = boxNew(addr, h->slot);
-#elif defined(FIRE_COMPACT)
-    FIRE_SETGEN(r, h->slot);
-    r.p = addr;
-#else
     r.reserved = h->gen;
     r.unit = h->slot;
     r.p = addr;
-#endif
     return r;
 }
 /* The same pointer, `bytes` further. */
 FIRE_FN Value leafPtrMove(Value p, intptr_t bytes) {
-#ifdef FIRE_SLOTREF
-    const PtrBox* b = (const PtrBox*)p.p;
-    p.p = boxNew((void*)((uintptr_t)b->addr + (uintptr_t)bytes), b->slot);
-#else
     p.p = (const void*)((uintptr_t)p.p + (uintptr_t)bytes);
-#endif
     return p;
 }
 
@@ -1773,7 +1665,7 @@ FIRE_COLD FIRE_FN VPair alignUnits(Value a, Value b) {
         /* an offset or conversion functions: the right operand goes into the unit of the left one (`20C + 9F`) */
         double converted;
         if (!unitConvert(b.kind == K_Int ? (double)b.i : (double)b.f, ub, ua, &converted)) return vpair(Undef(), Undef());
-        b = a.kind == K_Int && b.kind == K_Int ? Int((int64_t)nearbyint(converted), ua) : Float((Real)converted, ua);
+        b = a.kind == K_Int && b.kind == K_Int ? IntOp1((int64_t)nearbyint(converted), ua, b) : Float((Real)converted, ua);
         return vpair(a, b);
     }
     if (a.kind == K_Int && b.kind == K_Int) {
@@ -1782,8 +1674,8 @@ FIRE_COLD FIRE_FN VPair alignUnits(Value a, Value b) {
         Value* coarse = aIsFine ? &b : &a;
         uint32_t uFine = aIsFine ? ua : ub, uCoarse = aIsFine ? ub : ua;
         double up = (double)coarse->i * unitFactor(uCoarse, uFine);
-        if (up >= -9.2e18 && up <= 9.2e18) *coarse = Int((int64_t)fire_snapWhole(up), uFine);
-        else *fine = Int((int64_t)fire_snapWhole((double)fine->i * unitFactor(uFine, uCoarse)), uCoarse);
+        if (up >= -9.2e18 && up <= 9.2e18) *coarse = IntOp1((int64_t)fire_snapWhole(up), uFine, *coarse);
+        else *fine = IntOp1((int64_t)fire_snapWhole((double)fine->i * unitFactor(uFine, uCoarse)), uCoarse, *fine);
         return vpair(a, b);
     }
     factor = unitFactor(ub, ua);
@@ -1794,13 +1686,13 @@ FIRE_COLD FIRE_FN VPair alignUnits(Value a, Value b) {
 FIRE_COLD FIRE_FN Value addUnits(Value a, Value b) {
     VPair p = alignUnits(a, b);
     if (FIRE_UNLIKELY(p.a.kind == K_Undefined)) return Undef();
-    if (p.a.kind == K_Int && p.b.kind == K_Int) return Int((int64_t)((uint64_t)p.a.i + (uint64_t)p.b.i), p.a.unit);
+    if (p.a.kind == K_Int && p.b.kind == K_Int) return IntOp((int64_t)((uint64_t)p.a.i + (uint64_t)p.b.i), p.a.unit, p.a, p.b);
     return Float(toR(p.a) + toR(p.b), p.a.unit);
 }
 FIRE_COLD FIRE_FN Value subUnits(Value a, Value b) {
     VPair p = alignUnits(a, b);
     if (FIRE_UNLIKELY(p.a.kind == K_Undefined)) return Undef();
-    if (p.a.kind == K_Int && p.b.kind == K_Int) return Int((int64_t)((uint64_t)p.a.i - (uint64_t)p.b.i), p.a.unit);
+    if (p.a.kind == K_Int && p.b.kind == K_Int) return IntOp((int64_t)((uint64_t)p.a.i - (uint64_t)p.b.i), p.a.unit, p.a, p.b);
     return Float(toR(p.a) - toR(p.b), p.a.unit);
 }
 FIRE_COLD FIRE_FN Value modUnits(Value a, Value b) {
@@ -1808,8 +1700,8 @@ FIRE_COLD FIRE_FN Value modUnits(Value a, Value b) {
     if (FIRE_UNLIKELY(p.a.kind == K_Undefined)) return Undef();
     if (p.a.kind == K_Int && p.b.kind == K_Int) {
         if (FIRE_UNLIKELY(p.b.i == 0)) return divideByZero();
-        if (FIRE_UNLIKELY(p.b.i == -1)) return Int(0, p.a.unit);
-        return Int(p.a.i % p.b.i, p.a.unit);
+        if (FIRE_UNLIKELY(p.b.i == -1)) return IntOp(0, p.a.unit, p.a, p.b);
+        return IntOp(p.a.i % p.b.i, p.a.unit, p.a, p.b);
     }
     return Float(fmod(toR(p.a), toR(p.b)), p.a.unit);
 }
@@ -1823,21 +1715,21 @@ FIRE_COLD FIRE_FN Value foldScale(Value a, Value b, double scale, bool divide) {
         if (scale >= 1 && scale == floor(scale) && scale < 9.2e18) {
             uint64_t s = (uint64_t)scale;
             int64_t xs;
-            if (!divide) return Int((int64_t)((uint64_t)x * (uint64_t)y * s));
+            if (!divide) return IntOp((int64_t)((uint64_t)x * (uint64_t)y * s), 0, a, b);
             if (FIRE_UNLIKELY(y == 0)) return divideByZero();
             xs = (int64_t)((uint64_t)x * s);
-            if (FIRE_UNLIKELY(y == -1)) return Int((int64_t)(0 - (uint64_t)xs));
-            return Int(xs / y);
+            if (FIRE_UNLIKELY(y == -1)) return IntOp((int64_t)(0 - (uint64_t)xs), 0, a, b);
+            return IntOp(xs / y, 0, a, b);
         }
         inv = unitNiceFactor(1.0 / scale);
         if (inv >= 1 && inv == floor(inv) && inv < 9.2e18) {
             uint64_t s = (uint64_t)inv;
             int64_t d;
-            if (!divide) return Int((int64_t)((uint64_t)x * (uint64_t)y) / (int64_t)s);
+            if (!divide) return IntOp((int64_t)((uint64_t)x * (uint64_t)y) / (int64_t)s, 0, a, b);
             d = (int64_t)((uint64_t)y * s);
             if (FIRE_UNLIKELY(d == 0)) return divideByZero();
-            if (FIRE_UNLIKELY(d == -1)) return Int((int64_t)(0 - (uint64_t)x));
-            return Int(x / d);
+            if (FIRE_UNLIKELY(d == -1)) return IntOp((int64_t)(0 - (uint64_t)x), 0, a, b);
+            return IntOp(x / d, 0, a, b);
         }
     }
     r = divide ? toR(a) / toR(b) : toR(a) * toR(b);
@@ -1859,7 +1751,7 @@ FIRE_COLD FIRE_FN Value mulUnits(Value a, Value b) {
     }
     u = unitMul(a.unit, b.unit);
     if (FIRE_UNLIKELY(unitIsUnitless(u) && g_ud[u].scale != 1.0)) return foldScale(a, b, g_ud[u].scale, false);
-    if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i), u);
+    if (a.kind == K_Int && b.kind == K_Int) return IntOp((int64_t)((uint64_t)a.i * (uint64_t)b.i), u, a, b);
     return Float(toR(a) * toR(b), u);
 }
 FIRE_COLD FIRE_FN Value divUnits(Value a, Value b) {
@@ -1872,8 +1764,8 @@ FIRE_COLD FIRE_FN Value divUnits(Value a, Value b) {
     if (FIRE_UNLIKELY(unitIsUnitless(u) && g_ud[u].scale != 1.0)) return foldScale(a, b, g_ud[u].scale, true);
     if (a.kind == K_Int && b.kind == K_Int) {
         if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
-        if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i), u);
-        return Int(a.i / b.i, u);
+        if (FIRE_UNLIKELY(b.i == -1)) return IntOp((int64_t)(0 - (uint64_t)a.i), u, a, b);
+        return IntOp(a.i / b.i, u, a, b);
     }
     return Float(toR(a) / toR(b), u);
 }
@@ -1989,7 +1881,7 @@ FIRE_FN uint64_t wordOfReal(double f) {
 FIRE_FN Value add(Value a, Value b) {
     if (isPtr(a) && b.kind == K_Int) return ptrOffset(a, b.i);
     if (FIRE_LIKELY(a.unit == b.unit)) {
-        if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit);
+        if (a.kind == K_Int && b.kind == K_Int) return IntOp((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit, a, b);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) + toR(b), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
     if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_ADD, a, b);
@@ -2000,7 +1892,7 @@ FIRE_FN Value sub(Value a, Value b) {
     if (isPtr(a) && b.kind == K_Int) return ptrOffset(a, -b.i);
     if (isPtr(a) && isPtr(b)) return ptrDiff(a, b);
     if (FIRE_LIKELY(a.unit == b.unit)) {
-        if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i - (uint64_t)b.i), a.unit);
+        if (a.kind == K_Int && b.kind == K_Int) return IntOp((int64_t)((uint64_t)a.i - (uint64_t)b.i), a.unit, a, b);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) - toR(b), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return subUnits(a, b);
     if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_SUB, a, b);
@@ -2008,7 +1900,7 @@ FIRE_FN Value sub(Value a, Value b) {
 }
 FIRE_FN Value mul(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == 0 && b.unit == 0)) {
-        if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i));
+        if (a.kind == K_Int && b.kind == K_Int) return IntOp((int64_t)((uint64_t)a.i * (uint64_t)b.i), 0, a, b);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) * toR(b));
     } else if (isNumeric(a) && isNumeric(b)) return mulUnits(a, b);
     if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_MUL, a, b);
@@ -2018,8 +1910,8 @@ FIRE_FN Value divide(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == 0 && b.unit == 0)) {
         if (a.kind == K_Int && b.kind == K_Int) {
             if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
-            if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i));
-            return Int(a.i / b.i);
+            if (FIRE_UNLIKELY(b.i == -1)) return IntOp((int64_t)(0 - (uint64_t)a.i), 0, a, b);
+            return IntOp(a.i / b.i, 0, a, b);
         }
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) / toR(b));
     } else if (isNumeric(a) && isNumeric(b)) return divUnits(a, b);
@@ -2030,8 +1922,8 @@ FIRE_FN Value modulo(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) {
             if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
-            if (FIRE_UNLIKELY(b.i == -1)) return Int(0, a.unit);
-            return Int(a.i % b.i, a.unit);
+            if (FIRE_UNLIKELY(b.i == -1)) return IntOp(0, a.unit, a, b);
+            return IntOp(a.i % b.i, a.unit, a, b);
         }
         if (isNumeric(a) && isNumeric(b)) return Float(fmod(toR(a), toR(b)), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return modUnits(a, b);
@@ -2061,17 +1953,17 @@ FIRE_FN Value coerceUnit(Value v, uint32_t target) {
     if (v.kind != K_Undefined && ((unitIsUnitless(target) && !unitIsUnitless(v.unit)) || !unitCompatible(v.unit, target))) {
         double inBase;
         if (!unitToBase(v.kind == K_Int ? (double)v.i : (double)v.f, v.unit, &inBase)) return Undef();
-        if (v.kind == K_Int && fabs(inBase) < 9.0e15 && inBase == floor(inBase)) return Int((int64_t)inBase, target);
+        if (v.kind == K_Int && fabs(inBase) < 9.0e15 && inBase == floor(inBase)) return IntOp1((int64_t)inBase, target, v);
         return Float((Real)inBase, target);
     }
     if (v.kind == K_Undefined) return UndefU(target);
     if (!unitLinear(v.unit) || !unitLinear(target)) {
         double converted;
         if (!unitConvert(v.kind == K_Int ? (double)v.i : (double)v.f, v.unit, target, &converted)) return Undef();
-        return v.kind == K_Int ? Int((int64_t)nearbyint(converted), target) : Float((Real)converted, target);
+        return v.kind == K_Int ? IntOp1((int64_t)nearbyint(converted), target, v) : Float((Real)converted, target);
     }
     factor = unitFactor(v.unit, target);
-    if (v.kind == K_Int) return Int((int64_t)nearbyint((double)v.i * factor), target);
+    if (v.kind == K_Int) return IntOp1((int64_t)nearbyint((double)v.i * factor), target, v);
     if (v.kind == K_Float) return Float((Real)((double)v.f * factor), target);
     return UndefU(target);
 }
@@ -2142,12 +2034,13 @@ FIRE_FN Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
     int64_t r;
     if (n.kind != (toFloat ? K_Float : K_Int)) return n;   /* (the error of coerceType) */
     if (toFloat) return bits < 64 ? Float((Real)roundFloatToWidth((double)n.f, bits), n.unit) : n;
-    if (bits >= 64) return n;
+    /* (an explicit width beyond the program's int - `int[64]` with `#intwidth 32`, `int[32]` with `#intwidth 16` - is kept by the value: `wide`) */
+    if (bits >= 64) return IntW(n.i, n.unit, 64);
     mask = (1ull << bits) - 1;
     raw = (uint64_t)n.i & mask;
     r = (int64_t)raw;
     if (!isUnsigned && (raw & (1ull << (bits - 1)))) r -= (int64_t)(1ull << bits);
-    return Int(r, isUnsigned ? 0 : n.unit);   /* (`byte`, the unsigned width, is raw data without a unit: SPEC 8.10, like the VM) */
+    return IntW(r, isUnsigned ? 0 : n.unit, bits == 32 && !isUnsigned ? 32 : 0);   /* (`byte`, the unsigned width, is raw data without a unit: SPEC 8.10, like the VM) */
 }
 
 /* `x!word` and a store into a `word` (OpCode.ConvertWidth with the word flag, Value.ToWord): an int cut to the width (two's complement), a float rounded
@@ -2176,7 +2069,7 @@ FIRE_FN Value wordOf(Value v, bool implicit) {
 }
 
 FIRE_FN Value negate(Value v) {
-    if (v.kind == K_Int) return Int((int64_t)(0 - (uint64_t)v.i), v.unit);
+    if (v.kind == K_Int) return IntOp1((int64_t)(0 - (uint64_t)v.i), v.unit, v);
     if (v.kind == K_Word) return WordV(0 - (uint64_t)v.w);   /* (wraps: -1 as a word is the largest one) */
     if (v.kind == K_Float) return Float(-v.f, v.unit);
     return opFailed(v, v);
@@ -2197,7 +2090,7 @@ FIRE_FN Value lnot(Value v) {
         if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(SYM, a, b);   \
         if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); } \
         if (FIRE_UNLIKELY(a.reserved != 0) && a.reserved == b.reserved && enumOf(a) && enumOf(a)->flags) return EnumV(a.i OP b.i, a.reserved); \
-        return Int(a.i OP b.i, a.unit);                                                        \
+        return IntOp(a.i OP b.i, a.unit, a, b);                                                \
     }
 FIRE_BITOP(bitAnd, &, "&", W_AND)
 FIRE_BITOP(bitOr, |, "|", W_OR)
@@ -2206,18 +2099,18 @@ FIRE_BITOP(bitXor, ^, "#", W_XOR)
 FIRE_FN Value shl(Value a, Value b) {
     if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_SHL, a, b);
     if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed("<<", a, b);
-    return Int((int64_t)((uint64_t)a.i << (b.i & 63)), a.unit);
+    return IntOp1((int64_t)((uint64_t)a.i << (b.i & 63)), a.unit, a);
 }
 FIRE_FN Value shr(Value a, Value b) {
     if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_SHR, a, b);
     if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(">>", a, b);
-    return Int(a.i >> (b.i & 63), a.unit);
+    return IntOp1(a.i >> (b.i & 63), a.unit, a);
 }
 FIRE_FN Value bitNot(Value v) {
     if (FIRE_UNLIKELY(v.kind == K_Word)) return WordV(~(uint64_t)v.w);
     if (FIRE_UNLIKELY(v.kind != K_Int)) return intOpFailed("~", v, v);
     if (FIRE_UNLIKELY(v.reserved != 0) && enumOf(v) && enumOf(v)->flags) return EnumV(~v.i, v.reserved);   /* (the complement of a flag value is one too) */
-    return Int(~v.i, v.unit);
+    return IntOp1(~v.i, v.unit, v);
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -2347,6 +2240,33 @@ typedef struct Obj {
 #endif
 } Obj;
 FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
+/* ---- Narrow fields (docs/spec/NATIVE_BACKEND.md "Schmale Felder"): a field declared `int` (with `#intwidth 32`/`16`), `float` (with `#floatwidth 32`) or
+ * `bool` holds nothing but a number or a bool of that kind, or `undefined` - 8 bytes are enough (kind, a unit of 16 bits, 32 bits of payload), and two such
+ * fields share the slot of one Value (the generator lays them out per class: CppGenerator.LayoutOf). Half 0 lies over the head of the slot's Value, so the
+ * slot reads as a number there - every generic walk over the fields of an object (release, ownership, copy, handover) sees a value that holds no reference
+ * and leaves it alone. Half 1 lies over the payload; its kind is stored XOR K_Undefined, so that the zeros of a fresh slot (Undef()) read as undefined. */
+typedef struct NValue { uint8_t kind; uint8_t pad; uint16_t unit; union { int32_t i; float f; } u; } NValue;
+FIRE_STATIC_ASSERT(sizeof(NValue) == 8, "A narrow field takes 8 bytes");
+FIRE_FN Value nvGet(const Value* slot, int half) {
+    NValue n;
+    Value r;
+    memcpy(&n, (const char*)slot + (half ? 8 : 0), sizeof n);
+    if (half) n.kind ^= K_Undefined;
+    r.kind = n.kind; r.wide = 0; r.reserved = 0; r.unit = n.unit;
+    if (n.kind == K_Float) r.f = (Real)n.u.f;
+    else r.i = n.kind == K_Undefined ? 0 : (int64_t)n.u.i;
+    return r;
+}
+/* Stores `v` (of the kind of the field or undefined: the declaration checked it) - an int cut to the program's width, like a store into `int[32]`. */
+FIRE_FN void nvSet(Value* slot, int half, Value v) {
+    NValue n;
+    if (FIRE_UNLIKELY(v.unit > 0xFFFFu)) fatal("Too many units for a narrow field.");
+    n.kind = v.kind; n.pad = 0; n.unit = (uint16_t)v.unit;
+    if (v.kind == K_Float) n.u.f = (float)v.f;
+    else n.u.i = v.kind == K_Undefined ? 0 : (int32_t)FIRE_INT_CUT(v.i);
+    if (half) n.kind ^= K_Undefined;
+    memcpy((char*)slot + (half ? 8 : 0), &n, sizeof n);
+}
 /* The list of what the object owns - made now if it has none yet (8 % of the objects of the test programs own something: 40 bytes saved on the others). */
 FIRE_FN OwnList* objOwned(Obj* o) {
     if (FIRE_UNLIKELY(!o->owned)) {
@@ -2781,9 +2701,6 @@ FIRE_FN Value adoptV(Value v, OwnList* list) {
  * Memory of the reference-counted values
  * --------------------------------------------------------------------------------------------------------------------- */
 FIRE_FN void freeRef(Ref* r) {
-#ifdef FIRE_SLOTREF
-    if (r->type == R_Box) { boxFree((PtrBox*)r); return; }
-#endif
     if (r->type == R_Lam) {
         Lam* l = (Lam*)r;
         Value* caps = lamCaps(l);
@@ -2960,6 +2877,13 @@ FIRE_FN Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, 
     return guardKindSlow(v, kind, unitless, what, unitlessText);
 }
 
+/* A declaration `int` (not `int[32]`/`int[64]`): it holds the program's int - with `#intwidth 32`/`16` an int that keeps a wider width is cut when it goes in
+ * (DeclaredKind.CutsWide of the VM; a narrow field stores 32 bits anyway). */
+#ifdef FIRE_INT32
+FIRE_FN Value intProgram(Value v) { if (v.kind == K_Int && v.wide) { v.i = FIRE_INT_CUT(v.i); v.wide = 0; } return v; }
+#else
+#define intProgram(v) (v)
+#endif
 /* A float declaration that takes every unit (`#any`): a whole number becomes a float, the unit stays. */
 FIRE_FN Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.unit) : v.kind == K_Word ? Float(wordReal(v)) : v; }
 
@@ -3223,7 +3147,7 @@ FIRE_COLD FIRE_FN Value addSlow(Value a, Value b, OwnList* list) {
 /* `+` for operands that may be strings (the generator uses `add` where both are known to be numbers). */
 FIRE_FN Value addR(Value a, Value b, OwnList* list) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
-        if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit);
+        if (a.kind == K_Int && b.kind == K_Int) return IntOp((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit, a, b);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) + toR(b), a.unit);
     }
     return addSlow(a, b, list);

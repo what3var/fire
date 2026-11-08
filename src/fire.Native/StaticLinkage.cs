@@ -129,7 +129,7 @@ namespace fire.Native
                 foreach (var (name, text) in package.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
                     sb.AppendLine($"// ---- package {package.Package.Name} {package.Package.Version}, import \"{package.Name}\" (C): {name}");
-                    sb.AppendLine(text);
+                    sb.AppendLine(CppGenerator.PackageNativeText(text));
                     sb.AppendLine($"// ---- end of {name}");
                 }
             else return sb.ToString();

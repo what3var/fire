@@ -1726,17 +1726,16 @@ runs), the native backend stores an int in an `int32_t` (`FIRE_INT32`) - the sam
 (`int[8]`, `int[64]`) keep their meaning. An explicit width beyond the program's (`int[64]` with `#intwidth 32` or `16`, `int[32]` with `#intwidth 16`) is kept by
 the value: a variable, parameter or field declared so stores the number whole, and the value carries its width on - an operation with
 such an operand computes in that width and its result keeps it (`int[64] t = ...; t * 3` is a 64-bit number), until it is stored
-into an explicitly narrower declaration (`int[32]`, `int[16]`, ...), which cuts as always; a plain `int` or `var` keeps what it
-gets. An int literal in such an expression (`t + 864000000000`, `t > 3000000000`) or stored into such a declaration
+into an explicitly narrower declaration (`int[32]`, `int[16]`, ...), which cuts as always. A plain `int` holds the program's int: a
+field, parameter, return value or variable declared `int` cuts a wider value when it goes in (the type checker reports it, `TC021`: declare
+`int[64]`, or cut on purpose with `!int`); a `var` takes the width of its initializer. An int literal in such an expression (`t + 864000000000`, `t > 3000000000`) or stored into such a declaration
 (`int[64] t = 864000000000`, a field or `static` field with that initialiser) is not cut; as an argument of a call it is (write
 `864000000000!int[64]` or keep it in an `int[64]` constant). A whole number from native code (a package, the host) that does not fit
 the program's int keeps its 64 bits. Overrides: `-i 16|32|64` on the command line (wins), the project setting `intWidth`, a
 target's `intWidth` in `fire.native.json`; `#if int32` sees the width the command line or the target gives (the directive is read
-later than the symbols). Natively, `#intwidth 32` together with `#floatwidth 32` on a target with 32-bit pointers (a
-microcontroller) makes every value 8 bytes instead of 16 (`FIRE_COMPACT`): fields, array elements, variables and stack slots take
-half the memory - without a limit on the objects, arrays and buffers alive at once (a pointer into an array or a buffer then takes a
-counted box of 16 bytes while it lives), and with up to 65535 different units.
-(A target whose `word` has 64 bits - 8.10a - keeps 16-byte values.)
+later than the symbols). Natively a value takes 16 bytes on every target (it holds an `int[64]` too); what is statically narrow is
+stored narrow: with `#intwidth 32` (or `16`) and `#floatwidth 32` two fields declared `int`, `float` or `bool` share the 16 bytes of one
+value (docs/spec/NATIVE_BACKEND.md "Schmale Felder"), and typed arrays (`int a[]`, `float f[]`) store their elements raw.
 
 `#intwidth 16` (the native width of the 8086/286, for `dos16`) cuts every int and every int constant to 16 bits the same way
 (`32767 + 1` is `-32768`, `256 * 256` is 0, `70000` is `4464`): the VM cuts every int it makes (`Value.Ints16`), natively an int

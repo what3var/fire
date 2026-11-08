@@ -685,6 +685,68 @@ namespace fire.Native
             return index;
         }
 
+        // ---- Narrow fields (fire_rt.h nvGet/nvSet, docs/spec/NATIVE_BACKEND.md "Schmale Felder"): two fields declared `int` (with `#intwidth 32`/`16`),
+        // `float` (with `#floatwidth 32`) or `bool` share the slot of one Value. Not where something reads the fields of an object by their index without
+        // knowing the layout: threads (sync, handover), reflection and probes, JSON, the debugger, separate modules and plugins.
+        private bool NarrowFieldsOn => !_usesThreads && !_usesReflection && !_usesProbes && !_usesJson && !DebugBuild && !Modular && !_openWorld && !_separate && !_dll;
+        private readonly Dictionary<string, bool> _narrowEligible = new(StringComparer.Ordinal);
+        /// <summary>Is the field `name` narrow - in every class that has a field of this name (its declaration: `int` without a wider width, `float`, `bool`)?</summary>
+        private bool NarrowName(string name)
+        {
+            if (!NarrowFieldsOn || _fieldAddressTaken.Contains(name)) return false;
+            if (_narrowEligible.TryGetValue(name, out bool known)) return known;
+            bool ok = true;
+            TypeTag? tag = null;
+            foreach (var rc in _program.Program.Classes.Values)
+            {
+                if (!rc.FieldIndex.ContainsKey(name)) continue;
+                FieldInfo? info = null;
+                for (var c = rc; c != null && info == null; c = c.Base) c.OwnFieldInfo.TryGetValue(name, out info);
+                byte kind = info is { IsStatic: false } ? info.RequiredKind : (byte)0;
+                var t = kind == 0 ? (TypeTag?)null : DeclaredKind.TagOf(kind);
+                bool eligible = t switch
+                {
+                    TypeTag.Int => _program.IntWidth <= 32 && !DeclaredKind.KeepsWidth(kind),
+                    TypeTag.Float => _program.FloatWidth == 32,
+                    TypeTag.Bool => true,
+                    _ => false,
+                };
+                if (!eligible || tag != null && tag != t) { ok = false; break; }
+                tag = t;
+            }
+            _narrowEligible[name] = ok;
+            return ok;
+        }
+        /// <summary>The place of each field of `rc` (by its index): the slot, and the half of a narrow one (-1: a whole Value); and the number of slots. The fields
+        /// of a base class come first and are laid out the same (a half a base leaves free is taken by the next narrow field of a derived class).</summary>
+        private (int[] Slot, int[] Half, int Count) LayoutOf(RuntimeClass rc)
+        {
+            var names = rc.FlattenedFieldNames;
+            var slot = new int[names.Count];
+            var half = new int[names.Count];
+            int next = 0, open = -1;
+            for (int i = 0; i < names.Count; i++)
+            {
+                if (NarrowName(names[i]))
+                {
+                    if (open >= 0) { slot[i] = open; half[i] = 1; open = -1; }
+                    else { slot[i] = next; half[i] = 0; open = next++; }
+                }
+                else { slot[i] = next++; half[i] = -1; }
+            }
+            return (slot, half, next);
+        }
+        /// <summary>The number of Value slots of an object of the class.</summary>
+        private int SlotCount(ClassInfo cls) => LayoutOf(cls.Rc).Count;
+        /// <summary>The field with the index `index` of an object of `rc` (`obj`: an Obj*) as a Value.</summary>
+        private string FieldRead(RuntimeClass rc, int index, string obj)
+        {
+            var layout = LayoutOf(rc);
+            return layout.Half[index] < 0 ? $"objFields({obj})[{layout.Slot[index]}]" : $"nvGet(&objFields({obj})[{layout.Slot[index]}], {layout.Half[index]})";
+        }
+        /// <summary>The narrow place of the field (slot, half), null for a whole Value (and its slot then).</summary>
+        private (int Slot, int Half) FieldPlace(RuntimeClass rc, int index) { var layout = LayoutOf(rc); return (layout.Slot[index], layout.Half[index]); }
+
         /// <summary>`obj.name = value` on an object of a known class: the checks of the field's declaration (unit, kind) and the store by index, like sf_
         /// (a destroyed object throws first); null when the field helpers are needed.</summary>
         private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType, Func from, bool nullable = false)
@@ -700,10 +762,14 @@ namespace fire.Native
                 int demanded = unit != null ? DemandedUnitId(unit) : DeclaredKind.IsUnitless(kind) ? 0 : -1;
                 if (KindOfDeclared(kind) == KindBool || demanded >= 0 && UnitOfType(valueType) == demanded) { unit = null; kind = 0; }
             }
+            byte declaredKind = rc.FindFieldRequiredKind(name);
+            bool cutWide = kind == 0 && declaredKind != 0 && DeclaredKind.TagOf(declaredKind) == TypeTag.Int && !DeclaredKind.KeepsWidth(declaredKind) && _program.IntWidth < 64;
             string checks = (unit != null ? $"x = {AdaptUnitCall("x", unit)}; " : "")
-                + (kind != 0 ? FieldKindCheck(name, kind) + " " : "")
+                + (kind != 0 ? FieldKindCheck(name, kind) + " " : cutWide ? "x = intProgram(x); " : "")
                 + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "");
-            string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) setFieldAt({obj}, {index}, x);" : $"setFieldAt({obj}, {index}, x);";
+            var (fieldSlot, fieldHalf) = FieldPlace(rc, index);
+            string put = fieldHalf < 0 ? $"setFieldAt({obj}, {fieldSlot}, x);" : $"nvSet(&objFields(objAt({obj}))[{fieldSlot}], {fieldHalf}, x);";
+            string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) {put}" : put;
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
             // (the setter of a restricted name takes the caller's class: here it may, see DirectFieldIndex)
             string tail = FieldTail(name, from, () => "NULL");
@@ -1479,7 +1545,7 @@ namespace fire.Native
                 foreach (var (name, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
                     sb.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\" (C): {name}");
-                    sb.AppendLine(text);
+                    sb.AppendLine(PackageNativeText(text));
                     sb.AppendLine($"// ---- end of {name}");
                 }
 
@@ -1504,7 +1570,7 @@ namespace fire.Native
                 foreach (var (name, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
                     nat.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\": {name}");
-                    nat.AppendLine(text);
+                    nat.AppendLine(PackageNativeText(text));
                     nat.AppendLine($"// ---- end of {name}");
                     natSources = true;
                 }
@@ -2201,7 +2267,7 @@ namespace fire.Native
                 sb.AppendLine("        case K_Array: case K_Buffer: case K_String: {");   // (a string: the enumerator indexes it, `text[i]` is a char)
                 sb.AppendLine("            bool ok;");
                 sb.AppendLine("            Value count = lengthOf(self, &ok);");
-                sb.AppendLine($"            Value e = newObject({info.Id}, {info.Fields.Count}, list);");
+                sb.AppendLine($"            Value e = newObject({info.Id}, {SlotCount(info)}, list);");
                 sb.AppendLine($"            {Nested($"{ctor.Name}(e, self, count);")}");   // (the VM makes it nested)
                 sb.AppendLine("            return e;");
                 sb.AppendLine("        }");
@@ -2321,6 +2387,10 @@ namespace fire.Native
             foreach (var cls in _classList)
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) indexByClass[cls.Id] = index;
             if (Modular || HasProperty(name) || RestrictedField(name)) return PropertyHelpers(name, indexByClass);
+            // (the place of the field: its slot - of a narrow one slot * 2 + half, the helpers below take it apart)
+            bool narrow = NarrowName(name);
+            foreach (var cls in _classList)
+                if (indexByClass.TryGetValue(cls.Id, out int at)) { var (slotAt, halfAt) = FieldPlace(cls.Rc, at); indexByClass[cls.Id] = narrow ? slotAt * 2 + halfAt : slotAt; }
             bool isLength = name is "Length" or "length";
             string m = Mangle(name);
             string lengthCode = isLength ? "    { bool ok; Value n = lengthOf(v, &ok); if (ok) return n; }\n"
@@ -2363,17 +2433,21 @@ namespace fire.Native
             // (a value that is not an object, or an object without the field: a MissingMemberException, like the VM)
             string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
             string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
-            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return objFields(o)[idx];\n}}\n"
+            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return {(narrow ? "nvGet(&objFields(o)[idx >> 1], (int)(idx & 1u))" : "objFields(o)[idx]")};\n}}\n"
                  + (_usesThreads ? $"static inline void sfb_{m}(Value v, Value x);\nstatic inline void sf_{m}(Value v, Value x) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x); sectionScopeExit(ss_); }}\n" : "")   // (a change of an object of the shared domain is one section)
-                 + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
+                 + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}" + (narrow ? "    nvSet(&objFields(o)[idx >> 1], (int)(idx & 1u), x);\n}\n" : "    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    retain(x);\n    release(old);\n}\n")
                  + (!_fieldAddressTaken.Contains(name) ? "" : $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&objFields(o)[idx]);\n}}\n");
         }
 
         /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
         private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, $"Field '{name}'")};";
         private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch { TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", _ => "K_Bool" };
-        private string GuardKindCall(string value, byte declared, string what) =>
-            $"guardKind({value}, {KindConstant(declared)}, {(DeclaredKind.IsUnitless(declared) ? "true" : "false")}, {CString(what)}, {Constant(Value.MakeString(Unit.DemandDisplay("unitless")))})";
+        private string GuardKindCall(string value, byte declared, string what)
+        {
+            string call = $"guardKind({value}, {KindConstant(declared)}, {(DeclaredKind.IsUnitless(declared) ? "true" : "false")}, {CString(what)}, {Constant(Value.MakeString(Unit.DemandDisplay("unitless")))})";
+            // (a plain `int` holds the program's int: a wider one is cut, DeclaredKind.CutsWide)
+            return DeclaredKind.TagOf(declared) == TypeTag.Int && !DeclaredKind.KeepsWidth(declared) && _program.IntWidth < 64 ? $"intProgram({call})" : call;
+        }
         private static byte KindOfDeclared(byte declared) => DeclaredKind.TagOf(declared) switch { TypeTag.Int => KindInt, TypeTag.Float => KindFloat, _ => KindBool };
 
         private HashSet<FunctionProto>? _setterProtos;
@@ -2419,7 +2493,7 @@ namespace fire.Native
                         fieldGuard = $"if (!{cond}) return accessDenied({text}); ";
                         fieldGuardSet = $"if (!{cond}) {{ accessDenied({text}); return; }} ";
                     }
-                    getArms.Add((label, $"{{ {fieldGuard}return objFields(o)[{index}]; }}"));
+                    getArms.Add((label, $"{{ {fieldGuard}return {FieldRead(cls.Rc, index, "o")}; }}"));
                     string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
                         ? $"x = {AdaptUnitCall("x", requiredUnit)}; " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
                         : "";
@@ -2427,8 +2501,10 @@ namespace fire.Native
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType)
                         unit += ClassGuard("x", requiredType, $"Field '{name}'", "o") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
-                    setArms.Add((label, $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{index}]; objFields(o)[{index}] = x; retain(x); release(old); return; }}"));
-                    ptrArms.Add((label, $"return PtrV(&objFields(o)[{index}]);"));
+                    var (armSlot, armHalf) = FieldPlace(cls.Rc, index);
+                    setArms.Add((label, armHalf >= 0 ? $"{{ {fieldGuardSet}{unit}nvSet(&objFields(o)[{armSlot}], {armHalf}, x); return; }}"
+                        : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; retain(x); release(old); return; }}"));
+                    ptrArms.Add((label, $"return PtrV(&objFields(o)[{armSlot}]);"));
                     continue;
                 }
                 var (getter, getterDecl, getterAccess) = cls.Rc.FindMethodWithAccess("get_" + name, 0);
@@ -2516,19 +2592,19 @@ namespace fire.Native
                 var destroyedClass = _classes.GetValueOrDefault("DestroyedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DestroyedException");
                 var divideClass = _classes.GetValueOrDefault("DivideByZeroException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DivideByZeroException");
                 sb.AppendLine("Value makeDivideError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({divideClass.Id}, {divideClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    Value o = newObject({divideClass.Id}, {SlotCount(divideClass)}, g_globalOwn);");
                 sb.AppendLine($"    {Nested($"{_funcByProto[divideClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 sb.AppendLine("Value makeDestroyedError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({destroyedClass.Id}, {destroyedClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    Value o = newObject({destroyedClass.Id}, {SlotCount(destroyedClass)}, g_globalOwn);");
                 sb.AppendLine($"    {Nested($"{_funcByProto[destroyedClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 if (_usesReflection && _classes.GetValueOrDefault("ReflectionException") is { } reflectClass)
                 {
                     sb.AppendLine("Value makeReflectError(Value message) {");
-                    sb.AppendLine($"    Value o = newObject({reflectClass.Id}, {reflectClass.Fields.Count}, g_globalOwn);");
+                    sb.AppendLine($"    Value o = newObject({reflectClass.Id}, {SlotCount(reflectClass)}, g_globalOwn);");
                     sb.AppendLine($"    {Nested($"{_funcByProto[reflectClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                     sb.AppendLine("    return o;");
                     sb.AppendLine("}");
@@ -2540,18 +2616,18 @@ namespace fire.Native
                 }
                 var accessClass = _classes.GetValueOrDefault("AccessDeniedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class AccessDeniedException");
                 sb.AppendLine("Value makeAccessError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({accessClass.Id}, {accessClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    Value o = newObject({accessClass.Id}, {SlotCount(accessClass)}, g_globalOwn);");
                 sb.AppendLine($"    {Nested($"{_funcByProto[accessClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 var unitClass = _classes.GetValueOrDefault("UnitMismatchException") ?? throw new NativeNotSupportedException("exceptions need the prelude class UnitMismatchException");
                 sb.AppendLine("Value makeUnitError(Value message, Value expected, Value actual) {");
-                sb.AppendLine($"    Value o = newObject({unitClass.Id}, {unitClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    Value o = newObject({unitClass.Id}, {SlotCount(unitClass)}, g_globalOwn);");
                 sb.AppendLine($"    {Nested($"{_funcByProto[unitClass.Rc.FindConstructor(3)!].Name}(o, message, expected, actual);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 sb.AppendLine("Value makeIndexError(Value message, int64_t index, int64_t length) {");
-                sb.AppendLine($"    Value o = newObject({indexClass.Id}, {indexClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    Value o = newObject({indexClass.Id}, {SlotCount(indexClass)}, g_globalOwn);");
                 sb.AppendLine($"    {Nested($"{_funcByProto[indexClass.Rc.FindConstructor(3)!].Name}(o, message, Int(index), Int(length));")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
@@ -2563,7 +2639,7 @@ namespace fire.Native
                     var errorClass = _classes.GetValueOrDefault(name);
                     if (errorClass == null || errorClass.Rc.FindConstructor(1) is not { ParamCount: 1 } ctor) continue;
                     sb.AppendLine($"    if (strcmp(cls, {CString(name)}) == 0) {{");
-                    sb.AppendLine($"        Value o = newObject({errorClass.Id}, {errorClass.Fields.Count}, g_globalOwn);");
+                    sb.AppendLine($"        Value o = newObject({errorClass.Id}, {SlotCount(errorClass)}, g_globalOwn);");
                     sb.AppendLine($"        {Nested($"{_funcByProto[ctor].Name}(o, message);")}");
                     sb.AppendLine("        return o;");
                     sb.AppendLine("    }");
@@ -3503,7 +3579,7 @@ namespace fire.Native
                     string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
                     string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
                     _pendingNewTArgs = null;
-                    E($"{{ Value o = newObject({ClassIdExpr(newClass)}, {newClass.Fields.Count}, {ownerExpr}); {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{selector.Name}(o{args}, &{OwnerList()}); ctorEnd(o); {S(slot)} = o; }}");
+                    E($"{{ Value o = newObject({ClassIdExpr(newClass)}, {SlotCount(newClass)}, {ownerExpr}); {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{selector.Name}(o{args}, &{OwnerList()}); ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -3813,7 +3889,7 @@ namespace fire.Native
                         string kc = Constant(constant);
                         bool ints = varKind == KindInt && constKind == KindInt;
                         if (ints)
-                            E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = Int((int64_t)((uint64_t){v}.i {op} (uint64_t){kc}.i){unitArg});{(sec.Length > 0 ? " " + SectionEnd(v) + "}" : "")}");
+                            E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = IntOp((int64_t)((uint64_t){v}.i {op} (uint64_t){kc}.i), {(varUnit == 0 ? "0" : varUnit.ToString())}, {v}, {kc});{(sec.Length > 0 ? " " + SectionEnd(v) + "}" : "")}");
                         else
                         {
                             string x = varKind == KindFloat ? $"{v}.f" : $"(Real){v}.i", y = constKind == KindFloat ? $"{kc}.f" : $"(Real){kc}.i";
@@ -3918,7 +3994,8 @@ namespace fire.Native
                     Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
                 case OpCode.CoerceType:
                     Need(1);
-                    E($"{S(d - 1)} = coerceType({S(d - 1)}, {(TypeTag)ins.A[0] switch { TypeTag.Bool => "K_Bool", TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Char => "K_Char", _ => "K_String" }});");
+                    // (`x!int`: the program's int - an int that keeps a wider width is cut: intProgram)
+                    E($"{S(d - 1)} = {((TypeTag)ins.A[0] == TypeTag.Int && _program.IntWidth < 64 ? "intProgram(" : "(")}coerceType({S(d - 1)}, {(TypeTag)ins.A[0] switch { TypeTag.Bool => "K_Bool", TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Char => "K_Char", _ => "K_String" }}));");
                     Check();
                     return Next();
                 case OpCode.CastTo:
@@ -4018,7 +4095,7 @@ namespace fire.Native
                     Need(2); E($"{S(d - 2)} = Bool(isFrom({S(d - 2)}, {S(d - 1)}, {(ins.A[0] != 0 ? "true" : "false")}));"); d--; SetR(d - 1, false); return Next();
                 case OpCode.Neg:
                     Need(1);
-                    if (K(d - 1) == KindInt) { E($"{S(d - 1)} = Int((int64_t)(0 - (uint64_t){S(d - 1)}.i){(U(d - 1) == 0 ? "" : $", {UnitC(U(d - 1))}")});"); _kindsKept = true; return Next(); }
+                    if (K(d - 1) == KindInt) { E($"{S(d - 1)} = IntOp1((int64_t)(0 - (uint64_t){S(d - 1)}.i), {(U(d - 1) == 0 ? "0" : UnitC(U(d - 1)))}, {S(d - 1)});"); _kindsKept = true; return Next(); }
                     if (K(d - 1) == KindFloat) { E($"{S(d - 1)} = Float(-{S(d - 1)}.f{(U(d - 1) == 0 ? "" : $", {UnitC(U(d - 1))}")});"); _kindsKept = true; return Next(); }
                     return Unary("negate");
                 case OpCode.LogicalNot:
@@ -4452,8 +4529,9 @@ namespace fire.Native
                     if (ObjSlot(d - 1) && DirectFieldIndex(ObjClass(Ty(d - 1)), field, f) is int fieldIndex)
                     {
                         // an object of a known class: the field by its index (a destroyed object throws, like gf_; undefined goes to gf_, which reports it)
-                        if (IsNullable(Ty(d - 1))) E($"{S(d - 1)} = FIRE_LIKELY({S(d - 1)}.kind == K_Class && leafAlive({S(d - 1)})) ? objFields(objAt({S(d - 1)}))[{fieldIndex}] : {FieldFn("gf", field)}({S(d - 1)}{FieldTail(field, f, () => "NULL")});");
-                        else E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? objFields(objAt({S(d - 1)}))[{fieldIndex}] : destroyedError({S(d - 1)});");
+                        string read = FieldRead(ObjClass(Ty(d - 1)), fieldIndex, $"objAt({S(d - 1)})");
+                        if (IsNullable(Ty(d - 1))) E($"{S(d - 1)} = FIRE_LIKELY({S(d - 1)}.kind == K_Class && leafAlive({S(d - 1)})) ? {read} : {FieldFn("gf", field)}({S(d - 1)}{FieldTail(field, f, () => "NULL")});");
+                        else E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? {read} : destroyedError({S(d - 1)});");
                         Check();
                     }
                     else if (ObjSlot(d - 1) && !IsNullable(Ty(d - 1)) && DirectAccessor(ObjClass(Ty(d - 1)), field, false, f) is { } getter)
@@ -4607,7 +4685,7 @@ namespace fire.Native
                     string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
                     string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
                     _pendingNewTArgs = null;
-                    E($"{{ Value o = newObject({ClassIdExpr(cls)}, {cls.Fields.Count}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); ctorEnd(o); {S(slot)} = o; }}");
+                    E($"{{ Value o = newObject({ClassIdExpr(cls)}, {SlotCount(cls)}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -5626,14 +5704,14 @@ namespace fire.Native
                 if (K(d - 2) != KindInt || K(d - 1) != KindInt) return false;
                 string a = S(d - 2), b = S(d - 1);
                 int unit = U(d - 2);
-                string unitArg = unit == 0 ? "" : $", {UnitC(unit)}";
+                string unitC = unit == 0 ? "0" : UnitC(unit);
                 switch (op)
                 {
-                    case "<<": E($"{a} = Int((int64_t)((uint64_t){a}.i << ({b}.i & 63)){unitArg});"); break;
-                    case ">>": E($"{a} = Int({a}.i >> ({b}.i & 63){unitArg});"); break;
+                    case "<<": E($"{a} = IntOp1((int64_t)((uint64_t){a}.i << ({b}.i & 63)), {unitC}, {a});"); break;
+                    case ">>": E($"{a} = IntOp1({a}.i >> ({b}.i & 63), {unitC}, {a});"); break;
                     default:
                         if (U(d - 1) != unit) return false;
-                        E($"{a} = FIRE_LIKELY(({a}.reserved | {b}.reserved) == 0) ? Int({a}.i {op} {b}.i{unitArg}) : {(op == "&" ? "bitAnd" : op == "|" ? "bitOr" : "bitXor")}({a}, {b});");
+                        E($"{a} = FIRE_LIKELY(({a}.reserved | {b}.reserved) == 0) ? IntOp({a}.i {op} {b}.i, {unitC}, {a}, {b}) : {(op == "&" ? "bitAnd" : op == "|" ? "bitOr" : "bitXor")}({a}, {b});");
                         break;
                 }
                 d--;
@@ -5677,10 +5755,10 @@ namespace fire.Native
                     {
                         case "/": E($"{a} = divide({a}, {b});"); CheckIf($"{a}.kind == K_Undefined"); break;   // (undefined throws there, too)
                         case "%":
-                            E($"{a} = FIRE_LIKELY({(guard.Length > 0 ? guard + " && " : "")}{b}.i > 0) ? Int({a}.i % {b}.i{unitArg}) : modulo({a}, {b});");
+                            E($"{a} = FIRE_LIKELY({(guard.Length > 0 ? guard + " && " : "")}{b}.i > 0) ? IntOp({a}.i % {b}.i, {(unit == 0 ? "0" : UnitC(unit))}, {a}, {b}) : modulo({a}, {b});");
                             CheckIf($"{a}.kind == K_Undefined");
                             break;
-                        default: Emit($"Int((int64_t)((uint64_t){a}.i {op} (uint64_t){b}.i){unitArg})"); break;
+                        default: Emit($"IntOp((int64_t)((uint64_t){a}.i {op} (uint64_t){b}.i), {(unit == 0 ? "0" : UnitC(unit))}, {a}, {b})"); break;
                     }
                 }
                 else if (op == "%") Emit($"Float(fmod({Num(d - 2)}, {Num(d - 1)}){unitArg})");
@@ -5792,6 +5870,12 @@ namespace fire.Native
             return _units.Count - 1;
         }
 
+        /// <summary>The C of a package as the generated file holds it: its ints are native ones (fire_rt.h FIRE_INT_U: one that does not fit the program's
+        /// int keeps its 64 bits, as the VM does with what a native of a package returns - the ticks of a clock, the size of a file).</summary>
+        internal static string PackageNativeText(string text) =>
+            "#undef FIRE_INT_U\n#undef FIRE_INT_1\n#define FIRE_INT_U IntNativeU\n#define FIRE_INT_1 IntNative\n" + text
+            + "\n#undef FIRE_INT_U\n#undef FIRE_INT_1\n#define FIRE_INT_U fire_IntU\n#define FIRE_INT_1 fire_Int1";
+
         private string Constant(Value v)
         {
             switch (v.Kind)
@@ -5802,6 +5886,8 @@ namespace fire.Native
                     string lit = i == long.MinValue ? "INT64_MIN" : i.ToString(CultureInfo.InvariantCulture) + "LL";
                     if (v.Enum is { } enumType) return $"EnumV({lit}, {EnumC(EnumIndex(enumType))})";   // (a value of an enum carries its type)
                     int unit = UnitId(v.Unit);
+                    // (a literal written for an `int[64]` with `#intwidth 32` keeps its width: IntW, Value.WithWide)
+                    if (v.Wide != 0) return $"IntW({lit}, {(unit == 0 ? "0" : UnitC(unit))}, {v.Wide})";
                     return unit == 0 ? $"Int({lit})" : $"Int({lit}, {UnitC(unit)})";
                 }
                 case ValueKind.Float:

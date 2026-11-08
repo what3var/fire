@@ -16160,7 +16160,7 @@ else
             any v = "dyn"
             print(Show.Of(v))
             """),
-        ("Ueberladung vorab gewaehlt: wechselnder Argumenttyp an derselben Stelle (lax) nimmt abwechselnd Hinweis und Bewertung", """
+        ("Ueberladung vorab gewaehlt: wechselnder Argumenttyp an derselben Stelle (any) waehlt jedes Mal richtig", """
             class Show {
                 static string Of(int x) { return "int" }
                 static string Of(string s) { return "string" }
@@ -16172,7 +16172,7 @@ else
             }
             var sh = new Show(1)
             for (int i = 0; i < 6; i++) {
-                int x = i
+                any x = i
                 if (i % 2 == 1) { x = "odd" }
                 print(Show.Of(x) + " / " + sh.Me(x) + " / " + new Show(x).made)
             }
@@ -23020,6 +23020,42 @@ else
             }
             print("end")
             """),
+        ("Schmale Felder (#intwidth 32, #floatwidth 32): int/float/bool teilen sich einen Wert, Vererbung mit freier Haelfte, undefined, Einheiten, int[64] bleibt breit, Kopie, Schneiden", """
+            #intwidth 32
+            #floatwidth 32
+            class P { int x
+                float y
+                bool ok
+                int len : mm
+                string name
+                int[64] big
+                construct(int x) { this.x = x; this.y = x * 0.5; this.ok = x > 1; this.len = 5cm; this.name = "p" + x; this.big = 864000000000 }
+                int Sum() { return this.x + this.len / 1mm }
+            }
+            class Q : P { int z
+                float w
+                construct(int x) : base(x) { this.z = x * 3; this.w = 0.25 }
+            }
+            var p = new P(2)
+            print(p.x + " " + p.y + " " + p.ok + " " + p.len + " " + p.name + " " + p.big + " " + p.Sum())
+            var q = new Q(3)
+            print(q.x + " " + q.y + " " + q.ok + " " + q.z + " " + q.w + " " + q.big * 2)
+            P any1 = q
+            any1.x = 2147483647
+            any1.x = any1.x + 1
+            print(any1.x + " " + q.x)
+            var e = new P(1)
+            e.ok = undefined
+            e.y = undefined
+            print(e.ok == undefined)
+            print(e.y == undefined)
+            var c = copy q
+            c.z = 7
+            print(c.z + " " + q.z + " " + c.w)
+            any d = q
+            d.y = 4
+            print(d.y + " " + d.z)
+            """),
         ("#intwidth 32: Ueberlauf, Division, Schieben, Konstanten, typisierte Arrays, Felder, Schleifen, Einheiten", """
             #intwidth 32
             var a = 2147483647
@@ -27256,11 +27292,11 @@ else
                 Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                 string compactC = Path.Combine(workDir, "compact.c");
                 File.WriteAllText(compactC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { compactSource }, null, null, null, null, compactTarget), compactTarget)
-                    + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
+                    + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 16 && sizeof(NValue) == 8, \"a value has 16 bytes, a narrow field 8\");\n");
                 Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                 string compactBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{compactC}\" -I\"{workDir}\" -o \"{compactC}.bin\" -lm", workDir, out int compactExit);
                 string compactOut = compactExit == 0 ? RunProc($"{compactC}.bin", "", workDir, out _) : compactBuild;
-                CheckNat("8-Byte-Value (#intwidth 32, #floatwidth 32, 32-Bit-Zeiger): dasselbe wie die VM", compactExit == 0 && !compactBuild.Contains("warning") && compactOut.Replace("\r", "") == expectedCompact,
+                CheckNat("32-Bit-Build (#intwidth 32, #floatwidth 32, 32-Bit-Zeiger): 16-Byte-Werte, schmale Felder - dasselbe wie die VM", compactExit == 0 && !compactBuild.Contains("warning") && compactOut.Replace("\r", "") == expectedCompact,
                     $"  erwartet (VM):\n{expectedCompact}\n  erhalten (32 Bit):\n{compactOut}");
 
                 // ROADMAP 13.1: no limit of 65535 live objects, arrays and buffers (the slot in the payload, 28 bits of generation in the head), pointers into
@@ -27329,11 +27365,11 @@ else
                     Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                     string slotC = Path.Combine(workDir, perf ? "compactslotsperf.c" : "compactslots.c");
                     File.WriteAllText(slotC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { source }, null, null, null, null, compactTarget), compactTarget)
-                        + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
+                        + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 16 && sizeof(NValue) == 8, \"a value has 16 bytes, a narrow field 8\");\n");
                     Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                     string slotBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{slotC}\" -I\"{workDir}\" -o \"{slotC}.bin\" -lm", workDir, out int slotExit);
                     string slotOut = slotExit == 0 ? RunProc($"{slotC}.bin", "", workDir, out _) : slotBuild;
-                    CheckNat($"8-Byte-Value{(perf ? " (#performance)" : "")}: mehr als 65535 lebende Objekte/Arrays, Generationen ueber 4096, Zeiger in Arrays und Puffer (Kaesten)",
+                    CheckNat($"32-Bit-Build{(perf ? " (#performance)" : "")}: mehr als 65535 lebende Objekte/Arrays, Generationen ueber 4096, Zeiger in Arrays und Puffer (ohne Kaesten)",
                         slotExit == 0 && !slotBuild.Contains("warning") && slotOut.Replace("\r", "") == expected && expected.StartsWith("live: 70000"),
                         $"  erwartet (VM):\n{expected}\n  erhalten (32 Bit):\n{slotOut}");
                 }

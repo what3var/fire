@@ -408,7 +408,7 @@ namespace fire.Native
                 foreach (var (file, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
                     nat.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\": {file}");
-                    nat.AppendLine(text);
+                    nat.AppendLine(CppGenerator.PackageNativeText(text));
                     nat.AppendLine($"// ---- end of {file}");
                 }
             nat.AppendLine();

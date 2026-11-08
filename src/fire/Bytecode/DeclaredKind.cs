@@ -10,6 +10,9 @@ namespace fire.Bytecode
     public static class DeclaredKind
     {
         public const byte UnitlessBit = 0x80;
+        /// <summary>An int declared with an explicit width beyond the program's (`int[64]`, `int[32]`): a value keeps the width it has (Value.Wide). A plain `int`
+        /// holds the program's int - with `#intwidth 32`/`16` a wider value is cut when it goes in (like a store into `int[32]`; natively a narrow field).</summary>
+        public const byte KeepsWidthBit = 0x40;
 
         /// <summary>`initializer`: the initializer of a field or the default value of a parameter. A declaration without a unit takes the unit of its
         /// initializer (the type checker converts at the assignments then); only without one, or with a number literal without a unit, it is
@@ -20,7 +23,7 @@ namespace fire.Bytecode
             byte unitless = type.Unit == null && IsUnitlessLiteral(initializer) ? UnitlessBit : (byte)0;
             return type.BaseName switch
             {
-                "int" => (byte)((int)TypeTag.Int + 1 | unitless),
+                "int" => (byte)((int)TypeTag.Int + 1 | unitless | (type.BitWidth is 32 or 64 && !type.Unsigned ? KeepsWidthBit : 0)),
                 "float" => (byte)((int)TypeTag.Float + 1 | unitless),
                 "bool" => (byte)((int)TypeTag.Bool + 1),
                 _ => (byte)0,
@@ -35,7 +38,11 @@ namespace fire.Bytecode
             _ => false,
         };
 
-        public static TypeTag TagOf(byte required) => (TypeTag)((required & 0x7F) - 1);
+        public static TypeTag TagOf(byte required) => (TypeTag)((required & 0x3F) - 1);
+        public static bool KeepsWidth(byte required) => (required & KeepsWidthBit) != 0;
+        /// <summary>A plain `int` declaration and an int that keeps a wider width (`#intwidth 32`): it is cut when it goes in.</summary>
+        private static bool CutsWide(in Value value, byte required) =>
+            value.Wide != 0 && Value.Ints32 && (required & KeepsWidthBit) == 0 && value.Kind == ValueKind.Int && TagOf(required) == TypeTag.Int;
         public static bool IsUnitless(byte required) => (required & UnitlessBit) != 0;
 
         public static ValueKind ValueKindOf(byte required) => TagOf(required) switch
@@ -46,7 +53,7 @@ namespace fire.Bytecode
         /// <summary>Does the value fit as it is?</summary>
         public static bool Fits(in Value value, byte required) =>
             required == 0 || value.Kind == ValueKind.Undefined
-            || value.Kind == ValueKindOf(required) && (!IsUnitless(required) || value.Unit is null || ReferenceEquals(value.Unit, Unit.Unitless));
+            || value.Kind == ValueKindOf(required) && (!IsUnitless(required) || value.Unit is null || ReferenceEquals(value.Unit, Unit.Unitless)) && !CutsWide(value, required);
 
         /// <summary>A number that has to be unitless but carries a unit (the caller converts it: AdaptToUnit "unitless").</summary>
         public static bool NeedsUnitless(in Value value, byte required) =>
@@ -55,6 +62,7 @@ namespace fire.Bytecode
         /// <summary>Checks the kind and converts a whole number for a float in place; null when the value fits now, else the message of the ArgumentException.</summary>
         public static string? Accept(ref Value value, byte required, string what)
         {
+            if (CutsWide(value, required)) value = value.WithWide(0);   // (the program's int: cut to its width)
             if (value.Kind == ValueKind.Undefined || value.Kind == ValueKindOf(required)) return null;
             if (ValueKindOf(required) == ValueKind.Float && value.Kind == ValueKind.Int)
             {

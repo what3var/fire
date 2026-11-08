@@ -602,6 +602,8 @@ namespace fire.Compiler
                 lock (typeof(Linker)) File.AppendAllText(varLogFile, lines.ToString());
             }
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
+            // (the width of the program's int as below - the project's setting before the tag of the source: TC021 needs it)
+            TypeChecker.ProgramIntWidth = intWidthOverride ?? ProcessIntWidth ?? Plan?.Settings?.IntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
             var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);

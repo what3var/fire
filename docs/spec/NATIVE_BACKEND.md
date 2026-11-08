@@ -170,23 +170,28 @@ Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung
 
 ### Breite von `int` und Größe eines Werts (`#intwidth 32`, SPEC 8.2.2)
 
-* `FIRE_INT32` (der Generator schreibt es bei `#intwidth 32`): `Value::i` ist ein `int32_t` (`FireInt`). Die Operationen bleiben, wie sie
-  sind - sie rechnen mit den auf 64 Bit erweiterten Operanden, und das Ergebnis wird beim Speichern in den `int32_t` abgeschnitten. Genau so
-  schneidet die VM jeden Int ab, den sie erzeugt (`Value.Ints32`); auch die Sonderfälle (`INT_MIN / -1`, Schieben um 32 und mehr) geben in
-  beiden dasselbe.
-* `FIRE_COMPACT` (von selbst, wenn `FIRE_INT32`, `FIRE_FLOAT32` und 32-Bit-Zeiger zusammenkommen; `FIRE_WIDE_VALUE` schaltet es ab): der
-  Kopf eines Werts sind 32 Bit als Bitfelder - `kind` 4, `reserved` 12 (Enum), `unit` 16 (Einheit, Versatz eines Zeigers auf eine Variable:
-  `FIRE_UNIT_OFFSET` liest ihn mit Vorzeichen) - dazu 32 Bit Nutzlast: 8 statt 16 Byte. Mehr als 65535 Einheiten beenden das Programm mit
-  einer Meldung. Geprüft wird es auf dem Rechner als 32-Bit-Build (`gcc -m32`, gcc-multilib).
-* Objekte, Arrays und Puffer im kompakten Format (`FIRE_SLOTREF`: kompakt und geprüft): die Nutzlast ist der **Slot** (32 Bit), die 28 Bit
-  des Kopfs hinter `kind` sind die **Generation** (`FIRE_VGEN`/`FIRE_SETGEN`, `FIRE_GEN_MASK`); die Adresse steht in der Slot-Tabelle neben
-  der Generation (`SlotEntry {hdr, gen}`: eine Ladung für `arrOf`/`objAt` und die Prüfung). Keine Grenze bei den lebenden Objekten (Slot 0
-  bleibt frei). Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `PtrBox {rc/type, Adresse, Slot}` (16 Byte pro
-  lebendem Zeiger, die Generation im Kopf des Werts), gezählt wie Strings (`isRef`) und über eine Freiliste pro Thread wiederverwendet
-  (`boxNew`/`boxFree`, höchstens 64 frei). `==` vergleicht Slot und Lebenszeit (eine Generation zwischen `born` und heute: der alte Verweis
-  vor einem `fire handover` ist dasselbe Objekt). Mit `#performance` (`FIRE_UNCHECKED`) trägt jeder Wert seine Adresse direkt; nimmt das
-  Programm Zeiger in Arrays (`FIRE_ELEMPTRS`), bleibt die Slot-Tabelle für sie (der Slot steht dann im Kopf des Zeigers).
-  Die Runtime liest Handles nur über `leafOf`, `leafSet`, `sameLeaf`, `leafKey`, `ptrAddr`, `ptrSlot`, `leafPtrV` - nie über `.p`.
+* Ein Wert (`Value`) hat auf jedem Ziel 16 Byte: Kopf (`kind`, `wide`, `reserved`, `unit`) und 64 Bit Nutzlast (`int64_t i`, `Real f`, Zeiger,
+  `uint64_t w`). Er hält alles, was eine Variable vom Typ `any` halten kann - auch ein `int[64]` auf einem Ziel mit `#intwidth 32`/`16`
+  (docs/spec/TYPES.md: der Typ einer Variablen steht fest; schmal gespeichert wird, was statisch schmal ist, s. "Schmale Felder").
+  Das frühere 8-Byte-Format (`FIRE_COMPACT`, Slot statt Zeiger, gezählte Zeiger-Kästen `PtrBox`) gibt es nicht mehr: Objekte, Arrays und Puffer
+  tragen ihre Adresse im Wert, Slot und Generation im Kopf; ein Zeiger in ein Array ist ein Wert ohne Kasten.
+* `FIRE_INT32` (bei `#intwidth 32`) / `FIRE_INT16`: jeder Int wird beim Erzeugen auf die Programmbreite geschnitten (`FIRE_INT_CUT`; `Int(v)`),
+  wie die VM (`Value.Ints32`). `wide` (0, 32, 64) ist `Value._wide` der VM: ein Int einer ausdrücklich breiteren Deklaration (`int[64]`,
+  `int[32]` bei `#intwidth 16`) behält seine Breite; eine Operation mit so einem Operanden rechnet in der größeren Breite (`IntOp`/`IntOp1`,
+  `FIRE_W2`; die typisierten Schnellwege des Generators ebenso), `convertWidth` setzt sie, ein Literal für so eine Deklaration ist `IntW(..., 64)`.
+  Ein Int aus dem C eines Pakets, der nicht in die Programmbreite passt, behält seine 64 Bit (`IntNative`, `Value.MakeNativeInt`): der Generator
+  schaltet `FIRE_INT_U`/`FIRE_INT_1` rund um jeden Paket-Quelltext um (`PackageNativeText`), sodass `Int(...)` dort native Ints macht.
+  Eine Deklaration `int` (ohne Breite) hält den Int des Programms: ein breiterer Wert wird beim Hineinschreiben geschnitten (`intProgram`,
+  in der VM `DeclaredKind.CutsWide` über das Bit `KeepsWidthBit` von `int[32]`/`int[64]`); der Typprüfer meldet das als `TC021`.
+* **Schmale Felder** (`nvGet`/`nvSet`, `NValue`): ein Feld, das `int` (bei `#intwidth 32`/`16`), `float` (bei `#floatwidth 32`) oder `bool`
+  deklariert ist, hält nur eine Zahl bzw. einen bool dieser Art oder `undefined` - 8 Byte reichen (Art, Einheit mit 16 Bit, 32 Bit Nutzlast).
+  Zwei solche Felder teilen sich den Slot eines Werts (`CppGenerator.LayoutOf`: in der Reihenfolge der Felder, die einer Basisklasse zuerst und
+  gleich; eine freie Hälfte am Ende der Basisklasse nimmt das nächste schmale Feld der abgeleiteten). Hälfte 0 liegt über dem Kopf des Slots,
+  der sich deshalb wie eine Zahl liest - jeder generische Gang über die Felder (Freigeben, Besitz, Kopie) sieht einen Wert ohne Referenz;
+  Hälfte 1 liegt über der Nutzlast, ihre Art ist mit `K_Undefined` verXORt (Nullen sind `undefined`). Ein Feldname ist schmal, wenn er es
+  in jeder Klasse ist, die ihn hat, und seine Adresse nirgends genommen wird. Vorerst aus bei Threads, Reflection/Sonden, JSON, Debug-Builds,
+  getrennter Übersetzung und Plugins (dort liest die Runtime Felder per Index ohne das Layout). Getypte Arrays sind ohnehin roh (Ebene 3),
+  Arrays von `any` bleiben 16 Byte je Element.
 
 ### Regeln für die Runtime (gelernt)
 
@@ -742,8 +747,7 @@ Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines`
 `supportsThreads`, `floatWidth`, `intWidth`, `wordWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
 `wordWidth` (16, 32 oder 64) ist die Breite von `word`, dem vorzeichenlosen Maschinenwort des Ziels (SPEC 8.10a); ohne Angabe die des Ziels, von dem es erbt: 64 Bit auf `windows`,
 `linux`, `macos`, 32 auf `esp32`, `freertos`, `wasm`. Das generierte C bekommt `#define FIRE_WORD_BITS N` (`#if word16|word32|word64`, `Word.Bits`); ein Wort ist ein Wert der Art
-`K_Word` (die Bits in `v.w`, oberhalb der Breite 0), ein Wortpuffer ein `Buf` mit `elem = sizeof(FireWord)` (`bufWords`, `allocBufOf`). Ein 8-Byte-Wert (`FIRE_COMPACT`) nur mit
-höchstens 32 Bit breiten Wörtern. **Schmales C:** wo der Generator ein Wort oder einen Puffer selbst gemacht hat (eine Umwandlung nach `word`, `byte a[n]`/`new byte[n]`, `word a[n]`/
+`K_Word` (die Bits in `v.w`, oberhalb der Breite 0), ein Wortpuffer ein `Buf` mit `elem = sizeof(FireWord)` (`bufWords`, `allocBufOf`). **Schmales C:** wo der Generator ein Wort oder einen Puffer selbst gemacht hat (eine Umwandlung nach `word`, `byte a[n]`/`new byte[n]`, `word a[n]`/
 `new word[n]`, ein Element davon), schreibt er Wort-Arithmetik und -Vergleiche, die Speicherung in `byte`/`word` und die Elemente und `length` des Puffers als C aus (`WordV(x + y)`,
 `bufOf(b)->data[i]` mit Prüfung von Lebendigkeit und Bereich, sonst der allgemeine Zugriff), dazu `& | # << >>` zweier ints. Eine Prüfsummen-Schleife über einen Bytepuffer
 (2 x 200 x 1.000.000 Elemente, `word`-Summe und `byte`-xor, gcc -O2): 4,45 s vorher, 0,41 s nachher. Die Locals bleiben 16-Byte-Werte (gcc hält die Zahlen in Registern);

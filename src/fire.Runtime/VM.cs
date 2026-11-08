@@ -4305,7 +4305,10 @@ namespace fire.Runtime
                 case OpCode.CoerceType:
                 {
                     var tag = (TypeTag)ReadByte();
-                    Push(CoerceTypeChecked(Pop(), TagToKind(tag)));
+                    var coerced = CoerceTypeChecked(Pop(), TagToKind(tag));
+                    // (`x!int`: the program's int - an int that keeps a wider width is cut, TC021)
+                    if (tag == TypeTag.Int && coerced.Wide != 0 && Value.Ints32) coerced = coerced.WithWide(0);
+                    Push(coerced);
                     break;
                 }
                 case OpCode.CoerceTypeDynamic:

@@ -113,6 +113,10 @@ static class TypeTests
         Check("int / int ist ein int (7 / 2 ist 3), eine Potenz immer ein float (2 ^ 3 ist 8.0, auch zur Laufzeit)",
             Run("var q = 7 / 2\nvar p = 2 ^ 3\nint both = q + (p!int)\nprint(both)\nprint(p / 16)\nprint(2 ^ 3 is of float)", TypeCheckMode.Strict) is var pw && pw == "|11\n0.5\nTrue"
             && Run("var p = 2 ^ 3\nint i = p\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC001", pw);
+        Check("#intwidth 32: ein int[64] in ein schlichtes int ist TC021 und wird geschnitten (auch zur Laufzeit, Feld und Parameter); var behaelt die Breite, !int ist still",
+            Run("#intwidth 32\nint[64] t = 864000000000\nint x = t + 0\nvar y = t + 1\nint z = (t + 2)!int\nclass B { int v\n  static int Id(int p) { return p } }\nvar b = new B()\nb.v = t\nprint(x)\nprint(y)\nprint(z)\nprint(b.v)\nprint(B.Id(t))")
+                is var cut && cut == "TC021 TC021 TC021|711573504\n864000000001\n711573506\n711573504\n711573504"
+            && Run("int[64] t = 864000000000\nint x = t\nprint(x)") == "|864000000000", cut);
         Check("var a = [] hat keine Elementtypen: TC020 (any[]), int a[] = [] ist still",
             Run("var a = []\nprint(a.length)", TypeCheckMode.Strict) == "TC020|0" && Run("int a[] = []\nprint(a.length)", TypeCheckMode.Strict) == "|0");
         Check("Namen im eigenen Namespace: Parameter, Felder und Aufrufe (UI.M.Max) haben ihren Typ", Run("""
