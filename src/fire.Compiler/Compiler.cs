@@ -1002,6 +1002,8 @@ namespace fire.Compiler
                                 RequiredUnit = fd.Type?.UnitDemand,
                                 RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
+                                RequiredArray = fd.Type?.ArrayWidthCode(fd.ArrayRanks.Count) is var arrayCode and not 0 && (arrayCode & 0xFF) is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word)
+                                    ? (ushort)(arrayCode & 0xFFFF) : (ushort)0,
                                 IsStatic = fd.IsStatic,
                                 TypeText = JsonTypeText(fd.Type, fd.ArrayRanks.Count, rc.Decl),
                                 Attributes = AttributeMetas(fd.Attributes),

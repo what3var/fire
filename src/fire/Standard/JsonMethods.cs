@@ -731,6 +731,16 @@ namespace fire.Standard
                 throw Mismatch(path, type, "a string");
             }
 
+            /// <summary>The array `value` (at depth `rank` its inner arrays) becomes typed (VM.TypeArrayValue without a unit).</summary>
+            private static void TypeArrayDeep(Value value, byte elem, int rank, int depth, string path)
+            {
+                if (value.Kind != ValueKind.Array || depth > 64) return;
+                var array = value.AsArray();
+                if (depth < rank) { foreach (var inner in array.Items) TypeArrayDeep(inner, elem, rank, depth + 1, path); return; }
+                if (array.ElemType != ArrayElem.None) return;
+                if (!array.MakeTyped(elem, null, out _, out var message, out _)) throw new JsonError($"{path}: {message}");
+            }
+
             private Value BuildArray(ArrayNode a, string type, IOwner owner, string path, long? id)
             {
                 if (type.EndsWith("[]", StringComparison.Ordinal) || type is "" or "any" or "class")
@@ -865,7 +875,11 @@ namespace fire.Standard
                     if (key.StartsWith("$", StringComparison.Ordinal)) continue;
                     var field = fields.FirstOrDefault(f => f.JsonName == key) ?? fields.FirstOrDefault(f => string.Equals(f.JsonName, key, StringComparison.OrdinalIgnoreCase));
                     if (field == null) continue;   // (a member the class does not have: left out)
-                    obj.Fields[field.Name] = Build(child, Substitute(field.Type, obj), obj, path + "." + key, field.Unit, (obj, field.Name));
+                    var built = Build(child, Substitute(field.Type, obj), obj, path + "." + key, field.Unit, (obj, field.Name));
+                    // a field declared as a typed array without a unit (FieldInfo.RequiredArray) holds a typed array, like after any other assignment
+                    if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null)
+                        TypeArrayDeep(built, (byte)(requiredArray & 0xFF), requiredArray >> 8, 1, path + "." + key);
+                    obj.Fields[field.Name] = built;
                 }
                 if (HasOnDeserialized(rc)) Hooks.Add(obj);
                 return value;

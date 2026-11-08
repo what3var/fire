@@ -764,9 +764,14 @@ namespace fire.Native
             }
             byte declaredKind = rc.FindFieldRequiredKind(name);
             bool cutWide = kind == 0 && declaredKind != 0 && DeclaredKind.TagOf(declaredKind) == TypeTag.Int && !DeclaredKind.KeepsWidth(declaredKind) && _program.IntWidth < 64;
+            // a typed array field: typed like by TypeArray - not when the value is such an array already (KindArr of the element, no unit)
+            ushort requiredArray = rc.FindFieldRequiredArray(name);
+            bool arrayKnown = requiredArray != 0 && (requiredArray >> 8) == 1 && rc.FindFieldRequiredUnit(name) == null && BaseKindOfType(valueType) == KindArr
+                && (valueType & TypeNone) == 0 && UnitOfType(valueType) == (requiredArray & 0xFF);
             string checks = (unit != null ? $"x = {AdaptUnitCall("x", unit)}; " : "")
                 + (kind != 0 ? FieldKindCheck(name, kind) + " " : cutWide ? "x = intProgram(x); " : "")
-                + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "");
+                + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "")
+                + (requiredArray != 0 && !arrayKnown ? FieldArrayCheck(rc, name) + " " : "");
             var (fieldSlot, fieldHalf) = FieldPlace(rc, index);
             string put = fieldHalf < 0 ? $"setFieldAt({obj}, {fieldSlot}, x);" : $"nvSet(&objFields(objAt({obj}))[{fieldSlot}], {fieldHalf}, x);";
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) {put}" : put;
@@ -884,6 +889,15 @@ namespace fire.Native
             {
                 if (!cls.Rc.FieldIndex.ContainsKey(name)) continue;
                 byte declared = cls.Rc.FindFieldRequiredKind(name);
+                if (declared == 0 && cls.Rc.FindFieldRequiredArray(name) is var requiredArray and not 0)
+                {
+                    // a field declared as a typed array without a unit: an array of that element or undefined (every assignment types it, FieldInfo.RequiredArray)
+                    if ((requiredArray >> 8) != 1 || cls.Rc.FindFieldRequiredUnit(name) != null) return TypeUnknown;
+                    int arrType = TypeOf(KindArr, requiredArray & 0xFF) | NullableBit;
+                    if (result is { } knownArr && knownArr != arrType) return TypeUnknown;
+                    result = arrType;
+                    continue;
+                }
                 if (declared == 0)
                 {
                     // a field declared with a class: an object of it or undefined (its setter checks every assignment, DeclaredType)
@@ -1424,10 +1438,12 @@ namespace fire.Native
         /// <summary>The C that converts `value` into the unit a declaration demands (fire_rt.h adaptUnit; a leading `#`: the declaration is a float).</summary>
         /// <summary>The unit arguments of typeArray/newTypedArray for the unit demand constant of an OpCode.TypeArray (0xFFFF: none): `unit, flags, text`
         /// (flags TU_UNIT 1, TU_DIMONLY 2, TU_ANY 4 of fire_rt.h; text as the messages show it).</summary>
-        private string TypeArrayUnitArgs(Chunk chunk, int constIdx)
+        private string TypeArrayUnitArgs(Chunk chunk, int constIdx) => TypeArrayUnitArgsOf(constIdx == 0xFFFF ? null : chunk.Constants[constIdx].AsString());
+        /// <summary>The unit arguments of typeArray for a unit demand (UnitDemand; null: none).</summary>
+        private string TypeArrayUnitArgsOf(string? demand)
         {
-            if (constIdx == 0xFFFF) return $"0, 0, {Constant(Value.MakeString("(no unit)"))}";
-            string unit = chunk.Constants[constIdx].AsString().TrimStart('#');
+            if (demand == null) return $"0, 0, {Constant(Value.MakeString("(no unit)"))}";
+            string unit = demand.TrimStart('#');
             if (unit == "any") return $"0, 4, {Constant(Value.MakeString("any"))}";
             bool dimensionOnly = unit.StartsWith("any ", StringComparison.Ordinal);
             return $"{UnitC(UnitId(DemandUnit(unit)))}, {(dimensionOnly ? 3 : 1)}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))}";
@@ -2417,7 +2433,8 @@ namespace fire.Native
                 if (!indexByClass.ContainsKey(cls.Id)) continue;
                 string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
                     + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "")
-                    + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'", "o") + " " : "");
+                    + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'", "o") + " " : "")
+                    + (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck ? arrayCheck + " " : "");
                 if (check.Length > 0) unitArms.Add((cls.Id, check + "break;"));
             }
             string unitCode = unitArms.Count == 0 ? "" : "    switch (o->cls) {\n" + MergedCases(unitArms) + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
@@ -2432,6 +2449,9 @@ namespace fire.Native
 
         /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
         private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, $"Field '{name}'")};";
+        /// <summary>A field declared as a typed array (FieldInfo.RequiredArray): what is assigned is typed like by OpCode.TypeArray ("" for any other field).</summary>
+        private string FieldArrayCheck(RuntimeClass rc, string name) => rc.FindFieldRequiredArray(name) is var arr and not 0
+            ? $"typeArray(x, {arr & 0xFF}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name))}, 1);" : "";
         private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch { TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", _ => "K_Bool" };
         private string GuardKindCall(string value, byte declared, string what)
         {
@@ -2492,6 +2512,8 @@ namespace fire.Native
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType)
                         unit += ClassGuard("x", requiredType, $"Field '{name}'", "o") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
+                    if (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck)
+                        unit += arrayCheck + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     var (armSlot, armHalf) = FieldPlace(cls.Rc, index);
                     setArms.Add((label, armHalf >= 0 ? $"{{ {fieldGuardSet}{unit}nvSet(&objFields(o)[{armSlot}], {armHalf}, x); return; }}"
                         : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; retain(x); release(old); return; }}"));
@@ -4964,6 +4986,11 @@ namespace fire.Native
                         E(ClassGuard(S(d - 1), staticClass, $"Field '{Str(ins.A[1])}'"));
                         Check();
                     }
+                    if (FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1])) is { } staticOwner && FieldArrayCheck(staticOwner, Str(ins.A[1])) is { Length: > 0 } staticArray)
+                    {
+                        E(staticArray.Replace("typeArray(x,", $"typeArray({S(d - 1)},"));
+                        Check();
+                    }
                     StoreVar(sfVar, d - 1);
                     return Next();
                 }
@@ -5347,7 +5374,9 @@ namespace fire.Native
                     // load) - the generic access for undefined, a destroyed array, an index out of range or an unpacked array; an int, float or bool, or undefined
                     Need(2);
                     string a = S(d - 2), i = S(d - 1);
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else {a} = {Px}aget_g({a}, {i}, &{OwnerList()}); }}");
+                    // (the generic route types the array first: what the element is, is then certain even when a way of writing the field or variable
+                    // missed it - it converts, or it is the exception)
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OwnerList()}); }}");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(ArrElemKind(getElem), 0) | NullableBit); _kindsKept = true; return Next();
                 }

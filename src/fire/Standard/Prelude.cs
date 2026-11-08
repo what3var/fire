@@ -447,15 +447,12 @@ namespace fire.Standard
                     return a == b
                 }
 
-                // the entry of `key` (hash `h`), -1 if there is none (the arrays as typed locals: a native build reads their elements in place)
+                // the entry of `key` (hash `h`), -1 if there is none (a native build reads the elements of the typed arrays in place)
                 int Find(any key, int h) {
-                    int buckets[] = this.buckets
-                    int hashes[] = this.hashes
-                    int next[] = this.next
-                    int i = buckets[h & (buckets.length - 1)] - 1
+                    int i = this.buckets[h & (this.buckets.length - 1)] - 1
                     while (i >= 0) {
-                        if (hashes[i] == h && this.SameKey(this.keys[i], key)) { return i }
-                        i = next[i] - 1
+                        if (this.hashes[i] == h && this.SameKey(this.keys[i], key)) { return i }
+                        i = this.next[i] - 1
                     }
                     return -1
                 }
@@ -467,12 +464,11 @@ namespace fire.Standard
                     this.used = i + 1
                     this.keys[i] = key
                     this.vals[i] = value
-                    int buckets[] = this.buckets
                     this.hashes[i] = h
                     this.live[i] = true
-                    int b = h & (buckets.length - 1)
-                    this.next[i] = buckets[b]
-                    buckets[b] = i + 1
+                    int b = h & (this.buckets.length - 1)
+                    this.next[i] = this.buckets[b]
+                    this.buckets[b] = i + 1
                     this.count = this.count + 1
                 }
 

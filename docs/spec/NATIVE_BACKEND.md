@@ -153,9 +153,14 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   `speed` liest er ein Element von `int`/`float`/`bool` an Ort und Stelle (`arrPackedAt` mit festem Element: eine Ladung) und kennt dessen Art (oder
   `undefined`, das die geschützten Schnellwege der Arithmetik prüfen), schreibt ein `int`/`bool` an Ort und Stelle (ohne Threads: `aset_g` betritt sonst
   einen Abschnitt) und liest `length` direkt; sonst, bei einem zerstörten Array, einem Index außerhalb oder `size`, der allgemeine Zugriff. Ein `TypeArray`
-  auf einen Platz, der schon so typisiert ist, entfällt; sonst prüft `typeArray` eingebettet zuerst, ob das Array den Typ schon hat. Felder (`this.hashes`)
-  gelten noch nicht als bekannt: Reflection und JSON setzen sie ohne `TypeArray`. Gemessen (Dictionary-Benchmark wie oben, `__HashTable.Find`/`Insert`
-  über typisierte Locals): 4,34 -> 3,62 Mrd. Instruktionen, 0,46 -> 0,32 s gegenüber dem Stand vor den typisierten Tabellen, 39 -> 18 MB.
+  auf einen Platz, der schon so typisiert ist, entfällt; sonst prüft `typeArray` eingebettet zuerst, ob das Array den Typ schon hat. **Felder:** ein Feld,
+  das als typisiertes Array deklariert ist, trägt das in `FieldInfo.RequiredArray` (Element | Rang << 8; nicht `byte`/`word`); jeder Weg, es zu setzen,
+  typisiert: der übersetzte (`TypeArray`), die allgemeinen Setter der VM (`GuardFieldArray`; solche Felder kommen nicht in den Inline-Cache) und der
+  Runtime (`sf_`, `DirectSetField`, statische Felder; Reflection geht über `sf_`), JSON (VM `TypeArrayDeep`, nativ `JsonFieldInfo.arr`; nur ohne Einheit).
+  Ein Feld ohne Einheit mit Rang 1, das in jeder Klasse gleich deklariert ist, liest der Generator deshalb als `KindArr` (`FieldType`). Der allgemeine
+  Zweig des eingebetteten Lesens typisiert das Array vorher (`typeArray`): so ist die Art des Elements auch dann sicher, wenn ein Schreibweg es verpasst
+  hätte. Gemessen (Dictionary-Benchmark wie oben): 4,34 -> 3,62 Mrd. Instruktionen mit typisierten Locals im Prelude, 3,08 mit den Feldern direkt;
+  0,46 -> 0,31 s gegenüber dem Stand vor den typisierten Tabellen, 39 -> 18 MB.
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit

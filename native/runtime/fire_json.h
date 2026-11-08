@@ -9,7 +9,8 @@ FIRE_BEGIN
 
 /* A field as JSON sees it (JsonMethods.JsonField): the name in the JSON text, the slot in the object, the declared type (`int`, `Point`, `List<Point>`, `$0`, "" for
  * an untyped one) and the unit it is declared with (0: none). */
-typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; } JsonFieldInfo;
+/* `arr`: a field declared as a typed array without a unit (FieldInfo.RequiredArray: the element | the rank << 8; 0: none) - what is read for it is typed */
+typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; } JsonFieldInfo;
 /* A class: its name (as the program knows it, `Box`1` for a generic one whose plain name is taken), the plain name, its fields, `flags` (1 actor, 2 has
  * OnDeserialized(), 4 the List of the prelude, 8 JsonObject, 16 not serializable: `[NotSerializable]` or `"serializable": false` in its package) and the number of its
  * type parameters. */
@@ -1143,6 +1144,7 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         if (!field) continue;   /* (a member the class does not have: left out) */
         s.container = obj; s.index = field->slot; s.has = true;
         v = jsBuild(r, member->node, jsSubstitute(J, field->type, o2, c), objOwned(o2), jsCat3(J, path, ".", key), field->unit, s);
+        if (field->arr && !J->failed && v.kind == K_Array) typeArray(v, (uint8_t)(field->arr & 0xFF), field->arr >> 8, 0, 0, Undef(), 1);
         jsStore(obj, field->slot, v);
     }
     if (c->flags & JSON_FLAG_HOOK) {

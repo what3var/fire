@@ -3058,6 +3058,11 @@ namespace fire.Runtime
                 if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
                 string? requiredType = obj.RtClass?.FindFieldRequiredType(fieldName);
                 if (!GuardFieldType(ref value, requiredType, fieldName, obj)) return false;
+                if (obj.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
+                {
+                    hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
+                    if (!GuardFieldArray(value, requiredArray, obj.RtClass.FindFieldRequiredUnit(fieldName))) return false;
+                }
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
@@ -3165,6 +3170,11 @@ namespace fire.Runtime
             if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
             string? requiredType = oi.RtClass?.FindFieldRequiredType(fieldName);
             if (!GuardFieldType(ref value, requiredType, fieldName, oi)) return;
+            if (oi.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
+            {
+                hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
+                if (!GuardFieldArray(value, requiredArray, oi.RtClass.FindFieldRequiredUnit(fieldName))) return;
+            }
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
                 && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
@@ -3657,6 +3667,7 @@ namespace fire.Runtime
             }
             if (!GuardFieldKind(ref setValue, setOwner.FindFieldRequiredKind(setFieldName), setFieldName)) return;
             if (!GuardFieldType(ref setValue, setOwner.FindFieldRequiredType(setFieldName), setFieldName, null)) return;
+            if (!GuardFieldArray(setValue, setOwner.FindFieldRequiredArray(setFieldName), setOwner.FindFieldRequiredUnit(setFieldName))) return;
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
             if (staticWriteBroker == null)
@@ -4560,6 +4571,7 @@ namespace fire.Runtime
                     if (initOwner.FindFieldRequiredUnit(initFieldName) is { } requiredUnitName && !AdaptFieldUnit(ref initValue, requiredUnitName)) break;
                     if (!GuardFieldKind(ref initValue, initOwner.FindFieldRequiredKind(initFieldName), initFieldName)) break;
                     if (!GuardFieldType(ref initValue, initOwner.FindFieldRequiredType(initFieldName), initFieldName, null)) break;
+                    if (!GuardFieldArray(initValue, initOwner.FindFieldRequiredArray(initFieldName), initOwner.FindFieldRequiredUnit(initFieldName))) break;
 
                     initOwner.StaticFieldValues[initFieldName] = initValue;
                     break;
@@ -6629,6 +6641,11 @@ namespace fire.Runtime
         /// <summary>A field declared int/float/bool takes a value of that kind or undefined (DeclaredKind); false: an ArgumentException is thrown.</summary>
         private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
             DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
+
+        /// <summary>A field declared as a typed array (FieldInfo.RequiredArray) holds an array of that element or undefined: the array is typed like by OpCode.TypeArray;
+        /// false: the ArgumentException is thrown.</summary>
+        private bool GuardFieldArray(Value value, ushort requiredArray, string? unit) =>
+            requiredArray == 0 || TypeArrayValue(value, (byte)(requiredArray & 0xFF), requiredArray >> 8, unit, 1);
 
         /// <summary>GuardLocal: the end of the prologue - a parameter declared int/float/bool holds that kind or undefined (DeclaredKind).</summary>
         private void OpGuardLocal()

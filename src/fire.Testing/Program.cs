@@ -23113,6 +23113,38 @@ else
             d.Clear()
             print(d.Count + " " + d.ContainsKey(7))
             """),
+        ("Felder mit typisiertem Array: jede Zuweisung typisiert (direkt, ueber any, Reflection, JSON, statisch), ein Nicht-Array ist die ArgumentException, Elemente direkt gelesen", """
+            #import "json"
+            #import "reflection"
+            class Grid { int cells[]
+                float w[]
+                static int counts[]
+                construct() { }
+                int Sum() { var s = 0
+                    for (int i = 0; i < this.cells.length; i++) { s = s + this.cells[i] }
+                    return s } }
+            var g = new Grid()
+            g.cells = [1, 2, 3]
+            print(g.Sum() + " " + g.cells.length)
+            try { g.cells[0] = "x"; print("untyped") } catch (ArgumentException e) { print("typed: " + e.message) }
+            any o = g
+            try { o.cells = "nope"; print("took a string") } catch (ArgumentException e) { print("any: " + e.message) }
+            o.cells = [4, 5]
+            print(g.Sum())
+            try { Reflect.Set(g, "cells", 7); print("reflect took 7") } catch (ArgumentException e) { print("reflect: " + e.message) }
+            any arr = [10, 20, 30]
+            Reflect.Set(g, "cells", arr)
+            try { g.cells[1] = 2.5; print("float in int") } catch (ArgumentException e) { print("reflect typed: " + e.message) }
+            print(g.Sum())
+            Grid back = Json.Deserialize("{\"$type\": \"Grid\", \"cells\": [7, 8, 9], \"w\": [0.5, 1]}", "Grid")
+            try { back.cells[0] = "s"; print("json untyped") } catch (ArgumentException e) { print("json typed: " + e.message) }
+            print(back.Sum() + " " + back.w[1])
+            Grid.counts = [1, 1]
+            try { Grid.counts = 3; print("static took 3") } catch (ArgumentException e) { print("static: " + e.message) }
+            try { Grid.counts[0] = true; print("static untyped") } catch (ArgumentException e) { print("static typed: " + e.message) }
+            g.cells = undefined
+            try { print(g.Sum()) } catch (e) { print("undefined: " + e.message) }
+            """),
         ("Tabellen mit #intwidth 32: Hashes passen ins int-Array (30 Bit), auch der eines GetHashCode ueber 32 Bit", """
             #intwidth 32
             class Key : IEquatable { int a

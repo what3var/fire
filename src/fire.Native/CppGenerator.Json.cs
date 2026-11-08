@@ -155,7 +155,7 @@ namespace fire.Native
             if (fields.Count > 0)
             {
                 sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", fields.Select(f =>
-                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}}}")) + "};");
+                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}}}")) + "};");
                 if (unitFixups != null)
                     for (int j = 0; j < fields.Count; j++)
                         if (UnitId(fields[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");
