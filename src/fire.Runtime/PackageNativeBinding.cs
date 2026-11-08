@@ -331,7 +331,7 @@ namespace fire.Runtime
             {
                 case KindUndefined: return Value.MakeUndefined();
                 case KindBool: return Value.MakeBool(fv.Bits != 0);
-                case KindInt: return Value.MakeInt(fv.Bits);
+                case KindInt: return Value.MakeNativeInt(fv.Bits);
                 case KindFloat: return Value.MakeFloat(BitConverter.Int64BitsToDouble(fv.Bits));
                 case KindChar: return Value.MakeChar((char)fv.Bits);
                 case KindString: return Value.MakeString(fv.Length == 0 ? "" : Marshal.PtrToStringUni(new IntPtr(fv.Bits), fv.Length));

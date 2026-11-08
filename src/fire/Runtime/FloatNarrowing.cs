@@ -16,11 +16,12 @@ namespace fire.Runtime
         /// <summary>`#intwidth 32`: every int constant cut to 32 bits (two's complement), as an int32 CPU holds it; the arithmetic is cut by
         /// <see cref="Value.Ints32"/> at run time.</summary>
         public static void ApplyInts32(CompiledProgram program) => ApplyIntWidth(program, 32);
-        /// <summary>`#intwidth 32` or `#intwidth 16`: every int constant cut to that width (two's complement).</summary>
+        /// <summary>`#intwidth 32` or `#intwidth 16`: every int constant cut to that width (two's complement) - but a literal written for an explicit
+        /// wider width (`int[64] t = 864000000000`, Value.Wide) keeps it.</summary>
         public static void ApplyIntWidth(CompiledProgram program, int bits)
         {
             long Cut(long v) => bits == 16 ? (short)v : (int)v;
-            Narrow(program, c => c.Kind == ValueKind.Int && Cut(c.AsInt()) != c.AsInt() ? (c.IsEnum ? Value.MakeEnum((int)Cut(c.AsInt()), c.Enum!) : Value.MakeInt(Cut(c.AsInt()), c.Unit, c.Width)) : null);
+            Narrow(program, c => c.Kind == ValueKind.Int && c.Wide == 0 && Cut(c.AsInt()) != c.AsInt() ? (c.IsEnum ? Value.MakeEnum((int)Cut(c.AsInt()), c.Enum!) : Value.MakeInt(Cut(c.AsInt()), c.Unit, c.Width)) : null);
         }
 
         private static void Narrow(CompiledProgram program, Func<Value, Value?> narrow)

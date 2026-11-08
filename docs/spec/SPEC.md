@@ -1722,7 +1722,14 @@ complement number for the whole program: every operation computes as before and 
 (`2147483647 + 1` is `-2147483648`, `65536 * 65536` is 0, `1 << 32` is 0, `-2147483648 / -1` is `-2147483648`), and so is
 every int constant (`3000000000` is `-1294967296`). The VM cuts every int it makes (`Value.Ints32`, process-wide while a program
 runs), the native backend stores an int in an `int32_t` (`FIRE_INT32`) - the same results in every engine. Explicit widths
-(`int[8]`, `int[64]`) keep their meaning. Overrides: `-i 16|32|64` on the command line (wins), the project setting `intWidth`, a
+(`int[8]`, `int[64]`) keep their meaning. An explicit width beyond the program's (`int[64]` with `#intwidth 32` or `16`, `int[32]` with `#intwidth 16`) is kept by
+the value: a variable, parameter or field declared so stores the number whole, and the value carries its width on - an operation with
+such an operand computes in that width and its result keeps it (`int[64] t = ...; t * 3` is a 64-bit number), until it is stored
+into an explicitly narrower declaration (`int[32]`, `int[16]`, ...), which cuts as always; a plain `int` or `var` keeps what it
+gets. An int literal in such an expression (`t + 864000000000`, `t > 3000000000`) or stored into such a declaration
+(`int[64] t = 864000000000`, a field or `static` field with that initialiser) is not cut; as an argument of a call it is (write
+`864000000000!int[64]` or keep it in an `int[64]` constant). A whole number from native code (a package, the host) that does not fit
+the program's int keeps its 64 bits. Overrides: `-i 16|32|64` on the command line (wins), the project setting `intWidth`, a
 target's `intWidth` in `fire.native.json`; `#if int32` sees the width the command line or the target gives (the directive is read
 later than the symbols). Natively, `#intwidth 32` together with `#floatwidth 32` on a target with 32-bit pointers (a
 microcontroller) makes every value 8 bytes instead of 16 (`FIRE_COMPACT`): fields, array elements, variables and stack slots take

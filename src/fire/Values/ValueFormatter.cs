@@ -49,7 +49,8 @@ namespace fire.Values
                     break;
                 case ValueKind.Int:
                     writer.WriteValue(value.AsInt());
-                    writer.WriteValue((byte)value.Width);
+                    // (the width byte: 8..64 in its bits 3-6; bit 7 a kept explicit width - Value.Wide -, bit 0 then 32 instead of 64)
+                    writer.WriteValue((byte)((byte)value.Width | (value.Wide == 64 ? 0x80 : value.Wide == 32 ? 0x81 : 0)));
                     writer.WriteValue(value.Unit);
                     // an enum value carries its type: the declaration (name, flag, members), interned again when it is read
                     if (value.Enum is { } enumType)
@@ -98,7 +99,9 @@ namespace fire.Values
                 case ValueKind.Int:
                 {
                     long i = reader.ReadValue<long>();
-                    var width = (NumericWidth)reader.ReadValue<byte>();
+                    byte widthByte = reader.ReadValue<byte>();
+                    var width = (NumericWidth)(widthByte & 0x78);
+                    byte wide = (widthByte & 0x80) == 0 ? (byte)0 : (widthByte & 1) != 0 ? (byte)32 : (byte)64;
                     var unit = reader.ReadValue<Unit?>();
                     if (reader.ReadValue<bool>())
                     {
@@ -109,7 +112,7 @@ namespace fire.Values
                         for (int k = 0; k < count; k++) members.Add((reader.ReadValue<string>() ?? "", reader.ReadValue<long>()));
                         value = Value.MakeEnum(i, EnumType.Intern(name, flags, members));
                     }
-                    else value = Value.MakeInt(i, unit, width);
+                    else value = Value.MakeInt(i, unit, width, wide);
                     break;
                 }
                 case ValueKind.Float:

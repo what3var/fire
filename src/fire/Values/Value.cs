@@ -29,6 +29,13 @@ namespace fire.Values
         private readonly object? _ref;
         /// <summary>Int: the id of its enum type (EnumType.Id), 0 for a plain whole number.</summary>
         private readonly ushort _enum;
+        /// <summary>Int: the width a value of an explicit width keeps beyond the program's `int` (SPEC 8.2.1: `int[64]` with `#intwidth 32`) - 64 or 32;
+        /// 0 for an int of the program's width. Set by a store into such a declaration (OpCode.ConvertWidth) and by a literal written for one; an operation
+        /// with such an operand computes in its width and passes it on. Without `#intwidth` (Ints32 false) it changes nothing.</summary>
+        private readonly byte _wide;
+
+        /// <summary>See <see cref="_wide"/>: 64, 32 or 0.</summary>
+        public byte Wide => _wide;
 
         /// <summary>The enum type of an enum value (null for anything else). An enum value is an Int that carries its type (see EnumType).</summary>
         public EnumType? Enum => _enum == 0 ? null : EnumType.ById(_enum);
@@ -47,14 +54,23 @@ namespace fire.Values
         private bool _boolValue => _bits != 0;
         private char _charValue => (char)_bits;
 
-        private Value(ValueKind kind, long bits, object? reference, NumericWidth width = NumericWidth.W64, ushort enumId = 0)
+        private Value(ValueKind kind, long bits, object? reference, NumericWidth width = NumericWidth.W64, ushort enumId = 0, byte wide = 0)
         {
             Kind = kind;
             Width = width;
-            _bits = kind == ValueKind.Int && Ints32 ? (Ints16 ? (short)bits : (int)bits) : bits;
+            _bits = kind == ValueKind.Int && Ints32 ? CutInt(bits, wide) : bits;
             _ref = reference;
             _enum = enumId;
+            _wide = kind == ValueKind.Int ? wide : (byte)0;
         }
+
+        /// <summary>An int of a narrow program (Ints32) cut to its width: the program's, or the wider one it keeps (<see cref="Wide"/>).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static long CutInt(long bits, byte wide) => wide >= 64 ? bits : wide == 32 || !Ints16 ? (int)bits : (short)bits;
+
+        /// <summary>The wider of the widths two operands keep (<see cref="Wide"/>).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte W(in Value a, in Value b) => a._wide >= b._wide ? a._wide : b._wide;
 
         // ---------------------------------------------------------------
         // Program-wide float precision (SPEC 8.2.1): with `#floatwidth 32` every float is a 32-bit IEEE float.
@@ -91,8 +107,16 @@ namespace fire.Values
         public static Value MakeBool(bool value) =>
             new(ValueKind.Bool, value ? 1 : 0, null);
 
-        public static Value MakeInt(long value, Unit? unit = null, NumericWidth width = NumericWidth.W64) =>
-            new(ValueKind.Int, value, unit ?? Values.Unit.Unitless, width);
+        public static Value MakeInt(long value, Unit? unit = null, NumericWidth width = NumericWidth.W64, byte wide = 0) =>
+            new(ValueKind.Int, value, unit ?? Values.Unit.Unitless, width, 0, wide);
+
+        /// <summary>A whole number from native code (a package, a host function; its ints have 64 bits): with `#intwidth 32`/`16` a number that does not fit the
+        /// program's int keeps its 64 bits (<see cref="Wide"/>) - the native meant it (ticks of a clock, sizes of files).</summary>
+        public static Value MakeNativeInt(long value, Unit? unit = null) =>
+            MakeInt(value, unit, NumericWidth.W64, Ints32 && value != (Ints16 ? (short)value : (int)value) ? (byte)64 : (byte)0);
+
+        /// <summary>The same int keeping the width <paramref name="wide"/> (64 or 32; 0: the program's) - a literal written for an `int[64]`.</summary>
+        public Value WithWide(byte wide) => Kind == ValueKind.Int ? new Value(Kind, _bits, _ref, Width, _enum, wide) : this;
 
         /// <summary>A value of an enum: the whole number `value` that carries its type.</summary>
         public static Value MakeEnum(long value, EnumType type) =>
@@ -321,7 +345,7 @@ namespace fire.Values
                 double result = target.IsUnitless ? actual.ToUnitless(plain) : target.FromUnitless(plain);
                 if (value.Kind == ValueKind.Float) { value = MakeFloat(result, target, value.Width); return UnitAdaptation.Ok; }
                 if (Math.Abs(Math.Round(result)) >= 9.2e18) return UnitAdaptation.Overflow;
-                value = MakeInt((long)Math.Round(result), target, value.Width);
+                value = MakeInt((long)Math.Round(result), target, value.Width, value._wide);
                 return UnitAdaptation.Ok;
             }
             if (!actual.IsCompatibleWith(target)) return UnitAdaptation.Mismatch;
@@ -331,7 +355,7 @@ namespace fire.Values
                 double result = actual.Convert(value.Kind == ValueKind.Float ? value._floatValue : value._intValue, target);
                 if (value.Kind == ValueKind.Float) { value = MakeFloat(result, target, value.Width); return UnitAdaptation.Ok; }
                 if (Math.Abs(Math.Round(result)) >= 9.2e18) return UnitAdaptation.Overflow;
-                value = MakeInt((long)Math.Round(result), target, value.Width);
+                value = MakeInt((long)Math.Round(result), target, value.Width, value._wide);
                 return UnitAdaptation.Ok;
             }
             double factor = actual.ConversionFactorTo(target);
@@ -342,7 +366,7 @@ namespace fire.Values
             }
             double converted = Math.Round(value._intValue * factor);
             if (Math.Abs(converted) >= 9.2e18) return UnitAdaptation.Overflow;
-            value = MakeInt((long)converted, target, value.Width);
+            value = MakeInt((long)converted, target, value.Width, value._wide);
             return UnitAdaptation.Ok;
         }
 
@@ -426,7 +450,7 @@ namespace fire.Values
         {
             if (!BothNumericSameUnit(a, b)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
-                ? new Value(ValueKind.Int, a._bits + b._bits, a._ref)
+                ? new Value(ValueKind.Int, a._bits + b._bits, a._ref, NumericWidth.W64, 0, W(a, b))
                 : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() + b.ToDouble())), a._ref);
             return true;
         }
@@ -436,7 +460,7 @@ namespace fire.Values
         {
             if (!BothNumericSameUnit(a, b)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
-                ? new Value(ValueKind.Int, a._bits - b._bits, a._ref)
+                ? new Value(ValueKind.Int, a._bits - b._bits, a._ref, NumericWidth.W64, 0, W(a, b))
                 : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() - b.ToDouble())), a._ref);
             return true;
         }
@@ -447,7 +471,7 @@ namespace fire.Values
         {
             if (!BothNumericSameUnit(a, b) || !ReferenceEquals(a._ref, Values.Unit.Unitless)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
-                ? new Value(ValueKind.Int, a._bits * b._bits, a._ref)
+                ? new Value(ValueKind.Int, a._bits * b._bits, a._ref, NumericWidth.W64, 0, W(a, b))
                 : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() * b.ToDouble())), a._ref);
             return true;
         }
@@ -458,7 +482,7 @@ namespace fire.Values
         {
             if (a.Kind != ValueKind.Int || b.Kind != ValueKind.Int || !ReferenceEquals(a._ref, b._ref) || b._bits == 0 || b._bits == -1)
                 return false;
-            a = new Value(ValueKind.Int, a._bits % b._bits, a._ref);
+            a = new Value(ValueKind.Int, a._bits % b._bits, a._ref, NumericWidth.W64, 0, W(a, b));
             return true;
         }
 
@@ -578,7 +602,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, a._bits + b._bits, a._ref);
+                    return new Value(ValueKind.Int, a._bits + b._bits, a._ref, NumericWidth.W64, 0, W(a, b));
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() + b.ToDouble())), a._ref);
             }
 
@@ -600,7 +624,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() + b.ToDouble(), a.Unit);
-            return MakeInt(a._intValue + b._intValue, a.Unit);
+            return MakeInt(a._intValue + b._intValue, a.Unit, NumericWidth.W64, W(a, b));
         }
 
         public static Value Subtract(Value a, Value b)
@@ -608,7 +632,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, a._bits - b._bits, a._ref);
+                    return new Value(ValueKind.Int, a._bits - b._bits, a._ref, NumericWidth.W64, 0, W(a, b));
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() - b.ToDouble())), a._ref);
             }
 
@@ -624,7 +648,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() - b.ToDouble(), a.Unit);
-            return MakeInt(a._intValue - b._intValue, a.Unit);
+            return MakeInt(a._intValue - b._intValue, a.Unit, NumericWidth.W64, W(a, b));
         }
 
         /// <summary>Pointer arithmetic: "N elements further" - see
@@ -641,7 +665,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, b._bits == -1 ? 0 : a._bits % b._bits, a._ref);   // (long.MinValue % -1 overflows in .NET)
+                    return new Value(ValueKind.Int, b._bits == -1 ? 0 : a._bits % b._bits, a._ref, NumericWidth.W64, 0, W(a, b));   // (long.MinValue % -1 overflows in .NET)
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() % b.ToDouble())), a._ref);
             }
             if (AnyWord(a, b)) return WordOp(WordOperation.Mod, a, b);
@@ -651,7 +675,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() % b.ToDouble(), a.Unit);
-            return MakeInt(b._intValue == -1 ? 0 : a._intValue % b._intValue, a.Unit);
+            return MakeInt(b._intValue == -1 ? 0 : a._intValue % b._intValue, a.Unit, NumericWidth.W64, W(a, b));
         }
 
         public static Value Divide(Value a, Value b)
@@ -663,7 +687,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, b._bits == -1 ? unchecked(-a._bits) : a._bits / b._bits, a._ref);   // (long.MinValue / -1 wraps, like the native code)
+                    return new Value(ValueKind.Int, b._bits == -1 ? unchecked(-a._bits) : a._bits / b._bits, a._ref, NumericWidth.W64, 0, W(a, b));   // (long.MinValue / -1 wraps, like the native code)
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() / b.ToDouble())), a._ref);
             }
 
@@ -673,7 +697,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() / b.ToDouble(), resultUnit);
-            return MakeInt(b._intValue == -1 ? unchecked(-a._intValue) : a._intValue / b._intValue, resultUnit);
+            return MakeInt(b._intValue == -1 ? unchecked(-a._intValue) : a._intValue / b._intValue, resultUnit, NumericWidth.W64, W(a, b));
         }
 
         public static Value Multiply(Value a, Value b)
@@ -685,7 +709,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, a._bits * b._bits, a._ref);
+                    return new Value(ValueKind.Int, a._bits * b._bits, a._ref, NumericWidth.W64, 0, W(a, b));
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() * b.ToDouble())), a._ref);
             }
 
@@ -695,7 +719,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() * b.ToDouble(), resultUnit);
-            return MakeInt(a._intValue * b._intValue, resultUnit);
+            return MakeInt(a._intValue * b._intValue, resultUnit, NumericWidth.W64, W(a, b));
         }
 
         /// <summary>A product or quotient whose units cancel but leave a factor (`5cm / 1mm`, `1km * (1/1m)`): the factor goes into the number (50), the
@@ -710,14 +734,14 @@ namespace fire.Values
                 if (scale >= 1 && scale == Math.Floor(scale) && scale < 9.2e18)
                 {
                     long s = (long)scale;
-                    return divide ? MakeInt(y == -1 ? unchecked(-(x * s)) : unchecked(x * s) / y) : MakeInt(unchecked(x * y * s));
+                    return divide ? MakeInt(y == -1 ? unchecked(-(x * s)) : unchecked(x * s) / y, null, NumericWidth.W64, W(a, b)) : MakeInt(unchecked(x * y * s), null, NumericWidth.W64, W(a, b));
                 }
                 double inv = Values.Unit.NiceFactor(1.0 / scale);
                 if (inv >= 1 && inv == Math.Floor(inv) && inv < 9.2e18)
                 {
                     long s = (long)inv;
-                    if (divide) { long d = unchecked(y * s); return MakeInt(d == -1 ? unchecked(-x) : x / d); }
-                    return MakeInt(unchecked(x * y) / s);
+                    if (divide) { long d = unchecked(y * s); return MakeInt(d == -1 ? unchecked(-x) : x / d, null, NumericWidth.W64, W(a, b)); }
+                    return MakeInt(unchecked(x * y) / s, null, NumericWidth.W64, W(a, b));
                 }
             }
             double r = divide ? a.ToDouble() / b.ToDouble() : a.ToDouble() * b.ToDouble();
@@ -730,7 +754,7 @@ namespace fire.Values
         {
             if (v.Kind == ValueKind.Word) return MakeWord(unchecked(0UL - v.AsWord()));   // (wraps: -1 as a word is the largest one)
             RequireNumeric(v);
-            return v.Kind == ValueKind.Float ? MakeFloat(-v._floatValue, v.Unit) : MakeInt(-v._intValue, v.Unit);
+            return v.Kind == ValueKind.Float ? MakeFloat(-v._floatValue, v.Unit) : MakeInt(-v._intValue, v.Unit, NumericWidth.W64, v._wide);
         }
 
         public static Value LogicalNot(Value v)
@@ -746,7 +770,7 @@ namespace fire.Values
             if (v.Kind != ValueKind.Int)
                 throw new InvalidOperationException($"'~' expects int, not {v.Kind}.");
             if (v.Enum is { IsFlags: true } type) return MakeEnum(~v._intValue, type);   // (the complement of a flag value is one too)
-            return MakeInt(~v._intValue, v.Unit);
+            return MakeInt(~v._intValue, v.Unit, NumericWidth.W64, v._wide);
         }
 
         private static void RequireInt(Value v, string opSymbol)
@@ -760,7 +784,7 @@ namespace fire.Values
             if (AnyWord(a, b)) return WordOp(WordOperation.And, a, b);
             RequireInt(a, "&"); RequireInt(b, "&");
             RequireSameUnit(a, b);
-            return FlagResult(a, b, a._intValue & b._intValue) ?? MakeInt(a._intValue & b._intValue, a.Unit);
+            return FlagResult(a, b, a._intValue & b._intValue) ?? MakeInt(a._intValue & b._intValue, a.Unit, NumericWidth.W64, W(a, b));
         }
 
         public static Value BitOr(Value a, Value b)
@@ -768,7 +792,7 @@ namespace fire.Values
             if (AnyWord(a, b)) return WordOp(WordOperation.Or, a, b);
             RequireInt(a, "|"); RequireInt(b, "|");
             RequireSameUnit(a, b);
-            return FlagResult(a, b, a._intValue | b._intValue) ?? MakeInt(a._intValue | b._intValue, a.Unit);
+            return FlagResult(a, b, a._intValue | b._intValue) ?? MakeInt(a._intValue | b._intValue, a.Unit, NumericWidth.W64, W(a, b));
         }
 
         public static Value BitXor(Value a, Value b)
@@ -776,7 +800,7 @@ namespace fire.Values
             if (AnyWord(a, b)) return WordOp(WordOperation.Xor, a, b);
             RequireInt(a, "#"); RequireInt(b, "#");
             RequireSameUnit(a, b);
-            return FlagResult(a, b, a._intValue ^ b._intValue) ?? MakeInt(a._intValue ^ b._intValue, a.Unit);
+            return FlagResult(a, b, a._intValue ^ b._intValue) ?? MakeInt(a._intValue ^ b._intValue, a.Unit, NumericWidth.W64, W(a, b));
         }
 
         /// <summary>`&amp;`, `|`, `#` of two values of the same flag enum: a value of that enum again (`Test.a | Test.b` is a `Test`); otherwise null (a plain int).</summary>
@@ -797,14 +821,14 @@ namespace fire.Values
         {
             if (AnyWord(a, b)) return WordOp(WordOperation.Shl, a, b);
             RequireInt(a, "<<"); RequireInt(b, "<<");
-            return MakeInt(a._intValue << (int)b._intValue, a.Unit);
+            return MakeInt(a._intValue << (int)b._intValue, a.Unit, NumericWidth.W64, a._wide);
         }
 
         public static Value ShiftRight(Value a, Value b)
         {
             if (AnyWord(a, b)) return WordOp(WordOperation.Shr, a, b);
             RequireInt(a, ">>"); RequireInt(b, ">>");
-            return MakeInt(a._intValue >> (int)b._intValue, a.Unit);
+            return MakeInt(a._intValue >> (int)b._intValue, a.Unit, NumericWidth.W64, a._wide);
         }
 
         /// <summary>`^` (power, NOT bitwise XOR - that is `#`, see BitXor).
@@ -830,7 +854,7 @@ namespace fire.Values
             long exponent = b._intValue;
             for (long i = 0; i < exponent; i++)
                 result *= baseValue;
-            return MakeInt(result, a.Unit);
+            return MakeInt(result, a.Unit, NumericWidth.W64, W(a, b));
         }
 
         /// <summary>Truncates an Int/Float value to the given bit width
@@ -845,11 +869,12 @@ namespace fire.Values
         {
             var number = CoerceType(toFloat ? ValueKind.Float : ValueKind.Int);
             if (toFloat) return bits is 8 or 16 or 32 ? MakeFloat(RoundFloatToWidth(number._floatValue, bits), number.Unit, (NumericWidth)bits) : MakeFloat(number._floatValue, number.Unit);
-            if (bits >= 64) return MakeInt(number._intValue, number.Unit);
+            // (an explicit width beyond the program's int - `int[64]` with `#intwidth 32`, `int[32]` with `#intwidth 16` - is kept by the value: Wide)
+            if (bits >= 64) return MakeInt(number._intValue, number.Unit, NumericWidth.W64, 64);
             long mask = (1L << bits) - 1, raw = number._intValue & mask;
             if (!unsigned && (raw & (1L << (bits - 1))) != 0) raw -= 1L << bits;
             // (`byte` - the unsigned width - is raw data without a unit, SPEC 8.10: the number stored there loses its unit)
-            return MakeInt(raw, unsigned ? Values.Unit.Unitless : number.Unit, (NumericWidth)bits);
+            return MakeInt(raw, unsigned ? Values.Unit.Unitless : number.Unit, (NumericWidth)bits, bits == 32 && !unsigned ? (byte)32 : (byte)0);
         }
 
         /// <summary>`x!word` and a store into a `word` (OpCode.ConvertWidth with the word flag, SPEC 8.10): an int cut to the width of a word (two's complement:

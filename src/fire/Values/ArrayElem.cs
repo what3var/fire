@@ -82,7 +82,8 @@ namespace fire.Values
                 return false;
             }
             if (value.Kind == ValueKind.Undefined) { stored = value; return true; }
-            stored = value.ConvertWidth(Bits(type), isFloat, type == U8);
+            // (an element of `int a[]` is an int of the program: no kept width - Value.Wide - for it)
+            stored = type == I64 ? (value.Wide != 0 ? Value.MakeInt(value.AsInt(), value.Unit) : value) : value.ConvertWidth(Bits(type), isFloat, type == U8);
             return true;
         }
 

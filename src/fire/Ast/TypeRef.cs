@@ -58,6 +58,7 @@ namespace fire.Ast
             : BaseName == "word" && BitWidth == null ? WordWidthCode   // (the machine word: the width is the target's, SPEC 8.10)
             : BitWidth is not { } bits ? 0
             : BaseName == "int" && bits is 8 or 16 or 32 ? bits | (Unsigned ? 0x200 : 0)
+            : BaseName == "int" && bits == 64 && !Unsigned ? 64   // (nothing to cut - but with `#intwidth 32` the value keeps its 64 bits: Value.Wide)
             : BaseName == "float" && bits is 8 or 16 or 32 ? bits | 0x100
             : 0;
 

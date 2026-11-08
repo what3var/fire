@@ -1153,7 +1153,7 @@ namespace fire.Compiler
                 }
                 else
                 {
-                    inner.CompileExpr(initializer);
+                    inner.CompileExprFor(initializer, arrayRanks is { Count: > 0 } ? 0 : type?.WidthCode ?? 0);
                     if (isStatic) inner.EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(initializer), hoist: false);   // a static field: the program
                 }
                 inner.EmitCheckLambdaSignatureIfNeeded(type);
@@ -1674,7 +1674,7 @@ namespace fire.Compiler
 
                     if (vd.Initializer != null)
                     {
-                        CompileExpr(vd.Initializer);
+                        CompileExprFor(vd.Initializer, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
                         EmitCheckLambdaSignatureIfNeeded(vd.Type);
                     }
                     else if (autoArrayAlloc)
@@ -2435,8 +2435,47 @@ namespace fire.Compiler
         /// assignments to members take SetFieldAccessor.</summary>
         private int _accessor;
 
+        /// <summary>A literal compiled now keeps this width (64 or 32; 0: the program's) - SPEC 8.2.1: an int literal in an expression with an operand of an
+        /// explicit wider width (`this.ticks + 864000000000` with `int[64] ticks`), or stored into one (`int[64] t = 864000000000`), is not cut to `#intwidth`.
+        /// Only arithmetic, comparisons, signs and width casts pass it on to their operands; any other expression (a call, an index, ...) starts without.</summary>
+        private int _wideLiteral;
+
+        /// <summary>The explicit width beyond `int` an expression is known to have (64 or 32), 0 when it has none or is not known: a variable, parameter or
+        /// field declared `int[64]`/`int[32]`, a cast `!int[64]`, arithmetic with such an operand.</summary>
+        private int StaticWide(Expr e)
+        {
+            static int OfCode(int code) => code is 64 or 32 ? code : 0;
+            switch (e)
+            {
+                case IdentifierExpr id when _refs.TryGetValue(id, out var r):
+                    return r switch
+                    {
+                        ResolvedRef.Local l => OfCode(l.Width),
+                        ResolvedRef.Global g => OfCode(g.Width),
+                        ResolvedRef.ImplicitThisMember => OfCode(_refParams.FieldWidth(id.Name)),
+                        _ => 0,
+                    };
+                case MemberExpr me: return OfCode(_refParams.FieldWidth(me.Name));
+                case TypeCoerceExpr { Width: 64 or 32, Unsigned: false } c when c.TargetTypeKeyword != TokenType.KwFloat: return c.Width;
+                case BinaryExpr { Op: not (BinaryOp.And or BinaryOp.Or) } b: return Math.Max(StaticWide(b.Left), StaticWide(b.Right));
+                case UnaryExpr { Op: UnaryOp.Negate or UnaryOp.BitNot } u: return StaticWide(u.Operand);
+                case AssignExpr a: return StaticWide(a.Target);
+                default: return 0;
+            }
+        }
+
         private void CompileExpr(Expr expr)
         {
+            int outerWide = _wideLiteral;
+            switch (expr)
+            {
+                case LiteralExpr: break;
+                case BinaryExpr { Op: not (BinaryOp.And or BinaryOp.Or) }: _wideLiteral = Math.Max(outerWide, StaticWide(expr)); break;
+                case UnaryExpr { Op: UnaryOp.Negate or UnaryOp.BitNot }: break;
+                case TypeCoerceExpr { Width: > 0 }: _wideLiteral = Math.Max(outerWide, StaticWide(expr)); break;
+                case AssignExpr: _wideLiteral = StaticWide(expr); break;   // (`t = 864000000000` for an `int[64] t`)
+                default: _wideLiteral = 0; break;
+            }
             try
             {
                 CompileExprCore(expr);
@@ -2447,6 +2486,17 @@ namespace fire.Compiler
             {
                 throw new CompilerException(ex.Message, expr.Line);
             }
+            finally { _wideLiteral = outerWide; }
+        }
+
+        /// <summary>Compiles the value stored into a declaration of the width code <paramref name="widthCode"/> (TypeRef.WidthCode): a literal in it keeps an
+        /// explicit wider width (<see cref="_wideLiteral"/>).</summary>
+        private void CompileExprFor(Expr value, int widthCode)
+        {
+            int outer = _wideLiteral;
+            _wideLiteral = widthCode is 64 or 32 ? widthCode : 0;
+            try { CompileExpr(value); }
+            finally { _wideLiteral = outer; }
         }
 
         private void CompileExprCore(Expr expr)
@@ -2454,7 +2504,7 @@ namespace fire.Compiler
             switch (expr)
             {
                 case LiteralExpr lit:
-                    EmitLoadConst(lit.Value);
+                    EmitLoadConst(_wideLiteral != 0 && lit.Value.Kind == ValueKind.Int && !lit.Value.IsEnum ? lit.Value.WithWide((byte)_wideLiteral) : lit.Value);
                     break;
 
                 case IdentifierExpr id:

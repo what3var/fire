@@ -5,31 +5,40 @@ class TimeException : Exception {
 
 // A duration. Calculate as with numbers: `a + b`, `a - b`, `a * 2`, `a / 2`, comparisons, `a == b`.
 class TimeSpan {
-    int ticks
+    int[64] ticks
+
+    // ticks (100 ns) per unit: int[64], so that a program with `#intwidth 32` or `16` keeps them whole (SPEC 8.2.1)
+    static int[64] PerMillisecond = 10000
+    static int[64] PerSecond = 10000000
+    static int[64] PerMinute = 600000000
+    static int[64] PerHour = 36000000000
+    static int[64] PerDay = 864000000000
+    // 1970-01-01 in ticks since 0001-01-01
+    static int[64] UnixEpoch = 621355968000000000
 
     // new TimeSpan(ticks) / (h, m, s) / (d, h, m, s) / (d, h, m, s, ms)
-    construct(int ticks) { this.ticks = ticks }
-    construct(int h, int m, int s) { this.ticks = h * 36000000000 + m * 600000000 + s * 10000000 }
-    construct(int d, int h, int m, int s) { this.ticks = d * 864000000000 + h * 36000000000 + m * 600000000 + s * 10000000 }
-    construct(int d, int h, int m, int s, int ms) { this.ticks = d * 864000000000 + h * 36000000000 + m * 600000000 + s * 10000000 + ms * 10000 }
+    construct(int[64] ticks) { this.ticks = ticks }
+    construct(int h, int m, int s) { this.ticks = h * TimeSpan.PerHour + m * TimeSpan.PerMinute + s * TimeSpan.PerSecond }
+    construct(int d, int h, int m, int s) { this.ticks = d * TimeSpan.PerDay + h * TimeSpan.PerHour + m * TimeSpan.PerMinute + s * TimeSpan.PerSecond }
+    construct(int d, int h, int m, int s, int ms) { this.ticks = d * TimeSpan.PerDay + h * TimeSpan.PerHour + m * TimeSpan.PerMinute + s * TimeSpan.PerSecond + ms * TimeSpan.PerMillisecond }
 
     static TimeSpan Zero() { return new TimeSpan(0) }
-    static TimeSpan FromTicks(int t) { return new TimeSpan(t) }
-    static TimeSpan FromMilliseconds(float x) { return new TimeSpan(__time_to_ticks(x, 10000)) }
-    static TimeSpan FromSeconds(float x) { return new TimeSpan(__time_to_ticks(x, 10000000)) }
-    static TimeSpan FromMinutes(float x) { return new TimeSpan(__time_to_ticks(x, 600000000)) }
-    static TimeSpan FromHours(float x) { return new TimeSpan(__time_to_ticks(x, 36000000000)) }
-    static TimeSpan FromDays(float x) { return new TimeSpan(__time_to_ticks(x, 864000000000)) }
+    static TimeSpan FromTicks(int[64] t) { return new TimeSpan(t) }
+    static TimeSpan FromMilliseconds(float x) { return new TimeSpan(__time_to_ticks(x, TimeSpan.PerMillisecond)) }
+    static TimeSpan FromSeconds(float x) { return new TimeSpan(__time_to_ticks(x, TimeSpan.PerSecond)) }
+    static TimeSpan FromMinutes(float x) { return new TimeSpan(__time_to_ticks(x, TimeSpan.PerMinute)) }
+    static TimeSpan FromHours(float x) { return new TimeSpan(__time_to_ticks(x, TimeSpan.PerHour)) }
+    static TimeSpan FromDays(float x) { return new TimeSpan(__time_to_ticks(x, TimeSpan.PerDay)) }
 
     // From a value with a time unit (`TimeSpan.Of(1.5s)`, `Of(250ms)`), a number (milliseconds) or a TimeSpan
     static TimeSpan Of(any v) {
         if (v is of TimeSpan) { return v }
         var t = __time_unit_ticks(v)
-        if (t == undefined) { return new TimeSpan(__time_to_ticks(v, 10000)) }
+        if (t == undefined) { return new TimeSpan(__time_to_ticks(v, TimeSpan.PerMillisecond)) }
         return new TimeSpan(t)
     }
 
-    int Ticks { get { return this.ticks } }
+    int[64] Ticks { get { return this.ticks } }
     int Days { get { return this.ticks / 864000000000 } }
     int Hours { get { return (this.ticks / 36000000000) % 24 } }
     int Minutes { get { return (this.ticks / 600000000) % 60 } }
@@ -75,7 +84,7 @@ class TimeSpan {
 
 // A point in time (calendar date and time of day). `kind` is "local" or "utc"; comparisons and differences assume the same kind (ToUtc()/ToLocal() convert).
 class DateTime {
-    int ticks
+    int[64] ticks
     string kind
 
     // new DateTime(y, m, d) / (y, m, d, h, mi, s) / (y, m, d, h, mi, s, ms) - Ortszeit
@@ -83,7 +92,7 @@ class DateTime {
     construct(int y, int m, int d, int h, int mi, int s) { this.ticks = __time_make(y, m, d, h, mi, s, 0); this.kind = "local" }
     construct(int y, int m, int d, int h, int mi, int s, int ms) { this.ticks = __time_make(y, m, d, h, mi, s, ms); this.kind = "local" }
 
-    static DateTime FromTicks(int ticks, string kind) {
+    static DateTime FromTicks(int[64] ticks, string kind) {
         var d = new DateTime(1, 1, 1)
         d.ticks = ticks
         d.kind = kind
@@ -112,9 +121,9 @@ class DateTime {
         if (d == undefined) { throw new TimeException("Not a valid date: '" + text + "'") }
         return d
     }
-    static DateTime FromUnixSeconds(float s) { return DateTime.FromTicks(621355968000000000 + __time_to_ticks(s, 10000000), "utc") }
+    static DateTime FromUnixSeconds(float s) { return DateTime.FromTicks(TimeSpan.UnixEpoch + __time_to_ticks(s, TimeSpan.PerSecond), "utc") }
 
-    int Ticks { get { return this.ticks } }
+    int[64] Ticks { get { return this.ticks } }
     string Kind { get { return this.kind } }
     int Year { get { return __time_parts(this.ticks)[0] } }
     int Month { get { return __time_parts(this.ticks)[1] } }
@@ -140,12 +149,12 @@ class DateTime {
         if (o is of TimeSpan) { return DateTime.FromTicks(this.ticks - o.ticks, this.kind) }
         return new TimeSpan(this.ticks - o.ticks)
     }
-    DateTime AddTicks(int t) { return DateTime.FromTicks(this.ticks + t, this.kind) }
-    DateTime AddMilliseconds(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 10000), this.kind) }
-    DateTime AddSeconds(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 10000000), this.kind) }
-    DateTime AddMinutes(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 600000000), this.kind) }
-    DateTime AddHours(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 36000000000), this.kind) }
-    DateTime AddDays(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 864000000000), this.kind) }
+    DateTime AddTicks(int[64] t) { return DateTime.FromTicks(this.ticks + t, this.kind) }
+    DateTime AddMilliseconds(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, TimeSpan.PerMillisecond), this.kind) }
+    DateTime AddSeconds(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, TimeSpan.PerSecond), this.kind) }
+    DateTime AddMinutes(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, TimeSpan.PerMinute), this.kind) }
+    DateTime AddHours(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, TimeSpan.PerHour), this.kind) }
+    DateTime AddDays(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, TimeSpan.PerDay), this.kind) }
     DateTime AddMonths(int n) { return DateTime.FromTicks(__time_add_months(this.ticks, n), this.kind) }
     DateTime AddYears(int n) { return DateTime.FromTicks(__time_add_months(this.ticks, n * 12), this.kind) }
 
@@ -158,7 +167,7 @@ class DateTime {
         if (this.kind == "local") { return this }
         return DateTime.FromTicks(this.ticks + __time_local_offset(this.ticks), "local")
     }
-    any ToUnixSeconds() { return (this.ToUtc().ticks - 621355968000000000) / 10000000 }
+    any ToUnixSeconds() { return (this.ToUtc().ticks - TimeSpan.UnixEpoch) / TimeSpan.PerSecond }
 
     int CompareTo(DateTime o) {
         if (this.ticks < o.ticks) { return -1 }
