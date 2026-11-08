@@ -23296,6 +23296,84 @@ else
             print(t)
             print(H.Area(1000))
             """),
+        ("Skalare (Ebene 2): Zahlen mit Einheit - mm-Summen, x++ und x += in der Einheit, m/s, cm + m, Vergleiche, * und / mit einer Zahl, int[16] mit Einheit", """
+            class U {
+                static int Path(int n) {
+                    int len : mm = 0mm
+                    for (int i = 0; i < n; i++) { len = len + 15mm; len += 5mm }
+                    len++
+                    return len / 1mm
+                }
+                static float Speed(int n) {
+                    float d : m = 0m
+                    float t : s = 0s
+                    for (int i = 0; i < n; i++) { d = d + 2.5m; t = t + 0.5s }
+                    float v = d / t
+                    return v * 1s / 1m
+                }
+                static string Mixed() {
+                    float a : cm = 120cm
+                    float b : m = 1.5m
+                    float c : cm = a + b
+                    float e : cm = -a
+                    int k : cm = 7cm
+                    int m2 : cm = k * 3
+                    int q : cm = k % 4cm
+                    bool lt = a < c
+                    bool eq = k == 7cm
+                    return c + " " + e + " " + m2 + " " + q + " " + lt + " " + eq + " " + (a * 2) + " " + (b / 3)
+                }
+                static int Narrow() {
+                    int[16] w : mm = 70000mm
+                    byte raw = 300
+                    return w / 1mm + raw
+                }
+            }
+            print(U.Path(100))
+            print(U.Speed(40))
+            print(U.Mixed())
+            print(U.Narrow())
+            """),
+        ("Skalare (Ebene 2), #intwidth 32 / #floatwidth 32: dieselben Rechnungen mit Einheit", """
+            #intwidth 32
+            #floatwidth 32
+            class U {
+                static int Path(int n) {
+                    int len : mm = 0mm
+                    for (int i = 0; i < n; i++) { len = len + 15mm; len += 5mm }
+                    len++
+                    return len / 1mm
+                }
+                static float Speed(int n) {
+                    float d : m = 0m
+                    float t : s = 0s
+                    for (int i = 0; i < n; i++) { d = d + 2.5m; t = t + 0.5s }
+                    float v = d / t
+                    return v * 1s / 1m
+                }
+                static string Mixed() {
+                    float a : cm = 120cm
+                    float b : m = 1.5m
+                    float c : cm = a + b
+                    float e : cm = -a
+                    int k : cm = 7cm
+                    int m2 : cm = k * 3
+                    int q : cm = k % 4cm
+                    bool lt = a < c
+                    bool eq = k == 7cm
+                    return c + " " + e + " " + m2 + " " + q + " " + lt + " " + eq + " " + (a * 2) + " " + (b / 3)
+                }
+                static int Narrow() {
+                    int[16] w : mm = 70000mm
+                    byte raw = 300
+                    return w / 1mm + raw
+                }
+            }
+            print(U.Path(100))
+            print(U.Speed(40))
+            print(U.Mixed())
+            print(U.Narrow())
+            """),
         ("Felder mit typisiertem Array: jede Zuweisung typisiert (direkt, ueber any, Reflection, JSON, statisch), ein Nicht-Array ist die ArgumentException, Elemente direkt gelesen", """
             #import "json"
             #import "reflection"
