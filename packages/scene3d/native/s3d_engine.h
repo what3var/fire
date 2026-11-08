@@ -220,13 +220,15 @@ struct S3dTexture {
     uint32_t version;  /* counts the changes (the bump map): the hardware backend loads the texture again */
     void* gpu;         /* the copy of the hardware backend, or NULL */
     int refs;          /* (the bridge: the users of the texture - its fire object and the objects that show it) */
+    uint8_t* lean;     /* the lean renderer (s3d_lean.h): the texels as indices of the palette `leanKey`, or NULL */
+    uint32_t leanKey;
     float strength;    /* (the bridge: how strongly the bump map tilts the light, Texture.BumpStrength) */
 };
 
 static void s3d_texFree(S3dTexture* t) {
     if (t == NULL) return;
     s3d_gpu_releaseTexture(t);
-    S3D_FREE(t->rgba); S3D_FREE(t->bump);
+    S3D_FREE(t->rgba); S3D_FREE(t->bump); S3D_FREE(t->lean);
     S3D_FREE(t);
 }
 static void s3d_texPrepare(S3dTexture* t) {
@@ -762,14 +764,11 @@ static S3dMat4 s3d_viewProjection(const S3dCamera* cam, int w, int h) {
 
 /* Queues one mesh for the frame: its matrices and its look; nothing is transformed or drawn before `s3d_flush`. The camera places the mesh (and a billboard faces it). The mesh and the
  * texture have to live until the flush. */
-static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh, const S3dObjectParams* obj, const S3dSurface* surf, const S3dTexture* tex) {
-    S3dMat4 rotation, model;
-    S3dVec3 invS, centre;
-    S3dBatch* batch;
-    if (f->w <= 0 || f->h <= 0 || mesh->idxN < 3) return;
-    if (!S3D_GROW(f->batches, f->batchCap, f->batchN + 1)) return;
-    /* model = T(pos) * R * S * T(-pivot); a billboard replaces R by a turn towards the camera */
-    rotation = s3d_rotationXYZ(obj->rx, obj->ry, obj->rz);
+/* The matrices of an object: model = T(pos) * R * S * T(-pivot) (a billboard replaces R by a turn towards the camera) and the normal matrix (R * S^-1, the inverse transpose of the
+ * model's 3x3 part for a rotation and a non uniform scale). Both renderers place an object with them. */
+static void s3d_objectMatrices(const S3dCamera* cam, const S3dObjectParams* obj, const S3dSurface* surf, S3dMat4* model, S3dMat4* normalM) {
+    S3dMat4 rotation = s3d_rotationXYZ(obj->rx, obj->ry, obj->rz);
+    S3dVec3 invS;
     if (surf->billboard != 0) {
         S3dVec3 toCam = s3d_sub(cam->pos, obj->pos), zaxis, xaxis, yaxis;
         S3dMat4 b = s3d_identity();
@@ -783,9 +782,20 @@ static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh
         S3D_AT(b, 0, 2) = zaxis.x; S3D_AT(b, 1, 2) = zaxis.y; S3D_AT(b, 2, 2) = zaxis.z;
         rotation = s3d_mul(b, s3d_rotationZ(obj->rz));
     }
-    model = s3d_mul(s3d_translation(obj->pos), s3d_mul(rotation, s3d_mul(s3d_scaling(obj->scale), s3d_translation(s3d_scale(obj->pivot, -1.0f)))));
-    /* the normal matrix: the inverse transpose of the model's 3x3 part. For rotation and a non uniform scale that is (R * S^-1). */
+    *model = s3d_mul(s3d_translation(obj->pos), s3d_mul(rotation, s3d_mul(s3d_scaling(obj->scale), s3d_translation(s3d_scale(obj->pivot, -1.0f)))));
     invS = s3d_v3(obj->scale.x != 0 ? 1.0f / obj->scale.x : 0, obj->scale.y != 0 ? 1.0f / obj->scale.y : 0, obj->scale.z != 0 ? 1.0f / obj->scale.z : 0);
+    *normalM = s3d_mul(rotation, s3d_scaling(invS));
+}
+
+/* Queues one mesh for the frame: its matrices and its look; nothing is transformed or drawn before `s3d_flush`. The camera places the mesh (and a billboard faces it). The mesh and the
+ * texture have to live until the flush. */
+static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh, const S3dObjectParams* obj, const S3dSurface* surf, const S3dTexture* tex) {
+    S3dMat4 model, normalM;
+    S3dVec3 centre;
+    S3dBatch* batch;
+    if (f->w <= 0 || f->h <= 0 || mesh->idxN < 3) return;
+    if (!S3D_GROW(f->batches, f->batchCap, f->batchN + 1)) return;
+    s3d_objectMatrices(cam, obj, surf, &model, &normalM);
 
     /* a slot that was used before keeps its vertex memory; a new one starts empty */
     if (f->batchN >= f->batchInit) { memset(&f->batches[f->batchN], 0, sizeof(S3dBatch)); f->batchInit = f->batchN + 1; }
@@ -802,7 +812,7 @@ static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh
     batch->mesh = mesh;
     batch->cam = *cam;
     batch->model = model;
-    batch->normalM = s3d_mul(rotation, s3d_scaling(invS));
+    batch->normalM = normalM;
     batch->vp = s3d_viewProjection(cam, f->w, f->h);
     batch->blended = surf->cutoff <= 0 && (surf->opacity < 1.0f || (batch->tex && batch->tex->hasAlpha));
     centre = s3d_transformPoint(&model, s3d_scale(s3d_add(mesh->bmin, mesh->bmax), 0.5f));

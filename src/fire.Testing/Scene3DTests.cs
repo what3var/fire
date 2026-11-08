@@ -193,6 +193,34 @@ static class Scene3DTests
         cam.Render()
         print("software " + (H.Sum(frame) == H.Sum(frame)) + " " + cam.LastRenderer)
 
+        // the lean renderer (RenderMode.Fast): light per corner, bands, 16-bit depth, a palette picture, the shadow of one light, dithered transparency
+        var fastFrame = new Framebuffer(64, 48)
+        var fastCam = new Camera(fastFrame)
+        fastCam.SetPosition(0m, 2m, 5m)
+        fastCam.LookAt(0m, 0.5m, 0m)
+        scene.Add(fastCam)
+        scene.Renderer = RenderMode.Fast
+        scene.Shadows = false
+        fastCam.Render()
+        print("fast " + H.Sum(fastFrame) + " " + fastCam.LastRenderer)
+        scene.Shadows = true
+        scene.ShadowResolution = 128
+        fastCam.Render()
+        var fastShadow = H.Sum(fastFrame)
+        print("fast shadows " + fastShadow)
+        var palFrame = new Framebuffer(64, 48, ColorMode.Palette!int)
+        var palCam = new Camera(palFrame)
+        palCam.SetPosition(0m, 2m, 5m)
+        palCam.LookAt(0m, 0.5m, 0m)
+        scene.Add(palCam)
+        palCam.Render()
+        print("fast palette " + H.Sum(palFrame) + " " + palFrame.ReadBytes().length)
+        glass.Opacity = 0.3
+        fastCam.Render()
+        print("fast dither " + (H.Sum(fastFrame) != fastShadow))
+        scene.Renderer = RenderMode.Software
+        scene.ShadowResolution = 1024
+
         // lengths and angles need units (a length property converts and refuses a number without a unit itself)
         try { box.X = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }
         try { box.RotationX = 1.5 } catch (Scene3DException e) { print("error " + e.message) }

@@ -3,8 +3,9 @@
 enum Template { Box = 0, Sphere = 1, Cylinder = 2, Cone = 3, Plane = 4, Quad = 5 }
 enum BillboardMode { Off = 0, Facing = 1, Vertical = 2 }
 enum LightKind { Ambient = 0, Directional = 1, Point = 2 }
-// Who draws a scene: the software renderer (everywhere, the same pixels everywhere) or the GPU (Vulkan; where there is none, the software renderer draws).
-enum RenderMode { Software = 0, Hardware = 1 }
+// Who draws a scene: the software renderer (everywhere, the same pixels everywhere), the GPU (Vulkan; where there is none, the software renderer draws), or the lean
+// renderer (Fast: light per corner, no shadows yet, little memory - the picture is drawn in bands straight into the framebuffer, also in its palette; for old and small machines).
+enum RenderMode { Software = 0, Hardware = 1, Fast = 2 }
 
 class Scene3DException : Exception {
     construct(string message) : base(message) { }
@@ -435,6 +436,24 @@ class Camera {
         if (this.scene == undefined) { throw new Scene3DException("The camera is not in a scene: scene.Add(camera).") }
         var w = this.framebuffer.Width()
         var h = this.framebuffer.Height()
+        var lean = __S3DLean()
+        if (this.scene.Renderer == RenderMode.Fast || (lean & 2) != 0) {
+            // the lean renderer: straight into the framebuffer where it can (a native build), else through a picture of the camera
+            var mode = this.framebuffer.Mode()
+            var drawn = 0
+            if ((lean & 1) != 0) { drawn = __S3DRenderLean(this.h, this.scene.h, this.framebuffer.id, w, h, mode, undefined, undefined) }
+            else {
+                var size = w * h * 4
+                if (mode == 1) { size = w * h }
+                if (this.pixels == undefined || this.pixels.length != size) { this.pixels = new byte[size] }
+                var palette = undefined
+                if (mode == 1) { palette = this.framebuffer.ReadPalette(true) }
+                drawn = __S3DRenderLean(this.h, this.scene.h, this.framebuffer.id, w, h, mode, this.pixels, palette)
+                if (drawn == 0) { this.framebuffer.WriteBytes(this.pixels) }
+            }
+            if (drawn < 0) { throw new Scene3DException("The framebuffer has no usable size (or the memory is gone).") }
+            return
+        }
         if (this.pixels == undefined || this.pixels.length != w * h * 4) { this.pixels = new byte[w * h * 4] }
         var drawn = __S3DRender(this.h, this.scene.h, this.pixels, w, h, this.framebuffer.id)
         if (drawn < 0) { throw new Scene3DException("The framebuffer has no usable size (or the memory is gone).") }
@@ -450,10 +469,12 @@ class Camera {
     // The last picture went straight from the GPU into the window (DirectDrawing), not through the framebuffer.
     bool DrewDirectly { get { return __S3DCamRenderer(this.h) == 2 } }
 
-    // Who drew the last picture: RenderMode.Software or RenderMode.Hardware (the scene asked for the hardware renderer and there is a GPU).
+    // Who drew the last picture: RenderMode.Software, RenderMode.Hardware (the scene asked for the hardware renderer and there is a GPU) or RenderMode.Fast.
     RenderMode LastRenderer {
         get {
-            if (__S3DCamRenderer(this.h) == 0) { return RenderMode.Software }
+            var r = __S3DCamRenderer(this.h)
+            if (r == 0) { return RenderMode.Software }
+            if (r == 3) { return RenderMode.Fast }
             return RenderMode.Hardware
         }
     }

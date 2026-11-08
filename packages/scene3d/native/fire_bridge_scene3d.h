@@ -16,6 +16,9 @@
 #ifndef FIRE_S3D_ENGINE_H
 #include "s3d_engine.h"
 #endif
+#ifndef FIRE_S3D_LEAN_H
+#include "s3d_lean.h"
+#endif
 
 /* ---- the tables: slot 0 is never used (handle 0 is "none"), a free slot is used again ---- */
 typedef struct FireS3dTable { void** items; s3d_size count, cap; } FireS3dTable;
@@ -234,7 +237,7 @@ enum { LF_INTENSITY = 0, LF_X, LF_Y, LF_Z, LF_DX, LF_DY, LF_DZ, LF_RANGE };
 enum { LN_KIND = 0, LN_COLOR, LN_ENABLED, LN_CAST, LN_LAYERS };
 /* camera: f = x, y, z, rotation x, y, z, field of view, near, far; n = background, direct drawing */
 enum { CF_X = 0, CF_RX = 3, CF_FOV = 6, CF_NEAR, CF_FAR };
-enum { CN_BACKGROUND = 0, CN_DIRECT };
+enum { CN_BACKGROUND = 0, CN_DIRECT, CN_LAST };   /* (CN_LAST: who drew the last picture - 0 software, 1 GPU, 2 GPU into the windows, 3 the lean renderer) */
 /* scene: f = ambient intensity; n = ambient colour, shadows, shadow resolution, threads, renderer */
 enum { SN_AMBIENT = 0, SN_SHADOWS, SN_SHADOWRES, SN_THREADS, SN_RENDERER };
 /* material: f = specular, shininess; n = smooth, two sided, emissive */
@@ -247,6 +250,7 @@ typedef struct FireS3dItem {
     int64_t mesh, tex, mat;          /* object: the handles it uses (it is one of their users) */
     S3dMesh* tris; int trisDirty;    /* object: the triangles of AddTriangle (made into its mesh when it is needed) */
     S3dFrame* frame; int directOn;   /* camera: its depth buffer and queue; whether it draws straight into the windows */
+    S3dLean* lean;                   /* camera: the lean renderer (RenderMode.Fast) */
     int64_t* objects; s3d_size objectN, objectCap;   /* scene: its objects and lights, in the order they were added */
     int64_t* lights; s3d_size lightN, lightCap;
 } FireS3dItem;
@@ -269,6 +273,7 @@ static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     if (it->mat) fire_s3d_itemRelease(it->mat);
     if (it->tris) s3d_meshFree(it->tris);
     if (it->frame) s3d_frameFree(it->frame);
+    if (it->lean) s3d_leanFree(it->lean);
     for (i = 0; i < it->objectN; i++) fire_s3d_itemRelease(it->objects[i]);
     for (i = 0; i < it->lightN; i++) fire_s3d_itemRelease(it->lights[i]);
     S3D_FREE(it->objects); S3D_FREE(it->lights);
@@ -461,7 +466,7 @@ static Value fire_s3d_CamLookAt(Value h, Value x, Value y, Value z) {
 }
 static Value fire_s3d_CamRenderer(Value h) {
     FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_CAMERA);
-    return Int(it && it->frame ? it->frame->lastBackend : 0);
+    return Int(it ? it->n[CN_LAST] : 0);
 }
 
 /* Adds an object or a light to a scene (the scene becomes one of its users; cameras and textures need nothing here). */
@@ -494,8 +499,8 @@ static Value fire_s3d_SceneRemove(Value scene, Value item) {
 
 static Real fire_s3d_channel(int64_t c, int shift) { return (Real)((c >> shift) & 255) / (Real)255.0; }
 
-/* What the renderer takes for an object (the numbers are worked out as the fire side did before, in Real, and then made floats - the pictures stay the same). */
-static void fire_s3d_queueObject(S3dFrame* f, const S3dCamera* cam, FireS3dItem* o) {
+/* What the renderers take for an object (the numbers are worked out as the fire side did before, in Real, and then made floats - the pictures stay the same). 0: it has no mesh. */
+static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** texture, S3dObjectParams* opOut, S3dSurface* sOut) {
     const Real* F = o->f;
     const int64_t* N = o->n;
     S3dMesh* m = fire_s3d_objMesh(o);
@@ -507,7 +512,7 @@ static void fire_s3d_queueObject(S3dFrame* f, const S3dCamera* cam, FireS3dItem*
     int64_t emissive = 0;
     S3dObjectParams op;
     S3dSurface s;
-    if (m == NULL) return;
+    if (m == NULL) return 0;
     minX = (Real)m->bmin.x; minY = (Real)m->bmin.y; minZ = (Real)m->bmin.z;
     w = (Real)m->bmax.x - minX; hgt = (Real)m->bmax.y - minY; d = (Real)m->bmax.z - minZ;
     if (mat) {
@@ -551,8 +556,46 @@ static void fire_s3d_queueObject(S3dFrame* f, const S3dCamera* cam, FireS3dItem*
     s.layers = (int)(float)N[ON_LAYERS];
     s.bump = tex && tex->bump ? tex->strength : 0.0f;
     s.billboard = (int)N[ON_BILLBOARD];
-    s3d_queueMesh(f, cam, m, &op, &s, tex);
+    *mesh = m; *texture = tex; *opOut = op; *sOut = s;
+    return 1;
 }
+
+/* The full renderer queues an object into `f`, the lean one (`L`) transforms and lights it at once. */
+static void fire_s3d_queueObject(S3dFrame* f, S3dLean* L, const S3dCamera* cam, FireS3dItem* o) {
+    S3dMesh* m;
+    S3dTexture* tex;
+    S3dObjectParams op;
+    S3dSurface s;
+    if (!fire_s3d_objectOf(o, &m, &tex, &op, &s)) return;
+    if (L) s3d_leanObject(L, m, &op, &s, tex);
+    else s3d_queueMesh(f, cam, m, &op, &s, tex);
+}
+
+/* The lean renderer's shadow map covers the objects that cast shadows (their boxes in the world). */
+static void fire_s3d_leanShadows(S3dLean* L, const S3dCamera* cam, const FireS3dItem* scene) {
+    S3dVec3 lo = s3d_v3(1e30f, 1e30f, 1e30f), hi = s3d_v3(-1e30f, -1e30f, -1e30f);
+    s3d_size i;
+    if (L->shadowLight < 0) return;
+    for (i = 0; i < scene->objectN; i++) {
+        FireS3dItem* o = fire_s3d_itemAt(scene->objects[i], FIRE_S3D_OBJECT);
+        S3dMesh* m;
+        S3dTexture* tex;
+        S3dObjectParams op;
+        S3dSurface s;
+        S3dMat4 model, normalM;
+        int c;
+        if (!o || !o->alive || !o->n[ON_VISIBLE] || !fire_s3d_objectOf(o, &m, &tex, &op, &s) || !s.castShadows || s.opacity < 1) continue;
+        s3d_objectMatrices(cam, &op, &s, &model, &normalM);
+        for (c = 0; c < 8; c++) {
+            S3dVec3 q = s3d_transformPoint(&model, s3d_v3((c & 1) ? m->bmax.x : m->bmin.x, (c & 2) ? m->bmax.y : m->bmin.y, (c & 4) ? m->bmax.z : m->bmin.z));
+            lo = s3d_v3(s3d_minf(lo.x, q.x), s3d_minf(lo.y, q.y), s3d_minf(lo.z, q.z));
+            hi = s3d_v3(s3d_maxf(hi.x, q.x), s3d_maxf(hi.y, q.y), s3d_maxf(hi.z, q.z));
+        }
+    }
+    s3d_leanShadows(L, lo, hi, (int)(float)scene->n[SN_SHADOWRES]);
+}
+
+
 
 static void fire_s3d_lightOf(S3dLight* light, int64_t kind, int64_t color, Real intensity, const Real* pos, const Real* dir, Real range, int shadows, int64_t layers) {
     light->kind = (int)kind;
@@ -563,6 +606,30 @@ static void fire_s3d_lightOf(S3dLight* light, int64_t kind, int64_t color, Real 
     light->range = (float)range;
     light->castShadows = shadows;
     light->mask = (int)(float)layers;
+}
+
+static S3dCamera fire_s3d_cameraOf(const FireS3dItem* c) {
+    S3dCamera cam;
+    cam.pos = s3d_v3((float)c->f[CF_X], (float)c->f[CF_X + 1], (float)c->f[CF_X + 2]);
+    cam.rx = (float)c->f[CF_RX]; cam.ry = (float)c->f[CF_RX + 1]; cam.rz = (float)c->f[CF_RX + 2];
+    cam.fovY = (float)c->f[CF_FOV]; cam.nearPlane = (float)c->f[CF_NEAR]; cam.farPlane = (float)c->f[CF_FAR];
+    return cam;
+}
+
+/* The lights of a scene: its ambient light first, then the ones that are on (`*n` of them); NULL when the memory is gone. */
+static S3dLight* fire_s3d_lightsOf(const FireS3dItem* s, s3d_size* n) {
+    static const Real zero3[3] = { 0, 0, 0 };
+    S3dLight* ls = (S3dLight*)S3D_MALLOC(sizeof(S3dLight) * (s->lightN + 1));
+    s3d_size i;
+    *n = 0;
+    if (ls == NULL) return NULL;
+    fire_s3d_lightOf(&ls[(*n)++], S3D_LIGHT_AMBIENT, s->n[SN_AMBIENT], s->f[0], zero3, zero3, 1, 0, 16777215);
+    for (i = 0; i < s->lightN; i++) {
+        FireS3dItem* L = fire_s3d_itemAt(s->lights[i], FIRE_S3D_LIGHT);
+        if (!L || !L->alive || !L->n[LN_ENABLED]) continue;
+        fire_s3d_lightOf(&ls[(*n)++], L->n[LN_KIND], L->n[LN_COLOR], L->f[LF_INTENSITY], &L->f[LF_X], &L->f[LF_DX], L->f[LF_RANGE], L->n[LN_CAST] && L->n[LN_KIND] != S3D_LIGHT_AMBIENT, L->n[LN_LAYERS]);
+    }
+    return ls;
 }
 
 /* Draws the scene as the camera sees it into `buffer` (width * height * 4 bytes, the picture of the camera's framebuffer `fb`). Returns who drew (0 software, 1 the GPU, 2 the GPU
@@ -577,7 +644,6 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
     S3dFlushSettings fs;
     s3d_size i, n = 0;
     int direct;
-    static const Real zero3[3] = { 0, 0, 0 };
     if (b == NULL) return Undef();
     if (!c || !s || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(-1);
     if ((s3d_size)b->length < (s3d_size)width.i * (s3d_size)height.i * 4) return Int(-1);
@@ -593,29 +659,105 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
     else s3d_frameClearDepth(f);
     f->clearColor = (uint32_t)c->n[CN_BACKGROUND];
     s3d_clearPixels(b->data, (int)width.i, (int)height.i, (uint32_t)c->n[CN_BACKGROUND]);
-    cam.pos = s3d_v3((float)c->f[CF_X], (float)c->f[CF_X + 1], (float)c->f[CF_X + 2]);
-    cam.rx = (float)c->f[CF_RX]; cam.ry = (float)c->f[CF_RX + 1]; cam.rz = (float)c->f[CF_RX + 2];
-    cam.fovY = (float)c->f[CF_FOV]; cam.nearPlane = (float)c->f[CF_NEAR]; cam.farPlane = (float)c->f[CF_FAR];
+    cam = fire_s3d_cameraOf(c);
     for (i = 0; i < s->objectN; i++) {
         FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
-        if (o && o->alive && o->n[ON_VISIBLE]) fire_s3d_queueObject(f, &cam, o);
+        if (o && o->alive && o->n[ON_VISIBLE]) fire_s3d_queueObject(f, NULL, &cam, o);
     }
-    /* the lights: the ambient light of the scene first, then the ones that are on */
-    ls = (S3dLight*)S3D_MALLOC(sizeof(S3dLight) * (s->lightN + 1));
-    if (ls == NULL) return Int(-2);
-    fire_s3d_lightOf(&ls[n++], S3D_LIGHT_AMBIENT, s->n[SN_AMBIENT], s->f[0], zero3, zero3, 1, 0, 16777215);
-    for (i = 0; i < s->lightN; i++) {
-        FireS3dItem* L = fire_s3d_itemAt(s->lights[i], FIRE_S3D_LIGHT);
-        if (!L || !L->alive || !L->n[LN_ENABLED]) continue;
-        fire_s3d_lightOf(&ls[n++], L->n[LN_KIND], L->n[LN_COLOR], L->f[LF_INTENSITY], &L->f[LF_X], &L->f[LF_DX], L->f[LF_RANGE], L->n[LN_CAST] && L->n[LN_KIND] != S3D_LIGHT_AMBIENT, L->n[LN_LAYERS]);
-    }
+    if ((ls = fire_s3d_lightsOf(s, &n)) == NULL) return Int(-2);
     fs.shadows = s->n[SN_SHADOWS] != 0;
     fs.shadowResolution = (int)(float)s->n[SN_SHADOWRES];
     fs.threads = (int)(float)s->n[SN_THREADS];
     fs.backend = s->n[SN_RENDERER] == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
     s3d_flush(b->data, f, &cam, ls, n, &fs);
     S3D_FREE(ls);
+    c->n[CN_LAST] = f->lastBackend;
     return Int(f->lastBackend);
+}
+
+/* ---- the lean renderer (RenderMode.Fast, s3d_lean.h) ---- */
+/* Where its rows go: the framebuffer itself (a native build has the graphics bridge: no picture of the camera at all), or a buffer of the whole picture (the VM). */
+typedef struct FireS3dRows { uint8_t* data; s3d_size rowBytes; } FireS3dRows;
+static void fire_s3d_rowsToBuffer(void* ctx, int y, int rows, const uint8_t* data) {
+    FireS3dRows* r = (FireS3dRows*)ctx;
+    S3D_COPY(r->data + (s3d_size)y * r->rowBytes, data, (s3d_size)rows * r->rowBytes);
+}
+#if defined(FIRE_BRIDGE_GRAPHICS_H) && !defined(FIRE_LIBRARY)
+#define FIRE_S3D_LEAN_DIRECT 1
+static void fire_s3d_rowsToFramebuffer(void* ctx, int y, int rows, const uint8_t* data) {
+    FireGfxFramebuffer* fb = (FireGfxFramebuffer*)ctx;
+    s3d_size i, n = (s3d_size)fb->width * (s3d_size)rows;
+    if (fb->indices) S3D_COPY(fb->indices + (s3d_size)y * (s3d_size)fb->width, data, n);
+    else {
+        uint32_t* to = fb->pixels + (s3d_size)y * (s3d_size)fb->width;
+        for (i = 0; i < n; i++) to[i] = data[i * 4] | ((uint32_t)data[i * 4 + 1] << 8) | ((uint32_t)data[i * 4 + 2] << 16) | ((uint32_t)data[i * 4 + 3] << 24);
+    }
+}
+#endif
+
+/* What the lean renderer can do here: 1 it writes straight into a framebuffer (the camera needs no picture of its own), 2 it is the only renderer of this build (a small target). */
+static Value fire_s3d_Lean(void) {
+    int64_t bits = 0;
+#ifdef FIRE_S3D_LEAN_DIRECT
+    bits |= 1;
+#endif
+#ifdef FIRE_S3D_LEAN_ONLY
+    bits |= 2;
+#endif
+    return Int(bits);
+}
+
+/* Draws the scene with the lean renderer into the framebuffer `fb` (width x height, `mode` 0 RGBA / 1 palette): straight into it (returns 3), or into `buffer` (width * height * 4
+ * or width * height bytes; `palette`: the framebuffer's 1024 bytes RGBA when it has a palette; returns 0). -1: a size or handle that is not usable, -2: the memory. */
+static Value fire_s3d_RenderLean(Value camera, Value scene, Value fb, Value width, Value height, Value mode, Value buffer, Value palette) {
+    FireS3dItem* c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
+    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
+    int w = (int)width.i, h = (int)height.i, bpp = mode.i == 1 ? 1 : 4, result = 0;
+    uint32_t pal[256];
+    S3dLeanSink sink = fire_s3d_rowsToBuffer;
+    void* ctx;
+    FireS3dRows rows;
+    S3dCamera cam;
+    S3dLight* ls;
+    s3d_size i, n = 0;
+    if (!c || !s || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(-1);
+#ifdef FIRE_S3D_LEAN_DIRECT
+    if (buffer.kind == K_Undefined) {
+        FireGfxTables* t = fire_gfxb_tables();
+        FireGfxFramebuffer* f = fb.i > 0 && (fire_gfx_size)fb.i < t->fbCount ? t->framebuffers[(fire_gfx_size)fb.i] : NULL;
+        if (f == NULL || f->width != w || f->height != h || (f->indices != NULL) != (bpp == 1)) return Int(-1);
+        fire_gfx_fbCpu(f, 1);
+        for (i = 0; i < 256; i++) pal[i] = f->palette.entries[i];
+        sink = fire_s3d_rowsToFramebuffer; ctx = f;
+        result = 3;
+    } else
+#endif
+    {
+        Buf* b = bufferArg(buffer, "Scene3D.Camera.Render");
+        if (b == NULL) return Undef();
+        if ((s3d_size)b->length < (s3d_size)w * (s3d_size)h * (s3d_size)bpp) return Int(-1);
+        if (bpp == 1) {
+            FireBytes p;
+            if (!bytesArg(palette, "Scene3D.Camera.Render", &p)) return Undef();
+            if (p.length < 1024) return Int(-1);
+            for (i = 0; i < 256; i++) pal[i] = p.data[i * 4] | ((uint32_t)p.data[i * 4 + 1] << 8) | ((uint32_t)p.data[i * 4 + 2] << 16) | ((uint32_t)p.data[i * 4 + 3] << 24);
+        }
+        rows.data = b->data; rows.rowBytes = (s3d_size)w * (s3d_size)bpp;
+        ctx = &rows;
+    }
+    if (c->lean == NULL && (c->lean = s3d_leanNew()) == NULL) return Int(-2);
+    cam = fire_s3d_cameraOf(c);
+    if ((ls = fire_s3d_lightsOf(s, &n)) == NULL) return Int(-2);
+    if (!s3d_leanBegin(c->lean, w, h, bpp, pal, &cam, ls, n, (uint32_t)c->n[CN_BACKGROUND], s->n[SN_SHADOWS] != 0)) { S3D_FREE(ls); return Int(-2); }
+    S3D_FREE(ls);
+    fire_s3d_leanShadows(c->lean, &cam, s);
+    for (i = 0; i < s->objectN; i++) {
+        FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
+        if (o && o->alive && o->n[ON_VISIBLE]) fire_s3d_queueObject(NULL, c->lean, &cam, o);
+    }
+    s3d_leanEnd(c->lean, sink, ctx);
+    c->n[CN_LAST] = 3;
+    return Int(result);
 }
 
 static void fire_s3d_reset(void) {

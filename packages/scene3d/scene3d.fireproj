@@ -13,6 +13,7 @@
   "native": {
     "sources": [
       "native/s3d_engine.h",
+      "native/s3d_lean.h",
       "native/s3d_vk.h",
       "native/s3d_shaders.h",
       "native/s3d_gpu_vk.h",
@@ -251,6 +252,18 @@
         "returns": "int",
         "arguments": 6,
         "c": "fire_s3d_Render"
+      },
+      {
+        "name": "__S3DLean",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_s3d_Lean"
+      },
+      {
+        "name": "__S3DRenderLean",
+        "returns": "int",
+        "arguments": 8,
+        "c": "fire_s3d_RenderLean"
       }
     ],
     "reset": "fire_s3d_reset",
