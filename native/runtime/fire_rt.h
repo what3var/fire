@@ -2039,18 +2039,12 @@ FIRE_FN Value modulo(Value a, Value b) {
     return opFailed(a, b);
 }
 /* `a ^ b` (power; `#` is the bitwise xor): ints multiply, a float or a negative exponent uses pow. The units must be equal. */
+/* A power is always a float (Value.Power: its type must not depend on the value of the exponent). */
 FIRE_FN Value power(Value a, Value b) {
-    bool useFloat;
-    uint64_t result = 1, base;
-    int64_t i;
     if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_POW, a, b);
     if (FIRE_UNLIKELY(!isNumeric(a) || !isNumeric(b))) return opFailed(a, b);
     if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); }
-    useFloat = a.kind == K_Float || b.kind == K_Float || (b.kind == K_Int && b.i < 0);
-    if (useFloat) return Float((Real)pow((double)toR(a), (double)toR(b)), a.unit);
-    base = (uint64_t)a.i;
-    for (i = 0; i < b.i; i++) result *= base;
-    return Int((int64_t)result, a.unit);
+    return Float((Real)pow((double)toR(a), (double)toR(b)), a.unit);
 }
 /* The unit a value carries (only numbers and `undefined` can have one). */
 FIRE_FN uint32_t unitOf(Value v) { return (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0; }

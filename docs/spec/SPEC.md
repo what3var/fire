@@ -92,10 +92,9 @@ is `0.25`, neither rejected nor `-4`.
 interplay with units), and `+` additionally for string
 concatenation (as soon as one side is a `string`, the other is appended via
 its normal `ToString()` representation). `^` (exponentiation) also accepts
-`int`/`float`; for `int^int` with a non-negative exponent
-the result stays `int` (fast integer exponentiation), otherwise the
-calculation is done via `float` (also for a negative exponent, since a plain
-`int` integer rounding of values <1 would almost always yield just 0).
+`int`/`float`; the result is always a `float` (`2 ^ 10` is `1024.0`, `2 ^ -1` is `0.5`): the type of an
+expression must not depend on a value (a variable keeps its type, docs/spec/TYPES.md) - `(2 ^ 10)!int` is the whole
+number. (A `word` to an int power stays a word.)
 
 `&`/`|`/`#`/`<<`/`>>` (bitwise operators, including the unary `~`)
 accept **only** `int` - a run-time error for `float`/

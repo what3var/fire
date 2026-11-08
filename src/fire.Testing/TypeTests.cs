@@ -110,8 +110,11 @@ static class TypeTests
             var arr = [1, "one"]
             print(u)
             """, TypeCheckMode.Strict) is var joined && joined == "TC020 TC020|0.5\n1", joined);
-        Check("int / int ist ein int (7 / 2 ist 3), int ^ nicht negatives Literal ein int",
-            Run("var q = 7 / 2\nvar p = 2 ^ 3\nint both = q + p\nprint(both)", TypeCheckMode.Strict) == "|11");
+        Check("int / int ist ein int (7 / 2 ist 3), eine Potenz immer ein float (2 ^ 3 ist 8.0, auch zur Laufzeit)",
+            Run("var q = 7 / 2\nvar p = 2 ^ 3\nint both = q + (p!int)\nprint(both)\nprint(p / 16)\nprint(2 ^ 3 is of float)", TypeCheckMode.Strict) is var pw && pw == "|11\n0.5\nTrue"
+            && Run("var p = 2 ^ 3\nint i = p\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC001", pw);
+        Check("var a = [] hat keine Elementtypen: TC020 (any[]), int a[] = [] ist still",
+            Run("var a = []\nprint(a.length)", TypeCheckMode.Strict) == "TC020|0" && Run("int a[] = []\nprint(a.length)", TypeCheckMode.Strict) == "|0");
         Check("Namen im eigenen Namespace: Parameter, Felder und Aufrufe (UI.M.Max) haben ihren Typ", Run("""
             namespace Cx {
                 class Port { string n

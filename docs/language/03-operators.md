@@ -50,7 +50,7 @@ print(n < 0 ? "neg" : n == 0 ? "zero" : "pos")   // pos
 ## Arithmetic
 
 - `+ - * / %` work on `int` and `float`. Two `int`s stay an `int`: `7 / 2` is `3`. With a `float` on one side the result is a `float`: `7.0 / 2` is `3.5`.
-- `int ^ int` with an exponent of 0 or more stays an `int`; otherwise the power is computed as `float`.
+- A power is always a `float` (`2 ^ 10` is `1024.0`, printed `1024`): its type does not depend on the exponent. `(2 ^ 10)!int` is the whole number.
 - Division of an `int` by zero throws a `DivideByZeroException`.
 - `+` joins texts as soon as one side is a `string`: `"n = " + 3` is `"n = 3"`.
 - Numbers with [units](05-units.md) are converted and checked: `500mm + 2m` is `2500mm`, `5mm + 2kg` throws a `UnitMismatchException`.

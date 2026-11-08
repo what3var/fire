@@ -1207,6 +1207,12 @@ namespace fire.Compiler
                     else if (init.TypeParam == null) ReportUntypedVar(v.Name, v.Line, "the type of its initializer is not known here");
                     if (init.TypeParam == null) LogVar(v.Line, v.Name, init.DeclaredAny || _mixedJoins.ContainsKey(v.Initializer) ? LateVarTypeCode : UntypedVarCode, "any");
                 }
+                else if (init.Kind == StaticKind.Array && init.Element is { IsDynamic: true } && v.Initializer is ArrayLiteralExpr { Elements.Count: 0 })
+                {
+                    // `var a = []`: nothing says what the elements are
+                    Report(LateVarTypeCode, $"'{v.Name}' is an empty array literal: its elements have no type, it becomes an 'any[]' - every element is wide and checked at run time; declare the element type ('int {v.Name}[] = []'), or write 'any {v.Name}[] = []' if that is meant", v.Line);
+                    LogVar(v.Line, v.Name, LateVarTypeCode, "any[]");
+                }
                 else if (init.Kind == StaticKind.Array && init.Element is { IsDynamic: true } && v.Initializer != null && _mixedJoins.TryGetValue(v.Initializer, out var mixedElements))
                 {
                     Report(LateVarTypeCode, $"The elements of '{v.Name}' have unrelated types ({mixedElements}): it becomes an 'any[]' - every element is wide and checked at run time; give them one type, or write 'any {v.Name}[] = ...' if that is meant", v.Line);
@@ -1690,11 +1696,12 @@ namespace fire.Compiler
                     if (left.Kind == StaticKind.Int && right.Kind == StaticKind.Int) return StaticType.Int;
                     if (left.Kind is StaticKind.Int or StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float) return StaticType.Float;
                     return StaticType.Dynamic;
-                case BinaryOp.Div or BinaryOp.Power:
-                    // two ints divide into an int (`7 / 2` is 3); `2 ^ 3` is an int, but `2 ^ -1` a float - the power of two ints is an int only for an exponent
-                    // known not to be negative (a literal)
-                    if (left.Kind == StaticKind.Int && right.Kind == StaticKind.Int
-                        && (b.Op == BinaryOp.Div || b.Right is LiteralExpr { Value: { Kind: fire.Values.ValueKind.Int } exponent } && exponent.AsInt() >= 0)) return StaticType.Int;
+                case BinaryOp.Power:
+                    // a power is always a float (`2 ^ 3` is 8.0): its type does not depend on the exponent
+                    return left.Kind is StaticKind.Int or StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float ? StaticType.Float : StaticType.Dynamic;
+                case BinaryOp.Div:
+                    // two ints divide into an int (`7 / 2` is 3)
+                    if (left.Kind == StaticKind.Int && right.Kind == StaticKind.Int) return StaticType.Int;
                     return left.Kind == StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float
                         || right.Kind == StaticKind.Float && left.Kind is StaticKind.Int or StaticKind.Float ? StaticType.Float : StaticType.Dynamic;
                 default: return StaticType.Dynamic;

@@ -186,7 +186,9 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
     with `TC020`; `any x = ...` says it on purpose and is quiet.
   Values of related types join: `int`/`float` to `float` (the whole number is converted at run time), objects to the nearest class or interface all of
   them are (`c ? new Dog() : new Cat()` is an `Animal`). The point of all this is that every variable has one static type the backend can lay out (a
-  narrow value where it is known, the wide one only for `any`).
+  narrow value where it is known, the wide one only for `any`). For the same reason no operation has a type that depends on a value: `int / int` is an
+  `int` (`7 / 2` is 3), a power is always a `float` (`2 ^ 3` is 8.0). `var a = []` says nothing about its elements: `TC020`, an `any[]`
+  (`int a[] = []` says it).
 * **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;
   same dimension -> `a * factor`; otherwise `UnitMismatchException`. The factor is cached per (source unit, target unit) at the site; where the source unit is also static the whole thing

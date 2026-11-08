@@ -832,29 +832,15 @@ namespace fire.Values
         }
 
         /// <summary>`^` (power, NOT bitwise XOR - that is `#`, see BitXor).
-        /// Integer-fast exponentiation (repeated multiplication) for
-        /// `int^int` with a non-negative exponent (result stays `int`,
-        /// as with `+`/`-`/`*`); as soon as ONE operand is `float` or the
-        /// exponent is negative, it is computed via `Math.Pow` (float result)
-        /// - a negative exponent for `int^int` would otherwise yield only
-        /// 0 (integer rounding of values &lt;1), which is hardly ever meant.</summary>
+        /// A power is always a float (`2 ^ 3` is 8.0, `2 ^ -1` is 0.5): its type must not depend on the value of the exponent - a variable keeps its
+        /// type (docs/spec/TYPES.md), and `int ^ int` as an int would be one for some exponents only. A whole result is `x!int` away.</summary>
         public static Value Power(Value a, Value b)
         {
             if (AnyWord(a, b)) return WordOp(WordOperation.Pow, a, b);
             RequireNumeric(a); RequireNumeric(b);
             RequireSameUnit(a, b);
 
-            bool useFloat = a.Kind == ValueKind.Float || b.Kind == ValueKind.Float
-                || (b.Kind == ValueKind.Int && b._intValue < 0);
-            if (useFloat)
-                return MakeFloat(System.Math.Pow(a.ToDouble(), b.ToDouble()), a.Unit);
-
-            long result = 1;
-            long baseValue = a._intValue;
-            long exponent = b._intValue;
-            for (long i = 0; i < exponent; i++)
-                result *= baseValue;
-            return MakeInt(result, a.Unit, NumericWidth.W64, W(a, b));
+            return MakeFloat(System.Math.Pow(a.ToDouble(), b.ToDouble()), a.Unit);
         }
 
         /// <summary>Truncates an Int/Float value to the given bit width
