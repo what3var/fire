@@ -446,7 +446,7 @@ class Camera {
                 var size = w * h * 4
                 if (mode == 1) { size = w * h }
                 if (this.pixels == undefined || this.pixels.length != size) { this.pixels = new byte[size] }
-                var palette = undefined
+                any palette = undefined
                 if (mode == 1) { palette = this.framebuffer.ReadPalette(true) }
                 drawn = __S3DRenderLean(this.h, this.scene.h, this.framebuffer.id, w, h, mode, this.pixels, palette)
                 if (drawn == 0) { this.framebuffer.WriteBytes(this.pixels) }
