@@ -166,6 +166,8 @@ generic class `new T[n]` makes such an array for the type argument it runs with.
 ## Dictionaries and sets: `Dictionary<K, V>`, `HashSet<T>`
 
 `Dictionary<K, V>` maps keys to values, `HashSet<T>` holds each value once. Both keep the order in which the keys came in (`foreach`, `Keys`, `Values`).
+Like a list, they keep keys and values of `int`, `float`, `bool` or `char` in typed arrays (`Dictionary<int, float>`: raw numbers); their table itself
+(hashes, chains) is typed too.
 
 | `Dictionary<K, V>` | Meaning |
 |---|---|

@@ -51,6 +51,8 @@ namespace fire.Values
             error = Error.None;
             message = null;
             if (type == None) return true;
+            // (the common case - an int of the program without a unit into `int a[]`: stored as it is)
+            if (type == I64 && unit == null && value.Kind == ValueKind.Int && value.Wide == 0 && value.Unit is null or { IsUnitless: true }) return true;
             switch (type)
             {
                 case Bool:

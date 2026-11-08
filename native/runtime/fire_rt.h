@@ -1985,8 +1985,12 @@ FIRE_FN const char* coerceKindName(uint8_t kind) {
     }
 }
 /* `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType); anything else is an ArgumentException. */
-FIRE_FN Value coerceType(Value v, uint8_t target) {
+FIRE_COLD FIRE_FN Value coerceWrong(uint8_t kind, uint8_t target) {
     char text[96];
+    snprintf(text, sizeof text, "Cannot coerce type %s to %s.", coerceKindName(kind), coerceKindName(target));
+    return fireError("ArgumentException", text);
+}
+FIRE_FN Value coerceType(Value v, uint8_t target) {
     if (v.kind == target) { if (target == K_Int) v.reserved = 0; return v; }   /* (`c!int`: the number of an enum value) */
     /* a word as an int: the same bits as a signed number (like a cast in C); as a float its unsigned value. Into a word: wordOf */
     if (v.kind == K_Word && target == K_Int) return Int((int64_t)(uint64_t)v.w);
@@ -2002,8 +2006,7 @@ FIRE_FN Value coerceType(Value v, uint8_t target) {
     if (v.kind == K_Char && target == K_Int) return Int(v.i);
     if (v.kind == K_Char && target == K_Float) return Float((Real)v.i);
     if (v.kind == K_Undefined && target == K_Char) return Char(0);
-    snprintf(text, sizeof text, "Cannot coerce type %s to %s.", coerceKindName(v.kind), coerceKindName(target));
-    return fireError("ArgumentException", text);
+    return coerceWrong(v.kind, target);
 }
 
 /* A float rounded to a small float format, round to nearest, ties to even (exactly as Value.RoundFloatToWidth): 32 = IEEE binary32, 16 = IEEE binary16
@@ -2030,12 +2033,10 @@ FIRE_FN double roundFloatToWidth(double value, int bits) {
 
 /* `x!int[8]`, `x!byte`, `x!float[32]`, `x!float[16]` (Value.ConvertWidth): the number cut to the width - an int in two's complement, `isUnsigned` keeps
  * 0..2^bits-1, a float rounded to float32, half precision or FP8 E4M3 (roundFloatToWidth). */
-FIRE_FN Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
-    Value n = coerceType(v, toFloat ? K_Float : K_Int);
+/* The int `n` cut to `bits` (two's complement; `isUnsigned`: 0..2^bits-1). */
+FIRE_FN Value intToWidth(Value n, int bits, bool isUnsigned) {
     uint64_t mask, raw;
     int64_t r;
-    if (n.kind != (toFloat ? K_Float : K_Int)) return n;   /* (the error of coerceType) */
-    if (toFloat) return bits < 64 ? Float((Real)roundFloatToWidth((double)n.f, bits), n.unit) : n;
     /* (an explicit width beyond the program's int - `int[64]` with `#intwidth 32`, `int[32]` with `#intwidth 16` - is kept by the value: `wide`) */
     if (bits >= 64) return IntW(n.i, n.unit, 64);
     mask = (1ull << bits) - 1;
@@ -2043,6 +2044,13 @@ FIRE_FN Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
     r = (int64_t)raw;
     if (!isUnsigned && (raw & (1ull << (bits - 1)))) r -= (int64_t)(1ull << bits);
     return IntW(r, isUnsigned ? 0 : n.unit, bits == 32 && !isUnsigned ? 32 : 0);   /* (`byte`, the unsigned width, is raw data without a unit: SPEC 8.10, like the VM) */
+}
+
+FIRE_FN Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
+    Value n = coerceType(v, toFloat ? K_Float : K_Int);
+    if (n.kind != (toFloat ? K_Float : K_Int)) return n;   /* (the error of coerceType) */
+    if (toFloat) return bits < 64 ? Float((Real)roundFloatToWidth((double)n.f, bits), n.unit) : n;
+    return intToWidth(n, bits, isUnsigned);
 }
 
 /* `x!word` and a store into a `word` (OpCode.ConvertWidth with the word flag, Value.ToWord): an int cut to the width (two's complement), a float rounded
@@ -4707,8 +4715,15 @@ FIRE_FN size_t arrElemSize(uint8_t e) {
 /* The value as an element of the typed array `t` (VM: ArrayElem.TryConvert): an int cut to the width, a float rounded, an int becomes a float in a float
  * array, a number converted into the unit of the elements; `undefined` fits every type. Anything else is the exception (ArgumentException,
  * UnitMismatchException, OverflowException) - then *ok is false. */
-FIRE_FN Value arrElemConvert(const ArrTyped* t, Value v, bool* ok) {
+FIRE_COLD FIRE_FN Value arrElemWrong(const ArrTyped* t, Value v, bool* ok) {
     char text[200];
+    snprintf(text, sizeof text, "An element of an array of %s must be %s (or undefined), not %s.", arrElemName(t->elem),
+             t->elem == E_Bool ? "a bool" : t->elem == E_Char ? "a char" : arrElemIsFloat(t->elem) ? "a number" : "an int", coerceKindName(v.kind));
+    fireError("ArgumentException", text);
+    *ok = false;
+    return Undef();
+}
+FIRE_FN Value arrElemConvert(const ArrTyped* t, Value v, bool* ok) {
     bool isFloat;
     *ok = true;
     if (t->elem == E_Bool || t->elem == E_Char) {
@@ -4716,6 +4731,8 @@ FIRE_FN Value arrElemConvert(const ArrTyped* t, Value v, bool* ok) {
         if (v.kind == (t->elem == E_Bool ? K_Bool : K_Char)) return v;
     } else {
         isFloat = arrElemIsFloat(t->elem);
+        /* (the common case - an int without a unit into an array of ints without one: the width only) */
+        if (FIRE_LIKELY(v.kind == K_Int && !isFloat && v.unit == 0 && !(t->flags & (TU_ANY | TU_UNIT)))) { v.reserved = 0; return intToWidth(v, arrElemBits(t->elem), t->elem == E_U8); }
         if (v.kind == K_Int || v.kind == K_Undefined || (isFloat && v.kind == K_Float)) {
             if (t->flags & TU_ANY) {
                 /* (`: any`: every unit, kept) */
@@ -4731,11 +4748,7 @@ FIRE_FN Value arrElemConvert(const ArrTyped* t, Value v, bool* ok) {
             return convertWidth(v, arrElemBits(t->elem), isFloat, t->elem == E_U8);
         }
     }
-    snprintf(text, sizeof text, "An element of an array of %s must be %s (or undefined), not %s.", arrElemName(t->elem),
-             t->elem == E_Bool ? "a bool" : t->elem == E_Char ? "a char" : arrElemIsFloat(t->elem) ? "a number" : "an int", coerceKindName(v.kind));
-    fireError("ArgumentException", text);
-    *ok = false;
-    return Undef();
+    return arrElemWrong(t, v, ok);
 }
 
 FIRE_FN bool arrIsReal(const ArrTyped* t, uint32_t i) { return t->real && (t->real[i >> 3] >> (i & 7) & 1); }
@@ -4856,7 +4869,9 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
     bool ok;
     memset(&probe, 0, sizeof probe);
     probe.elem = elem; probe.unit = unit; probe.flags = flags; probe.unitText = unitText;
-    for (i = 0; i < a->length; i++) { arrElemConvert(&probe, items[i], &ok); if (!ok) return false; }
+    /* (`undefined` without a unit - a new array is full of it - fits every typed array without a unit demand as it is) */
+#define FIRE_ARR_PLAIN_UNDEF(x) ((x).kind == K_Undefined && (x).unit == 0 && !(flags & TU_UNIT))
+    for (i = 0; i < a->length; i++) { if (FIRE_ARR_PLAIN_UNDEF(items[i])) continue; arrElemConvert(&probe, items[i], &ok); if (!ok) return false; }
     t = arrTypedNew(elem, unit, flags, unitText);
     t->own |= AT_INLINE;
     a->typed = t;
@@ -4869,7 +4884,14 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
     if (FIRE_UNLIKELY(!t->data)) allocFailed();
     t->own |= AT_DATA;
     t->packed = 1;
-    for (i = 0; i < a->length; i++) { Value v = arrElemConvert(t, items[i], &ok); release(items[i]); arrPackedSet(a, i, v); }
+    for (i = 0; i < a->length; i++) {
+        Value v;
+        if (FIRE_ARR_PLAIN_UNDEF(items[i])) { arrPackedSet(a, i, items[i]); continue; }
+        v = arrElemConvert(t, items[i], &ok);
+        release(items[i]);
+        arrPackedSet(a, i, v);
+    }
+#undef FIRE_ARR_PLAIN_UNDEF
     return true;
 }
 
