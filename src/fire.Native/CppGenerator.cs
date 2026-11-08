@@ -377,7 +377,7 @@ namespace fire.Native
             var spec = SpecFunc(generic, "m:" + text, text, specParams);
             var conditions = new List<string>();
             foreach (var (param, kind, unit) in specParams)
-                if ((slotType(firstArg + param) & ~NarrowBit) != TypeOf(kind, unit)) conditions.Add(KindTest(slot(firstArg + param), kind, unit));
+                if ((slotType(firstArg + param) & ~(NarrowBit | CutBit)) != TypeOf(kind, unit)) conditions.Add(KindTest(slot(firstArg + param), kind, unit));
             return (spec, conditions.Count == 0 ? null : string.Join(" && ", conditions));
         }
 
@@ -623,10 +623,13 @@ namespace fire.Native
         // TypeNone: nothing yet - the result of a call of a function none of whose `return`s was seen yet (in the last round: one that never returns,
         // the code after the call does not run); it joins to the other side, and whatever is computed from it is TypeNone, too.
         private const int TypeUnknown = 0, NullableBit = 0x10, TypeUndefined = NullableBit, TypeNone = 0x20;
-        // NarrowBit (on an int): certainly not wide - an int of the program's width (Value.wide 0), so a C FireInt holds it exactly. Set only where that is
-        // proven (a constant of the program's width, arithmetic on narrow operands, what a plain `int` declaration cuts to, an element of a typed array);
-        // a type without it is maybe wide. With `#intwidth 64` every int is narrow (IsNarrowIntType).
-        private const int NarrowBit = 0x40;
+        // NarrowBit (on an int): a plain number of the program's width - not wide (Value.wide 0: a C FireInt holds it exactly) and no value of an enum
+        // (reserved 0) - so it may live as a C number. Set only where that is proven: a constant of the program's width, arithmetic on narrow operands (its
+        // result is a new number), an element of a typed int array or of a byte buffer, `length`, a cut to a width (ConvertWidth). A type without it is maybe
+        // wide or an enum value.
+        // CutBit (on an int): of the program's width but maybe a value of an enum - a plain `int` parameter or field (every way in cuts to the program's int):
+        // a comparison may read its number (ScalarIntCondition), a variable does not become a C number from it.
+        private const int NarrowBit = 0x40, CutBit = 0x80;
         private static int TypeOf(byte kind, int unit) => kind == KindUnknown ? TypeUnknown : kind | (kind == KindBool ? 0 : unit) << 8;
         /// <summary>The kind of a value that is certainly no `undefined` (KindUnknown for a nullable type).</summary>
         private static byte KindOfType(int type) => (type & (NullableBit | TypeNone)) != 0 ? KindUnknown : (byte)(type & 0x0F);
@@ -855,9 +858,9 @@ namespace fire.Native
             if (a == b) return a;
             if (a == TypeNone) return b;
             if (b == TypeNone) return a;
-            // (narrow only where both are)
-            int narrow = a & b & NarrowBit;
-            a &= ~NarrowBit; b &= ~NarrowBit;
+            // (narrow - or cut - only where both are)
+            int narrow = a & b & (NarrowBit | CutBit);
+            a &= ~(NarrowBit | CutBit); b &= ~(NarrowBit | CutBit);
             if (a == b) return a | narrow;
             if (a == TypeUnknown || b == TypeUnknown) return TypeUnknown;
             if (a == TypeUndefined) return b | NullableBit;
@@ -922,8 +925,8 @@ namespace fire.Native
                 byte kind = KindOfDeclared(declared);
                 int unit = kind == KindBool ? 0 : cls.Rc.FindFieldRequiredUnit(name) is { } demand ? DemandedUnitId(demand) : DeclaredKind.IsUnitless(declared) ? 0 : -1;
                 if (unit < 0) return TypeUnknown;
-                // (a plain `int` field holds the program's int - every way in cuts to it: narrow)
-                int type = TypeOf(kind, unit) | NullableBit | (kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? NarrowBit : 0);
+                // (a plain `int` field holds the program's int - every way in cuts to it - but maybe a value of an enum: CutBit)
+                int type = TypeOf(kind, unit) | NullableBit | (kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? CutBit : 0);
                 if (result is { } r && r != type) return TypeUnknown;
                 result = type;
             }
@@ -1139,9 +1142,11 @@ namespace fire.Native
         /// <summary>The type a constant gives a stack slot (constants carry no bit width in the generated code).</summary>
         private int TypeOfConstant(Value c) => c.Kind switch
         {
-            ValueKind.Int => TypeOf(KindInt, UnitId(c.Unit)) | (c.Wide == 0 && FitsProgramInt(c.AsInt()) ? NarrowBit : 0),
+            // (a value of an enum is an int with its enum: not narrow - a C number would lose the enum)
+            ValueKind.Int => TypeOf(KindInt, UnitId(c.Unit)) | (c.Wide == 0 && c.Enum == null && FitsProgramInt(c.AsInt()) ? NarrowBit : 0),
             ValueKind.Float => TypeOf(KindFloat, UnitId(c.Unit)),
             ValueKind.Bool => TypeOf(KindBool, 0),
+            ValueKind.Word => TypeOf(KindWord, 0),
             ValueKind.Undefined => TypeUndefined,
             _ => TypeUnknown,
         };
@@ -1154,9 +1159,11 @@ namespace fire.Native
         /// <summary>A variable that is a C FireInt (Ebene 2): a local of the function (no parameter, no global, no variable of a thread) whose every store is a narrow
         /// int without a unit (its joined type), that nothing points to and that holds no reference.</summary>
         private bool ScalarVarOf(Func f, string v) => ScalarsOn && (v[0] == 'B' || v[0] == 'P' && int.Parse(v.AsSpan(1)) >= f.ParamLike)
-            && _varType.TryGetValue(VarKey(f, v), out int type) && IsNarrowIntType(type) && !VarRef(VarKey(f, v));
+            && _varType.TryGetValue(VarKey(f, v), out int type) && (IsNarrowIntType(type) || KindOfType(type) == KindWord) && !VarRef(VarKey(f, v));
+        /// <summary>The C type of a variable that is a C number (ScalarVarOf).</summary>
+        private string ScalarVarCType(Func f, string v) => _varType.TryGetValue(VarKey(f, v), out int type) && KindOfType(type) == KindWord ? "FireWord" : "FireInt";
         /// <summary>A narrow int without a unit that is certainly no `undefined` (KindOfType: neither nullable nor nothing).</summary>
-        private bool IsNarrowIntType(int type) => KindOfType(type) == KindInt && UnitOfType(type) == 0 && (_program.IntWidth >= 64 || (type & NarrowBit) != 0);
+        private static bool IsNarrowIntType(int type) => KindOfType(type) == KindInt && UnitOfType(type) == 0 && (type & NarrowBit) != 0;
 
         private void MarkVarRef(string key)
         {
@@ -3112,7 +3119,12 @@ namespace fire.Native
             if (f.Root.MaxDepth > 0)
             {
                 if (framed) foreach (int i in Enumerable.Range(0, f.Root.MaxDepth)) Var("Value", $"s{i}", null);
-                else decl.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
+                else
+                {
+                    decl.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
+                    // (a slot that only ever holds scalars - Ebene 2 - is not read as a Value)
+                    if (f.Scalars.Count > 0) post.AppendLine("    " + string.Concat(Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"(void)s{i}; ")));
+                }
             }
             var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
             // (Ebene 2: the variables that are C numbers, and the scalar shadows of the slots)
@@ -3123,7 +3135,7 @@ namespace fire.Native
                 if (framed) foreach (var l in localsToDeclare) Var("Value", l, "Undef()");
                 else decl.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
             }
-            var scalarDecls = scalarLocals.Select(l => (Name: l, Type: "FireInt")).Concat(f.Scalars.Select(kv => (Name: kv.Key, Type: kv.Value))).ToList();
+            var scalarDecls = scalarLocals.Select(l => (Name: l, Type: ScalarVarCType(f, l))).Concat(f.Scalars.Select(kv => (Name: kv.Key, Type: kv.Value))).ToList();
             foreach (var (scalarName, scalarType) in scalarDecls)
             {
                 string zero = scalarType == "bool" ? "false" : "0";
@@ -3562,18 +3574,21 @@ namespace fire.Native
         /// <summary>The scalar shadow of slot k (after its type: a bool `_b`, an int `_n`); it is declared with the function.</summary>
         private static string ScalarName(Func f, Flow st, int k)
         {
-            bool isBool = BaseKindOfType(st.Types[k]) == KindBool;
-            string name = SlotName(st.Region, k) + (isBool ? "_b" : "_n");
-            f.Scalars[name] = isBool ? "bool" : "FireInt";
+            byte kind = BaseKindOfType(st.Types[k]);
+            string name = SlotName(st.Region, k) + (kind == KindBool ? "_b" : kind == KindWord ? "_w" : "_n");
+            f.Scalars[name] = ScalarCType(kind);
             return name;
         }
+        /// <summary>The C type of a scalar of the kind: a bool, a machine word (FireWord), else an int of the program (FireInt).</summary>
+        private static string ScalarCType(byte kind) => kind == KindBool ? "bool" : kind == KindWord ? "FireWord" : "FireInt";
         /// <summary>Slot k gets its Value from its scalar shadow (and is a Value again).</summary>
         private static void Materialize(Func f, Flow st, int k, Action<string> emit)
         {
             if (k < 0 || k >= 64 || (st.Scalar >> k & 1) == 0) return;
             string shadow = ScalarName(f, st, k);
             st.Scalar &= ~(1UL << k);
-            emit($"{SlotName(st.Region, k)} = {(BaseKindOfType(st.Types[k]) == KindBool ? "Bool" : "Int")}({shadow});");
+            byte kind = BaseKindOfType(st.Types[k]);
+            emit($"{SlotName(st.Region, k)} = {(kind == KindBool ? $"Bool({shadow})" : kind == KindWord ? $"WordV((uint64_t){shadow})" : $"Int({shadow})")};");
         }
         /// <summary>Every scalar slot (but `except1`, `except2`) becomes a Value again - before a jump, an operation that is not scalar-aware, a jump target.</summary>
         private static void MaterializeAll(Func f, Flow st, Action<string> emit, int except1 = -1, int except2 = -1)
@@ -3585,7 +3600,8 @@ namespace fire.Native
         private static bool ScalarAware(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal
             or OpCode.Add or OpCode.Sub or OpCode.Mul or OpCode.Mod or OpCode.Lt or OpCode.LtEq or OpCode.Gt or OpCode.GtEq or OpCode.Eq or OpCode.NotEq
             or OpCode.JumpIfFalse or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq
-            or OpCode.Pop or OpCode.ReleaseTemps or OpCode.EnterScope or OpCode.ExitScope or OpCode.ClaimToScope or OpCode.ArithLocalConstPop;
+            or OpCode.Pop or OpCode.ReleaseTemps or OpCode.EnterScope or OpCode.ExitScope or OpCode.ClaimToScope or OpCode.ArithLocalConstPop
+            or OpCode.BitAnd or OpCode.BitOr or OpCode.BitXor or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ConvertWidth or OpCode.ArrayGet;
 
         private StepResult StepCore(Func f, Chunk chunk, Instr ins, Flow st, StringBuilder? sb, ISet<string> locals)
         {
@@ -3827,6 +3843,11 @@ namespace fire.Native
             // the C FireInt of such a slot (its shadow, or the number of its Value) / the C bool of a slot that holds a bool
             string SN(int k) => IsScalar(k) ? ScalarName(f, st, k) : $"(FireInt){SlotName(st.Region, k)}.i";
             string SB(int k) => IsScalar(k) ? ScalarName(f, st, k) : $"({SlotName(st.Region, k)}.i != 0)";
+            // a slot a word operation takes: a word (in its shadow or as a Value), or a narrow int (its bits)
+            bool WordOperand(int k) => K(k) == KindWord || NarrowInt(k);
+            string SW(int k) => K(k) == KindWord ? (IsScalar(k) ? ScalarName(f, st, k) : $"{SlotName(st.Region, k)}.w") : $"(FireWord)(uint64_t)(int64_t){SN(k)}";
+            // the C number a variable that is a C number takes from slot k
+            string ScalarValue(string v, int k) => ScalarVarCType(f, v) == "FireWord" ? SW(k) : SN(k);
             // slot k takes `expr` (a FireInt, or a bool for KindBool) into its shadow: its Value is stale from here
             void SetScalar(int k, int type, string expr)
             {
@@ -3868,7 +3889,7 @@ namespace fire.Native
             // Stores into a variable: count what it now holds, let go of what it held.
             void StoreVar(string variable, int slot)
             {
-                if (ScalarVar(variable)) { E($"{variable} = {SN(slot)};"); return; }   // (a variable that is a C number: every value stored is a narrow int)
+                if (ScalarVar(variable)) { E($"{variable} = {ScalarValue(variable, slot)};"); return; }   // (a variable that is a C number: every value stored is a narrow int, or a word)
                 string key = VarKey(f, variable);
                 bool valueRef = R(slot);
                 if (valueRef) MarkVarRef(key);
@@ -3897,6 +3918,11 @@ namespace fire.Native
                 case OpCode.LoadConst:
                 {
                     var c = chunk.Constants[ins.A[0]];
+                    if (SlotScalars() && c.Kind == ValueKind.Word)
+                    {
+                        SetScalar(d, TypeOf(KindWord, 0), $"(FireWord){c.AsWord()}ULL");
+                        d++; return Next();
+                    }
                     if (SlotScalars() && IsNarrowIntType(TypeOfConstant(c)))
                     {
                         // a narrow int: a C number in the slot's shadow
@@ -3933,7 +3959,7 @@ namespace fire.Native
                         locals.Add(v);
                     }
                     string key = VarKey(f, v);
-                    if (ScalarVar(v)) E($"{v} = {SN(d - 1)};");   // (a variable that is a C number: every value stored is a narrow int)
+                    if (ScalarVar(v)) E($"{v} = {ScalarValue(v, d - 1)};");   // (a variable that is a C number: every value stored is a narrow int, or a word)
                     else if (R(d - 1)) { MarkVarRef(key); E($"{v} = {S(d - 1)}; retain({v});"); }
                     else E($"{v} = {S(d - 1)};");
                     JoinVarType(key, Ty(d - 1));
@@ -3948,7 +3974,7 @@ namespace fire.Native
                     {
                         // a variable that is a C number: into the slot's shadow (a catch block: a Value of it)
                         if (SlotScalars()) SetScalar(d, LoadType(v), v);
-                        else { E($"{S(d)} = Int({v});"); SetR(d, false); SetT(d, LoadType(v)); _kindsKept = true; }
+                        else { E($"{S(d)} = {(ScalarVarCType(f, v) == "FireWord" ? $"WordV((uint64_t){v})" : $"Int({v})")};"); SetR(d, false); SetT(d, LoadType(v)); _kindsKept = true; }
                         d++; return Next();
                     }
                     E($"{S(d)} = {v};");
@@ -4002,25 +4028,28 @@ namespace fire.Native
                     int varUnit = UnitOfType(varType);
                     // `x++` (step mode) counts in the unit of the variable (stepOf)
                     int constUnit = stepMode && varUnit != 0 ? varUnit : UnitOfType(constType);
+                    if (local && ScalarVar(v))
+                    {
+                        // a variable that is a C number: `x += c` in C (an int wraps like the program's int, a word at its width); a store that is no narrow
+                        // int (no int for a word) would have made it a Value
+                        bool word = ScalarVarCType(f, v) == "FireWord";
+                        if (constKind != KindInt || UnitOfType(constType) != 0 || !word && !IsNarrowIntType(constType))
+                        {
+                            // (not such a number: the variable is a Value after all - the types change, so the generator runs another round)
+                            JoinVarType(key, TypeUnknown);
+                            return Next();
+                        }
+                        if (word) E($"{v} = (FireWord)({v} {(subtract ? "-" : "+")} (FireWord)(uint64_t){constant.AsInt()}LL);");
+                        else E($"{v} = (FireInt)((FireUInt){v} {(subtract ? "-" : "+")} (FireUInt){constant.AsInt()}LL);");
+                        JoinVarType(key, word ? TypeOf(KindWord, 0) : TypeOf(KindInt, 0) | NarrowBit);
+                        return Next();
+                    }
                     if (varKind == KindWord && constKind == KindInt && UnitOfType(constType) == 0)
                     {
                         // a word and a whole number: written out, it wraps (SPEC 8.10)
                         string sec = SectionFor(v);
                         E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = WordV((uint64_t){v}.w {(subtract ? "-" : "+")} (uint64_t)(int64_t){Constant(constant)}.i);{(sec.Length > 0 ? " " + SectionEnd(v) + "}" : "")}");
                         JoinVarType(key, TypeOf(KindWord, 0));
-                        return Next();
-                    }
-                    if (local && ScalarVar(v))
-                    {
-                        // a variable that is a C number: `x += c` in C (wraps like the program's int); a store that is no narrow int would have made it a Value
-                        if (constKind != KindInt || !IsNarrowIntType(constType) || constUnit != 0)
-                        {
-                            // (not a narrow int: the variable is a Value after all - the types change, so the generator runs another round)
-                            JoinVarType(key, TypeUnknown);
-                            return Next();
-                        }
-                        E($"{v} = (FireInt)((FireUInt){v} {(subtract ? "-" : "+")} (FireUInt){constant.AsInt()}LL);");
-                        JoinVarType(key, TypeOf(KindInt, 0) | NarrowBit);
                         return Next();
                     }
                     if (IsNum(varKind) && IsNum(constKind) && varUnit == constUnit)
@@ -4165,6 +4194,20 @@ namespace fire.Native
                     d--; SetR(d - 1, true); return Next();
                 case OpCode.ConvertWidth:
                     Need(1);
+                    if (SlotScalars() && IsScalar(d - 1) && (ins.A[1] & 1) == 0)
+                    {
+                        // a scalar into a width: a C cast (it cannot fail) - into a word, a byte (its lowest 8 bits), or an int of a fixed width
+                        bool toWord = (ins.A[1] & 8) != 0, unsignedTo = (ins.A[1] & 2) != 0;
+                        int bits = ins.A[0];
+                        if (toWord && WordOperand(d - 1)) { string w = SW(d - 1); SetScalar(d - 1, TypeOf(KindWord, 0), w); return Next(); }
+                        if (!toWord && (NarrowInt(d - 1) || K(d - 1) == KindWord) && bits is 8 or 16 or 32 or 64 && bits <= _program.IntWidth)
+                        {
+                            string x = K(d - 1) == KindWord ? $"(FireInt){SW(d - 1)}" : SN(d - 1);
+                            string ctype = (unsignedTo ? "uint" : "int") + bits + "_t";
+                            SetScalar(d - 1, TypeOf(KindInt, 0) | NarrowBit, bits == 64 ? x : $"(FireInt)({ctype}){x}");
+                            return Next();
+                        }
+                    }
                     if ((ins.A[1] & 8) != 0 && K(d - 1) is KindWord or KindInt)
                     {
                         // a word or an int of known kind into a word: written out (an int cut to the width, its unit dropped)
@@ -4176,7 +4219,7 @@ namespace fire.Native
                     {
                         // a store into a `byte` of a number of known kind: its lowest 8 bits, without a unit (SPEC 8.10)
                         E($"{S(d - 1)} = Int((uint8_t)({(K(d - 1) == KindWord ? $"{S(d - 1)}.w" : $"{S(d - 1)}.i")}));");
-                        SetR(d - 1, false); SetT(d - 1, TypeOf(KindInt, 0)); _kindsKept = true;
+                        SetR(d - 1, false); SetT(d - 1, TypeOf(KindInt, 0) | NarrowBit); _kindsKept = true;
                         return Next();
                     }
                     if ((ins.A[1] & 8) != 0)
@@ -4193,8 +4236,12 @@ namespace fire.Native
                         // implicit (an assignment to a declared width): only a number of the declared kind is cut (a word counts as an int) - this cannot fail
                         string implicitTest = (ins.A[1] & 1) != 0 ? $"{S(d - 1)}.kind == K_Float" : $"({S(d - 1)}.kind == K_Int || {S(d - 1)}.kind == K_Word)";
                         E($"if ({implicitTest}) {S(d - 1)} = convertWidth({S(d - 1)}, {ins.A[0]}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {((ins.A[1] & 2) != 0 ? "true" : "false")});");
-                        // (a byte - unsigned - is raw data: the unit is dropped, SPEC 8.10)
-                        if ((ins.A[1] & 2) != 0 && K(d - 1) == KindInt) { SetT(d - 1, TypeOf(KindInt, 0)); _kindsKept = true; }
+                        // (a byte - unsigned - is raw data: the unit is dropped, SPEC 8.10; an int of a width the program's int holds is narrow - convertWidth makes
+                        // a new number, no enum value)
+                        int cutBits = ins.A[0];
+                        int narrowCut = (ins.A[1] & 1) == 0 && cutBits <= _program.IntWidth && cutBits is 8 or 16 or 32 or 64 ? NarrowBit : 0;
+                        if ((ins.A[1] & 2) != 0 && K(d - 1) == KindInt) { SetT(d - 1, TypeOf(KindInt, 0) | narrowCut); _kindsKept = true; }
+                        else if (K(d - 1) == KindInt) { SetT(d - 1, Ty(d - 1) & ~(NarrowBit | CutBit) | narrowCut); _kindsKept = true; }
                         return Next();
                     }
                     E($"{S(d - 1)} = convertWidth({S(d - 1)}, {ins.A[0]}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {((ins.A[1] & 2) != 0 ? "true" : "false")});");
@@ -5182,8 +5229,8 @@ namespace fire.Native
                     Check();
                     int unit = ins.A[3] == 0xFFFF ? -1 : DemandedUnitId(Str(ins.A[3]));
                     byte kind = KindOfDeclared(declared);
-                    // (a plain `int` is cut to the program's int: narrow)
-                    int narrowParam = kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? NarrowBit : 0;
+                    // (a plain `int` is cut to the program's int - but it may hold a value of an enum: CutBit)
+                    int narrowParam = kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? CutBit : 0;
                     JoinVarType(VarKey(f, v), kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : unit < 0 ? TypeUnknown : TypeOf(kind, unit) | NullableBit | narrowParam);
                     _kindsKept = true;
                     return Next();
@@ -5478,10 +5525,24 @@ namespace fire.Native
                     // an index out of range (it throws there)
                     Need(2);
                     bool wordsGet = U(d - 2) == BufWords;
+                    if (SlotScalars() && (NarrowInt(d - 1) || K(d - 1) == KindInt))
+                    {
+                        // into the shadow of the slot: a byte is a narrow int, a word a word (the generic access - an index out of range, a destroyed buffer - throws)
+                        string ab = S(d - 2), ib = NarrowInt(d - 1) ? SN(d - 1) : $"(FireInt){S(d - 1)}.i";
+                        string elem = wordsGet ? $"(FireWord)bufWords(bufOf({ab}))[{ib}]" : $"(FireInt)bufOf({ab})->data[{ib}]";
+                        int elemType = wordsGet ? TypeOf(KindWord, 0) : TypeOf(KindInt, 0) | NarrowBit;
+                        string idxValue = NarrowInt(d - 1) ? $"Int({ib})" : S(d - 1);
+                        SetT(d - 2, elemType); SetR(d - 2, false); _kindsKept = true;
+                        string shadow = ScalarName(f, st, d - 2);
+                        E($"if (FIRE_LIKELY(leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, &{OwnerList()}); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
+                        st.Scalar |= 1UL << (d - 2);
+                        Check();
+                        d--; return Next();
+                    }
                     string a = S(d - 2), i = S(d - 1);
                     E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, &{OwnerList()});");
                     Check();
-                    d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0)); _kindsKept = true; return Next();
+                    d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0) | (wordsGet ? 0 : NarrowBit)); _kindsKept = true; return Next();
                 }
                 case OpCode.ArraySet when K(d - 3) == KindBuf && K(d - 2) == KindInt && (K(d - 1) == KindWord && U(d - 3) == BufWords || K(d - 1) == KindInt && (U(d - 3) == BufBytes || U(d - 1) == 0)):
                 {
@@ -5895,6 +5956,15 @@ namespace fire.Native
             bool TypedWord(string op)
             {
                 if (K(d - 2) != KindWord && K(d - 1) != KindWord) return false;
+                if (SlotScalars() && WordOperand(d - 2) && WordOperand(d - 1) && op is not ("/" or "%"))
+                {
+                    // words (or a narrow int: its bits): C arithmetic on FireWord, it wraps at the width; the result in the left slot's shadow
+                    string wx = SW(d - 2), wy = SW(d - 1);
+                    string expr = op is "<<" or ">>" ? $"({wy} >= FIRE_WORD_BITS ? (FireWord)0 : (FireWord)({wx} {op} {wy}))" : $"(FireWord)({wx} {op} {wy})";
+                    SetScalar(d - 2, TypeOf(KindWord, 0), expr);
+                    d--;
+                    return true;
+                }
                 string? x = WordBits(d - 2), y = WordBits(d - 1);
                 if (x == null || y == null) return false;
                 string a = S(d - 2), b = S(d - 1);
@@ -5916,6 +5986,20 @@ namespace fire.Native
             bool TypedIntBits(string op)
             {
                 if (K(d - 2) != KindInt || K(d - 1) != KindInt) return false;
+                if (SlotScalars() && NarrowInt(d - 2) && NarrowInt(d - 1))
+                {
+                    // two narrow ints (no enum values): C on FireInt; the shifts as shl/shr compute them (FIRE_SCALAR_SHL/SHR)
+                    string bx = SN(d - 2), by = SN(d - 1);
+                    string expr = op switch
+                    {
+                        "<<" => $"FIRE_SCALAR_SHL({bx}, {by})",
+                        ">>" => $"FIRE_SCALAR_SHR({bx}, {by})",
+                        _ => $"(FireInt)({bx} {op} {by})",
+                    };
+                    SetScalar(d - 2, TypeOf(KindInt, 0) | NarrowBit, expr);
+                    d--;
+                    return true;
+                }
                 string a = S(d - 2), b = S(d - 1);
                 int unit = U(d - 2);
                 string unitC = unit == 0 ? "0" : UnitC(unit);
@@ -6003,7 +6087,9 @@ namespace fire.Native
             string? ScalarIntCondition(string op, int ia, int ib, out bool mayThrow)
             {
                 mayThrow = false;
-                bool MaybeNarrow(int k) => BaseKindOfType(Ty(k)) == KindInt && U(k) == 0 && (Ty(k) & TypeNone) == 0 && (_program.IntWidth >= 64 || (Ty(k) & NarrowBit) != 0);
+                // two words, or a word and a narrow int: unsigned, at the width of the word (SPEC 8.10)
+                if ((K(ia) == KindWord || K(ib) == KindWord) && WordOperand(ia) && WordOperand(ib)) return $"{SW(ia)} {op} {SW(ib)}";
+                bool MaybeNarrow(int k) => BaseKindOfType(Ty(k)) == KindInt && U(k) == 0 && (Ty(k) & TypeNone) == 0 && (Ty(k) & (NarrowBit | CutBit)) != 0;
                 if (!MaybeNarrow(ia) || !MaybeNarrow(ib)) return null;
                 bool na = NarrowInt(ia), nb = NarrowInt(ib);
                 if (na && nb) return $"{SN(ia)} {op} {SN(ib)}";
