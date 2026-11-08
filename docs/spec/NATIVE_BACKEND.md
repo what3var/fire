@@ -141,8 +141,12 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   **Objekte** haben dasselbe Handle (siehe oben).
 * **`new T[n]`** mit einem Typparameter `T` (das innere Array von `List<T>`): `OpCode.TypeArrayOfParam` typisiert es nach dem Typargument, das läuft -
   `int`, `float`, `bool`, `char` ohne Einheit werden ein gepacktes Array (`TArg.arrElem`, in der VM `DeclaredType.TypedElementOf`), alles andere bleibt
-  ein Array von Werten. `List<int>` hält seine Zahlen also roh (8 bzw. mit `#intwidth 32` 4 Byte statt 16 je Element); `Dictionary`/`HashSet` (ihre
-  Tabelle ist nicht generisch) noch nicht.
+  ein Array von Werten. `List<int>` hält seine Zahlen also roh (8 bzw. mit `#intwidth 32` 4 Byte statt 16 je Element), `Dictionary`/`HashSet` ihre
+  Schlüssel und Werte ebenso (ihre Tabelle ist `__HashTable<K, V>`; `HashSet<T>` ist `__HashTable<T, any>`), dazu Hashes, Ketten und Buckets als `int a[]`,
+  die Merker `live` als `bool a[]` (ein Hash hat 30 Bit, damit er auch mit `#intwidth 32` ins Array passt). Folgt `TypeArrayOfParam` direkt auf `NewArray`,
+  legt der Generator das gepackte Array gleich an (`newTypedArray`, wie bei `int a[] = new int[n]`) statt erst ein Array von Werten umzuwandeln - das
+  hätte die 16 Byte je Element zusätzlich zu den gepackten Zahlen behalten. Gemessen (200 000 Einträge `Dictionary<int, int>`, 1,5 Mio. Abfragen,
+  `HashSet<int>`): 18 statt 39 MB, etwas schneller.
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit

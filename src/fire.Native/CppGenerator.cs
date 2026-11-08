@@ -5108,6 +5108,9 @@ namespace fire.Native
                     }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
                         E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {typed.A[0]}, {TypeArrayUnitArgs(chunk, typed.A[2])}, &{OwnerList()});");
+                    else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArrayOfParam } ofParam)
+                        // `new T[n]` (TypeArrayOfParam right after): packed at once when the type argument that runs has an element type (`List<int>`)
+                        E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ofParam.A[0]))}; {S(d - 1)} = ta_ && ta_[0] && ta_[0]->arrElem ? newTypedArray({S(d - 1)}, (uint8_t)(ta_[0]->arrElem - 1), {TypeArrayUnitArgs(chunk, 0xFFFF)}, &{OwnerList()}) : newArray({S(d - 1)}, &{OwnerList()}); }}");
                     else
                         E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});");
                     SetR(d - 1, true); return Next();

@@ -407,14 +407,15 @@ namespace fire.Standard
 
             // The table of Dictionary and HashSet: the entries in the order they came in (`keys`, `vals`, their hashes; `live` false for a removed one) and
             // per bucket the first entry of its chain (`buckets`, `next`: index + 1, 0 for none). The keys are compared with `==` (strings by text, numbers by
-            // value - `1km` is `1000m`), an IEquatable key with Equals/GetHashCode.
-            class __HashTable {
+            // value - `1km` is `1000m`), an IEquatable key with Equals/GetHashCode. The arrays are typed: `keys` and `vals` by the type arguments (`new K[n]`:
+            // `Dictionary<int, float>` holds its keys and values raw, `Dictionary<string, Node>` as values), the others hold ints and bools.
+            class __HashTable<K, V> {
                 protected any keys
                 protected any vals
-                private any hashes
-                private any next
-                protected any live
-                private any buckets
+                private int hashes[]
+                private int next[]
+                protected bool live[]
+                private int buckets[]
                 private int count
                 protected int used
                 protected Owns owns
@@ -424,8 +425,8 @@ namespace fire.Standard
 
                 construct(Owns owns) {
                     this.owns = owns
-                    this.keys = new class[8]
-                    this.vals = new class[8]
+                    this.keys = new K[8]
+                    this.vals = new V[8]
                     this.hashes = new int[8]
                     this.next = new int[8]
                     this.live = new bool[8]
@@ -435,9 +436,10 @@ namespace fire.Standard
                     this.used = 0
                 }
 
+                // (30 bits: the hash fits the int array `hashes` also where an int has 32 bits; the buckets take its low bits)
                 int HashOf(any key) {
-                    if (key is of IEquatable) { return key.GetHashCode() }
-                    return __MathCall(15, key)
+                    if (key is of IEquatable) { return key.GetHashCode() & 1073741823 }
+                    return __MathCall(15, key) & 1073741823
                 }
 
                 bool SameKey(any a, any b) {
@@ -447,7 +449,7 @@ namespace fire.Standard
 
                 // the entry of `key` (hash `h`), -1 if there is none
                 int Find(any key, int h) {
-                    any i = this.buckets[h & (this.buckets.length - 1)] - 1
+                    int i = this.buckets[h & (this.buckets.length - 1)] - 1
                     while (i >= 0) {
                         if (this.hashes[i] == h && this.SameKey(this.keys[i], key)) { return i }
                         i = this.next[i] - 1
@@ -464,7 +466,7 @@ namespace fire.Standard
                     this.vals[i] = value
                     this.hashes[i] = h
                     this.live[i] = true
-                    any b = h & (this.buckets.length - 1)
+                    int b = h & (this.buckets.length - 1)
                     this.next[i] = this.buckets[b]
                     this.buckets[b] = i + 1
                     this.count = this.count + 1
@@ -472,8 +474,8 @@ namespace fire.Standard
 
                 // takes the entry out of its chain; key and value stay with the caller (Drop or TakeLocal)
                 undefined Unlink(int at) {
-                    any b = this.hashes[at] & (this.buckets.length - 1)
-                    any i = this.buckets[b] - 1
+                    int b = this.hashes[at] & (this.buckets.length - 1)
+                    int i = this.buckets[b] - 1
                     var prev = -1
                     while (i >= 0 && i != at) {
                         prev = i
@@ -495,12 +497,12 @@ namespace fire.Standard
                 undefined Resize() {
                     var cap = 8
                     while (cap < this.count * 2) { cap = cap * 2 }
-                    var nk = new class[cap]
-                    var nv = new class[cap]
-                    var nh = new int[cap]
-                    var nn = new int[cap]
-                    var nl = new bool[cap]
-                    var nb = new int[cap]
+                    var nk = new K[cap]
+                    var nv = new V[cap]
+                    int nh[] = new int[cap]
+                    int nn[] = new int[cap]
+                    bool nl[] = new bool[cap]
+                    int nb[] = new int[cap]
                     for (var b0 = 0; b0 < cap; b0 = b0 + 1) { nb[b0] = 0 }
                     var j = 0
                     for (var i = 0; i < this.used; i = i + 1) {
@@ -619,7 +621,7 @@ namespace fire.Standard
 
             /// Values by key (`Dictionary<string, int>`): `dict[key] = value`, `dict[key]`, Add, Get, TryGet, ContainsKey, Remove, Take, Keys, Values,
             /// `Count`; `foreach` gives KeyValuePairs in the order the keys came in. `new Dictionary<string, Node>(Owns.Values)` owns its values (see Owns).
-            class Dictionary<K, V> : __HashTable, IEnumerable<KeyValuePair<K, V>> {
+            class Dictionary<K, V> : __HashTable<K, V>, IEnumerable<KeyValuePair<K, V>> {
                 construct(Owns owns = Owns.Explicit) : base(owns) { }
 
                 /// Adds a key that is not there yet (an ArgumentException if it is).
@@ -741,7 +743,7 @@ namespace fire.Standard
 
             /// A set of values, each once (`HashSet<string>`): Add, Contains, Remove, Take, Clear, `Count`; `foreach` in the order they came in.
             /// `new HashSet<Node>(Owns.Values)` owns its elements (see Owns).
-            class HashSet<T> : __HashTable, IEnumerable<T> {
+            class HashSet<T> : __HashTable<T, any>, IEnumerable<T> {
                 construct(Owns owns = Owns.Explicit) : base(owns) { }
 
                 /// Adds `item`; false if an equal one is already there.

@@ -23052,6 +23052,79 @@ else
             bf.items[0] = "ok"
             print(bf.items[0])
             """),
+        ("Tabellen mit Typargument: Dictionary<int, float>/HashSet<int> halten Schluessel und Werte roh (__HashTable<K, V>, new K[n]), Dictionary<string, Node> nicht; Owns, IEquatable, Einheiten, Probe ueber die Felder", """
+            class Node { string name
+                construct(string n) { this.name = n } }
+            class Key : IEquatable { int a
+                construct(int a) { this.a = a }
+                bool Equals(any o) { return o is of Key && o.a % 10 == this.a % 10 }
+                int GetHashCode() { return this.a % 10 + 4000000000 } }
+            class Probe<K, V> : Dictionary<K, V> {
+                construct() : base() { }
+                string KeysTyped() { any old = this.keys[0]
+                    try { this.keys[0] = "x"; this.keys[0] = old; return "untyped" } catch (ArgumentException e) { return "typed" } }
+                string ValsTyped() { any old = this.vals[0]
+                    try { this.vals[0] = "x"; this.vals[0] = old; return "untyped" } catch (ArgumentException e) { return "typed" } }
+            }
+            var d = new Dictionary<int, float>()
+            for (int i = 0; i < 100; i++) { d[i * 7] = i * 0.5 }
+            d.Remove(14)
+            d[21] = -1.0
+            print(d.Count + " " + d[7] + " " + d[21] + " " + d.ContainsKey(14) + " " + d.Get(14, 9.0) + " " + d[693])
+            var sum = 0.0
+            foreach (p in d) { sum = sum + p.Key + p.Value }
+            print(sum + " " + d.Keys[0] + " " + d.Values[98])
+            var s = new Dictionary<string, int>()
+            s["eins"] = 1
+            s["zwei"] = 2
+            s.Add("drei", 3)
+            try { s.Add("eins", 9) } catch (ArgumentException e) { print("dup") }
+            int got = 0
+            print(s.TryGet("zwei", got) + " " + got + " " + s.Take("drei") + " " + s.Count)
+            var owned = new Dictionary<string, Node>(Owns.Values)
+            owned["a"] = new Node("A")
+            owned["b"] = new Node("B")
+            var b = owned["b"]
+            owned.Remove("b")
+            var gone = "alive"
+            try { gone = b.name } catch (e) { gone = "gone" }
+            print(owned["a"].name + " " + gone)
+            var hs = new HashSet<int>()
+            for (int i = 0; i < 50; i++) { hs.Add(i % 20) }
+            hs.Remove(3)
+            var hsum = 0
+            foreach (x in hs) { hsum = hsum + x }
+            print(hs.Count + " " + hs.Contains(3) + " " + hs.Contains(19) + " " + hsum)
+            var ks = new HashSet<Key>()
+            ks.Add(new Key(3))
+            print(ks.Add(new Key(13)) + " " + ks.Contains(new Key(23)) + " " + ks.Count)
+            var lengths = new Dictionary<any, string>()
+            lengths[1km] = "km"
+            print(lengths[1000m] + " " + lengths.ContainsKey(1000))
+            var pi = new Probe<int, bool>()
+            pi[1] = true
+            var ps = new Probe<string, Node>()
+            ps["x"] = new Node("n")
+            print(pi.KeysTyped() + " " + pi.ValsTyped() + " " + ps.KeysTyped() + " " + pi[1])
+            var raw = new Dictionary()
+            raw[1] = "a"
+            raw["b"] = 2
+            print(raw[1] + raw["b"])
+            d.Clear()
+            print(d.Count + " " + d.ContainsKey(7))
+            """),
+        ("Tabellen mit #intwidth 32: Hashes passen ins int-Array (30 Bit), auch der eines GetHashCode ueber 32 Bit", """
+            #intwidth 32
+            class Key : IEquatable { int a
+                construct(int a) { this.a = a }
+                bool Equals(any o) { return o is of Key && o.a % 10 == this.a % 10 }
+                int[64] GetHashCode() { return this.a % 10 + 4000000000 } }
+            var d = new Dictionary<int, int>()
+            for (int i = 0; i < 300; i++) { d[i * 1000003] = i }
+            var ks = new HashSet<Key>()
+            ks.Add(new Key(3))
+            print(d.Count + " " + d[299 * 1000003] + " " + d.ContainsKey(5) + " " + ks.Add(new Key(13)) + " " + ks.Contains(new Key(23)))
+            """),
         ("Schmale Felder (#intwidth 32, #floatwidth 32): int/float/bool teilen sich einen Wert, Vererbung mit freier Haelfte, undefined, Einheiten, int[64] bleibt breit, Kopie, Schneiden", """
             #intwidth 32
             #floatwidth 32
