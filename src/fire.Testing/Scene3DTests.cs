@@ -11,6 +11,7 @@ static class Scene3DTests
     public const string Script = """
         #import "graphics"
         #import "scene3d"
+        #import "scene3d.terrain"
 
         // a checksum of the picture (the same in the VM and in C++)
         class H {
@@ -220,6 +221,34 @@ static class Scene3DTests
         print("fast dither " + (H.Sum(fastFrame) != fastShadow))
         scene.Renderer = RenderMode.Software
         scene.ShadowResolution = 1024
+
+        // terrains (scene3d.terrain): smooth and in blocks, the height of the ground, from an array and from a picture
+        var hills = new byte[8 * 8]
+        for (var i = 0; i < 64; i++) { hills[i] = ((i % 8) * (i / 8)) % 7 }
+        var land = new Terrain(hills, 8, 8, 50cm, 10cm)
+        land.Z = -2m
+        var steps = new Terrain(hills, 8, 8, 50cm, 10cm, TerrainMode.Hard)
+        steps.X = 3m
+        steps.RotationY = 90deg
+        scene.Add(land)
+        scene.Add(steps)
+        print("terrain " + land.Triangles + " " + steps.Triangles + " " + land.Width + " " + steps.Width + " " + (steps.Mode == TerrainMode.Hard))
+        print("ground " + land.HeightAt(0m, -2m) + " " + land.HeightAt(0.3m, -1.6m) + " " + steps.HeightAt(3.2m, 0.6m) + " " + (land.HeightAt(10m, 0m) == undefined))
+        var ramp = new Terrain([0, 1, 2, 3, 0, 1, 2, 3], 4, 2, 1m, 1m)
+        print("ramp " + ramp.HeightAt(0m, 0m) + " " + ramp.HeightAt(-1m, 0.2m) + " " + ramp.Height)
+        var picture = new Framebuffer(4, 4)
+        var white = new byte[64]
+        for (var i = 0; i < 64; i++) { white[i] = 255 }
+        picture.WriteBytes(white)
+        var lit = Terrain.FromImage(picture, 1m, 1cm, TerrainMode.Hard)
+        print("image " + lit.Triangles + " " + lit.HeightAt(0m, 0m))
+        cam.Render()
+        print("terrain picture " + H.Sum(frame))
+        scene.Renderer = RenderMode.Fast
+        cam.Render()
+        print("terrain fast " + H.Sum(frame))
+        scene.Renderer = RenderMode.Software
+        try { var bad = new Terrain(hills, 3, 3) } catch (Scene3DException e) { print("error " + e.message) }
 
         // lengths and angles need units (a length property converts and refuses a number without a unit itself)
         try { box.X = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }

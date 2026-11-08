@@ -264,6 +264,18 @@
         "returns": "int",
         "arguments": 8,
         "c": "fire_s3d_RenderLean"
+      },
+      {
+        "name": "__S3DTerrain",
+        "returns": "bool",
+        "arguments": 7,
+        "c": "fire_s3d_Terrain"
+      },
+      {
+        "name": "__S3DTerrainHeight",
+        "returns": "float",
+        "arguments": 3,
+        "c": "fire_s3d_TerrainHeight"
       }
     ],
     "reset": "fire_s3d_reset",

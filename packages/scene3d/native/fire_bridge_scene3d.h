@@ -253,6 +253,7 @@ typedef struct FireS3dItem {
     S3dLean* lean;                   /* camera: the lean renderer (RenderMode.Fast) */
     int64_t* objects; s3d_size objectN, objectCap;   /* scene: its objects and lights, in the order they were added */
     int64_t* lights; s3d_size lightN, lightCap;
+    float* terrain; int tCols, tRows, tHard; float tCell, tStep;   /* object, a terrain: its heights (in steps), cells, how it is built */
 } FireS3dItem;
 static FireS3dTable g_s3dItems;
 
@@ -278,7 +279,7 @@ static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     if (it->lean) s3d_leanFree(it->lean);
     for (i = 0; i < it->objectN; i++) fire_s3d_itemRelease(it->objects[i]);
     for (i = 0; i < it->lightN; i++) fire_s3d_itemRelease(it->lights[i]);
-    S3D_FREE(it->objects); S3D_FREE(it->lights);
+    S3D_FREE(it->objects); S3D_FREE(it->lights); S3D_FREE(it->terrain);
     S3D_FREE(it);
 }
 static void fire_s3d_itemRelease(int64_t h) {
@@ -427,6 +428,200 @@ static Value fire_s3d_ObjCorner(Value h, Value x, Value y, Value z) {
     it->trisDirty = 1;
     return Bool(!m->bad);
 }
+static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** texture, S3dObjectParams* opOut, S3dSurface* sOut);
+
+/* ---- terrains (scene3d.terrain): a mesh from a grid of heights ----------------------------------------------------------------------------------------------------------
+ * The grid has `cols` x `rows` heights (in steps: a height of 1 is `step` meters). Smooth: every height is a corner, the cells between them are two triangles with shared corners (the
+ * normals are smoothed); the diagonal of a cell goes from (i+1, j) to (i, j+1). Hard: every height is a block of `cell` x `cell` - a flat top at its height and upright walls only
+ * where a neighbour is lower (the border goes down to the lowest of 0 and the heights): what cannot be seen is not built; neighbouring tops of the same height are one rectangle,
+ * walls in a line with the same heights on both sides one quad. The terrain lies centred on x and z, height 0 at y = 0 (its anchor). Texture coordinates follow the ground: u across
+ * the width, v across the depth (measured like the object's height, so that TextureWidth / TextureHeight tile in meters). */
+typedef struct FireS3dTerrainBuild { S3dMesh* m; float x0, z0, uScale, vScale, yTop; } FireS3dTerrainBuild;
+
+static void fire_s3d_quad(FireS3dTerrainBuild* b, const float* p /* 4 corners x, y, z: counter clockwise seen from the front */, int wall, int alongX) {
+    uint32_t base = (uint32_t)(b->m->posN / 3);
+    int k;
+    for (k = 0; k < 4; k++) {
+        float x = p[k * 3], y = p[k * 3 + 1], z = p[k * 3 + 2], u, v;
+        if (!wall) { u = (x - b->x0) / b->uScale; v = (z - b->z0) / b->vScale; }
+        else { u = (alongX ? x - b->x0 : z - b->z0) / b->uScale; v = (b->yTop - y) / b->vScale; }
+        s3d_addVertex(b->m, x, y, z, u, v);
+    }
+    s3d_addTriangle(b->m, base, base + 1, base + 2);
+    s3d_addTriangle(b->m, base, base + 2, base + 3);
+}
+
+static S3dMesh* fire_s3d_terrainMesh(const float* H, int cols, int rows, float cell, float step, int hard) {
+    FireS3dTerrainBuild b;
+    float minH = H[0], maxH = H[0], W, D, height;
+    int i, j;
+    s3d_size n = (s3d_size)cols * (s3d_size)rows, k;
+    for (k = 1; k < n; k++) { if (H[k] < minH) minH = H[k]; if (H[k] > maxH) maxH = H[k]; }
+    b.m = s3d_meshNew();
+    if (b.m == NULL) return NULL;
+    W = (float)(hard ? cols : cols - 1) * cell; D = (float)(hard ? rows : rows - 1) * cell;
+    b.x0 = -W * 0.5f; b.z0 = -D * 0.5f;
+    if (hard && minH > 0) minH = 0;
+    height = (maxH - minH) * step;
+    b.uScale = W > 0 ? W : 1;
+    b.vScale = height >= 0.000001f ? height : (D > 0 ? D : 1);
+    b.yTop = maxH * step;
+    if (!hard) {
+        for (j = 0; j < rows; j++)
+            for (i = 0; i < cols; i++) {
+                float x = b.x0 + (float)i * cell, z = b.z0 + (float)j * cell;
+                s3d_addVertex(b.m, x, H[(s3d_size)j * cols + i] * step, z, (x - b.x0) / b.uScale, (z - b.z0) / b.vScale);
+            }
+        for (j = 0; j + 1 < rows; j++)
+            for (i = 0; i + 1 < cols; i++) {
+                uint32_t a = (uint32_t)((s3d_size)j * cols + i), r = a + 1, d = a + (uint32_t)cols, rd = d + 1;
+                s3d_addTriangle(b.m, a, d, r);
+                s3d_addTriangle(b.m, r, d, rd);
+            }
+    } else {
+        uint8_t* done = (uint8_t*)s3d_calloc(n, 1);
+        if (done == NULL) { s3d_meshFree(b.m); return NULL; }
+        /* the tops: rectangles of the same height (greedy: as wide as it goes, then as deep as the whole width goes) */
+        for (j = 0; j < rows; j++)
+            for (i = 0; i < cols; i++) {
+                float h = H[(s3d_size)j * cols + i], p[12], y, xa, xb, za, zb;
+                int w = 1, d = 1, ok = 1, t;
+                if (done[(s3d_size)j * cols + i]) continue;
+                while (i + w < cols && !done[(s3d_size)j * cols + i + w] && H[(s3d_size)j * cols + i + w] == h) w++;
+                while (ok && j + d < rows) {
+                    for (t = 0; t < w; t++) if (done[(s3d_size)(j + d) * cols + i + t] || H[(s3d_size)(j + d) * cols + i + t] != h) { ok = 0; break; }
+                    if (ok) d++;
+                }
+                for (k = 0; k < (s3d_size)d; k++) for (t = 0; t < w; t++) done[(s3d_size)(j + (int)k) * cols + i + t] = 1;
+                y = h * step; xa = b.x0 + (float)i * cell; xb = xa + (float)w * cell; za = b.z0 + (float)j * cell; zb = za + (float)d * cell;
+                p[0] = xa; p[1] = y; p[2] = za;  p[3] = xa; p[4] = y; p[5] = zb;  p[6] = xb; p[7] = y; p[8] = zb;  p[9] = xb; p[10] = y; p[11] = za;
+                fire_s3d_quad(&b, p, 0, 0);
+            }
+        S3D_FREE(done);
+        /* the walls across x (between column i-1 and i, at x = x0 + i * cell): runs along z with the same two heights */
+        for (i = 0; i <= cols; i++)
+            for (j = 0; j < rows; ) {
+                float l = i > 0 ? H[(s3d_size)j * cols + i - 1] : minH, r = i < cols ? H[(s3d_size)j * cols + i] : minH;
+                int run = 1;
+                if (l == r) { j++; continue; }
+                while (j + run < rows && (i > 0 ? H[(s3d_size)(j + run) * cols + i - 1] : minH) == l && (i < cols ? H[(s3d_size)(j + run) * cols + i] : minH) == r) run++;
+                {
+                    float x = b.x0 + (float)i * cell, za = b.z0 + (float)j * cell, zb = za + (float)run * cell, lo = (l < r ? l : r) * step, hi = (l < r ? r : l) * step, p[12];
+                    if (l > r) {   /* the left one is higher: the wall faces +x */
+                        p[0] = x; p[1] = lo; p[2] = zb;  p[3] = x; p[4] = lo; p[5] = za;  p[6] = x; p[7] = hi; p[8] = za;  p[9] = x; p[10] = hi; p[11] = zb;
+                    } else {
+                        p[0] = x; p[1] = lo; p[2] = za;  p[3] = x; p[4] = lo; p[5] = zb;  p[6] = x; p[7] = hi; p[8] = zb;  p[9] = x; p[10] = hi; p[11] = za;
+                    }
+                    fire_s3d_quad(&b, p, 1, 0);
+                }
+                j += run;
+            }
+        /* the walls across z (between row j-1 and j): runs along x */
+        for (j = 0; j <= rows; j++)
+            for (i = 0; i < cols; ) {
+                float f = j > 0 ? H[(s3d_size)(j - 1) * cols + i] : minH, bk = j < rows ? H[(s3d_size)j * cols + i] : minH;
+                int run = 1;
+                if (f == bk) { i++; continue; }
+                while (i + run < cols && (j > 0 ? H[(s3d_size)(j - 1) * cols + i + run] : minH) == f && (j < rows ? H[(s3d_size)j * cols + i + run] : minH) == bk) run++;
+                {
+                    float z = b.z0 + (float)j * cell, xa = b.x0 + (float)i * cell, xb = xa + (float)run * cell, lo = (f < bk ? f : bk) * step, hi = (f < bk ? bk : f) * step, p[12];
+                    if (f > bk) {   /* the row before is higher: the wall faces +z */
+                        p[0] = xa; p[1] = lo; p[2] = z;  p[3] = xb; p[4] = lo; p[5] = z;  p[6] = xb; p[7] = hi; p[8] = z;  p[9] = xa; p[10] = hi; p[11] = z;
+                    } else {
+                        p[0] = xb; p[1] = lo; p[2] = z;  p[3] = xa; p[4] = lo; p[5] = z;  p[6] = xa; p[7] = hi; p[8] = z;  p[9] = xb; p[10] = hi; p[11] = z;
+                    }
+                    fire_s3d_quad(&b, p, 1, 1);
+                }
+                i += run;
+            }
+    }
+    if (!s3d_meshFinish(b.m)) { s3d_meshFree(b.m); return NULL; }
+    return b.m;
+}
+
+/* Makes the object a terrain: `heights` is a byte buffer (cols * rows heights 0..255, or cols * rows * 4 bytes R, G, B, A whose brightness is the height) or an array of numbers;
+ * `cell` the size of a cell (meters), `step` the height of 1 (meters), `hard` 0 smooth / 1 blocks. false: the data do not fit (or the memory is gone). */
+static Value fire_s3d_Terrain(Value h, Value heights, Value cols, Value rows, Value cell, Value step, Value hard) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    s3d_size n, k;
+    float* H;
+    S3dMesh* m;
+    int64_t mh;
+    if (!it || cols.i < (hard.i ? 1 : 2) || rows.i < (hard.i ? 1 : 2) || cols.i > 4096 || rows.i > 4096 || toR(cell) <= 0) return Bool(false);
+    n = (s3d_size)cols.i * (s3d_size)rows.i;
+    H = (float*)S3D_MALLOC(n * sizeof(float));
+    if (H == NULL) return Bool(false);
+    if (heights.kind == K_Array) {
+        Arr* a = arrOf(heights);
+        const Value* v;
+        if ((s3d_size)a->length != n) { S3D_FREE(H); return Bool(false); }
+        v = arrItems(a);
+        for (k = 0; k < n; k++) H[k] = (float)toR(v[k]);
+    } else {
+        FireBytes in;
+        if (!bytesArg(heights, "Scene3D.Terrain", &in)) { S3D_FREE(H); return Undef(); }
+        if ((s3d_size)in.length == n) for (k = 0; k < n; k++) H[k] = (float)in.data[k];
+        else if ((s3d_size)in.length == n * 4) for (k = 0; k < n; k++) H[k] = (float)(((int)in.data[k * 4] * 3 + (int)in.data[k * 4 + 1] * 6 + (int)in.data[k * 4 + 2]) / 10);
+        else { S3D_FREE(H); return Bool(false); }
+    }
+    m = fire_s3d_terrainMesh(H, (int)cols.i, (int)rows.i, (float)toR(cell), (float)toR(step), hard.i != 0);
+    if (m == NULL || (mh = fire_s3d_add(&g_s3dMeshes, m)) == 0) { if (m) s3d_meshFree(m); S3D_FREE(H); return Bool(false); }
+    fire_s3d_meshRelease(it->mesh);
+    it->mesh = mh;
+    S3D_FREE(it->terrain);
+    it->terrain = H; it->tCols = (int)cols.i; it->tRows = (int)rows.i; it->tHard = hard.i != 0; it->tCell = (float)toR(cell); it->tStep = (float)toR(step);
+    /* the anchor: x and z in the middle, y where the height 0 is */
+    it->f[OF_AX] = (Real)0.5; it->f[OF_AX + 2] = (Real)0.5;
+    it->f[OF_AX + 1] = m->bmax.y - m->bmin.y > 1e-6f ? (Real)(-m->bmin.y / (m->bmax.y - m->bmin.y)) : (Real)0;
+    return Bool(true);
+}
+
+/* The height of the ground of a terrain below the world point (x, z): its y in the world (undefined outside the terrain). The terrain may be moved, scaled and turned around
+ * the vertical axis. */
+static Value fire_s3d_TerrainHeight(Value h, Value wx, Value wz) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dMesh* m;
+    S3dTexture* tex;
+    S3dObjectParams op;
+    S3dSurface s;
+    S3dMat4 model, normalM;
+    S3dCamera cam;
+    float a, b, c, d, e, f, det, px, pz, lx, lz, gx, gz, y;
+    int i, j, cols, rows;
+    if (!it || it->terrain == NULL || !fire_s3d_objectOf(it, &m, &tex, &op, &s)) return Undef();
+    memset(&cam, 0, sizeof cam);
+    s.billboard = 0;
+    s3d_objectMatrices(&cam, &op, &s, &model, &normalM);
+    /* local x, z from world x, z: the inverse of the x/z part of the model (a turn around y and a scale) */
+    a = S3D_AT(model, 0, 0); b = S3D_AT(model, 0, 2); c = S3D_AT(model, 2, 0); d = S3D_AT(model, 2, 2);
+    e = (float)toR(wx) - S3D_AT(model, 0, 3); f = (float)toR(wz) - S3D_AT(model, 2, 3);
+    det = a * d - b * c;
+    if (det == 0) return Undef();
+    lx = (d * e - b * f) / det; lz = (a * f - c * e) / det;
+    cols = it->tCols; rows = it->tRows;
+    if (it->tHard) {
+        gx = lx / it->tCell + (float)cols * 0.5f; gz = lz / it->tCell + (float)rows * 0.5f;
+        if (gx < 0 || gz < 0 || gx >= (float)cols || gz >= (float)rows) return Undef();
+        y = it->terrain[(s3d_size)(int)gz * cols + (int)gx] * it->tStep;
+    } else {
+        float fx, fz, h00, h10, h01, h11;
+        gx = lx / it->tCell + (float)(cols - 1) * 0.5f; gz = lz / it->tCell + (float)(rows - 1) * 0.5f;
+        if (gx < 0 || gz < 0 || gx > (float)(cols - 1) || gz > (float)(rows - 1)) return Undef();
+        i = (int)gx; j = (int)gz;
+        if (i > cols - 2) i = cols - 2;
+        if (j > rows - 2) j = rows - 2;
+        fx = gx - (float)i; fz = gz - (float)j;
+        h00 = it->terrain[(s3d_size)j * cols + i]; h10 = it->terrain[(s3d_size)j * cols + i + 1];
+        h01 = it->terrain[(s3d_size)(j + 1) * cols + i]; h11 = it->terrain[(s3d_size)(j + 1) * cols + i + 1];
+        /* the two triangles of the cell (the diagonal from (1, 0) to (0, 1)) */
+        if (fx + fz <= 1) y = h00 + fx * (h10 - h00) + fz * (h01 - h00);
+        else y = h11 + (1 - fx) * (h01 - h11) + (1 - fz) * (h10 - h11);
+        y *= it->tStep;
+    }
+    px = lx; pz = lz;
+    return Float((Real)s3d_transformPoint(&model, s3d_v3(px, y, pz)).y);
+}
+
 static Value fire_s3d_ObjTriangles(Value h) {
     FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
     S3dMesh* m = it ? fire_s3d_objMesh(it) : NULL;
