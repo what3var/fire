@@ -1174,11 +1174,15 @@ namespace fire.Compiler
             }
             // `int! count` (SPEC 8.11): a field that never holds undefined starts at zero (in the unit it demands)
             else if (arrayRanks is not { Count: > 0 } && type is { NonNull: true } && DeclaredKind.Of(type) is var nonNullKind and not 0)
-                inner.EmitLoadConst(DeclaredKind.ZeroOf(nonNullKind, type.RequiredUnit is { } zeroUnit && !zeroUnit.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(zeroUnit) : null));
+                inner.EmitLoadConst(DeclaredKind.ZeroOf(nonNullKind, ZeroUnitOf(type)));
             else inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
             return new FunctionProto(inner._chunk, 0, AccessModifier.Private);
         }
+
+        /// <summary>The unit the zero of a `defined` declaration without an initializer has (SPEC 8.11): the one it demands, none for an open one.</summary>
+        private static fire.Values.Unit? ZeroUnitOf(TypeRef type) =>
+            type.RequiredUnit is { } unit && !unit.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(unit) : null;
 
         /// <summary>Emits for every parameter with a lambda-signature
         /// type annotation (`lambda&lt;P1,...,Pn&gt;`, see Ast.TypeRef.
@@ -1695,6 +1699,8 @@ namespace fire.Compiler
                         // from there on the slots stay 'undefined', as before with
                         // a completely undetermined-size declarator.
                         CompileArrayAlloc(vd.ArrayRanks, 0, IsByteBuffer(vd.Type, vd.ArrayRanks.Count));
+                    else if (vd.Type is { NonNull: true } && DeclaredKind.Of(vd.Type) is var zeroKind and not 0)
+                        EmitLoadConst(DeclaredKind.ZeroOf(zeroKind, ZeroUnitOf(vd.Type)));   // (`defined int n` starts at 0: SPEC 8.11)
                     else
                         EmitLoadConst(Value.MakeUndefined());
 
@@ -3048,6 +3054,7 @@ namespace fire.Compiler
             LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or AssignExpr or IncDecExpr or LambdaExpr or InterpolatedStringExpr
                 or IsOfExpr or IsInExpr or IsFromExpr or TryProcessExpr => false,   // (`a..b` is a call of __Range.Of: a new array, claimed like one)
             UnaryExpr { Op: UnaryOp.Take } => false,
+            UnaryExpr { Op: UnaryOp.Trust } t => MayBeUnclaimed(t.Operand),
             ConditionalExpr c => MayBeUnclaimed(c.Then) || MayBeUnclaimed(c.Else),
             _ => true,
         };
@@ -3059,7 +3066,7 @@ namespace fire.Compiler
             null or LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or LambdaExpr => false,
             AssignExpr a => (a.Target is not IdentifierExpr && MayLeaveTemps(a.Target)) || MayLeaveTemps(a.Value),
             IncDecExpr i => i.Target is not IdentifierExpr,
-            UnaryExpr { Op: UnaryOp.Take } u => MayLeaveTemps(u.Operand),
+            UnaryExpr { Op: UnaryOp.Take or UnaryOp.Trust } u => MayLeaveTemps(u.Operand),
             _ => true,
         };
 
@@ -3783,6 +3790,12 @@ namespace fire.Compiler
                 return;
             }
 
+            if (u.Op == UnaryOp.Trust)
+            {
+                // `trust x` (SPEC 8.11): the value itself - the developer vouches that it is not undefined (the VM still checks where `defined` is declared)
+                CompileExpr(u.Operand);
+                return;
+            }
             if (u.Op == UnaryOp.Take)
             {
                 // `var a = take x` (SPEC 2.2): x belongs to the current scope (other places - arguments, assignments - are handled where they occur)

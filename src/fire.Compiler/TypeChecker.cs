@@ -22,11 +22,21 @@ namespace fire.Compiler
     /// The static types the checker knows. `Dynamic` is "not known": it is compatible with everything, so code that does not state its types is never reported.
     /// </summary>
     internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum, Word }
+    /// <summary>What the checker knows about undefined in a value (StaticType.Null, SPEC 8.11).</summary>
+    /// <summary>Inferred: a local that was only given defined values so far (in the order of the code - a loop may give it something else later): no warning,
+    /// but a `defined` variable still checks what it takes from it.</summary>
+    internal enum Nullness { Unknown, Defined, Inferred, MayBeUndefined }
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
-        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false, bool DeclaredAny = false, byte Wide = 0)
+        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false, bool DeclaredAny = false, byte Wide = 0,
+        Nullness Null = Nullness.Unknown)
     {
+        // (Null: whether a value of a value type certainly is not undefined - a literal, what an operator computes, `defined int` - or may be undefined
+        // as far as the code declares it: a parameter, field or uninitialized variable declared `int`, the literal `undefined` (SPEC 8.11); not part of the type)
+        /// <summary>Is this a value type that `defined` can mark (int, float, bool, word, char)?</summary>
+        public bool IsValueKind => Kind is StaticKind.Int or StaticKind.Float or StaticKind.Bool or StaticKind.Word or StaticKind.Char;
+        public StaticType WithNull(Nullness n) => n == Null ? this : this with { Null = n };
         // (Wide: an int of an explicit width beyond the program's - `int[64]`, `int[32]` - and what is computed from one: Value.Wide; a plain `int` is 0)
         // (DeclaredAny: a `Dynamic` the code declared - `any x`, an `any` field, parameter or return value - not one the checker does not know: a `var`
         // initialized with it is `any` on purpose of someone (TC020), one of unknown type is TC019)
@@ -125,6 +135,9 @@ namespace fire.Compiler
         /// <summary>An int of a wider width (`int[64]`, and what is computed from one) into a plain `int` of a program whose int is narrower (`#intwidth 32`):
         /// the value is cut (at run time too) - declare `int[64]`, or cut it on purpose (`x!int`).</summary>
         public const string WideIntCode = "TC021";
+        /// <summary>A value that may be undefined (a parameter, field or variable declared `int`, the literal `undefined`) goes where `defined int` is declared
+        /// (SPEC 8.11): it is checked at run time - `trust x` says it certainly is defined.</summary>
+        public const string UndefinedCode = "TC022";
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
         [ThreadStatic] public static int ProgramIntWidth;
         /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
@@ -245,6 +258,12 @@ namespace fire.Compiler
 
         private void CheckAssignable(StaticType value, StaticType target, int line, string what, string code = AssignCode, Expr? valueExpr = null)
         {
+            // `defined int` (SPEC 8.11): a value the code says may be undefined - it is checked at run time
+            if (target.Null == Nullness.Defined && value.Null == Nullness.MayBeUndefined)
+                Report(UndefinedCode, value.Kind == StaticKind.Undefined
+                    ? $"undefined goes into {what}, which is 'defined {target}': that is an ArgumentException at run time"
+                    : $"{(valueExpr is IdentifierExpr id ? $"'{id.Name}'" : "The value")} may be undefined, but {what} is 'defined {target}': it is checked at run time - give it a value that is defined, or write 'trust {(valueExpr is IdentifierExpr id2 ? id2.Name : "x")}' if it certainly is", line);
+            if (value.Kind == StaticKind.Undefined && target.Null == Nullness.Defined) return;
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
             if (CutsWide(value, target))
                 Report(WideIntCode, $"An int[{value.Wide}] goes into {what}, a plain int of {ProgramIntWidth} bits in this program: it is cut - declare int[{value.Wide}], or cut it on purpose (!int)", line);
@@ -480,9 +499,16 @@ namespace fire.Compiler
             if (IsRawType(type)) result = result with { Unit = Unit.Unitless, UnitIsDimension = false, Raw = true };
             // `int[64]`, `int[32]`: keeps that width beyond the program's int (Value.Wide)
             if (result.Kind == StaticKind.Int && type is { BaseName: "int", BitWidth: 32 or 64, Unsigned: false }) result = result with { Wide = (byte)type.BitWidth! };
+            // `defined int` (SPEC 8.11): never undefined
+            if (type.NonNull && arrayRanks + type.ArrayRank == 0) result = result.WithNull(Nullness.Defined);
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
             return result;
         }
+
+        /// <summary>A declaration of the code being checked: a value type declared without `defined` may hold undefined (a parameter that is not passed, a field
+        /// or a variable that was never given a value).</summary>
+        private static StaticType MayBeUndefined(StaticType type) =>
+            type.IsValueKind && type.Null == Nullness.Unknown ? type.WithNull(Nullness.MayBeUndefined) : type;
 
         /// <summary>`byte` (an unsigned `int[8]`) and `word`: the raw-data types without a unit (SPEC 8.10).</summary>
         internal static bool IsRawType(TypeRef? type) => type != null && type.PointerDepth == 0 && type.LambdaSignature == null
@@ -724,8 +750,10 @@ namespace fire.Compiler
         {
             // (a conflict the type checker reports - a warning in lax mode - is checked too: the type of a variable never changes, a float does not go
             // into an int without a cast)
-            if (value.Kind == StaticKind.Undefined) return;
-            bool needed = target.Kind switch
+            // (`defined int x`: what is not certainly defined is checked - SPEC 8.11)
+            bool undefinedChecked = type.NonNull && value.Null != Nullness.Defined;
+            if (value.Kind == StaticKind.Undefined && !undefinedChecked) return;
+            bool needed = undefinedChecked || target.Kind switch
             {
                 StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word) || CutsWide(value, target),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
@@ -780,8 +808,8 @@ namespace fire.Compiler
             foreach (var (decl, map) in Chain(receiver))
                 foreach (var member in decl.Members)
                 {
-                    if (member is FieldDecl f && f.Name == name) return FieldType(f, map);
-                    if (member is PropertyDecl p && p.Name == name) return DeclaredOrDynamic(p.Type, 0, map);
+                    if (member is FieldDecl f && f.Name == name) return f.Source >= _firstUserSource ? MayBeUndefined(FieldType(f, map)) : FieldType(f, map);
+                    if (member is PropertyDecl p && p.Name == name) return p.Source >= _firstUserSource ? MayBeUndefined(DeclaredOrDynamic(p.Type, 0, map)) : DeclaredOrDynamic(p.Type, 0, map);
                 }
             return null;
         }
@@ -1204,6 +1232,9 @@ namespace fire.Compiler
                     CheckAssignable(init, target, v.Line, $"'{v.Name}'", valueExpr: v.Initializer);
                     if (v.ArrayRanks.Count == 0 && v.Type != null) GuardLocalValue(v.Initializer, init, target, v.Type, v.Name);
                 }
+                // (a local is as defined as what it was given - SPEC 8.11: `int s = 0` holds a number until something that may be undefined goes in)
+                if (target.IsValueKind && target.Null != Nullness.Defined && v.ArrayRanks.Count == 0)
+                    target = target.WithNull(v.Initializer == null ? Nullness.MayBeUndefined : init.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : init.Null);
                 Declare(v.Name, target);
                 if (v.ArrayRanks.Count == 0 && v.Type is { ArrayRank: 0, PointerDepth: 0 } localType) DeclareLocalType(v.Name, localType);
             }
@@ -1212,6 +1243,7 @@ namespace fire.Compiler
                 // `var x = ...` has the type of its initializer for good; `undefined` alone says nothing (`undefined!Type` does). Its unit may change
                 // (a `var` without a unit takes every unit), `var x : mm` demands mm.
                 var type = init.Kind == StaticKind.Undefined ? StaticType.Dynamic : init;
+                if (type.IsValueKind && type.Null == Nullness.Defined) type = type.WithNull(Nullness.Inferred);   // (only so far: SPEC 8.11)
                 bool pending = false;
                 if (init.Kind == StaticKind.Undefined) pending = true;   // (the first assignment gives the type: TC020, none at all TC019)
                 else if (init.IsDynamic && v.Initializer != null)
@@ -1503,7 +1535,7 @@ namespace fire.Compiler
             _returnType = returnType;
             (_returnTypeRef, _returnWhat) = (returnTypeRef, what);
             Push();
-            foreach (var p in parameters) Declare(p.Name, DeclaredOrDynamic(p.Type, p.ArrayRanks.Count));
+            foreach (var p in parameters) Declare(p.Name, MayBeUndefined(DeclaredOrDynamic(p.Type, p.ArrayRanks.Count)));
             foreach (var s in body.Statements) Check(s);
             Pop();
             _returnType = previousReturn;
@@ -1518,6 +1550,19 @@ namespace fire.Compiler
             expr is LambdaExpr lam ? InferLambda(lam, expected) : Infer(expr);
 
         private StaticType Infer(Expr expr)
+        {
+            var type = InferCore(expr);
+            // what certainly is not undefined (SPEC 8.11): a literal, what an operator computes (an undefined operand throws), `trust x`
+            return expr switch
+            {
+                LiteralExpr { Value.Kind: ValueKind.Undefined } => type.WithNull(Nullness.MayBeUndefined),
+                LiteralExpr or BinaryExpr or IncDecExpr or IsOfExpr or IsInExpr or IsFromExpr
+                    or UnaryExpr { Op: UnaryOp.Negate or UnaryOp.LogicalNot or UnaryOp.BitNot or UnaryOp.Trust } when type.IsValueKind => type.WithNull(Nullness.Defined),
+                _ => type,
+            };
+        }
+
+        private StaticType InferCore(Expr expr)
         {
             switch (expr)
             {
@@ -1542,7 +1587,16 @@ namespace fire.Compiler
                 case UnaryExpr u: return InferUnary(u);
                 case BinaryExpr b: return InferBinary(b);
                 case RebindExpr rb: Infer(rb.Target); return Infer(rb.Lambda);
-                case ConditionalExpr ce: CheckCondition(ce.Condition); return Join([Infer(ce.Then), Infer(ce.Else)], ce);
+                case ConditionalExpr ce:
+                {
+                    CheckCondition(ce.Condition);
+                    StaticType thenType = Infer(ce.Then), elseType = Infer(ce.Else);
+                    var joined = Join([thenType, elseType], ce);
+                    // (defined when both branches are)
+                    var nulls = new[] { thenType.Null, elseType.Null };
+                    return joined.WithNull(nulls.Contains(Nullness.MayBeUndefined) ? Nullness.MayBeUndefined : nulls.Contains(Nullness.Unknown) ? Nullness.Unknown
+                        : nulls.Contains(Nullness.Inferred) ? Nullness.Inferred : Nullness.Defined);
+                }
                 case AssignExpr a: return InferAssign(a);
                 case MemberExpr m: return InferMember(m);
                 case IndexExpr ix: return InferIndex(ix);
@@ -1630,7 +1684,7 @@ namespace fire.Compiler
                 UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Dynamic,
                 UnaryOp.LogicalNot => StaticType.Bool,
                 UnaryOp.BitNot => operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Int,
-                UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take => operand,
+                UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take or UnaryOp.Trust => operand,
                 _ => StaticType.Dynamic,
             };
         }
@@ -1739,6 +1793,10 @@ namespace fire.Compiler
             string what = a.Target switch { IdentifierExpr id => $"'{id.Name}'", MemberExpr m => $"'{m.Name}'", IndexExpr => "an element", _ => "the target" };
             CheckAssignable(value, target, a.Line, what, valueExpr: a.Value);
             if (a.Target is IdentifierExpr local && LocalType(local.Name) is { } localType) GuardLocalValue(a.Value, value, target, localType, local.Name);
+            // (a local that is not `defined` is as defined as its last value: SPEC 8.11)
+            if (a.Target is IdentifierExpr assigned && target.IsValueKind && target.Null != Nullness.Defined)
+                for (int i = _scopes.Count - 1; i >= 0; i--)
+                    if (_scopes[i].TryGetValue(assigned.Name, out var current)) { _scopes[i][assigned.Name] = current.WithNull(value.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : Nullness.MayBeUndefined); break; }
             return target.IsDynamic ? value : target;
         }
 
