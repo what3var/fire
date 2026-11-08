@@ -253,6 +253,11 @@ namespace fire.Native
                 string root = FindRoot(temp) ?? throw new InvalidOperationException("The archive holds no Open Watcom (no folder with h and binnt64/binl64).");
                 if (System.IO.Directory.Exists(Directory)) System.IO.Directory.Delete(Directory, recursive: true);
                 System.IO.Directory.Move(root, Directory);
+
+                var has64 = System.IO.Directory.Exists(Path.Combine(Directory, "binw64")) || System.IO.Directory.Exists(Path.Combine(Directory, "binl64"));
+
+                log?.Invoke($"Found 64-bit compilers: {has64}");
+
                 if (!OperatingSystem.IsWindows())
                     foreach (string bin in new[] { "binl64", "binl" })
                     {
@@ -261,7 +266,11 @@ namespace fire.Native
                         foreach (string f in System.IO.Directory.GetFiles(dir))
                             File.SetUnixFileMode(f, File.GetUnixFileMode(f) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
                     }
-                string owcc = Path.Combine(Directory, OperatingSystem.IsWindows() ? "binnt64" : "binl64", OperatingSystem.IsWindows() ? "owcc.exe" : "owcc");
+
+                var exeSuffix = has64 ? "64" : "";
+                var pathRoot = OperatingSystem.IsWindows() ? $"binnt{exeSuffix}" : $"binl{exeSuffix}";
+
+                string owcc = Path.Combine(Directory, pathRoot, OperatingSystem.IsWindows() ? "owcc.exe" : "owcc");
                 if (!File.Exists(owcc)) throw new InvalidOperationException($"Open Watcom was unpacked, but '{owcc}' is not there.");
                 log?.Invoke("Open Watcom is ready: " + Directory);
                 return Directory;
@@ -277,7 +286,7 @@ namespace fire.Native
         {
             for (int depth = 0; depth < 3; depth++)
             {
-                if (System.IO.Directory.Exists(Path.Combine(dir, "h")) && (System.IO.Directory.Exists(Path.Combine(dir, "binnt64")) || System.IO.Directory.Exists(Path.Combine(dir, "binl64")))) return dir;
+                if (System.IO.Directory.Exists(Path.Combine(dir, "h")) && (System.IO.Directory.Exists(Path.Combine(dir, "binnt64")) || System.IO.Directory.Exists(Path.Combine(dir, "binl64")) || System.IO.Directory.Exists(Path.Combine(dir, "binnt")) || System.IO.Directory.Exists(Path.Combine(dir, "binl")))) return dir;
                 var subs = System.IO.Directory.GetDirectories(dir);
                 string? found = subs.Select(s => FindRoot1(s)).FirstOrDefault(r => r != null);
                 if (found != null) return found;
@@ -288,7 +297,7 @@ namespace fire.Native
         }
 
         private static string? FindRoot1(string dir) =>
-            System.IO.Directory.Exists(Path.Combine(dir, "h")) && (System.IO.Directory.Exists(Path.Combine(dir, "binnt64")) || System.IO.Directory.Exists(Path.Combine(dir, "binl64"))) ? dir : null;
+            System.IO.Directory.Exists(Path.Combine(dir, "h")) && (System.IO.Directory.Exists(Path.Combine(dir, "binnt64")) || System.IO.Directory.Exists(Path.Combine(dir, "binl64")) || System.IO.Directory.Exists(Path.Combine(dir, "binnt")) || System.IO.Directory.Exists(Path.Combine(dir, "binl"))) ? dir : null;
     }
 
     /// <summary>What the user is asked when a C++ toolchain is needed and there is none.</summary>
