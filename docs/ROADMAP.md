@@ -29,6 +29,7 @@ Leitlinien:
 | 6 | [UI-Markup: fehlende Eigenschaften](#14-ui-markup-fehlende-eigenschaften) | - | klein; `.fxml` ist der Hauptweg für Oberflächen, dort fehlen ToolTip, Cursor und Drag & Drop |
 | 0 | [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
+| 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -759,3 +760,45 @@ lesen ein Argument mit `bufOf(value)` als Byte-Puffer, ohne die Art zu prüfen (
   Nutzer sind beide heute nicht zu unterscheiden.
 * Test: jedes Package mit `byte[]`-Parametern bekommt einen Fall mit einem Array (VM und nativ).
 
+## 16. Scene3D für Spiele
+
+Wunsch des Benutzers: mit `scene3d` sollen Spiele möglich werden, bis hinunter auf DOS (Spiele wie Tomb Raider liefen dort). Arbeitsbranch `scene-revamp`,
+Basis ist immer `targets` (wird parallel weiterentwickelt; Größen können sich nach Merges ändern). Für alle Punkte gilt: die Größe bleibt unter Kontrolle,
+Teile dürfen in Unterpakete (`scene3d.terrain`, `scene3d.models`, `scene3d.effects`, `scene3d.physics`; ein Punkt im Namen geht, siehe `ui.docking`).
+
+**Stand (Analyse):** die Engine ist ein Desktop-Renderer in `float` - pro Pixel 10 interpolierte Werte, Division, Normalisieren, Blinn-Phong mit `sqrtf`/`powf`;
+Kamera-Pixel (RGBA), Tiefenpuffer (`float`) und Framebuffer nehmen je 4 Byte pro Pixel (12 Byte; 640x480 = 3,7 MB); Schatten sind standardmäßig an
+(1024² `float` = 4 MB je Richtungslicht, 24 MB je Punktlicht); alle Dreiecke eines Bildes werden vor dem Zeichnen gepuffert (`S3dTri` ~200 Byte,
+`S3dClipVertex` 48 Byte je Vertex und Objekt); Meshes 32 Byte je Vertex (`float` Position/UV/Normale, `uint32` Indizes). Auf dos16 bleiben neben dem
+Programm (~500 KB mit scene3d) nur Bilder um 64x48. Es fehlen: Frustum-Culling pro Objekt und eine Raumstruktur, Nebel/Sichtweite, Hierarchie
+(`Parent`), Raycast/Picking, Skybox, LOD, Mipmaps; `Object.Parameters()`/`LightParameters()` legen pro Bild und Objekt ein neues `float[]` an.
+
+1. **Größe** (zuerst):
+   * Ein zweiter, schlanker Rasterizer (`Scene.Quality`, eigene Quelle, nur gelinkt, wenn benutzt): 8 Bit mit Palette und Schattierungstabellen direkt in
+     einen Paletten-Framebuffer, Tiefe als `uint16`, Licht pro Vertex (Gouraud), Festkomma-Spans mit perspektivischer Korrektur alle 8-16 Pixel. Der
+     heutige Renderer bleibt für den Desktop (bytegleiche Tests).
+   * In Bändern zeichnen: die Dreiecke einmal nach Bändern sortiert, Tiefenpuffer nur für ein Band (640x32 x 2 Byte = 40 KB), das fertige Band geht gleich
+     in den Videospeicher (VESA mit Bänken) - so passt 640x480 auch neben ein dos16-Programm.
+   * Weniger Code: Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn benutzt (Stripping / Defines); unter DOS Schatten standardmäßig aus.
+   * Kompakte Meshes: Positionen `int16` relativ zur Bounding-Box, Normale als Byte (Index in eine eigene Tabelle), Indizes `uint16`, UV `int16` (8-10 statt
+     32 Byte je Vertex); Texturen mit Palette (8 Bit) und Mipmaps.
+   * XMS (dos16): Ablage für Meshes und Texturen, pro Objekt eingeblendet. dos32 braucht es nicht (flacher Speicher).
+   * Culling pro Objekt, Nebel, Hierarchie; die fire-Seite ohne neue Arrays pro Bild.
+2. **Heightmaps** (`scene3d.terrain`): `Terrain` aus `byte[]`/`word[]`-Höhen, Zellgröße, Höhenfaktor; in Stücke (32x32) für das Culling. Zwei Modi:
+   **smooth** (gemeinsame Vertices, interpolierte Normalen) und **hard** (jede Zelle ein flacher Deckel, senkrechte Wände nur, wo die Nachbarn sich
+   unterscheiden, nur die sichtbare Seite). `HeightAt(x, z)` für Physik und Figuren.
+3. **Modelle:** eigenes kompaktes Laufzeitformat (`.f3d`, quantisiert wie oben); Quellen in offenen Formaten (glTF 2.0, OBJ) und im Format des Editors,
+   zur Bauzeit von forge umgewandelt (oder in spark exportiert).
+   1. **Editor** in spark mit zwei Modi: **Blöcke** (Palette wählen, Modell aus Blöcken; beim Export nur die sichtbaren Flächen, gleiche Nachbarflächen
+      verschmolzen) zuerst, danach **CAD** (2D-Ansichten und 3D, Vertex/Kante/Fläche, Extrudieren, Spiegeln).
+   2. **Animationen:** ein Modell trägt mehrere benannte Clips (Frames, fps, Schleife), zwischen den Frames interpoliert. Vorschlag: Modelle aus starren
+      Teilen mit Hierarchie, ein Frame speichert eine Transformation je Teil (klein, billig); Frames je Vertex optional.
+4. **Partikel und Effekte** (`scene3d.effects`): Partikel aus einem festen Pool, als Sprites im Rasterizer (Tiefentest, additiv/Alpha), einfache Parameter
+   und Vorgaben (`Fire`, `Smoke`, `Sparks`, `Rain`, `Snow`, `Explosion`). Statt programmierbarer Pixel-Shader Materialeffekte zum Einschalten (laufende UVs,
+   Farbrotation über die Palette, Flackern, Wellen auf den Vertices, Toon) und Effekte auf das ganze Bild (Abblenden, Tönung, Nebel); später evtl. eine
+   fire-Funktion als Vertex-Shader.
+5. **Physik** (`scene3d.physics`): einfach, schnell, leicht zu bedienen - Kugel, Box (achsenparallel), Kapsel, Heightfield, statische Meshes; Character
+   Controller (Laufen, Springen, Stufen), Raycasts, Trigger; fester Zeitschritt, Gitter als Vorauswahl; mit Einheiten (`Body.Dynamic(mass: 2kg)`,
+   `scene.Gravity = 9.81m/s²`) und Vorgaben (`Body.Bouncy`, `Body.Ice`). Starrkörper mit Rotation später.
+
+Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD.
