@@ -837,4 +837,52 @@ nach Arbeiten auf `targets`).
    Controller (Laufen, Springen, Stufen), Raycasts, Trigger; fester Zeitschritt, Gitter als Vorauswahl; mit Einheiten (`Body.Dynamic(mass: 2kg)`,
    `scene.Gravity = 9.81m/s²`) und Vorgaben (`Body.Bouncy`, `Body.Ice`). Starrkörper mit Rotation später.
 
-Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD.
+### 16.1 Offen nach Meilenstein 1 und 2 (Stand `scene-revamp`)
+
+**A. Kompakte Meshes** (Wunsch des Benutzers: festhalten; vor oder mit Meilenstein 3, weil das Modellformat dieselbe Form bekommt):
+* **Heute:** `S3dMesh` hat je Ecke `float` Position (12 Byte), UV (8) und Normale (12) und je Dreieck drei `uint32_t` (12 Byte) - 32 Byte je Ecke plus
+  Indizes. Ein Terrain 64x64 (geglättet) braucht so ~220 KB, eine Kugel mit 24 Segmenten ~20 KB; auf dos16 passt davon wenig neben das Programm.
+* **Ziel - 8 bis 10 Byte je Ecke:**
+  * Position `int16` x 3, quantisiert auf die Bounding-Box des Meshes (`bmin` + q / 65535 * (bmax - bmin); Fehler unter 1/65535 der Ausdehnung);
+  * Normale als **ein Byte**: Index in eine feste Tabelle von 256 Richtungen (eigene, gleichmäßig über die Kugel verteilt; nicht übernommen), oder 2 Byte
+    (oktaedrisch) für glattere Flächen - zu messen;
+  * UV als `int16` x 2 in 1/256 einer Texturbreite (Wiederholung bis 128x), oder gar keine UV, wenn das Mesh keine Textur braucht (ein Flag);
+  * Indizes `uint16`, solange das Mesh unter 65536 Ecken hat (sonst `uint32`); Dreiecke mit flacher Normale teilen keine Ecken mehr als nötig.
+* **Wo umgerechnet wird:** einmal beim Laden/Erzeugen (`s3d_meshFinish`, Vorlagen, OBJ, Terrain, später `.f3d`); die Renderer lesen die kompakte Form direkt
+  (die Transformation nimmt `int16` und die Box, das Licht die Tabelle). Der volle Renderer darf weiter `float` intern haben (der Desktop hat Platz);
+  die Bilder des vollen Renderers sollen gleich bleiben - sonst die Prüfsummen bewusst neu festlegen.
+* **Messen:** Speicher je Mesh vorher/nachher (Kugel, Box, Terrain 32x32/64x64), Pixel-Abweichung im vollen Renderer, Geschwindigkeit des schlanken.
+* Dazu passend: **Texturen mit Palette** (8 Bit je Texel statt 32, heute nur als Kopie für Paletten-Bilder: `S3dTexture.lean`) und **Mipmaps**
+  (Ruhe in der Ferne, weniger Cache-Fehler); auf dos16 RGBA-Texturen nach dem Umrechnen verwerfen.
+
+**B. Größe und Speicher (Rest von Meilenstein 1):**
+* **640x480 auf dos16:** der Paletten-Framebuffer (300 KB) passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher. Wege: (a) eine Kamera, die
+  ihre Bänder direkt in den Videospeicher schreibt (VESA 101h mit Bänken; der schlanke Renderer arbeitet schon bandweise), (b) der Framebuffer in XMS/EMS
+  (nach den Arbeiten auf `targets`).
+* **XMS/EMS auf dos16:** Ablage für Meshes und Texturen, pro Objekt eingeblendet.
+* **Festkomma** im schlanken Renderer auch zwischen den Ecken, Zeilen und 16-Pixel-Stücken (heute `float`; auf einem 8086 ohne FPU teuer).
+* **Weniger Code im vollen Renderer:** Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn ein Programm sie benutzt (heute nur auf dos16/bios16
+  ganz weggelassen, `FIRE_S3D_LEAN_ONLY`).
+* Weiter messen und kürzen: `Camera.Render` (~8 KB übersetzt), `Scene.Add` (~7 KB), die Konstruktoren; die Runtime (~91 KB, Einheiten ~10 KB) ist Sache
+  von `targets`.
+
+**C. Fehlende Bausteine für Spiele** (aus der Analyse, noch nicht angefangen):
+* **Culling pro Objekt** (Bounding-Box gegen das Sichtvolumen) und eine **Raumstruktur** (Räume mit Portalen für Level; ein Gitter für offene Gelände).
+* **Nebel / Sichtweite** (billig, versteckt die Far-Plane; im schlanken Renderer über die Schattierungsstufen).
+* **Hierarchie** (`obj.Parent`): Teile, die mitgehen (die Waffe in der Hand) - braucht auch die Animation aus Meilenstein 3.
+* **Raycast / Picking** (Maus, Schießen; dieselben Strahlen braucht die Physik).
+* **Skybox**, **LOD** (gröbere Meshes in der Ferne).
+* Schatten im schlanken Renderer: weiche Kante (2x2 gemittelt) und Punktlichter; heute nur das erste Richtungslicht, harte Kante.
+
+**D. Terrains (Rest von Meilenstein 2):**
+* große Terrains in **Stücke** teilen (z. B. 32x32), die ohne Sicht wegfallen - sobald es Culling gibt; **LOD** je Stück;
+* **Farben nach Höhe** (Gras, Fels, Schnee) ohne Textur; mehrere Texturen nach Höhe/Neigung;
+* `HeightAt` bei geneigtem Terrain (Drehung um x/z) und die Neigung des Bodens (`NormalAt`) für Figuren und Physik;
+* der Speicher folgt mit A (heute 32 Byte je Ecke und 4 Byte je Höhe für `HeightAt`).
+
+**E. Auf `targets` gefunden** (nicht scene3d; dort zu beheben):
+* dos16-Programme stürzen seit 8ab2aa2 in DOSBox-X mit "Invalid Opcode" (INT 6) ab, je nach Code; mit 02e959e laufen sie. Damit ist scene3d (auch der
+  schlanke Renderer und die Terrains) unter DOS bisher nicht ausgeführt, nur gebaut.
+* Der Generator erzeugt für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit ablehnt (E1078).
+
+Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD; A (kompakte Meshes) vor oder mit 3, B/C/D nach Bedarf dazwischen.
