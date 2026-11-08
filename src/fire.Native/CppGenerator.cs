@@ -724,11 +724,15 @@ namespace fire.Native
         /// <summary>The field with the index `index` of an object of `rc` (`obj`: an Obj*) as a Value.</summary>
         private string FieldRead(RuntimeClass rc, int index, string obj)
         {
-            var layout = LayoutOf(rc);
+            var layout = LayoutOf(LayoutClass(rc, index));
             return layout.Half[index] < 0 ? $"objFields({obj})[{layout.Slot[index]}]" : $"nvGet(&objFields({obj})[{layout.Slot[index]}], {layout.Half[index]})";
         }
         /// <summary>The narrow place of the field (slot, half), null for a whole Value (and its slot then).</summary>
-        private (int Slot, int Half) FieldPlace(RuntimeClass rc, int index) { var layout = LayoutOf(rc); return (layout.Slot[index], layout.Half[index]); }
+        private (int Slot, int Half) FieldPlace(RuntimeClass rc, int index) { var layout = LayoutOf(LayoutClass(rc, index)); return (layout.Slot[index], layout.Half[index]); }
+        /// <summary>A class whose layout has the field `index`: `rc` itself, or - when `rc` is a base class (or an interface) that does not declare it while every
+        /// class an object of it can be does (DirectFieldIndex) - one of those; they share the layout of the field (the fields of a base class come first).</summary>
+        private RuntimeClass LayoutClass(RuntimeClass rc, int index) =>
+            index < rc.FlattenedFieldNames.Count ? rc : InstancesOf(rc).Select(c => c.Rc).FirstOrDefault(c => index < c.FlattenedFieldNames.Count) ?? rc;
 
         /// <summary>`obj.name = value` on an object of a known class: the checks of the field's declaration (unit, kind) and the store by index, like sf_
         /// (a destroyed object throws first); null when the field helpers are needed.</summary>
