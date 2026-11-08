@@ -23113,6 +23113,189 @@ else
             d.Clear()
             print(d.Count + " " + d.ContainsKey(7))
             """),
+        ("Skalare (Ebene 2): word-Hash, Bits zaehlen, Ints fester Breite, Schieben ueber die Breite, word ueber 0 - in C gerechnet wie in der VM", """
+            class W {
+                static word Hash(byte data[]) {
+                    word h = 5381
+                    for (int i = 0; i < data.length; i++) { h = h * 33 + data[i]; h = h # (h >> 7) }
+                    return h
+                }
+                static int Bits(int n) {
+                    int c = 0
+                    int x = n
+                    while (x != 0 && c < 70) { c = c + (x & 1); x = x >> 1 }
+                    return c
+                }
+                static int Small(int n) {
+                    int[8] b = 0
+                    int[16] s = 0
+                    for (int i = 0; i < n; i++) { b = b + 7; s = s * 3 + i }
+                    int[8] neg = 200
+                    return b + s + neg + (i8(300) << 2)
+                }
+                static int i8(int v) { int[8] r = v
+                    return r }
+                static word Mix(word a, word b) { word r = a
+                    r = (r << 13) | (r >> 51)
+                    r = r - b * 3
+                    if (r > a) { r = r / 2 }
+                    return r }
+            }
+            byte bytes[] = new byte[64]
+            for (int i = 0; i < 64; i++) { bytes[i] = i * 37 }
+            print(W.Hash(bytes))
+            print(W.Bits(1023) + " " + W.Bits(-1) + " " + W.Bits(12345))
+            print(W.Small(1000))
+            print(W.Mix(123456789, 987654321))
+            word wz = 0
+            wz = wz - 1
+            print(wz + " " + (wz > 5) + " " + (wz >> 60))
+            int sh = 1
+            print((sh << 31) + " " + (sh << 63) + " " + (-8 >> 1) + " " + (-8 >> 70))
+            """),
+        ("Skalare (Ebene 2), #intwidth 32: dieselben Rechnungen mit FireInt von 32 Bit", """
+            #intwidth 32
+            class W {
+                static word Hash(byte data[]) {
+                    word h = 5381
+                    for (int i = 0; i < data.length; i++) { h = h * 33 + data[i]; h = h # (h >> 7) }
+                    return h
+                }
+                static int Bits(int n) {
+                    int c = 0
+                    int x = n
+                    while (x != 0 && c < 70) { c = c + (x & 1); x = x >> 1 }
+                    return c
+                }
+                static int Small(int n) {
+                    int[8] b = 0
+                    int[16] s = 0
+                    for (int i = 0; i < n; i++) { b = b + 7; s = s * 3 + i }
+                    int[8] neg = 200
+                    return b + s + neg + (i8(300) << 2)
+                }
+                static int i8(int v) { int[8] r = v
+                    return r }
+                static word Mix(word a, word b) { word r = a
+                    r = (r << 13) | (r >> 51)
+                    r = r - b * 3
+                    if (r > a) { r = r / 2 }
+                    return r }
+            }
+            byte bytes[] = new byte[64]
+            for (int i = 0; i < 64; i++) { bytes[i] = i * 37 }
+            print(W.Hash(bytes))
+            print(W.Bits(1023) + " " + W.Bits(-1) + " " + W.Bits(12345))
+            print(W.Small(1000))
+            print(W.Mix(123456789, 987654321))
+            word wz = 0
+            wz = wz - 1
+            print(wz + " " + (wz > 5) + " " + (wz >> 60))
+            int sh = 1
+            print((sh << 31) + " " + (sh << 63) + " " + (-8 >> 1) + " " + (-8 >> 70))
+            """),
+        ("Skalare (Ebene 2): Floats - Rechenketten, gemischt mit Ints, Vergleiche mit NaN und Unendlich, %, Negation, float[32], x -= c", """
+            class F {
+                static float Area(int n) {
+                    float a = 0.0
+                    float x = 0.5
+                    for (int i = 0; i < n; i++) { a = a + x * x; x = x + 0.25 }
+                    return a
+                }
+                static float Mixed(int n) {
+                    float s = 1.0
+                    for (int i = 1; i <= n; i++) { s = s * 1.5 - i / 4.0 + i % 3 }
+                    return s
+                }
+                static string Cmp(float a, float b) {
+                    float x = a
+                    float y = b
+                    string r = ""
+                    if (x < y) { r = r + "<" }
+                    if (x > y) { r = r + ">" }
+                    if (x == y) { r = r + "=" }
+                    if (x != y) { r = r + "!" }
+                    if (x <= y) { r = r + "le" }
+                    return r
+                }
+                static float Neg(float v) { float t = v * 2.0
+                    float u = -t
+                    t -= 0.5
+                    return u + t }
+                static float Round32(float v) { float w = v * 3.0
+                    float[32] q = w / 7.0
+                    return q }
+            }
+            print(F.Area(1000))
+            print(F.Mixed(40))
+            float nan = 0.0 / 0.0
+            float inf = 1.0 / 0.0
+            print(F.Cmp(1.0, 2.0) + " " + F.Cmp(2.0, 2.0) + " " + F.Cmp(nan, 1.0) + " " + F.Cmp(1.0, nan) + " " + F.Cmp(nan, nan) + " " + F.Cmp(inf, 1.0))
+            print(F.Neg(3.25) + " " + F.Round32(1.1) + " " + inf + " " + (-inf))
+            float m = 7.5
+            print(m % 2.0 + " " + (-m % 2.0) + " " + (m % 0.0))
+            """),
+        ("Skalare (Ebene 2), #floatwidth 32: dieselben Float-Rechnungen mit Real von 32 Bit", """
+            #floatwidth 32
+            class F {
+                static float Area(int n) {
+                    float a = 0.0
+                    float x = 0.5
+                    for (int i = 0; i < n; i++) { a = a + x * x; x = x + 0.25 }
+                    return a
+                }
+                static float Mixed(int n) {
+                    float s = 1.0
+                    for (int i = 1; i <= n; i++) { s = s * 1.5 - i / 4.0 + i % 3 }
+                    return s
+                }
+                static string Cmp(float a, float b) {
+                    float x = a
+                    float y = b
+                    string r = ""
+                    if (x < y) { r = r + "<" }
+                    if (x > y) { r = r + ">" }
+                    if (x == y) { r = r + "=" }
+                    if (x != y) { r = r + "!" }
+                    if (x <= y) { r = r + "le" }
+                    return r
+                }
+                static float Neg(float v) { float t = v * 2.0
+                    float u = -t
+                    t -= 0.5
+                    return u + t }
+                static float Round32(float v) { float w = v * 3.0
+                    float[32] q = w / 7.0
+                    return q }
+            }
+            print(F.Area(1000))
+            print(F.Mixed(40))
+            float nan = 0.0 / 0.0
+            float inf = 1.0 / 0.0
+            print(F.Cmp(1.0, 2.0) + " " + F.Cmp(2.0, 2.0) + " " + F.Cmp(nan, 1.0) + " " + F.Cmp(1.0, nan) + " " + F.Cmp(nan, nan) + " " + F.Cmp(inf, 1.0))
+            print(F.Neg(3.25) + " " + F.Round32(1.1) + " " + inf + " " + (-inf))
+            float m = 7.5
+            print(m % 2.0 + " " + (-m % 2.0) + " " + (m % 0.0))
+            """),
+        ("Skalare (Ebene 2): Schleife mit Rest und Vergleich gegen einen int-Parameter", """
+            class H {
+                static int Sum(int n) {
+                    int s = 0
+                    for (int i = 0; i < n; i++) { s = (s * 31 + i) % 1000003 }
+                    return s
+                }
+                static float Area(int n) {
+                    float a = 0.0
+                    float x = 0.5
+                    for (int i = 0; i < n; i++) { a = a + x * x; x = x + 0.25 }
+                    return a
+                }
+            }
+            var t = 0
+            for (int r = 0; r < 20; r++) { t = t + H.Sum(50000) }
+            print(t)
+            print(H.Area(1000))
+            """),
         ("Felder mit typisiertem Array: jede Zuweisung typisiert (direkt, ueber any, Reflection, JSON, statisch), ein Nicht-Array ist die ArgumentException, Elemente direkt gelesen", """
             #import "json"
             #import "reflection"

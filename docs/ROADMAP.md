@@ -656,7 +656,8 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 9. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
    gepackt pro Klasse später.
    **Begonnen:** Stufe 1 (typisierte Arrays im Generator, `KindArr`, auch Felder), Stufe 2a (Merkmal „schmal“, skalare Plätze und Variablen für Ints der
-   Programmbreite, bools aus Vergleichen und `word`; docs/spec/NATIVE_BACKEND.md "Skalare"). Offen: floats als Skalare, Parameter und Rückgaben als C-Typen.
+   Programmbreite, floats, bools aus Vergleichen und `word`; docs/spec/NATIVE_BACKEND.md "Skalare"). Offen: Zahlen mit Einheit als Skalare, Parameter und
+   Rückgaben als C-Typen.
    **Messung (Frage des Benutzers: woher die 350 KB eines Grafikprogramms auf dos16 kommen).** Grafik-C ~85 KB (~23 Byte je Zeile, normal), Runtime 75 KB,
    C-Bibliothek 46 KB - und **109 KB aus fire übersetzter Code** für 725 Zeilen (Prelude der Grafik + Programm), ~150 Byte je Zeile: `DrawRoundRect` (4 Zeilen,
    reicht an ein Native weiter) wird 298 Zeilen C und 4,7 KB. gcc `-m32 -Os` erzeugt aus demselben C ebenso viel (108 KB) - es ist der allgemeine Code, nicht
