@@ -138,12 +138,18 @@ enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_
 #ifdef FIRE_INT32
 typedef int32_t FireInt;
 typedef uint32_t FireUInt;   /* (the arithmetic of the generator's scalar ints: it wraps like FIRE_INT_CUT) */
+#define FIRE_FIREINT_BITS 32
 #define FIRE_INT_UNDEF INT32_MIN   /* (an `undefined` element of a packed int array; a real INT32_MIN is marked in `real`) */
 #else
 typedef int64_t FireInt;
 typedef uint64_t FireUInt;
 #define FIRE_INT_UNDEF INT64_MIN
+#define FIRE_FIREINT_BITS 64
 #endif
+/* `<<` and `>>` of the generator's scalar ints, as shl/shr compute them (in 64 bits, the count & 63, then cut to the program's int) - a C shift by the
+ * whole width or more is undefined */
+#define FIRE_SCALAR_SHL(a, s) ((int)((s) & 63) >= FIRE_FIREINT_BITS ? (FireInt)0 : (FireInt)((FireUInt)(a) << ((s) & 63)))
+#define FIRE_SCALAR_SHR(a, s) ((int)((s) & 63) >= FIRE_FIREINT_BITS ? (FireInt)((a) < 0 ? -1 : 0) : (FireInt)((a) >> ((s) & 63)))
 
 /* `word` (SPEC 8.10): the machine word of the target, unsigned, without a unit - K_Word, its bits in `w` (zero above the width). The generator defines
  * FIRE_WORD_BITS from the target (`wordWidth`); without it (a package library for the VM) the width of a pointer. An operation on words wraps at the
