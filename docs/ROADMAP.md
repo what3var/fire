@@ -822,8 +822,7 @@ nach Arbeiten auf `targets`).
    Wände nur zur niedrigeren Seite, in einer Reihe mit gleichen Höhen ein Quad, der Rand bis 0). Das Mesh macht das C von scene3d (`__S3DTerrain`), das Unterpaket
    ist nur fire. `HeightAt` folgt Position, Skalierung und Drehung um die Hochachse; Texturkoordinaten in Metern. VM == nativ (Scene3DTests), dos16 baut.
    **Offen:** Stücke (Culling, wenn es Culling gibt), LOD, Farben nach Höhe; Speicher der Meshes (32 Byte je Ecke) - kommt mit den kompakten Meshes.
-   **Gefunden** (auf `targets`, nicht scene3d): seit cb6398d/de76901 gibt ein nativer Build Enum-Werte als Zahl statt als Namen aus (`print("" + M.B)` -> `1`;
-   die VM: `B`).
+   (Zwischendurch gab ein nativer Build Enum-Werte als Zahl aus - cb6398d/de76901 auf `targets`; mit 2f8b4cc behoben.)
 3. **Modelle:** eigenes kompaktes Laufzeitformat (`.f3d`, quantisiert wie oben); Quellen in offenen Formaten (glTF 2.0, OBJ) und im Format des Editors,
    zur Bauzeit von forge umgewandelt (oder in spark exportiert).
    1. **Editor** in spark mit zwei Modi: **Blöcke** (Palette wählen, Modell aus Blöcken; beim Export nur die sichtbaren Flächen, gleiche Nachbarflächen
