@@ -155,13 +155,17 @@ namespace fire.Native
         {
             var rc = ci.Rc;
             var fields = JsonMethods.JsonFieldsOf(rc).Where(f => rc.FieldIndex.ContainsKey(f.Name)).ToList();
-            if (fields.Count > 0)
+            // (behind them the `defined` fields that do not go to JSON: a read object holds their zeros too)
+            var extra = rc.FieldIndex.Keys.Where(n => fields.All(f => f.Name != n) && rc.FindFieldRequiredKind(n) is var k and not 0 && DeclaredKind.IsNonNull(k))
+                .Select(n => new JsonMethods.JsonField(n, n, "", rc.FindFieldRequiredUnit(n)?.TrimStart('#') is { Length: > 0 } demand && !demand.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(demand) : null)).ToList();
+            var rows = fields.Concat(extra).ToList();
+            if (rows.Count > 0)
             {
-                sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", fields.Select(f =>
-                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}}}")) + "};");
+                sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", rows.Select(f =>
+                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}}}")) + ", {NULL, 0, NULL, 0, 0, 0}};");
                 if (unitFixups != null)
-                    for (int j = 0; j < fields.Count; j++)
-                        if (UnitId(fields[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");
+                    for (int j = 0; j < rows.Count; j++)
+                        if (UnitId(rows[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");
             }
             else fieldTable = "NULL";
             if (rc.IsActor) flags |= 1;

@@ -204,6 +204,15 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   ein `defined`-Parameter nimmt ihn ohne Prüfung (`(FireInt)s.i`: ein vertrautes `undefined` ist 0); einer unbekannter Art wird weiter geprüft.
   Gemessen (`Mix(a, b, c) = a * 31 + b * 7 + c` in einer Schleife mit `% 1000003`): dos16 (Open Watcom, `-Os`) 1476 -> 131 Byte Code für beide
   Methoden; x86-64 gcc `-Os` 6,27 -> 1,55 s, `-O2` gleich (gcc bettet die kleinen Funktionen dort ohnehin ein und entfernt die Values selbst).
+* **Felder als C-Typen.** Ein Feld mit deklarierter Art (`int`, `float`, `bool`, `defined ...`) hält nur Zahlen und `undefined`: ein direktes Speichern
+  (Objekt einer bekannten Klasse) ist ein C-Store ohne `retain`/`release`, und eine Zahl oder ein bool braucht kein `claimToHolder` - der Scope dafür keine
+  Liste. Ein **`defined`-Feld mit statischer Einheit** (`defined int`, `defined float : m`, `defined bool`, `defined word`; `CppGenerator.CFields.cs`) hat Art
+  und Einheit seines Slots fest, sobald sein Initialisierer (im Konstruktor) die Null gespeichert hat - JSON setzt sie für jedes solche Feld, auch eines,
+  das nicht in JSON geht (die Zeilen hinter `njson` in `JsonFieldInfo`, ein Eintrag ohne Namen beendet die Tabelle). Danach liest und schreibt ein direkter
+  Zugriff nur die Zahl: `.i`/`.f`/`.w` des Values, bei einer schmalen Hälfte deren Nutzlast (`nvGetI`/`nvPutI`, `nvGetF`/`nvPutF`) - direkt aus dem und in den
+  Schatten, ohne Value dazwischen (GetField, SetField, SetFieldClaim, SetFieldOnThis halten die Skalare der Stelle). Konstruktoren und Initialisierer
+  schreiben weiter Values, ebenso Objekte mit Sonden. Das Layout bleibt: Reflection, JSON, Kopien und der Debugger sehen die Values wie vorher.
+  Gemessen auf dos16 (Watcom, `-Os`): eine Methode mit drei Feldänderungen (`x += dx`, `y += x % 7`, `len += 1cm`) 1588 -> 1063 Byte.
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit

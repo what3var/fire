@@ -14,6 +14,7 @@ typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type
 /* A class: its name (as the program knows it, `Box`1` for a generic one whose plain name is taken), the plain name, its fields, `flags` (1 actor, 2 has
  * OnDeserialized(), 4 the List of the prelude, 8 JsonObject, 16 not serializable: `[NotSerializable]` or `"serializable": false` in its package) and the number of its
  * type parameters. */
+/* (fields: the njson fields that go to JSON, then the `defined` fields that do not, then a row with a NULL name) */
 typedef struct JsonClassInfo { const char* name; const char* plain; uint32_t nfields; const JsonFieldInfo* fields; uint32_t njson; uint8_t flags; uint8_t ntparams; } JsonClassInfo;
 /* The slots of the classes JSON fills itself (-1: not in the program). */
 typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; } JsonSpecial;
@@ -1129,8 +1130,9 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
     o2 = objAt(obj);
     if (args.n > 0) o2->targs = jsTypeArgsFor(J, args.p, args.n);
     if (hasId) jsIdSet(r, id, obj);
-    /* `defined int n` (SPEC 8.10b): a field that is not in the text holds zero */
-    for (m = 0; m < c->njson; m++) {
+    /* `defined int n` (SPEC 8.10b): a field that is not in the text holds zero - also one that does not go to JSON (the rows behind njson; a row without a
+     * name ends the table) */
+    for (m = 0; c->fields && c->fields[m].name; m++) {
         const JsonFieldInfo* df = &c->fields[m];
         if (!df->defined) continue;
         jsStore(obj, df->slot, df->defined == K_Int ? Int(0, df->unit) : df->defined == K_Float ? Float((Real)0, df->unit) : df->defined == K_Bool ? Bool(false)

@@ -23447,6 +23447,46 @@ else
             any s = "x"
             try { print(G.Twice(s)) } catch (Exception e) { print(e.message) }
             """),
+        ("Felder als C-Typen: defined-Felder (int, float mit Einheit) direkt gelesen und geschrieben, auch ueber einen Parameter der Klasse", """
+            class P {
+                defined int x
+                defined int y
+                defined float : m len
+                Step(defined int dx) { this.x = this.x + dx; this.y = this.y + this.x % 7; this.len = this.len + 1cm }
+                static defined int Sum(P p) { return p.x + p.y }
+            }
+            var p = new P()
+            for (int i = 0; i < 1000; i++) { p.Step(i) }
+            print(p.x + " " + p.y + " " + p.len + " " + P.Sum(p))
+            """),
+        ("Felder als C-Typen: JSON - auch ein [NonSerialized] defined-Feld haelt seine Null, danach direkt geschrieben", """
+            #import "json"
+            class Q {
+                defined int n
+                [NonSerialized] defined int hidden
+                [NonSerialized] defined float : m dist
+                int plain
+                Bump() { this.hidden = this.hidden + 2; this.dist = this.dist + 1m; this.n = this.n + 1 }
+            }
+            var q = Json.Deserialize<Q>("{\"n\": 4}")
+            q.Bump()
+            print(q.n + " " + q.hidden + " " + q.dist + " " + q.plain)
+            print(Json.Serialize(q))
+            """),
+        ("Felder als C-Typen, #intwidth 32 / #floatwidth 32: schmale Haelften direkt gelesen und geschrieben", """
+            #intwidth 32
+            #floatwidth 32
+            class P {
+                defined int x
+                defined int y
+                defined float : m len
+                Step(defined int dx) { this.x = this.x + dx; this.y = this.y + this.x % 7; this.len = this.len + 1cm }
+                static defined int Sum(P p) { return p.x + p.y }
+            }
+            var p = new P()
+            for (int i = 0; i < 1000; i++) { p.Step(i) }
+            print(p.x + " " + p.y + " " + p.len + " " + P.Sum(p))
+            """),
         ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
             class K {
                 defined int n
