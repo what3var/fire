@@ -38,6 +38,9 @@ class S3D {
         return (f:s) / 1s
     }
 
+    // A speed in meters a second (m/s, km/h, ...).
+    static float Speed(float v : m/s) { return v / (1m / 1s) }
+
     static float:m Meters(float m) { return m * 1m }
     static float:deg Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
 
@@ -48,6 +51,8 @@ class S3D {
 
     // A colour from its parts (0..255 each).
     static int Rgb(int r, int g, int b) { return r + g * 256 + b * 65536 + 255 * 16777216 }
+    // A colour with its alpha (0 transparent .. 255 solid).
+    static int Rgba(int r, int g, int b, int a) { return r + g * 256 + b * 65536 + a * 16777216 }
 
     // The GPU that RenderMode.Hardware draws with ("" when there is none: no Vulkan, no driver, no GPU; HardwareError says why).
     static string HardwareName() { return __S3DHardwareName() }
@@ -322,8 +327,9 @@ class Object {
     }
     // Stops where it is (Play starts again; AnimationTime can still be set).
     undefined Stop() { __S3DObjAnimate(this.h, 3, 0.0) }
-    // Moves the animation on (call it every frame with the time that passed: obj.Advance(16ms)).
-    undefined Advance(float time : any s) { __S3DObjAnimate(this.h, 0, S3D.Seconds(time)) }
+    // The time goes on for the object (call it every frame with the time that passed: obj.Advance(16ms); Scene.Advance does it for all objects): its animation,
+    // its spin, the scroll of its texture, its particles (scene3d.effects).
+    undefined Advance(float time : any s) { __S3DObjAdvance(this.h, S3D.Seconds(time)) }
     // The time in the animation (set it to show a moment of it).
     float AnimationTime : s {
         get { return __S3DObjAnimate(this.h, 2, 0.0) * 1s }
@@ -451,6 +457,16 @@ class Object {
     float TextureX : m { get { return __S3DGetF(this.h, 12) * 1m } set { __S3DSetF(this.h, 12, S3D.Length(value)) } }
     float TextureY : m { get { return __S3DGetF(this.h, 13) * 1m } set { __S3DSetF(this.h, 13, S3D.Length(value)) } }
     float TextureRotation : any { get { return S3D.Degrees(__S3DGetF(this.h, 16)) } set { __S3DSetF(this.h, 16, S3D.Angle(value)) } }
+
+    // ---- movement by itself (Advance moves it on) ----
+    // How far the object turns in a second about each axis (90deg: a quarter turn a second).
+    float SpinX : any { get { return S3D.Degrees(__S3DGetF(this.h, 19)) } set { __S3DSetF(this.h, 19, S3D.Angle(value)) } }
+    float SpinY : any { get { return S3D.Degrees(__S3DGetF(this.h, 20)) } set { __S3DSetF(this.h, 20, S3D.Angle(value)) } }
+    float SpinZ : any { get { return S3D.Degrees(__S3DGetF(this.h, 21)) } set { __S3DSetF(this.h, 21, S3D.Angle(value)) } }
+    undefined SetSpin(float x : any, float y : any, float z : any) { __S3DSetF3(this.h, 19, S3D.Angle(x), S3D.Angle(y), S3D.Angle(z), false) }
+    // How fast the texture runs over the object (water, lava, a conveyor belt): TextureX / TextureY move on by this much a second.
+    float TextureScrollX : m/s { get { return __S3DGetF(this.h, 22) * 1m / 1s } set { __S3DSetF(this.h, 22, S3D.Speed(value)) } }
+    float TextureScrollY : m/s { get { return __S3DGetF(this.h, 23) * 1m / 1s } set { __S3DSetF(this.h, 23, S3D.Speed(value)) } }
 
     int Triangles { get { return __S3DObjTriangles(this.h) } }
 
@@ -595,6 +611,26 @@ class Scene {
     int Threads { get { return __S3DGetI(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
     // RenderMode.Software (default) or RenderMode.Hardware: the GPU draws (Vulkan), where there is one; else the software renderer.
     RenderMode Renderer { get { return __S3DGetI(this.h, 4)!RenderMode } set { __S3DSetI(this.h, 4, value!int) } }
+
+    // ---- the effects on the whole picture ----
+    // Fog: from `start` on, the picture goes into the colour, from `end` on it is all fog - also where no object is (the background). It hides the end of the
+    // world and is cheap (Fast and Software; the GPU draws no fog yet). NoFog() takes it away.
+    undefined Fog(int color, float start : any m, float end : any m) {
+        __S3DSetI(this.h, 5, color)
+        __S3DSetF(this.h, 1, S3D.Length(start))
+        __S3DSetF(this.h, 2, S3D.Length(end))
+    }
+    undefined NoFog() { __S3DSetF(this.h, 1, 0.0); __S3DSetF(this.h, 2, 0.0) }
+    int FogColor { get { return __S3DGetI(this.h, 5) } set { __S3DSetI(this.h, 5, value) } }
+    float FogStart : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DSetF(this.h, 1, S3D.Length(value)) } }
+    float FogEnd : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DSetF(this.h, 2, S3D.Length(value)) } }
+    // The tint: the whole picture towards a colour by `amount` (0 nothing .. 1 all the colour): fading out (black), a flash (white), under water (blue).
+    undefined Tint(int color, float amount) { __S3DSetI(this.h, 6, color); __S3DSetF(this.h, 3, amount) }
+    int TintColor { get { return __S3DGetI(this.h, 6) } set { __S3DSetI(this.h, 6, value) } }
+    float TintAmount { get { return __S3DGetF(this.h, 3) } set { __S3DSetF(this.h, 3, value) } }
+
+    // The time goes on for every object of the scene (Object.Advance: animations, spin, texture scroll, particles) - once a frame: scene.Advance(16ms).
+    undefined Advance(float time : any s) { __S3DSceneAdvance(this.h, S3D.Seconds(time)) }
 
     // Adds an object, camera, light or texture (to Objects, Cameras, Lights or Textures); with a key the item can be fetched with Get(key). Returns the item.
     any Add(any item, string key = "") {

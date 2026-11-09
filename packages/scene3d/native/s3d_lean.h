@@ -82,6 +82,8 @@ typedef struct S3dLean {
     uint8_t* inverse;              /* 4096 */
     uint8_t* shade;                /* S3D_LEAN_LEVELS * 256 */
     uint32_t background;
+    void (*post)(void* ctx, struct S3dLean* L, int top, int rows);   /* after the triangles of a band (the effects, s3d_effects.h); NULL: nothing */
+    void* postCtx;
 } S3dLean;
 
 static S3dLean* s3d_leanNew(void) { return (S3dLean*)s3d_calloc(1, sizeof(S3dLean)); }
@@ -591,6 +593,7 @@ static void s3d_leanEnd(S3dLean* L, S3dLeanSink sink, void* ctx) {
             if (t->maxY < top || t->minY > bottom) continue;
             s3d_leanRaster(L, t, top, s3d_maxi(t->minY, top), s3d_mini(t->maxY, bottom));
         }
+        if (L->post) L->post(L->postCtx, L, top, rows);
         sink(ctx, top, rows, L->band);
     }
     L->vN = L->tN = L->sN = 0;

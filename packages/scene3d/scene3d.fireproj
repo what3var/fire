@@ -15,6 +15,7 @@
       "native/s3d_engine.h",
       "native/s3d_lean.h",
       "native/s3d_model.h",
+      "native/s3d_effects.h",
       "native/s3d_vk.h",
       "native/s3d_shaders.h",
       "native/s3d_gpu_vk.h",
@@ -335,6 +336,54 @@
         "c": "fire_s3d_ObjClip",
         "needsList": true,
         "returnsReference": true
+      },
+      {
+        "name": "__S3DEmitter",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_s3d_Emitter"
+      },
+      {
+        "name": "__S3DEmitterSet",
+        "returns": "bool",
+        "arguments": 3,
+        "c": "fire_s3d_EmitterSet"
+      },
+      {
+        "name": "__S3DEmitterGet",
+        "returns": "float",
+        "arguments": 2,
+        "c": "fire_s3d_EmitterGet"
+      },
+      {
+        "name": "__S3DEmitterInt",
+        "returns": "int",
+        "arguments": 4,
+        "c": "fire_s3d_EmitterInt"
+      },
+      {
+        "name": "__S3DEmitterBurst",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_EmitterBurst"
+      },
+      {
+        "name": "__S3DEmitterPreset",
+        "returns": "bool",
+        "arguments": 3,
+        "c": "fire_s3d_EmitterPreset"
+      },
+      {
+        "name": "__S3DObjAdvance",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_ObjAdvance"
+      },
+      {
+        "name": "__S3DSceneAdvance",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_SceneAdvance"
       }
     ],
     "reset": "fire_s3d_reset",

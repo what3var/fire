@@ -1,0 +1,91 @@
+#import "scene3d"
+
+// scene3d.effects (docs/graphics/effects.md): particles. The particles live and are drawn in the renderer (s3d_effects.h): a pool of a fixed size for each
+// emitter, nothing of them in fire - and a program that does not import this package carries nothing of it. Fog and tint are part of the Scene itself.
+
+// An emitter: an object of the scene that sends out particles from its place - soft discs that face the camera, from a first colour and size to a last one
+// over their life. Scene.Advance (or Advance) moves them on; everything is the same in the VM and in a native build (the chance comes from Seed).
+class Emitter : Object {
+    construct(float x : any m = 0m, float y : any m = 0m, float z : any m = 0m) : base() {
+        if (!__S3DEmitter(this.h)) { throw new Scene3DException("No memory for an emitter.") }
+        this.SetPosition(x, y, z)
+    }
+
+    // How many particles a second it makes (while it runs), and how many can live at once (the pool; the oldest stay, no new ones while it is full).
+    float Rate { get { return __S3DEmitterGet(this.h, 0) } set { __S3DEmitterSet(this.h, 0, value) } }
+    int MaxParticles { get { return __S3DEmitterGet(this.h, 18)!int } set { __S3DEmitterSet(this.h, 18, value * 1.0) } }
+    // How long a particle lives, and how much that varies (0.3: 30% more or less).
+    float Lifetime : s { get { return __S3DEmitterGet(this.h, 1) * 1s } set { __S3DEmitterSet(this.h, 1, S3D.Seconds(value)) } }
+    float LifetimeVariation { get { return __S3DEmitterGet(this.h, 2) } set { __S3DEmitterSet(this.h, 2, value) } }
+    // How fast a particle starts, and how much that varies.
+    float Speed : m/s { get { return __S3DEmitterGet(this.h, 3) * 1m / 1s } set { __S3DEmitterSet(this.h, 3, S3D.Speed(value)) } }
+    float SpeedVariation { get { return __S3DEmitterGet(this.h, 4) } set { __S3DEmitterSet(this.h, 4, value) } }
+    // The direction the particles fly in (default: up), and how far they spread from it (0deg: a ray, 180deg: all around).
+    undefined SetDirection(float x, float y, float z) { __S3DEmitterSet(this.h, 6, x); __S3DEmitterSet(this.h, 7, y); __S3DEmitterSet(this.h, 8, z) }
+    float Spread : any { get { return S3D.Degrees(__S3DEmitterGet(this.h, 5)) } set { __S3DEmitterSet(this.h, 5, S3D.Angle(value)) } }
+    // What pulls on the particles (0, -9.81m/s^2, 0: they fall) and how much the air slows them (0 not at all, 1: a lot).
+    undefined SetGravity(float x : m/s^2, float y : m/s^2, float z : m/s^2) {
+        __S3DEmitterSet(this.h, 9, x / (1m / 1s / 1s)); __S3DEmitterSet(this.h, 10, y / (1m / 1s / 1s)); __S3DEmitterSet(this.h, 11, z / (1m / 1s / 1s))
+    }
+    float Drag { get { return __S3DEmitterGet(this.h, 12) } set { __S3DEmitterSet(this.h, 12, value) } }
+    // The box around the emitter where particles start (half its width, height and depth; 0: all from the point).
+    undefined SetArea(float x : any m, float y : any m, float z : any m) {
+        __S3DEmitterSet(this.h, 15, S3D.Length(x)); __S3DEmitterSet(this.h, 16, S3D.Length(y)); __S3DEmitterSet(this.h, 17, S3D.Length(z))
+    }
+    // The size of a particle at the start and at the end of its life.
+    float StartSize : m { get { return __S3DEmitterGet(this.h, 13) * 1m } set { __S3DEmitterSet(this.h, 13, S3D.Length(value)) } }
+    float EndSize : m { get { return __S3DEmitterGet(this.h, 14) * 1m } set { __S3DEmitterSet(this.h, 14, S3D.Length(value)) } }
+    // The colour at the start and at the end of a life (0xAABBGGRR, S3D.Rgba: the alpha makes them see-through - an end colour with alpha 0 fades them out).
+    int StartColor { get { return __S3DEmitterInt(this.h, 0, 0, false) } set { __S3DEmitterInt(this.h, 0, value, true) } }
+    int EndColor { get { return __S3DEmitterInt(this.h, 1, 0, false) } set { __S3DEmitterInt(this.h, 1, value, true) } }
+    // true: the colours are added to the picture (fire, sparks, magic: they light up); false: laid over it (smoke, rain, snow).
+    bool Additive {
+        get { return __S3DEmitterGet(this.h, 19) != 0.0 }
+        set {
+            var v = 0.0
+            if (value) { v = 1.0 }
+            __S3DEmitterSet(this.h, 19, v)
+        }
+    }
+    // The start of the emitter's chance: the same seed and the same steps give the same particles.
+    int Seed { get { return __S3DEmitterInt(this.h, 2, 0, false) } set { __S3DEmitterInt(this.h, 2, value, true) } }
+
+    // Whether it makes new particles (false: the ones that live fly on and go; Stop() is the animation's, as for every Object).
+    bool Running {
+        get { return __S3DEmitterGet(this.h, 20) != 0.0 }
+        set {
+            var v = 0.0
+            if (value) { v = 1.0 }
+            __S3DEmitterSet(this.h, 20, v)
+        }
+    }
+    // `count` particles at once (an explosion, a hit).
+    undefined Burst(int count) { __S3DEmitterBurst(this.h, count) }
+    // All particles go at once.
+    undefined Clear() { __S3DEmitterBurst(this.h, -1) }
+    // How many particles live now.
+    int Count { get { return __S3DEmitterInt(this.h, 3, 0, false) } }
+
+    // ---- ready ones (each can be changed afterwards; their settings are in the renderer: s3d_effects.h) ----
+    static Emitter Ready(int kind, any x, any y, any z, float size) {
+        var e = new Emitter(x, y, z)
+        __S3DEmitterPreset(e.h, kind, size)
+        return e
+    }
+    // Flames: yellow to dark red, added, rising.
+    static Emitter Fire(float x : any m, float y : any m, float z : any m) { return Emitter.Ready(0, x, y, z, 0.0) }
+    // Smoke: grey, slow, growing, fading.
+    static Emitter Smoke(float x : any m, float y : any m, float z : any m) { return Emitter.Ready(1, x, y, z, 0.0) }
+    // Sparks: fast, bright, falling.
+    static Emitter Sparks(float x : any m, float y : any m, float z : any m) { return Emitter.Ready(2, x, y, z, 0.0) }
+    // Rain over a square of `size` (the emitter is the sky above it: put it high).
+    static Emitter Rain(float x : any m, float y : any m, float z : any m, float size : any m = 10m) { return Emitter.Ready(3, x, y, z, S3D.Length(size)) }
+    // Snow over a square of `size` (put it high).
+    static Emitter Snow(float x : any m, float y : any m, float z : any m, float size : any m = 10m) { return Emitter.Ready(4, x, y, z, S3D.Length(size)) }
+    // An explosion: `count` particles at once in all directions, then nothing more (Burst again for the next one).
+    static Emitter Explosion(float x : any m, float y : any m, float z : any m, int count = 150) {
+        var e = Emitter.Ready(5, x, y, z, count * 1.0)
+        e.Burst(count)
+        return e
+    }
+}

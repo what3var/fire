@@ -22,6 +22,9 @@
 #ifndef FIRE_S3D_MODEL_H
 #include "s3d_model.h"
 #endif
+#ifndef FIRE_S3D_EFFECTS_H
+#include "s3d_effects.h"
+#endif
 
 /* ---- the tables: slot 0 is never used (handle 0 is "none"), a free slot is used again ---- */
 typedef struct FireS3dTable { void** items; s3d_size count, cap; } FireS3dTable;
@@ -228,12 +231,13 @@ static Value fire_s3d_TexSetStrength(Value h, Value v) {
  * An item lives while someone uses it: its fire object (until its destructor: FIRE_S3D_ITEM_ALIVE is cleared, a scene skips it), the scenes it is in, the objects that use a
  * material. A mesh and a texture are counted the same way (an object that shows them is a user). */
 enum { FIRE_S3D_OBJECT = 1, FIRE_S3D_LIGHT = 2, FIRE_S3D_CAMERA = 3, FIRE_S3D_SCENE = 4, FIRE_S3D_MATERIAL = 5 };
-#define FIRE_S3D_FLOATS 19
+#define FIRE_S3D_FLOATS 24
 #define FIRE_S3D_INTS 8
 
-/* object: f = x, y, z, rotation x, y, z, scale x, y, z, anchor x, y, z, texture x, y, width, height, rotation, opacity, alpha cutoff;
+/* object: f = x, y, z, rotation x, y, z, scale x, y, z, anchor x, y, z, texture x, y, width, height, rotation, opacity, alpha cutoff, spin x, y, z (rad/s),
+ *             texture scroll x, y (m/s: Advance moves them on);
  *         n = colour, visible, two sided, lit, casts shadows, receives shadows, layers, billboard */
-enum { OF_PX = 0, OF_RX = 3, OF_SX = 6, OF_AX = 9, OF_TX = 12, OF_TY, OF_TW, OF_TH, OF_TROT, OF_OPACITY, OF_CUTOFF };
+enum { OF_PX = 0, OF_RX = 3, OF_SX = 6, OF_AX = 9, OF_TX = 12, OF_TY, OF_TW, OF_TH, OF_TROT, OF_OPACITY, OF_CUTOFF, OF_SPIN, OF_SCROLL = OF_SPIN + 3 };
 enum { ON_COLOR = 0, ON_VISIBLE, ON_TWOSIDED, ON_LIT, ON_CAST, ON_RECEIVE, ON_LAYERS, ON_BILLBOARD };
 /* light: f = intensity, x, y, z, direction x, y, z, range; n = kind, colour, enabled, casts shadows, layers */
 enum { LF_INTENSITY = 0, LF_X, LF_Y, LF_Z, LF_DX, LF_DY, LF_DZ, LF_RANGE };
@@ -241,8 +245,9 @@ enum { LN_KIND = 0, LN_COLOR, LN_ENABLED, LN_CAST, LN_LAYERS };
 /* camera: f = x, y, z, rotation x, y, z, field of view, near, far; n = background, direct drawing */
 enum { CF_X = 0, CF_RX = 3, CF_FOV = 6, CF_NEAR, CF_FAR };
 enum { CN_BACKGROUND = 0, CN_DIRECT, CN_LAST };   /* (CN_LAST: who drew the last picture - 0 software, 1 GPU, 2 GPU into the windows, 3 the lean renderer) */
-/* scene: f = ambient intensity; n = ambient colour, shadows, shadow resolution, threads, renderer */
-enum { SN_AMBIENT = 0, SN_SHADOWS, SN_SHADOWRES, SN_THREADS, SN_RENDERER };
+/* scene: f = ambient intensity, fog start, fog end, tint amount; n = ambient colour, shadows, shadow resolution, threads, renderer, fog colour, tint colour */
+enum { SF_AMBIENT = 0, SF_FOGSTART, SF_FOGEND, SF_TINT };
+enum { SN_AMBIENT = 0, SN_SHADOWS, SN_SHADOWRES, SN_THREADS, SN_RENDERER, SN_FOGCOLOR, SN_TINTCOLOR };
 /* material: f = specular, shininess; n = smooth, two sided, emissive */
 enum { MN_SMOOTH = 0, MN_TWOSIDED, MN_EMISSIVE };
 
@@ -258,6 +263,7 @@ typedef struct FireS3dItem {
     int64_t* lights; s3d_size lightN, lightCap;
     float* terrain; int tCols, tRows, tHard; float tCell, tStep;   /* object, a terrain: its heights (in steps), cells, how it is built */
     int64_t model; int clip, playing, loop; Real time;             /* object of a model: the model (it is one of its users), the clip that plays and its time */
+    S3dEmitter* emitter;                                           /* object, an emitter: its particles (scene3d.effects) */
 } FireS3dItem;
 static FireS3dTable g_s3dItems;
 
@@ -289,6 +295,7 @@ static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     for (i = 0; i < it->lightN; i++) fire_s3d_itemRelease(it->lights[i]);
     S3D_FREE(it->objects); S3D_FREE(it->lights); S3D_FREE(it->terrain);
     fire_s3d_modelRelease(it->model);
+    s3d_emitterFree(it->emitter);
     S3D_FREE(it);
 }
 static void fire_s3d_itemRelease(int64_t h) {
@@ -321,7 +328,7 @@ static Value fire_s3d_New(Value kind) {
             break;
         case FIRE_S3D_SCENE:
             it->f[0] = (Real)0.25;
-            it->n[SN_AMBIENT] = 4294967295LL; it->n[SN_SHADOWS] = 1; it->n[SN_SHADOWRES] = 1024;
+            it->n[SN_AMBIENT] = 4294967295LL; it->n[SN_SHADOWS] = 1; it->n[SN_SHADOWRES] = 1024; it->n[SN_FOGCOLOR] = 4290822336LL; it->n[SN_TINTCOLOR] = 4278190080LL;
             break;
         default:   /* material */
             it->f[1] = 32; it->n[MN_SMOOTH] = 1;
@@ -502,6 +509,70 @@ static Value fire_s3d_ObjClip(Value h, Value kind, OwnList* list) {
     if (!m || it->clip < 0) return fire_s3d_strOf("", list);
     if (kind.i == 1) return fire_s3d_strOf(it->playing ? "playing" : "", list);
     return fire_s3d_strOf(m->clips[it->clip].name, list);
+}
+
+/* ---- emitters (scene3d.effects): an object with particles ---- */
+static S3dEmitter* fire_s3d_emitterAt(Value h) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    return it ? it->emitter : NULL;
+}
+/* The object becomes an emitter (its place is where the particles come from). */
+static Value fire_s3d_Emitter(Value h) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    if (!it) return Bool(false);
+    if (it->emitter == NULL) it->emitter = s3d_emitterNew();
+    return Bool(it->emitter != NULL);
+}
+static Value fire_s3d_EmitterSet(Value h, Value slot, Value v) {
+    S3dEmitter* e = fire_s3d_emitterAt(h);
+    if (!e || slot.i < 0 || slot.i >= S3D_EM_COUNT_SETTINGS) return Bool(false);
+    e->st[slot.i] = (float)toR(v);
+    return Bool(true);
+}
+static Value fire_s3d_EmitterGet(Value h, Value slot) {
+    S3dEmitter* e = fire_s3d_emitterAt(h);
+    return Float(e && slot.i >= 0 && slot.i < S3D_EM_COUNT_SETTINGS ? (Real)e->st[slot.i] : (Real)0);
+}
+/* `which`: 0 the colour at the start of a life, 1 at its end, 2 the seed of its chance, 3 how many particles live (read only); `set`: v becomes it. Returns it. */
+static Value fire_s3d_EmitterInt(Value h, Value which, Value v, Value set) {
+    S3dEmitter* e = fire_s3d_emitterAt(h);
+    uint32_t* at;
+    if (!e) return Int(0);
+    if (which.i == 3) return Int(e->n);
+    at = which.i == 0 ? &e->color0 : which.i == 1 ? &e->color1 : &e->seed;
+    if (set.i) { *at = (uint32_t)(v.kind == K_Float ? (int64_t)v.f : v.i); if (which.i == 2 && *at == 0) *at = 1; }
+    return Int((int64_t)*at);
+}
+/* A ready emitter (s3d_emitterPreset): its settings and colours. */
+static Value fire_s3d_EmitterPreset(Value h, Value kind, Value size) {
+    S3dEmitter* e = fire_s3d_emitterAt(h);
+    if (!e) return Bool(false);
+    s3d_emitterPreset(e, (int)kind.i, (float)toR(size));
+    return Bool(true);
+}
+/* `count` particles at once (an explosion); below 0: all particles go. */
+static Value fire_s3d_EmitterBurst(Value h, Value count) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    if (!it || !it->emitter) return Bool(false);
+    if (count.i < 0) { it->emitter->n = 0; it->emitter->due = 0; }
+    else s3d_emitterBurst(it->emitter, s3d_v3((float)it->f[OF_PX], (float)it->f[OF_PX + 1], (float)it->f[OF_PX + 2]), (int)(count.i > 16000 ? 16000 : count.i));
+    return Bool(true);
+}
+
+static Value fire_s3d_ObjAnimate(Value h, Value mode, Value value);
+/* The time goes on for an object by dt seconds: its animation, its spin, the scroll of its texture, its particles. */
+static void fire_s3d_objAdvance(int64_t h, FireS3dItem* o, Real dt) {
+    int i;
+    if (o->model) fire_s3d_ObjAnimate(Int(h), Int(0), Float(dt));
+    for (i = 0; i < 3; i++) o->f[OF_RX + i] += o->f[OF_SPIN + i] * dt;
+    o->f[OF_TX] += o->f[OF_SCROLL] * dt; o->f[OF_TY] += o->f[OF_SCROLL + 1] * dt;
+    if (o->emitter) s3d_emitterAdvance(o->emitter, s3d_v3((float)o->f[OF_PX], (float)o->f[OF_PX + 1], (float)o->f[OF_PX + 2]), (float)dt);
+}
+static Value fire_s3d_ObjAdvance(Value h, Value dt) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    if (!it) return Bool(false);
+    fire_s3d_objAdvance(h.i, it, toR(dt));
+    return Bool(true);
 }
 
 /* The triangles of AddTriangle become the mesh of the object (when they changed). */
@@ -1003,6 +1074,42 @@ static S3dLight* fire_s3d_lightsOf(const FireS3dItem* s, s3d_size* n) {
     return ls;
 }
 
+/* ---- the effects of a picture (s3d_effects.h): fog, particles, tint ---- */
+/* The time goes on for all objects of a scene by dt seconds (Object.Advance for each of them). */
+static Value fire_s3d_SceneAdvance(Value scene, Value dt) {
+    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
+    s3d_size i;
+    if (!s) return Bool(false);
+    for (i = 0; i < s->objectN; i++) {
+        FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
+        if (o && o->alive) fire_s3d_objAdvance(s->objects[i], o, toR(dt));
+    }
+    return Bool(true);
+}
+/* The effects of the scene for a picture of w x h: 0 none (nothing to do); the splats are the caller's to free (fx->splats). */
+static int fire_s3d_fxOf(const FireS3dItem* s, const S3dCamera* cam, int w, int h, S3dFx* fx) {
+    S3dEmitter* list[64];
+    s3d_size i, en = 0;
+    memset(fx, 0, sizeof(*fx));
+    fx->fogStart = (float)s->f[SF_FOGSTART]; fx->fogEnd = (float)s->f[SF_FOGEND]; fx->fogColor = (uint32_t)s->n[SN_FOGCOLOR];
+    fx->tint = (float)s->f[SF_TINT]; fx->tintColor = (uint32_t)s->n[SN_TINTCOLOR];
+    for (i = 0; i < s->objectN && en < 64; i++) {
+        FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
+        if (o && o->alive && o->n[ON_VISIBLE] && o->emitter && o->emitter->n > 0) list[en++] = o->emitter;
+    }
+    if (en) fx->splats = s3d_splatsOf(list, en, cam, w, h, &fx->splatN);
+    return fx->fogEnd > fx->fogStart || fx->tint > 0 || fx->splatN > 0;
+}
+/* The lean renderer: the effects on each band, as soon as its triangles are drawn. */
+static void fire_s3d_leanFx(void* ctx, S3dLean* L, int top, int rows) {
+    S3dFxTarget t;
+    memset(&t, 0, sizeof(t));
+    t.px = L->band; t.w = L->w; t.y0 = top; t.y1 = top + rows - 1; t.bpp = L->bpp;
+    t.pal = L->pal; t.inverse = L->inverse;
+    t.qdepth = L->depth; t.qScale = L->nearPlane * 65535.0f;
+    s3d_fxApply(&t, (S3dFx*)ctx);
+}
+
 /* Draws the scene as the camera sees it into `buffer` (width * height * 4 bytes, the picture of the camera's framebuffer `fb`). Returns who drew (0 software, 1 the GPU, 2 the GPU
  * straight into the windows of the framebuffer), -1 when the size is not usable, -2 when the frame cannot be cleared (the memory). */
 static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value width, Value height, Value fb) {
@@ -1047,6 +1154,15 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
     s3d_flush(b->data, f, &cam, ls, n, &fs);
     S3D_FREE(ls);
     c->n[CN_LAST] = f->lastBackend;
+    if (f->lastBackend != S3D_BACKEND_DIRECT) {   /* (DirectDrawing: the picture is in the windows, not here) */
+        S3dFx fx;
+        if (fire_s3d_fxOf(s, &cam, (int)width.i, (int)height.i, &fx)) {
+            S3dFxTarget t;
+            s3d_fxTargetFull(&t, b->data, (int)width.i, (int)height.i, f->lastBackend == S3D_BACKEND_SOFTWARE ? f->depth : NULL, cam.nearPlane, cam.farPlane);
+            s3d_fxApply(&t, &fx);
+        }
+        if (fx.splats) S3D_FREE((void*)fx.splats);
+    }
     return Int(f->lastBackend);
 #endif
 }
@@ -1131,7 +1247,14 @@ static Value fire_s3d_RenderLean(Value camera, Value scene, Value fb, Value widt
         FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
         if (o && o->alive && o->n[ON_VISIBLE]) fire_s3d_queueObject(NULL, c->lean, &cam, o);
     }
-    s3d_leanEnd(c->lean, sink, ctx);
+    {
+        S3dFx fx;
+        if (fire_s3d_fxOf(s, &cam, w, h, &fx)) { c->lean->post = fire_s3d_leanFx; c->lean->postCtx = &fx; }
+        s3d_leanEnd(c->lean, sink, ctx);
+        c->lean->post = NULL; c->lean->postCtx = NULL;
+        if (fx.splats) S3D_FREE((void*)fx.splats);
+        if (fx.fogMap) S3D_FREE(fx.fogMap);
+    }
     c->n[CN_LAST] = 3;
     return Int(result);
 }

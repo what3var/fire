@@ -32,6 +32,7 @@ static class Scene3DTests
         #import "graphics"
         #import "scene3d"
         #import "scene3d.terrain"
+        #import "scene3d.effects"
 
         // a checksum of the picture (the same in the VM and in C++)
         class H {
@@ -324,6 +325,50 @@ static class Scene3DTests
         cam.Render()
         print("blocks hop " + figure.Playing + " " + figure.AnimationTime + " " + H.Sum(frame))
         scene.Remove(figure)
+
+        // effects (scene3d.effects): particles (the same in the VM and native: the emitter's own chance), fog, tint, spin, a texture that runs
+        var flames = Emitter.Fire(0m, 1m, 1m)
+        scene.Add(flames)
+        var smoke = Emitter.Smoke(-1m, 1m, 0m)
+        scene.Add(smoke)
+        var boom = Emitter.Explosion(1m, 1m, 1m, 40)
+        scene.Add(boom)
+        for (var i = 0; i < 20; i++) { scene.Advance(50ms) }
+        print("particles " + flames.Count + " " + smoke.Count + " " + boom.Count + " " + flames.Running + " " + boom.Running + " " + flames.Lifetime + " " + flames.Speed + " " + flames.Spread)
+        box.SpinY = 90deg
+        floor.TextureScrollX = 50cm / 1s
+        scene.Advance(500ms)
+        print("spin " + box.RotationY + " " + floor.TextureX + " " + box.SpinY)
+        boom.Burst(30)
+        scene.Advance(100ms)
+        cam.Render()
+        print("effects software " + H.Sum(frame))
+        scene.Renderer = RenderMode.Fast
+        cam.Render()
+        print("effects fast " + H.Sum(frame))
+        palCam.Render()
+        print("effects palette " + H.Sum(palFrame))
+        scene.Fog(S3D.Rgb(150, 160, 180), 3m, 8m)
+        cam.Render()
+        print("fog fast " + H.Sum(frame))
+        palCam.Render()
+        print("fog palette " + H.Sum(palFrame))
+        scene.Renderer = RenderMode.Software
+        cam.Render()
+        print("fog software " + H.Sum(frame) + " " + scene.FogStart + " " + scene.FogEnd)
+        scene.Tint(S3D.Rgb(0, 0, 60), 0.3)
+        cam.Render()
+        print("tint " + H.Sum(frame) + " " + scene.TintAmount)
+        scene.NoFog()
+        scene.Tint(0, 0.0)
+        boom.Clear()
+        smoke.Running = false
+        smoke.Seed = 7
+        print("cleared " + boom.Count + " " + smoke.Running + " " + smoke.Seed)
+        scene.Remove(flames)
+        scene.Remove(smoke)
+        scene.Remove(boom)
+        try { flames.Speed = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }
         try { robot.Play("dance") } catch (Scene3DException e) { print("error " + e.message) }
         try { Model.FromBytes(new byte[10]) } catch (Scene3DException e) { print("error " + e.message) }
         try { robot.Advance(3) } catch (UnitMismatchException e) { print("unit " + e.message) }
