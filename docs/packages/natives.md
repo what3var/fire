@@ -196,6 +196,10 @@ class SensorKit {
 * `linkLibraries` (in `native`, optional): system libraries the C++ needs on one platform or target, by the same keys as `platformSources`, e.g. `"linkLibraries": { "windows": [ "ws2_32" ] }` - the build links them (`-lws2_32`, `ws2_32.lib`).
 * `exceptions` (in `native`): the exception classes of your prelude that your natives throw, e.g. `"exceptions": [ "SensorException" ]`. The class needs a constructor with one text
   argument; the native throws it with `return fireError("SensorException", "no answer");` (a native build constructs the class by name, the VM gets the class and the text from the library).
+* `threadSafe` (in `native`, optional, default `false`): your natives may be called by several fire threads at the same time. Without it a native build calls the
+  natives of one package one at a time - a lock per package, taken around each call; a native that waits (`gilRelease()` ... `gilAcquire()`, see below) and a
+  callback into fire code that reaches a safe point let go of it meanwhile, so other threads can call the package then, just as with the old global lock. Set it
+  only when your natives keep no state of their own, or protect it themselves.
 * `host: true` (per function): in the virtual machine the host runs the function itself instead of the library. It is for what the C ABI cannot carry or what must not run inside a library:
   a wait that has to be abortable (`Sleep`), or a function that needs the unit of a value. The VM looks the function up by name in its own table (`fire.Runtime.HostNatives`), so this is for the
   standard packages; in a native build the `cpp` function is used as always.

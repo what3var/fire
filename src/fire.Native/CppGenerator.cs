@@ -1453,6 +1453,16 @@ namespace fire.Native
         /// <summary>The exception classes that natives of the imported packages throw (`exceptions` of the package): the runtime constructs them by name (`fireError`).</summary>
         private readonly List<string> _errorClasses = new();
         private readonly List<(InstalledImport Import, string Key)> _packageImports = new();
+        /// <summary>The locks of the packages whose natives fire threads may call (docs/ROADMAP_TASKS.md 1f): import key -> index into `fire_pkgM`.</summary>
+        private readonly Dictionary<string, int> _pkgLocks = new();
+        /// <summary>The lock of the package of a native in a program with fire threads: its index in `fire_pkgM`, -1 for none (no threads, or `"threadSafe": true`).</summary>
+        private int PkgLock(string native)
+        {
+            if (!_usesThreads || Modular || !_nativeImportOf.TryGetValue(native, out var key)) return -1;
+            if (_packageImports.FirstOrDefault(p => p.Key == key).Import?.Import.Native is { ThreadSafe: true }) return -1;
+            if (!_pkgLocks.TryGetValue(key, out int index)) { index = _pkgLocks.Count; _pkgLocks[key] = index; _version++; }
+            return index;
+        }
 
         /// <summary>The natives in C++ (graphics, windows, the packages) that the program calls: they are in a file of their own (C++), the program (C) calls them
         /// through a function with C linkage each - `fire_nat_N`. The C++ function -> (N, number of arguments, the list of the scope as the last argument).</summary>
@@ -1766,6 +1776,11 @@ namespace fire.Native
             if (_staticFields.Count > 0) sb.AppendLine();
             if (_usesThreads && !Modular)
             {
+                // (the locks of the packages - fire_rt.h FIRE_PKG_ENTER, without the GIL)
+                sb.AppendLine("#ifdef FIRE_NO_GIL");
+                sb.AppendLine($"static fire_mutex fire_pkgM[{Math.Max(1, _pkgLocks.Count)}];");
+                sb.AppendLine($"static void fire_pkgLocksInit(void) {{ int i; for (i = 0; i < {Math.Max(1, _pkgLocks.Count)}; i++) fire_mutex_init(&fire_pkgM[i]); }}");
+                sb.AppendLine("#endif");
                 // (the first `fire`: what the globals and static fields hold is shared with the threads from then on - fire_rt.h ensureDomain, without the GIL)
                 sb.AppendLine("#ifdef FIRE_STR_CROSS");
                 sb.AppendLine("static void fire_shareGlobals(void) {");
@@ -3323,7 +3338,7 @@ namespace fire.Native
                 if (region.Catches.Count > 0)
                     for (int k = region.DepthBase; k < region.Out.MaxDepth; k++) Var("Value", $"c{region.Template}_{k}", null);
             }
-            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;" + (Modular ? "" : "\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif"));
+            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;" + (Modular ? "" : "\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif\n#ifdef FIRE_NO_GIL\n    fire_pkgLocksInit();\n#endif"));
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) post.AppendLine("    g_globalOwn = &OG;");
             if (f.Kind == FuncKind.FireBody)
             {
@@ -3777,6 +3792,7 @@ namespace fire.Native
         {
             if (ins.Op != OpCode.CallNative || ins.A[0] >= _natives.Count || !_packageNatives.TryGetValue(_natives[ins.A[0]], out var pn) || pn.Argc != ins.A[1]) return false;
             if (!NativeCTypes.IsTyped(pn.Fn, pn.IsC) || !NativeIsHere(_nativeImportOf.GetValueOrDefault(_natives[ins.A[0]]) ?? "")) return false;
+            if (PkgLock(_natives[ins.A[0]]) >= 0) return false;   // (its call is a statement between the package's lock)
             for (int i = 0; i < pn.Argc; i++) if (NativeCTypes.ParamCType(pn.Fn, i) == null) return false;
             return true;
         }
@@ -5007,10 +5023,13 @@ namespace fire.Native
                         if (packageNative.Host) NeedTimeObj();        // a function the VM runs itself waits and takes times: a TimeSpan is read from its `ticks`
                         // (a package in C: its function is part of this file; in C++: through the thunk into fire_natives.cpp)
                         string typedRet = typed ? NativeCTypes.ReturnCType(packageNative.Fn) ?? "" : "";
+                        // (the lock of the package around the call, in a program with fire threads - nothing with the GIL)
+                        int pkgLock = PkgLock(native);
+                        string pkgEnter = pkgLock >= 0 ? $"{{ FIRE_PKG_ENTER(fire_pkgM[{pkgLock}]) " : "", pkgLeave = pkgLock >= 0 ? $" FIRE_PKG_LEAVE(fire_pkgM[{pkgLock}]) }}" : "";
                         // (an int[64] result in a program with 32-bit ints, or no scalars here: the Value of the C number)
-                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32)))
+                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32) || pkgLock >= 0))
                         {
-                            E($"{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};");
+                            E($"{pkgEnter}{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};{pkgLeave}");
                             typedRet = "";
                             Check();
                             if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
@@ -5029,7 +5048,7 @@ namespace fire.Native
                             d = first + 1; SetR(first, false); _kindsKept = true;
                             return Next();
                         }
-                        E($"{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});");
+                        E($"{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}");
                         Check();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");

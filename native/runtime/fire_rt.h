@@ -324,7 +324,8 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
 typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCache;
 #define FIRE_SLOT_THREAD_VARS(X) X(SlotCache, g_slotCache, FIRE_ZERO_INIT) \
     X(uint8_t, g_domReader, 0)   /* a fire thread that does not hold the read side of the globals' lock (see DomLock): its next touch of the shared domain takes it */ \
-    X(uint8_t, g_domHeld, 0)     /* ... it holds it (until its next safe point) */
+    X(uint8_t, g_domHeld, 0)     /* ... it holds it (until its next safe point) */ \
+    X(fire_mutex*, g_pkgHeld, NULL)   /* the lock of the package whose native runs on this thread (see FIRE_PKG_ENTER) */
 #else
 #define FIRE_SLOT_THREAD_VARS(X)
 #endif
@@ -426,6 +427,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_slotCache FIRE_TLV(g_slotCache)
 #define g_domReader FIRE_TLV(g_domReader)
 #define g_domHeld FIRE_TLV(g_domHeld)
+#define g_pkgHeld FIRE_TLV(g_pkgHeld)
 #endif
 #ifdef FIRE_DEBUG
 #define g_dbgTop FIRE_TLV(g_dbgTop)
@@ -7328,12 +7330,49 @@ FIRE_FN void domWriterLeave(void) {
     fire_mutex_unlock(&g_dom.m);
     g_domReader = 1;
 }
-FIRE_FN void gilAcquire(void) { if (!g_isThread) domMainEnter(); }
-FIRE_FN void gilRelease(void) { if (!g_isThread) domMainLeave(); else domReadLeave(); }
+/* The natives of a package (step 1f): one thread at a time per package - its lock, held while one of its natives runs, given back with the GIL's points
+ * (a native that waits, a callback into fire code that reaches a safe point). The order is always: the read side of the globals first, then the package's
+ * lock - so while the main program holds the write side no thread holds a package's lock, and the main program cannot wait for one forever. A package that
+ * says it is thread safe (`"threadSafe": true` in its manifest) has no lock. */
+FIRE_FN fire_mutex* pkgEnter(fire_mutex* m) {
+    fire_mutex* prev = g_pkgHeld;
+    if (prev == m) return prev;
+    if (g_domReader) domReadEnter();
+    fire_mutex_lock(m);
+    g_pkgHeld = m;
+    return prev;
+}
+FIRE_FN void pkgLeave(fire_mutex* m, fire_mutex* prev) {
+    if (prev == m) return;
+    fire_mutex_unlock(m);
+    g_pkgHeld = prev;
+}
+#define FIRE_PKG_ENTER(m) fire_mutex* pkPrev_ = pkgEnter(&(m));
+#define FIRE_PKG_LEAVE(m) pkgLeave(&(m), pkPrev_);
+FIRE_FN void gilAcquire(void) {
+    if (!g_isThread) domMainEnter();
+    else if (g_pkgHeld && g_domReader) domReadEnter();
+    if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
+}
+FIRE_FN void gilRelease(void) {
+    if (g_pkgHeld) fire_mutex_unlock(g_pkgHeld);
+    if (!g_isThread) domMainLeave(); else domReadLeave();
+}
 FIRE_FN void gilYield(void) {
     FIRE_PLAT_YIELD();
-    if (!g_isThread) { if (fire_atomic_load(&g_dom.readersWaiting)) domMainYield(); }
-    else domReadLeave();
+    if (!g_isThread) {
+        if (fire_atomic_load(&g_dom.readersWaiting)) {
+            if (g_pkgHeld) fire_mutex_unlock(g_pkgHeld);
+            domMainYield();
+            if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
+        }
+    } else if (g_pkgHeld) {
+        /* (inside a native's callback: the others get the package and the main program its turn, then this thread takes both again, in the order) */
+        fire_mutex_unlock(g_pkgHeld);
+        domReadLeave();
+        domReadEnter();
+        fire_mutex_lock(g_pkgHeld);
+    } else domReadLeave();
 }
 #else
 FIRE_FN void gilAcquire(void) {
@@ -7353,6 +7392,8 @@ FIRE_FN void gilRelease(void) {
     fire_cond_notifyAll(&g_gil.cv);
     fire_mutex_unlock(&g_gil.m);
 }
+#define FIRE_PKG_ENTER(m)
+#define FIRE_PKG_LEAVE(m)
 /* Lets a thread that waits for the lock run (the ticket lock is fair: this thread queues up again behind it). */
 FIRE_FN void gilYield(void) {
     FIRE_PLAT_YIELD();   /* (a scheduler of fire itself: the others get their turn - a thread that has not started yet waits for nothing) */

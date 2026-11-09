@@ -78,7 +78,10 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    an object, array or buffer goes through it), `FIRE_DOM_READ` before a thread reads a global or a static field - and lets go of it at its next safe point
    or wait; threads read side by side, a thread that never touches the domain never waits. A section holds the write side alone. A program with two
    threads reading global strings and fields of a global object while the main program rewrites them is clean under ThreadSanitizer without the GIL.
-6. **1f** a lock per package instead of the GIL around natives.
+6. **1f** a lock per package instead of the GIL around natives. *Done:* in a program with fire threads every call of a package's native is between
+   `FIRE_PKG_ENTER`/`FIRE_PKG_LEAVE` of that package's lock (`fire_pkgM`, nothing with the GIL; a typed native in C then goes through its Value). A thread
+   takes the read side of the globals before a package's lock, so the main program, holding the write side, never waits for a package's lock; the lock is
+   given back where the GIL was (`gilRelease` in a native that waits, the safe points of a callback). `"threadSafe": true` in the manifest: no lock.
 7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests.
 
 ## 3. The language: `fire` and `await`
