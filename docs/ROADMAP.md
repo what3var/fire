@@ -941,6 +941,16 @@ die Handles als `defined int h` (+2,6 KB auf dos16: sie gehen fast nur an Native
 Eigenschaften (keine Änderung: Accessoren bekommen keinen C-Rumpf). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
 C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`. `FIRE_TESTS_ONLY=scene3d` prüft das dos16-C weiter mit.
 
+**Größe nach M5 (gemessen mit `forge build --stats`, dos16, ein Programm mit Szene, Boden, Ball-Körper, Kamera im schlanken Renderer, 60 Bilder):**
+Laden 404 -> 366 KB. Die Schritte: (1) die Physik mit Vektoren als Zeiger statt als Werte (auf 16 Bit kopiert jeder Aufruf mit einem `S3dVec3` 12 Byte;
+gemessen an einer kleinen Rechnung 263 -> 114 Byte) und `a + b * s` in einem: Physik-C 60,6 -> 51,8 KB; (2) `Camera.Render` auf Zielen mit nur dem schlanken
+Renderer (`#if dos16 || bios16`) nur noch der direkte Aufruf: -13 KB (der fire-Code des vollen Wegs und die Lese-/Schreib-Funktionen des Framebuffers);
+(3) `Scene.Add/Get/Remove` mit einer Liste der Schlüssel und `listOf`, der Vorlagen-Konstruktor ein Native (`__S3DObjTemplate`): fire-Code von scene3d
+33,5 -> 21,4 KB; (4) die Effekte hängen wie die Physik an Funktionszeigern (gesetzt durch einen Emitter oder `Scene.Fog/Tint`): ohne Effekte -11,5 KB.
+Dasselbe Programm ohne Physik lädt 321 KB, mit Effekten 329 KB; alle laufen in DOSBox-X. Was bleibt: Laufzeit 76 KB, C-Bibliothek 54 KB, schlanker
+Renderer ~25 KB, Physik 52 KB (echte Arbeit: Box/Box, Box/Dreieck, Lösen, Gitter, Höhenfeld), Far Data 36 KB (Konstanten des Programms; die Texte der
+scene3d-Preludes daran höchstens 3,5 KB).
+
 **B. Größe und Speicher (Rest von Meilenstein 1):**
 * **640x480 auf dos16:** der Paletten-Framebuffer (300 KB) passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher. Wege: (a) eine Kamera, die
   ihre Bänder direkt in den Videospeicher schreibt (VESA 101h mit Bänken; der schlanke Renderer arbeitet schon bandweise), (b) der Framebuffer in XMS/EMS

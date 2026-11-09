@@ -275,6 +275,14 @@ typedef struct FireS3dJointRec { int kind, alive; int64_t a, b; S3dVec3 la, lb; 
 /* the physics, once a body is made (so that a program without one carries none of it): a scene's step, a body's end */
 static void (*g_s3dPhysics)(FireS3dItem* scene, Real dt);
 static void (*g_s3dBodyFree)(S3dBody* body);
+/* the effects, once the program asks for them (an emitter, scene.Fog / Tint): the emitters' steps and ends, the effects of a picture - a program without
+ * them carries none of their code */
+static void (*g_s3dEmitterAdvance)(S3dEmitter* e, S3dVec3 origin, float dt);
+static void (*g_s3dEmitterFree)(S3dEmitter* e);
+static int (*g_s3dFxOf)(const FireS3dItem* s, const S3dCamera* cam, int w, int h, S3dFx* fx);
+static void (*g_s3dLeanFx)(void* ctx, S3dLean* L, int top, int rows);
+static void (*g_s3dFxApply)(const S3dFxTarget* t, S3dFx* fx);
+static void fire_s3d_effectsOn(void);
 static FireS3dTable g_s3dItems;
 
 static FireS3dItem* fire_s3d_itemAt(int64_t h, int kind) {
@@ -305,7 +313,7 @@ static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     for (i = 0; i < it->lightN; i++) fire_s3d_itemRelease(it->lights[i]);
     S3D_FREE(it->objects); S3D_FREE(it->lights); S3D_FREE(it->terrain);
     fire_s3d_modelRelease(it->model);
-    s3d_emitterFree(it->emitter);
+    if (it->emitter && g_s3dEmitterFree) g_s3dEmitterFree(it->emitter);
     S3D_FREE(it->joints);
     if (it->body && g_s3dBodyFree) g_s3dBodyFree(it->body);
     S3D_FREE(it);
@@ -534,6 +542,7 @@ static S3dEmitter* fire_s3d_emitterAt(Value h) {
 static Value fire_s3d_Emitter(Value h) {
     FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
     if (!it) return Bool(false);
+    fire_s3d_effectsOn();
     if (it->emitter == NULL) it->emitter = s3d_emitterNew();
     return Bool(it->emitter != NULL);
 }
@@ -581,7 +590,7 @@ static void fire_s3d_objAdvance(int64_t h, FireS3dItem* o, Real dt) {
     if (o->model) fire_s3d_ObjAnimate(Int(h), Int(0), Float(dt));
     for (i = 0; i < 3; i++) o->f[OF_RX + i] += o->f[OF_SPIN + i] * dt;
     o->f[OF_TX] += o->f[OF_SCROLL] * dt; o->f[OF_TY] += o->f[OF_SCROLL + 1] * dt;
-    if (o->emitter) s3d_emitterAdvance(o->emitter, s3d_v3((float)o->f[OF_PX], (float)o->f[OF_PX + 1], (float)o->f[OF_PX + 2]), (float)dt);
+    if (o->emitter && g_s3dEmitterAdvance) g_s3dEmitterAdvance(o->emitter, s3d_v3((float)o->f[OF_PX], (float)o->f[OF_PX + 1], (float)o->f[OF_PX + 2]), (float)dt);
 }
 static Value fire_s3d_ObjAdvance(Value h, Value dt) {
     FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
@@ -862,6 +871,22 @@ static Value fire_s3d_ObjSize(Value h, Value axis, Value meters) {
     e = fire_s3d_extent(it, (int)axis.i);
     if (e < (Real)0.000001) return Bool(false);
     it->f[OF_SX + axis.i] = toR(meters) / e;
+    return Bool(true);
+}
+
+/* An object from a template (kind 0 box .. 5 quad, `detail` segments around), at x, y, z, the outer sizes w, h, d (a plane has no height, a quad no depth: those are
+ * left). false: no such template, or no memory. */
+static Value fire_s3d_ObjTemplate(Value h, Value kind, Value detail, Value x, Value y, Value z, Value w, Value hgt, Value d) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    Value m;
+    if (!it || (m = fire_s3d_MeshTemplate(kind, detail)).i == 0) return Bool(false);
+    fire_s3d_ObjMesh(h, m);
+    fire_s3d_MeshFree(m);
+    if (kind.i == 4 || kind.i == 5) it->n[ON_TWOSIDED] = 1;
+    it->f[OF_PX] = toR(x); it->f[OF_PX + 1] = toR(y); it->f[OF_PX + 2] = toR(z);
+    fire_s3d_ObjSize(h, Int(0), w);
+    if (kind.i != 4) fire_s3d_ObjSize(h, Int(1), hgt);
+    if (kind.i != 5) fire_s3d_ObjSize(h, Int(2), d);
     return Bool(true);
 }
 
@@ -1154,7 +1179,7 @@ static void fire_s3d_bodyFit(FireS3dItem* o, S3dBody* b) {
     if (b->shape == S3D_SHAPE_SPHERE) b->half = s3d_v3(s3d_max3f(h.x, h.y, h.z), 0, 0);
     else if (b->shape == S3D_SHAPE_CAPSULE) { float r = s3d_maxf(h.x, h.z); b->half = s3d_v3(r, s3d_maxf(0, h.y - r), 0); }
     else b->half = h;
-    b->c = s3d_add(at, s3d_rot(b->R, b->local));
+    s3d_vrot(&b->c, b->R, &b->local); s3d_vadd(&b->c, &b->c, &at);
     s3d_bodyInertia(b);
     fire_s3d_bodyKey(o, b);
 }
@@ -1231,13 +1256,14 @@ static void fire_s3d_bodyTake(FireS3dItem* o, S3dBody* b, Real dt) {
         s3d_wake(b);
     }
     if (b->shape == S3D_SHAPE_MESH) return;
-    at = s3d_add(fire_s3d_objAt(o), s3d_rot(b->R, b->local));
+    s3d_vrot(&at, b->R, &b->local); at = s3d_add(fire_s3d_objAt(o), at);
     b->moved = b->kind == S3D_BODY_KINEMATIC && dt > 0 ? s3d_add(b->vel, s3d_scale(s3d_sub(at, b->c), (float)(1 / dt))) : b->vel;
     if (s3d_dot(s3d_sub(at, b->c), s3d_sub(at, b->c)) > 1e-6f) { b->c = at; s3d_wake(b); }
 }
 /* and back: the object's position (and turn) from the body's */
 static void fire_s3d_bodyGive(FireS3dItem* o, S3dBody* b) {
-    S3dVec3 at = s3d_sub(b->c, s3d_rot(b->R, b->local));
+    S3dVec3 at;
+    s3d_vrot(&at, b->R, &b->local); s3d_vsub(&at, &b->c, &at);
     o->f[OF_PX] = at.x; o->f[OF_PX + 1] = at.y; o->f[OF_PX + 2] = at.z;
     if (b->rotates) {
         float rx, ry, rz;
@@ -1276,7 +1302,9 @@ static void fire_s3d_physicsAdvance(FireS3dItem* s, Real dt) {
     }
     s->acc += dt;
     while (s->acc >= FIRE_S3D_STEP && steps < 8) {
-        s3d_physicsStep(list, n, joints, jn, s3d_v3(0, -(float)s->f[SF_GRAVITY], 0), (float)FIRE_S3D_STEP);
+        S3dVec3 g;
+        s3d_vset(&g, 0, -(float)s->f[SF_GRAVITY], 0);
+        s3d_physicsStep(list, n, joints, jn, &g, (float)FIRE_S3D_STEP);
         s->acc -= FIRE_S3D_STEP;
         steps++;
     }
@@ -1416,7 +1444,7 @@ static Value fire_s3d_BodyTouches(Value h, Value other) {
 
 /* ---- joints: kept by the scene (they join two of its objects, or one and a point of the world) ---- */
 /* where the middle of an object's body is now (as the program left the object) */
-static S3dVec3 fire_s3d_bodyCentre(FireS3dItem* o) { return s3d_add(fire_s3d_objAt(o), s3d_rot(o->body->R, o->body->local)); }
+static S3dVec3 fire_s3d_bodyCentre(FireS3dItem* o) { S3dVec3 r; s3d_vrot(&r, o->body->R, &o->body->local); return s3d_add(fire_s3d_objAt(o), r); }
 /* A joint: kind 0 a rope, 1 a rod, 2 a spring between the objects a and b (b 0: to the point x, y, z of the world) at their middles; length <= 0: as far as they
  * are apart now. Returns its number (1, 2, ...) or 0 (no such objects, no bodies, no memory). */
 static Value fire_s3d_Joint(Value scene, Value kind, Value a, Value b, Value x, Value y, Value z, Value length, Value stiffness, Value damping) {
@@ -1491,7 +1519,10 @@ static Value fire_s3d_Raycast(Value scene, Value x, Value y, Value z, Value dx, 
         fire_s3d_bodyTake(o, o->body, 0);
         list[n] = o->body; ids[n] = s->objects[i]; n++;
     }
-    found = s3d_raycast(list, n, s3d_v3((float)toR(x), (float)toR(y), (float)toR(z)), d, (float)toR(max), -1, &g_s3dRay);
+    {
+        S3dVec3 o = s3d_v3((float)toR(x), (float)toR(y), (float)toR(z));
+        found = s3d_raycast(list, n, &o, &d, (float)toR(max), -1, &g_s3dRay);
+    }
     if (found >= 0) result = ids[found];
     S3D_FREE(list); S3D_FREE(ids);
     return Int(result);
@@ -1540,6 +1571,13 @@ static void fire_s3d_leanFx(void* ctx, S3dLean* L, int top, int rows) {
     s3d_fxApply(&t, (S3dFx*)ctx);
 }
 
+static void fire_s3d_effectsOn(void) {
+    g_s3dEmitterAdvance = s3d_emitterAdvance; g_s3dEmitterFree = s3d_emitterFree;
+    g_s3dFxOf = fire_s3d_fxOf; g_s3dLeanFx = fire_s3d_leanFx; g_s3dFxApply = s3d_fxApply;
+}
+/* The program uses fog or a tint (Scene.Fog, Scene.Tint): their code is wanted. */
+static Value fire_s3d_Effects(void) { fire_s3d_effectsOn(); return Bool(true); }
+
 /* Draws the scene as the camera sees it into `buffer` (width * height * 4 bytes, the picture of the camera's framebuffer `fb`). Returns who drew (0 software, 1 the GPU, 2 the GPU
  * straight into the windows of the framebuffer), -1 when the size is not usable, -2 when the frame cannot be cleared (the memory). */
 static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value width, Value height, Value fb) {
@@ -1586,10 +1624,11 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
     c->n[CN_LAST] = f->lastBackend;
     if (f->lastBackend != S3D_BACKEND_DIRECT) {   /* (DirectDrawing: the picture is in the windows, not here) */
         S3dFx fx;
-        if (fire_s3d_fxOf(s, &cam, (int)width.i, (int)height.i, &fx)) {
+        memset(&fx, 0, sizeof fx);
+        if (g_s3dFxOf && g_s3dFxOf(s, &cam, (int)width.i, (int)height.i, &fx)) {
             S3dFxTarget t;
             s3d_fxTargetFull(&t, b->data, (int)width.i, (int)height.i, f->lastBackend == S3D_BACKEND_SOFTWARE ? f->depth : NULL, cam.nearPlane, cam.farPlane);
-            s3d_fxApply(&t, &fx);
+            g_s3dFxApply(&t, &fx);
         }
         if (fx.splats) S3D_FREE((void*)fx.splats);
     }
@@ -1679,7 +1718,8 @@ static Value fire_s3d_RenderLean(Value camera, Value scene, Value fb, Value widt
     }
     {
         S3dFx fx;
-        if (fire_s3d_fxOf(s, &cam, w, h, &fx)) { c->lean->post = fire_s3d_leanFx; c->lean->postCtx = &fx; }
+        memset(&fx, 0, sizeof fx);
+        if (g_s3dFxOf && g_s3dFxOf(s, &cam, w, h, &fx)) { c->lean->post = g_s3dLeanFx; c->lean->postCtx = &fx; }
         s3d_leanEnd(c->lean, sink, ctx);
         c->lean->post = NULL; c->lean->postCtx = NULL;
         if (fx.splats) S3D_FREE((void*)fx.splats);

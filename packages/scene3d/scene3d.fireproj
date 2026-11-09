@@ -233,6 +233,18 @@
         "c": "fire_s3d_ObjSize"
       },
       {
+        "name": "__S3DObjTemplate",
+        "returns": "bool",
+        "arguments": 9,
+        "c": "fire_s3d_ObjTemplate"
+      },
+      {
+        "name": "__S3DEffects",
+        "returns": "bool",
+        "arguments": 0,
+        "c": "fire_s3d_Effects"
+      },
+      {
         "name": "__S3DCamLookAt",
         "returns": "bool",
         "arguments": 4,
