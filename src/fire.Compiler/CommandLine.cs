@@ -49,6 +49,8 @@ namespace fire.Compiler
         public bool KeepSources { get; init; }
         /// <summary>`--keep-all`: a native build keeps every class and member, also what the program does not reach (`--stripping 0`).</summary>
         public bool KeepAll { get; init; }
+        /// <summary>`--stats`: a native build writes a report of its code by origin, its data and the typing of the generated functions (docs/ROADMAP.md section 16).</summary>
+        public bool Stats { get; init; }
         /// <summary>`--stripping 0-3|none|protected|methods|all`: how much a native build leaves out (`"stripping"` in fire.native.json, the project's setting; docs/spec/NATIVE_BACKEND.md).</summary>
         public fire.Native.StrippingLevel? Stripping { get; init; }
         /// <summary>`--optimize speed|size`: the direction of a native build (before the project and fire.native.json).</summary>
@@ -114,6 +116,9 @@ namespace fire.Compiler
                     and properties stays, a method only when it is used), 3 all (the default: only what the program reaches). Names work as well (--stripping methods).
                     Names given as literals to reflection (Reflect.New("Dog")) always stay; a debug build always keeps everything.
             --keep-all  The same as --stripping 0.
+            --stats  A native build writes a report next to the program (<output>.stats.txt and .json): the code by origin (the generated code per module, the runtime,
+                    the C of the packages, the C library - from the linker's map), the data, the typing of the generated functions (C numbers or Values, which have a
+                    C interface and why not), the biggest functions, and for DOS the memory the program needs to load.
             --optimize speed|size  The direction of a native build: the flags of the C compiler (gcc/clang -O2 or -Os with sections, msvc /O2 or /O1,
                     Watcom -Ot or -Os) and the choices of the generated code (FIRE_OPTIMIZE_SIZE). Before the project ("optimize") and fire.native.json;
                     by default the target's (the PC targets of Open Watcom: size, the others: speed).
@@ -169,7 +174,7 @@ namespace fire.Compiler
             fire.Runtime.GlobalJobsMode? globalJobs = null;
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
-            bool keep = false, keepAll = false;
+            bool keep = false, keepAll = false, stats = false;
             fire.Native.StrippingLevel? stripping = null;
             fire.Runtime.OptimizeFor? optimize = null;
             string? linkage = null;
@@ -274,6 +279,11 @@ namespace fire.Compiler
                     if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Test)) return Fail(command, "--keep-all is only available with build, native and test.");
                     keepAll = true;
                 }
+                else if (string.Equals(arg, "--stats", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command != CommandKind.Build) return Fail(command, "--stats is only available with build.");
+                    stats = true;
+                }
                 else if (string.Equals(arg, "--keep", StringComparison.OrdinalIgnoreCase))
                 {
                     if (command != CommandKind.Build) return Fail(command, "--keep is only available with build.");
@@ -354,6 +364,7 @@ namespace fire.Compiler
                 ProgramArguments = programArguments,
                 KeepSources = keep,
                 KeepAll = keepAll,
+                Stats = stats,
                 Stripping = stripping,
                 Optimize = optimize,
                 Linkage = linkage,
@@ -514,6 +525,7 @@ namespace fire.Compiler
         /// <summary>`--keep-all` and `--stripping` go before the `"stripping"` of the configuration (and of the project, see NativeBuilder.StrippingOf).</summary>
         private static fire.Native.NativeConfig KeepAll(fire.Native.NativeConfig config, CommandLineOptions options)
         {
+            if (options.Stats) config.Stats = true;
             if (options.KeepAll) { config.Stripping = fire.Native.StrippingLevel.None; config.StrippingFromCommandLine = true; }
             else if (options.Stripping is { } level) { config.Stripping = level; config.StrippingFromCommandLine = true; }
             if (options.Optimize is { } direction) { config.Optimize = fire.Runtime.OptimizeFors.Name(direction); config.OptimizeFromCommandLine = true; }

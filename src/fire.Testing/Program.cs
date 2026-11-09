@@ -28303,6 +28303,22 @@ else
                 CheckNat("dos16: mit Open Watcom gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM (Objekte, Strings, Einheiten, Ausnahmen, word 16 Bit, ein fire-Thread)",
                     dosRun.Ok && dosRun.Text == dosVm && dosVm.Length > 0, $"  VM:\n{dosVm}\n  DOS:\n{dosRun.Text}");
 
+                // `--stats` (docs/ROADMAP.md section 16): the map of Open Watcom, the generated code by module, the typing (a `defined int` method has a C interface),
+                // the memory the program needs to load
+                {
+                    string statsDir = Path.Combine(workDir, "dos16stats");
+                    Directory.CreateDirectory(statsDir);
+                    string statsExe = Path.Combine(statsDir, "PROG.EXE");
+                    var statsBuilt = fire.Compiler.NativeBuilder.Build(new[] { "class Calc {\n    static defined int Twice(defined int x) { return x * 2 }\n}\nprint(Calc.Twice(21))" },
+                        new fire.Native.NativeConfig { Stats = true }, dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], statsExe, VmExecutionMode.Release);
+                    string statsText = File.Exists(statsExe + ".stats.txt") ? File.ReadAllText(statsExe + ".stats.txt") : "";
+                    string statsJson = File.Exists(statsExe + ".stats.json") ? File.ReadAllText(statsExe + ".stats.json") : "";
+                    CheckNat("--stats: dos16 - Code nach Herkunft aus der Watcom-Map, Typisierung (C-Schnittstelle einer defined-int-Methode), Speicher zum Laden",
+                        statsBuilt.Ok && statsText.Contains("fire: program") && statsText.Contains("runtime") && statsText.Contains("C library") && statsText.Contains(", loaded ")
+                        && statsText.Contains("C interface 1/") && statsJson.Contains("\"Calc.Twice\"") && statsBuilt.Log.Contains("Statistics (dos16)"),
+                        statsBuilt.Log.Length > 3000 ? statsBuilt.Log[^3000..] : statsBuilt.Log);
+                }
+
                 // files with the paths of DOS ("X:\FOLDER\FILE.EXT", "/" too, upper or lower case alike, what DOS gives back in upper case) - a fixed expectation:
                 // the VM works with the paths of this machine
                 const string dosFiles = """

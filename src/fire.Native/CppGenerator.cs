@@ -10,7 +10,11 @@ using fire.Values;
 namespace fire.Native
 {
     /// <summary>The generated sources of a native program: the program in C, and its natives in C++ (null: none).</summary>
-    public sealed record NativeSources(string Program, string? Natives);
+    public sealed record NativeSources(string Program, string? Natives)
+    {
+        /// <summary>`--stats`: what the generator made of each fire function (null: not asked for).</summary>
+        public IReadOnlyList<FuncStat>? Funcs { get; init; }
+    }
 
     /// <summary>
     /// Translates a linked program (bytecode) into one C source file that includes <c>fire_rt.h</c> (and, when the program calls natives written in C++ - the
@@ -105,6 +109,8 @@ namespace fire.Native
             /// <summary>The C interface of this round (CAbiOf) and the signature of the C body (null: none).</summary>
             public CAbi? CAbi;
             public string? CSig;
+            /// <summary>What this round made of the function (`--stats`, NativeStats).</summary>
+            public FuncStat? Stat;
             public int FinSignature => FinReturn.Count + FinJumps.Values.Sum(v => v.Count);
             public string Signature => SignatureOf(Name, "");
             /// <summary>The C signature with the function's name `name` and `suffix` after the names of its parameters (a function with a frame copies them in).</summary>
@@ -340,7 +346,7 @@ namespace fire.Native
         /// <see cref="NativesFileName"/> next to the program, compiled with a C++ compiler and linked with it).</summary>
         /// <param name="stripping">How much is left out (<see cref="StrippingLevel"/>); null: level 3, what the program does not reach - a debug build (`#debug`, `-m DEBUG`)
         /// keeps everything.</param>
-        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, StrippingLevel? stripping = null)
+        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null, StrippingLevel? stripping = null, bool stats = false)
         {
             if (ModulesFromEnvironment && program.SourceModules != null)
             {
@@ -352,9 +358,9 @@ namespace fire.Native
                         lock (typeof(CppGenerator)) File.AppendAllText(logFile, ex.Message + Environment.NewLine);
                 }
             }
-            var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _strip = EffectiveStripping(program, stripping) };
+            var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _strip = EffectiveStripping(program, stripping), _collectStats = stats };
             string c = generator.Run();
-            return new NativeSources(c, generator._nativesCode);
+            return new NativeSources(c, generator._nativesCode) { Funcs = stats ? generator.FuncStats() : null };
         }
 
         // -------------------------------------------------------------------------------------------------------------
@@ -3185,6 +3191,7 @@ namespace fire.Native
                 else decl.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
             }
             var scalarDecls = scalarLocals.Select(l => (Name: l, Type: ScalarVarCType(f, l))).Concat(f.Scalars.Select(kv => (Name: kv.Key, Type: kv.Value))).ToList();
+            if (_collectStats) f.Stat = StatOf(f, localsToDeclare.Count, scalarLocals.Count);
             foreach (var (scalarName, scalarType) in scalarDecls)
             {
                 string zero = scalarType == "bool" ? "false" : "0";

@@ -780,6 +780,11 @@ Die Messungen, die bisher von Hand liefen (Linker-Map auswerten, erzeugtes C dur
   (Value-Elemente, gepackte), Puffer, Strings und der Heap der Natives (malloc insgesamt).
 * Später: Vergleich zweier Builds (vorher/nachher) und ein Test, der Grenzen hält (z. B. das Beispiel "Scene3D Physics" passt auf dos16 in den Speicher).
 
+**Umgesetzt (erste Stufe):** `forge build ... --engine native --stats` (Linkage `source`, Open Watcom, gcc, clang): Code nach Herkunft aus der Map (erzeugt je Modul,
+Hilfsfunktionen des Generators, Laufzeit, Plattform, C je Paket, C-Bibliothek), Daten, Typisierung je Modul (C-Schnittstelle, Parameter, Variablen, Stack-Slots
+mit C-Schatten), die Gründe ohne C-Schnittstelle, die größten Funktionen mit ihrem fire-Namen, bei DOS der Speicher zum Laden. Bericht im Log und in
+`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). Offen: der Heap zur Laufzeit, der Vergleich zweier Builds, die Linkage `static`.
+
 Ausgangswerte (von Hand gemessen, Beispiel "Scene3D Physics", dos16, Watcom `-Os`, `eliminate`): EXE 760 KB, Lademodul 696 KB + 33 KB Mindestspeicher -
 **passt nicht in 640 KB**. Code: erzeugt 239 KB (davon `fire_main` 44 KB für 139 Zeilen, `Camera.Render` 17 KB für 30), Paket-C ~190 KB, Laufzeit 84 KB,
 C-Bibliothek 65 KB, FAR_DATA 48 KB. Ein Value von 8 statt 16 Byte (nur übersetzt, nicht lauffähig) spart 24 KB (3 %); ohne gezählte Aufruftiefe 27 KB, der
