@@ -878,6 +878,21 @@ nach Arbeiten auf `targets`).
 5. **Physik** (`scene3d.physics`): einfach, schnell, leicht zu bedienen - Kugel, Box (achsenparallel), Kapsel, Heightfield, statische Meshes; Character
    Controller (Laufen, Springen, Stufen), Raycasts, Trigger; fester Zeitschritt, Gitter als Vorauswahl; mit Einheiten (`Body.Dynamic(mass: 2kg)`,
    `scene.Gravity = 9.81m/s²`) und Vorgaben (`Body.Bouncy`, `Body.Ice`). Starrkörper mit Rotation später.
+   **Umgesetzt** (Unterpaket `scene3d.physics`, [Physik](graphics/physics.md)): `s3d_physics.h` - Körper am Objekt-Item (statisch, dynamisch, kinematisch,
+   Figur), Formen Box (achsenparallel), Kugel, aufrechte Kapsel, Dreiecke des Objekts in der Welt (xz-Gitter; auch Modelle mit Teilen; neu gebaut, wenn das
+   Objekt bewegt/gedreht/skaliert wird) und Terrains über ihre Höhen (die Dreiecke der Zellen unter einem Körper entstehen bei Bedarf, glatt und als Blöcke
+   mit Wänden - kein Speicher). Kontakte: Box/Box, rund/Box, rund/rund (Strecken-Abstand), rund/Dreieck (Strecke gegen Dreieck), Box/Dreieck (13 Achsen);
+   einseitige Flächen. Schritt 1/60 s in `scene.Advance` (höchstens 8 je Aufruf), drei Durchgänge: Trennen nach Massen, Abprall (unter 0,5 m/s keiner),
+   Reibung (Coulomb). Figur: `Walk` setzt die waagerechte Geschwindigkeit, Springen nur am Boden, Stufen (anheben, frei? dann per Strahl auf die Stufe
+   setzen - auch bergab ohne Hüpfen), Hänge bis `MaxSlope` ohne Rutschen. Trigger (`Touches`), Raycasts (Kugel, Box, Kapsel, Dreiecke), `scene.Gravity`
+   (`class extends Scene`). Die Physik hängt über Funktionszeiger an der Szene: ein Programm ohne Körper ruft nichts davon auf. Test: VM == nativ (Ball,
+   Stapel, Figur auf Stufe, Mauer, Sprung, Trigger, Strahlen, Terrain, Aufzug); Beispielprojekt „Scene3D Physics“. **dos16:** die Physik ist ~42 KB C
+   (Map-Datei: Gitter 3,9 KB, Höhenfeld 3,8 KB, Box/Dreieck 3 KB, ...) plus ~16 KB fire-Code. Damit ein Programm ohne Physik sie nicht trägt, entfernt der
+   Watcom-Linker jetzt unerreichte Segmente (`option eliminate`): eine scene3d-Szene 477 -> 425 KB, mit Effekten 488 -> 436 KB, Hallo-Welt 88 -> 84 KB
+   (läuft in DOSBox-X; die bios16-Prüfungen grün). **Offen:** Drehung (Starrkörper mit Winkelgeschwindigkeit), Box gegen Box gedreht, Gelenke,
+   Schlafen ruhender Körper, ein Gitter auch für viele dynamische Körper, die Größe auf dos16 (Vektoren als Zeiger statt Werte). **Gefunden:** scene3d auf
+   dos16 hängt in DOSBox-X schon bei zwei `new Object(Template.Box, ...)` (ein Objekt, rohe Natives, graphics allein: alles gut) - auch vor M5
+   (23af112), auch ohne `eliminate`; vermutlich die Werte/Felder seit 8ab2aa2 (`targets`).
 
 ### 16.1 Offen nach Meilenstein 1 und 2 (Stand `scene-revamp`)
 
@@ -905,8 +920,9 @@ nach Arbeiten auf `targets`).
 * Dazu passend: **Texturen mit Palette** (8 Bit je Texel statt 32, heute nur als Kopie für Paletten-Bilder: `S3dTexture.lean`) und **Mipmaps**
   (Ruhe in der Ferne, weniger Cache-Fehler); auf dos16 RGBA-Texturen nach dem Umrechnen verwerfen.
 
-**`defined` im scene3d-Prelude (gemessen, Stand nach M4):** die Hilfsfunktionen mit Zahlen (`S3D.Rgb`, `Rgba`, `Red/Green/Blue`, `Degrees`, `Meters`,
-`Speed`) und die drei Geschwindigkeiten (`TextureScrollX/Y`, `Emitter.Speed`) sind `defined`. Zuerst gemessen: dos16 431 314 -> 430 335 Byte (C-Rümpfe
+**`defined` im scene3d-Prelude (gemessen, Stand nach M4):** die Hilfsfunktionen mit Zahlen (`S3D.Rgb`, `Rgba`, `Red/Green/Blue`, `Degrees`, `Meters`)
+und die drei Geschwindigkeiten (`TextureScrollX/Y`, `Emitter.Speed`) sind `defined` (`S3D.Speed` wieder nicht: sonst warnt der Typprüfer bei jedem
+Aufrufer mit einem gewöhnlichen `float : m/s`). Zuerst gemessen: dos16 431 314 -> 430 335 Byte (C-Rümpfe
 ohne Values). Dabei fiel ein Generatorfehler auf (Value-Hülle unter `fN` statt `fN_b` auf Zielen, die die Aufruftiefe zählen); `targets` hat ihn mit
 1c2af40 grundsätzlich gelöst: ein Programm, das die Aufruftiefe zählt, hat keine C-Rümpfe. scene3d-Programme zählen sie immer (`Scene.Add` nimmt mit
 `try TakeTo`) - `defined` ist hier darum heute neutral (dos16 431 752 -> 431 766 Byte; nativ und VM ohne messbaren Unterschied). **Nicht** übernommen:

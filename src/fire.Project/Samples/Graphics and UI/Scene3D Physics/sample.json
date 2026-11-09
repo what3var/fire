@@ -1,0 +1,6 @@
+{
+  "title": "Scene3D Physics",
+  "description": "A playground for scene3d.physics: a figure that walks (arrow keys or WASD), jumps (Space), climbs stairs and pushes crates; bouncing balls (R drops more), a ramp, a lift and a coin to collect (a trigger).",
+  "open": [ "main.fire" ],
+  "order": 65
+}

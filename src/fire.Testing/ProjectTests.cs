@@ -238,7 +238,7 @@ static class ProjectTests
                 catch (Exception ex) { error = Describe(ex); }
                 Check($"Beispiele: {sample.Title} wird uebersetzt", error == "", error);
             }
-            Check("Beispiele: die 3D-Beispiele (Szene, Benchmark, Effekte, Terrain, Modelle) sind da", samples.Count(x => x.Name.StartsWith("Scene3D")) == 5, string.Join(", ", samples.Select(x => x.Name)));
+            Check("Beispiele: die 3D-Beispiele (Szene, Benchmark, Effekte, Terrain, Modelle, Physik) sind da", samples.Count(x => x.Name.StartsWith("Scene3D")) == 6, string.Join(", ", samples.Select(x => x.Name)));
             Check("Beispiele: die Kategorie Circuits hat ihre zwei Beispiele", samples.Count(x => x.Category == "Circuits") == 2, string.Join(", ", samples.Select(x => x.Category + "/" + x.Name)));
         }
 
