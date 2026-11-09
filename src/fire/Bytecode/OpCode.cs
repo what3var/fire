@@ -259,6 +259,9 @@ namespace fire.Bytecode
         // `new T[n]` with T a type parameter (the inner array of `List<T>`): the array on top becomes typed when the type argument that runs is `int`,
         // `float`, `bool` or `char` (without a unit) - `List<int>` keeps its numbers raw; anything else stays an array of values.
         TypeArrayOfParam,    // u16 typeParamTextIdx (`$k@Class` of the class, `$k@` of the method)
+        // `trust x` (SPEC 8.10b): the developer vouches that the value on top of the stack is not undefined. Nothing in the VM (a `defined` declaration
+        // still checks it); a native release build takes it as a defined number of the kind it has (an undefined that was trusted counts as 0).
+        Trust,               //                     : peek
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

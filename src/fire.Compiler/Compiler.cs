@@ -3792,8 +3792,10 @@ namespace fire.Compiler
 
             if (u.Op == UnaryOp.Trust)
             {
-                // `trust x` (SPEC 8.10b): the value itself - the developer vouches that it is not undefined (the VM still checks where `defined` is declared)
+                // `trust x` (SPEC 8.10b): the value itself - the developer vouches that it is not undefined (the VM still checks where `defined` is declared;
+                // a native release build takes it as a defined number)
                 CompileExpr(u.Operand);
+                _chunk.EmitOp(OpCode.Trust);
                 return;
             }
             if (u.Op == UnaryOp.Take)

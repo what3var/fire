@@ -3659,7 +3659,7 @@ namespace fire.Native
             or OpCode.JumpIfFalse or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq
             or OpCode.Pop or OpCode.ReleaseTemps or OpCode.EnterScope or OpCode.ExitScope or OpCode.ClaimToScope or OpCode.ArithLocalConstPop
             or OpCode.BitAnd or OpCode.BitOr or OpCode.BitXor or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ConvertWidth or OpCode.ArrayGet
-            or OpCode.Div or OpCode.Neg or OpCode.LogicalNot or OpCode.CheckUnit or OpCode.Dup or OpCode.StepAdd or OpCode.StepSub;
+            or OpCode.Div or OpCode.Neg or OpCode.LogicalNot or OpCode.CheckUnit or OpCode.Dup or OpCode.StepAdd or OpCode.StepSub or OpCode.Trust;
 
         private StepResult StepCore(Func f, Chunk chunk, Instr ins, Flow st, StringBuilder? sb, ISet<string> locals)
         {
@@ -5438,6 +5438,20 @@ namespace fire.Native
                     else E($"TArgs ctargs = {(f.SpecTArgs != null ? TArgsExpr(f, f.SpecTArgs) : "((TArgs)g_callTArgs)")}; g_callTArgs = NULL; g_explicitTArgs = 0; (void)ctargs;");
                     _kindsKept = true;
                     return Next();
+                case OpCode.Trust:
+                {
+                    // `trust x` (SPEC 8.10b): a release build takes a value of a known kind as a defined number of it - a `defined` parameter takes it without
+                    // the check (an undefined that was trusted counts as 0); one of an unknown kind is still checked. A debug build checks as the VM does.
+                    if (!DebugBuild && d >= 1 && d <= 64)
+                    {
+                        int tt = Ty(d - 1);
+                        byte tk = BaseKindOfType(tt);
+                        if (tk == KindInt && (tt & (CutBit | NarrowBit)) != 0) SetT(d - 1, tt & ~(NullableBit | TypeNone | CutBit) | NarrowBit);
+                        else if (tk is KindFloat or KindBool or KindWord) SetT(d - 1, tt & ~(NullableBit | TypeNone));
+                        _kindsKept = true;
+                    }
+                    return Next();
+                }
                 case OpCode.GuardTop when GuardTopProven(st, ins):
                     return Next();   // (`defined`: the slot certainly holds such a number - SPEC 8.10b)
                 case OpCode.GuardTop:

@@ -23422,6 +23422,23 @@ else
             int[64] wide = 5000000000
             print(M.Wrap(wide))
             """),
+        ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
+            class K {
+                defined int n
+                int plain = 4
+                static defined int T(defined int x) { return x * 2 }
+                static defined float F(defined float x) { return x + 1 }
+                static defined int G(int y) { return K.T(trust y) }
+                static defined float H(float y) { return K.F(trust y) }
+                defined int P() { return K.T(trust this.plain) }
+            }
+            print(K.G(5) + " " + K.H(1.5) + " " + new K().P())
+            any a = "s"
+            try { print(K.T(trust a)) } catch (ArgumentException e) { print(e.message) }
+            int total = 0
+            for (int i = 0; i < 1000; i++) { total = total + K.G(i) }
+            print(total)
+            """),
         ("defined (SPEC 8.10b): JSON - ein fehlendes defined-Feld ist 0, null ist die ArgumentException; Reflection prueft wie eine Zuweisung", """
             #import "json"
             #import "reflection"

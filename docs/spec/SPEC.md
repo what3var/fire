@@ -2390,8 +2390,10 @@ is defined until something that may be undefined goes in. Such a value going whe
 warning (an error with `#strict`): it is checked at run time all the same.
 
 **`trust x`** says the developer has checked that `x` is defined: no `TC022`. It is a word of its own only in front of an
-operand on the same line (`trust u`, `trust this.n`). In the VM (and a native debug build) the check still runs; a native
-release build may leave it out at the call - an `undefined` that was trusted is then the number 0.
+operand on the same line (`trust u`, `trust this.n`). In the VM (and a native debug build) the check still runs. A native
+release build takes a trusted value whose kind it knows (a parameter or field declared `int`, `float`, `bool`, `word`) as a defined number
+of it: it goes into a `defined` parameter without the check - an `undefined` that was trusted is then the number 0. A value of a kind it does
+not know (`any`) is still checked.
 
 **Natively** (docs/spec/NATIVE_BACKEND.md, "Parameter und Rückgaben als C-Typen") a method with `defined int`/`float`/`word`
 parameters or a `defined` return value has a body with C types: a direct call passes C numbers and takes one back, without

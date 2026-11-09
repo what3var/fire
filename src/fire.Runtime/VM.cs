@@ -4281,6 +4281,8 @@ namespace fire.Runtime
                     TypeArrayValue(Peek(), elemType, rank, unitIdx == 0xFFFF ? null : _constants[unitIdx].AsString(), 1);
                     break;
                 }
+                case OpCode.Trust:
+                    break;   // (`trust x`: only the native backend acts on it)
                 case OpCode.TypeArrayOfParam:
                 {
                     string paramText = _constants[ReadU16()].AsString();

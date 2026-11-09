@@ -197,7 +197,9 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   das Ergebnis landet im Schatten des Platzes. Die Skalare der Aufrufstelle bleiben dabei Skalare (die Operation materialisiert nur, was sie als Value
   braucht). Ein `GuardTop` einer `defined`-Rückgabe, deren Platz die Zahl schon beweist, erzeugt nichts. Nicht für generische Methoden (Trampolin),
   Accessoren, Methoden mit `try` (der Rahmen hält Values), Module, Debug-Builds und `#intwidth 16`. Ob eine Methode eine C-Rückgabe hat, hängt am
-  zusammengeführten Rückgabetyp: ändert er sich, läuft eine weitere Runde (`NoteCReturn`).
+  zusammengeführten Rückgabetyp: ändert er sich, läuft eine weitere Runde (`NoteCReturn`). **`trust x`** ist der Opcode `Trust` (in der VM nichts):
+  im Release-Build wird ein Platz bekannter Art (ein `int`-Parameter, ein Feld, `CutBit`/nullbar) zur definierten Zahl (`NarrowBit`, ohne `NullableBit`) -
+  ein `defined`-Parameter nimmt ihn ohne Prüfung (`(FireInt)s.i`: ein vertrautes `undefined` ist 0); einer unbekannter Art wird weiter geprüft.
   Gemessen (`Mix(a, b, c) = a * 31 + b * 7 + c` in einer Schleife mit `% 1000003`): dos16 (Open Watcom, `-Os`) 1476 -> 131 Byte Code für beide
   Methoden; x86-64 gcc `-Os` 6,27 -> 1,55 s, `-O2` gleich (gcc bettet die kleinen Funktionen dort ohnehin ein und entfernt die Values selbst).
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
