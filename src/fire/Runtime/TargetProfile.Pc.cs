@@ -18,7 +18,7 @@ namespace fire.Runtime
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
-                Platform = "dos16", Toolchain = "watcom",
+                Platform = "dos16", Toolchain = "watcom", PointerCalls = true,
                 // (owcc: a DOS program of the huge model - an array or a buffer may hold more than 64 KB (fire_cc_watcom.h) -, for the 8086; 32 KB of stack - the default of 2 KB is too small for the generated code; inlining
                 // limited - a function of the real mode must fit one segment of 64 KB, and a long `fire_main` with every fast path inlined does not; the stacks of
                 // fire threads lie outside DGROUP: SS is not DS (-zu) and no stack checks - they compare with the program's own stack.
@@ -42,7 +42,7 @@ namespace fire.Runtime
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
-                Platform = "dos32", Toolchain = "watcom",
+                Platform = "dos32", Toolchain = "watcom", PointerCalls = true,
                 // (owcc: the 32-bit compiler for the system dos32a - its stub is the whole extender; a stack of 256 KB)
                 CompileArgs = new[] { "-bdos32a", "-march=i386", "-mstack-size=262144" },
             },
@@ -60,7 +60,7 @@ namespace fire.Runtime
                 NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
-                Platform = "win16", Toolchain = "watcom",
+                Platform = "win16", Toolchain = "watcom", PointerCalls = true,
                 Entry = new EntryPoint { Name = "fire_win16_main" },
                 // (as dos16: the huge model linked with the C library of the large model - here the one of Windows; the 286 is the least Windows 3.x runs on;
                 // -zt=16: data from 16 bytes on gets far segments of its own - the stack and the small data share DGROUP, 64 KB, and the UI library has much of it;
@@ -83,7 +83,7 @@ namespace fire.Runtime
             Imports = new[] { NativeImports.Print, "time", "console", "machine", "graphics", "windows", NativeImports.Devices, NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
-                Platform = "bios16", Toolchain = "watcom",
+                Platform = "bios16", Toolchain = "watcom", PointerCalls = true,
                 // (as dos16 - but the start is the platform's (fire_bios16_start.asm: `_cstart_`, its stack of 32 KB), so no stack size here; floats are calls of
                 // the math library (-fpc, mathl): they run with and without an 8087 and change no code - the emulator of DOS (emu87) patches the program's code at
                 // run time, and that went wrong without DOS). `nofarcalls`: wlink otherwise turns a far call into the same segment into `push cs; call near`; a near

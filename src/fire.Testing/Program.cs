@@ -537,7 +537,7 @@ Console.WriteLine();
 Console.WriteLine("=== Typsystem-Test: 'try take' ausserhalb von Argument und Zuweisung (muss fehlschlagen) ===");
 try
 {
-    var program = Parser.Parse("class Box {\n    int v\n}\nvar b = new Box()\nprint(try take b == undefined)");
+    var program = Parser.Parse("class Box {\n    int v\n}\nvar b = new Box()\nvar c = try take b == undefined");
     Resolver.Resolve(program);
     Console.WriteLine("FEHLER: hätte ResolverException werfen müssen");
 }

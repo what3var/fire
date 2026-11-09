@@ -339,6 +339,17 @@ vermeidet sie, wo es ohne Änderung der Aufrufkonvention geht (gemessen am Beisp
 * **Zeiger-Argumente**: Runtime-Funktionen, die einen Value nur lesen, gibt es auch mit Adresse (`leafAliveP`, `destroyedErrorP`, `retainP`, `releaseP`, `truthyP`, `objAtP`,
   `ctorEndP`, `adoptP`, `hoistFromP`, `transferTreeP`, `finishArgsP`, `claimToListP`); der erzeugte Code (`PointerArgs`) nimmt sie, wo das Argument eine Variable oder ein
   Slot ist. Wo der Compiler einbettet, ist der Code derselbe.
+* **Zeigerkonvention** (`TargetProfile.Native.PointerCalls`: dos16, win16, dos32, bios16 - Open Watcom; `CppGenerator.PointerCalls.cs`): eine fire-Funktion nimmt ihre
+  Values per Adresse, `static Value fN_p(const Value* self_p, const Value* P0_p, ...)`. Ein Value per Wert kostet dort an jeder Aufrufstelle eine Kopie von 16 Byte
+  (`sub sp,16; mov di,sp; lea si; rep movsw`, rund 14 Byte Code je Argument), ein Zeiger `lea; push` (4-5 Byte). Im Rumpf ist ein Parameter, den die Funktion nur liest,
+  `(*P0_p)` (`#define P0 (*P0_p)` um die Funktion); einen, den sie schreibt - eine Zuweisung, `++`, ein Feld, seine Adresse an etwas anderes als eine lesende
+  `…P`-Funktion der Runtime (`guardSlot`, `adaptSlot`) -, kopiert sie beim Eintritt (`Value P0 = *P0_p;`). Beides geschieht auf dem C-Text: die Funktion, wenn sie
+  fertig ist (`PointerFunction`), die Aufrufe im ganzen Programm am Ende (`PointerCallsPass`, ohne das C der Pakete): `fN(s0, s1)` wird `fN_p(&s0, &s1)`, wenn jedes
+  Argument eine Variable des Aufrufers ist - ein Slot, ein Parameter, ein Block-Local, `self`, ein Element der Argumente eines Thunks; ein Ausdruck, eine globale
+  Variable (`G…`) oder ein statisches Feld (`SF…`), das der Aufgerufene ändern könnte, während er seinen Parameter liest, gehen an eine Hülle `fN` mit Values, die es
+  nur gibt, wenn sie gebraucht wird (auch für einen Funktionszeiger, etwa `ToString` in der Klassentabelle). Nicht dabei: Debug-Builds, Funktionen mit Frame (`try`),
+  C-Rümpfe (Ebene 2), Exporte und Module (Linkage static/shared, Plugins). Watcom gibt bei `s0 = fN_p(&s0, ...)` `&s0` auch als Rückgabepuffer; das ist richtig,
+  weil die Rümpfe ihr Ergebnis in Slots bauen und erst beim `return` kopieren. Physik-Beispiel auf dos16: 650.288 → 644.512 Byte (−5,8 KB), geladen −5,9 KB.
 
 Der Generator fügt die Prüfungen nur ein, wenn das Programm überhaupt `throw` oder `try` enthält (`FIRE_EXCEPTIONS`); sonst ändert sich der
 erzeugte Code nicht. Wo nur der langsame Weg werfen kann, steht die Prüfung nur dort: ein Feldzugriff auf ein Objekt bekannter Klasse
