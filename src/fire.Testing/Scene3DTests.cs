@@ -548,15 +548,15 @@ static class Scene3DTests
         Console.WriteLine("dos16 C: " + Dos16Functions());
     }
 
-    /// <summary>The C of the script for dos16 (no compiler needed): every function is defined once, and every `fN_b` that is declared is defined - a target that
+    /// <summary>The C of the script for dos16 (no compiler needed): every function is defined once, and every `fN_b` / `fN_p` that is declared is defined - a target that
     /// counts the call depth wraps each function (a method with a C body of `defined` numbers once got its Value wrapper under the wrong name).</summary>
     private static string Dos16Functions()
     {
         if (!TargetProfile.TryGet("dos16", out var dos16)) return "(no profile)";
         var linked = new Linker().CompileAndLink(new[] { Script }, null, null, VmExecutionMode.Release, null, dos16);
         string c = fire.Native.CppGenerator.Generate(linked, dos16);
-        var defined = System.Text.RegularExpressions.Regex.Matches(c, @"^(?:FIRE_MAYBE_UNUSED )?static Value (f\d+(?:_b)?)\([^;\n]*\)\r?$", System.Text.RegularExpressions.RegexOptions.Multiline).Select(m => m.Groups[1].Value).ToList();
-        var declared = System.Text.RegularExpressions.Regex.Matches(c, @"^(?:FIRE_MAYBE_UNUSED )?static Value (f\d+_b)\([^\n]*\);", System.Text.RegularExpressions.RegexOptions.Multiline).Select(m => m.Groups[1].Value).Distinct().ToList();
+        var defined = System.Text.RegularExpressions.Regex.Matches(c, @"^(?:FIRE_MAYBE_UNUSED )?static Value (f\d+(?:_b|_p)?)\([^;\n]*\)\r?$", System.Text.RegularExpressions.RegexOptions.Multiline).Select(m => m.Groups[1].Value).ToList();
+        var declared = System.Text.RegularExpressions.Regex.Matches(c, @"^(?:FIRE_MAYBE_UNUSED )?static Value (f\d+(?:_b|_p))\([^\n]*\);", System.Text.RegularExpressions.RegexOptions.Multiline).Select(m => m.Groups[1].Value).Distinct().ToList();
         var twice = defined.GroupBy(n => n).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
         var missing = declared.Where(n => !defined.Contains(n)).ToList();
         return twice.Count == 0 && missing.Count == 0 ? $"OK ({defined.Count} functions)" : "FEHLER - twice: " + string.Join(", ", twice) + "; never defined: " + string.Join(", ", missing);
