@@ -47,7 +47,18 @@ namespace fire.Compiler
         {
             if (_byFullPath.TryGetValue(fullPath, out int id)) return id;
             id = Entries.Count;
-            Entries.Add(new fire.Runtime.ResourceEntry { Name = name, Data = File.ReadAllBytes(fullPath) });
+            // a model in glTF becomes fire's model file (.f3d, docs/graphics/models.md): the program carries what scene3d reads
+            byte[] data;
+            if (ModelConverter.IsModelSource(fullPath))
+            {
+                try { data = ModelConverter.ConvertFile(fullPath); }
+                catch (Exception e) when (e is InvalidDataException or IOException or FormatException or KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException)
+                {
+                    throw new PreprocessorException($"The model '{name}' cannot be converted: {e.Message}");
+                }
+            }
+            else data = File.ReadAllBytes(fullPath);
+            Entries.Add(new fire.Runtime.ResourceEntry { Name = name, Data = data });
             _byFullPath[fullPath] = id;
             return id;
         }

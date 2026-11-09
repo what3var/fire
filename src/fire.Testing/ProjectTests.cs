@@ -224,6 +224,21 @@ static class ProjectTests
                 catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
                 Check($"Beispiele: {sample.Title} (Projekt mit Schaltung) laeuft", lines.Count >= 4 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
             }
+            // the 3D samples open windows: they are only translated (with their resources: robot.gltf and figure.fblocks become model files)
+            foreach (var sample in samples.Where(x => x.Name.StartsWith("Scene3D")))
+            {
+                string error = "";
+                try
+                {
+                    var s3dWs = new Workspace();
+                    s3dWs.Load(Path.Combine(sample.Folder, sample.ProjectFile));
+                    var s3dPlan = BuildPlan.Create(s3dWs, s3dWs.Projects[0]);
+                    RuntimeSession.Build(s3dPlan.SourceTexts, null, args => Value.MakeUndefined(), plan: s3dPlan);
+                }
+                catch (Exception ex) { error = Describe(ex); }
+                Check($"Beispiele: {sample.Title} wird uebersetzt", error == "", error);
+            }
+            Check("Beispiele: die 3D-Beispiele (Szene, Benchmark, Effekte, Terrain, Modelle, Physik) sind da", samples.Count(x => x.Name.StartsWith("Scene3D")) == 6, string.Join(", ", samples.Select(x => x.Name)));
             Check("Beispiele: die Kategorie Circuits hat ihre zwei Beispiele", samples.Count(x => x.Category == "Circuits") == 2, string.Join(", ", samples.Select(x => x.Category + "/" + x.Name)));
         }
 

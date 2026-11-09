@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-scene3d.effects",
+  "type": "library",
+  "import": "scene3d.effects",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'scene3d.effects' of fire: particles for scene3d (an Emitter and ready ones: fire, smoke, sparks, rain, snow, an explosion)."
+  }
+}

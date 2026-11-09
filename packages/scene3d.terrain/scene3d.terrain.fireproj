@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-scene3d.terrain",
+  "type": "library",
+  "import": "scene3d.terrain",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'scene3d.terrain' of fire: landscapes for scene3d from a grid of heights (a heightmap) - smooth, or in blocks with steps; the height of the ground at a point."
+  }
+}

@@ -96,6 +96,7 @@ namespace fire.Compiler
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
               fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
+              fire.Compiler model <file.gltf|file.glb> [-o <file.f3d>] [--fps n]
               fire.Compiler run|build <project.fireproj | solution.firesln> [-p <project>] [...]
               fire.Compiler test  [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m ...] [-f 32|64] [-i 32|64]
 

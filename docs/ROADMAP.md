@@ -30,6 +30,7 @@ Leitlinien:
 | 0 | [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
 | 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
+| 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -766,7 +767,208 @@ lesen ein Argument mit `bufOf(value)` als Byte-Puffer, ohne die Art zu prüfen (
   Nutzer sind beide heute nicht zu unterscheiden.
 * Test: jedes Package mit `byte[]`-Parametern bekommt einen Fall mit einem Array (VM und nativ).
 
-## 16. Mess-Werkzeug für Größe, Speicher und Typisierung
+## 16. Scene3D für Spiele
+
+Wunsch des Benutzers: mit `scene3d` sollen Spiele möglich werden, bis hinunter auf DOS (Spiele wie Tomb Raider liefen dort). Arbeitsbranch `scene-revamp`,
+Basis ist immer `targets` (wird parallel weiterentwickelt; Größen können sich nach Merges ändern). Für alle Punkte gilt: die Größe bleibt unter Kontrolle,
+Teile dürfen in Unterpakete (`scene3d.terrain`, `scene3d.models`, `scene3d.effects`, `scene3d.physics`; ein Punkt im Namen geht, siehe `ui.docking`).
+
+**Stand (Analyse):** die Engine ist ein Desktop-Renderer in `float` - pro Pixel 10 interpolierte Werte, Division, Normalisieren, Blinn-Phong mit `sqrtf`/`powf`;
+Kamera-Pixel (RGBA), Tiefenpuffer (`float`) und Framebuffer nehmen je 4 Byte pro Pixel (12 Byte; 640x480 = 3,7 MB); Schatten sind standardmäßig an
+(1024² `float` = 4 MB je Richtungslicht, 24 MB je Punktlicht); alle Dreiecke eines Bildes werden vor dem Zeichnen gepuffert (`S3dTri` ~200 Byte,
+`S3dClipVertex` 48 Byte je Vertex und Objekt); Meshes 32 Byte je Vertex (`float` Position/UV/Normale, `uint32` Indizes). Auf dos16 bleiben neben dem
+Programm (~500 KB mit scene3d) nur Bilder um 64x48. Es fehlen: Frustum-Culling pro Objekt und eine Raumstruktur, Nebel/Sichtweite, Hierarchie
+(`Parent`), Raycast/Picking, Skybox, LOD, Mipmaps; `Object.Parameters()`/`LightParameters()` legen pro Bild und Objekt ein neues `float[]` an.
+
+**Messung dos16** (Open Watcom 2.0 beta portabel, die 64x48-Szene des Tests, `-Os`, Map von wlink): ~372 KB Code, ~42 KB Daten (Ladegröße 421 KB). Davon
+übersetzte fire-Methoden 159 KB - **das Prelude von scene3d allein 122 KB** (`Object.Parameters` 21 KB, `Camera.Render` 18 KB, `Scene.LightParameters` 9 KB,
+`Object.Init`/Konstruktoren je 5-8 KB), graphics-Prelude 22 KB; Runtime ~91 KB (Einheiten allein ~10 KB); die C-Engine 54 KB (`s3d_rasterTri` 5 KB,
+Schatten ~9 KB); graphics-C 11 KB. Der Speicher ging auf dos16 aus (Wunsch des Benutzers: Schatten auch unter DOS, gern grob aufgelöst; XMS/EMS für dos16 später,
+nach Arbeiten auf `targets`).
+
+1. **Größe** (zuerst):
+   * **Die Szene lebt in C** (der größte Gewinn): Objekte, Lichter, Kamera und Szene sind Handles auf C-Strukturen, Eigenschaften lesen und schreiben sie
+     direkt; `Render` ist ein Aufruf, der in C über die Objekte läuft - keine `float[]` pro Objekt und Bild, kein `Parameters()`, kein `LightParameters()`.
+     Die API bleibt gleich; was ein Programm nicht benutzt, fällt beim Weglassen (§11) heraus.
+     **Umgesetzt:** Einträge mit Referenzzählern in `fire_bridge_scene3d.h` (Objekt, Licht, Kamera, Szene, Material; Meshes und Texturen gezählt wie sie;
+     `__S3DGetF/SetF/SetF3/GetI/GetB/SetI` für die Eigenschaften, `__S3DRender` zeichnet), die Klassen halten nur ihr Handle. Die Bilder sind dieselben (alle
+     Prüfsummen von Scene3DTests unverändert, VM == nativ). dos16 (64x48-Szene): Ladegröße 421 KB -> 345 KB (-76 KB), das Prelude von scene3d 122 KB -> 50 KB.
+     Unterschied: ein zerstörtes Objekt in einer Szene wird übersprungen; `scene.Objects`/`Lights` sind nur noch zum Lesen.
+     **Gefunden** (auf `targets`, nicht scene3d): seit 8ab2aa2 ("Native values: 16 bytes everywhere") stürzen dos16-Programme mit Open Watcom 2.0 beta (portabel,
+     Stand 2026-04-23) in DOSBox-X 2024.03 je nach Code mit "Invalid Opcode" (INT 6) ab (`#import "dos"` + `print("free " + Dos.LargestFree() * 16)`; Scene + Object)
+     - mit 02e959e laufen dieselben Programme. Außerdem erzeugt der Generator für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit
+     ablehnt (E1078) - das dos16-Programm des Tests baut so nicht.
+   * Die Kamera zeichnet direkt in die Pixel des Framebuffers (heute ein eigenes `byte[w*h*4]` und eine Kopie: 4 Byte pro Pixel weniger).
+   * Ein zweiter, schlanker Rasterizer (`Scene.Quality`, eigene Quelle, nur gelinkt, wenn benutzt): 8 Bit mit Palette und Schattierungstabellen direkt in
+     einen Paletten-Framebuffer, Tiefe als `uint16`, Licht pro Vertex (Gouraud), Festkomma-Spans mit perspektivischer Korrektur alle 8-16 Pixel. Der
+     heutige Renderer bleibt für den Desktop (bytegleiche Tests).
+   * **Umgesetzt** (`native/s3d_lean.h`, `RenderMode.Fast`): Licht pro Ecke, Bänder mit `uint16`-Tiefe (24 KB je Band auf 16 Bit), Texturen nearest mit
+     perspektivischer Korrektur alle 16 Pixel, Paletten-Framebuffer in ihrer Palette (32 Stufen je Farbe, Tabelle der nächsten Farbe 16x16x16, Texel einmal je
+     Palette als Indizes), Transparenz als Dither, Schatten des ersten Richtungslichts (Schattenkarte mit 16-Bit-Tiefen, auf 16 Bit höchstens 128x128 = 32 KB, harte
+     Kante); im nativen Build gehen die Bänder direkt in den Framebuffer (keine Kamera-Pixel), in der VM über einen Puffer. VM == nativ, die Bandgröße ändert die
+     Pixel nicht. Auf dos16/bios16 ist er der einzige Renderer (`FIRE_S3D_LEAN_ONLY` im Plattformpaket: der volle Renderer wird nicht gebaut). Noch in Festkomma
+     nur pro Pixel (die Schritte zwischen den Ecken, Zeilen und 16-Pixel-Stücken sind float).
+     **Offen:** 640x480 auf dos16 - der Paletten-Framebuffer selbst hat 300 KB und passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher; dafür
+     der Framebuffer in XMS/EMS (nach den Arbeiten auf `targets`) oder eine Kamera, die direkt in den Videospeicher zeichnet (VESA mit Bänken).
+   * In Bändern zeichnen: die Dreiecke einmal nach Bändern sortiert, Tiefenpuffer nur für ein Band (640x32 x 2 Byte = 40 KB), das fertige Band geht gleich
+     in den Videospeicher (VESA mit Bänken) - so passt 640x480 auch neben ein dos16-Programm.
+   * Weniger Code: Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn benutzt (Stripping / Defines).
+   * Schatten auch unter DOS: Schattenkarten mit `uint16`-Tiefe und kleiner Auflösung (z. B. 128² = 32 KB je Richtungslicht), im schlanken Rasterizer
+     pro Vertex oder pro Span abgefragt.
+   * Kompakte Meshes: Positionen `int16` relativ zur Bounding-Box, Normale als Byte (Index in eine eigene Tabelle), Indizes `uint16`, UV `int16` (8-10 statt
+     32 Byte je Vertex); Texturen mit Palette (8 Bit) und Mipmaps.
+   * XMS (dos16): Ablage für Meshes und Texturen, pro Objekt eingeblendet. dos32 braucht es nicht (flacher Speicher).
+   * Culling pro Objekt, Nebel, Hierarchie; die fire-Seite ohne neue Arrays pro Bild.
+2. **Heightmaps** (`scene3d.terrain`): `Terrain` aus `byte[]`/`word[]`-Höhen, Zellgröße, Höhenfaktor; in Stücke (32x32) für das Culling. Zwei Modi:
+   **smooth** (gemeinsame Vertices, interpolierte Normalen) und **hard** (jede Zelle ein flacher Deckel, senkrechte Wände nur, wo die Nachbarn sich
+   unterscheiden, nur die sichtbare Seite). `HeightAt(x, z)` für Physik und Figuren.
+   **Umgesetzt** (Unterpaket `scene3d.terrain`, [Terrains](graphics/terrain.md)): `Terrain : Object` aus Bytes (Höhen oder RGBA-Helligkeit), Zahlen-Arrays oder
+   einem Bild (`FromImage`); Smooth (gemeinsame Ecken, Diagonale von (i+1, j) nach (i, j+1)) und Hard (Deckel gleicher Höhe gierig zu Rechtecken verschmolzen,
+   Wände nur zur niedrigeren Seite, in einer Reihe mit gleichen Höhen ein Quad, der Rand bis 0). Das Mesh macht das C von scene3d (`__S3DTerrain`), das Unterpaket
+   ist nur fire. `HeightAt` folgt Position, Skalierung und Drehung um die Hochachse; Texturkoordinaten in Metern. VM == nativ (Scene3DTests), dos16 baut.
+   **Offen:** Stücke (Culling, wenn es Culling gibt), LOD, Farben nach Höhe; Speicher der Meshes (32 Byte je Ecke) - kommt mit den kompakten Meshes.
+   (Zwischendurch gab ein nativer Build Enum-Werte als Zahl aus - cb6398d/de76901 auf `targets`; mit 2f8b4cc behoben.)
+3. **Modelle:** eigenes kompaktes Laufzeitformat (`.f3d`, quantisiert wie oben); Quellen in offenen Formaten (glTF 2.0, OBJ) und im Format des Editors,
+   zur Bauzeit von forge umgewandelt (oder in spark exportiert).
+   1. **Editor** in spark mit zwei Modi: **Blöcke** (Palette wählen, Modell aus Blöcken; beim Export nur die sichtbaren Flächen, gleiche Nachbarflächen
+      verschmolzen) zuerst, danach **CAD** (2D-Ansichten und 3D, Vertex/Kante/Fläche, Extrudieren, Spiegeln).
+      **Blöcke umgesetzt:** das Format `.fblocks` (JSON, ein Block je Zeile; Größe, Kante eines Blocks in Metern, Palette, Teile mit Eltern und Drehpunkt) und
+      `BlockModel` (fire.Compiler: Text, sichtbare Flächen - keine zwischen Blöcken eines Teils, zwischen Teilen bleiben sie -, gierige Rechtecke je Teil/Farbe/
+      Richtung/Schicht, Strahl-Auswahl, `ToF3d`: je Teil ein Teil am Drehpunkt, darunter je Farbe eins); forge macht eine Ressource `x.fblocks` zu .f3d, `forge model
+      x.fblocks`. Der Editor in spark (`BlockEditorControl`, *File > New > Block Model*): 3D-Ansicht (orthografisch, drehen/zoomen, Klick setzt einen Block auf die
+      Fläche oder den Boden, rechts entfernt, Shift nimmt die Farbe), Schichtansicht (malen/radieren mit Linie zwischen den Punkten, ein Strich ein Undo-Schritt,
+      Bild auf/ab), Spiegeln X, Palette (wählen, ändern, hinzu, weg), Teile (neu, Drehpunkt), Größe, Export .f3d, Undo/Redo. Getestet: `FIRE_TESTS_ONLY=blocks`
+      (Text, Flächen, Verschmelzen, Umlaufsinn, Strahlen, Datei), Scene3DTests zeichnet eine Blockfigur aus einer Ressource (VM == nativ), der Editor in spark unter
+      Xvfb von Hand (Klicks, Striche, Undo/Redo, Speichern).
+      **Animationen im Editor umgesetzt:** in `.fblocks` `"animations"` (Name, Länge, Schleife, Schlüssel je Teil: Zeit, Drehung in Grad Ry*Rx*Rz, Verschieben in
+      Zellen, Skalieren; dazwischen linear, eine Schleife geht vom letzten zum ersten), `BlockModel.PartPose/PoseMatrices` (um den Drehpunkt, Kinder gehen mit),
+      `ToF3d` schreibt je Animation einen Clip (30 fps, Schleifen-Flag je Clip im gemeinsamen Writer). Im Editor eine zweite Leiste: Animation wählen/neu/ändern/
+      löschen, Loop, Abspielen, Zeitleiste (Schlüssel des Teils als Rauten, Klick/Ziehen auf 1/30 s), Drehen/Verschieben/Skalieren des Teils zur Zeit - eine
+      Änderung setzt einen Schlüssel, Schlüssel löschen; die 3D-Ansicht zeigt die Pose (gebaut wird in der Ruhepose). Getestet: `FIRE_TESTS_ONLY=blocks`
+      (Text, Interpolation, Schleife, Drehpunkt, Kinder, Teil entfernt, Clips), Scene3DTests spielt "nod"/"hop" der Blockfigur (VM == nativ), der Editor unter
+      Xvfb (Wählen, Zeit, Schlüssel per Eingabe, Abspielen, Speichern).
+      **Nachgeholt:** Füllen in der Schicht (`BlockModel.FloodFillLayer`: Fläche gleicher Blöcke oder leerer Zellen über die Seiten), Auswahl einer Box (in der
+      Schicht oder durch alle Schichten; im 3D-Bild als Drahtbox) mit Kopieren/Ausschneiden/Einfügen am Zeiger (die Blöcke kommen in den gewählten Teil),
+      Löschen, Box füllen (`Copy/Delete/Paste/FillBox`, getestet); die Vorschau mit scene3d selbst (`BlockPreviewWindow`: das Modell als .f3d in der VM gezeichnet,
+      auf einem Boden, mit Schatten, mit der gewählten Animation - jedes 1/30 s ein Bild, im Kreis gezeigt; Renderer und Seite wählbar). Unter Xvfb geprüft.
+   2. **Animationen:** ein Modell trägt mehrere benannte Clips (Frames, fps, Schleife), zwischen den Frames interpoliert. Vorschlag: Modelle aus starren
+      Teilen mit Hierarchie, ein Frame speichert eine Transformation je Teil (klein, billig); Frames je Vertex optional.
+   **Umgesetzt (Format, Import, Animation):** das Format `.f3d` ([Models and animations](graphics/models.md), Byte für Byte in `s3d_model.h`): Teile im Baum
+   (Ruhepose T/R/S, Farbe, Mesh mit `int16`-Positionen in der Box des Teils, Normale oktaedrisch in 2 Byte, UV `int16`, Indizes `uint16`: 8/12 Byte je Ecke),
+   Clips mit Frames (26 Byte je Teil und Frame). forge macht es aus glTF 2.0 (`ModelConverter`: .gltf mit Data-URIs oder Dateien, .glb; Knoten -> Teile, Meshes,
+   Grundfarbe, Matrix zerlegt; Animationen bei 30 fps abgetastet - linear, step, cubic spline), als Ressource beim Bauen (`new Resource("x.glb")`) und mit
+   `forge model`. scene3d liest es (`Model.FromBytes/FromResource`), zeichnet die Teile mit der Pose des Clips (Objekt-Matrix mal Teil-Matrix, Normalen-Matrix
+   als inverse Transponierte; beide Renderer), `Play`/`Advance`/`AnimationTime`/`Stop`. Test: ein glTF-Roboter (Körper, Arm als Kind, "wave"/"jump"),
+   VM == nativ; dos16 baut. **Offen:** die Meshes auch im Speicher kompakt (heute zu `float` entpackt, siehe 16.1 A), Texturen in der Datei, Überblenden
+   zwischen Clips, Ereignisse am Ende eines Clips, Skins (Knochen) bewusst nicht.
+   (Zwischendurch stürzte der Generator bei Array-Literalen mit mehr als ~60 Elementen ab - 2f8b4cc/6a6c387 auf `targets`; mit 3f14d20 behoben.)
+4. **Partikel und Effekte** (`scene3d.effects`): Partikel aus einem festen Pool, als Sprites im Rasterizer (Tiefentest, additiv/Alpha), einfache Parameter
+   und Vorgaben (`Fire`, `Smoke`, `Sparks`, `Rain`, `Snow`, `Explosion`). Statt programmierbarer Pixel-Shader Materialeffekte zum Einschalten (laufende UVs,
+   Farbrotation über die Palette, Flackern, Wellen auf den Vertices, Toon) und Effekte auf das ganze Bild (Abblenden, Tönung, Nebel); später evtl. eine
+   fire-Funktion als Vertex-Shader.
+   **Umgesetzt** (Unterpaket `scene3d.effects`, [Partikel und Effekte](graphics/effects.md)): `s3d_effects.h` - je Emitter ein Pool fester Größe
+   (32 Byte je Partikel, bis 16000), eigener Zufall (xorshift, `Seed`: VM == nativ), Kegel um eine Richtung, Box als Startfläche, Schwerkraft, Luftwiderstand,
+   Farbe/Größe über das Leben; gezeichnet nach den Dreiecken als weiche Scheiben mit Tiefentest (voller Renderer: NDC-z, schlanker: `uint16` je Band,
+   über `S3dLean.post`), von fern nach nah, additiv oder überblendet, auch ins Palettenbild. `Emitter : Object` mit Eigenschaften und den Vorgaben
+   `Fire`/`Smoke`/`Sparks`/`Rain`/`Snow`/`Explosion` (eine Tabelle in C: das Paket kostet auf dos16 12,7 KB statt 31 KB als fire-Code). In `scene3d`
+   selbst: `Scene.Fog(color, start, end)` (der Hintergrund ganz Nebel; im schlanken Renderer 16 Stufen ohne Division je Pixel, für Paletten eine Tabelle
+   16 x 256), `Scene.Tint(color, amount)`, `Scene.Advance(dt)`/`Object.Advance(dt)` (Partikel, Animation, `SpinX/Y/Z`, `TextureScrollX/Y`). Test: VM == nativ
+   (Software, Fast, Palette, Nebel, Tönung); dos16 baut. **Offen:** Nebel im GPU-Renderer (heute: Partikel und Tönung über dem GPU-Bild, ohne Tiefe),
+   Partikel mit Textur (Funken als Striche, Rauch mit Flocken), Emitter-Richtung im Raum des Objekts, die übrigen Materialeffekte (Farbrotation der
+   Palette, Flackern, Wellen, Toon).
+5. **Physik** (`scene3d.physics`): einfach, schnell, leicht zu bedienen - Kugel, Box (achsenparallel), Kapsel, Heightfield, statische Meshes; Character
+   Controller (Laufen, Springen, Stufen), Raycasts, Trigger; fester Zeitschritt, Gitter als Vorauswahl; mit Einheiten (`Body.Dynamic(mass: 2kg)`,
+   `scene.Gravity = 9.81m/s²`) und Vorgaben (`Body.Bouncy`, `Body.Ice`). Starrkörper mit Rotation später.
+   **Umgesetzt** (Unterpaket `scene3d.physics`, [Physik](graphics/physics.md)): `s3d_physics.h` - Körper am Objekt-Item (statisch, dynamisch, kinematisch,
+   Figur), Formen Box (achsenparallel), Kugel, aufrechte Kapsel, Dreiecke des Objekts in der Welt (xz-Gitter; auch Modelle mit Teilen; neu gebaut, wenn das
+   Objekt bewegt/gedreht/skaliert wird) und Terrains über ihre Höhen (die Dreiecke der Zellen unter einem Körper entstehen bei Bedarf, glatt und als Blöcke
+   mit Wänden - kein Speicher). Kontakte: Box/Box, rund/Box, rund/rund (Strecken-Abstand), rund/Dreieck (Strecke gegen Dreieck), Box/Dreieck (13 Achsen);
+   einseitige Flächen. Schritt 1/60 s in `scene.Advance` (höchstens 8 je Aufruf), drei Durchgänge: Trennen nach Massen, Abprall (unter 0,5 m/s keiner),
+   Reibung (Coulomb). Figur: `Walk` setzt die waagerechte Geschwindigkeit, Springen nur am Boden, Stufen (anheben, frei? dann per Strahl auf die Stufe
+   setzen - auch bergab ohne Hüpfen), Hänge bis `MaxSlope` ohne Rutschen. Trigger (`Touches`), Raycasts (Kugel, Box, Kapsel, Dreiecke), `scene.Gravity`
+   (`class extends Scene`). Die Physik hängt über Funktionszeiger an der Szene: ein Programm ohne Körper ruft nichts davon auf. Test: VM == nativ (Ball,
+   Stapel, Figur auf Stufe, Mauer, Sprung, Trigger, Strahlen, Terrain, Aufzug); Beispielprojekt „Scene3D Physics“. **dos16:** die Physik ist ~42 KB C
+   (Map-Datei: Gitter 3,9 KB, Höhenfeld 3,8 KB, Box/Dreieck 3 KB, ...) plus ~16 KB fire-Code. Damit ein Programm ohne Physik sie nicht trägt, entfernt der
+   Watcom-Linker jetzt unerreichte Segmente (`option eliminate`): eine scene3d-Szene 477 -> 425 KB, mit Effekten 488 -> 436 KB, Hallo-Welt 88 -> 84 KB
+   (läuft in DOSBox-X; die bios16-Prüfungen grün). **Offen:** Drehung (Starrkörper mit Winkelgeschwindigkeit), Box gegen Box gedreht, Gelenke,
+   Schlafen ruhender Körper, ein Gitter auch für viele dynamische Körper, die Größe auf dos16 (Vektoren als Zeiger statt Werte). **Gefunden:** scene3d auf
+   dos16 hängt in DOSBox-X schon bei zwei `new Object(Template.Box, ...)` (ein Objekt, rohe Natives, graphics allein: alles gut) - auch vor M5
+   (23af112), auch ohne `eliminate`; vermutlich die Werte/Felder seit 8ab2aa2 (`targets`).
+
+### 16.1 Offen nach Meilenstein 1 und 2 (Stand `scene-revamp`)
+
+**A. Kompakte Meshes** (Wunsch des Benutzers: festhalten; vor oder mit Meilenstein 3, weil das Modellformat dieselbe Form bekommt):
+* **Umgesetzt** (nach Meilenstein 3): `s3d_meshFinish` packt jedes Mesh (`s3d_meshCompact`): Positionen `int16` in der Box, Normalen oktaedrisch in 2 Byte,
+  UV `int16` (1/1024; bei größeren Werten skaliert; keine, wenn alle 0), Indizes `uint16` unter 65536 Ecken; die `float`-Arrays gehen. Gelesen über
+  `s3d_meshPos/Nrm/Uv/Idx` (voller und schlanker Renderer, Schattenkarten, GPU-Upload entpackt in einen Puffer). Fehlt der Speicher fürs Packen, bleiben die
+  floats; `S3D_MESH_FLOAT` behält sie immer. **Gemessen:** Box 912 -> 360 Byte, Kugel (24) 16,7 -> 7,1 KB, Zylinder 4,4 -> 1,8 KB, Terrain 32x32 56 -> 24 KB,
+  64x64 226 -> 97 KB (je Ecke 12 Byte plus ~12 Byte Indizes statt 32 + 24). **Pixel:** gegen die float-Meshes in der Testszene (160x120) weichen im
+  Software-Renderer 70 von 19200 Pixeln um höchstens 2/255 ab, im schlanken 52 (höchstens 2), im Palettenbild 4 um eine Schattierungsstufe; die
+  Prüfsummen der Scene3DTests sind damit bewusst neu (VM == nativ), die Zählungen des dos16-Tests bleiben gleich.
+* Noch offen aus A: Texturen mit Palette (8 Bit) und Mipmaps.
+* **Heute:** `S3dMesh` hat je Ecke `float` Position (12 Byte), UV (8) und Normale (12) und je Dreieck drei `uint32_t` (12 Byte) - 32 Byte je Ecke plus
+  Indizes. Ein Terrain 64x64 (geglättet) braucht so ~220 KB, eine Kugel mit 24 Segmenten ~20 KB; auf dos16 passt davon wenig neben das Programm.
+* **Ziel - 8 bis 10 Byte je Ecke:**
+  * Position `int16` x 3, quantisiert auf die Bounding-Box des Meshes (`bmin` + q / 65535 * (bmax - bmin); Fehler unter 1/65535 der Ausdehnung);
+  * Normale als **ein Byte**: Index in eine feste Tabelle von 256 Richtungen (eigene, gleichmäßig über die Kugel verteilt; nicht übernommen), oder 2 Byte
+    (oktaedrisch) für glattere Flächen - zu messen;
+  * UV als `int16` x 2 in 1/256 einer Texturbreite (Wiederholung bis 128x), oder gar keine UV, wenn das Mesh keine Textur braucht (ein Flag);
+  * Indizes `uint16`, solange das Mesh unter 65536 Ecken hat (sonst `uint32`); Dreiecke mit flacher Normale teilen keine Ecken mehr als nötig.
+* **Wo umgerechnet wird:** einmal beim Laden/Erzeugen (`s3d_meshFinish`, Vorlagen, OBJ, Terrain, später `.f3d`); die Renderer lesen die kompakte Form direkt
+  (die Transformation nimmt `int16` und die Box, das Licht die Tabelle). Der volle Renderer darf weiter `float` intern haben (der Desktop hat Platz);
+  die Bilder des vollen Renderers sollen gleich bleiben - sonst die Prüfsummen bewusst neu festlegen.
+* **Messen:** Speicher je Mesh vorher/nachher (Kugel, Box, Terrain 32x32/64x64), Pixel-Abweichung im vollen Renderer, Geschwindigkeit des schlanken.
+* Dazu passend: **Texturen mit Palette** (8 Bit je Texel statt 32, heute nur als Kopie für Paletten-Bilder: `S3dTexture.lean`) und **Mipmaps**
+  (Ruhe in der Ferne, weniger Cache-Fehler); auf dos16 RGBA-Texturen nach dem Umrechnen verwerfen.
+
+**`defined` im scene3d-Prelude (gemessen, Stand nach M4):** die Hilfsfunktionen mit Zahlen (`S3D.Rgb`, `Rgba`, `Red/Green/Blue`, `Degrees`, `Meters`)
+und die drei Geschwindigkeiten (`TextureScrollX/Y`, `Emitter.Speed`) sind `defined` (`S3D.Speed` wieder nicht: sonst warnt der Typprüfer bei jedem
+Aufrufer mit einem gewöhnlichen `float : m/s`). Zuerst gemessen: dos16 431 314 -> 430 335 Byte (C-Rümpfe
+ohne Values). Dabei fiel ein Generatorfehler auf (Value-Hülle unter `fN` statt `fN_b` auf Zielen, die die Aufruftiefe zählen); `targets` hat ihn mit
+1c2af40 grundsätzlich gelöst: ein Programm, das die Aufruftiefe zählt, hat keine C-Rümpfe. scene3d-Programme zählen sie immer (`Scene.Add` nimmt mit
+`try TakeTo`) - `defined` ist hier darum heute neutral (dos16 431 752 -> 431 766 Byte; nativ und VM ohne messbaren Unterschied). **Nicht** übernommen:
+die Handles als `defined int h` (+2,6 KB auf dos16: sie gehen fast nur an Natives, die Values nehmen, und werden dafür neu eingepackt) und die übrigen
+Eigenschaften (keine Änderung: Accessoren bekommen keinen C-Rumpf). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
+C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`. `FIRE_TESTS_ONLY=scene3d` prüft das dos16-C weiter mit.
+
+**B. Größe und Speicher (Rest von Meilenstein 1):**
+* **640x480 auf dos16:** der Paletten-Framebuffer (300 KB) passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher. Wege: (a) eine Kamera, die
+  ihre Bänder direkt in den Videospeicher schreibt (VESA 101h mit Bänken; der schlanke Renderer arbeitet schon bandweise), (b) der Framebuffer in XMS/EMS
+  (nach den Arbeiten auf `targets`).
+* **XMS/EMS auf dos16:** Ablage für Meshes und Texturen, pro Objekt eingeblendet.
+* **Festkomma** im schlanken Renderer auch zwischen den Ecken, Zeilen und 16-Pixel-Stücken (heute `float`; auf einem 8086 ohne FPU teuer).
+* **Weniger Code im vollen Renderer:** Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn ein Programm sie benutzt (heute nur auf dos16/bios16
+  ganz weggelassen, `FIRE_S3D_LEAN_ONLY`).
+* Weiter messen und kürzen: `Camera.Render` (~8 KB übersetzt), `Scene.Add` (~7 KB), die Konstruktoren; die Runtime (~91 KB, Einheiten ~10 KB) ist Sache
+  von `targets`.
+
+**C. Fehlende Bausteine für Spiele** (aus der Analyse, noch nicht angefangen):
+* **Culling pro Objekt** (Bounding-Box gegen das Sichtvolumen) und eine **Raumstruktur** (Räume mit Portalen für Level; ein Gitter für offene Gelände).
+* **Nebel / Sichtweite** (billig, versteckt die Far-Plane; im schlanken Renderer über die Schattierungsstufen).
+* **Hierarchie** (`obj.Parent`): Teile, die mitgehen (die Waffe in der Hand) - braucht auch die Animation aus Meilenstein 3.
+* **Raycast / Picking** (Maus, Schießen; dieselben Strahlen braucht die Physik).
+* **Skybox**, **LOD** (gröbere Meshes in der Ferne).
+* Schatten im schlanken Renderer: weiche Kante (2x2 gemittelt) und Punktlichter; heute nur das erste Richtungslicht, harte Kante.
+
+**D. Terrains (Rest von Meilenstein 2):**
+* große Terrains in **Stücke** teilen (z. B. 32x32), die ohne Sicht wegfallen - sobald es Culling gibt; **LOD** je Stück;
+* **Farben nach Höhe** (Gras, Fels, Schnee) ohne Textur; mehrere Texturen nach Höhe/Neigung;
+* `HeightAt` bei geneigtem Terrain (Drehung um x/z) und die Neigung des Bodens (`NormalAt`) für Figuren und Physik;
+* der Speicher folgt mit A (heute 32 Byte je Ecke und 4 Byte je Höhe für `HeightAt`).
+
+**E. Auf `targets` gefunden** (nicht scene3d; dort zu beheben):
+* **Behoben (scene-revamp):** dos16-Programme hatten nur **2 KB Stapel** - `-mstack-size=32768` kommt bei owcc für `-bdos` nicht im Kopf des Programms an
+  (die Map: `Stack size: 0800`), wie schon bei win16. Seit die Werte 16 Byte haben (8ab2aa2), läuft der Stapel über, ohne Prüfung (`-fno-stack-check`)
+  still: falsche Werte, Hänger, "Invalid Opcode" - je nach Code. Jetzt `option stack=32768` für den Linker (TargetProfile.Pc). Damit laufen in DOSBox-X:
+  zwei Objekte aus Vorlagen (vorher Hänger), Körper und Schritte der Physik, die Effekte (Nebel ins Palettenbild), 60 Bilder mit Physik im schlanken
+  Renderer.
+* dos16-Programme stürzen seit 8ab2aa2 in DOSBox-X mit "Invalid Opcode" (INT 6) ab, je nach Code; mit 02e959e laufen sie. Damit ist scene3d (auch der
+  schlanke Renderer und die Terrains) unter DOS bisher nicht ausgeführt, nur gebaut.
+* Der Generator erzeugt für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit ablehnt (E1078).
+
+Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD; A (kompakte Meshes) vor oder mit 3, B/C/D nach Bedarf dazwischen.
+
+## 17. Mess-Werkzeug für Größe, Speicher und Typisierung
 
 Die Messungen, die bisher von Hand liefen (Linker-Map auswerten, erzeugtes C durchzählen, Heap zur Laufzeit zählen), sollen ein eingebautes Werkzeug werden, z. B.
 `forge build ... --stats` (Bericht als Text und JSON neben dem Programm) und ein Laufzeit-Schalter `FIRE_STATS`. Grob:

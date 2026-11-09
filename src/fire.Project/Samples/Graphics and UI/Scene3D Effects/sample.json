@@ -1,0 +1,6 @@
+{
+  "title": "Scene3D Effects",
+  "description": "Particles (scene3d.effects: fire, smoke, sparks, snow, an explosion), fog and a tint, a spinning coin and running water. F switches the renderer (Software / Fast), Space lets it explode, G the fog, S the snow.",
+  "open": [ "main.fire" ],
+  "order": 62
+}

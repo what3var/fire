@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-scene3d.physics",
+  "type": "library",
+  "import": "scene3d.physics",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'scene3d.physics' of fire: bodies for scene3d objects (static, dynamic, kinematic; box, sphere, capsule, triangles, terrains), a character that walks and jumps, rays."
+  }
+}

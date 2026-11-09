@@ -36,6 +36,9 @@ namespace fire.Native
             args.AddRange(r.IncludeDirs.Select(d => "-I" + Quote(d)));
             args.Add("-o");
             args.Add(Quote(r.Output));
+            // (the linker leaves out every segment - with -ffunction-sections every function - that nothing reaches: the C of a package that the program does not
+            // call, e.g. scene3d's physics without scene3d.physics; measured on dos16: a scene3d program 477 -> 425 KB, hello 88 -> 84 KB)
+            if (!r.CompileOnly) { args.Add("-Wl,option"); args.Add("-Wl,eliminate"); }
             if (!r.CompileOnly) args.AddRange(r.Libraries.Where(l => l != "-lm"));   // (the math functions are in Watcom's C library)
             return (Locate(r.Toolchain) ?? r.Toolchain.Compiler ?? "owcc", string.Join(" ", args));
         }

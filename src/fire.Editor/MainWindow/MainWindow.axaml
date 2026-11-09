@@ -163,6 +163,7 @@
 						</MenuItem>
 						<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
 						<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
+						<MenuItem Header="_Block Model" Click="NewBlockModel_Click"/>
 					</MenuItem>
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
 					<Separator/>
@@ -355,6 +356,7 @@
 									</MenuItem>
 									<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
 									<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
+						<MenuItem Header="_Block Model" Click="NewBlockModel_Click"/>
 									<Separator/>
 									<MenuItem Header="_Project..." Click="NewProject_Click"/>
 									<MenuItem Header="_Solution..." Click="NewSolution_Click"/>
