@@ -10,7 +10,7 @@ namespace fire.Native
     public sealed partial class CppGenerator
     {
         /// <summary>The place of a field that is a C number and its static type (a narrow int, a float, a bool or a word, never undefined); null for any other.</summary>
-        private (int Slot, int Half, int Type)? CFieldOf(RuntimeClass rc, string name, Func from)
+        private (int Slot, int Half, int Type, RuntimeClass Rc, int Index)? CFieldOf(RuntimeClass rc, string name, Func from)
         {
             if (!ScalarsOn || DirectFieldIndex(rc, name, from) is not int index) return null;
             byte declared = rc.FindFieldRequiredKind(name);
@@ -20,12 +20,14 @@ namespace fire.Native
             if (!(IsNarrowIntType(type) || kind is KindFloat or KindBool or KindWord)) return null;
             var (slot, half) = FieldPlace(rc, index);
             if (half >= 0 && kind == KindWord) return null;
-            return (slot, half, type);
+            return (slot, half, type, rc, index);
         }
 
         /// <summary>The C number of such a field of the object `obj` (an Obj*).</summary>
-        private static string CFieldRead((int Slot, int Half, int Type) field, string obj)
+        private string CFieldRead((int Slot, int Half, int Type, RuntimeClass Rc, int Index) field, string obj)
         {
+            // (a packed field: the C number itself - CppGenerator.Packed.cs)
+            if (RawRef(field.Rc, field.Index, obj) is { } raw) return KindOfType(field.Type) == KindBool ? $"({raw} != 0)" : raw;
             string place = $"objFields({obj})[{field.Slot}]";
             return (KindOfType(field.Type), field.Half >= 0) switch
             {
@@ -40,8 +42,9 @@ namespace fire.Native
         }
 
         /// <summary>The store of the C number `x` into such a field of the object `obj` (an Obj*).</summary>
-        private static string CFieldWrite((int Slot, int Half, int Type) field, string obj, string x)
+        private string CFieldWrite((int Slot, int Half, int Type, RuntimeClass Rc, int Index) field, string obj, string x)
         {
+            if (RawRef(field.Rc, field.Index, obj) is { } raw) return KindOfType(field.Type) == KindBool ? $"{raw} = ({x}) ? 1 : 0;" : $"{raw} = {x};";
             string place = $"objFields({obj})[{field.Slot}]";
             return (KindOfType(field.Type), field.Half >= 0) switch
             {
@@ -70,7 +73,7 @@ namespace fire.Native
 
         /// <summary>A GetField / SetField / SetFieldClaim / SetFieldOnThis that reads or writes a C field (CFieldOf) - such an instruction keeps the scalars of
         /// the code (it takes and gives C numbers). Null when it is not one.</summary>
-        private (int Slot, int Half, int Type)? CFieldAccess(Func f, Flow st, Instr ins)
+        private (int Slot, int Half, int Type, RuntimeClass Rc, int Index)? CFieldAccess(Func f, Flow st, Instr ins)
         {
             if (!ScalarsOn || st.Region != null) return null;
             // (the initializer of the fields stores their zeros - with kind and unit - as Values: only from then on the number alone changes)

@@ -213,6 +213,16 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Schatten, ohne Value dazwischen (GetField, SetField, SetFieldClaim, SetFieldOnThis halten die Skalare der Stelle). Konstruktoren und Initialisierer
   schreiben weiter Values, ebenso Objekte mit Sonden. Das Layout bleibt: Reflection, JSON, Kopien und der Debugger sehen die Values wie vorher.
   Gemessen auf dos16 (Watcom, `-Os`): eine Methode mit drei Feldänderungen (`x += dx`, `y += x % 7`, `len += 1cm`) 1588 -> 1063 Byte.
+* **Gepackte Objekte.** Ein Feld, das in jeder Klasse, die es hat, `defined` ist und eine statische Art und Einheit hat (`CppGenerator.Packed.cs`:
+  `RawType`), ist kein Value-Slot, sondern eine C-Zahl hinter den Slots des Objekts (`objRaw`, `Obj.nraw` Bytes; `nfields` und `nraw` teilen sich die
+  32 Bit des früheren `nfields`): `FireInt`, `Real`, `FireWord`, ein Byte für ein bool, auf ihre Größe ausgerichtet, die Felder der Basisklasse zuerst
+  (`RawLayoutOf`) - ein direkter Zugriff auf eine Basis kennt ihren Offset deshalb auch in abgeleiteten Objekten; haben alle Klassen, die das Objekt sein
+  kann, gleich viele Slots, ist der Offset eine Konstante (sonst `objRaw`: `nfields * sizeof(Value)` zur Laufzeit). `newObjectR` legt sie mit Nullen an,
+  `copyValue` (`flat`) und der tiefe Kopierer (`copy`) kopieren die Bytes. Die Feld-Helfer (`gf_`/`sf_`) gehen für solche Namen pro Klasse wie die einer
+  Property. Nur wo nichts die Felder eines Objekts über ihren Index liest, ohne das Layout zu kennen - dieselben Programme wie bei den schmalen Feldern
+  (`NarrowFieldsOn`: keine Threads, Reflection, Sonden, JSON, kein Debugger, keine Module) - und nicht für Felder, deren Adresse genommen wird.
+  Gemessen: 300 000 Objekte mit drei `defined int` und einem `defined bool` 45 -> 35 MB (64 Bit), 35 -> 31 MB (`#intwidth 32`, dort waren die schmalen
+  Felder schon kompakt); der Code bleibt gleich groß (dos16: 1063 -> 1096 Byte für die Methode mit drei Feldänderungen).
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
