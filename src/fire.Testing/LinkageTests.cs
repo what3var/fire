@@ -830,6 +830,8 @@ static class LinkageTests
         string? before = Environment.GetEnvironmentVariable("FIRE_TEST_PLUGIN");
         try
         {
+            Directory.CreateDirectory(Path.Combine(root, "plugpacked-host"));
+            Directory.CreateDirectory(Path.Combine(root, "plugpacked-kit"));
             var hostPlan = Plan("Host");
             var host = Build(hostPlan.SourceTexts, "shared", Path.Combine(root, "plugpacked-host", "host"), plan: hostPlan);
             var kitPlan = Plan("Kit");
