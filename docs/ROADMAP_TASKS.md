@@ -60,8 +60,10 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    `handover` (the strings in the moved parts), the arguments of `fire global` and of actor messages, the value of `terminate`. The bit `R_SHARED` in the type
    byte of a string or lambda makes its counts atomic (`retain`/`release` look at it first: one byte, a branch that is never taken in a program without
    threads); the lambda of a `fire global` job carries it (made in the thread, let go of by the main program). `sync` writes into its original inside a
-   section, `originOf`/`copiesOf` have `g_originM`. *Second part with 1e:* a thread that reads a string of the global scope sets `R_SHARED` on it while
-   the lock of the globals holds the main program. Open: an original of another fire thread (not the main program) is written by `sync` while that thread
+   section, `originOf`/`copiesOf` have `g_originM`. *Second part done (with 1e):* a string or lambda gets `R_SHARED` when it goes into the shared domain -
+   a store into a global or static field (`FIRE_DOM_SHARE`), a field or an element of an object or array of the domain (`FIRE_DOM_STORE` in `setFieldAt`,
+   `arraySet` and the generated setters), and at the first `fire` everything the domain holds already (`markOwnedShared`, the program's
+   `fire_shareGlobals`). Whoever writes the domain holds its write side, so nobody counts the string at that moment. Open: an original of another fire thread (not the main program) is written by `sync` while that thread
    runs - it needs a section of its owner (that thread grants it at its safe points), see 1e.
 3. **1c** the slot table in segments. *Done* (only with `FIRE_NO_GIL`; the GIL build keeps the one array): `FIRE_SLOT_SEGMENTS` - a directory of 2^14
    segments of 2^14 slots that never move (the same two loads as before), the free slots cached per thread (64, exchanged half by half with the shared
@@ -70,7 +72,12 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    counts its two holders atomically and is handed over with release/acquire), `g_mailboxM` (actors), `g_thrM` (the thread list, their exceptions, the
    graveyard, the value of `terminate`; `terminate` requested and the live count are atomic). The platform layer got `fire_atomic_loadAcquire`,
    `fire_atomic_storeRelease`, `fire_atomic_addAcqRel`. Still open: probes, `originOf`/`copiesOf`, run-time units, host services.
-5. **1e** the reader/writer lock of the globals.
+5. **1e** the reader/writer lock of the globals. *Done* (`DomLock`, with `FIRE_NO_GIL` it takes the place of the GIL): the main program holds the write
+   side while it runs and lets go of it where it let go of the GIL (waits, blocking natives) and, when threads wait to read, at its safe points; a fire
+   thread takes the read side when it first touches the shared domain - `FIRE_DOM_TOUCH` in `leafOf` (one test of flag 64 in the header; every access to
+   an object, array or buffer goes through it), `FIRE_DOM_READ` before a thread reads a global or a static field - and lets go of it at its next safe point
+   or wait; threads read side by side, a thread that never touches the domain never waits. A section holds the write side alone. A program with two
+   threads reading global strings and fields of a global object while the main program rewrites them is clean under ThreadSanitizer without the GIL.
 6. **1f** a lock per package instead of the GIL around natives.
 7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests.
 

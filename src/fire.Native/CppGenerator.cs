@@ -1764,6 +1764,16 @@ namespace fire.Native
                 else if (IsOwnClass(FindClass(key.Class))) sb.AppendLine($"Value {StaticFieldVar(key.Class, key.Field)} = FIRE_UNDEF_INIT; // {key.Class}.{key.Field}");
                 else sb.AppendLine($"extern Value {StaticFieldVar(key.Class, key.Field)}; // {key.Class}.{key.Field}");
             if (_staticFields.Count > 0) sb.AppendLine();
+            if (_usesThreads && !Modular)
+            {
+                // (the first `fire`: what the globals and static fields hold is shared with the threads from then on - fire_rt.h ensureDomain, without the GIL)
+                sb.AppendLine("#ifdef FIRE_STR_CROSS");
+                sb.AppendLine("static void fire_shareGlobals(void) {");
+                foreach (var gl in _globals.OrderBy(x => x)) sb.AppendLine($"    refShare(G{gl});");
+                foreach (var (_, index) in _staticFields.OrderBy(kv => kv.Value)) sb.AppendLine($"    refShare(SF{index});");
+                sb.AppendLine("}");
+                sb.AppendLine("#endif");
+            }
 
             sb.Append(ModuleTables());
             foreach (var (from, to) in _unitFactorCaches) sb.AppendLine($"static double {Px}kUF_{from}_{to} = 0;   // the factor between unit {from} and unit {to}, looked up once");
@@ -2548,7 +2558,7 @@ namespace fire.Native
             string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return {(narrow ? "nvGet(&objFields(o)[idx >> 1], (int)(idx & 1u))" : "objFields(o)[idx]")};\n}}\n"
                  + (_usesThreads ? $"static inline void sfb_{m}(Value v, Value x);\nstatic inline void sf_{m}(Value v, Value x) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x); sectionScopeExit(ss_); }}\n" : "")   // (a change of an object of the shared domain is one section)
-                 + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}" + (narrow ? "    nvSet(&objFields(o)[idx >> 1], (int)(idx & 1u), x);\n}\n" : "    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    retain(x);\n    release(old);\n}\n")
+                 + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}" + (narrow ? "    nvSet(&objFields(o)[idx >> 1], (int)(idx & 1u), x);\n}\n" : "    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    FIRE_DOM_STORE(&o->h, x);\n    retain(x);\n    release(old);\n}\n")
                  + (!_fieldAddressTaken.Contains(name) ? "" : $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&objFields(o)[idx]);\n}}\n");
         }
 
@@ -2657,7 +2667,7 @@ namespace fire.Native
                     var (armSlot, armHalf) = FieldPlace(cls.Rc, index);
                     if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawTypeAt(cls.Rc, index), "x")}; return; }}")); ptrArms.Add((label, FieldPtrExpr(cls.Rc, index, "NULL", "o")!)); continue; }
                     setArms.Add((label, armHalf >= 0 ? $"{{ {fieldGuardSet}{unit}nvSet(&objFields(o)[{armSlot}], {armHalf}, x); return; }}"
-                        : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; retain(x); release(old); return; }}"));
+                        : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; FIRE_DOM_STORE(&o->h, x); retain(x); release(old); return; }}"));
                     // (a field declared `defined`: a K_PtrField, writes through it are checked like an assignment)
                     ptrArms.Add((label, FieldPtrExpr(cls.Rc, index, $"(void*)&objFields(o)[{armSlot}]", "o") ?? $"return PtrV(&objFields(o)[{armSlot}]);"));
                     continue;
@@ -3313,7 +3323,7 @@ namespace fire.Native
                 if (region.Catches.Count > 0)
                     for (int k = region.DepthBase; k < region.Out.MaxDepth; k++) Var("Value", $"c{region.Template}_{k}", null);
             }
-            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;");
+            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;" + (Modular ? "" : "\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif"));
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) post.AppendLine("    g_globalOwn = &OG;");
             if (f.Kind == FuncKind.FireBody)
             {
@@ -4318,7 +4328,9 @@ namespace fire.Native
                 bool varRef = VarRef(key);
                 string sec = SectionFor(variable);
                 string secEnd = SectionEnd(variable);
-                if (valueRef) E($"{{ {sec}Value n = {stored}; Value o = {variable}; {variable} = n; retain(n); release(o); {secEnd}}}");
+                // (a string or lambda that goes into a global or static field: shared with the fire threads from now on - FIRE_DOM_SHARE, without the GIL)
+                string share = sec.Length > 0 ? "FIRE_DOM_SHARE(n); " : "";
+                if (valueRef) E($"{{ {sec}Value n = {stored}; Value o = {variable}; {variable} = n; {share}retain(n); release(o); {secEnd}}}");
                 else if (varRef) E($"{{ {sec}Value o = {variable}; {variable} = {stored}; release(o); {secEnd}}}");
                 else E(sec.Length > 0 ? $"{{ {sec}{variable} = {stored}; {secEnd}}}" : $"{variable} = {stored};");
             }
@@ -4430,7 +4442,8 @@ namespace fire.Native
                 case OpCode.LoadGlobal:
                 {
                     string gv = GlobalVar(ins.A[0], locals);
-                    E($"{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
+                    // (a fire thread reads a global of the main program under the read side of the globals' lock - fire_rt.h DomLock, without the GIL)
+                    E($"{(_usesThreads && f.Kind == FuncKind.FireBody && gv[0] == 'G' ? "FIRE_DOM_READ(); " : "")}{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
                 }
                 case OpCode.StoreGlobal:
                 case OpCode.StoreGlobalPop:
@@ -5699,7 +5712,7 @@ namespace fire.Native
                     if (FindClass(Str(ins.A[0])).FindFieldAccess(Str(ins.A[1])) is { } getAccess)
                         AccessCheck(getAccess.DeclaringClass, getAccess.Access, $"Static field '{Str(ins.A[1])}' of '{getAccess.DeclaringClass.Name}' is {DescribeAccess(getAccess.Access)} and cannot be accessed from here.");
                     string sfVar = StaticFieldVar(Str(ins.A[0]), Str(ins.A[1]));
-                    E($"{S(d)} = {sfVar};");
+                    E($"{(_usesThreads ? "FIRE_DOM_READ(); " : "")}{S(d)} = {sfVar};");   // (any code may run on a fire thread: see LoadGlobal)
                     SetR(d, VarRef(sfVar));
                     d++; return Next();
                 }

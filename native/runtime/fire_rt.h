@@ -322,7 +322,9 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
 #if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
 #define FIRE_SLOT_CACHE 64u
 typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCache;
-#define FIRE_SLOT_THREAD_VARS(X) X(SlotCache, g_slotCache, FIRE_ZERO_INIT)
+#define FIRE_SLOT_THREAD_VARS(X) X(SlotCache, g_slotCache, FIRE_ZERO_INIT) \
+    X(uint8_t, g_domReader, 0)   /* a fire thread that does not hold the read side of the globals' lock (see DomLock): its next touch of the shared domain takes it */ \
+    X(uint8_t, g_domHeld, 0)     /* ... it holds it (until its next safe point) */
 #else
 #define FIRE_SLOT_THREAD_VARS(X)
 #endif
@@ -422,6 +424,8 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_acc FIRE_TLV(g_acc)
 #if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
 #define g_slotCache FIRE_TLV(g_slotCache)
+#define g_domReader FIRE_TLV(g_domReader)
+#define g_domHeld FIRE_TLV(g_domHeld)
 #endif
 #ifdef FIRE_DEBUG
 #define g_dbgTop FIRE_TLV(g_dbgTop)
@@ -1598,7 +1602,19 @@ FIRE_FN void leafSet(Value* r, const Owned* h) {
 /* The slot of an object, array or buffer (or of the array or buffer of a pointer into it: wide only). */
 #define FIRE_VSLOT(v) ((v).unit)
 /* The header behind a Value of an object, array or buffer. */
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+/* (docs/ROADMAP_TASKS.md 1e) A fire thread that touches an object, array or buffer of the shared domain (flag 64, the global scope of the main program) takes the
+ * read side of the globals' lock first; it keeps it until its next safe point. The main program and a thread that holds it pay one test of a flag. */
+FIRE_FN void domReadEnter(void);
+#define FIRE_DOM_TOUCH(h) do { if (FIRE_UNLIKELY(((const Owned*)(h))->flags & 64) && g_domReader) domReadEnter(); } while (0)
+/* A read of a global variable or a static field of the main program (the generator puts it before the read in code that may run on a fire thread). */
+#define FIRE_DOM_READ() do { if (FIRE_UNLIKELY(g_domReader)) domReadEnter(); } while (0)
+#else
+#define FIRE_DOM_TOUCH(h) ((void)0)
+#define FIRE_DOM_READ() ((void)0)
+#endif
 FIRE_FN Owned* leafOf(Value v) {
+    FIRE_DOM_TOUCH(v.p);
     return (Owned*)v.p;
 }
 /* Do two Values of objects, arrays or buffers name the same one? (A `fire handover` gives a value the next generation; the address stays: `==` is true, as in the VM.) */
@@ -1684,6 +1700,30 @@ FIRE_FN void release(Value v) {
         else if (r->rc != IMMORTAL && --r->rc == 0) freeRef(r);
     }
 }
+#ifdef FIRE_STR_CROSS
+/* A string or lambda that goes into the shared domain (a global, a static field, a field or an element of the global scope's objects and arrays, once there
+ * is a fire thread): fire threads may count it from now on - its counts are atomic (R_SHARED). Set by whoever writes the domain: the main program, or a
+ * thread in a section - nobody else counts it at that moment. A lambda's captures go with it. */
+extern FIRE_RT_DATA bool g_domainOn;
+FIRE_COLD FIRE_FN void refShareSlow(Ref* r) {
+    r->type |= R_SHARED;
+    if (R_KIND(r) == R_Lam) {
+        Lam* l = (Lam*)r;
+        uint32_t c;
+        for (c = 0; c < l->ncaps; c++) {
+            Value x = ((Value*)((char*)l + FIRE_HDR(Lam)))[c];
+            if (isRef(x) && refOf(x)->rc != IMMORTAL && !(refOf(x)->type & R_SHARED)) refShareSlow(refOf(x));
+        }
+    }
+}
+FIRE_FN void refShare(Value v) { if (isRef(v) && !(refOf(v)->type & R_SHARED) && refOf(v)->rc != IMMORTAL) refShareSlow(refOf(v)); }
+#define FIRE_DOM_SHARE(v) do { if (FIRE_UNLIKELY(g_domainOn)) refShare(v); } while (0)
+#define FIRE_DOM_STORE(h, v) do { if (FIRE_UNLIKELY(((const Owned*)(h))->flags & 64)) refShare(v); } while (0)
+#else
+#define refShare(v) ((void)0)
+#define FIRE_DOM_SHARE(v) ((void)0)
+#define FIRE_DOM_STORE(h, v) ((void)0)
+#endif
 
 FIRE_COLD FIRE_FN void poolGrow(void) {
     uint32_t cap = g_pool.cap ? g_pool.cap * 2 : 256;
@@ -3154,6 +3194,7 @@ FIRE_FN void setFieldAt(Value v, uint32_t index, Value x) {
     Obj* o = objAt(v);
     Value old = objFields(o)[index];
     objFields(o)[index] = x;
+    FIRE_DOM_STORE(&o->h, x);
     retain(x);
     release(old);
 }
@@ -5469,6 +5510,7 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
         items = arrValues(arr);
         old = items[i.i];
         items[i.i] = v;
+        FIRE_DOM_STORE(&arr->h, v);
         retain(v);
         release(old);
         return v;
@@ -7212,10 +7254,87 @@ extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
 
 #ifdef FIRE_NO_GIL
 /* (docs/ROADMAP_TASKS.md step 1: fire code runs on all cores - the hand-over points of the GIL stay the safe points, the GIL itself is gone;
- * what it protected has locks of its own. Being built step by step: until step 1g this switch is for the tests under ThreadSanitizer only.) */
-FIRE_FN void gilAcquire(void) { }
-FIRE_FN void gilRelease(void) { }
-FIRE_FN void gilYield(void) { FIRE_PLAT_YIELD(); }
+ * what it protected has locks of its own. Being built step by step: until step 1g this switch is for the tests under ThreadSanitizer only.)
+ *
+ * The lock of the globals (step 1e) takes the place of the GIL for the shared domain - the global variables, static fields and objects of the main
+ * program's global scope, which fire threads read directly. It has a write side and a read side:
+ *   - the main program holds the write side while it runs: from its start (gilAcquire) to every wait (gilRelease ... gilAcquire around blockUntil and the
+ *     blocking natives); at its safe points (gilYield) it lets the threads that wait to read in, and goes on when they have let go;
+ *   - a fire thread takes the read side when it first touches the shared domain (FIRE_DOM_TOUCH, FIRE_DOM_READ) and lets go of it at its next safe point or
+ *     wait - threads read side by side, and a thread that never touches the domain never waits for it;
+ *   - a section (a change of the domain by a thread, granted by the waiting main program) holds the write side alone. */
+typedef struct DomLock { fire_mutex m; fire_cond cv; int32_t readers, writersWaiting; fire_atomic32 readersWaiting; bool mainIn, mainWaiting, writer; } DomLock;
+extern FIRE_RT_DATA DomLock g_dom;
+FIRE_COLD FIRE_FN void domReadEnter(void) {
+    fire_mutex_lock(&g_dom.m);
+    fire_atomic_add(&g_dom.readersWaiting, 1);
+    while (g_dom.mainIn || g_dom.mainWaiting || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    fire_atomic_add(&g_dom.readersWaiting, (uint32_t)-1);
+    g_dom.readers++;
+    fire_cond_notifyAll(&g_dom.cv);
+    fire_mutex_unlock(&g_dom.m);
+    g_domReader = 0;
+    g_domHeld = 1;
+}
+FIRE_FN void domReadLeave(void) {
+    if (!g_domHeld) return;
+    fire_mutex_lock(&g_dom.m);
+    if (--g_dom.readers == 0) fire_cond_notifyAll(&g_dom.cv);
+    fire_mutex_unlock(&g_dom.m);
+    g_domHeld = 0;
+    g_domReader = 1;
+}
+FIRE_FN void domMainEnter(void) {
+    fire_mutex_lock(&g_dom.m);
+    g_dom.mainWaiting = true;
+    while (g_dom.readers > 0 || g_dom.writer || g_dom.writersWaiting > 0) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    g_dom.mainWaiting = false;
+    g_dom.mainIn = true;
+    fire_mutex_unlock(&g_dom.m);
+}
+FIRE_FN void domMainLeave(void) {
+    fire_mutex_lock(&g_dom.m);
+    g_dom.mainIn = false;
+    fire_cond_notifyAll(&g_dom.cv);
+    fire_mutex_unlock(&g_dom.m);
+}
+/* (the main program at a safe point: the threads that wait to read get in - all of them - then it waits until they have let go) */
+FIRE_COLD FIRE_FN void domMainYield(void) {
+    fire_mutex_lock(&g_dom.m);
+    g_dom.mainIn = false;
+    fire_cond_notifyAll(&g_dom.cv);
+    while (fire_atomic_load(&g_dom.readersWaiting) > 0 && !g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    g_dom.mainWaiting = true;
+    while (g_dom.readers > 0 || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    g_dom.mainWaiting = false;
+    g_dom.mainIn = true;
+    fire_mutex_unlock(&g_dom.m);
+}
+/* A section: the thread holds the write side alone (the main program waits for the section, the other threads have let go). */
+FIRE_FN void domWriterEnter(void) {
+    domReadLeave();
+    fire_mutex_lock(&g_dom.m);
+    g_dom.writersWaiting++;
+    while (g_dom.mainIn || g_dom.readers > 0 || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    g_dom.writersWaiting--;
+    g_dom.writer = true;
+    fire_mutex_unlock(&g_dom.m);
+    g_domReader = 0;
+}
+FIRE_FN void domWriterLeave(void) {
+    fire_mutex_lock(&g_dom.m);
+    g_dom.writer = false;
+    fire_cond_notifyAll(&g_dom.cv);
+    fire_mutex_unlock(&g_dom.m);
+    g_domReader = 1;
+}
+FIRE_FN void gilAcquire(void) { if (!g_isThread) domMainEnter(); }
+FIRE_FN void gilRelease(void) { if (!g_isThread) domMainLeave(); else domReadLeave(); }
+FIRE_FN void gilYield(void) {
+    FIRE_PLAT_YIELD();
+    if (!g_isThread) { if (fire_atomic_load(&g_dom.readersWaiting)) domMainYield(); }
+    else domReadLeave();
+}
 #else
 FIRE_FN void gilAcquire(void) {
     uint64_t ticket;
@@ -7340,8 +7459,11 @@ FIRE_RT_FN void fire_dbgThreadBegin(void);
 FIRE_RT_FN void fire_dbgThreadEnd(void);
 #endif
 FIRE_FN void threadEntry(ThreadStart st) {
-    gilAcquire();
     g_isThread = 1;
+#ifdef FIRE_NO_GIL
+    g_domReader = 1;
+#endif
+    gilAcquire();
     g_attnMask = ATTN_ALL;
     g_tick = 4096;
     g_travel = st.travel;
@@ -7542,7 +7664,10 @@ FIRE_FN void markArrayShared(Arr* a) {
     if (a->h.flags & F_SHARED) return;
     a->h.flags |= F_SHARED;
     if (!arrValues(a)) return;   /* (a packed array holds numbers only) */
-    for (i = 0; i < a->length; i++) if (arrItems(a)[i].kind == K_Array && ownedOf(arrItems(a)[i])) markArrayShared(arrOf(arrItems(a)[i]));
+    for (i = 0; i < a->length; i++) {
+        refShare(arrItems(a)[i]);
+        if (arrItems(a)[i].kind == K_Array && ownedOf(arrItems(a)[i])) markArrayShared(arrOf(arrItems(a)[i]));
+    }
 }
 FIRE_FN void markOwnedShared(Owned* c) {
     if (c->okind == O_Object) {
@@ -7552,17 +7677,26 @@ FIRE_FN void markOwnedShared(Owned* c) {
         if (o->h.flags & F_SHARED) return;
         o->h.flags |= F_SHARED;
         for (k = objOwnedHead(o); k; k = k->next) markOwnedShared(k);
-        for (i = 0; i < o->nfields; i++) if (objFields(o)[i].kind == K_Array && ownedOf(objFields(o)[i])) markArrayShared(arrOf(objFields(o)[i]));
+        for (i = 0; i < o->nfields; i++) {
+            refShare(objFields(o)[i]);
+            if (objFields(o)[i].kind == K_Array && ownedOf(objFields(o)[i])) markArrayShared(arrOf(objFields(o)[i]));
+        }
     } else if (c->okind == O_Array) markArrayShared((Arr*)c);
 }
 FIRE_FN void domainLink(OwnList* list, Owned* o) {
     if (list == g_domainRoot || (list->holder && (list->holder->flags & F_SHARED))) markOwnedShared(o);
 }
 /* The first `fire`: from now on what the global scope owns is shared. */
+#ifdef FIRE_STR_CROSS
+extern FIRE_RT_DATA void (*g_domShareGlobals)(void);   /* the program's: refShare on every global and static field */
+#endif
 FIRE_FN void ensureDomain(void) {
     Owned* c;
     if (g_domainOn) return;
     g_domainOn = true;
+#ifdef FIRE_STR_CROSS
+    if (g_domShareGlobals) g_domShareGlobals();
+#endif
     if (g_domainRoot) for (c = g_domainRoot->head; c; c = c->next) markOwnedShared(c);
 }
 FIRE_FN bool sharedValue(Value v) {
@@ -7626,12 +7760,18 @@ FIRE_FN void sectionAcquire(void) {
     fire_atomic_or(&g_attn, ATTN_SECT);
     notifyEvent();
     blockUntil(fire_sectionGranted, r, false, 0);
+#ifdef FIRE_NO_GIL
+    domWriterEnter();
+#endif
     g_curSection = r;
 }
 FIRE_FN void sectionRelease(void) {
     SectionReq* r = g_curSection;
     g_curSection = NULL;
     if (!r) return;
+#ifdef FIRE_NO_GIL
+    domWriterLeave();
+#endif
     fire_atomic_storeRelease(&r->done, 1);
     notifyEvent();
     sectionReqDrop(r);
@@ -8391,6 +8531,10 @@ FIRE_FN void fire_threadsInit(void) {
     fire_mutex_init(&g_reqM);
     fire_mutex_init(&g_mailboxM);
     fire_mutex_init(&g_originM);
+#ifdef FIRE_NO_GIL
+    fire_mutex_init(&g_dom.m);
+    fire_cond_init(&g_dom.cv);
+#endif
     fire_atomic_store(&g_terminate.requested, 0);
     g_terminate.value = Undef();
     ownListInit(&g_terminateOwn, 0, NULL);
@@ -8456,6 +8600,12 @@ uint64_t g_evCount = 0;
 fire_atomic32 g_attn;
 TerminateState g_terminate;
 fire_mutex g_thrM, g_reqM, g_mailboxM;
+#ifdef FIRE_NO_GIL
+DomLock g_dom;
+#endif
+#ifdef FIRE_STR_CROSS
+void (*g_domShareGlobals)(void) = NULL;
+#endif
 OwnList g_terminateOwn;
 fire_atomic32 g_threadsLive;
 PtrVec g_threadList;
