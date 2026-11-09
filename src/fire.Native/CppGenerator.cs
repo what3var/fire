@@ -1748,7 +1748,8 @@ namespace fire.Native
                 bool plain = text.All(c => c >= 0x20 && c < 0x7F) && !text.Contains("*/") && !text.Contains("/*");
                 string data = "{" + string.Join(", ", text.Select(c => ((int)c).ToString(CultureInfo.InvariantCulture)).Append("0")) + "}";
                 sb.AppendLine($"static const fire_char16 {Px}K{i}_d[] = {data};{(plain ? "   /* " + CString(text) + " */" : "")}");
-                sb.AppendLine($"static const Str {Px}K{i} = {{{{IMMORTAL, R_Str}}, {text.Length}, {Px}K{i}_d}};");
+                // (a text one round of the generation used and the last does not - a unit check that became a C number later - stays without a warning)
+                sb.AppendLine($"FIRE_MAYBE_UNUSED static const Str {Px}K{i} = {{{{IMMORTAL, R_Str}}, {text.Length}, {Px}K{i}_d}};");
             }
             if (_strings.Count > 0) sb.AppendLine();
             if (_globals.Count > 0)
