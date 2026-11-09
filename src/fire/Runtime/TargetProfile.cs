@@ -58,6 +58,9 @@ namespace fire.Runtime
         /// a board.</summary>
         public TargetCategory Category { get; init; } = TargetCategory.Os;
 
+        /// <summary>The extension of the program file a native build makes (`.exe` for Windows, Windows 3.x and DOS, `.html` for the browser; empty: none).</summary>
+        public string ProgramExtension { get; init; } = "";
+
         /// <summary>The name shown in the choice of targets ("BIOS16 (+IO)"); null: <see cref="Name"/>.</summary>
         public string? DisplayName { get; init; }
 
@@ -77,7 +80,7 @@ namespace fire.Runtime
         // -------------------------------------------------------------------------------------------------------------
         public static readonly TargetProfile Windows = new()
         {
-            Name = "windows", Symbols = new[] { "windows" }, HalPackage = "windows",
+            Name = "windows", Symbols = new[] { "windows" }, HalPackage = "windows", ProgramExtension = ".exe",
             DisplayName = "Windows", Category = TargetCategory.Os,
             Native = new NativeTarget { Platform = "windows" },
         };
@@ -134,7 +137,7 @@ namespace fire.Runtime
         /// own display), the files are in memory, there are no sockets. The result is a single `.html` file that opens as it is.</summary>
         public static readonly TargetProfile Wasm = new()
         {
-            Name = "wasm", Symbols = new[] { "wasm", "browser" }, HalPackage = "wasm", WordWidth = 32,
+            Name = "wasm", Symbols = new[] { "wasm", "browser" }, HalPackage = "wasm", ProgramExtension = ".html", WordWidth = 32,
             DisplayName = "WebAssembly (browser)", Category = TargetCategory.Os, Toolchains = new[] { "emscripten" },
             Native = new NativeTarget { Platform = "wasm", Toolchain = "emscripten" },
         };

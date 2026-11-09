@@ -775,6 +775,6 @@ namespace fire.Compiler
         }
 
         /// <summary>The name of the program that a native build produces by default (<c>out</c>, <c>out.exe</c> on Windows).</summary>
-        public static string DefaultOutput(TargetProfile target) => target.Name == "windows" ? "out.exe" : target.Name == "wasm" ? "out.html" : target.IsEmbedded ? "out" : "out";
+        public static string DefaultOutput(TargetProfile target) => "out" + target.ProgramExtension;
     }
 }

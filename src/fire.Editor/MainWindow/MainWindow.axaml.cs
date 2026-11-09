@@ -167,6 +167,7 @@ namespace fire.Editor
         public MainWindow()
         {
             InitializeComponent();
+            Opened += (_, _) => UpdateRunButtons();   // (Stop is grey while nothing runs)
             // our caption buttons (see SparkDecorations in MainWindow.axaml): set explicitly, since the decorations do not see Window.Resources
             WindowDecorationsTheme = (Avalonia.Styling.ControlTheme)Resources["SparkDecorations"]!;
 

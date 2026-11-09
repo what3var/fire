@@ -7769,6 +7769,10 @@ packerTests:
             SfCheck(wasmCmd.Executable.EndsWith("em++") && wasmCmd.Arguments.Contains("-fexceptions") && wasmCmd.Arguments.Contains("-sASYNCIFY") && wasmCmd.Arguments.Contains("-sSINGLE_FILE=1") && wasmCmd.Arguments.Contains("p.html"),
                 "wasm: der Aufruf von em++ (Ausnahmen, ASYNCIFY, eine Datei, Ausgabe .html)");
             SfCheck(fire.Compiler.NativeBuilder.DefaultOutput(wasm) == "out.html", "wasm: die Standardausgabe ist out.html");
+            SfCheck(fire.Compiler.NativeBuilder.DefaultOutput(TargetProfile.Dos16) == "out.exe" && fire.Compiler.NativeBuilder.DefaultOutput(TargetProfile.Win16) == "out.exe"
+                && fire.Compiler.NativeBuilder.DefaultOutput(TargetProfile.Dos32) == "out.exe"
+                && fire.Projects.ProjectOutput.ProgramPath("p", "Demo", "win16", "Release", TargetProfile.Win16.ProgramExtension).EndsWith("Demo.exe", StringComparison.Ordinal),
+                "dos16, dos32, win16: das Programm heisst .exe (Standardausgabe und Projektausgabe)");
             string wasmCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#if wasm\nprint(\"browser\")\n#else\nprint(\"desktop\")\n#endif" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
             SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.h\"") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
             string threadError = "";

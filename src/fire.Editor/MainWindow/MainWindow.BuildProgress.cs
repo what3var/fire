@@ -62,6 +62,7 @@ namespace fire.Editor
             job.Timer.Tick += (_, _) => RefreshBuildJob(job);
             job.Timer.Start();
             _buildJob = job;
+            UpdateRunButtons();
             return job;
         }
 
@@ -159,7 +160,7 @@ namespace fire.Editor
             job.Timer?.Stop();
             var lines = job.Feed.Drain();
             job.Ended = true;
-            if (_buildJob == job) _buildJob = null;
+            if (_buildJob == job) { _buildJob = null; UpdateRunButtons(); }
             UpdateBuildStatusBar(null);
             if (_closeAfterBuild) Dispatcher.UIThread.Post(Close);
             var window = job.Window;

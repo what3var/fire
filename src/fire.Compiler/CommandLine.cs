@@ -766,7 +766,7 @@ namespace fire.Compiler
                     // without -o and `output`: <project>/bin/<target>-<mode>/<name> (the mode the program gets: -m, the project, the tags of its files)
                     string out2 = output ?? (toolchain.EffectiveKind == "files"
                         ? fire.Projects.ProjectOutput.Folder(plan.Project.Directory, target.Name, EffectiveModeName(options, plan, target))
-                        : fire.Projects.ProjectOutput.ProgramPath(plan.Project.Directory, plan.Name, target.Name, EffectiveModeName(options, plan, target), target.Name == "windows"));
+                        : fire.Projects.ProjectOutput.ProgramPath(plan.Project.Directory, plan.Name, target.Name, EffectiveModeName(options, plan, target), target.ProgramExtension));
                     Directory.CreateDirectory(toolchain.EffectiveKind == "files" ? out2 : Path.GetDirectoryName(Path.GetFullPath(out2))!);
                     var result = NativeBuilder.Build(plan.SourceTexts, config, target, toolchain, out2, options.Mode, options.FloatWidth, options.KeepSources, defines: options.Defines, plan: plan);
                     stdout.Write(result.Log);
