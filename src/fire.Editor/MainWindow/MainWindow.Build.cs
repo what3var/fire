@@ -356,7 +356,7 @@ namespace fire.Editor
                 // a project builds into its folder, without asking: bin/<target>-<mode>/ (a toolchain that only writes files: that folder)
                 string folder = ProjectOutput.Folder(project.Directory, target.Name, RunModeName);
                 Directory.CreateDirectory(folder);
-                output = toolchain.EffectiveKind == "files" ? folder : ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, RunModeName, target.Name == "windows");
+                output = toolchain.EffectiveKind == "files" ? folder : ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, RunModeName, target.ProgramExtension);
             }
             else if (toolchain.EffectiveKind == "files")
             {
@@ -366,8 +366,9 @@ namespace fire.Editor
             }
             else
             {
-                bool windows = target.Name == "windows" || OperatingSystem.IsWindows();
-                var path = await PickSavePath("Build Native", windows ? "program.exe" : "program", windows ? "exe" : "");
+                // (the extension of the target - `.exe` also for Windows 3.x and DOS; a program for this machine on Windows has one too)
+                string extension = target.ProgramExtension.Length > 0 ? target.ProgramExtension : OperatingSystem.IsWindows() && target.Name == fire.Runtime.TargetProfile.Host.Name ? ".exe" : "";
+                var path = await PickSavePath("Build Native", "program" + extension, extension.TrimStart('.'));
                 if (path == null) return;
                 output = path;
             }

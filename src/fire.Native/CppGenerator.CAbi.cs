@@ -32,8 +32,8 @@ namespace fire.Native
         /// of a catch holds Values, no accessor, no module export) with scalars on.</summary>
         private CAbi? CAbiOf(Func f)
         {
-            // (a program that counts the call depth - `try x.TakeTo`, a debug build - has none: every call goes through the wrapper that counts it. Asked
-            // each time, not kept: the depth counting may be found in a later round, after this function was generated with a C body)
+            // (a debug build has none: every call goes through the wrapper that keeps its frame. Asked
+            // each time, not kept)
             if (Wrapped) return null;
             if (!_cAbiParams.TryGetValue(f, out var abi))
             {

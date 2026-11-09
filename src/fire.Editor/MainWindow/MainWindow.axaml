@@ -250,17 +250,17 @@
 					<MenuItem Header="_Refresh" Click="GitRefresh_Click"/>
 				</MenuItem>
 				<MenuItem Header="_Run">
-					<MenuItem Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
+					<MenuItem x:Name="miRun" Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
 					<MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+F5"/>
 					<MenuItem Header="Build Stan_dalone..." Click="Build_Click"/>
 					<MenuItem Header="Build _Native..." Click="BuildNative_Click"/>
 					<MenuItem Header="Cancel Bui_ld" Click="CancelBuild_Click" InputGesture="Ctrl+Pause"/>
 					<Separator/>
-					<MenuItem Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
-					<MenuItem Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
-					<MenuItem Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
-					<MenuItem Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
-					<MenuItem Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
+					<MenuItem x:Name="miStep" Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
+					<MenuItem x:Name="miStepInto" Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
+					<MenuItem x:Name="miStepOut" Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
+					<MenuItem x:Name="miContinue" Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
+					<MenuItem x:Name="miRunToEnd" Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
 					<MenuItem Header="_Ignore Error and Continue" Click="IgnoreError_Click" InputGesture="Shift+F8"/>
 					<MenuItem Header="S_top" Click="Stop_Click" InputGesture="Shift+F5"/>
 					<Separator/>
@@ -391,15 +391,15 @@
 							<ComboBoxItem Content="VM" Tag="vm"/>
 							<ComboBoxItem Content="Native" Tag="native"/>
 						</ComboBox>
-						<local:ToolStripButton Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended" IconSource="/Assets/icons/Material-Play.png"/>
+						<local:ToolStripButton x:Name="tbRun" Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended" IconSource="/Assets/icons/Material-Play.png"/>
 						<local:ToolStripButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)" IconSource="/Assets/icons/Material-Restart.png"/>
-						<local:ToolStripButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
-						<local:ToolStripButton Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)" IconSource="/Assets/icons/Material-Stop.png"/>
+						<local:ToolStripButton x:Name="tbRunToEnd" Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
+						<local:ToolStripButton x:Name="tbStop" Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)" IconSource="/Assets/icons/Material-Stop.png"/>
 					</local:ToolStrip>
 					<local:ToolStrip Id="debug" Title="Debug" Band="0" BandIndex="3">
-						<local:ToolStripButton Click="Step_Click" ToolTip.Tip="Step over (F10)" IconSource="/Assets/icons/Material-DebugStepOver.png"/>
-						<local:ToolStripButton Click="StepInto_Click" ToolTip.Tip="Step into (F11)" IconSource="/Assets/icons/Material-DebugStepInto.png"/>
-						<local:ToolStripButton Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)" IconSource="/Assets/icons/Material-DebugStepOut.png"/>
+						<local:ToolStripButton x:Name="tbStep" Click="Step_Click" ToolTip.Tip="Step over (F10)" IconSource="/Assets/icons/Material-DebugStepOver.png"/>
+						<local:ToolStripButton x:Name="tbStepInto" Click="StepInto_Click" ToolTip.Tip="Step into (F11)" IconSource="/Assets/icons/Material-DebugStepInto.png"/>
+						<local:ToolStripButton x:Name="tbStepOut" Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)" IconSource="/Assets/icons/Material-DebugStepOut.png"/>
 						<local:ToolStripButton Label="Breakpoint" Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)" IconSource="/Assets/icons/Material-PauseCircle.png"/>
 					</local:ToolStrip>
 					<local:ToolStrip Id="device" Title="Default device" Band="1" BandIndex="1">

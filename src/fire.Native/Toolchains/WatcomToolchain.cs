@@ -24,6 +24,9 @@ namespace fire.Native
             args.Add("-std=" + (r.Toolchain.CStd ?? "c99"));
             args.Add("-ffunction-sections");
             args.Add(r.DebugBuild ? "-g" : r.Toolchain.Optimization is "size" or null ? "-Os" : r.Toolchain.Optimization);
+            // (optimised for size: no inlining at all - the targets inline up to 20 quads (-oe=20, TargetProfile.Pc); for the generated code that is the
+            // fast paths of the runtime (leafAlive, the checks) in every function: measured on dos16, the sample Scene3D Physics 716 -> 686 KB)
+            if (!r.DebugBuild && r.Toolchain.Optimization is "size" or null) args.Add("-Wc,-oe=0");
             if (r.Toolchain.Args != null) args.AddRange(r.Toolchain.Args);
             if (r.CompileOnly) args.Add("-c");
             args.AddRange(StartupSources(r.Target, r.IncludeDir).Select(f => Quote(ObjectOf(f))));   // (the startup code of the platform first: its segments set the order)

@@ -28,6 +28,7 @@ Leitlinien:
 | 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
 | 6 | [UI-Markup: fehlende Eigenschaften](#14-ui-markup-fehlende-eigenschaften) | - | klein; `.fxml` ist der Hauptweg für Oberflächen, dort fehlen ToolTip, Cursor und Drag & Drop |
 | 0 | [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
+| 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
 
@@ -961,3 +962,28 @@ C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`.
 * Der Generator erzeugt für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit ablehnt (E1078).
 
 Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD; A (kompakte Meshes) vor oder mit 3, B/C/D nach Bedarf dazwischen.
+
+## 17. Mess-Werkzeug für Größe, Speicher und Typisierung
+
+Die Messungen, die bisher von Hand liefen (Linker-Map auswerten, erzeugtes C durchzählen, Heap zur Laufzeit zählen), sollen ein eingebautes Werkzeug werden, z. B.
+`forge build ... --stats` (Bericht als Text und JSON neben dem Programm) und ein Laufzeit-Schalter `FIRE_STATS`. Grob:
+
+* **Code nach Herkunft** aus der Linker-Map (Watcom `option map`, GNU `-Wl,-Map`): erzeugter fire-Code (Programm, je Paket, Prelude), Laufzeit (`fire_rt.h` usw.),
+  Paket-C, C-Bibliothek, Daten (DGROUP, FAR_DATA, Stack); die größten Funktionen mit ihrer fire-Quelle (`#line`). Bei dos16: Lademodul plus Mindestspeicher
+  gegen 640 KB.
+* **Typisierung** aus dem Generator: Parameter, Rückgaben, Locals, Globals, Stack-Slots und Felder - als C-Typ, gepackt, schmal oder als Value; Funktionen mit
+  C-ABI und **warum nicht** (z. B. Aufruftiefe gezählt, Einheit `any`, Objekt-Parameter).
+* **Heap zur Laufzeit** (am Programmende oder auf Abruf): Objekte (Köpfe, Value-Slots nach Inhalt Zahl/undefined/Referenz, gepackte Bytes, ObjExt), Arrays
+  (Value-Elemente, gepackte), Puffer, Strings und der Heap der Natives (malloc insgesamt).
+* Später: Vergleich zweier Builds (vorher/nachher) und ein Test, der Grenzen hält (z. B. das Beispiel "Scene3D Physics" passt auf dos16 in den Speicher).
+
+**Umgesetzt (erste Stufe):** `forge build ... --engine native --stats` (Linkage `source`, Open Watcom, gcc, clang): Code nach Herkunft aus der Map (erzeugt je Modul,
+Hilfsfunktionen des Generators, Laufzeit, Plattform, C je Paket, C-Bibliothek), Daten, Typisierung je Modul (C-Schnittstelle, Parameter, Variablen, Stack-Slots
+mit C-Schatten), die Gründe ohne C-Schnittstelle, die größten Funktionen mit ihrem fire-Namen, bei DOS der Speicher zum Laden. Bericht im Log und in
+`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). Offen: der Heap zur Laufzeit, der Vergleich zweier Builds, die Linkage `static`.
+
+Ausgangswerte (von Hand gemessen, Beispiel "Scene3D Physics", dos16, Watcom `-Os`, `eliminate`): EXE 760 KB, Lademodul 696 KB + 33 KB Mindestspeicher -
+**passt nicht in 640 KB**. Code: erzeugt 239 KB (davon `fire_main` 44 KB für 139 Zeilen, `Camera.Render` 17 KB für 30), Paket-C ~190 KB, Laufzeit 84 KB,
+C-Bibliothek 65 KB, FAR_DATA 48 KB. Ein Value von 8 statt 16 Byte (nur übersetzt, nicht lauffähig) spart 24 KB (3 %); ohne gezählte Aufruftiefe 27 KB, der
+C-ABI greift dann bei 3 von 227 Funktionen. Heap nach 200 Bildern: 32 fire-Objekte mit 103 Value-Slots (1,6 KB), 0 gepackte Bytes - bei 2,4 MB Heap
+insgesamt (davon 1 MB Framebuffer, der Rest Engine und Laufzeit).

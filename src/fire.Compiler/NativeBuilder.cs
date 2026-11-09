@@ -34,17 +34,33 @@ namespace fire.Compiler
 
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
         public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null,
-            StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null, string? toolchainKind = null, fire.Runtime.OptimizeFor? optimize = null)
+            StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null, string? toolchainKind = null, fire.Runtime.OptimizeFor? optimize = null, bool stats = false)
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchainKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = globalJobs,
                 Optimize = optimize ?? OptimizeOf(null, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program");
-            var generated = CppGenerator.GenerateSources(linked, target, stripping);
-            return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
+            var generated = CppGenerator.GenerateSources(linked, target, stripping, stats);
+            return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath) { Funcs = generated.Funcs };
+        }
+
+        /// <summary>`--stats`: the report of the build (NativeStats) into the log and next to the program (.stats.txt, .stats.json).</summary>
+        private static void WriteStats(TargetProfile target, string exe, string workDir, string cFile, string? mapFile, NativeProgram program, StringBuilder log)
+        {
+            if (mapFile == null || !File.Exists(mapFile)) { log.AppendLine("--stats: this toolchain writes no map of the program (Open Watcom, gcc and clang do)."); return; }
+            var report = NativeStats.Analyze(target.Name, exe, workDir, cFile, mapFile, program.Funcs ?? Array.Empty<FuncStat>());
+            string text = NativeStats.Text(report);
+            File.WriteAllText(exe + ".stats.txt", text);
+            File.WriteAllText(exe + ".stats.json", NativeStats.Json(report));
+            log.Append(text);
+            log.AppendLine($"(the report: {exe}.stats.txt and .stats.json, the map: {mapFile})");
         }
 
         /// <summary>The generated C (and the natives in C++, null: none) and what the executable needs besides: the subsystem, the version info and the icon.</summary>
-        public sealed record NativeProgram(string C, string? Natives, bool Gui, fire.Utilities.PeVersionInfo? VersionInfo, string? IconPath);
+        public sealed record NativeProgram(string C, string? Natives, bool Gui, fire.Utilities.PeVersionInfo? VersionInfo, string? IconPath)
+        {
+            /// <summary>`--stats`: what the generator made of each fire function.</summary>
+            public IReadOnlyList<FuncStat>? Funcs { get; init; }
+        }
 
         /// <summary>Writes version info and icon into a Windows executable the toolchain has made (the Win32 resource API; any other platform leaves the file alone).
         /// A missing icon file is reported in the log instead of failing the build.</summary>
@@ -141,11 +157,16 @@ namespace fire.Compiler
             }
             if (string.Equals(config.Linkage, "plugin", StringComparison.OrdinalIgnoreCase))
                 return BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+            if (config.Stats && string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
+            {
+                var r = BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+                return r with { Log = r.Log + "--stats: only with linkage \"source\" (--linkage source) - the libraries of linkage \"static\" come from the cache.\n" };
+            }
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
                 return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
-            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, OptimizeOf(config, plan, target));
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, OptimizeOf(config, plan, target), config.Stats);
             string cpp = program.C;
             bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
@@ -188,7 +209,14 @@ namespace fire.Compiler
                     toolchain = provided;
                 }
                 bool ok = true;
-                var sourceCommands = BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui);
+                var sourceCommands = BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui).ToList();
+                string? mapFile = null;
+                if (config.Stats && sourceCommands.Count > 0 && NativeStats.MapOptions(toolchain.EffectiveKind, NativeStats.MapFileOf(exe)) is { } mapOptions)
+                {
+                    mapFile = NativeStats.MapFileOf(exe);
+                    var (lastExe, lastArgs) = sourceCommands[^1];
+                    sourceCommands[^1] = (lastExe, lastArgs + " " + mapOptions);
+                }
                 for (int c = 0; c < sourceCommands.Count; c++)
                 {
                     var (exeName, arguments) = sourceCommands[c];
@@ -202,6 +230,7 @@ namespace fire.Compiler
                 }
                 bool built = ok && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
+                if (built && config.Stats) WriteStats(target, exe, workDir, cppFile, mapFile, program, log);
                 if (built && ToolchainDrivers.AfterLink(toolchain, target, exe) is { } after) log.AppendLine(after);   // (a target without an operating system: its disk image)
                 return new NativeBuildResult(built, exe, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C++ compiler of the native build reported errors (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
             }
@@ -746,6 +775,6 @@ namespace fire.Compiler
         }
 
         /// <summary>The name of the program that a native build produces by default (<c>out</c>, <c>out.exe</c> on Windows).</summary>
-        public static string DefaultOutput(TargetProfile target) => target.Name == "windows" ? "out.exe" : target.Name == "wasm" ? "out.html" : target.IsEmbedded ? "out" : "out";
+        public static string DefaultOutput(TargetProfile target) => "out" + target.ProgramExtension;
     }
 }

@@ -21,10 +21,13 @@ namespace fire.Projects
 
         /// <summary>The file of the program in that folder: the name of the project (characters a file name cannot have become `_`) with the extension of the target
         /// (<c>.exe</c> for Windows, <c>.html</c> for the browser).</summary>
-        public static string ProgramPath(string projectDirectory, string projectName, string target, string mode, bool windows)
+        public static string ProgramPath(string projectDirectory, string projectName, string target, string mode, bool windows) =>
+            ProgramPath(projectDirectory, projectName, target, mode, target == "wasm" ? ".html" : windows ? ".exe" : "");
+
+        /// <summary>The same with the extension of the target (TargetProfile.ProgramExtension: `.exe` also for Windows 3.x and DOS).</summary>
+        public static string ProgramPath(string projectDirectory, string projectName, string target, string mode, string extension)
         {
             foreach (char c in Path.GetInvalidFileNameChars()) projectName = projectName.Replace(c, '_');
-            string extension = target == "wasm" ? ".html" : windows ? ".exe" : "";
             return Path.Combine(Folder(projectDirectory, target, mode), projectName + extension);
         }
     }

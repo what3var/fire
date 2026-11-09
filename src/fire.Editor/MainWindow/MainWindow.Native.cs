@@ -26,6 +26,8 @@ namespace fire.Editor
 
         /// <summary>A plain native run (Release/Performance) that is going on (null: none).</summary>
         private Process? _nativeRun;
+        /// <summary>A native program runs without the debugger (a plain run): until it ends there is nothing to start or step.</summary>
+        private bool _nativePlainRunning;
 
         /// <summary>The serial port of a plain run on a board (its console in the Output panel; null: none).</summary>
         private SerialFramedTransport? _boardRun;
@@ -124,6 +126,8 @@ namespace fire.Editor
             board?.Dispose();
             var run = _nativeRun;
             _nativeRun = null;
+            _nativePlainRunning = false;
+            UpdateRunButtons();
             if (run == null) return;
             try { if (!run.HasExited) run.Kill(entireProcessTree: true); }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
@@ -132,14 +136,15 @@ namespace fire.Editor
 
         /// <summary>Where the program of a native run goes: a project into bin/&lt;target&gt;-&lt;mode&gt; of its folder, a saved script into bin/&lt;target&gt;-&lt;mode&gt;
         /// next to it, an unsaved one into the temporary folder.</summary>
-        private string NativeRunOutput(RunInput input, string target, string mode)
+        private string NativeRunOutput(RunInput input, fire.Runtime.TargetProfile target, string mode)
         {
-            bool windows = target == "windows" || OperatingSystem.IsWindows();
-            if (input.Project is { } project) return ProjectOutput.ProgramPath(project.Directory, project.Name, target, mode, windows);
+            // (the extension of the target - `.exe` also for Windows 3.x and DOS; a program for this machine on Windows has one too)
+            string extension = target.ProgramExtension.Length > 0 ? target.ProgramExtension : OperatingSystem.IsWindows() && target.Name == fire.Runtime.TargetProfile.Host.Name ? ".exe" : "";
+            if (input.Project is { } project) return ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, mode, extension);
             string? path = FullPathOf(input.Document);
             string directory = path != null ? Path.GetDirectoryName(path)! : Path.Combine(Path.GetTempPath(), "spark-native");
             string name = path != null ? Path.GetFileNameWithoutExtension(path) : "program";
-            return ProjectOutput.ProgramPath(directory, name, target, mode, windows);
+            return ProjectOutput.ProgramPath(directory, name, target.Name, mode, extension);
         }
 
         /// <summary>F5/F10/F11/Run to End with the native engine: builds the program for the chosen target (Debug: -O0 -g), then - Debug - starts it under the
@@ -185,7 +190,7 @@ namespace fire.Editor
             var mode = _session.ExecutionMode;
             bool debug = mode == Runtime.VmExecutionMode.Debug;
             string modeName = mode.ToString().ToLowerInvariant();
-            string output = NativeRunOutput(input, target.Name, modeName);
+            string output = NativeRunOutput(input, target, modeName);
             var buildToolchain = debug ? NativeLaunch.DebugToolchain(toolchain) : toolchain;
             string? defaultFile = input.Project != null ? null : input.Document?.DisplayName;
             string? defaultPath = input.Project != null ? null : FullPathOf(input.Document);
@@ -227,9 +232,13 @@ namespace fire.Editor
                     {
                         FlushPendingOutput();
                         UpdateStatus($"Native program finished (exit code {code}, {(DateTime.Now - started).TotalSeconds:0.0} s).");
+                        _nativePlainRunning = false;
+                        UpdateRunButtons();
                     }));
                     _nativeRun.StandardInput.Close();
+                    _nativePlainRunning = true;   // (it runs without the debugger: Start and the steps are grey until it ends)
                     _isBusy = false;
+                    UpdateRunButtons();
                     UpdateStatus($"Running {Path.GetFileName(result.Output)} natively ({modeName}) - Stop (Shift+F5) ends it.");
                     RevealTool("output");
                     return;
@@ -311,7 +320,7 @@ namespace fire.Editor
             var mode = _session.ExecutionMode;
             bool debug = mode == Runtime.VmExecutionMode.Debug;
             string modeName = mode.ToString().ToLowerInvariant();
-            string programPath = NativeRunOutput(input, target.Name, modeName);
+            string programPath = NativeRunOutput(input, target, modeName);
             string projectDir = Path.GetDirectoryName(Path.GetFullPath(programPath))!;
             var settings = input.Plan?.Settings;
             string? port = Esp32Launch.ResolvePort(settings?.Port ?? target.Native.Port, out string portProblem);

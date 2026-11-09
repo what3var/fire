@@ -21,7 +21,19 @@ namespace fire.Editor
 
         // Prevents overlapping step requests on the same thread (see the doc of DebugThreadContext.RequestStep: fire-and-forget, a second call while the first is still
         // running could overwrite its result) - set when requesting, reset as soon as ThreadPaused fires for the thread concerned.
-        private bool _isBusy;
+        /// <summary>The program runs (between a start or a step and the next pause or its end): Start and the steps are greyed out, Stop is not.</summary>
+        private bool _isBusy { get => _isBusyValue; set { if (_isBusyValue == value) return; _isBusyValue = value; UpdateRunButtons(); } }
+        private bool _isBusyValue;
+
+        /// <summary>Start, Run to End and the steps only when nothing runs (no program, a paused one, an ended one) and no build; Stop when something runs or is paused.</summary>
+        private void UpdateRunButtons()
+        {
+            if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess()) { Avalonia.Threading.Dispatcher.UIThread.Post(UpdateRunButtons); return; }
+            bool idle = !_isBusyValue && _buildJob == null && !_nativePlainRunning;
+            foreach (var c in new Control?[] { tbRun, tbRunToEnd, tbStep, tbStepInto, tbStepOut, miRun, miStep, miStepInto, miStepOut, miContinue, miRunToEnd })
+                if (c != null) c.IsEnabled = idle;
+            if (tbStop != null) tbStop.IsEnabled = _isBusyValue || _buildJob != null || _nativeRun != null || (_session.HasProgram && !_session.IsFinished);
+        }
 
         // The script that is compiled/paused in the debugger right now (stays so even when the tab is changed): a single file's document. null for a run of a project
         // (its files are the sources of the run, see _session.SourceFiles).
@@ -387,6 +399,7 @@ namespace fire.Editor
             _session.Reset();
             _reportedErrors.Clear();
             _isBusy = false;
+            UpdateRunButtons();
             ShowDebugLocation(null);
             _debugger.Refresh(BreakpointDescriptions());
             UpdateStatus("Stopped.");
@@ -394,6 +407,7 @@ namespace fire.Editor
 
         private void AfterStep(bool more)
         {
+            UpdateRunButtons();
             FlushPendingOutput(); // visible at once, not only at the next timer tick
             if (!more)
             {

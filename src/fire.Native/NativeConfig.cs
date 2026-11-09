@@ -38,6 +38,8 @@ namespace fire.Native
         private bool _strippingFromTrim;
         /// <summary><see cref="Stripping"/> was given on the command line (`--stripping`, `--keep-all`): it goes before the project's setting. Not saved.</summary>
         [JsonIgnore] public bool StrippingFromCommandLine { get; set; }
+        /// <summary>`--stats`: the build writes a report of its code, data and typing next to the program (NativeStats).</summary>
+        [JsonIgnore] public bool Stats { get; set; }
         /// <summary>The direction of the build (`"optimize"`: `speed` or `size`, OptimizeFor; docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"); null: the target's. The project and
         /// `--optimize` go before it (`--optimize` before the project: <see cref="OptimizeFromCommandLine"/>).</summary>
         public string? Optimize

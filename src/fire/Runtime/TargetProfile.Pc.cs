@@ -12,7 +12,7 @@ namespace fire.Runtime
         /// interrupt asks for it); no windows; the console is DOS's.</summary>
         public static readonly TargetProfile Dos16 = new()
         {
-            Name = "dos16", Symbols = new[] { "dos16", "dos" }, HalPackage = "dos16",
+            Name = "dos16", Symbols = new[] { "dos16", "dos" }, HalPackage = "dos16", ProgramExtension = ".exe",
             DisplayName = "DOS (16 bit, real mode)", Category = TargetCategory.Os, Toolchains = Watcom, Optimize = OptimizeFor.Size,
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
@@ -36,7 +36,7 @@ namespace fire.Runtime
         /// desktop (the 386 has the room; the results are the ones of the VM). fire threads are tasks of fire's own scheduler as on dos16 (std/sched/fire_ctx_x86_32.h).</summary>
         public static readonly TargetProfile Dos32 = new()
         {
-            Name = "dos32", Symbols = new[] { "dos32", "dos" }, HalPackage = "dos32",
+            Name = "dos32", Symbols = new[] { "dos32", "dos" }, HalPackage = "dos32", ProgramExtension = ".exe",
             DisplayName = "DOS (32 bit, DOS/32A)", Category = TargetCategory.Os, Toolchains = Watcom, Optimize = OptimizeFor.Size,
             FloatWidth = 64, IntWidth = 64, WordWidth = 32, DefaultStackBytes = 65536,
             Imports = new[] { NativeImports.Print, "io", "filesystem", NativeImports.Devices, "time", "console", "machine", "dos", "xms", "x86", "graphics", "windows", NativeImports.Reflection, NativeImports.Linq },
@@ -53,7 +53,7 @@ namespace fire.Runtime
         /// Windows 3.x is cooperative). fire threads are tasks of fire's own scheduler (std/sched/fire_ctx_win16.h: a stack segment each, -zu).</summary>
         public static readonly TargetProfile Win16 = new()
         {
-            Name = "win16", Symbols = new[] { "win16", "windows3" }, HalPackage = "win16",
+            Name = "win16", Symbols = new[] { "win16", "windows3" }, HalPackage = "win16", ProgramExtension = ".exe",
             DisplayName = "Windows 3.x", Category = TargetCategory.Os, Toolchains = Watcom, Optimize = OptimizeFor.Size,
             FloatWidth = 32, IntWidth = 32, WordWidth = 16, DefaultStackBytes = 16384,
             Imports = new[] { NativeImports.Print, "io", "filesystem", "time", "random", "hash", "json", "compression", "graphics", "windows", "ui", "dialogs",
