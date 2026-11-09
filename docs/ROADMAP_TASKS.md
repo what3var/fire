@@ -111,9 +111,29 @@ All of it is a small part of the C runtime: native programs use it directly, the
 
 ## 6. Cancellation
 
-**Cancellation tokens**, as in .NET. In C a token is a small object with an atomic flag and a list of waiters: `Sleep(5s, token)`, `await` with a token and
-the waits of `net` wake **at once** when it is cancelled, nobody polls the flag. In code `token.ThrowIfCancelled()` checks by hand.
-**Open:** passed explicitly (as in .NET, proposed) or handed on to awaited calls automatically.
+**Cancellation tokens**, as in .NET. In C a token is a small object with an atomic flag, its parent and a list of waiters: `Sleep`, `await` and the
+waits of `net` wake **at once** when it is cancelled, nobody polls the flag. In code `token.ThrowIfCancelled()` checks by hand; `CurrentToken` is the
+token of the running task.
+
+* **Every task has a token.** An awaited call gets a **new token linked to the caller's**: cancelling the caller cancels the child (and everything below
+  it), cancelling the child's own token does not reach the caller. So a task can end its children without ending itself or its caller.
+* **`await` inherits** (the callee is a child the caller waits for). **`fire` does not inherit** - a fire and forget task lives on independently - but it can
+  be cancelled like any task with `until`.
+* **`until`** - a keyword like the other clauses (`taking`, `with`, `handover`) - gives a task its token: the token of the task is then linked to the
+  given one (with `await` to the caller's token as well). A time value is a time limit (a token that is cancelled when the time runs out):
+
+  ```
+  var source = new CancellationSource()
+  fire until source.Token { Watch() }                  // cancellable fire and forget
+  fire Poll(url) until source.Token
+  var data = await Download(url) until 5s              // time limit (Net.TimeoutException / CancelledException - open)
+  var r = await [Load("a"), Load("b")] until source.Token, 10s
+  await until source.Token { ... }
+  source.Cancel()
+  ```
+
+* What a cancelled task sees: the next wait (`Sleep`, `await`, net) or `ThrowIfCancelled()` throws a `CancelledException`; it runs through `finally`
+  and destructors as usual. An `await` of a cancelled task throws it at the caller. Code that never waits and never checks is not stopped (no hard abort).
 
 ## Steps
 
@@ -123,9 +143,9 @@ the waits of `net` wake **at once** when it is cancelled, nobody polls the flag.
 3. Scheduler: coroutines, workers with work stealing, timer heap, `Yield`/`Sleep`, a pool that grows and shrinks, blocking natives.
 4. `await` in the language (lending, result, exceptions, several calls at once) and the way back of actors.
 5. Pinned tasks, task groups and the UI loop on the scheduler (event waits of the display backends).
-6. Cancellation tokens.
+6. Cancellation tokens and `until`.
 7. The VM on the scheduler.
 
 ## Open
 
-* Tokens explicit or handed on automatically.
+* Which exception a time limit of `until` throws (`CancelledException` or a `TimeoutException`).
