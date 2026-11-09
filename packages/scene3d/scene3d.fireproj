@@ -423,6 +423,24 @@
         "c": "fire_s3d_RayInfo"
       },
       {
+        "name": "__S3DJoint",
+        "returns": "int",
+        "arguments": 10,
+        "c": "fire_s3d_Joint"
+      },
+      {
+        "name": "__S3DJointSet",
+        "returns": "bool",
+        "arguments": 4,
+        "c": "fire_s3d_JointSet"
+      },
+      {
+        "name": "__S3DJointGet",
+        "returns": "float",
+        "arguments": 3,
+        "c": "fire_s3d_JointGet"
+      },
+      {
         "name": "__S3DObjAdvance",
         "returns": "bool",
         "arguments": 2,

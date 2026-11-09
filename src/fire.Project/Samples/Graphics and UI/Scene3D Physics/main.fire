@@ -2,8 +2,8 @@
 #import "scene3d"
 #import "scene3d.physics"
 #import "time"
-// Physics (docs/graphics/physics.md): a body makes an object solid. Static bodies never move (their shape is their own triangles), dynamic ones fall, bounce
-// and are pushed, a kinematic one is moved by the program. scene.Advance(dt) moves them all on.
+// Physics (docs/graphics/physics.md): a body makes an object solid. Static bodies never move (their shape is their own triangles), dynamic ones fall, bounce, tumble
+// and are pushed, a kinematic one is moved by the program; joints hang them on ropes and springs. scene.Advance(dt) moves them all on.
 //   arrow keys / WASD  walk        Space  jump        R  more balls        F  the renderer (Software / Fast)
 
 var fb = new Framebuffer(640, 400)
@@ -57,6 +57,18 @@ lift.Color = S3D.Rgb(90, 120, 200)
 scene.Add(lift)
 var liftBody = Body.Kinematic(lift)
 liftBody.SetVelocity(0m / 1s, 0.8m / 1s, 0m / 1s)
+
+// a swing: a plank on a rope from a point above, and a box on a spring that bounces
+var plank = new Object(Template.Box, -8m, 2m, 3m, 1.2m, 0.15m, 0.6m)
+plank.Color = S3D.Rgb(150, 110, 70)
+scene.Add(plank)
+Body.Dynamic(plank, 10kg)
+Joint.Rope(scene, plank, -8m, 5m, 3m)
+var bouncer = new Object(Template.Box, -11m, 2m, 3m, 0.8m, 0.8m, 0.8m)
+bouncer.Color = S3D.Rgb(120, 200, 120)
+scene.Add(bouncer)
+Body.Dynamic(bouncer, 5kg).Rotates = false
+Joint.Spring(scene, bouncer, -11m, 4m, 3m, 120.0, 2.0, 1.5m)
 
 // a coin: a trigger - it is touched, but it pushes nothing
 var coin = new Object(Template.Cylinder, 8m, 3.5m, 2m, 0.6m, 0.08m, 0.6m)

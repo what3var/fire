@@ -890,8 +890,18 @@ nach Arbeiten auf `targets`).
    Stapel, Figur auf Stufe, Mauer, Sprung, Trigger, Strahlen, Terrain, Aufzug); Beispielprojekt „Scene3D Physics“. **dos16:** die Physik ist ~42 KB C
    (Map-Datei: Gitter 3,9 KB, Höhenfeld 3,8 KB, Box/Dreieck 3 KB, ...) plus ~16 KB fire-Code. Damit ein Programm ohne Physik sie nicht trägt, entfernt der
    Watcom-Linker jetzt unerreichte Segmente (`option eliminate`): eine scene3d-Szene 477 -> 425 KB, mit Effekten 488 -> 436 KB, Hallo-Welt 88 -> 84 KB
-   (läuft in DOSBox-X; die bios16-Prüfungen grün). **Offen:** Drehung (Starrkörper mit Winkelgeschwindigkeit), Box gegen Box gedreht, Gelenke,
-   Schlafen ruhender Körper, ein Gitter auch für viele dynamische Körper, die Größe auf dos16 (Vektoren als Zeiger statt Werte). **Gefunden:** scene3d auf
+   (läuft in DOSBox-X; die bios16-Prüfungen grün).
+   **Nachgezogen:** Drehung - dynamische Boxen und Kugeln haben eine Orientierung (Quaternion) und eine Winkelgeschwindigkeit, Trägheit aus Form und
+   Masse, die Drehung geht als `RotationX/Y/Z` ins Objekt (Euler wie `s3d_rotationXYZ`). Kontakte mit Punkten: Box/Box über 15 Achsen und dann die
+   Gegenfläche an der Bezugsfläche zugeschnitten (bis 2 cm Abstand bleiben Punkte - spekulativ: sie dürfen sich bis zur Berührung nähern), Box/Dreieck
+   die Ecken hinter der Fläche, rund/Box im Raum der Box. Löser: Impulse je Punkt mit Hebelarm, innerhalb eines Schritts aufsummiert (Normale nie ziehend,
+   Reibung höchstens ihr Anteil), Baumgarte 0,2 über 5 mm Spielraum statt Lageverschiebung für drehende Körper (die Reibung hält dann auch das
+   Wegschieben - vorher wanderten Stapel), erst Geschwindigkeiten, dann Kontakte (6 Durchgänge), dann Bewegung. Drei versetzte Kisten stehen und
+   schlafen; eine gekippte Kiste legt sich flach (Fehler gefunden: die Tiefen der Dreieckspunkte wurden auf 0 begrenzt - angehobene Ecken stützten).
+   Schlafen nach 0,5 s unter 5 cm/s und 0,05 rad/s, Wecken bei Berührung, durch Gelenke, Kinematische, das Programm. Vorauswahl: die Boxen nach x
+   sortiert (Sweep), Paare nur mit einem wachen dynamischen Körper. Gelenke: Seil, Stange, Feder (zwei Körper oder Körper und Punkt; `Joint.Rope/Rod/
+   Spring`). Test VM == nativ; in DOSBox-X: Kiste fällt gedreht, liegt flach, schläft; Seil hält 2,000 m. **Offen:** Gelenke an anderen Punkten als der
+   Mitte, Scharniere, Drehung für Kapseln, die Größe auf dos16 (Physik-C ~55 KB; Vektoren als Zeiger statt Werte), Rollwiderstand. **Gefunden:** scene3d auf
    dos16 hängt in DOSBox-X schon bei zwei `new Object(Template.Box, ...)` (ein Objekt, rohe Natives, graphics allein: alles gut) - auch vor M5
    (23af112), auch ohne `eliminate`; vermutlich die Werte/Felder seit 8ab2aa2 (`targets`).
 

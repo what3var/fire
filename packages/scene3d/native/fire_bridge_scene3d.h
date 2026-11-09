@@ -268,7 +268,10 @@ typedef struct FireS3dItem {
     int64_t model; int clip, playing, loop; Real time;             /* object of a model: the model (it is one of its users), the clip that plays and its time */
     S3dEmitter* emitter;                                           /* object, an emitter: its particles (scene3d.effects) */
     S3dBody* body; Real acc;                                       /* object: its body (scene3d.physics); scene: the time not yet stepped */
+    struct FireS3dJointRec* joints; s3d_size jointN, jointCap;     /* scene: its joints (scene3d.physics) */
 } FireS3dItem;
+/* a joint as the scene keeps it: the objects by their handles (b 0: lb is a point of the world) */
+typedef struct FireS3dJointRec { int kind, alive; int64_t a, b; S3dVec3 la, lb; float length, stiffness, damping; } FireS3dJointRec;
 /* the physics, once a body is made (so that a program without one carries none of it): a scene's step, a body's end */
 static void (*g_s3dPhysics)(FireS3dItem* scene, Real dt);
 static void (*g_s3dBodyFree)(S3dBody* body);
@@ -303,6 +306,7 @@ static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     S3D_FREE(it->objects); S3D_FREE(it->lights); S3D_FREE(it->terrain);
     fire_s3d_modelRelease(it->model);
     s3d_emitterFree(it->emitter);
+    S3D_FREE(it->joints);
     if (it->body && g_s3dBodyFree) g_s3dBodyFree(it->body);
     S3D_FREE(it);
 }
@@ -1083,7 +1087,7 @@ static S3dLight* fire_s3d_lightsOf(const FireS3dItem* s, s3d_size* n) {
     return ls;
 }
 
-/* ---- physics (scene3d.physics, s3d_physics.h): a body belongs to an object; Scene.Advance steps the bodies of the scene ---- */
+/* ---- physics (scene3d.physics, s3d_physics.h): a body belongs to an object; Scene.Advance steps the bodies of the scene and its joints ---- */
 #define FIRE_S3D_STEP ((Real)1 / (Real)60)
 /* the model matrix of an object as it stands now */
 static int fire_s3d_modelOf(FireS3dItem* o, S3dMat4* model) {
@@ -1113,16 +1117,7 @@ static int fire_s3d_worldBox(FireS3dItem* o, S3dVec3* lo, S3dVec3* hi) {
     }
     return 1;
 }
-/* the shape fitted to what the object shows: a box around it, a sphere in it, an upright capsule in it */
-static void fire_s3d_bodyFit(FireS3dItem* o, S3dBody* b) {
-    S3dVec3 lo, hi, c, h;
-    if (!fire_s3d_worldBox(o, &lo, &hi)) { lo = hi = s3d_v3((float)o->f[OF_PX], (float)o->f[OF_PX + 1], (float)o->f[OF_PX + 2]); }
-    c = s3d_scale(s3d_add(lo, hi), 0.5f); h = s3d_scale(s3d_sub(hi, lo), 0.5f);
-    b->offset = s3d_sub(c, s3d_v3((float)o->f[OF_PX], (float)o->f[OF_PX + 1], (float)o->f[OF_PX + 2]));
-    if (b->shape == S3D_SHAPE_SPHERE) b->half = s3d_v3(s3d_max3f(h.x, h.y, h.z), 0, 0);
-    else if (b->shape == S3D_SHAPE_CAPSULE) { float r = s3d_maxf(h.x, h.z); b->half = s3d_v3(r, s3d_maxf(0, h.y - r), 0); }
-    else b->half = h;
-}
+static S3dVec3 fire_s3d_objAt(const FireS3dItem* o) { return s3d_v3((float)o->f[OF_PX], (float)o->f[OF_PX + 1], (float)o->f[OF_PX + 2]); }
 static void fire_s3d_bodyKey(FireS3dItem* o, S3dBody* b) { int k; for (k = 0; k < 12; k++) b->key[k] = (float)o->f[k]; }
 /* whether the object was turned or scaled (or, for triangles in the world, moved) since its shape was made */
 static int fire_s3d_bodyKeyChanged(FireS3dItem* o, S3dBody* b) {
@@ -1130,7 +1125,38 @@ static int fire_s3d_bodyKeyChanged(FireS3dItem* o, S3dBody* b) {
     for (k = b->shape == S3D_SHAPE_MESH ? 0 : 3; k < 12; k++) if (b->key[k] != (float)o->f[k]) return 1;
     return 0;
 }
-/* the triangles of a static (or kinematic) mesh body in the world - or, for a terrain, its heights and where it stands */
+/* The shape fitted to what the object shows: a body that turns gets the object's own box (its centre and half sizes in the object's turn, the turn as its
+ * own); any other the box around the object in the world (a sphere in it, an upright capsule in it). */
+static void fire_s3d_bodyFit(FireS3dItem* o, S3dBody* b) {
+    S3dVec3 at = fire_s3d_objAt(o), lo, hi, h;
+    if (b->rotates) {
+        S3dMesh* m;
+        S3dTexture* tex;
+        S3dObjectParams op;
+        S3dSurface s;
+        S3dVec3 blo, bhi;
+        b->local = h = s3d_v3(0, 0, 0);
+        if (fire_s3d_bounds(o, &blo, &bhi) && fire_s3d_objectOf(o, &m, &tex, &op, &s)) {
+            S3dVec3 mid = s3d_scale(s3d_add(blo, bhi), 0.5f);
+            b->local = s3d_v3(op.scale.x * (mid.x - op.pivot.x), op.scale.y * (mid.y - op.pivot.y), op.scale.z * (mid.z - op.pivot.z));
+            h = s3d_v3(fabsf(op.scale.x) * (bhi.x - blo.x) * 0.5f, fabsf(op.scale.y) * (bhi.y - blo.y) * 0.5f, fabsf(op.scale.z) * (bhi.z - blo.z) * 0.5f);
+        }
+        s3d_qFromEuler((float)o->f[OF_RX], (float)o->f[OF_RX + 1], (float)o->f[OF_RX + 2], b->q);
+    } else {
+        if (!fire_s3d_worldBox(o, &lo, &hi)) lo = hi = at;
+        h = s3d_scale(s3d_sub(hi, lo), 0.5f);
+        b->local = s3d_sub(s3d_scale(s3d_add(lo, hi), 0.5f), at);
+        b->q[0] = 1; b->q[1] = b->q[2] = b->q[3] = 0;
+    }
+    s3d_qMatrix(b->q, b->R);
+    if (b->shape == S3D_SHAPE_SPHERE) b->half = s3d_v3(s3d_max3f(h.x, h.y, h.z), 0, 0);
+    else if (b->shape == S3D_SHAPE_CAPSULE) { float r = s3d_maxf(h.x, h.z); b->half = s3d_v3(r, s3d_maxf(0, h.y - r), 0); }
+    else b->half = h;
+    b->c = s3d_add(at, s3d_rot(b->R, b->local));
+    s3d_bodyInertia(b);
+    fire_s3d_bodyKey(o, b);
+}
+/* the triangles of a static (or kinematic) mesh body in the world - or, for a terrain, its heights, where it stands and its box */
 static int fire_s3d_bodyMesh(FireS3dItem* o, S3dBody* b) {
     S3dMat4 model;
     S3dModel* md = fire_s3d_objModel(o);
@@ -1140,15 +1166,26 @@ static int fire_s3d_bodyMesh(FireS3dItem* o, S3dBody* b) {
     int p, parts;
     s3d_soupFree(b->soup); b->soup = NULL; b->hasHeights = 0;
     fire_s3d_bodyKey(o, b);
+    b->q[0] = 1; b->q[1] = b->q[2] = b->q[3] = 0; s3d_qMatrix(b->q, b->R);
+    b->local = s3d_v3(0, 0, 0); b->c = fire_s3d_objAt(o);
     if (!fire_s3d_modelOf(o, &model)) return 0;
     if (o->terrain) {
         S3dHeights* h = &b->heights;
         s3d_size k, n = (s3d_size)o->tCols * (s3d_size)o->tRows;
+        float maxH = o->terrain[0], hw, hd;
+        int c;
         h->H = o->terrain; h->cols = o->tCols; h->rows = o->tRows; h->hard = o->tHard; h->cell = o->tCell; h->step = o->tStep;
         h->minH = o->terrain[0];
-        for (k = 1; k < n; k++) if (o->terrain[k] < h->minH) h->minH = o->terrain[k];
+        for (k = 1; k < n; k++) { if (o->terrain[k] < h->minH) h->minH = o->terrain[k]; if (o->terrain[k] > maxH) maxH = o->terrain[k]; }
         if (h->hard && h->minH > 0) h->minH = 0;
         h->model = model; h->inv = s3d_affineInverse(&model);
+        hw = (float)(h->hard ? h->cols : h->cols - 1) * h->cell * 0.5f; hd = (float)(h->hard ? h->rows : h->rows - 1) * h->cell * 0.5f;
+        h->lo = s3d_v3(1e30f, 1e30f, 1e30f); h->hi = s3d_v3(-1e30f, -1e30f, -1e30f);
+        for (c = 0; c < 8; c++) {
+            S3dVec3 q = s3d_transformPoint(&model, s3d_v3((c & 1) ? hw : -hw, (c & 2) ? maxH * h->step : h->minH * h->step, (c & 4) ? hd : -hd));
+            h->lo = s3d_v3(s3d_minf(h->lo.x, q.x), s3d_minf(h->lo.y, q.y), s3d_minf(h->lo.z, q.z));
+            h->hi = s3d_v3(s3d_maxf(h->hi.x, q.x), s3d_maxf(h->hi.y, q.y), s3d_maxf(h->hi.z, q.z));
+        }
         b->hasHeights = 1;
         return 1;
     }
@@ -1183,49 +1220,72 @@ static int fire_s3d_bodyMesh(FireS3dItem* o, S3dBody* b) {
     S3D_FREE(v); S3D_FREE(idx);
     return b->soup != NULL;
 }
+/* The body takes the object as the program left it: turned or scaled anew (the shape again), moved (a kinematic one: that is its velocity). */
+static void fire_s3d_bodyTake(FireS3dItem* o, S3dBody* b, Real dt) {
+    S3dVec3 at;
+    if (fire_s3d_bodyKeyChanged(o, b)) {
+        if (b->shape == S3D_SHAPE_MESH) fire_s3d_bodyMesh(o, b);
+        else fire_s3d_bodyFit(o, b);
+        s3d_wake(b);
+    }
+    if (b->shape == S3D_SHAPE_MESH) return;
+    at = s3d_add(fire_s3d_objAt(o), s3d_rot(b->R, b->local));
+    b->moved = b->kind == S3D_BODY_KINEMATIC && dt > 0 ? s3d_add(b->vel, s3d_scale(s3d_sub(at, b->c), (float)(1 / dt))) : b->vel;
+    if (s3d_dot(s3d_sub(at, b->c), s3d_sub(at, b->c)) > 1e-6f) { b->c = at; s3d_wake(b); }
+}
+/* and back: the object's position (and turn) from the body's */
+static void fire_s3d_bodyGive(FireS3dItem* o, S3dBody* b) {
+    S3dVec3 at = s3d_sub(b->c, s3d_rot(b->R, b->local));
+    o->f[OF_PX] = at.x; o->f[OF_PX + 1] = at.y; o->f[OF_PX + 2] = at.z;
+    if (b->rotates) {
+        float rx, ry, rz;
+        s3d_eulerOf(b->R, &rx, &ry, &rz);
+        o->f[OF_RX] = rx; o->f[OF_RX + 1] = ry; o->f[OF_RX + 2] = rz;
+    }
+    fire_s3d_bodyKey(o, b);
+}
 
 /* The scene's time goes on for its bodies: in steps of 1/60 s (at most 8 in one call - a long pause does not make the world race). */
 static void fire_s3d_physicsAdvance(FireS3dItem* s, Real dt) {
     S3dBody** list;
     FireS3dItem** owners;
+    S3dJoint* joints = NULL;
     s3d_size i;
-    int n = 0, k, steps = 0;
+    int n = 0, k, steps = 0, jn = 0;
     if (dt <= 0) return;
     list = (S3dBody**)S3D_MALLOC(sizeof(S3dBody*) * (s->objectN + 1));
     owners = (FireS3dItem**)S3D_MALLOC(sizeof(FireS3dItem*) * (s->objectN + 1));
-    if (list == NULL || owners == NULL) { S3D_FREE(list); S3D_FREE(owners); return; }
+    if (s->jointN > 0) joints = (S3dJoint*)S3D_MALLOC(sizeof(S3dJoint) * s->jointN);
+    if (list == NULL || owners == NULL || (s->jointN > 0 && joints == NULL)) { S3D_FREE(list); S3D_FREE(owners); S3D_FREE(joints); return; }
     for (i = 0; i < s->objectN; i++) {
         FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
-        S3dBody* b;
-        S3dVec3 at;
-        if (!o || !o->alive || (b = o->body) == NULL) continue;
-        at = s3d_v3((float)o->f[OF_PX], (float)o->f[OF_PX + 1], (float)o->f[OF_PX + 2]);
-        /* moved by the program: a kinematic body gets that as its velocity (what stands on it goes along), any other one is simply there */
-        b->moved = b->kind == S3D_BODY_KINEMATIC ? s3d_add(b->vel, s3d_scale(s3d_sub(at, b->pos), (float)(1 / dt))) : s3d_v3(0, 0, 0);
-        b->pos = at;
-        if (fire_s3d_bodyKeyChanged(o, b)) {
-            if (b->shape == S3D_SHAPE_MESH) fire_s3d_bodyMesh(o, b);
-            else { fire_s3d_bodyFit(o, b); fire_s3d_bodyKey(o, b); }
-        }
-        list[n] = b; owners[n] = o; n++;
+        if (!o || !o->alive || o->body == NULL) continue;
+        fire_s3d_bodyTake(o, o->body, dt);
+        list[n] = o->body; owners[n] = o; n++;
+    }
+    for (i = 0; i < s->jointN; i++) {
+        FireS3dJointRec* r = &s->joints[i];
+        FireS3dItem* a = r->alive ? fire_s3d_itemAt(r->a, FIRE_S3D_OBJECT) : NULL;
+        FireS3dItem* b = r->alive && r->b ? fire_s3d_itemAt(r->b, FIRE_S3D_OBJECT) : NULL;
+        if (!a || !a->alive || !a->body || (r->b && (!b || !b->alive || !b->body))) continue;
+        joints[jn].kind = r->kind; joints[jn].a = a->body; joints[jn].b = b ? b->body : NULL; joints[jn].la = r->la; joints[jn].lb = r->lb;
+        joints[jn].length = r->length; joints[jn].stiffness = r->stiffness; joints[jn].damping = r->damping;
+        jn++;
     }
     s->acc += dt;
     while (s->acc >= FIRE_S3D_STEP && steps < 8) {
-        s3d_physicsStep(list, n, s3d_v3(0, -(float)s->f[SF_GRAVITY], 0), (float)FIRE_S3D_STEP);
+        s3d_physicsStep(list, n, joints, jn, s3d_v3(0, -(float)s->f[SF_GRAVITY], 0), (float)FIRE_S3D_STEP);
         s->acc -= FIRE_S3D_STEP;
         steps++;
     }
     if (steps == 8) s->acc = 0;
-    for (k = 0; k < n; k++)
-        if (list[k]->kind != S3D_BODY_STATIC) {
-            /* (a kinematic body of triangles that moved gets them anew at the next call: its key still says where they were made) */
-            owners[k]->f[OF_PX] = list[k]->pos.x; owners[k]->f[OF_PX + 1] = list[k]->pos.y; owners[k]->f[OF_PX + 2] = list[k]->pos.z;
-        }
-    S3D_FREE(list); S3D_FREE(owners);
+    /* (a kinematic body of triangles that moved gets them anew at the next call: its key still says where they were made) */
+    for (k = 0; k < n; k++) if (list[k]->kind != S3D_BODY_STATIC && list[k]->shape != S3D_SHAPE_MESH) fire_s3d_bodyGive(owners[k], list[k]);
+    S3D_FREE(list); S3D_FREE(owners); S3D_FREE(joints);
 }
 
 /* The object gets a body: kind 0 static, 1 dynamic, 2 kinematic, 3 a character (a dynamic capsule that walks); shape 0 its triangles (static and kinematic only),
- * 1 a box, 2 a sphere, 3 a capsule - fitted to what it shows. false: no such object, or no memory. */
+ * 1 a box, 2 a sphere, 3 a capsule - fitted to what it shows. A dynamic box or sphere turns. false: no such object, or no memory. */
 static Value fire_s3d_Body(Value h, Value kind, Value shape) {
     FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
     S3dBody* b;
@@ -1239,10 +1299,10 @@ static Value fire_s3d_Body(Value h, Value kind, Value shape) {
     if (b->shape == S3D_SHAPE_MESH && b->kind == S3D_BODY_DYNAMIC) b->shape = S3D_SHAPE_BOX;
     if (b->kind != S3D_BODY_DYNAMIC) b->invMass = 0;
     if (b->character) { b->bounce = 0; b->friction = 0; }
+    b->rotates = b->kind == S3D_BODY_DYNAMIC && !b->character && (b->shape == S3D_SHAPE_BOX || b->shape == S3D_SHAPE_SPHERE);
     b->twoSided = it->n[ON_TWOSIDED] != 0 || (it->mat && fire_s3d_itemAt(it->mat, FIRE_S3D_MATERIAL) && fire_s3d_itemAt(it->mat, FIRE_S3D_MATERIAL)->n[MN_TWOSIDED]);
-    b->pos = s3d_v3((float)it->f[OF_PX], (float)it->f[OF_PX + 1], (float)it->f[OF_PX + 2]);
     if (b->shape == S3D_SHAPE_MESH) { if (!fire_s3d_bodyMesh(it, b)) { s3d_bodyFree(b); return Bool(false); } }
-    else { fire_s3d_bodyFit(it, b); fire_s3d_bodyKey(it, b); }
+    else fire_s3d_bodyFit(it, b);
     s3d_bodyFree(it->body);
     it->body = b;
     return Bool(true);
@@ -1255,14 +1315,17 @@ static Value fire_s3d_BodyRemove(Value h) {
 }
 /* The numbers of a body: 0 mass (kg; 0: it cannot be moved), 1 bounce, 2 friction, 3 damping, 4 gravity (times the scene's), 5..7 velocity, 8..10 the size of the shape
  * (a box: half its sizes; a sphere: 8 the radius; a capsule: 8 the radius, 9 half its middle), 11..13 its centre from the position, 14 step height, 15 the steepest slope
- * (radians), 16, 17 walk x, z (m/s), 18 jump (m/s), 19 trigger; read only: 20 on the ground, 21 kind, 22 shape, 23 how many it touches */
+ * (radians), 16, 17 walk x, z (m/s), 18 jump (m/s), 19 trigger, 24 whether it turns, 25..27 angular velocity (rad/s), 28 angular damping, 29 asleep;
+ * read only: 20 on the ground, 21 kind, 22 shape, 23 how many it touches. Setting anything wakes it. */
 static S3dBody* fire_s3d_bodyAt(Value h) { FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT); return it ? it->body : NULL; }
 static Value fire_s3d_BodySet(Value h, Value slot, Value value) {
-    S3dBody* b = fire_s3d_bodyAt(h);
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dBody* b = it ? it->body : NULL;
     float v = (float)toR(value);
     if (!b) return Bool(false);
+    s3d_wake(b);
     switch ((int)slot.i) {
-        case 0: b->invMass = b->kind == S3D_BODY_DYNAMIC && v > 0 ? 1 / v : 0; break;
+        case 0: b->invMass = b->kind == S3D_BODY_DYNAMIC && v > 0 ? 1 / v : 0; s3d_bodyInertia(b); break;
         case 1: b->bounce = v; break;
         case 2: b->friction = v; break;
         case 3: b->damping = v; break;
@@ -1270,18 +1333,28 @@ static Value fire_s3d_BodySet(Value h, Value slot, Value value) {
         case 5: b->vel.x = v; break;
         case 6: b->vel.y = v; break;
         case 7: b->vel.z = v; break;
-        case 8: b->half.x = v; break;
-        case 9: b->half.y = v; break;
-        case 10: b->half.z = v; break;
-        case 11: b->offset.x = v; break;
-        case 12: b->offset.y = v; break;
-        case 13: b->offset.z = v; break;
+        case 8: b->half.x = v; s3d_bodyInertia(b); break;
+        case 9: b->half.y = v; s3d_bodyInertia(b); break;
+        case 10: b->half.z = v; s3d_bodyInertia(b); break;
+        case 11: b->local.x = v; break;
+        case 12: b->local.y = v; break;
+        case 13: b->local.z = v; break;
         case 14: b->stepHeight = v; break;
         case 15: b->slopeCos = cosf(v); break;
         case 16: b->walkX = v; break;
         case 17: b->walkZ = v; break;
         case 18: b->jump = v; break;
         case 19: b->trigger = v != 0; break;
+        case 24:
+            if ((v != 0) != (b->rotates != 0) && b->kind == S3D_BODY_DYNAMIC && !b->character && (b->shape == S3D_SHAPE_BOX || b->shape == S3D_SHAPE_SPHERE)) {
+                b->rotates = v != 0; b->w = s3d_v3(0, 0, 0); fire_s3d_bodyFit(it, b);
+            }
+            break;
+        case 25: b->w.x = v; break;
+        case 26: b->w.y = v; break;
+        case 27: b->w.z = v; break;
+        case 28: b->angularDamping = v; break;
+        case 29: if (v != 0 && b->kind == S3D_BODY_DYNAMIC) { b->asleep = 1; b->vel = b->w = s3d_v3(0, 0, 0); } break;
         default: return Bool(false);
     }
     return Bool(true);
@@ -1302,9 +1375,9 @@ static Value fire_s3d_BodyGet(Value h, Value slot) {
         case 8: v = b->half.x; break;
         case 9: v = b->half.y; break;
         case 10: v = b->half.z; break;
-        case 11: v = b->offset.x; break;
-        case 12: v = b->offset.y; break;
-        case 13: v = b->offset.z; break;
+        case 11: v = b->local.x; break;
+        case 12: v = b->local.y; break;
+        case 13: v = b->local.z; break;
         case 14: v = b->stepHeight; break;
         case 15: v = acosf(b->slopeCos < -1 ? -1 : b->slopeCos > 1 ? 1 : b->slopeCos); break;
         case 16: v = b->walkX; break;
@@ -1315,6 +1388,12 @@ static Value fire_s3d_BodyGet(Value h, Value slot) {
         case 21: v = (float)(b->character ? 3 : b->kind); break;
         case 22: v = (float)b->shape; break;
         case 23: v = (float)b->touchN; break;
+        case 24: v = (float)b->rotates; break;
+        case 25: v = b->w.x; break;
+        case 26: v = b->w.y; break;
+        case 27: v = b->w.z; break;
+        case 28: v = b->angularDamping; break;
+        case 29: v = (float)b->asleep; break;
         default: break;
     }
     return Float((Real)v);
@@ -1330,6 +1409,61 @@ static Value fire_s3d_BodyTouches(Value h, Value other) {
     if (!b) return Bool(false);
     for (k = 0; k < b->touchN; k++) if (b->touch[k] == other.i) return Bool(true);
     return Bool(false);
+}
+
+/* ---- joints: kept by the scene (they join two of its objects, or one and a point of the world) ---- */
+/* where the middle of an object's body is now (as the program left the object) */
+static S3dVec3 fire_s3d_bodyCentre(FireS3dItem* o) { return s3d_add(fire_s3d_objAt(o), s3d_rot(o->body->R, o->body->local)); }
+/* A joint: kind 0 a rope, 1 a rod, 2 a spring between the objects a and b (b 0: to the point x, y, z of the world) at their middles; length <= 0: as far as they
+ * are apart now. Returns its number (1, 2, ...) or 0 (no such objects, no bodies, no memory). */
+static Value fire_s3d_Joint(Value scene, Value kind, Value a, Value b, Value x, Value y, Value z, Value length, Value stiffness, Value damping) {
+    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
+    FireS3dItem* oa = fire_s3d_itemAt(a.i, FIRE_S3D_OBJECT);
+    FireS3dItem* ob = b.i ? fire_s3d_itemAt(b.i, FIRE_S3D_OBJECT) : NULL;
+    FireS3dJointRec r;
+    s3d_size i;
+    if (!s || !oa || !oa->body || (b.i && (!ob || !ob->body)) || kind.i < 0 || kind.i > 2) return Int(0);
+    memset(&r, 0, sizeof r);
+    r.kind = (int)kind.i; r.alive = 1; r.a = a.i; r.b = b.i;
+    r.lb = ob ? s3d_v3(0, 0, 0) : s3d_v3((float)toR(x), (float)toR(y), (float)toR(z));
+    r.length = (float)toR(length);
+    if (r.length <= 0) r.length = s3d_length(s3d_sub(ob ? fire_s3d_bodyCentre(ob) : r.lb, fire_s3d_bodyCentre(oa)));
+    r.stiffness = (float)toR(stiffness); r.damping = (float)toR(damping);
+    s3d_wake(oa->body); if (ob) s3d_wake(ob->body);
+    for (i = 0; i < s->jointN; i++) if (!s->joints[i].alive) { s->joints[i] = r; return Int((int64_t)i + 1); }
+    if (!S3D_GROW(s->joints, s->jointCap, s->jointN + 1)) return Int(0);
+    s->joints[s->jointN++] = r;
+    return Int((int64_t)s->jointN);
+}
+/* 0 length, 1 stiffness, 2 damping; set 3: the joint goes; get 3: how far apart the two ends are now, 4: whether it is there */
+static FireS3dJointRec* fire_s3d_jointAt(Value scene, Value id) {
+    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
+    return s && id.i >= 1 && (s3d_size)id.i <= s->jointN ? &s->joints[id.i - 1] : NULL;
+}
+static Value fire_s3d_JointSet(Value scene, Value id, Value slot, Value value) {
+    FireS3dJointRec* r = fire_s3d_jointAt(scene, id);
+    if (!r || !r->alive) return Bool(false);
+    if (slot.i == 0) r->length = (float)toR(value);
+    else if (slot.i == 1) r->stiffness = (float)toR(value);
+    else if (slot.i == 2) r->damping = (float)toR(value);
+    else if (slot.i == 3) r->alive = 0;
+    else return Bool(false);
+    return Bool(true);
+}
+static Value fire_s3d_JointGet(Value scene, Value id, Value slot) {
+    FireS3dJointRec* r = fire_s3d_jointAt(scene, id);
+    if (!r) return Float((Real)0);
+    if (slot.i == 0) return Float((Real)r->length);
+    if (slot.i == 1) return Float((Real)r->stiffness);
+    if (slot.i == 2) return Float((Real)r->damping);
+    if (slot.i == 4) return Float((Real)r->alive);
+    if (slot.i == 3 && r->alive) {
+        FireS3dItem* a = fire_s3d_itemAt(r->a, FIRE_S3D_OBJECT);
+        FireS3dItem* b = r->b ? fire_s3d_itemAt(r->b, FIRE_S3D_OBJECT) : NULL;
+        if (!a || !a->body || (r->b && (!b || !b->body))) return Float((Real)0);
+        return Float((Real)s3d_length(s3d_sub(b ? fire_s3d_bodyCentre(b) : r->lb, fire_s3d_bodyCentre(a))));
+    }
+    return Float((Real)0);
 }
 
 /* The first body of the scene a ray meets (from x, y, z towards dx, dy, dz, up to `max` meters): the handle of its object (0 none); RayInfo tells the rest. */
@@ -1351,8 +1485,7 @@ static Value fire_s3d_Raycast(Value scene, Value x, Value y, Value z, Value dx, 
     for (i = 0; i < s->objectN; i++) {
         FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
         if (!o || !o->alive || !o->body) continue;
-        if (o->body->shape == S3D_SHAPE_MESH && fire_s3d_bodyKeyChanged(o, o->body)) fire_s3d_bodyMesh(o, o->body);
-        o->body->pos = s3d_v3((float)o->f[OF_PX], (float)o->f[OF_PX + 1], (float)o->f[OF_PX + 2]);
+        fire_s3d_bodyTake(o, o->body, 0);
         list[n] = o->body; ids[n] = s->objects[i]; n++;
     }
     found = s3d_raycast(list, n, s3d_v3((float)toR(x), (float)toR(y), (float)toR(z)), d, (float)toR(max), -1, &g_s3dRay);

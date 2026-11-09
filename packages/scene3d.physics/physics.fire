@@ -80,6 +80,30 @@ class Body {
     float VelocityY : m/s { get { return __S3DBodyGet(this.h, 6) * 1m / 1s } set { __S3DBodySet(this.h, 6, S3D.Speed(value)) } }
     float VelocityZ : m/s { get { return __S3DBodyGet(this.h, 7) * 1m / 1s } set { __S3DBodySet(this.h, 7, S3D.Speed(value)) } }
     undefined SetVelocity(float x : any m/s, float y : any m/s, float z : any m/s) { this.VelocityX = x; this.VelocityY = y; this.VelocityZ = z }
+    // ---- turning (dynamic boxes and spheres turn: boxes tumble, balls roll; Rotates = false keeps one upright) ----
+    bool Rotates {
+        get { return __S3DBodyGet(this.h, 24) != 0.0 }
+        set {
+            var v = 0.0
+            if (value) { v = 1.0 }
+            __S3DBodySet(this.h, 24, v)
+        }
+    }
+    // How fast it turns about each axis, in the world (an angle a second: 90deg is a quarter turn a second).
+    float AngularVelocityX : any { get { return S3D.Degrees(__S3DBodyGet(this.h, 25)) } set { __S3DBodySet(this.h, 25, S3D.Angle(value)) } }
+    float AngularVelocityY : any { get { return S3D.Degrees(__S3DBodyGet(this.h, 26)) } set { __S3DBodySet(this.h, 26, S3D.Angle(value)) } }
+    float AngularVelocityZ : any { get { return S3D.Degrees(__S3DBodyGet(this.h, 27)) } set { __S3DBodySet(this.h, 27, S3D.Angle(value)) } }
+    undefined SetAngularVelocity(float x : any, float y : any, float z : any) {
+        __S3DBodySet(this.h, 25, S3D.Angle(x)); __S3DBodySet(this.h, 26, S3D.Angle(y)); __S3DBodySet(this.h, 27, S3D.Angle(z))
+    }
+    // How much the air slows its turning (default 0.3).
+    float AngularDamping { get { return __S3DBodyGet(this.h, 28) } set { __S3DBodySet(this.h, 28, value) } }
+
+    // ---- sleeping: a body that rests for half a second sleeps (it costs nothing) until something touches it, the program moves it or sets something ----
+    bool Sleeping { get { return __S3DBodyGet(this.h, 29) != 0.0 } }
+    undefined Wake() { __S3DBodySet(this.h, 0, __S3DBodyGet(this.h, 0)) }
+    undefined Sleep() { __S3DBodySet(this.h, 29, 1.0) }
+
     // A push: its velocity changes by this much (a kick, a jump pad).
     undefined Push(float x : any m/s, float y : any m/s, float z : any m/s) { this.VelocityX = this.VelocityX + x; this.VelocityY = this.VelocityY + y; this.VelocityZ = this.VelocityZ + z }
 
@@ -134,6 +158,45 @@ class Character : Body {
     // How high a step it climbs by walking against it (default 30 cm), and the steepest slope it stands on (default 45deg; steeper: it slides).
     float StepHeight : m { get { return __S3DBodyGet(this.h, 14) * 1m } set { __S3DBodySet(this.h, 14, S3D.Length(value)) } }
     float MaxSlope : any { get { return S3D.Degrees(__S3DBodyGet(this.h, 15)) } set { __S3DBodySet(this.h, 15, S3D.Angle(value)) } }
+}
+
+// A joint of two objects with bodies (at their middles), or of one object and a point of the world: a rope (at most its length apart), a rod (exactly), a
+// spring (pulled towards its length: Stiffness, how hard; Damping, how fast it calms down). Length 0 (the default): as far apart as they are now.
+// The scene keeps the joint (this is a view of it); Remove() takes it away.
+class Joint {
+    int scene
+    int id
+
+    construct(Scene scene, int kind, Object a, Object b, float x, float y, float z, float length, float stiffness, float damping) {
+        var bh = 0
+        if (b != undefined) { bh = b.h }
+        this.id = __S3DJoint(scene.h, kind, a.h, bh, x, y, z, length, stiffness, damping)
+        if (this.id == 0) { throw new Scene3DException("A joint needs objects with bodies (Body.Dynamic, Body.Static, ...).") }
+        this.scene = scene.h
+    }
+
+    static Joint Rope(Scene scene, Object a, Object b, float length : any m = 0m) { return new Joint(scene, 0, a, b, 0.0, 0.0, 0.0, S3D.Length(length), 0.0, 0.0) }
+    // (to a point of the world: a lamp on its cord, a swing)
+    static Joint Rope(Scene scene, Object a, float x : any m, float y : any m, float z : any m, float length : any m = 0m) {
+        return new Joint(scene, 0, a, undefined, S3D.Length(x), S3D.Length(y), S3D.Length(z), S3D.Length(length), 0.0, 0.0)
+    }
+    static Joint Rod(Scene scene, Object a, Object b, float length : any m = 0m) { return new Joint(scene, 1, a, b, 0.0, 0.0, 0.0, S3D.Length(length), 0.0, 0.0) }
+    static Joint Rod(Scene scene, Object a, float x : any m, float y : any m, float z : any m, float length : any m = 0m) {
+        return new Joint(scene, 1, a, undefined, S3D.Length(x), S3D.Length(y), S3D.Length(z), S3D.Length(length), 0.0, 0.0)
+    }
+    static Joint Spring(Scene scene, Object a, Object b, float stiffness = 50.0, float damping = 2.0, float length : any m = 0m) {
+        return new Joint(scene, 2, a, b, 0.0, 0.0, 0.0, S3D.Length(length), stiffness, damping)
+    }
+    static Joint Spring(Scene scene, Object a, float x : any m, float y : any m, float z : any m, float stiffness = 50.0, float damping = 2.0, float length : any m = 0m) {
+        return new Joint(scene, 2, a, undefined, S3D.Length(x), S3D.Length(y), S3D.Length(z), S3D.Length(length), stiffness, damping)
+    }
+
+    float Length : m { get { return __S3DJointGet(this.scene, this.id, 0) * 1m } set { __S3DJointSet(this.scene, this.id, 0, S3D.Length(value)) } }
+    float Stiffness { get { return __S3DJointGet(this.scene, this.id, 1) } set { __S3DJointSet(this.scene, this.id, 1, value) } }
+    float Damping { get { return __S3DJointGet(this.scene, this.id, 2) } set { __S3DJointSet(this.scene, this.id, 2, value) } }
+    // How far apart the two ends are now.
+    float Distance : m { get { return __S3DJointGet(this.scene, this.id, 3) * 1m } }
+    undefined Remove() { __S3DJointSet(this.scene, this.id, 3, 1.0) }
 }
 
 // Where a ray met a body: the object, how far, the point and the direction of the surface there.

@@ -430,7 +430,7 @@ static class Scene3DTests
         var pRock = new Object(Template.Sphere, 3m, 10m, 30m, 0.6m, 0.6m, 0.6m)
         world.Add(pRock)
         var rb = Body.Ball(pRock, 2kg)
-        for (var i = 0; i < 90; i++) { world.Advance(1s / 30.0) }
+        for (var i = 0; i < 45; i++) { world.Advance(1s / 30.0) }
         print("rock " + P.F(pRock.X) + " " + P.F(pRock.Y) + " ground " + P.F(pLand.HeightAt(pRock.X, pRock.Z)) + " " + rb.OnGround)
         // a pLift: kinematic, it carries a pCrate up
         var pLift = new Object(Template.Box, 8m, 0.1m, 0m, 2m, 0.2m, 2m)
@@ -444,6 +444,53 @@ static class Scene3DTests
         print("lift " + P.F(pLift.Y) + " box " + P.F(pBox3.Y))
         world.Gravity = 0m / 1s / 1s
         print("gravity " + world.Gravity)
+        // turning bodies (a crate falls turned and lies down flat, a stack of three stands, a ball rolls), sleeping, joints (a pendulum on a rope, a spring)
+        var spin = new Scene()
+        var spinFloor = new Object(Template.Plane, 0m, 0m, 0m, 40m, 0m, 40m)
+        spin.Add(spinFloor)
+        Body.Static(spinFloor)
+        var tumbler = new Object(Template.Box, 0m, 3m, 0m, 1m, 1m, 1m)
+        tumbler.SetRotation(30deg, 20deg, 40deg)
+        spin.Add(tumbler)
+        var tb = Body.Dynamic(tumbler, 5kg)
+        var st1 = new Object(Template.Box, 5m, 0.5m, 0m, 1m, 1m, 1m)
+        var st2 = new Object(Template.Box, 5.1m, 1.5m, 0m, 1m, 1m, 1m)
+        var st3 = new Object(Template.Box, 4.9m, 2.5m, 0m, 1m, 1m, 1m)
+        spin.Add(st1)
+        spin.Add(st2)
+        spin.Add(st3)
+        Body.Dynamic(st1, 5kg)
+        Body.Dynamic(st2, 5kg)
+        var sb3 = Body.Dynamic(st3, 5kg)
+        var roller = new Object(Template.Sphere, -5m, 0.25m, 0m, 0.5m, 0.5m, 0.5m)
+        spin.Add(roller)
+        var rl = Body.Ball(roller)
+        rl.SetVelocity(3m / 1s, 0m / 1s, 0m / 1s)
+        var bob = new Object(Template.Box, 12m, 5m, 0m, 0.4m, 0.4m, 0.4m)
+        spin.Add(bob)
+        Body.Dynamic(bob, 1kg)
+        var rope = Joint.Rope(spin, bob, 10m, 5m, 0m)
+        var sp1 = new Object(Template.Sphere, -10m, 5m, 0m, 0.4m, 0.4m, 0.4m)
+        var sp2 = new Object(Template.Sphere, -8m, 5m, 0m, 0.4m, 0.4m, 0.4m)
+        spin.Add(sp1)
+        spin.Add(sp2)
+        Body.Ball(sp1).GravityScale = 0.0
+        Body.Ball(sp2).GravityScale = 0.0
+        var spring = Joint.Spring(spin, sp1, sp2, 50.0, 1.0, 1m)
+        print("turning " + tb.Rotates + " " + rl.Rotates + " " + new Body(pFloor).Rotates + " " + P.F(rope.Length) + " " + spring.Stiffness)
+        for (var i = 0; i < 150; i++) {
+            spin.Advance(1s / 30.0)
+            if (i % 50 == 49) {
+                print(i + " tumbler " + P.F(tumbler.Y) + " " + P.F(tumbler.RotationX / 1deg * 1m) + " " + P.F(tumbler.RotationZ / 1deg * 1m) + " " + tb.Sleeping
+                    + " stack " + P.F(st2.Y) + " " + P.F(st3.Y) + " " + P.F(st3.X) + " " + sb3.Sleeping + " roller " + P.F(roller.X)
+                    + " bob " + P.F(bob.X) + " " + P.F(bob.Y) + " " + P.F(rope.Distance) + " spring " + P.F(spring.Distance))
+            }
+        }
+        rl.AngularVelocityY = 90deg
+        print("spun " + P.F(rl.AngularVelocityY / 1deg * 1m) + " " + rl.Sleeping)
+        rope.Remove()
+        tb.Sleep()
+        print("removed " + tb.Sleeping)
         try { robot.Play("dance") } catch (Scene3DException e) { print("error " + e.message) }
         try { Model.FromBytes(new byte[10]) } catch (Scene3DException e) { print("error " + e.message) }
         try { robot.Advance(3) } catch (UnitMismatchException e) { print("unit " + e.message) }
