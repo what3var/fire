@@ -29,6 +29,33 @@ What the GIL protects today, and what replaces it:
 
 Check: the thread tests of the suite on several cores, plus a run under ThreadSanitizer.
 
+### Step 1 in detail: what the GIL protects in `fire_rt.h` today (inventory)
+
+The state of a thread is already `thread_local` (`FIRE_THREAD_VARS`: unwinding, pool, handlers, global scope, sections, ...). What is shared:
+
+| State | Changes at run time? | Plan |
+|---|---|---|
+| `g_enums`, `g_unitTo/From`, `g_textUnits`, `g_classDescs`, `g_resources`, `g_argc/argv`, `g_enumerateItems`, `g_defaultTimeoutTicks`, `g_terminateFn`, `g_globalJobs` | no - set before `fire_main` (`fire_init`, unit init) | nothing (read-only); an assertion in debug builds that they are not written after the first thread started |
+| `g_slots` (generations, free list, `born`/`freed`) | yes - every object, array, buffer | 1c: segments that never move (a table of segment pointers), free slots cached per thread and refilled in batches under a mutex, generations as atomics |
+| reference counts (`retain`/`release`, `rc++`) | yes - strings cross threads (globals, `taking`, results, messages) | 1b: biased counting - a "shared" bit set where a string leaves its thread (copy into another domain, global read, message); shared counts atomically |
+| `g_ud`, `g_udCount` (units made at run time) | yes, rarely | 1d: a mutex for adding; readers see a published count (release/acquire) |
+| `g_fieldPtrs`, `g_targsHead`, `g_probeNodes`/`g_probeNextId`, `g_pluginRf`, `g_hostServices`, `g_threadsCatches` | yes, rarely | 1d: one small mutex each |
+| `g_mailboxes`, `g_originOf`/`g_copiesOf` (actors, copies across threads) | yes | 1d: one mutex each (the maps are only touched at copies and messages) |
+| `g_threadList`, `g_threadsLive`, `g_pendingExc`, `g_graveyard`, `g_reqs` (sections), `g_terminate` | yes | 1d: under the existing event mutex (`g_evM`) where they are already signalled; sections keep their protocol |
+| globals of the main program and the objects of the global scope (`g_domainOn`, `g_domainRoot`, flag 64) | yes - threads read them, sections write them | 1e: a reader/writer lock as in the VM (`ThreadShareLock`): reads by threads under the read lock, sections and the main program's writes under the write lock |
+| natives of packages | they assume one caller at a time | 1f: the GIL becomes the lock of the package (`fire_pkgLock` exists for libraries already); a package can declare itself thread safe |
+| the debugger (`g_dbgArmed`, its threads), `terminate` | stop the world | through the safe points (`g_attn`) as now - the GIL hand-over points stay the safe points |
+
+Order, each step with the GIL still on (no change of behaviour, the suite stays green), the last one switches it off:
+
+1. **1a** a build switch `FIRE_NO_GIL` and the test setup: the thread tests of the native group also with `FIRE_NO_GIL` and under ThreadSanitizer (`-fsanitize=thread`), on 4 cores.
+2. **1b** biased reference counting.
+3. **1c** the slot table in segments.
+4. **1d** the maps and lists with their mutexes.
+5. **1e** the reader/writer lock of the globals.
+6. **1f** a lock per package instead of the GIL around natives.
+7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests.
+
 ## 3. The language: `fire` and `await`
 
 ```
