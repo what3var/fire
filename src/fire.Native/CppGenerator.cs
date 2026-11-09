@@ -111,6 +111,8 @@ namespace fire.Native
             public string? CSig;
             /// <summary>What this round made of the function (`--stats`, NativeStats).</summary>
             public FuncStat? Stat;
+            /// <summary>The function runs `try x.Take...` (ownMethodTry): it keeps the argument list of its call (MYARGS).</summary>
+            public bool UsesTryTake;
             public int FinSignature => FinReturn.Count + FinJumps.Values.Sum(v => v.Count);
             public string Signature => SignatureOf(Name, "");
             /// <summary>The C signature with the function's name `name` and `suffix` after the names of its parameters (a function with a frame copies them in).</summary>
@@ -2080,14 +2082,31 @@ namespace fire.Native
             if (argc >= proto.ParamCount) return ("", "");
             var pre = new StringBuilder();
             var args = new StringBuilder();
+            bool calls = false;
             for (int i = argc; i < proto.ParamCount; i++)
             {
                 var defaultProto = i < proto.ParamDefaults.Count ? proto.ParamDefaults[i] : null;
                 if (defaultProto == null) throw new NativeNotSupportedException($"call with {argc} argument(s) of a function with {proto.ParamCount} parameters");
-                pre.Append($"Value dv{i} = adoptV({GetFunc(defaultProto, FuncKind.Init).Name}({self}), {list}); ");
+                if (ConstantDefault(defaultProto) is { } constant) pre.Append($"Value dv{i} = {constant}; ");
+                else { pre.Append($"Value dv{i} = adoptV({GetFunc(defaultProto, FuncKind.Init).Name}({self}), {list}); "); calls = true; }
                 args.Append($", dv{i}");
             }
-            return (pre.ToString(), args.ToString());
+            return (KeepArgIn(pre.ToString(), calls), args.ToString());
+        }
+
+        /// <summary>`try x.Take...`: the functions of default values that run before a call (they take g_argIn on entry like every fire function) - the
+        /// argument list the caller set is set again after them (`pre` comes right before the call).</summary>
+        private string KeepArgIn(string pre, bool calls) => _usesTryDepth && calls ? $"OwnList* const ai_ = g_argIn; {pre}g_argIn = ai_; " : pre;
+
+        /// <summary>A default value that is a constant (`int detail = 24`: its function is LoadConst, Return): the C of the constant - no function to call, nothing
+        /// that is owned. Null for any other default value.</summary>
+        private string? ConstantDefault(FunctionProto defaultProto)
+        {
+            var code = OpInfo.Decode(defaultProto.Chunk.Code);
+            if (code.Count != 2 || code[0].Op != OpCode.LoadConst || code[1].Op != OpCode.Return) return null;
+            var c = defaultProto.Chunk.Constants[code[0].A[0]];
+            // (no string: DefaultArgs also runs only to register what a call needs - a string constant would stay unused in the C)
+            return c.Kind is ValueKind.Int or ValueKind.Float or ValueKind.Bool or ValueKind.Undefined ? Constant(c) : null;
         }
 
         /// <summary>Does a method call of this name with this many arguments reach an implementation that fills in default values? Then its dispatcher gets the scope list.</summary>
@@ -3143,7 +3162,6 @@ namespace fire.Native
             var pre = new StringBuilder();     // what comes before the declarations
             var decl = new StringBuilder();    // the declarations (not framed) - or nothing, the frame holds them
             var post = new StringBuilder();    // the rest of the start of the function
-            if (_usesTryDepth && f.Kind == FuncKind.Main) pre.AppendLine("    ++g_callDepth;");
             pre.Append(Trampoline(f));
             if (f.HasSelf) pre.AppendLine("    (void)self;");
             // property accessors (SPEC 2.2): a setter takes what a property assignment of an accessor handed to it; a getter that keeps what belongs to it
@@ -3171,6 +3189,13 @@ namespace fire.Native
                         pre.AppendLine($"    Value P{i} = {ScalarValueOf(KindOfType(boxAbi.ParamType[i]), 0, $"P{i}_c")};");
             for (int i = 0; i < f.ParamCount; i++) pre.AppendLine($"    (void)P{i};");
             if (dbg != null && !framed) pre.AppendLine("    DbgFrame* const DF = g_dbgTop;");
+            // `try x.Take...` (SPEC 2.2): the argument list the caller set right before the call is this call's (MYARGS, for ownMethodTry); every fire function takes it on
+            // entry - a function it calls without one finds none
+            if (_usesTryDepth)
+            {
+                if (f.UsesTryTake) { if (framed) Var("OwnList*", "MYARGS", "g_argIn"); else decl.AppendLine("    OwnList* const MYARGS = g_argIn;"); }
+                post.AppendLine("    g_argIn = NULL;");
+            }
             if (f.Root.MaxDepth > 0)
             {
                 if (framed) foreach (int i in Enumerable.Range(0, f.Root.MaxDepth)) Var("Value", $"s{i}", null);
@@ -3303,16 +3328,14 @@ namespace fire.Native
             if (_target.Native.LineDirectives && catchCode.Length > 0) sb.AppendLine(LineResetMarker);
             if (framed) foreach (var m in members) sb.AppendLine($"#undef {m.Name}");
             if (dbg != null) foreach (var region in catchRegions) sb.AppendLine(DebugCatchWrapper(f, CatchName(f, region)));
-            // `try x.Take...`: every function counts the call depth (the callee knows which argument list is its own); a debug build keeps its frame
+            // a debug build keeps its frame
             if (f.CAbi is { } wrapAbi) sb.Append(CAbiWrapper(f, wrapAbi));
             if (defName != f.Name)
             {
                 string call = $"{defName}({string.Join(", ", (f.Kind == FuncKind.FireBody ? new[] { "args" } : Array.Empty<string>()).Concat(f.ParamNames))})";
                 sb.AppendLine(f.Signature);
                 if (dbg != null) sb.AppendLine(DebugWrapper(f, call));
-                else sb.AppendLine(f.Kind == FuncKind.FireBody
-                    ? $"{{ ++g_callDepth; {call}; --g_callDepth; }}"
-                    : $"{{ ++g_callDepth; Value r_ = {call}; --g_callDepth; return r_; }}");
+                else sb.AppendLine(f.Kind == FuncKind.FireBody ? $"{{ {call}; }}" : $"{{ return {call}; }}");
             }
             f.Code = sb.ToString();
             NoteCReturn(f);
@@ -3692,6 +3715,7 @@ namespace fire.Native
         {
             int d = st.Depth;
             string fn = f.Name;
+            int argsTravel = -1;   // (ArgsBefore: how many arguments travel in the argument list of the call; -1: not known)
             // (a slot whose value is only in its scalar shadow becomes a Value first: every generic use goes through S)
             string S(int k) { if (k >= 0 && k < 64 && (st.Scalar >> k & 1) != 0) Materialize(f, st, k, E); return SlotName(st.Region, k); }
             if (st.Scalar != 0 && !ScalarAware(ins.Op) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
@@ -3856,6 +3880,7 @@ namespace fire.Native
                     argOf[at] = positional + k;
                 }
                 var pre = new StringBuilder();
+                bool namedCalls = false;
                 var args = new StringBuilder();
                 for (int p = 0; p < proto.ParamCount; p++)
                 {
@@ -3867,10 +3892,11 @@ namespace fire.Native
                     }
                     var defaultProto = p < proto.ParamDefaults.Count ? proto.ParamDefaults[p] : null;
                     if (defaultProto == null) return null;
-                    pre.Append($"Value dv{p} = adoptV({GetFunc(defaultProto, FuncKind.Init).Name}({self}), &{OwnerList()}); ");
+                    if (ConstantDefault(defaultProto) is { } constant) pre.Append($"Value dv{p} = {constant}; ");
+                    else { pre.Append($"Value dv{p} = adoptV({GetFunc(defaultProto, FuncKind.Init).Name}({self}), &{OwnerList()}); "); namedCalls = true; }
                     args.Append($", dv{p}");
                 }
-                return (pre.ToString(), args.ToString());
+                return (KeepArgIn(pre.ToString(), namedCalls), args.ToString());
             }
             // The ArgumentException of VM.FillNamedArgs when the names do not fit the callee.
             static string NamedMismatch(FunctionProto proto, int argc, string[] names)
@@ -3902,12 +3928,17 @@ namespace fire.Native
             // callee's own locals, not before them as in the VM.
             void ArgsBefore(int first, int argc, long mask)
             {
+                argsTravel = 0;
                 for (int i = 0; i < Math.Min(argc, 16); i++)
                 {
                     int bits = (int)(mask >> (4 * i) & 15);
+                    if (bits is 1 or 2 or 5 or 6 or 7) argsTravel++;
                     if (bits is 4 or 7)
                     {
-                        // an unclaimed argument (a direct `new`, 7, is one too): the call owns it (SPEC 2.1)
+                        // an unclaimed argument (a direct `new`, 7, is one too): the call owns it (SPEC 2.1) - unless it is no reference at all (a number,
+                        // the result of an arithmetic: nothing to own)
+                        if (bits == 4 && (!R(first + i) || IsScalar(first + i) || K(first + i) is KindInt or KindFloat or KindBool or KindWord)) continue;
+                        if (bits == 4) argsTravel++;
                         f.NeedsArgList = true;
                         E($"reownArg({S(first + i)}, &{OwnerList()}, &AL);");
                     }
@@ -3932,6 +3963,9 @@ namespace fire.Native
                         Check();
                     }
                 }
+                // `try x.Take...`: the callee takes the argument list on entry (MYARGS) - it is set last, nothing that runs before the call takes it (the
+                // default values keep it: DefaultArgs); finishArgs clears it after the call
+                if (_usesTryDepth && argsTravel > 0) E("g_argIn = &AL;");
             }
             // The arguments of a call of a C body (CAbi): a C parameter takes the C number of its slot - a slot whose type does not prove it is checked into
             // its shadow first (the check throws like the prologue would) - every other one the Value.
@@ -3967,6 +4001,9 @@ namespace fire.Native
             }
             void ArgsAfter(int argc, long mask, string result)
             {
+                // (nothing travelled in the argument list: ArgsBefore left out every argument)
+                if (argsTravel == 0) { argsTravel = -1; return; }
+                argsTravel = -1;
                 for (int i = 0; i < Math.Min(argc, 16); i++)
                     if ((mask >> (4 * i) & 15) is 1 or 2 or 4 or 5 or 6 or 7) { E($"finishArgs({result}, &AL);"); return; }
             }
@@ -5218,6 +5255,7 @@ namespace fire.Native
                         string targetArg = baseArgs == 1 ? S(slot + 1) : "Undef()";
                         bool isTry = OwnMethodIsTry(method);
                         if (isTry && !_usesTryDepth) { _usesTryDepth = true; _version++; }
+                        if (isTry) f.UsesTryTake = true;
                         if (argc == baseArgs && !isTry) E($"ownMethod({ownMethodId}, {S(slot)}, {targetArg}, &{owner});");
                         else
                         {
@@ -5227,7 +5265,7 @@ namespace fire.Native
                             string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Int(0)";
                             if (argc > baseArgs && !_usesTakeEnumerate) { _usesTakeEnumerate = true; _version++; }
                             string call = isTry
-                                ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}));"
+                                ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS));"
                                 : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count});";
                             E($"{{ {localsDecl}{call} }}");
                             if (isTry) { SetR(slot, false); d = slot + 1; return Next(); }
@@ -6453,7 +6491,8 @@ namespace fire.Native
                 byte kind = K(d - 1);
                 int from = U(d - 1);
                 byte resultKind = toFloat ? KindFloat : kind;
-                string toFloatCode = toFloat && kind == KindInt ? $"{S(d - 1)} = Float((Real){S(d - 1)}.i{(from == 0 ? "" : $", {UnitC(from)}")});" : "";
+                // (built only when it is emitted: S() makes a scalar slot a Value)
+                string ToFloatCode() => $"{S(d - 1)} = Float((Real){S(d - 1)}.i{(from == 0 ? "" : $", {UnitC(from)}")});";
                 int resultUnit;
                 if (unitText == "any") resultUnit = from;
                 else
@@ -6474,7 +6513,7 @@ namespace fire.Native
                 // (nothing to convert: the slot stays as it is - narrow, or a scalar in its shadow)
                 if (!toFloat && resultUnit == from) { _kindsKept = true; return true; }
                 if (toFloat && kind == KindInt && SlotScalars() && IsScalar(d - 1)) { string fx = SF(d - 1); SetScalar(d - 1, TypeOf(KindFloat, from), fx); return true; }
-                if (toFloatCode.Length > 0) E(toFloatCode);
+                if (toFloat && kind == KindInt) E(ToFloatCode());
                 SetT(d - 1, TypeOf(resultKind, resultUnit)); _kindsKept = true;
                 return true;
             }

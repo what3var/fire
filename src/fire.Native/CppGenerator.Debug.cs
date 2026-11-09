@@ -18,7 +18,7 @@ namespace fire.Native
         private bool DebugBuild => _program.ExecutionMode == VmExecutionMode.Debug;
 
         /// <summary>The functions have a wrapper (`fN` calls `fN_b`): it counts the call depth (`try x.Take...`) or keeps the debug frame.</summary>
-        private bool Wrapped => _usesTryDepth || DebugBuild;
+        private bool Wrapped => DebugBuild;
 
         /// <summary>The platforms with a debug agent: the desktop (TCP or stdio), ESP32 (the console UART) and FreeRTOS (stdio).</summary>
         private bool DebugAgent => _target.Native.Platform is "posix" or "windows" or "esp32" or "freertos";
@@ -155,11 +155,11 @@ namespace fire.Native
             return sb.ToString();
         }
 
-        /// <summary>The wrapper `fN` around the function proper `fN_b`: it keeps the frame (and counts the call depth for `try x.Take...`).</summary>
+        /// <summary>The wrapper `fN` around the function proper `fN_b`: it keeps the frame.</summary>
         private string DebugWrapper(Func f, string call)
         {
             string hidden = IsHiddenFunc(f) ? "1" : "0";
-            string depthIn = _usesTryDepth ? " ++g_callDepth;" : "", depthOut = _usesTryDepth ? " --g_callDepth;" : "";
+            const string depthIn = "", depthOut = "";
             return f.Kind is FuncKind.FireBody or FuncKind.Main
                 ? $"{{ DbgFrame DF_; fire_dbgEnter(&DF_, &kDbgF_{f.Name}, {hidden});{depthIn} {call};{depthOut} fire_dbgLeave(&DF_); }}"
                 : $"{{ DbgFrame DF_; Value r_; fire_dbgEnter(&DF_, &kDbgF_{f.Name}, {hidden});{depthIn} r_ = {call};{depthOut} fire_dbgLeave(&DF_); return r_; }}";

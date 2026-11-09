@@ -338,7 +338,7 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
     X(int32_t, g_secDepth, 0) \
     X(OwnList* const*, g_scopeLists, NULL)   /* a call of an ownership method with a `Takes` mode through the dispatcher: the scopes of the call (see ownMethodT) */ \
     X(int32_t, g_scopeCount, 0) \
-    X(uint32_t, g_callDepth, 0)         /* the number of fire functions that are running on this thread (only kept when the program uses `try x.Take...`) */ \
+    X(OwnList*, g_argIn, NULL)          /* `try x.Take...`: the argument list of the call that is starting - set right before the call, taken by the callee on entry (MYARGS) */ \
     X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */ \
     X(const void*, g_callTArgs, NULL)       /* the type arguments for the next call of a generic method (TArgs) */ \
     X(int32_t, g_explicitTArgs, 0)           /* the call names its type arguments (`M<string>(x)`): their number - only generic overloads with that many count */ \
@@ -400,7 +400,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_travel FIRE_TLV(g_travel)
 #define g_curSection FIRE_TLV(g_curSection)
 #define g_secDepth FIRE_TLV(g_secDepth)
-#define g_callDepth FIRE_TLV(g_callDepth)
+#define g_argIn FIRE_TLV(g_argIn)
 #define g_scopeLists FIRE_TLV(g_scopeLists)
 #define g_scopeCount FIRE_TLV(g_scopeCount)
 #define g_reflCaller FIRE_TLV(g_reflCaller)
@@ -1285,7 +1285,7 @@ struct OwnList {
     Owned* head;
     Owned* tail;
     uint32_t mark;     /* scopes: height of the temporary pool when the scope was entered */
-    uint32_t depth;    /* argument lists (`mark == AL_MARK`): the call depth of the caller (see `try x.Take...`, `g_callDepth`) */
+    uint32_t depth;    /* (unused: kept for the layout of OwnList) */
     OwnList* parent;   /* scopes: the enclosing scope (TakeUpwards; set only when the program uses it) */
     Owned* holder;     /* object lists: the object that owns the list (null for a scope) */
     OwnList* home;     /* the statement temporaries of a scope (SPEC 2.1): that scope's list (null for any other list) */
@@ -5845,7 +5845,6 @@ FIRE_FN void takeArg(Value v, OwnList* from, OwnList* al) {
     if (o) { if (o->owner) ownUnlink(o); ownLink(al, o); }
     al->parent = from;
     al->mark = AL_MARK;
-    al->depth = g_callDepth;
 }
 
 /* `f(g())`: the result of a call passed straight on belongs to the callee, not to the caller (SPEC 2.1). The generated code lets the value travel in the
@@ -5856,7 +5855,6 @@ FIRE_FN void reownArg(Value v, OwnList* from, OwnList* al) {
     if (o && scopeListOf(o) == from) { ownUnlink(o); ownLink(al, o); }   /* (also what hangs on a temporary object) */
     al->parent = from;
     al->mark = AL_MARK;
-    al->depth = g_callDepth;
 }
 
 /* ---- Ownership in property accessors (SPEC 2.2): what belongs to the running accessor call - in one of its scopes `lists`, or handed to a setter by the
@@ -6104,6 +6102,7 @@ FIRE_FN void fire_carryFromArgs(Value v, OwnList* al) {
     }
 }
 FIRE_FN void finishArgs(Value result, OwnList* al) {
+    g_argIn = NULL;   /* (`try x.Take...`: a callee that was no fire function did not take it) */
     transferOut(result, al);
     if (al->head) fire_carryFromArgs(result, al);
     if (al->head) destroyList(al);
@@ -6224,15 +6223,15 @@ FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* 
 
 /* `try x.Take...(...)` (SPEC 2.2): only the owner moves the thing - it has to belong to a scope of the running call (`lists`) or to the current object
  * (`thisValue`). True when it moved. */
-FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue) {
+FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
     Owned* o = ownedOf(self);
     bool mine = false;
     int i;
     if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
     for (i = 0; i < n && !mine; i++) mine = o->owner == lists[i];
-    /* the result of a call that was passed on (`f(g())`, `f(take x)`) belongs to the called function: natively it travels in the argument list of the call,
-     * which the caller made one call level up */
-    if (!mine && o->owner && !o->owner->holder && o->owner->mark == AL_MARK && o->owner->depth + 1 == g_callDepth) mine = true;
+    /* the result of a call that was passed on (`f(g())`, `f(take x)`) belongs to the called function: natively it travels in the argument list of the call -
+     * the one the running function was given (`myArgs`: the caller set g_argIn right before the call, the function took it on entry) */
+    if (!mine && myArgs && o->owner == myArgs) mine = true;
     if (!mine && thisValue.kind == K_Class && leafAlive(thisValue)) mine = objOwns(objAt(thisValue), o);
     if (!mine || (o->flags & 1)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
@@ -6554,7 +6553,6 @@ FIRE_FN Value copyOwned(Value target, Value v, bool deep) {
 FIRE_FN Value copyArg(Value v, bool deep, OwnList* from, OwnList* al) {
     al->parent = from;
     al->mark = AL_MARK;
-    al->depth = g_callDepth;
     return copyValue(v, deep, al);
 }
 

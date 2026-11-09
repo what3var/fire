@@ -45,7 +45,6 @@ namespace fire.Native
         private string NoCAbiReason(Func f)
         {
             if (DebugBuild) return "debug build";
-            if (_usesTryDepth) return "the program counts the call depth (try x.Take...)";
             if (!ScalarsOn) return "no scalars";
             if (Modular || LibraryRole) return "module";
             if (f.External || f.Export != null) return "exported";
