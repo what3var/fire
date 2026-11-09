@@ -687,14 +687,14 @@ namespace fire.Native
             if (restricted && from == null) return null;
             int? index = null;
             int? rawOff = null;
-            bool raw = RawType(name) != 0;
             foreach (var c in InstancesOf(rc))
             {
                 if (!c.Rc.FieldIndex.TryGetValue(name, out int i) || index is { } known && known != i) return null;
                 if (restricted && c.Rc.FindFieldAccess(name) is { } access && !AccessAllowed(from!.Chunk.OwnerClass, access.DeclaringClass, access.Access)) return null;
-                // (a packed field: at the same offset in every one of them, too)
-                if (raw && RawLayoutOf(c.Rc).Off[i] is var off && (rawOff is { } knownOff && knownOff != off)) return null;
-                if (raw) rawOff = RawLayoutOf(c.Rc).Off[i];
+                // (packed or not, and at the same offset, in every one of them, too)
+                int off = RawLayoutOf(c.Rc).Off[i];
+                if (rawOff is { } knownOff && knownOff != off) return null;
+                rawOff = off;
                 index = i;
             }
             return index;
@@ -742,7 +742,7 @@ namespace fire.Native
             int next = 0, open = -1;
             for (int i = 0; i < names.Count; i++)
             {
-                if (RawType(names[i]) != 0) { slot[i] = -1; half[i] = -1; continue; }   // (a packed field: behind the slots, CppGenerator.Packed.cs)
+                if (RawTypeAt(rc, i) != 0) { slot[i] = -1; half[i] = -1; continue; }   // (a packed field: behind the slots, CppGenerator.Packed.cs)
                 if (NarrowName(names[i]))
                 {
                     if (open >= 0) { slot[i] = open; half[i] = 1; open = -1; }
@@ -759,7 +759,7 @@ namespace fire.Native
         {
             if (RawRef(rc, index, obj) is { } rawRef)
             {
-                int rawType = RawType(LayoutClass(rc, index).FlattenedFieldNames[index]);
+                int rawType = RawTypeAt(LayoutClass(rc, index), index);
                 return ScalarValueOf(KindOfType(rawType), UnitOfType(rawType), rawRef);
             }
             var layout = LayoutOf(LayoutClass(rc, index));
@@ -799,7 +799,7 @@ namespace fire.Native
                 + (requiredArray != 0 && !arrayKnown ? FieldArrayCheck(rc, name) + " " : "");
             var (fieldSlot, fieldHalf) = FieldPlace(rc, index);
             // (a field declared with a kind - int, float, bool, `defined ...` - holds nothing but numbers and undefined: no count to keep, the store is the C store)
-            string put = RawRef(rc, index, $"objAt({obj})") is { } rawPut ? $"{rawPut} = {RawFromValue(RawType(name), "x")};"
+            string put = RawRef(rc, index, $"objAt({obj})") is { } rawPut ? $"{rawPut} = {RawFromValue(RawTypeAt(LayoutClass(rc, index), index), "x")};"
                 : fieldHalf >= 0 ? $"nvSet(&objFields(objAt({obj}))[{fieldSlot}], {fieldHalf}, x);"
                 : declaredKind != 0 ? $"objFields(objAt({obj}))[{fieldSlot}] = x;" : $"setFieldAt({obj}, {fieldSlot}, x);";
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) {put}" : put;
@@ -1073,7 +1073,7 @@ namespace fire.Native
                     if (rc == null) continue;
                     string token = args == null ? "$" + k : k < args.Length ? args[k] : "";
                     string expr = token.Length == 0 ? "NULL"
-                        : token.StartsWith('$') ? $"(o->targs ? o->targs[{token.Substring(1)}] : NULL)"
+                        : token.StartsWith('$') ? $"(objTArgs(o) ? objTArgs(o)[{token.Substring(1)}] : NULL)"
                         : TArgRef(token);
                     cases.Add((ci.Id, expr));
                 }
@@ -2321,7 +2321,7 @@ namespace fire.Native
                 sb.AppendLine("        case K_Array: case K_Buffer: case K_String: {");   // (a string: the enumerator indexes it, `text[i]` is a char)
                 sb.AppendLine("            bool ok;");
                 sb.AppendLine("            Value count = lengthOf(self, &ok);");
-                sb.AppendLine($"            Value e = newObject({info.Id}, {SlotCount(info)}, list);");
+                sb.AppendLine($"            Value e = {NewObjectCall(info, "list")};");
                 sb.AppendLine($"            {Nested($"{ctor.Name}(e, self, count);")}");   // (the VM makes it nested)
                 sb.AppendLine("            return e;");
                 sb.AppendLine("        }");
@@ -2441,7 +2441,7 @@ namespace fire.Native
             foreach (var cls in _classList)
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) indexByClass[cls.Id] = index;
             // (a packed field: its offset is the class's - the helpers by class, like those of a property)
-            if (Modular || HasProperty(name) || RestrictedField(name) || RawType(name) != 0) return PropertyHelpers(name, indexByClass);
+            if (Modular || HasProperty(name) || RestrictedField(name) || _classList.Any(c => c.Rc.FieldIndex.TryGetValue(name, out int ri) && RawTypeAt(c.Rc, ri) != 0)) return PropertyHelpers(name, indexByClass);
             // (the place of the field: its slot - of a narrow one slot * 2 + half, the helpers below take it apart)
             bool narrow = NarrowName(name);
             foreach (var cls in _classList)
@@ -2583,7 +2583,7 @@ namespace fire.Native
                     if (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck)
                         unit += arrayCheck + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     var (armSlot, armHalf) = FieldPlace(cls.Rc, index);
-                    if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawType(name), "x")}; return; }}")); continue; }
+                    if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawTypeAt(cls.Rc, index), "x")}; return; }}")); ptrArms.Add((label, $"return packedFieldAddress({CString(name)});")); continue; }
                     setArms.Add((label, armHalf >= 0 ? $"{{ {fieldGuardSet}{unit}nvSet(&objFields(o)[{armSlot}], {armHalf}, x); return; }}"
                         : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; retain(x); release(old); return; }}"));
                     ptrArms.Add((label, $"return PtrV(&objFields(o)[{armSlot}]);"));
@@ -2674,19 +2674,19 @@ namespace fire.Native
                 var destroyedClass = _classes.GetValueOrDefault("DestroyedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DestroyedException");
                 var divideClass = _classes.GetValueOrDefault("DivideByZeroException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DivideByZeroException");
                 sb.AppendLine("Value makeDivideError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({divideClass.Id}, {SlotCount(divideClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(divideClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[divideClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 sb.AppendLine("Value makeDestroyedError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({destroyedClass.Id}, {SlotCount(destroyedClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(destroyedClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[destroyedClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 if (_usesReflection && _classes.GetValueOrDefault("ReflectionException") is { } reflectClass)
                 {
                     sb.AppendLine("Value makeReflectError(Value message) {");
-                    sb.AppendLine($"    Value o = newObject({reflectClass.Id}, {SlotCount(reflectClass)}, g_globalOwn);");
+                    sb.AppendLine($"    Value o = {NewObjectCall(reflectClass, "g_globalOwn")};");
                     sb.AppendLine($"    {Nested($"{_funcByProto[reflectClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                     sb.AppendLine("    return o;");
                     sb.AppendLine("}");
@@ -2698,18 +2698,18 @@ namespace fire.Native
                 }
                 var accessClass = _classes.GetValueOrDefault("AccessDeniedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class AccessDeniedException");
                 sb.AppendLine("Value makeAccessError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({accessClass.Id}, {SlotCount(accessClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(accessClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[accessClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 var unitClass = _classes.GetValueOrDefault("UnitMismatchException") ?? throw new NativeNotSupportedException("exceptions need the prelude class UnitMismatchException");
                 sb.AppendLine("Value makeUnitError(Value message, Value expected, Value actual) {");
-                sb.AppendLine($"    Value o = newObject({unitClass.Id}, {SlotCount(unitClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(unitClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[unitClass.Rc.FindConstructor(3)!].Name}(o, message, expected, actual);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 sb.AppendLine("Value makeIndexError(Value message, int64_t index, int64_t length) {");
-                sb.AppendLine($"    Value o = newObject({indexClass.Id}, {SlotCount(indexClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(indexClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[indexClass.Rc.FindConstructor(3)!].Name}(o, message, Int(index), Int(length));")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
@@ -2721,7 +2721,7 @@ namespace fire.Native
                     var errorClass = _classes.GetValueOrDefault(name);
                     if (errorClass == null || errorClass.Rc.FindConstructor(1) is not { ParamCount: 1 } ctor) continue;
                     sb.AppendLine($"    if (strcmp(cls, {CString(name)}) == 0) {{");
-                    sb.AppendLine($"        Value o = newObject({errorClass.Id}, {SlotCount(errorClass)}, g_globalOwn);");
+                    sb.AppendLine($"        Value o = {NewObjectCall(errorClass, "g_globalOwn")};");
                     sb.AppendLine($"        {Nested($"{_funcByProto[ctor].Name}(o, message);")}");
                     sb.AppendLine("        return o;");
                     sb.AppendLine("    }");
@@ -2785,8 +2785,9 @@ namespace fire.Native
                 sb.AppendLine($"static void {destroy}(Obj* o) {{ {string.Join(" ", chain)} }}");
             }
             string toString = cls.Rc.FindMethodWithAccess("ToString", 0).Proto is { ParamCount: 0 } m ? _funcByProto[m].Name : "NULL";
-            int message = _usesExceptions && cls.Rc.FieldIndex.TryGetValue("message", out int mi) ? mi : -1;
-            int ticks = _needsTimeObj && cls.Rc.FieldIndex.TryGetValue("ticks", out int ti) ? ti : -1;
+            // (the slots of the fields - a packed field before them takes none)
+            int message = _usesExceptions && cls.Rc.FieldIndex.TryGetValue("message", out int mi) ? FieldPlace(cls.Rc, mi).Slot : -1;
+            int ticks = _needsTimeObj && cls.Rc.FieldIndex.TryGetValue("ticks", out int ti) ? FieldPlace(cls.Rc, ti).Slot : -1;
             string types = "NULL";
             if (_usesExceptions && excTypes)
             {
@@ -3795,7 +3796,7 @@ namespace fire.Native
                 if (newClass != null)
                 {
                     string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
-                    string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
+                    string typeArgsSet = _pendingNewTArgs != null ? $"objSetTArgs(asObj(o), {_pendingNewTArgs}); " : "";
                     _pendingNewTArgs = null;
                     E($"{{ Value o = {NewObjectCall(newClass, ownerExpr)}; {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{selector.Name}(o{args}, &{OwnerList()}); ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
@@ -5107,7 +5108,7 @@ namespace fire.Native
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = newNames != null ? NamedCallArgsOrFail(ctor, d - argc, argc, newNames, mask, "o", "new " + cls.Rc.Name) : DefaultArgs(ctor, argc, "o", "&" + OwnerList());
                     string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
-                    string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
+                    string typeArgsSet = _pendingNewTArgs != null ? $"objSetTArgs(asObj(o), {_pendingNewTArgs}); " : "";
                     _pendingNewTArgs = null;
                     E($"{{ Value o = {NewObjectCall(cls, ownerExpr)}; {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));

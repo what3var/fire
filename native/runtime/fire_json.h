@@ -10,12 +10,12 @@ FIRE_BEGIN
 /* A field as JSON sees it (JsonMethods.JsonField): the name in the JSON text, the slot in the object, the declared type (`int`, `Point`, `List<Point>`, `$0`, "" for
  * an untyped one) and the unit it is declared with (0: none). */
 /* `arr`: a field declared as a typed array without a unit (FieldInfo.RequiredArray: the element | the rank << 8; 0: none) - what is read for it is typed */
-typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; uint8_t defined; } JsonFieldInfo;   /* (defined: the kind of a `defined` field, SPEC 8.10b) */
+typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; uint8_t defined; uint8_t raw; uint16_t rawOff; } JsonFieldInfo;   /* (raw: a packed field - FIRE_RAW_*, at rawOff of objRaw) */   /* (defined: the kind of a `defined` field, SPEC 8.10b) */
 /* A class: its name (as the program knows it, `Box`1` for a generic one whose plain name is taken), the plain name, its fields, `flags` (1 actor, 2 has
  * OnDeserialized(), 4 the List of the prelude, 8 JsonObject, 16 not serializable: `[NotSerializable]` or `"serializable": false` in its package) and the number of its
  * type parameters. */
 /* (fields: the njson fields that go to JSON, then the `defined` fields that do not, then a row with a NULL name) */
-typedef struct JsonClassInfo { const char* name; const char* plain; uint32_t nfields; const JsonFieldInfo* fields; uint32_t njson; uint8_t flags; uint8_t ntparams; } JsonClassInfo;
+typedef struct JsonClassInfo { const char* name; const char* plain; uint32_t nfields; const JsonFieldInfo* fields; uint32_t njson; uint8_t flags; uint8_t ntparams; uint16_t nraw; } JsonClassInfo;   /* (nraw: the bytes of its packed fields) */
 /* The slots of the classes JSON fills itself (-1: not in the program). */
 typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; } JsonSpecial;
 
@@ -214,8 +214,8 @@ static const char* jsTArgName(const TArg* t) {
 static JsStrs jsTypeArgs(JsCtx* J, Obj* o, const JsonClassInfo* c) {
     JsStrs result = {NULL, 0, 0};
     uint32_t k;
-    if (!o->targs || !c || c->ntparams == 0) return result;
-    for (k = 0; k < c->ntparams; k++) jsPushStr(J, &result, jsTArgName(o->targs[k]));
+    if (!objTArgs(o) || !c || c->ntparams == 0) return result;
+    for (k = 0; k < c->ntparams; k++) jsPushStr(J, &result, jsTArgName(objTArgs(o)[k]));
     return result;
 }
 /* The type of a slot with a type parameter of the class (`$0`) replaced by the object's type argument. */
@@ -226,7 +226,7 @@ static const char* jsSubstitute(JsCtx* J, const char* type, Obj* o, const JsonCl
     if (len < 2 || type[0] != '$') return type;
     while (end < len && type[end] >= '0' && type[end] <= '9') end++;
     k = (uint32_t)atoi(jsDup(J, type + 1, end - 1));
-    arg = o && o->targs && c && k < c->ntparams ? jsTArgName(o->targs[k]) : "";
+    arg = o && objTArgs(o) && c && k < c->ntparams ? jsTArgName(objTArgs(o)[k]) : "";
     return arg[0] == 0 ? "" : jsCat(J, arg, type + end);
 }
 
@@ -400,6 +400,7 @@ static void jsDiscover(JsWriter* w, Value start) {
                 continue;
             }
             for (k = (int64_t)c->njson - 1; k >= 0; k--) {
+                if (c->fields[k].raw) continue;   /* (a packed field: a number, nothing to walk) */
                 jsGrow(J, (void**)&stack, n, &cap, sizeof(JsPending));
                 stack[n].v = objFields(o)[c->fields[k].slot]; stack[n].container = o; stack[n].containerKind = K_Class; n++;
             }
@@ -520,7 +521,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
     if (shared && !(isRoot || jsCanDefine(w, o, container, containerKind))) { jsRef(w, id); return; }
     if (shared) jsMarkWritten(w, o);
     jsSplitGeneric(J, type, &typeArgs);
-    withType = w->typeNames && (isRoot || type[0] == 0 || !jsEq(jsPlain(J, type), c->plain) || (typeArgs.n == 0 && o->targs && c->ntparams > 0));
+    withType = w->typeNames && (isRoot || type[0] == 0 || !jsEq(jsPlain(J, type), c->plain) || (typeArgs.n == 0 && objTArgs(o) && c->ntparams > 0));
     if (c->flags & JSON_FLAG_OBJECT) withType = false;
 
     if (c->flags & JSON_FLAG_LIST) {
@@ -566,7 +567,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
         uint32_t i;
         for (i = 0; i < c->njson && !J->failed; i++) {
             const JsonFieldInfo* f = &c->fields[i];
-            Value value = objFields(o)[f->slot];
+            Value value = f->raw ? rawGet(o, f->raw, f->rawOff, f->unit) : objFields(o)[f->slot];
             if (value.kind == K_Lambda || isPtr(value)) continue;
             jsKey(w, f->name, &first);
             jsWriteValue(w, value, jsSubstitute(J, f->type, o, c), o, K_Class, false, f->unit);
@@ -991,10 +992,10 @@ static Value jsBuildList(JsReader* r, JsNode* a, const char* type, OwnList* owne
     Arr* items;
     if (sp->listCls < 0) return jsReadFail(r, jsCat(r->J, path, ": the class 'List' is not known."));
     c = jsonClassAt((uint32_t)sp->listCls);
-    list = newObject((uint32_t)sp->listCls, c->nfields, owner);
+    list = newObjectR((uint32_t)sp->listCls, c->nfields, c->nraw, owner);
     jsSplitGeneric(r->J, type, &args);
     element = args.n == 1 ? args.p[0] : "";
-    if (element[0]) objAt(list)->targs = jsTypeArgsFor(r->J, &element, 1);
+    if (element[0]) objSetTArgs(objAt(list), jsTypeArgsFor(r->J, &element, 1));
     if (hasId) jsIdSet(r, id, list);
     n = a->nitems;
     items = allocArr((uint32_t)(n > 8 ? n : 8), objOwned(objAt(list)));
@@ -1126,15 +1127,16 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
     c = jsonClassAt((uint32_t)cls);
     if (c->flags & JSON_FLAG_ACTOR) return jsReadFail(r, jsCat5(J, path, ": an actor ('", c->name, "') cannot be read from JSON.", ""));
     if (c->flags & JSON_FLAG_EXCLUDED) { jsFail(J, jsCat5(J, path, ": the class '", c->name, "' cannot be read from JSON: ", JSON_NOT_SERIALIZABLE), "ArgumentException"); return Undef(); }
-    obj = newObject((uint32_t)cls, c->nfields, owner);
+    obj = newObjectR((uint32_t)cls, c->nfields, c->nraw, owner);
     o2 = objAt(obj);
-    if (args.n > 0) o2->targs = jsTypeArgsFor(J, args.p, args.n);
+    if (args.n > 0) objSetTArgs(o2, jsTypeArgsFor(J, args.p, args.n));
     if (hasId) jsIdSet(r, id, obj);
     /* `defined int n` (SPEC 8.10b): a field that is not in the text holds zero - also one that does not go to JSON (the rows behind njson; a row without a
      * name ends the table) */
     for (m = 0; c->fields && c->fields[m].name; m++) {
         const JsonFieldInfo* df = &c->fields[m];
         if (!df->defined) continue;
+        if (df->raw) continue;   /* (a packed field starts at zero anyway) */
         jsStore(obj, df->slot, df->defined == K_Int ? Int(0, df->unit) : df->defined == K_Float ? Float((Real)0, df->unit) : df->defined == K_Bool ? Bool(false)
             : df->defined == K_Word ? WordV(0) : Char(0));
     }
@@ -1159,7 +1161,8 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
                 : field->defined == K_Char ? " is a char" : " is a bool", " and never undefined."), "ArgumentException");
             break;
         }
-        jsStore(obj, field->slot, v);
+        if (field->raw) rawSet(o2, field->raw, field->rawOff, v);
+        else jsStore(obj, field->slot, v);
     }
     if (c->flags & JSON_FLAG_HOOK) {
         jsGrow(J, (void**)&r->hooks, r->nhooks, &r->capHooks, sizeof(Value));
@@ -1179,7 +1182,7 @@ static Value jsBuildJsonObject(JsReader* r, JsNode* o, OwnList* owner, const cha
     OwnList* own;
     if (sp->objCls < 0) return jsReadFail(r, jsCat(J, path, ": an object without '$type' needs a class to read into (or the class JsonObject of `#import \"json\"`)."));
     c = jsonClassAt((uint32_t)sp->objCls);
-    obj = newObject((uint32_t)sp->objCls, c->nfields, owner);
+    obj = newObjectR((uint32_t)sp->objCls, c->nfields, c->nraw, owner);
     if (hasId) jsIdSet(r, id, obj);
     members = (JsMember**)jsAlloc(J, (o->nmembers ? o->nmembers : 1) * sizeof(JsMember*));
     for (i = 0; i < o->nmembers; i++) if (r->plain || o->members[i].klen == 0 || o->members[i].key[0] != '$') members[n++] = &o->members[i];

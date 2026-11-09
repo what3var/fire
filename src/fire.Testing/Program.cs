@@ -23567,6 +23567,58 @@ else
             for (int i = 0; i < 1000; i++) { sum = sum + many[i].id + many[i].count }
             print(sum)
             """),
+        ("Gepackte Objekte mit JSON: Serialize/Deserialize ueber die Plaetze, [NonSerialized], null ist die ArgumentException", """
+            #import "json"
+            class Base { defined int id; string tag = "t" }
+            class P : Base {
+                defined float : m len
+                string name = "p"
+                defined bool ok
+                [NonSerialized] defined int hidden
+                Bump() { this.id++; this.len = this.len + 1m; this.ok = !this.ok; this.hidden = this.hidden + 3 }
+            }
+            var p = new P()
+            p.Bump(); p.Bump()
+            var text = Json.Serialize(p)
+            print(text)
+            var q = Json.Deserialize<P>(text)
+            q.Bump()
+            print(q.id + " " + q.len + " " + q.ok + " " + q.hidden + " " + q.name + " " + q.tag)
+            try { Json.Deserialize<P>("{\"id\": null}") } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Gepackte Objekte mit Reflection und Sonden: Reflect.Get/Set (mit Einheit), undefined abgelehnt, probe changed", """
+            #import "reflection"
+            class P { defined int x; string name = "n"; defined float : cm w; int plain }
+            var p = new P()
+            p.x = 4
+            Reflect.Set(p, "x", 9)
+            Reflect.Set(p, "w", 2m)
+            print(Reflect.Get(p, "x") + " " + Reflect.Get(p, "w") + " " + p.x + " " + p.w + " " + Reflect.Get(p, "name"))
+            try { Reflect.Set(p, "x", undefined) } catch (ArgumentException e) { print(e.message) }
+            var seen = 0
+            probe p.x changed (int old, int nv) => { seen = seen + 1 }
+            p.x = 11
+            p.x = p.x + 1
+            print(seen + " " + p.x)
+            """),
+        ("Gepackte Objekte mit Threads: taking kopiert die C-Zahlen, sync schreibt sie zurueck, flat", """
+            #import "time"
+            class C { defined int n; defined float : m d; string s = "c"; defined bool done }
+            var shared = new C()
+            shared.n = 5
+            fire taking shared {
+                shared.n = shared.n * 10
+                shared.d = shared.d + 2m
+                shared.s = "from thread"
+                shared.done = true
+                sync shared
+            }
+            while (!shared.done) { Sleep(1) }
+            print(shared.n + " " + shared.d + " " + shared.s + " " + shared.done)
+            var copy2 = flat shared
+            copy2.n = 1
+            print(copy2.n + " " + shared.n + " " + copy2.d)
+            """),
         ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
             class K {
                 defined int n

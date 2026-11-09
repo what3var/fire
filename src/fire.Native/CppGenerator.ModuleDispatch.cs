@@ -337,7 +337,7 @@ namespace fire.Native
                     sb.AppendLine("        case K_Array: case K_Buffer: case K_String: {");
                     sb.AppendLine("            bool ok;");
                     sb.AppendLine("            Value count = lengthOf(self, &ok);");
-                    sb.AppendLine($"            Value e = newObject({ClassIdExpr(info)}, {info.Fields.Count}, list);");
+                    sb.AppendLine($"            Value e = {NewObjectCall(info, "list")};");
                     sb.AppendLine($"            {Nested($"{ctor.Name}(e, self, count);")}");
                     sb.AppendLine("            return e;");
                     sb.AppendLine("        }");
@@ -395,7 +395,7 @@ namespace fire.Native
                 var arms = new List<(int, string)>();
                 foreach (var cls in Served.Where(c => IsOwnClass(c.Rc)))
                 {
-                    if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) arms.Add((cls.Id, $"return objFields(o)[{index}];"));
+                    if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) arms.Add((cls.Id, $"return {FieldRead(cls.Rc, index, "o")};"));
                     else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) arms.Add((cls.Id, $"{{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}"));
                 }
                 sb.AppendLine($"static Value {FieldFn("gfp", name)}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    uint32_t k_ = {OwnLocal("o->cls")};\n    if (!({OwnRangeTest("k_")})) return Undef();\n    switch (k_) {{\n{MergedCases(arms)}        default: return Undef();\n    }}\n}}");
@@ -494,7 +494,7 @@ namespace fire.Native
             if (rc == null) return null;
             string token = args == null ? "$" + k : k < args.Length ? args[k] : "";
             return token.Length == 0 ? "NULL"
-                : token.StartsWith('$') ? $"({obj}->targs ? {obj}->targs[{token.Substring(1)}] : NULL)"
+                : token.StartsWith('$') ? $"(objTArgs({obj}) ? objTArgs({obj})[{token.Substring(1)}] : NULL)"
                 : TArgRef(token);
         }
 
@@ -574,7 +574,7 @@ namespace fire.Native
                 if (methods.Count > 0)
                     sb.AppendLine($"static const FireMethod {table}_m[] = {{{string.Join(", ", methods.Select(x => $"{{{CString(x.Name)}, {x.Argc}, {x.Params}, {CallFn(x.Name, x.Argc, "mt_")}}}"))}}};");
                 if (fields.Count > 0)
-                    sb.AppendLine($"static const FireField {table}_f[] = {{{string.Join(", ", fields.Select(f => $"{{{CString(f)}, {cls.Rc.FieldIndex[f]}, {FieldFn("fget", f)}, {FieldFn("fset", f)}, {FieldFn("fptr", f)}}}"))}}};");
+                    sb.AppendLine($"static const FireField {table}_f[] = {{{string.Join(", ", fields.Select(f => $"{{{CString(f)}, {TableSlotOf(cls.Rc, f)}, {FieldFn("fget", f)}, {FieldFn("fset", f)}, {FieldFn("fptr", f)}}}"))}}};");
                 sb.AppendLine($"{(LibraryRole ? "" : "static ")}const FireMembers {table} = {{{cls.Id}u, {methods.Count}, {(methods.Count > 0 ? table + "_m" : "NULL")}, {fields.Count}, {(fields.Count > 0 ? table + "_f" : "NULL")}}};   // {cls.Rc.Name}");
                 if (IsOwnClass(cls.Rc) && TArgOfClassFunction(cls.Rc) is { } targ) sb.Append(targ);
             }
@@ -677,7 +677,7 @@ namespace fire.Native
             if (methods.Count > 0)
                 sb.AppendLine($"static const FireMethod {table}_m[] = {{{string.Join(", ", methods.Select(x => $"{{{CString(x.Name)}, {x.Argc}, {x.Params}, {px}mt_{Mangle(x.Name)}_{x.Argc}}}"))}}};");
             if (fields.Count > 0)
-                sb.AppendLine($"static const FireField {table}_f[] = {{{string.Join(", ", fields.Select(f => $"{{{CString(f)}, {c.FieldIndex[f]}, {px}fget_{Mangle(f)}, {px}fset_{Mangle(f)}, {px}fptr_{Mangle(f)}}}"))}}};");
+                sb.AppendLine($"static const FireField {table}_f[] = {{{string.Join(", ", fields.Select(f => $"{{{CString(f)}, {TableSlotOf(c, f)}, {px}fget_{Mangle(f)}, {px}fset_{Mangle(f)}, {px}fptr_{Mangle(f)}}}"))}}};");
             sb.AppendLine($"static const FireMembers {table} = {{{k}u, {methods.Count}, {(methods.Count > 0 ? table + "_m" : "NULL")}, {fields.Count}, {(fields.Count > 0 ? table + "_f" : "NULL")}}};   // {c.Name} ({m.Name})");
             _libraryTablesCode.Append(sb);
             return _libraryClassTables[(m, c.Name)] = table;

@@ -162,7 +162,7 @@ namespace fire.Native
             if (rows.Count > 0)
             {
                 sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", rows.Select(f =>
-                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}}}")) + ", {NULL, 0, NULL, 0, 0, 0}};");
+                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0}};");
                 if (unitFixups != null)
                     for (int j = 0; j < rows.Count; j++)
                         if (UnitId(rows[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");
@@ -171,7 +171,7 @@ namespace fire.Native
             if (rc.IsActor) flags |= 1;
             if (rc.IsNotSerializable()) flags |= 16;
             if (JsonMethods.HasOnDeserialized(rc)) flags |= 2;
-            return $"{{{CString(rc.Name)}, {CString(GenericClassNames.PlainName(rc.Name))}, {ci.Fields.Count}, {fieldTable}, {fields.Count}, {flags}, {JsonTypeParamCount(rc)}}}";
+            return $"{{{CString(rc.Name)}, {CString(GenericClassNames.PlainName(rc.Name))}, {SlotCount(ci)}, {fieldTable}, {fields.Count}, {flags}, {JsonTypeParamCount(rc)}, {(PackedOn ? RawLayoutOf(rc).Bytes : 0)}}}";
         }
 
         /// <summary>A plugin whose program has JSON: the rows of its classes and its type arguments (FirePlugin.jsonAt, ...: the program's jsonClassAt asks for a class
@@ -219,22 +219,22 @@ namespace fire.Native
             int jsonIds = _classList.Count == 0 ? 0 : _classList.Max(c => c.Id) + 1;
             for (int jsonId = 0; jsonId < jsonIds; jsonId++)
             {
-                if (!jsonById.TryGetValue(jsonId, out var ci)) { rows.Add("{\"\", \"\", 0, NULL, 0, 0, 0}"); continue; }   // (an id without a class, see ClassDescTable)
+                if (!jsonById.TryGetValue(jsonId, out var ci)) { rows.Add("{\"\", \"\", 0, NULL, 0, 0, 0, 0}"); continue; }   // (an id without a class, see ClassDescTable)
                 var rc = ci.Rc;
                 int flags = 0;
                 if (rc.Name == "List" && rc.FieldIndex.TryGetValue("items", out int items) && rc.FieldIndex.TryGetValue("count", out int count))
                 {
                     flags |= 4;
-                    (listCls, listItems, listCount) = (ci.Id, items, count);
+                    (listCls, listItems, listCount) = (ci.Id, FieldPlace(rc, items).Slot, FieldPlace(rc, count).Slot);
                 }
                 if (rc.Name == "JsonObject" && rc.FieldIndex.TryGetValue("keys", out int keys) && rc.FieldIndex.TryGetValue("values", out int values) && rc.FieldIndex.TryGetValue("count", out int n))
                 {
                     flags |= 8;
-                    (objCls, objKeys, objValues, objCount) = (ci.Id, keys, values, n);
+                    (objCls, objKeys, objValues, objCount) = (ci.Id, FieldPlace(rc, keys).Slot, FieldPlace(rc, values).Slot, FieldPlace(rc, n).Slot);
                 }
                 rows.Add(JsonRow(ci, $"kJsonF{ci.Id}", flags, sb, null));
             }
-            sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
+            sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
             sb.AppendLine($"static const uint32_t kJsonClassCount = {rows.Count};");
             sb.AppendLine($"static const JsonSpecial kJsonSpecial = {{{listCls}, {listItems}, {listCount}, {objCls}, {objKeys}, {objValues}, {objCount}}};");
             var targs = _targIds.OrderBy(kv => kv.Value).ToList();

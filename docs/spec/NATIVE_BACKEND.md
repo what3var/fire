@@ -219,10 +219,22 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   (`RawLayoutOf`) - ein direkter Zugriff auf eine Basis kennt ihren Offset deshalb auch in abgeleiteten Objekten; haben alle Klassen, die das Objekt sein
   kann, gleich viele Slots, ist der Offset eine Konstante (sonst `objRaw`: `nfields * sizeof(Value)` zur Laufzeit). `newObjectR` legt sie mit Nullen an,
   `copyValue` (`flat`) und der tiefe Kopierer (`copy`) kopieren die Bytes. Die Feld-Helfer (`gf_`/`sf_`) gehen für solche Namen pro Klasse wie die einer
-  Property. Nur wo nichts die Felder eines Objekts über ihren Index liest, ohne das Layout zu kennen - dieselben Programme wie bei den schmalen Feldern
-  (`NarrowFieldsOn`: keine Threads, Reflection, Sonden, JSON, kein Debugger, keine Module) - und nicht für Felder, deren Adresse genommen wird.
+  Property. Wer die Felder eines Objekts ohne das Layout zu kennen liest, geht über ihre Plätze (`FirePlace`: Slot, schmale Hälfte oder gepackte C-Zahl;
+  `placeGet`, `rawGet`/`rawSet`): JSON (`JsonFieldInfo.raw`/`rawOff`, `JsonClassInfo.nraw` für die Objekte, die es anlegt), der Debugger (`DbgClass.places`:
+  `expand` zeigt die Felder in ihrer Reihenfolge, `set` geht über den Setter und liest den neuen Wert vom Platz), Reflection und Sonden über die
+  Feld-Helfer, Threads über `syncFields` (`sync x` kopiert die Bytes zurück; `taking` über den tiefen Kopierer). Auch Debug-Builds packen (ohne
+  Skalare: über die Value-Wege des Generators). **Module und Plugins** (Linkage `static`/`shared`, `--linkage plugin`): jedes Modul legt eine Klasse aus,
+  die es kennt - auch eine Basis aus einer anderen Bibliothek -, deshalb entscheidet dort allein die Deklaration des Felds (`RawTypeAt`: `defined`, eine
+  statische Art und Einheit), die jedes Modul aus der Schnittstelle der Klasse gleich sieht; ein Modul kennt nicht alle abgeleiteten Klassen (ein Plugin
+  kann ableiten), der Offset kommt deshalb immer über `objRaw` (die Slots des Objekts zur Laufzeit). Die Tabellen der Mitglieder (`FireField.index`) nennen
+  den Slot, -1 für ein gepacktes Feld (es geht über seine get/set-Funktionen des Moduls). Die Adresse eines gepackten Felds (`&obj.n`) gibt es in einem
+  Programm aus Modulen nicht (eine ArgumentException, `packedFieldAddress`); in einem Programm aus einem Stück wird ein Feld, dessen Adresse genommen
+  wird, nicht gepackt.
   Gemessen: 300 000 Objekte mit drei `defined int` und einem `defined bool` 45 -> 35 MB (64 Bit), 35 -> 31 MB (`#intwidth 32`, dort waren die schmalen
   Felder schon kompakt); der Code bleibt gleich groß (dos16: 1063 -> 1096 Byte für die Methode mit drei Feldänderungen).
+* **Der Objektkopf.** Was die meisten Objekte nie brauchen - die Liste dessen, was ein Objekt besitzt, und seine Typargumente - liegt in einem Block
+  `ObjExt`, den `objExt` erst anlegt, wenn das Objekt etwas besitzt oder Typargumente bekommt (`objOwned`, `objSetTArgs`; gelesen mit `objTArgs`). Der
+  Kopf eines Objekts (`Obj`, mit dem `Owned` aller Werte mit Besitzer) ist damit 48 statt 56 Byte (64 Bit) und 32 statt 40 Byte (16 und 32 Bit).
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
