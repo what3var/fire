@@ -3262,7 +3262,7 @@ namespace fire.Native
             }
             if (f.NeedsArgList)
             {
-                if (framed) Var("OwnList", "AL", "scopeList(0)"); else decl.AppendLine("    OwnList AL = {NULL, NULL, 0, 0, NULL, NULL, NULL};");
+                if (framed) Var("OwnList", "AL", "scopeList(0)"); else decl.AppendLine("    OwnList AL = {NULL, NULL, 0, 0, NULL, NULL, NULL}; (void)AL;");
             }
             // the handlers of the `try` statements, and the operand stack slots of the catch blocks
             foreach (var region in f.Regions.Values.OrderBy(r => r.Template))
@@ -4138,6 +4138,7 @@ namespace fire.Native
             void SetScalar(int k, int type, string expr)
             {
                 SetT(k, type); SetR(k, false); _kindsKept = true;
+                if (k >= 0 && k < 64) st.Alias[k] = null;   // (the slot holds the scalar now, no alias any more)
                 string shadow = ScalarName(f, st, k);
                 E($"{shadow} = {expr};");
                 st.Scalar |= 1UL << k;
