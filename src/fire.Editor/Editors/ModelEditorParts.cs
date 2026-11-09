@@ -42,6 +42,7 @@ namespace fire.Editor
 
         public override void Render(DrawingContext context)
         {
+            context.FillRectangle(Brushes.Transparent, new Rect(Bounds.Size));   // (a click anywhere on the strip reaches it)
             int perRow = PerRow;
             for (int i = 0; i < Palette.Count; i++)
             {
