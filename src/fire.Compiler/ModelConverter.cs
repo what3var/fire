@@ -17,18 +17,20 @@ namespace fire.Compiler
         public static bool IsModelSource(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
-            return ext == ".gltf" || ext == ".glb";
+            return ext == ".gltf" || ext == ".glb" || ext == BlockModel.Extension;
         }
 
         /// <summary>The .f3d of a glTF file; InvalidDataException with the reason when it cannot be read.</summary>
         public static byte[] ConvertFile(string path, int fps = FramesPerSecond)
         {
+            if (Path.GetExtension(path).Equals(BlockModel.Extension, StringComparison.OrdinalIgnoreCase)) return ConvertBlocks(File.ReadAllText(path));
             byte[] data = File.ReadAllBytes(path);
             string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
             return Convert(data, name => File.ReadAllBytes(Path.Combine(dir, Uri.UnescapeDataString(name))), fps);
         }
 
-        private sealed class Part
+        /// <summary>A part as the writer takes it: the rest pose relative to the parent, the mesh in the part's space (normals of unit length), the colour (RGBA) or none.</summary>
+        internal sealed class Part
         {
             public int Parent = -1;
             public string Name = "";
@@ -38,6 +40,9 @@ namespace fire.Compiler
             public byte[]? Color;
             public bool HasUv;
         }
+
+        /// <summary>The .f3d of a block model (`.fblocks`, docs/graphics/models.md - the block editor of spark).</summary>
+        public static byte[] ConvertBlocks(string text) => BlockModel.Parse(text).ToF3d();
 
         public static byte[] Convert(byte[] file, Func<string, byte[]> readExternal, int fps = FramesPerSecond)
         {
@@ -244,6 +249,12 @@ namespace fire.Compiler
                 if (clips.Count > 65535) throw new InvalidDataException("Too many animations.");
             }
 
+            return Write(parts, clips, fps);
+        }
+
+        /// <summary>The bytes of an .f3d: the parts (parent before child) and the clips (frames x parts of translation, rotation, scale - 10 numbers).</summary>
+        internal static byte[] Write(List<Part> parts, List<(string Name, int Frames, double[][][] Poses)> clips, int fps)
+        {
             // the box of the whole model in its rest pose
             var world = new double[parts.Count][];
             double[] lo = { double.MaxValue, double.MaxValue, double.MaxValue }, hi = { double.MinValue, double.MinValue, double.MinValue };

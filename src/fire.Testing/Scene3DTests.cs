@@ -17,7 +17,16 @@ static class Scene3DTests
         return path.Replace("\\", "/");
     }
 
-    public static readonly string Script = ScriptText.Replace("{ROBOT}", RobotFile());
+    /// <summary>The figure of BlockModelTests as a block model file (.fblocks): forge makes an .f3d of it when the program is built.</summary>
+    private static string FigureFile()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "fire-scene3d-figure.fblocks");
+        string text = BlockModelTests.Figure();
+        if (!File.Exists(path) || File.ReadAllText(path) != text) File.WriteAllText(path, text);
+        return path.Replace("\\", "/");
+    }
+
+    public static readonly string Script = ScriptText.Replace("{ROBOT}", RobotFile()).Replace("{FIGURE}", FigureFile());
 
     private const string ScriptText = """
         #import "graphics"
@@ -297,6 +306,14 @@ static class Scene3DTests
         cam.Render()
         print("model fast " + H.Sum(frame))
         scene.Renderer = RenderMode.Software
+        var figure = new Object(Model.FromResource(new Resource("{FIGURE}")))
+        figure.SetPosition(1.5m, 0m, 1.5m)
+        figure.AnchorY = 0.0
+        scene.Add(figure)
+        print("blocks " + figure.Width + " " + figure.Height + " " + figure.Triangles + " " + Model.FromResource(new Resource("{FIGURE}")).Parts)
+        cam.Render()
+        print("blocks picture " + H.Sum(frame))
+        scene.Remove(figure)
         try { robot.Play("dance") } catch (Scene3DException e) { print("error " + e.message) }
         try { Model.FromBytes(new byte[10]) } catch (Scene3DException e) { print("error " + e.message) }
         try { robot.Advance(3) } catch (UnitMismatchException e) { print("unit " + e.message) }
