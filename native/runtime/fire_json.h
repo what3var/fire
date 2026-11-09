@@ -214,8 +214,8 @@ static const char* jsTArgName(const TArg* t) {
 static JsStrs jsTypeArgs(JsCtx* J, Obj* o, const JsonClassInfo* c) {
     JsStrs result = {NULL, 0, 0};
     uint32_t k;
-    if (!o->targs || !c || c->ntparams == 0) return result;
-    for (k = 0; k < c->ntparams; k++) jsPushStr(J, &result, jsTArgName(o->targs[k]));
+    if (!objTArgs(o) || !c || c->ntparams == 0) return result;
+    for (k = 0; k < c->ntparams; k++) jsPushStr(J, &result, jsTArgName(objTArgs(o)[k]));
     return result;
 }
 /* The type of a slot with a type parameter of the class (`$0`) replaced by the object's type argument. */
@@ -226,7 +226,7 @@ static const char* jsSubstitute(JsCtx* J, const char* type, Obj* o, const JsonCl
     if (len < 2 || type[0] != '$') return type;
     while (end < len && type[end] >= '0' && type[end] <= '9') end++;
     k = (uint32_t)atoi(jsDup(J, type + 1, end - 1));
-    arg = o && o->targs && c && k < c->ntparams ? jsTArgName(o->targs[k]) : "";
+    arg = o && objTArgs(o) && c && k < c->ntparams ? jsTArgName(objTArgs(o)[k]) : "";
     return arg[0] == 0 ? "" : jsCat(J, arg, type + end);
 }
 
@@ -520,7 +520,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
     if (shared && !(isRoot || jsCanDefine(w, o, container, containerKind))) { jsRef(w, id); return; }
     if (shared) jsMarkWritten(w, o);
     jsSplitGeneric(J, type, &typeArgs);
-    withType = w->typeNames && (isRoot || type[0] == 0 || !jsEq(jsPlain(J, type), c->plain) || (typeArgs.n == 0 && o->targs && c->ntparams > 0));
+    withType = w->typeNames && (isRoot || type[0] == 0 || !jsEq(jsPlain(J, type), c->plain) || (typeArgs.n == 0 && objTArgs(o) && c->ntparams > 0));
     if (c->flags & JSON_FLAG_OBJECT) withType = false;
 
     if (c->flags & JSON_FLAG_LIST) {
@@ -994,7 +994,7 @@ static Value jsBuildList(JsReader* r, JsNode* a, const char* type, OwnList* owne
     list = newObject((uint32_t)sp->listCls, c->nfields, owner);
     jsSplitGeneric(r->J, type, &args);
     element = args.n == 1 ? args.p[0] : "";
-    if (element[0]) objAt(list)->targs = jsTypeArgsFor(r->J, &element, 1);
+    if (element[0]) objSetTArgs(objAt(list), jsTypeArgsFor(r->J, &element, 1));
     if (hasId) jsIdSet(r, id, list);
     n = a->nitems;
     items = allocArr((uint32_t)(n > 8 ? n : 8), objOwned(objAt(list)));
@@ -1128,7 +1128,7 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
     if (c->flags & JSON_FLAG_EXCLUDED) { jsFail(J, jsCat5(J, path, ": the class '", c->name, "' cannot be read from JSON: ", JSON_NOT_SERIALIZABLE), "ArgumentException"); return Undef(); }
     obj = newObject((uint32_t)cls, c->nfields, owner);
     o2 = objAt(obj);
-    if (args.n > 0) o2->targs = jsTypeArgsFor(J, args.p, args.n);
+    if (args.n > 0) objSetTArgs(o2, jsTypeArgsFor(J, args.p, args.n));
     if (hasId) jsIdSet(r, id, obj);
     /* `defined int n` (SPEC 8.10b): a field that is not in the text holds zero - also one that does not go to JSON (the rows behind njson; a row without a
      * name ends the table) */

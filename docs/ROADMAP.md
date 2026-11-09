@@ -659,8 +659,8 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Programmbreite, floats, Zahlen mit Einheit, bools aus Vergleichen und `word`; docs/spec/NATIVE_BACKEND.md "Skalare"), Stufe 2b (Parameter und Rückgaben
    als C-Typen: über `defined int`/`float`/`word`/`bool` und `trust` - SPEC 8.10b, der Typprüfer warnt mit TC022 -, ein C-Rumpf je Methode und die
    Value-Funktion davor; NATIVE_BACKEND.md "Parameter und Rückgaben als C-Typen"). Felder als C-Typen (`defined`-Felder direkt als Zahl gelesen und geschrieben, NATIVE_BACKEND.md). Gepackte Objekte (`defined`-Felder als
-   C-Zahlen hinter den Slots). Offen: gepackte Objekte auch mit JSON, Reflection, Threads und Debugger (sie kennen das Layout noch nicht), ein kleinerer
-   Objektkopf.
+   C-Zahlen hinter den Slots). Der Objektkopf ist kleiner (Besitzliste und Typargumente in einem Block, der erst bei Bedarf entsteht). Offen: gepackte Objekte auch mit
+   JSON, Reflection, Threads und Debugger (sie kennen das Layout noch nicht).
    **Messung (Frage des Benutzers: woher die 350 KB eines Grafikprogramms auf dos16 kommen).** Grafik-C ~85 KB (~23 Byte je Zeile, normal), Runtime 75 KB,
    C-Bibliothek 46 KB - und **109 KB aus fire übersetzter Code** für 725 Zeilen (Prelude der Grafik + Programm), ~150 Byte je Zeile: `DrawRoundRect` (4 Zeilen,
    reicht an ein Native weiter) wird 298 Zeilen C und 4,7 KB. gcc `-m32 -Os` erzeugt aus demselben C ebenso viel (108 KB) - es ist der allgemeine Code, nicht

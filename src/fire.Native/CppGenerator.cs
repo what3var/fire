@@ -1073,7 +1073,7 @@ namespace fire.Native
                     if (rc == null) continue;
                     string token = args == null ? "$" + k : k < args.Length ? args[k] : "";
                     string expr = token.Length == 0 ? "NULL"
-                        : token.StartsWith('$') ? $"(o->targs ? o->targs[{token.Substring(1)}] : NULL)"
+                        : token.StartsWith('$') ? $"(objTArgs(o) ? objTArgs(o)[{token.Substring(1)}] : NULL)"
                         : TArgRef(token);
                     cases.Add((ci.Id, expr));
                 }
@@ -3795,7 +3795,7 @@ namespace fire.Native
                 if (newClass != null)
                 {
                     string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
-                    string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
+                    string typeArgsSet = _pendingNewTArgs != null ? $"objSetTArgs(asObj(o), {_pendingNewTArgs}); " : "";
                     _pendingNewTArgs = null;
                     E($"{{ Value o = {NewObjectCall(newClass, ownerExpr)}; {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{selector.Name}(o{args}, &{OwnerList()}); ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
@@ -5107,7 +5107,7 @@ namespace fire.Native
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = newNames != null ? NamedCallArgsOrFail(ctor, d - argc, argc, newNames, mask, "o", "new " + cls.Rc.Name) : DefaultArgs(ctor, argc, "o", "&" + OwnerList());
                     string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
-                    string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
+                    string typeArgsSet = _pendingNewTArgs != null ? $"objSetTArgs(asObj(o), {_pendingNewTArgs}); " : "";
                     _pendingNewTArgs = null;
                     E($"{{ Value o = {NewObjectCall(cls, ownerExpr)}; {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));

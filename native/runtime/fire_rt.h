@@ -2257,8 +2257,9 @@ typedef struct Obj {
     uint32_t cls;      /* class id (assigned by the generator) */
     uint16_t nfields;  /* the Value slots of the fields */
     uint16_t nraw;     /* the bytes of its packed fields behind them (objRaw; docs/spec/NATIVE_BACKEND.md "Gepackte Objekte"), 0 for most */
-    OwnList* owned;    /* what this object owns: made when it first owns something (objOwned; most objects never do), NULL until then */
-    TArgs targs;       /* the type arguments it was created with (null: none known) */
+    /* what this object owns and the type arguments it was created with - in one block, made when it first owns something or gets type arguments (objExt;
+     * most objects never do), NULL until then (docs/spec/NATIVE_BACKEND.md "Der Objektkopf") */
+    struct ObjExt* ext;
 #ifdef __cplusplus
     Value* fields() { return (Value*)((char*)this + FIRE_HDR(Obj)); }
 #endif
@@ -2299,19 +2300,26 @@ FIRE_FN int32_t nvGetI(const Value* slot, int half) { int32_t x; memcpy(&x, (con
 FIRE_FN void nvPutI(Value* slot, int half, int32_t x) { memcpy((char*)slot + (half ? 8 : 0) + offsetof(NValue, u), &x, sizeof x); }
 FIRE_FN float nvGetF(const Value* slot, int half) { float x; memcpy(&x, (const char*)slot + (half ? 8 : 0) + offsetof(NValue, u), sizeof x); return x; }
 FIRE_FN void nvPutF(Value* slot, int half, float x) { memcpy((char*)slot + (half ? 8 : 0) + offsetof(NValue, u), &x, sizeof x); }
-/* The list of what the object owns - made now if it has none yet (8 % of the objects of the test programs own something: 40 bytes saved on the others). */
-FIRE_FN OwnList* objOwned(Obj* o) {
-    if (FIRE_UNLIKELY(!o->owned)) {
-        o->owned = (OwnList*)malloc(sizeof(OwnList));
-        if (FIRE_UNLIKELY(!o->owned)) fatal("Out of memory.");
-        ownListInit(o->owned, 0, &o->h);
+/* The part of an object that most objects never need: the list of what it owns and its type arguments. */
+typedef struct ObjExt { OwnList owned; TArgs targs; } ObjExt;
+FIRE_FN ObjExt* objExt(Obj* o) {
+    if (FIRE_UNLIKELY(!o->ext)) {
+        o->ext = (ObjExt*)malloc(sizeof(ObjExt));
+        if (FIRE_UNLIKELY(!o->ext)) fatal("Out of memory.");
+        ownListInit(&o->ext->owned, 0, &o->h);
+        o->ext->targs = NULL;
     }
-    return o->owned;
+    return o->ext;
 }
+/* The list of what the object owns - made now if it has none yet (8 % of the objects of the test programs own something: 40 bytes saved on the others). */
+FIRE_FN OwnList* objOwned(Obj* o) { return &objExt(o)->owned; }
 /* Does the object own `x` (directly)? */
-FIRE_FN bool objOwns(const Obj* o, const Owned* x) { return o->owned != NULL && x->owner == o->owned; }
+FIRE_FN bool objOwns(const Obj* o, const Owned* x) { return o->ext != NULL && x->owner == &o->ext->owned; }
 /* The first value the object owns (NULL: none). */
-FIRE_FN Owned* objOwnedHead(const Obj* o) { return o->owned ? o->owned->head : NULL; }
+FIRE_FN Owned* objOwnedHead(const Obj* o) { return o->ext ? o->ext->owned.head : NULL; }
+/* The type arguments the object was created with (NULL: none known), and setting them (no block for none). */
+FIRE_FN TArgs objTArgs(const Obj* o) { return o->ext ? o->ext->targs : NULL; }
+FIRE_FN void objSetTArgs(Obj* o, TArgs targs) { if (targs || o->ext) objExt(o)->targs = targs; }
 
 /* A class of the program as the runtime sees it (ROADMAP 9, A0): the generated program fills a table of these (one row per class id, `g_classDescs`) instead of a
  * function with a switch over the class ids for each question. Its name, the number of fields, the field `message` (an exception that nothing catches) and the
@@ -2555,10 +2563,9 @@ FIRE_FN Value newObjectR(uint32_t cls, uint32_t fieldCount, uint32_t rawBytes, O
     slotAcquire(&o->h);   /* the handle: a destroyed object is recognized by it (SPEC 2.3, 2.5) */
     o->cls = cls;
     o->h.flags = 0;
-    o->owned = NULL;
+    o->ext = NULL;
     o->nfields = (uint16_t)fieldCount;
     o->nraw = (uint16_t)rawBytes;
-    o->targs = NULL;
     f = objFields(o);
     for (i = 0; i < fieldCount; i++) f[i] = Undef();
     if (rawBytes) memset(objRaw(o), 0, rawBytes);
@@ -2592,7 +2599,7 @@ FIRE_FN void batchEnd(void) {
         for (i = 0; i < obj->nfields; i++) release(f[i]);
         slotRelease(&obj->h);   /* from now on a Value of this object is dead: using it is a DestroyedException */
 #ifndef FIRE_KEEP_DESTROYED
-        free(obj->owned);
+        free(obj->ext);
         free(obj);
 #endif
         o = next;
@@ -2616,7 +2623,7 @@ FIRE_FN void destroy(Obj* o) {
         runDestructors(o);
         g_unwind = saved;
     } else runDestructors(o);
-    if (o->owned) destroyList(o->owned);
+    if (o->ext) destroyList(&o->ext->owned);
 #ifdef FIRE_REFLECTION
     if (FIRE_UNLIKELY(o->h.flags & 2)) probeFree(o);
 #endif
@@ -5883,7 +5890,7 @@ FIRE_FN void ownedStackFree(OwnedStack* s) { free(s->items); s->items = NULL; s-
  * (an array can own). */
 /* (An object: its list as it is - NULL when it owns nothing yet; moveReachable makes it only when something really moves, see fire_carrierList.) */
 FIRE_FN OwnList* carrierOf(Owned* node) {
-    if (node->okind == O_Object) return ((Obj*)node)->owned;
+    if (node->okind == O_Object) return ((Obj*)node)->ext ? &((Obj*)node)->ext->owned : NULL;
     if (node->okind == O_Array) {
         Arr* a;
         if (node->owner && node->owner->holder) return node->owner;
@@ -6185,7 +6192,7 @@ FIRE_FN Value flatCopy(Value v, OwnList* owner) {
             if (FIRE_UNLIKELY(classNoCopy(src->cls))) return noCopyError(src->cls, false);
             c = newObjectR(src->cls, src->nfields, src->nraw, owner);
             dst = asObj(c);
-            dst->targs = src->targs;
+            objSetTArgs(dst, objTArgs(src));
             for (i = 0; i < src->nfields; i++) { objFields(dst)[i] = objFields(src)[i]; retain(objFields(dst)[i]); }
             if (src->nraw) memcpy(objRaw(dst), objRaw(src), src->nraw);   /* (the packed fields: numbers) */
             return c;
@@ -6357,7 +6364,7 @@ FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
         target = objOwned(asObj(holderCopy));
     }
     copy = newObjectR(o->cls, o->nfields, o->nraw, target);
-    asObj(copy)->targs = o->targs;
+    objSetTArgs(asObj(copy), objTArgs(o));
     if (c->taking) asObj(copy)->h.flags |= 16;   /* a copy for a thread: its destructor does not run when the thread ends */
     *copyMapFind(&c->objects, o) = copy;   /* replaces the "found" marker */
     return copy;

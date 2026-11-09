@@ -223,6 +223,9 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   (`NarrowFieldsOn`: keine Threads, Reflection, Sonden, JSON, kein Debugger, keine Module) - und nicht für Felder, deren Adresse genommen wird.
   Gemessen: 300 000 Objekte mit drei `defined int` und einem `defined bool` 45 -> 35 MB (64 Bit), 35 -> 31 MB (`#intwidth 32`, dort waren die schmalen
   Felder schon kompakt); der Code bleibt gleich groß (dos16: 1063 -> 1096 Byte für die Methode mit drei Feldänderungen).
+* **Der Objektkopf.** Was die meisten Objekte nie brauchen - die Liste dessen, was ein Objekt besitzt, und seine Typargumente - liegt in einem Block
+  `ObjExt`, den `objExt` erst anlegt, wenn das Objekt etwas besitzt oder Typargumente bekommt (`objOwned`, `objSetTArgs`; gelesen mit `objTArgs`). Der
+  Kopf eines Objekts (`Obj`, mit dem `Owned` aller Werte mit Besitzer) ist damit 48 statt 56 Byte (64 Bit) und 32 statt 40 Byte (16 und 32 Bit).
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit

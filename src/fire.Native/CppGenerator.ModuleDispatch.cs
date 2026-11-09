@@ -494,7 +494,7 @@ namespace fire.Native
             if (rc == null) return null;
             string token = args == null ? "$" + k : k < args.Length ? args[k] : "";
             return token.Length == 0 ? "NULL"
-                : token.StartsWith('$') ? $"({obj}->targs ? {obj}->targs[{token.Substring(1)}] : NULL)"
+                : token.StartsWith('$') ? $"(objTArgs({obj}) ? objTArgs({obj})[{token.Substring(1)}] : NULL)"
                 : TArgRef(token);
         }
 
