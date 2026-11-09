@@ -2903,6 +2903,11 @@ FIRE_FN void ctorEnd(Value o) { if (FIRE_UNLIKELY(g_unwind.active) && o.kind == 
 FIRE_FN void destroy(Obj* o) {
     if (o->h.flags & 1) return;
     o->h.flags |= 1;
+#ifdef FIRE_SLOT_SEGMENTS
+    /* (from now on an older Value - the sender's of a `fire handover` - says "destroyed", not "handed over": another thread may look before the slot is
+     * freed at the end of the batch; the Values of the living ones stay valid for the destructors of the batch) */
+    slotBornSet(o->h.slot, slotGenGet(o->h.slot));
+#endif
     batchBegin();
     if (o->h.flags & 16) {
         /* a copy that `taking` made for a fire thread (its original still lives), or an object whose constructor threw: no destructor */
@@ -2957,6 +2962,9 @@ FIRE_FN void destroyList(OwnList* list) {
 FIRE_FN void destroyLeaf(Owned* o) {
     if (o->flags & 1) return;
     o->flags |= 1;
+#ifdef FIRE_SLOT_SEGMENTS
+    slotBornSet(o->slot, slotGenGet(o->slot));   /* (see destroy) */
+#endif
     if (o->owner) ownUnlink(o);
     if (o->okind == O_Array) {
         Arr* a = (Arr*)o;
