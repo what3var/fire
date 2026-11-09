@@ -31,12 +31,11 @@ var figure = new Object(Model.FromResource(new Resource("figure.fblocks")))
 figure.AnchorY = 0.0
 figure.Play("hop", true)
 scene.Add(figure)
-// the house stands behind them; its roof (a part of its own) nods
+// the house stands behind them (its roof is a part of its own; the test animation "nod" tilts it, so it is not played here)
 var house = new Object(Model.FromResource(new Resource("house.fmesh")))
 house.SetPosition(3.5m, 0m, -3m)
 house.AnchorY = 0.0
 house.RotationY = -30deg
-house.Play("nod", true)
 scene.Add(house)
 print("robot: " + robotModel.Parts + " parts, animations: " + robotModel.Animations.Count + "; figure: " + figure.Triangles + " triangles; house: " + house.Triangles + " triangles")
 
