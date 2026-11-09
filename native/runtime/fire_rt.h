@@ -338,7 +338,8 @@ typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCac
 #define FIRE_SLOT_THREAD_VARS(X) X(SlotCache, g_slotCache, FIRE_ZERO_INIT) \
     X(uint8_t, g_domReader, 0)   /* a fire thread that does not hold the read side of the globals' lock (see DomLock): its next touch of the shared domain takes it */ \
     X(uint8_t, g_domHeld, 0)     /* ... it holds it (until its next safe point) */ \
-    X(fire_mutex*, g_pkgHeld, NULL)   /* the lock of the package whose native runs on this thread (see FIRE_PKG_ENTER) */
+    X(fire_mutex*, g_pkgHeld, NULL)   /* the lock of the package whose native runs on this thread (see FIRE_PKG_ENTER) */ \
+    X(struct ThreadRec*, g_self, NULL)  /* this fire thread as an owner of originals that other threads `sync` into (see ThreadRec) */
 #else
 #define FIRE_SLOT_THREAD_VARS(X)
 #endif
@@ -441,6 +442,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_domReader FIRE_TLV(g_domReader)
 #define g_domHeld FIRE_TLV(g_domHeld)
 #define g_pkgHeld FIRE_TLV(g_pkgHeld)
+#define g_self FIRE_TLV(g_self)
 #endif
 #ifdef FIRE_DEBUG
 #define g_dbgTop FIRE_TLV(g_dbgTop)
@@ -1482,7 +1484,13 @@ extern FIRE_RT_DATA fire_mutex g_slotM;
 #define slotGenGet(slot) (*(volatile FireGen*)&slotEntry(slot).gen)
 #define slotGenSet(slot, g) (*(volatile FireGen*)&slotEntry(slot).gen = (FireGen)(g))
 #endif
-#define slotBorn(slot) (slotEntry(slot).born)
+#if defined(__GNUC__) || defined(__clang__)
+#define slotBornGet(slot) __atomic_load_n(&slotEntry(slot).born, __ATOMIC_RELAXED)
+#define slotBornSet(slot, g) __atomic_store_n(&slotEntry(slot).born, (FireGen)(g), __ATOMIC_RELAXED)
+#else
+#define slotBornGet(slot) (*(volatile FireGen*)&slotEntry(slot).born)
+#define slotBornSet(slot, g) (*(volatile FireGen*)&slotEntry(slot).born = (FireGen)(g))
+#endif
 #define slotInTable(slot) ((uint32_t)(slot) < fire_atomic_load(&g_slots.count))
 #ifdef FIRE_SLOT_HDR
 #define slotHdr(slot) (slotEntry(slot).hdr)
@@ -1534,7 +1542,7 @@ FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
     FireGen g = (FireGen)((slotGenGet(slot) + 1) & FIRE_GEN_MASK);
     slotGenSet(slot, g);
-    slotBorn(slot) = g;
+    slotBornSet(slot, g);
     if (FIRE_UNLIKELY(g_slotCache.n == FIRE_SLOT_CACHE)) slotSpill(FIRE_SLOT_CACHE / 2);
     g_slotCache.slot[g_slotCache.n++] = slot;
 }
@@ -1550,7 +1558,8 @@ typedef struct SlotTable {
 extern FIRE_RT_DATA SlotTable g_slots;
 #define slotGenGet(slot) (g_slots.e[slot].gen)
 #define slotGenSet(slot, g) (g_slots.e[slot].gen = (FireGen)(g))
-#define slotBorn(slot) (g_slots.born[slot])
+#define slotBornGet(slot) (g_slots.born[slot])
+#define slotBornSet(slot, g) (g_slots.born[slot] = (FireGen)(g))
 #define slotInTable(slot) ((uint32_t)(slot) < g_slots.cap)
 #ifdef FIRE_SLOT_HDR
 #define slotHdr(slot) (g_slots.e[slot].hdr)
@@ -1587,7 +1596,7 @@ FIRE_FN void slotAcquire(Owned* o) {
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
     slotGenSet(slot, (slotGenGet(slot) + 1) & FIRE_GEN_MASK);
-    slotBorn(slot) = slotGenGet(slot);
+    slotBornSet(slot, slotGenGet(slot));
     if (g_slots.nfree == g_slots.freedCap) {
         uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
         uint32_t* freed = (uint32_t*)realloc(g_slots.freed, cap * sizeof(uint32_t));
@@ -1665,7 +1674,7 @@ FIRE_FN bool handedOverRef(Value v) {
 #else
     FireGen born;
     if ((v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) || !slotInTable(FIRE_VSLOT(v))) return false;
-    born = slotBorn(FIRE_VSLOT(v));
+    born = slotBornGet(FIRE_VSLOT(v));
     return ((FIRE_VGEN(v) - born) & FIRE_GEN_MASK) < ((slotGenGet(FIRE_VSLOT(v)) - born) & FIRE_GEN_MASK);
 #endif
 }
@@ -7427,7 +7436,7 @@ FIRE_FN void notifyEvent(void) {
 
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
  * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
-enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4 };
+enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8 };   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 
 /* `requested` is read by every thread at its safe points (atomic); the claim (the first call wins) and `value` are under g_thrM. */
@@ -7444,10 +7453,18 @@ FIRE_FN int64_t steadyMs(void) { return fire_plat_nowMs(); }
 
 /* Waits - with the GIL released - until `pred(ctx)` (evaluated with the GIL held) is true. Returns false when it was cut short by `terminate`
  * (`stopOnTerminate`) or when the deadline passed (`deadlineMs` on the steady clock, 0 = none). */
+#ifdef FIRE_NO_GIL
+FIRE_FN void threadServe(void);
+FIRE_FN void threadRecBegin(void);
+FIRE_FN void threadRecEnd(void);
+#endif
 FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs) {
     for (;;) {
         int64_t now, slice = 5;
         uint64_t seen;
+#ifdef FIRE_NO_GIL
+        threadServe();   /* (a fire thread that waits grants the sections other threads ask of it) */
+#endif
         if (pred(ctx)) return true;
         if (stopOnTerminate && terminateRequested()) return false;
         now = steadyMs();
@@ -7519,6 +7536,10 @@ FIRE_FN void threadEntry(ThreadStart st) {
 #endif
     gilAcquire();
     g_attnMask = ATTN_ALL;
+#ifdef FIRE_NO_GIL
+    g_attnMask |= ATTN_PEER;
+    threadRecBegin();
+#endif
     g_tick = 4096;
     g_travel = st.travel;
 #ifdef FIRE_DEBUG
@@ -7529,6 +7550,9 @@ FIRE_FN void threadEntry(ThreadStart st) {
     fire_dbgThreadEnd();
 #endif
     sectionAbort();
+#ifdef FIRE_NO_GIL
+    threadRecEnd();
+#endif
     free(st.args);
     free(g_pool.items);
     g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
@@ -7840,6 +7864,78 @@ FIRE_FN int32_t sectionYieldBegin(void) {
     return held;
 }
 FIRE_FN void sectionYieldEnd(int32_t held) { if (held > 0) { sectionAcquire(); g_secDepth = held; } }
+#ifdef FIRE_NO_GIL
+/* A fire thread as the owner of originals (without the GIL): `sync` from another thread into an original this thread owns (`taking` in this thread) is a
+ * section of this thread - asked for here, granted at this thread's next safe point or wait (threadServe), which then waits until the sync is done, as the
+ * main program does for its globals. When the thread ends its originals are destroyed first (`sync` says undefined), then what is still asked is granted. */
+typedef struct ThreadRec { fire_mutex m; SectionReq** reqs; uint32_t n, cap; fire_atomic32 pending, refs; bool dead; } ThreadRec;
+extern FIRE_RT_DATA fire_atomic32 g_peerPending;   /* asked sections of all threads (ATTN_PEER is set while there are some) */
+FIRE_FN void threadRecDrop(ThreadRec* r) {
+    if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) { free(r->reqs); free(r); }
+}
+FIRE_FN void threadRecBegin(void) {
+    ThreadRec* r = (ThreadRec*)calloc(1, sizeof(ThreadRec));
+    if (!r) allocFailed();
+    fire_mutex_init(&r->m);
+    fire_atomic_store(&r->refs, 1);
+    g_self = r;
+}
+/* Grants what other threads asked of this one, one after the other (each: until its sync is done). */
+FIRE_FN void threadServe(void) {
+    ThreadRec* r = g_self;
+    if (!r || !fire_atomic_load(&r->pending)) return;
+    for (;;) {
+        SectionReq* q = NULL;
+        fire_mutex_lock(&r->m);
+        if (r->n) { q = r->reqs[0]; memmove(r->reqs, r->reqs + 1, (r->n - 1) * sizeof(SectionReq*)); r->n--; }
+        if (!r->n) fire_atomic_store(&r->pending, 0);
+        fire_mutex_unlock(&r->m);
+        if (!q) break;
+        if (fire_atomic_add(&g_peerPending, (uint32_t)-1) == 1) {
+            fire_atomic_and(&g_attn, ~(uint32_t)ATTN_PEER);
+            if (fire_atomic_load(&g_peerPending)) fire_atomic_or(&g_attn, ATTN_PEER);
+        }
+        fire_atomic_storeRelease(&q->granted, 1);
+        notifyEvent();
+        blockUntil(fire_sectionDone, q, false, 0);
+        sectionReqDrop(q);
+    }
+}
+/* The end of the thread (its scopes are destroyed): nothing more is asked of it; what was asked is granted (the originals are gone). */
+FIRE_FN void threadRecEnd(void) {
+    ThreadRec* r = g_self;
+    if (!r) return;
+    fire_mutex_lock(&r->m);
+    r->dead = true;
+    fire_mutex_unlock(&r->m);
+    threadServe();
+    g_self = NULL;
+    threadRecDrop(r);
+}
+/* Asks the owner of an original for its section (false: the owner has ended - nothing to wait for). */
+FIRE_FN SectionReq* threadRecAsk(ThreadRec* owner) {
+    SectionReq* q = (SectionReq*)malloc(sizeof(SectionReq));
+    if (!q) allocFailed();
+    fire_atomic_store(&q->granted, 0); fire_atomic_store(&q->done, 0); fire_atomic_store(&q->refs, 2);
+    fire_mutex_lock(&owner->m);
+    if (owner->dead) { fire_mutex_unlock(&owner->m); free(q); return NULL; }
+    owner->reqs = (SectionReq**)fire_growPush(owner->reqs, &owner->n, &owner->cap, sizeof(SectionReq*));
+    owner->reqs[owner->n++] = q;
+    fire_atomic_store(&owner->pending, 1);
+    fire_mutex_unlock(&owner->m);
+    fire_atomic_add(&g_peerPending, 1);
+    fire_atomic_or(&g_attn, ATTN_PEER);
+    notifyEvent();
+    blockUntil(fire_sectionGranted, q, false, 0);
+    return q;
+}
+FIRE_FN void threadRecDone(SectionReq* q) {
+    if (!q) return;
+    fire_atomic_storeRelease(&q->done, 1);
+    notifyEvent();
+    sectionReqDrop(q);
+}
+#endif
 /* One change of the shared domain from a thread: the section lasts from sectionScopeEnter to sectionScopeExit (with what Enter returned).
  * `sectionScopeEnterV` for a value: only an object or array of the shared domain needs one. */
 FIRE_FN bool sectionScopeEnter(bool shared) {
@@ -7941,6 +8037,9 @@ FIRE_FN int drainQueue(void) {
 extern FIRE_RT_DATA PtrMap g_originOf;   /* copy -> original (null: destroyed) */
 extern FIRE_RT_DATA PtrMap g_copiesOf;   /* original -> PtrVec* of its copies */
 extern FIRE_RT_DATA fire_mutex g_originM;  /* (both maps: a thread makes copies for its own threads, another syncs or destroys at the same time) */
+#ifdef FIRE_NO_GIL
+extern FIRE_RT_DATA PtrMap g_originOwner;   /* copy -> ThreadRec* of the fire thread that owns its original (none: the main program's) */
+#endif
 FIRE_FN void originAdd(Obj* copy, Obj* original) {
     void** slot;
     PtrVec* copies;
@@ -7948,6 +8047,9 @@ FIRE_FN void originAdd(Obj* copy, Obj* original) {
     original->h.flags |= 4;
     fire_mutex_lock(&g_originM);
     ptrMapPut(&g_originOf, copy, original);
+#ifdef FIRE_NO_GIL
+    if (g_isThread && g_self) { fire_atomic_add(&g_self->refs, 1); ptrMapPut(&g_originOwner, copy, g_self); }
+#endif
     slot = ptrMapFind(&g_copiesOf, original);
     if (slot) copies = (PtrVec*)*slot;
     else {
@@ -7977,6 +8079,12 @@ FIRE_FN void originFree(Obj* o) {
             }
             ptrMapRemove(&g_originOf, o);
         }
+#ifdef FIRE_NO_GIL
+        {
+            void** ow = ptrMapFind(&g_originOwner, o);
+            if (ow) { threadRecDrop((ThreadRec*)*ow); ptrMapRemove(&g_originOwner, o); }
+        }
+#endif
     }
     if (o->h.flags & 4) {
         void** cs = ptrMapFind(&g_copiesOf, o);
@@ -8301,6 +8409,39 @@ FIRE_FN Value syncValue(Value v, bool flat) {
     /* (the original is written while the main program is held: a section - also when it is not in the shared domain, which costs only a short wait.
      * An original of another fire thread is not held by it: docs/ROADMAP_TASKS.md 1e, open.) */
 #ifdef FIRE_NO_GIL
+    {
+        /* (an original of another fire thread: that thread's section; else - the main program's - a section of the main program) */
+        void** ow;
+        ThreadRec* owner;
+        fire_mutex_lock(&g_originM);
+        ow = ptrMapFind(&g_originOwner, copy);
+        owner = ow ? (ThreadRec*)*ow : NULL;
+        if (owner) fire_atomic_add(&owner->refs, 1);
+        fire_mutex_unlock(&g_originM);
+        if (owner && owner != g_self) {
+            int32_t held = sectionYieldBegin();   /* (no section of the main program is held while waiting for another thread) */
+            SectionReq* q = threadRecAsk(owner);
+            Value r;
+            threadRecDrop(owner);
+            fire_mutex_lock(&g_originM);
+            slot = ptrMapFind(&g_originOf, copy);
+            known = slot != NULL;
+            original = slot ? (Obj*)*slot : NULL;
+            fire_mutex_unlock(&g_originM);
+            if (!known) { threadRecDone(q); sectionYieldEnd(held); fatal("sync: this object is not a 'taking' copy (no SyncOrigin set)."); }
+            r = Undef();
+            if (original) {
+                CopyMap seen = {0};
+                bool ok = syncNoCopyFields(copy, original, flat, &seen);
+                copyMapFree(&seen);
+                if (ok) { syncFields(copy, original, flat); r = Bool(true); }
+            }
+            threadRecDone(q);
+            sectionYieldEnd(held);
+            return r;
+        }
+        if (owner) threadRecDrop(owner);
+    }
     ss = sectionScopeEnter(g_domainOn);
 #else
     ss = false;   /* (the GIL holds the others) */
@@ -8471,6 +8612,9 @@ FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
     if (g_leaving) return false;
     if (terminateRequested()) { startLeave(); return true; }
     if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
+#ifdef FIRE_NO_GIL
+    if (g_attnMask & ATTN_PEER) threadServe();
+#endif
     return g_unwind.active != 0;
 }
 
@@ -8671,6 +8815,10 @@ ReqQueue g_reqs;
 PtrMap g_originOf;
 PtrMap g_copiesOf;
 fire_mutex g_originM;
+#ifdef FIRE_NO_GIL
+PtrMap g_originOwner;
+fire_atomic32 g_peerPending;
+#endif
 ThreadsCatch* g_threadsCatches = NULL;
 uint32_t g_threadsCatchCount = 0, g_threadsCatchCap = 0;
 Value (*g_terminateFn)(Value) = NULL;

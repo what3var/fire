@@ -63,8 +63,12 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    section, `originOf`/`copiesOf` have `g_originM`. *Second part done (with 1e):* a string or lambda gets `R_SHARED` when it goes into the shared domain -
    a store into a global or static field (`FIRE_DOM_SHARE`), a field or an element of an object or array of the domain (`FIRE_DOM_STORE` in `setFieldAt`,
    `arraySet` and the generated setters), and at the first `fire` everything the domain holds already (`markOwnedShared`, the program's
-   `fire_shareGlobals`). Whoever writes the domain holds its write side, so nobody counts the string at that moment. Open: an original of another fire thread (not the main program) is written by `sync` while that thread
-   runs - it needs a section of its owner (that thread grants it at its safe points), see 1e.
+   `fire_shareGlobals`). Whoever writes the domain holds its write side, so nobody counts the string at that moment. An original of another fire thread (not the main program) - `fire taking a { ... sync a }` inside a
+   thread: rare, but allowed fire and correct in the VM (a lock per tree) and with the GIL, so without the GIL it was a regression (a race, a use after
+   free when the owner destroys the original) - is now a section of its owner: `taking` notes the owner's `ThreadRec` beside the original, `sync` asks it
+   (`threadRecAsk`), the owner grants it at its next safe point (`ATTN_PEER`) or while it waits (`blockUntil` serves it) and waits until the sync is done; an
+   owner that ends destroys its originals first (`sync` says undefined) and then grants what is still asked. A sample where the owner reads the original
+   while a child syncs into it: 14 races before, none after. In step 4 this becomes the mailbox of a task.
 3. **1c** the slot table in segments. *Done* (only with `FIRE_NO_GIL`; the GIL build keeps the one array): `FIRE_SLOT_SEGMENTS` - a directory of 2^14
    segments of 2^14 slots that never move (the same two loads as before), the free slots cached per thread (64, exchanged half by half with the shared
    stack under `g_slotM`, given back when a thread ends), generations read and written atomically (relaxed: plain moves on x86 and arm).
@@ -82,7 +86,11 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    `FIRE_PKG_ENTER`/`FIRE_PKG_LEAVE` of that package's lock (`fire_pkgM`, nothing with the GIL; a typed native in C then goes through its Value). A thread
    takes the read side of the globals before a package's lock, so the main program, holding the write side, never waits for a package's lock; the lock is
    given back where the GIL was (`gilRelease` in a native that waits, the safe points of a callback). `"threadSafe": true` in the manifest: no lock.
-7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests.
+7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests. *Done:* the default where
+   the platform's threads are real (`FIRE_PLAT_PARALLEL` from the posix and windows layers) and the compiler has atomics; the targets with a scheduler of
+   fire itself (dos, win16, wasm), FreeRTOS and TinyCC (`FIRE_TLS_STRUCT`), the modules (`FIRE_MODULES`, `FIRE_DLL` - no package locks and no
+   `fire_shareGlobals` there yet) and debug builds (the native debugger stops the threads through the GIL) keep the GIL; `FIRE_GIL` keeps it anywhere.
+   The ThreadSanitizer test builds the default (`FIRE_TEST_GIL=1`: with the GIL). Left for later: the debugger without the GIL, the modules.
 
 ## 3. The language: `fire` and `await`
 
