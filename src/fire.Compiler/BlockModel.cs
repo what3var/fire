@@ -236,40 +236,9 @@ namespace fire.Compiler
             if (root.TryGetProperty("palette", out var pal))
                 foreach (var c in pal.EnumerateArray()) m.Palette.Add(ParseColor(c.GetString() ?? "#FFFFFF"));
             if (m.Palette.Count == 0) m.Palette.AddRange(DefaultPalette);
-            if (root.TryGetProperty("parts", out var parts))
-                foreach (var p in parts.EnumerateArray())
-                {
-                    var part = new Part
-                    {
-                        Name = p.TryGetProperty("name", out var n) ? n.GetString() ?? "part" : "part",
-                        Parent = p.TryGetProperty("parent", out var pa) ? pa.GetInt32() : -1,
-                        Pivot = p.TryGetProperty("pivot", out var pv) ? pv.EnumerateArray().Select(e => e.GetDouble()).Concat(new double[3]).Take(3).ToArray() : new double[3],
-                    };
-                    if (part.Parent >= m.Parts.Count) throw new InvalidDataException($"The part '{part.Name}' names a parent that comes after it.");
-                    m.Parts.Add(part);
-                }
+            m.Parts.AddRange(ParseParts(root));
             if (m.Parts.Count == 0) m.Parts.Add(new Part { Name = "body", Pivot = new double[] { m.SizeX / 2.0, 0, m.SizeZ / 2.0 } });
-            if (root.TryGetProperty("animations", out var anims))
-                foreach (var a in anims.EnumerateArray())
-                {
-                    var anim = new Animation
-                    {
-                        Name = a.TryGetProperty("name", out var an) ? an.GetString() ?? "animation" : "animation",
-                        Length = a.TryGetProperty("length", out var al) && al.GetDouble() > 0 ? al.GetDouble() : 1,
-                        Loop = !a.TryGetProperty("loop", out var lp) || lp.GetBoolean(),
-                    };
-                    double[] Three(JsonElement k, string name, double def) =>
-                        k.TryGetProperty(name, out var v) ? v.EnumerateArray().Select(e => e.GetDouble()).Concat(new[] { def, def, def }).Take(3).ToArray() : new[] { def, def, def };
-                    if (a.TryGetProperty("keys", out var keys))
-                        foreach (var k in keys.EnumerateArray())
-                            anim.Keys.Add(new Key
-                            {
-                                Part = k.TryGetProperty("part", out var kp) ? kp.GetInt32() : 0,
-                                Time = k.TryGetProperty("time", out var kt) ? Math.Max(0, kt.GetDouble()) : 0,
-                                Rotate = Three(k, "rotate", 0), Move = Three(k, "move", 0), Scale = Three(k, "scale", 1),
-                            });
-                    m.Animations.Add(anim);
-                }
+            m.Animations.AddRange(ParseAnimations(root));
             if (root.TryGetProperty("blocks", out var blocks))
                 foreach (var b in blocks.EnumerateArray())
                 {
@@ -280,7 +249,92 @@ namespace fire.Compiler
             return m;
         }
 
-        private static uint ParseColor(string s)
+        /// <summary>The parts of a model file (`"parts"`: name, parent - an earlier part or -1 -, pivot).</summary>
+        internal static List<Part> ParseParts(JsonElement root)
+        {
+            var list = new List<Part>();
+            if (!root.TryGetProperty("parts", out var parts)) return list;
+            foreach (var p in parts.EnumerateArray())
+            {
+                var part = new Part
+                {
+                    Name = p.TryGetProperty("name", out var n) ? n.GetString() ?? "part" : "part",
+                    Parent = p.TryGetProperty("parent", out var pa) ? pa.GetInt32() : -1,
+                    Pivot = p.TryGetProperty("pivot", out var pv) ? pv.EnumerateArray().Select(e => e.GetDouble()).Concat(new double[3]).Take(3).ToArray() : new double[3],
+                };
+                if (part.Parent >= list.Count) throw new InvalidDataException($"The part '{part.Name}' names a parent that comes after it.");
+                list.Add(part);
+            }
+            return list;
+        }
+
+        /// <summary>The animations of a model file (`"animations"`: name, length, loop, keys of the parts).</summary>
+        internal static List<Animation> ParseAnimations(JsonElement root)
+        {
+            var list = new List<Animation>();
+            if (!root.TryGetProperty("animations", out var anims)) return list;
+            foreach (var a in anims.EnumerateArray())
+            {
+                var anim = new Animation
+                {
+                    Name = a.TryGetProperty("name", out var an) ? an.GetString() ?? "animation" : "animation",
+                    Length = a.TryGetProperty("length", out var al) && al.GetDouble() > 0 ? al.GetDouble() : 1,
+                    Loop = !a.TryGetProperty("loop", out var lp) || lp.GetBoolean(),
+                };
+                double[] Three(JsonElement k, string name, double def) =>
+                    k.TryGetProperty(name, out var v) ? v.EnumerateArray().Select(e => e.GetDouble()).Concat(new[] { def, def, def }).Take(3).ToArray() : new[] { def, def, def };
+                if (a.TryGetProperty("keys", out var keys))
+                    foreach (var k in keys.EnumerateArray())
+                        anim.Keys.Add(new Key
+                        {
+                            Part = k.TryGetProperty("part", out var kp) ? kp.GetInt32() : 0,
+                            Time = k.TryGetProperty("time", out var kt) ? Math.Max(0, kt.GetDouble()) : 0,
+                            Rotate = Three(k, "rotate", 0), Move = Three(k, "move", 0), Scale = Three(k, "scale", 1),
+                        });
+                list.Add(anim);
+            }
+            return list;
+        }
+
+        /// <summary>`"parts": [...]` (without the comma after it).</summary>
+        internal static void AppendParts(StringBuilder sb, IReadOnlyList<Part> parts)
+        {
+            var inv = CultureInfo.InvariantCulture;
+            sb.Append("  \"parts\": [\n");
+            for (int i = 0; i < parts.Count; i++)
+            {
+                var p = parts[i];
+                sb.Append("    {\"name\": ").Append(JsonSerializer.Serialize(p.Name)).Append($", \"parent\": {p.Parent}, \"pivot\": [")
+                  .Append(string.Join(", ", p.Pivot.Select(v => v.ToString("R", inv)))).Append("]}").Append(i + 1 < parts.Count ? ",\n" : "\n");
+            }
+            sb.Append("  ]");
+        }
+
+        /// <summary>`,\n  "animations": [...]` when there are any.</summary>
+        internal static void AppendAnimations(StringBuilder sb, IReadOnlyList<Animation> animations)
+        {
+            if (animations.Count == 0) return;
+            var inv = CultureInfo.InvariantCulture;
+            string N(double v) => v.ToString("R", inv);
+            string V(double[] v) => "[" + string.Join(", ", v.Select(N)) + "]";
+            sb.Append(",\n  \"animations\": [\n");
+            for (int i = 0; i < animations.Count; i++)
+            {
+                var a = animations[i];
+                sb.Append("    {\"name\": ").Append(JsonSerializer.Serialize(a.Name)).Append(", \"length\": ").Append(N(a.Length)).Append(", \"loop\": ").Append(a.Loop ? "true" : "false").Append(", \"keys\": [");
+                var keys = a.Keys.OrderBy(k => k.Part).ThenBy(k => k.Time).ToList();
+                for (int k = 0; k < keys.Count; k++)
+                {
+                    var key = keys[k];
+                    sb.Append(k == 0 ? "\n      " : ",\n      ");
+                    sb.Append($"{{\"part\": {key.Part}, \"time\": {N(key.Time)}, \"rotate\": {V(key.Rotate)}, \"move\": {V(key.Move)}, \"scale\": {V(key.Scale)}}}");
+                }
+                sb.Append(keys.Count > 0 ? "\n    ]}" : "]}").Append(i + 1 < animations.Count ? ",\n" : "\n");
+            }
+            sb.Append("  ]");
+        }
+
+        internal static uint ParseColor(string s)
         {
             s = s.Trim().TrimStart('#');
             return s.Length == 6 && uint.TryParse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint v) ? v : 0xFFFFFF;
@@ -297,14 +351,8 @@ namespace fire.Compiler
             sb.Append($"  \"size\": [{SizeX}, {SizeY}, {SizeZ}],\n");
             sb.Append("  \"block\": ").Append(BlockSize.ToString("R", inv)).Append(",\n");
             sb.Append("  \"palette\": [").Append(string.Join(", ", Palette.Select(c => "\"" + ColorText(c) + "\""))).Append("],\n");
-            sb.Append("  \"parts\": [\n");
-            for (int i = 0; i < Parts.Count; i++)
-            {
-                var p = Parts[i];
-                sb.Append("    {\"name\": ").Append(JsonSerializer.Serialize(p.Name)).Append($", \"parent\": {p.Parent}, \"pivot\": [")
-                  .Append(string.Join(", ", p.Pivot.Select(v => v.ToString("R", inv)))).Append("]}").Append(i + 1 < Parts.Count ? ",\n" : "\n");
-            }
-            sb.Append("  ],\n  \"blocks\": [");
+            AppendParts(sb, Parts);
+            sb.Append(",\n  \"blocks\": [");
             var ordered = _blocks.OrderBy(b => b.Key.Y).ThenBy(b => b.Key.Z).ThenBy(b => b.Key.X).ToList();
             for (int i = 0; i < ordered.Count; i++)
             {
@@ -313,26 +361,7 @@ namespace fire.Compiler
                 sb.Append($"[{k.X}, {k.Y}, {k.Z}, {b.Color}").Append(b.Part != 0 ? $", {b.Part}]" : "]");
             }
             sb.Append(ordered.Count > 0 ? "\n  ]" : "]");
-            if (Animations.Count > 0)
-            {
-                string N(double v) => v.ToString("R", inv);
-                string V(double[] v) => "[" + string.Join(", ", v.Select(N)) + "]";
-                sb.Append(",\n  \"animations\": [\n");
-                for (int i = 0; i < Animations.Count; i++)
-                {
-                    var a = Animations[i];
-                    sb.Append("    {\"name\": ").Append(JsonSerializer.Serialize(a.Name)).Append(", \"length\": ").Append(N(a.Length)).Append(", \"loop\": ").Append(a.Loop ? "true" : "false").Append(", \"keys\": [");
-                    var keys = a.Keys.OrderBy(k => k.Part).ThenBy(k => k.Time).ToList();
-                    for (int k = 0; k < keys.Count; k++)
-                    {
-                        var key = keys[k];
-                        sb.Append(k == 0 ? "\n      " : ",\n      ");
-                        sb.Append($"{{\"part\": {key.Part}, \"time\": {N(key.Time)}, \"rotate\": {V(key.Rotate)}, \"move\": {V(key.Move)}, \"scale\": {V(key.Scale)}}}");
-                    }
-                    sb.Append(keys.Count > 0 ? "\n    ]}" : "]}").Append(i + 1 < Animations.Count ? ",\n" : "\n");
-                }
-                sb.Append("  ]");
-            }
+            AppendAnimations(sb, Animations);
             sb.Append("\n}\n");
             return sb.ToString();
         }
@@ -507,7 +536,10 @@ namespace fire.Compiler
         public static readonly double[] Identity = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 
         /// <summary>Where a part is at a time of an animation (relative to its rest pose): rotation (degrees), movement (cells), scale - between its keys linearly.</summary>
-        public (double[] Rotate, double[] Move, double[] Scale) PartPose(Animation? anim, int part, double time)
+        public (double[] Rotate, double[] Move, double[] Scale) PartPose(Animation? anim, int part, double time) => PoseOf(anim, part, time);
+
+        /// <summary>The pose of a part at a time of an animation (shared with the mesh models of the CAD editor, MeshModel).</summary>
+        public static (double[] Rotate, double[] Move, double[] Scale) PoseOf(Animation? anim, int part, double time)
         {
             var keys = anim?.Keys.Where(k => k.Part == part).OrderBy(k => k.Time).ToList();
             if (anim == null || keys == null || keys.Count == 0) return (new double[3], new double[3], new double[] { 1, 1, 1 });
@@ -528,15 +560,18 @@ namespace fire.Compiler
         }
 
         /// <summary>For every part the matrix (row major 4x4, cells) that takes a point of its rest pose to where it is at the time of the animation (null: the rest pose).</summary>
-        public double[][] PoseMatrices(Animation? anim, double time)
+        public double[][] PoseMatrices(Animation? anim, double time) => PoseMatricesOf(Parts, anim, time);
+
+        /// <summary>The same for any parts (their pivots in the units of the model: cells, or meters for a mesh model).</summary>
+        public static double[][] PoseMatricesOf(IReadOnlyList<Part> parts, Animation? anim, double time)
         {
-            var result = new double[Parts.Count][];
-            for (int i = 0; i < Parts.Count; i++)
+            var result = new double[parts.Count][];
+            for (int i = 0; i < parts.Count; i++)
             {
-                var (rot, move, scale) = PartPose(anim, i, time);
-                var pv = Parts[i].Pivot;
+                var (rot, move, scale) = PoseOf(anim, i, time);
+                var pv = parts[i].Pivot;
                 var local = Mul(Translation(pv[0] + move[0], pv[1] + move[1], pv[2] + move[2]), Mul(Rotation(rot), Mul(Scaling(scale), Translation(-pv[0], -pv[1], -pv[2]))));
-                int parent = Parts[i].Parent;
+                int parent = parts[i].Parent;
                 result[i] = parent >= 0 && parent < i ? Mul(result[parent], local) : local;
             }
             return result;
