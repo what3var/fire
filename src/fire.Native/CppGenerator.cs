@@ -3232,8 +3232,8 @@ namespace fire.Native
                 else
                 {
                     decl.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
-                    // (a slot that only ever holds scalars - Ebene 2 - is not read as a Value)
-                    if (f.Scalars.Count > 0) post.AppendLine("    " + string.Concat(Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"(void)s{i}; ")));
+                    // (a slot that only ever holds scalars - Ebene 2 - or only ever an alias of a variable - Flow.Alias - is not read as a Value)
+                    post.AppendLine("    " + string.Concat(Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"(void)s{i}; ")));
                 }
             }
             var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
