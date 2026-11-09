@@ -39,20 +39,20 @@ class S3D {
     }
 
     // A speed in meters a second (m/s, km/h, ...).
-    static float Speed(float v : m/s) { return v / (1m / 1s) }
+    static defined float Speed(defined float v : m/s) { return v / (1m / 1s) }
 
-    static float:m Meters(float m) { return m * 1m }
-    static float:deg Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
+    static defined float:m Meters(defined float m) { return m * 1m }
+    static defined float:deg Degrees(defined float radians) { return (radians * 57.29577951308232) * 1deg }
 
     // The colour 0xAABBGGRR as three fractions.
-    static float Red(int c) { return (c & 255) / 255.0 }
-    static float Green(int c) { return ((c >> 8) & 255) / 255.0 }
-    static float Blue(int c) { return ((c >> 16) & 255) / 255.0 }
+    static defined float Red(defined int c) { return (c & 255) / 255.0 }
+    static defined float Green(defined int c) { return ((c >> 8) & 255) / 255.0 }
+    static defined float Blue(defined int c) { return ((c >> 16) & 255) / 255.0 }
 
     // A colour from its parts (0..255 each).
-    static int Rgb(int r, int g, int b) { return r + g * 256 + b * 65536 + 255 * 16777216 }
+    static defined int Rgb(defined int r, defined int g, defined int b) { return r + g * 256 + b * 65536 + 255 * 16777216 }
     // A colour with its alpha (0 transparent .. 255 solid).
-    static int Rgba(int r, int g, int b, int a) { return r + g * 256 + b * 65536 + a * 16777216 }
+    static defined int Rgba(defined int r, defined int g, defined int b, defined int a) { return r + g * 256 + b * 65536 + a * 16777216 }
 
     // The GPU that RenderMode.Hardware draws with ("" when there is none: no Vulkan, no driver, no GPU; HardwareError says why).
     static string HardwareName() { return __S3DHardwareName() }
@@ -465,8 +465,8 @@ class Object {
     float SpinZ : any { get { return S3D.Degrees(__S3DGetF(this.h, 21)) } set { __S3DSetF(this.h, 21, S3D.Angle(value)) } }
     undefined SetSpin(float x : any, float y : any, float z : any) { __S3DSetF3(this.h, 19, S3D.Angle(x), S3D.Angle(y), S3D.Angle(z), false) }
     // How fast the texture runs over the object (water, lava, a conveyor belt): TextureX / TextureY move on by this much a second.
-    float TextureScrollX : m/s { get { return __S3DGetF(this.h, 22) * 1m / 1s } set { __S3DSetF(this.h, 22, S3D.Speed(value)) } }
-    float TextureScrollY : m/s { get { return __S3DGetF(this.h, 23) * 1m / 1s } set { __S3DSetF(this.h, 23, S3D.Speed(value)) } }
+    defined float TextureScrollX : m/s { get { return __S3DGetF(this.h, 22) * 1m / 1s } set { __S3DSetF(this.h, 22, S3D.Speed(value)) } }
+    defined float TextureScrollY : m/s { get { return __S3DGetF(this.h, 23) * 1m / 1s } set { __S3DSetF(this.h, 23, S3D.Speed(value)) } }
 
     int Triangles { get { return __S3DObjTriangles(this.h) } }
 

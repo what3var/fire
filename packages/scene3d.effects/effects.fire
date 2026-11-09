@@ -18,7 +18,7 @@ class Emitter : Object {
     float Lifetime : s { get { return __S3DEmitterGet(this.h, 1) * 1s } set { __S3DEmitterSet(this.h, 1, S3D.Seconds(value)) } }
     float LifetimeVariation { get { return __S3DEmitterGet(this.h, 2) } set { __S3DEmitterSet(this.h, 2, value) } }
     // How fast a particle starts, and how much that varies.
-    float Speed : m/s { get { return __S3DEmitterGet(this.h, 3) * 1m / 1s } set { __S3DEmitterSet(this.h, 3, S3D.Speed(value)) } }
+    defined float Speed : m/s { get { return __S3DEmitterGet(this.h, 3) * 1m / 1s } set { __S3DEmitterSet(this.h, 3, S3D.Speed(value)) } }
     float SpeedVariation { get { return __S3DEmitterGet(this.h, 4) } set { __S3DEmitterSet(this.h, 4, value) } }
     // The direction the particles fly in (default: up), and how far they spread from it (0deg: a ray, 180deg: all around).
     undefined SetDirection(float x, float y, float z) { __S3DEmitterSet(this.h, 6, x); __S3DEmitterSet(this.h, 7, y); __S3DEmitterSet(this.h, 8, z) }

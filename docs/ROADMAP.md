@@ -904,6 +904,15 @@ nach Arbeiten auf `targets`).
 * Dazu passend: **Texturen mit Palette** (8 Bit je Texel statt 32, heute nur als Kopie für Paletten-Bilder: `S3dTexture.lean`) und **Mipmaps**
   (Ruhe in der Ferne, weniger Cache-Fehler); auf dos16 RGBA-Texturen nach dem Umrechnen verwerfen.
 
+**`defined` im scene3d-Prelude (gemessen, Stand nach M4):** die Hilfsfunktionen mit Zahlen (`S3D.Rgb`, `Rgba`, `Red/Green/Blue`, `Degrees`, `Meters`,
+`Speed`) sind `defined` - ihr Rumpf ist natives C ohne Values. dos16 (ein Programm mit Szene, Licht, Kamera; mit `scene3d.effects`): 431 314 -> 430 335 Byte
+(443 330 -> 441 919). **Nicht** übernommen: die Handles als `defined int h` (+2,6 KB auf dos16 - sie gehen fast nur an Natives, die Values nehmen, und
+werden dafür jedes Mal neu eingepackt) und die Eigenschaften als `defined` (keine Änderung: Accessoren bekommen keinen C-Rumpf); Ausnahme die drei
+Geschwindigkeiten (`TextureScrollX/Y`, `Emitter.Speed`), damit `S3D.Speed` ohne Laufzeitprüfung bleibt. Nativ (Linux, 200 000 Eigenschaftszugriffe) und in
+der VM (~2,2 s) kein messbarer Unterschied. Dabei gefunden und behoben: auf Zielen, die die Aufruftiefe zählen (dos16, `try x.TakeTo`), schrieb der
+Generator die Value-Hülle einer Methode mit C-Rumpf unter `fN` statt `fN_b` (doppelt definiert, `fN_b` fehlte); `FIRE_TESTS_ONLY=scene3d` prüft das C für
+dos16 jetzt mit. Lohnen würde sich `defined` erst, wenn auch die Natives C-Zahlen nehmen (`__S3DGetF(int, int)` ohne Values) - ein Punkt für `targets`.
+
 **B. Größe und Speicher (Rest von Meilenstein 1):**
 * **640x480 auf dos16:** der Paletten-Framebuffer (300 KB) passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher. Wege: (a) eine Kamera, die
   ihre Bänder direkt in den Videospeicher schreibt (VESA 101h mit Bänken; der schlanke Renderer arbeitet schon bandweise), (b) der Framebuffer in XMS/EMS

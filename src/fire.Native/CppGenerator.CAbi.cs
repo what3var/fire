@@ -174,11 +174,11 @@ namespace fire.Native
         }
 
         /// <summary>The function with Values (`fN`) in front of the C body: the parameters are checked like the prologue would (a failed check returns,
-        /// the caller sees the exception), the C result becomes a Value again.</summary>
-        private string CAbiWrapper(Func f, CAbi abi)
+        /// the caller sees the exception), the C result becomes a Value again. `name`: `fN`, or `fN_b` when a wrapper counts the call depth around it.</summary>
+        private string CAbiWrapper(Func f, CAbi abi, string name)
         {
             var body = new System.Text.StringBuilder();
-            body.AppendLine(f.Signature);
+            body.AppendLine(name == f.Name ? f.Signature : f.SignatureOf(name, ""));
             body.AppendLine("{");
             var args = new List<string>();
             if (f.HasSelf) args.Add("self");
