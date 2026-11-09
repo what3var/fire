@@ -23643,6 +23643,22 @@ else
                 print(p.n)
             }
             """),
+        ("defined (SPEC 8.10b): ein Programm, das die Aufruftiefe zaehlt (try x.TakeTo), hat keine C-Ruempfe - jede Methode einmal, ihr _b dahinter", """
+            class M {
+                static defined int Mix(defined int a, defined int b) { return a * 31 + b }
+            }
+            class Item { int v = 1 }
+            class Holder {
+                Item kept
+                Keep(Item it) { if (try it.TakeTo(this)) { this.kept = it } }
+            }
+            int s = 0
+            for (int i = 0; i < 100; i++) { s = M.Mix(s, i) % 1000 }
+            print(s)
+            var h = new Holder()
+            h.Keep(new Item())
+            print(h.kept.v)
+            """),
         ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
             class K {
                 defined int n
