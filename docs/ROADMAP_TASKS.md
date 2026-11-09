@@ -132,12 +132,15 @@ token of the running task.
   var source = new CancellationSource()
   fire until source.Token { Watch() }                  // cancellable fire and forget
   fire Poll(url) until source.Token
-  var data = await Download(url) until 5s              // time limit (Net.TimeoutException / CancelledException - open)
+  var data = await Download(url) until 5s              // time limit: TimeoutException
   var r = await [Load("a"), Load("b")] until source.Token, 10s
   await until source.Token { ... }
   source.Cancel()
   ```
 
+* **`TimeoutException`** (a subclass of `CancelledException`) is what a time limit of `until` throws: the reason is visible, and one
+  `catch (CancelledException e)` still catches both. The own time limits of the net package (`ReadTimeout`, `Accept(timeout)`) keep throwing
+  `Net.TimeoutException` (a `Net.NetException`); a limit given with `until` around net calls throws `TimeoutException`.
 * What a cancelled task sees: the next wait (`Sleep`, `await`, net) or `ThrowIfCancelled()` throws a `CancelledException`; it runs through `finally`
   and destructors as usual. An `await` of a cancelled task throws it at the caller. Code that never waits and never checks is not stopped (no hard abort).
 
@@ -154,4 +157,3 @@ token of the running task.
 
 ## Open
 
-* Which exception a time limit of `until` throws (`CancelledException` or a `TimeoutException`).
