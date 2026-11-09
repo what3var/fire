@@ -23422,6 +23422,22 @@ else
             int[64] wide = 5000000000
             print(M.Wrap(wide))
             """),
+        ("defined (SPEC 8.10b): JSON - ein fehlendes defined-Feld ist 0, null ist die ArgumentException; Reflection prueft wie eine Zuweisung", """
+            #import "json"
+            #import "reflection"
+            class P {
+                defined int n
+                defined float : m len
+                int plain
+            }
+            var a = Json.Deserialize<P>("{\"plain\": 3}")
+            print(a.n + " " + a.len + " " + a.plain)
+            var b = Json.Deserialize<P>("{\"n\": 7, \"len\": 2}")
+            print(b.n + " " + b.len)
+            try { var c = Json.Deserialize<P>("{\"n\": null}"); print("c " + c.n) } catch (ArgumentException e) { print(e.message) }
+            try { Reflect.Set(b, "n", undefined) } catch (ArgumentException e) { print(e.message) }
+            print(Json.Serialize(b))
+            """),
         ("defined (SPEC 8.10b): undefined, ein falscher Typ und Exceptions - an der Aufrufstelle, im Rumpf, bei Rueckgabe, Feld und Property wie in der VM", """
             class M {
                 defined int count

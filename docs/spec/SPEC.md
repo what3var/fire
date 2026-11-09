@@ -2375,6 +2375,8 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
 * **A field, a property's field and a variable without an initializer start at zero** in the unit they demand (`0`, `0.0`,
   `False`, the word 0, the char 0).
 * **A return value**: every `return` is checked, and the end of the body (which returns `undefined`) is the exception.
+* **JSON and reflection** keep the promise: `Json.Deserialize` leaves a `defined` field that is not in the text at zero (reading JSON runs no
+  initializers) and a `null` for it is an `ArgumentException` (`$.n is an int and never undefined.`); `Reflect.Set` checks like an assignment.
 * `defined` stands in front of the type and its width (`defined int[16] x`, `defined byte b`, `defined float : m len`); it is
   a word of its own only there (a variable may still be called `defined`). Not for an array (the elements of a typed array
   are a matter of the array, 8.4.2), a pointer or a type argument (`List<defined int>` is an error). `int!` is an error

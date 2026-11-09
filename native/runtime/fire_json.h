@@ -10,7 +10,7 @@ FIRE_BEGIN
 /* A field as JSON sees it (JsonMethods.JsonField): the name in the JSON text, the slot in the object, the declared type (`int`, `Point`, `List<Point>`, `$0`, "" for
  * an untyped one) and the unit it is declared with (0: none). */
 /* `arr`: a field declared as a typed array without a unit (FieldInfo.RequiredArray: the element | the rank << 8; 0: none) - what is read for it is typed */
-typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; } JsonFieldInfo;
+typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; uint8_t defined; } JsonFieldInfo;   /* (defined: the kind of a `defined` field, SPEC 8.10b) */
 /* A class: its name (as the program knows it, `Box`1` for a generic one whose plain name is taken), the plain name, its fields, `flags` (1 actor, 2 has
  * OnDeserialized(), 4 the List of the prelude, 8 JsonObject, 16 not serializable: `[NotSerializable]` or `"serializable": false` in its package) and the number of its
  * type parameters. */
@@ -1129,6 +1129,13 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
     o2 = objAt(obj);
     if (args.n > 0) o2->targs = jsTypeArgsFor(J, args.p, args.n);
     if (hasId) jsIdSet(r, id, obj);
+    /* `defined int n` (SPEC 8.10b): a field that is not in the text holds zero */
+    for (m = 0; m < c->njson; m++) {
+        const JsonFieldInfo* df = &c->fields[m];
+        if (!df->defined) continue;
+        jsStore(obj, df->slot, df->defined == K_Int ? Int(0, df->unit) : df->defined == K_Float ? Float((Real)0, df->unit) : df->defined == K_Bool ? Bool(false)
+            : df->defined == K_Word ? WordV(0) : Char(0));
+    }
     for (m = 0; m < o->nmembers; m++) {
         JsMember* member = &o->members[m];
         const JsonFieldInfo* field = NULL;
@@ -1145,6 +1152,11 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         s.container = obj; s.index = field->slot; s.has = true;
         v = jsBuild(r, member->node, jsSubstitute(J, field->type, o2, c), objOwned(o2), jsCat3(J, path, ".", key), field->unit, s);
         if (field->arr && !J->failed && v.kind == K_Array) typeArray(v, (uint8_t)(field->arr & 0xFF), field->arr >> 8, 0, 0, Undef(), 1);
+        if (field->defined && !J->failed && v.kind == K_Undefined) {
+            jsFail(J, jsCat3(J, jsCat3(J, path, ".", key), field->defined == K_Int ? " is an int" : field->defined == K_Float ? " is a float" : field->defined == K_Word ? " is a word"
+                : field->defined == K_Char ? " is a char" : " is a bool", " and never undefined."), "ArgumentException");
+            break;
+        }
         jsStore(obj, field->slot, v);
     }
     if (c->flags & JSON_FLAG_HOOK) {
