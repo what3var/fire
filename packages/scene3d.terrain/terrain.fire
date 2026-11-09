@@ -46,7 +46,7 @@ class Terrain : Object {
     // The height of the ground (its y in the world) below the point (x, z) of the world, or undefined outside the terrain. The terrain may be moved, scaled and turned around
     // the vertical axis. For a figure that walks on it: figure.Y = terrain.HeightAt(figure.X, figure.Z).
     any HeightAt(float x : any m, float z : any m) {
-        var y = __S3DTerrainHeight(this.h, S3D.Length(x), S3D.Length(z))
+        any y = __S3DTerrainHeight(this.h, S3D.Length(x), S3D.Length(z))
         if (y == undefined) { return undefined }
         return y * 1m
     }
