@@ -1,0 +1,90 @@
+#import "windows"
+#import "scene3d"
+#import "scene3d.terrain"
+#import "time"
+// A landscape from a grid of heights (docs/graphics/terrain.md). The heights here are worked out (hills from sines); a picture works as well
+// (Terrain.FromImage: the brightness of each pixel is a height).
+//   M  smooth hills or the same heights as blocks
+//   F  the renderer: Software or Fast
+
+var fb = new Framebuffer(640, 400)
+var win = new Window(fb, "Scene3D Terrain")
+win.EnableEvents()
+var hud = new Renderer(fb)
+var white = new SolidBrush(S3D.Rgb(255, 255, 255))
+var shade = new SolidBrush(S3D.Rgba(0, 0, 0, 160))
+
+var size = 48
+var heights = new byte[size * size]
+for (var z = 0; z < size; z++) {
+    for (var x = 0; x < size; x++) {
+        var h = 75.0 + 40.0 * Math.Sin(x * 0.25) * Math.Cos(z * 0.2) + 30.0 * Math.Sin((x + z) * 0.1)   // 5 .. 145: a byte holds 0 .. 255
+        heights[z * size + x] = Math.Floor(h)!int
+    }
+}
+
+var scene = new Scene()
+scene.Add(Light.Directional(-0.5, -1.0, -0.3))
+scene.Fog(S3D.Rgb(170, 190, 220), 15m, 40m)
+
+// a cell is 1 m, a height of 1 is 4 cm: hills up to almost 6 m
+var land = new Terrain(heights, size, size, 1m, 4cm)
+land.Texture = Texture.Checker(32, 2, S3D.Rgb(110, 170, 90), S3D.Rgb(95, 150, 80))
+land.TextureWidth = 2m
+land.TextureHeight = 2m
+scene.Add(land)
+var blocks = new Terrain(heights, size, size, 1m, 4cm, TerrainMode.Hard)
+blocks.Texture = land.Texture
+blocks.TextureWidth = 1m
+blocks.TextureHeight = 1m
+blocks.Visible = false
+scene.Add(blocks)
+
+// water in the valleys
+var lake = new Object(Template.Plane, 0m, 1.8m, 0m, 48m, 0m, 48m)
+lake.Color = S3D.Rgb(60, 110, 190)
+lake.Opacity = 0.7
+lake.ReceiveShadows = false
+scene.Add(lake)
+
+// a ball that rolls over the ground: its height is the height of the ground below it
+var ball = new Object(Template.Sphere, 0m, 0m, 0m, 1m, 1m, 1m)
+ball.Color = S3D.Rgb(230, 60, 50)
+ball.AnchorY = 0.0
+scene.Add(ball)
+
+var cam = new Camera(fb)
+scene.Add(cam)
+
+var last = DateTime.UtcNow.Ticks
+var t = 0.0
+while (win.Tick()) {
+    any e = win.NextEvent()
+    while (e != undefined) {
+        if (e[0] == EventType.KeyDown && e[1] == 109) {           // M
+            land.Visible = !land.Visible
+            blocks.Visible = !land.Visible
+        } else if (e[0] == EventType.KeyDown && e[1] == 102) {    // F
+            if (scene.Renderer == RenderMode.Fast) { scene.Renderer = RenderMode.Software } else { scene.Renderer = RenderMode.Fast }
+        }
+        e = win.NextEvent()
+    }
+    var now = DateTime.UtcNow.Ticks
+    t = t + (now - last) / 10000000.0
+    last = now
+
+    // the ball goes round in a circle, on the ground
+    var bx = (Math.Sin(t * 0.3) * 12.0) * 1m
+    var bz = (Math.Cos(t * 0.3) * 12.0) * 1m
+    any ground = land.HeightAt(bx, bz)
+    if (blocks.Visible) { ground = blocks.HeightAt(bx, bz) }
+    if (ground != undefined) { ball.SetPosition(bx, ground, bz) }
+
+    // the camera follows from behind and above
+    cam.SetPosition((Math.Sin(t * 0.3 - 0.5) * 20.0) * 1m, ball.Y + 6m, (Math.Cos(t * 0.3 - 0.5) * 20.0) * 1m)
+    cam.LookAt(ball.X, ball.Y, ball.Z)
+
+    cam.Render()
+    hud.FillRect(0, 0, 640, 18, shade)
+    hud.DrawText(6, 4, "M smooth / blocks   F renderer (" + scene.Renderer + ")   " + land.Triangles + " / " + blocks.Triangles + " triangles", white, shade, Fonts.Console(), 8)
+}

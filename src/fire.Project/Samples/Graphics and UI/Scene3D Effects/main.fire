@@ -1,0 +1,120 @@
+#import "windows"
+#import "scene3d"
+#import "scene3d.effects"
+#import "time"
+// Particles and effects (docs/graphics/effects.md): emitters are objects of the scene that send out particles; fog and a tint lie over the whole picture.
+// scene.Advance(dt) moves everything on: the particles, the spin of the coin, the water's texture.
+//   F      the renderer: Software (smooth) or Fast (the lean one, as on DOS)
+//   Space  an explosion (and a flash: the tint)
+//   G      fog on / off
+//   S      snow on / off
+
+var fb = new Framebuffer(640, 400)
+var win = new Window(fb, "Scene3D Effects")
+win.EnableEvents()
+var hud = new Renderer(fb)
+var white = new SolidBrush(S3D.Rgb(255, 255, 255))
+var shade = new SolidBrush(S3D.Rgba(0, 0, 0, 160))
+
+var scene = new Scene()
+scene.AmbientColor = S3D.Rgb(120, 130, 170)
+scene.AmbientIntensity = 0.35
+scene.Add(Light.Directional(-0.4, -1.0, -0.5))
+scene.Add(Light.Point(0m, 0.8m, 0m, S3D.Rgb(255, 160, 80), 1.2))
+
+var ground = new Object(Template.Plane, 0m, 0m, 0m, 40m, 0m, 40m)
+ground.Texture = Texture.Checker(64, 2, S3D.Rgb(70, 90, 70), S3D.Rgb(60, 80, 60))
+ground.TextureWidth = 2m
+ground.TextureHeight = 2m
+scene.Add(ground)
+
+// a river: its texture runs over it
+var water = new Object(Template.Plane, 0m, 0.01m, -4m, 40m, 0m, 2m)
+water.Texture = Texture.Checker(32, 4, S3D.Rgb(40, 90, 160), S3D.Rgb(60, 120, 190))
+water.TextureWidth = 1m
+water.TextureHeight = 1m
+water.TextureScrollX = 60cm / 1s
+scene.Add(water)
+
+// crates in a ring around the camp (`take`: the loop body hands each one to the scene)
+for (var i = 0; i < 7; i++) {
+    var a = i * 0.9
+    var crate = new Object(Template.Box, (Math.Sin(a) * 10.0) * 1m, 0.75m, (Math.Cos(a) * 10.0 - 1.0) * 1m, 1.5m, 1.5m, 1.5m)
+    crate.Color = S3D.Rgb(150, 130, 110)
+    crate.RotationY = i * 17deg
+    scene.Add(take crate)
+}
+// the camp fire: logs, flames, smoke and sparks
+for (var i = 0; i < 5; i++) {
+    var log = new Object(Template.Cylinder, 0m, 0.08m, 0m, 0.16m, 0.9m, 0.16m)
+    log.RotationZ = 90deg
+    log.RotationY = i * 36deg
+    log.Color = S3D.Rgb(90, 60, 40)
+    scene.Add(take log)
+}
+scene.Add(Emitter.Fire(0m, 0.1m, 0m))
+scene.Add(Emitter.Smoke(0m, 1m, 0m))
+scene.Add(Emitter.Sparks(0m, 0.3m, 0m))
+
+// a coin that turns by itself
+var coin = new Object(Template.Cylinder, 1.6m, 1.2m, 0.8m, 0.6m, 0.06m, 0.6m)
+coin.RotationX = 90deg
+coin.Color = S3D.Rgb(255, 200, 40)
+coin.Material = Material.Metal()
+coin.SpinY = 120deg
+scene.Add(coin)
+
+var snow = Emitter.Snow(0m, 6m, 0m, 16m)
+scene.Add(snow)
+var boom = Emitter.Explosion(-2.5m, 1.5m, -2.5m, 150)
+boom.Clear()
+scene.Add(boom)
+
+var fog = true
+scene.Fog(S3D.Rgb(140, 150, 175), 5m, 22m)
+var flash = 0.0
+
+var cam = new Camera(fb)
+scene.Add(cam)
+
+var last = DateTime.UtcNow.Ticks
+var angle = 0.0
+while (win.Tick()) {
+    any e = win.NextEvent()
+    while (e != undefined) {
+        if (e[0] == EventType.KeyDown) {
+            int key = e[1]
+            if (key == 102) {          // F
+                if (scene.Renderer == RenderMode.Fast) { scene.Renderer = RenderMode.Software } else { scene.Renderer = RenderMode.Fast }
+            } else if (key == 32) {    // Space
+                boom.Burst(150)
+                flash = 0.6
+            } else if (key == 103) {   // G
+                fog = !fog
+                if (fog) { scene.Fog(S3D.Rgb(140, 150, 175), 5m, 22m) } else { scene.NoFog() }
+            } else if (key == 115) {   // S
+                snow.Running = !snow.Running
+            }
+        }
+        e = win.NextEvent()
+    }
+    var now = DateTime.UtcNow.Ticks
+    var dt = (now - last) / 10000000.0
+    last = now
+    if (dt > 0.1) { dt = 0.1 }
+    scene.Advance(dt * 1s)
+
+    // the camera goes slowly around the fire
+    angle = angle + dt * 0.15
+    cam.SetPosition((Math.Sin(angle) * 6.5) * 1m, 2.4m, (Math.Cos(angle) * 6.5) * 1m)
+    cam.LookAt(0m, 0.8m, 0m)
+
+    // the flash fades
+    flash = flash - dt
+    if (flash < 0.0) { flash = 0.0 }
+    scene.Tint(S3D.Rgb(255, 230, 180), flash)
+
+    cam.Render()
+    hud.FillRect(0, 0, 640, 18, shade)
+    hud.DrawText(6, 4, "F renderer (" + scene.Renderer + ")   Space explosion   G fog   S snow   particles: " + (snow.Count + boom.Count), white, shade, Fonts.Console(), 8)
+}

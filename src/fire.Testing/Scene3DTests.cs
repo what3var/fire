@@ -395,13 +395,14 @@ static class Scene3DTests
     public static void Run()
     {
         if (Environment.GetEnvironmentVariable("FIRE_SCENE_FILE") is { Length: > 0 } file) { Console.WriteLine(Vm(File.ReadAllText(file))); return; }
-        // (FIRE_SCENE_DUMP=folder: writes the script and the test model there - scene3d.fire, robot.gltf, robot.f3d)
+        // (FIRE_SCENE_DUMP=folder: writes the script and the test models there - scene3d.fire, robot.gltf, robot.f3d, figure.fblocks)
         if (Environment.GetEnvironmentVariable("FIRE_SCENE_DUMP") is { Length: > 0 } dump)
         {
             Directory.CreateDirectory(dump);
             File.WriteAllText(Path.Combine(dump, "scene3d.fire"), Script);
             File.WriteAllText(Path.Combine(dump, "robot.gltf"), ModelTestData.RobotGltf());
             File.WriteAllBytes(Path.Combine(dump, "robot.f3d"), ModelTestData.RobotF3d());
+            File.WriteAllText(Path.Combine(dump, "figure.fblocks"), BlockModelTests.Figure());
             return;
         }
         string vm = Vm(Script);
