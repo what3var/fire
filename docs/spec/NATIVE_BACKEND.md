@@ -227,9 +227,13 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   die es kennt - auch eine Basis aus einer anderen Bibliothek -, deshalb entscheidet dort allein die Deklaration des Felds (`RawTypeAt`: `defined`, eine
   statische Art und Einheit), die jedes Modul aus der Schnittstelle der Klasse gleich sieht; ein Modul kennt nicht alle abgeleiteten Klassen (ein Plugin
   kann ableiten), der Offset kommt deshalb immer über `objRaw` (die Slots des Objekts zur Laufzeit). Die Tabellen der Mitglieder (`FireField.index`) nennen
-  den Slot, -1 für ein gepacktes Feld (es geht über seine get/set-Funktionen des Moduls). Die Adresse eines gepackten Felds (`&obj.n`) gibt es in einem
-  Programm aus Modulen nicht (eine ArgumentException, `packedFieldAddress`); in einem Programm aus einem Stück wird ein Feld, dessen Adresse genommen
-  wird, nicht gepackt.
+  den Slot, -1 für ein gepacktes Feld (es geht über seine get/set-Funktionen des Moduls). Ob gepackt wird, hängt nur an den Deklarationen, nicht daran, was der
+  Code mit dem Feld tut. **Die Adresse eines `defined`-Felds** (`&obj.n`, ein `ref`-Argument) ist ein Zeiger eigener Art, `K_PtrField`: seine Nutzlast ist
+  die Adresse der Zahl (die gepackte C-Zahl oder der Value-Slot), `unit` die Nummer eines Deskriptors des Felds (`FireFieldPtr`: Name, wie es liegt, seine
+  Deklaration, die Einheit; jedes Modul legt seine statisch an, die Runtime nummeriert sie beim ersten Gebrauch - unter dem GIL - in `g_fieldPtrs`),
+  `reserved` der Versatz der Zeigerarithmetik. `ptrWrite` rechnet in die Einheit des Felds um und prüft wie eine Zuweisung (`guardKindNN`); eine
+  `extern`-Funktion bekommt die Zahl in ihrem Puffer und schreibt sie über den Zeiger zurück. Deshalb behält ein `defined`-Feld, dessen Adresse
+  genommen wird, auch seinen statischen Typ (`FieldType`). Die VM prüft dasselbe (`TryWritePointer` bei einem `FieldPointerTarget` eines `defined`-Felds).
   Gemessen: 300 000 Objekte mit drei `defined int` und einem `defined bool` 45 -> 35 MB (64 Bit), 35 -> 31 MB (`#intwidth 32`, dort waren die schmalen
   Felder schon kompakt); der Code bleibt gleich groß (dos16: 1063 -> 1096 Byte für die Methode mit drei Feldänderungen).
 * **Der Objektkopf.** Was die meisten Objekte nie brauchen - die Liste dessen, was ein Objekt besitzt, und seine Typargumente - liegt in einem Block

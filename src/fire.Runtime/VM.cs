@@ -6326,6 +6326,13 @@ namespace fire.Runtime
 
         private bool TryWritePointer(Value ptr, Value value)
         {
+            // a field declared `defined` (SPEC 8.10b): what goes through the pointer is checked like an assignment to the field - its unit, its kind, never undefined
+            if (ptr.AsPointer() is FieldPointerTarget { Offset: 0 } field && field.Instance.RtClass is { } rc
+                && rc.FindFieldRequiredKind(field.FieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
+            {
+                if (rc.FindFieldRequiredUnit(field.FieldName) is { } unit && !AdaptFieldUnit(ref value, unit)) return false;
+                if (!GuardFieldKind(ref value, kind, field.FieldName)) return false;
+            }
             try { ptr.AsPointer().Write(value); return true; }
             catch (PointerRangeException ex) { ThrowPointerRange(ex); return false; }
             catch (ArrayElementException ex) { ThrowArrayElementError(ex.ElemUnit, ex.Offending, ex.Error, ex.Message); return false; }

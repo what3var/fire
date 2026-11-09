@@ -119,8 +119,9 @@ FIRE_NORETURN FIRE_FN void exitNow(int code) {
 
 /* The kinds of a value. A pointer has one kind per target (see "`ref` parameters"): a variable or a field, an element of a byte buffer, an element of an
  * array. They follow one another, so that `isPtr` is a single comparison. */
-enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_PtrByte, K_PtrElem, K_Array, K_Buffer, K_Undefined, K_Word };
-#define FIRE_IS_PTR_KIND(k) ((unsigned)(k) - (unsigned)K_PtrVar <= (unsigned)(K_PtrElem - K_PtrVar))
+enum { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_PtrVar, K_PtrByte, K_PtrElem, K_Array, K_Buffer, K_Undefined, K_Word, K_PtrField };
+/* (K_PtrField: a pointer to a field declared `defined` - a packed C number or a Value slot, written like an assignment to the field: fieldPtrV) */
+#define FIRE_IS_PTR_KIND(k) ((unsigned)(k) - (unsigned)K_PtrVar <= (unsigned)(K_PtrElem - K_PtrVar) || (k) == K_PtrField)
 
 /* The width of `int`: 64 bits, 32 when the program is generated with `#intwidth 32` (FIRE_INT32; SPEC 8.2.1), 16 with `#intwidth 16` (FIRE_INT16: the
  * storage stays 32 bits - the field also holds chars up to 10FFFFh - and every int that is made is cut to 16, FIRE_INT_CUT). An operation computes in 64 bits
@@ -1786,7 +1787,8 @@ FIRE_COLD FIRE_FN Value divUnits(Value a, Value b) {
 FIRE_FN Value ptrOffset(Value p, int64_t n) {
     Value r = p;
     if (n == 0) return p;
-    if (p.kind == K_PtrVar) r.unit = (uint32_t)(FIRE_UNIT_OFFSET(p) + (int32_t)n);   /* a variable or a field: an "array" with one element, the offset travels in `unit` */
+    if (p.kind == K_PtrVar) r.unit = (uint32_t)(FIRE_UNIT_OFFSET(p) + (int32_t)n);
+    else if (p.kind == K_PtrField) r.reserved = (uint16_t)((int16_t)p.reserved + (int16_t)n);   /* a variable or a field: an "array" with one element, the offset travels in `unit` */
     else r = leafPtrMove(p, (intptr_t)n * (p.kind == K_PtrByte ? 1 : (intptr_t)sizeof(Value)));
     return r;
 }
@@ -1987,7 +1989,7 @@ FIRE_FN Value relabelUnit(Value v, uint32_t target) {
 FIRE_FN const char* coerceKindName(uint8_t kind) {
     switch (kind) {
         case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
-        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_PtrVar: case K_PtrByte: case K_PtrElem: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_PtrVar: case K_PtrByte: case K_PtrElem: case K_PtrField: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
         case K_Word: return "Word";
         default: return "Undefined";
     }
@@ -2217,6 +2219,7 @@ FIRE_FN bool eq(Value a, Value b) {
             return x == y || (x->length == y->length && memcmp(x->data, y->data, x->length * sizeof(fire_char16)) == 0);
         }
         case K_PtrVar: return a.p == b.p && a.unit == b.unit;
+        case K_PtrField: return a.p == b.p && a.reserved == b.reserved;
         case K_PtrByte: case K_PtrElem: return ptrAddr(a) == ptrAddr(b);
         case K_Class: case K_Array: case K_Buffer: return sameLeaf(a, b);
         default: return a.p == b.p;
@@ -2309,8 +2312,7 @@ typedef struct FirePlace { uint16_t slot; int8_t half; uint8_t raw; uint16_t off
 #define FIRE_RAW_BOOL 3
 #define FIRE_RAW_WORD 4
 /* The packed fields, as Values. */
-FIRE_FN Value rawGet(Obj* o, uint8_t raw, uint16_t off, uint32_t unit) {
-    const char* r = objRaw(o) + off;
+FIRE_FN Value rawGetAt(const char* r, uint8_t raw, uint32_t unit) {
     switch (raw) {
         case FIRE_RAW_INT: { FireInt x; memcpy(&x, r, sizeof x); return Int(x, unit); }
         case FIRE_RAW_REAL: { Real x; memcpy(&x, r, sizeof x); return Float(x, unit); }
@@ -2318,9 +2320,9 @@ FIRE_FN Value rawGet(Obj* o, uint8_t raw, uint16_t off, uint32_t unit) {
         default: { FireWord x; memcpy(&x, r, sizeof x); return WordV((uint64_t)x); }
     }
 }
+FIRE_FN Value rawGet(Obj* o, uint8_t raw, uint16_t off, uint32_t unit) { return rawGetAt(objRaw(o) + off, raw, unit); }
 /* Stores a Value of the field's kind (its declaration has checked it) into a packed field. */
-FIRE_FN void rawSet(Obj* o, uint8_t raw, uint16_t off, Value v) {
-    char* r = objRaw(o) + off;
+FIRE_FN void rawSetAt(char* r, uint8_t raw, Value v) {
     switch (raw) {
         case FIRE_RAW_INT: { FireInt x = (FireInt)v.i; memcpy(r, &x, sizeof x); break; }
         case FIRE_RAW_REAL: { Real x = v.kind == K_Float ? (Real)v.f : (Real)v.i; memcpy(r, &x, sizeof x); break; }
@@ -2328,14 +2330,34 @@ FIRE_FN void rawSet(Obj* o, uint8_t raw, uint16_t off, Value v) {
         default: { FireWord x = (FireWord)v.w; memcpy(r, &x, sizeof x); break; }
     }
 }
+FIRE_FN void rawSet(Obj* o, uint8_t raw, uint16_t off, Value v) { rawSetAt(objRaw(o) + off, raw, v); }
+/* `&obj.n` of a field declared `defined` (SPEC 8.10b): a K_PtrField - its payload is the address of the number (a packed C number, or the Value slot), `unit` the
+ * number of the descriptor of the field (its name, how it is stored, its declaration; each module has its own, the runtime numbers them when they are first
+ * used - under the GIL), `reserved` the offset of pointer arithmetic (only 0 can be used). What goes through it is checked like an assignment to the field. */
+typedef struct FireFieldPtr { const char* name; uint8_t raw; uint8_t declared; uint8_t unitless; uint8_t hasUnit; uint32_t unit; Value text; uint32_t id; } FireFieldPtr;   /* (unit: the one it demands - hasUnit; text: that unit for the messages) */
+extern FIRE_RT_DATA FireFieldPtr** g_fieldPtrs;
+extern FIRE_RT_DATA uint32_t g_fieldPtrCount, g_fieldPtrCap;
+FIRE_FN uint32_t fieldPtrId(FireFieldPtr* d) {
+    if (FIRE_UNLIKELY(d->id == 0)) {
+        if (g_fieldPtrCount == g_fieldPtrCap) {
+            uint32_t cap = g_fieldPtrCap ? g_fieldPtrCap * 2 : 16;
+            FireFieldPtr** items = (FireFieldPtr**)realloc(g_fieldPtrs, cap * sizeof(FireFieldPtr*));
+            if (!items) outOfMemory();
+            g_fieldPtrs = items;
+            g_fieldPtrCap = cap;
+        }
+        g_fieldPtrs[g_fieldPtrCount++] = d;
+        d->id = g_fieldPtrCount;
+    }
+    return d->id;
+}
+FIRE_FN Value fieldPtrV(void* addr, FireFieldPtr* d) { Value r; r.kind = K_PtrField; FIRE_PAD0(r) r.reserved = 0; r.unit = fieldPtrId(d); r.p = addr; return r; }
+FIRE_FN const FireFieldPtr* fieldPtrOf(Value p) { return g_fieldPtrs[p.unit - 1]; }
 FIRE_FN Value placeGet(Obj* o, const FirePlace* p) {
     if (p->raw) return rawGet(o, p->raw, p->off, p->unit);
     if (p->half >= 0) return nvGet(&objFields(o)[p->slot], p->half);
     return objFields(o)[p->slot];
 }
-
-/* `&obj.n` of a packed field (`defined int n` in a program of modules: a C number behind the slots, no Value to point to). */
-FIRE_COLD FIRE_FN Value packedFieldAddress(const char* name);
 
 /* The part of an object that most objects never need: the list of what it owns and its type arguments. */
 typedef struct ObjExt { OwnList owned; TArgs targs; } ObjExt;
@@ -3207,7 +3229,7 @@ FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
             return;
         }
         case K_Lambda: setPiece(out, "<lambda>"); return;
-        case K_PtrVar: case K_PtrByte: case K_PtrElem: setPiece(out, "<pointer>"); return;
+        case K_PtrVar: case K_PtrByte: case K_PtrElem: case K_PtrField: setPiece(out, "<pointer>"); return;
         case K_Array: setPiece(out, "<array>"); return;
         case K_Buffer: {
             int n = snprintf(tmp, sizeof tmp, bufOf(v)->elem != 1 ? "<buffer %u words>" : "<buffer %u bytes>", (unsigned)bufOf(v)->length);
@@ -3971,7 +3993,7 @@ FIRE_HOST_EXTERN Value makeReflectError(Value message);
 FIRE_FN const char* kindName(Value v) {
     switch (v.kind) {
         case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
-        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_PtrVar: case K_PtrByte: case K_PtrElem: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_PtrVar: case K_PtrByte: case K_PtrElem: case K_PtrField: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
         case K_Word: return "Word";
         default: return "Undefined";
     }
@@ -4031,7 +4053,7 @@ FIRE_FN int64_t keyHash(Value x) {
         case K_Word: return (int64_t)fire_mixHash((uint64_t)x.w);   /* (like an int with the same bits: `==` takes them as equal) */
         case K_Char: case K_Bool: return (int64_t)fire_mixHash((uint64_t)x.i ^ ((uint64_t)x.kind << 56));
         case K_Class: case K_Array: case K_Buffer: return (int64_t)fire_mixHash((uint64_t)leafKey(x));
-        case K_PtrByte: case K_PtrElem: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)ptrAddr(x));
+        case K_PtrByte: case K_PtrElem: case K_PtrField: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)ptrAddr(x));
         default: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)x.p);
     }
 }
@@ -4453,12 +4475,6 @@ FIRE_COLD FIRE_FN Value missingMethod(Value self, const char* name, int argc) {
     if (self.kind == K_Class) snprintf(text, sizeof text, "Method '%s' not found on '%s'.", name, className(asObj(self)->cls));
     else snprintf(text, sizeof text, "'%s' (%d argument(s)) is not a known built-in method on a value of type %s.", name, argc, valueKindText(self));
     return fireError("MissingMemberException", text);
-}
-
-FIRE_COLD FIRE_FN Value packedFieldAddress(const char* name) {
-    char text[300];
-    snprintf(text, sizeof text, "The address of the field '%s' cannot be taken in this native build: it is declared 'defined' and lives packed in the object (a program of modules).", name);
-    return fireError("ArgumentException", text);
 }
 
 /* A field that the value does not have: a MissingMemberException (the texts of the VM). */
@@ -5294,6 +5310,10 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
         if (FIRE_UNLIKELY(FIRE_UNIT_OFFSET(p) != 0)) { *err = indexError("Pointer offset", FIRE_UNIT_OFFSET(p), 1); return false; }
         return true;
     }
+    if (p.kind == K_PtrField) {
+        if (FIRE_UNLIKELY((int16_t)p.reserved != 0)) { *err = indexError("Pointer offset", (int16_t)p.reserved, 1); return false; }
+        return true;
+    }
 #ifdef FIRE_PTRBOUNDS
     {
         Owned* h;
@@ -5323,14 +5343,16 @@ FIRE_FN Value ptrRead(Value p) {
     if (FIRE_UNLIKELY(!isPtr(p))) fatal("Dereference of a value that is not a pointer.");
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return err;
     if (p.kind == K_PtrVar) return *(const Value*)p.p;
+    if (p.kind == K_PtrField) { const FireFieldPtr* d = fieldPtrOf(p); return d->raw ? rawGetAt((const char*)p.p, d->raw, d->unit) : *(const Value*)p.p; }
     return p.kind == K_PtrByte ? Int(*(const uint8_t*)ptrAddr(p)) : *(const Value*)ptrAddr(p);
 }
 
 /* `p - q` for two pointers into the same array, buffer, variable or field: the number of elements between them. */
 FIRE_FN Value ptrDiff(Value a, Value b) {
-    if (a.kind != b.kind || (a.kind == K_PtrVar ? a.p != b.p : (ptrSlot(a) != ptrSlot(b) || FIRE_VGEN(a) != FIRE_VGEN(b))))
+    if (a.kind != b.kind || (a.kind == K_PtrVar || a.kind == K_PtrField ? a.p != b.p : (ptrSlot(a) != ptrSlot(b) || FIRE_VGEN(a) != FIRE_VGEN(b))))
         fatal("Pointer difference ('ptr1 - ptr2') needs two pointers into the same array or the same variable.");
     if (a.kind == K_PtrVar) return Int((int64_t)FIRE_UNIT_OFFSET(a) - (int64_t)FIRE_UNIT_OFFSET(b));
+    if (a.kind == K_PtrField) return Int((int64_t)(int16_t)a.reserved - (int64_t)(int16_t)b.reserved);
     return Int((int64_t)(((intptr_t)ptrAddr(a) - (intptr_t)ptrAddr(b)) / (a.kind == K_PtrByte ? (intptr_t)1 : (intptr_t)sizeof(Value))));
 }
 
@@ -5341,6 +5363,22 @@ FIRE_FN void ptrWrite(Value p, Value v) {
     if (FIRE_UNLIKELY(!isPtr(p))) fatal("Assignment through a value that is not a pointer.");
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return;
     if (p.kind == K_PtrByte) { *(uint8_t*)ptrAddr(p) = (uint8_t)v.i; return; }
+    if (p.kind == K_PtrField) {
+        /* a field declared `defined`: checked like an assignment to it (undefined, another kind: the ArgumentException) */
+        const FireFieldPtr* d = fieldPtrOf(p);
+        char what[200];
+        if (d->hasUnit) {
+            v = adaptUnit(v, d->unit, false, d->declared == K_Float, d->text);
+            if (FIRE_UNLIKELY(g_unwind.active)) return;
+        }
+        snprintf(what, sizeof what, "Field '%s'", d->name);
+        v = guardKindNN(v, d->declared, d->unitless != 0, what, d->text);
+        if (FIRE_UNLIKELY(v.kind != d->declared)) return;   /* (thrown) */
+        if (d->declared == K_Int) v = intProgram(v);
+        if (d->raw) { rawSetAt((char*)p.p, d->raw, v); return; }
+        *(Value*)p.p = v;   /* (the field holds a number: nothing to count) */
+        return;
+    }
 #ifdef FIRE_ELEMPTRS
     if (p.kind == K_PtrElem && (FIRE_UNCHECKED_OR(slotGen(ptrSlot(p)) == FIRE_VGEN(p)))) {
         /* an element of a typed array (unpacked when the pointer was taken): the value is converted like `a[i] = v`, or it is the exception */
@@ -6634,6 +6672,7 @@ typedef struct ExternPtr {
     Value* target;
     uint8_t kind;
     void* raw;
+    Value field;   /* a K_PtrField (a field declared `defined`): the new value goes back through it (checked like an assignment) */
 } ExternPtr;
 FIRE_FN void externPtrInit(ExternPtr* e, Value v) {
     Value cur;
@@ -6643,8 +6682,11 @@ FIRE_FN void externPtrInit(ExternPtr* e, Value v) {
     if (!isPtr(v)) fatal("A pointer argument of an extern function expects a pointer.");
     if (v.kind == K_PtrByte) { e->raw = ptrAddr(v); return; }   /* a pointer into a byte buffer: its bytes */
     if (v.kind == K_PtrVar && FIRE_UNIT_OFFSET(v) != 0) fatal("A pointer argument of an extern function points outside of its variable.");
-    e->target = v.kind == K_PtrVar ? (Value*)v.p : (Value*)ptrAddr(v);
-    cur = *e->target;
+    if (v.kind == K_PtrField) { e->field = v; cur = ptrRead(v); }
+    else {
+        e->target = v.kind == K_PtrVar ? (Value*)v.p : (Value*)ptrAddr(v);
+        cur = *e->target;
+    }
     e->kind = cur.kind;
     switch (cur.kind) {
         case K_Int: { int64_t x = cur.i; memcpy(e->buf.bytes, &x, 8); break; }
@@ -6656,14 +6698,22 @@ FIRE_FN void externPtrInit(ExternPtr* e, Value v) {
     e->raw = e->buf.bytes;
 }
 FIRE_FN void externPtrFree(ExternPtr* e) {
-    if (!e->target) return;
+    Value nv;
+    if (!e->target && e->field.kind != K_PtrField) return;
     switch (e->kind) {
-        case K_Int: { int64_t x; memcpy(&x, e->buf.bytes, 8); *e->target = Int(x); break; }
-        case K_Float: { double d; memcpy(&d, e->buf.bytes, 8); *e->target = Float((Real)d); break; }
-        case K_Bool: *e->target = Bool(e->buf.bytes[0] != 0); break;
-        case K_Char: { int32_t c; memcpy(&c, e->buf.bytes, 4); *e->target = Char((uint32_t)c); break; }
-        default: break;
+        case K_Int: { int64_t x; memcpy(&x, e->buf.bytes, 8); nv = Int(x); break; }
+        case K_Float: { double d; memcpy(&d, e->buf.bytes, 8); nv = Float((Real)d); break; }
+        case K_Bool: nv = Bool(e->buf.bytes[0] != 0); break;
+        case K_Char: { int32_t c; memcpy(&c, e->buf.bytes, 4); nv = Char((uint32_t)c); break; }
+        default: return;
     }
+    if (e->field.kind == K_PtrField) {
+        /* (the number in the unit of the field: what the native function changed it to) */
+        const FireFieldPtr* d = fieldPtrOf(e->field);
+        if (d->hasUnit && (nv.kind == K_Int || nv.kind == K_Float)) nv.unit = d->unit;
+        ptrWrite(e->field, nv);
+    }
+    else *e->target = nv;
 }
 
 /* ---- `Library` (docs/language/18-native-code.md, fire.Standard.LibraryMethods): a native library loaded at run time and its functions by C signature.
@@ -7978,6 +8028,8 @@ uint32_t g_textUnitCount = 0;
 #ifdef FIRE_SLOTS
 SlotTable g_slots;
 #endif
+FireFieldPtr** g_fieldPtrs;
+uint32_t g_fieldPtrCount, g_fieldPtrCap;
 bool g_domainOn = false;
 const ResEntry* g_resources = NULL;
 const FireEnum* g_enums = NULL;

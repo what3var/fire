@@ -2375,6 +2375,8 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
 * **A field, a property's field and a variable without an initializer start at zero** in the unit they demand (`0`, `0.0`,
   `False`, the word 0, the char 0).
 * **A return value**: every `return` is checked, and the end of the body (which returns `undefined`) is the exception.
+* **Through a pointer or a `ref`** (`&obj.n`, a `ref int` parameter given `obj.n`) the field keeps it too: what is written through it is
+  converted into the field's unit and checked like an assignment (undefined is the `ArgumentException`).
 * **JSON and reflection** keep the promise: `Json.Deserialize` leaves a `defined` field that is not in the text at zero (reading JSON runs no
   initializers) and a `null` for it is an `ArgumentException` (`$.n is an int and never undefined.`); `Reflect.Set` checks like an assignment.
 * `defined` stands in front of the type and its width (`defined int[16] x`, `defined byte b`, `defined float : m len`); it is

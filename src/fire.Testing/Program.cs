@@ -23618,6 +23618,31 @@ else
             copy2.n = 1
             print(copy2.n + " " + shared.n + " " + copy2.d)
             """),
+        ("Adressen gepackter Felder: ref auf defined-Felder, &p.n und &p.len lesen und schreiben (Einheit umgerechnet), undefined ueber den Zeiger abgelehnt", """
+            class P { defined int n; defined float : m len; int plain = 0; string s = "x" }
+            class K {
+                static Add(ref int x, defined int by) { x = x + by }
+                static Scale(ref float y) { y = y * 2 }
+            }
+            var p = new P()
+            K.Add(p.n, 5)
+            K.Add(p.n, 2)
+            K.Scale(p.len)
+            p.len = p.len + 1m
+            K.Scale(p.len)
+            K.Add(p.plain, 3)
+            print(p.n + " " + p.len + " " + p.plain)
+            unsafe {
+                int* q = &p.n
+                *q = *q * 10
+                print(*q + " " + p.n)
+                float* r = &p.len
+                *r = 450cm
+                print(*r + " " + p.len)
+                try { *q = undefined } catch (ArgumentException e) { print(e.message) }
+                print(p.n)
+            }
+            """),
         ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
             class K {
                 defined int n
