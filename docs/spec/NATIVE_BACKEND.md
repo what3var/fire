@@ -186,9 +186,11 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Float-Schleife `a = a + x * x; x = x + 0.25` 1001 -> 351 Byte. Mit gcc `-O2` gleich schnell wie vorher (gcc hielt die Values schon in Registern).
 * **Parameter und Rückgaben als C-Typen (Ebene 2, Stufe 2b).** Grundlage ist `defined` (SPEC 8.10b): ein `defined int`-Parameter ist nie `undefined` und
   kein Enum-Wert, eine `defined`-Rückgabe ebenso - das macht den Rumpf einer Methode skalar, ohne dass der Generator die Aufrufer kennen muss
-  (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern ohne Einheit oder mit einer `defined`-Rückgabe
+  (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern oder mit einer `defined`-Rückgabe
   (auch `bool`), deren Rückgabewerte eine statische Art und Einheit haben, bekommt einen **C-Rumpf** `fN_c` mit diesen C-Typen (`FireInt`, `Real`,
-  `FireWord`, `bool`): die C-Parameter sind Variablen, die C-Zahlen sind (`ScalarVarOf`; eine, in die der Rumpf etwas anderes speichert, wird am Anfang
+  `FireWord`, `bool`; ein Parameter mit fester Einheit - `defined float : m` - hat sie statisch im Typ: an der Aufrufstelle geht ein Argument derselben
+  Einheit direkt hinein, jedes andere wird erst umgerechnet wie vom `CheckUnit` des Prologs, `adaptUnit`, dann geprüft; eine offene Einheit, `: any`,
+  `: any m`, bleibt ein Value): die C-Parameter sind Variablen, die C-Zahlen sind (`ScalarVarOf`; eine, in die der Rumpf etwas anderes speichert, wird am Anfang
   zum Value `Pi` aus `Pi_c`), ihr `GuardLocal` entfällt, ein `return` gibt die Zahl zurück (ein Ausstieg durch eine Ausnahme 0). `fN` bleibt die Funktion
   mit Values für alles Übrige (Dispatcher, Interfaces, Lambdas, Reflection, Überschreibungen): sie prüft die C-Parameter wie der Prolog (`guardKindNN`),
   ruft `fN_c` und packt das Ergebnis in einen Value. Ein **direkter Aufruf** (`CallStaticMethod`, `CallMethod` auf einem Objekt einer bekannten Klasse,

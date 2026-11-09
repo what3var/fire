@@ -3882,14 +3882,21 @@ namespace fire.Native
                     int k = first + i, type = abi.ParamType[i];
                     if (type == 0) { result.Add(S(k)); continue; }
                     byte kind = KindOfType(type);
+                    int unit = UnitOfType(type);
                     bool proven = kind switch
                     {
-                        KindInt => NarrowInt(k) && U(k) == 0,
-                        KindFloat => (K(k) == KindFloat || NarrowInt(k)) && U(k) == 0,
+                        KindInt => NarrowInt(k) && U(k) == unit,
+                        KindFloat => (K(k) == KindFloat || NarrowInt(k)) && U(k) == unit,
                         _ => K(k) == KindWord,
                     };
                     if (!proven)
                     {
+                        // (a parameter with a unit: the value is converted into it first, like the CheckUnit of the prologue - then checked)
+                        if (abi.ParamDemand[i] is { } demand)
+                        {
+                            E($"{S(k)} = {AdaptUnitCall(S(k), demand)};");
+                            Check();
+                        }
                         SetScalar(k, type, CNumberOf(type, $"({GuardKindCall(S(k), CDeclared(type), abi.ParamWhat[i])})"));
                         Check();
                     }

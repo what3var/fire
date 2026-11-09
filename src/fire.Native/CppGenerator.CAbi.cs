@@ -18,6 +18,8 @@ namespace fire.Native
         {
             public required int[] ParamType;
             public required string[] ParamWhat;
+            /// <summary>The unit demand of a C parameter with a unit (`#m`, `mm`: CheckUnit of the prologue, done by the caller), null without one.</summary>
+            public required string?[] ParamDemand;
             public int RetType;
             public bool Active => RetType != 0 || ParamType.Any(t => t != 0);
         }
@@ -50,6 +52,7 @@ namespace fire.Native
             if (f.HasSelf && code.Any(c => c.Op == OpCode.GuardLocalType && !string.IsNullOrEmpty(DeclaredType.Parse(f.Chunk.Constants[c.A[1]].AsString()).TypeParamClass))) return null;
             var types = new int[f.ParamCount];
             var whats = new string[f.ParamCount];
+            var demands = new string?[f.ParamCount];
             foreach (var c in code.Where(c => c.Op == OpCode.GuardLocal && c.A[0] < f.ParamCount))
             {
                 int i = c.A[0];
@@ -57,19 +60,30 @@ namespace fire.Native
                 byte declared = (byte)((c.A[1] & 0x7F) + 1 | c.A[1] & DeclaredKind.UnitlessBit);
                 if (!DeclaredKind.IsNonNull(declared)) continue;
                 byte kind = KindOfDeclared(declared);
-                // (a parameter without a unit only: one with a unit converts in the prologue - CheckUnit - before its check)
-                if (kind is KindInt or KindFloat && (c.A[3] == 0xFFFF || f.Chunk.Constants[c.A[3]].AsString() != "unitless")) continue;
+                // (a number without a unit, or in one fixed unit: the prologue converts into it - CheckUnit - before its check, the caller does that
+                // then; an open unit - `: any`, `: any m` - stays a Value)
+                int unit = 0;
+                if (kind is KindInt or KindFloat)
+                {
+                    if (c.A[3] == 0xFFFF) continue;
+                    string demand = f.Chunk.Constants[c.A[3]].AsString();
+                    if (demand != "unitless")
+                    {
+                        if (demand.TrimStart('#').StartsWith("any", StringComparison.Ordinal) || (unit = DemandedUnitId(demand)) <= 0) continue;
+                        demands[i] = demand;
+                    }
+                }
                 int type = kind switch
                 {
-                    KindInt when !DeclaredKind.KeepsWidth(declared) => TypeOf(KindInt, 0) | NarrowBit,
-                    KindFloat => TypeOf(KindFloat, 0),
+                    KindInt when !DeclaredKind.KeepsWidth(declared) => TypeOf(KindInt, unit) | NarrowBit,
+                    KindFloat => TypeOf(KindFloat, unit),
                     KindWord => TypeOf(KindWord, 0),
                     _ => 0,
                 };
                 types[i] = type;
                 whats[i] = f.Chunk.Constants[c.A[2]].AsString();
             }
-            return new CAbi { ParamType = types, ParamWhat = whats };
+            return new CAbi { ParamType = types, ParamWhat = whats, ParamDemand = demands };
         }
 
         /// <summary>After a round's code of the method: the C return value it can have - every `return` is checked (`defined`, the chunk ends with
@@ -119,7 +133,7 @@ namespace fire.Native
         {
             byte kind = KindOfType(type);
             return (byte)((kind == KindInt ? (int)TypeTag.Int : kind == KindFloat ? (int)TypeTag.Float : (int)TypeTag.Word) + 1 | DeclaredKind.NonNullBit
-                | (kind == KindWord ? 0 : DeclaredKind.UnitlessBit));
+                | (kind == KindWord || UnitOfType(type) != 0 ? 0 : DeclaredKind.UnitlessBit));   // (one with a unit was converted into it before: AdaptUnitCall)
         }
 
         /// <summary>The C number of a checked Value.</summary>
@@ -172,6 +186,12 @@ namespace fire.Native
             {
                 int type = abi.ParamType[i];
                 if (type == 0) { args.Add($"P{i}"); continue; }
+                if (abi.ParamDemand[i] is { } demand)
+                {
+                    // (the CheckUnit of the prologue first: into the unit of the parameter)
+                    body.AppendLine($"    P{i} = {AdaptUnitCall($"P{i}", demand)};");
+                    if (_usesExceptions) body.AppendLine($"    if (FIRE_UNLIKELY(g_unwind.active)) return Undef();");
+                }
                 body.AppendLine($"    P{i} = {GuardKindCall($"P{i}", CDeclared(type), abi.ParamWhat[i])};");
                 if (_usesExceptions) body.AppendLine($"    if (FIRE_UNLIKELY(g_unwind.active)) return Undef();");
                 args.Add(CNumberOf(type, $"P{i}"));

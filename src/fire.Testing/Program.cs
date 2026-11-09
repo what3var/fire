@@ -23422,6 +23422,30 @@ else
             int[64] wide = 5000000000
             print(M.Wrap(wide))
             """),
+        ("defined (SPEC 8.10b): C-Parameter mit Einheit - gleiche Einheit direkt, cm in m und int in float umgerechnet, falsche Dimension, undefined, ueber ein Interface", """
+            interface IArea { defined float : m Side(defined float : m x) }
+            class G : IArea {
+                static defined float : m Twice(defined float : m x) { return x * 2 }
+                static defined int : mm Pad(defined int : mm x, defined int n) { return x + n * 1mm }
+                static defined float Ratio(defined float : m a, defined float : m b) { return a / b }
+                static defined float : s Time(defined float : m d, defined float : m/s v) { return d / v }
+                defined float : m Side(defined float : m x) { return x + 1m }
+            }
+            print(G.Twice(3m) + " " + G.Twice(250cm) + " " + G.Twice(2.5m))
+            print(G.Pad(5mm, 3) + " " + G.Pad(2cm, 1))
+            print(G.Ratio(1m, 50cm) + " " + G.Time(100m, 20m / 4s))
+            float : m acc = 0m
+            for (int i = 0; i < 1000; i++) { acc = G.Twice(acc / 2 + 1cm) }
+            print(acc)
+            IArea a = new G()
+            print(a.Side(30cm) + " " + new G().Side(2m))
+            any k = 3kg
+            try { print(G.Twice(k)) } catch (UnitMismatchException e) { print("mismatch " + e.message) }
+            float : m u
+            try { print(G.Twice(u)) } catch (ArgumentException e) { print(e.message) }
+            any s = "x"
+            try { print(G.Twice(s)) } catch (Exception e) { print(e.message) }
+            """),
         ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
             class K {
                 defined int n
