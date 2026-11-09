@@ -615,18 +615,19 @@ class Scene {
     // Fog: from `start` on, the picture goes into the colour, from `end` on it is all fog - also where no object is (the background). It hides the end of the
     // world and is cheap (Fast and Software; the GPU draws no fog yet). NoFog() takes it away.
     undefined Fog(int color, float start : any m, float end : any m) {
+        __S3DEffects()
         __S3DSetI(this.h, 5, color)
         __S3DSetF(this.h, 1, S3D.Length(start))
         __S3DSetF(this.h, 2, S3D.Length(end))
     }
     undefined NoFog() { __S3DSetF(this.h, 1, 0.0); __S3DSetF(this.h, 2, 0.0) }
-    int FogColor { get { return __S3DGetI(this.h, 5) } set { __S3DSetI(this.h, 5, value) } }
-    float FogStart : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DSetF(this.h, 1, S3D.Length(value)) } }
-    float FogEnd : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DSetF(this.h, 2, S3D.Length(value)) } }
+    int FogColor { get { return __S3DGetI(this.h, 5) } set { __S3DEffects(); __S3DSetI(this.h, 5, value) } }
+    float FogStart : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DEffects(); __S3DSetF(this.h, 1, S3D.Length(value)) } }
+    float FogEnd : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DEffects(); __S3DSetF(this.h, 2, S3D.Length(value)) } }
     // The tint: the whole picture towards a colour by `amount` (0 nothing .. 1 all the colour): fading out (black), a flash (white), under water (blue).
-    undefined Tint(int color, float amount) { __S3DSetI(this.h, 6, color); __S3DSetF(this.h, 3, amount) }
-    int TintColor { get { return __S3DGetI(this.h, 6) } set { __S3DSetI(this.h, 6, value) } }
-    float TintAmount { get { return __S3DGetF(this.h, 3) } set { __S3DSetF(this.h, 3, value) } }
+    undefined Tint(int color, float amount) { __S3DEffects(); __S3DSetI(this.h, 6, color); __S3DSetF(this.h, 3, amount) }
+    int TintColor { get { return __S3DGetI(this.h, 6) } set { __S3DEffects(); __S3DSetI(this.h, 6, value) } }
+    float TintAmount { get { return __S3DGetF(this.h, 3) } set { __S3DEffects(); __S3DSetF(this.h, 3, value) } }
 
     // The time goes on for every object of the scene (Object.Advance: animations, spin, texture scroll, particles) - once a frame: scene.Advance(16ms).
     undefined Advance(float time : any s) { __S3DSceneAdvance(this.h, S3D.Seconds(time)) }
