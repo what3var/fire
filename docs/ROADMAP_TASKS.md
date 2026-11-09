@@ -88,9 +88,19 @@ All of it is a small part of the C runtime: native programs use it directly, the
 * The UI task and its handlers form a **task group**: it runs only on the UI worker and switches between its members only at `await`, `Yield` and
   `Sleep` - not at the time slice points, so a handler is undisturbed between two awaits (the rule known from WPF and the browser). Tasks outside the
   group may take the worker at any safe point; they cannot see the UI objects.
-* Other tasks do not touch the UI: a handler fetches results itself (`var data = await Load(...)`, then sets them); messages from outside (progress,
-  a push from the server) are jobs that run in the UI group, like `fire global { }`: e.g. `fire ui { label.Text = text }`, the data copied as with
-  `taking`.
+* Other tasks do not touch the UI directly. A handler fetches results itself (`var data = await Load(...)`, then sets them). For code from outside
+  (progress, a push from the server) a window has a **dispatcher**: it is the mailbox of its UI group, and a reference to a window may go to other tasks
+  like an actor reference (`with window`). The language form:
+
+  ```
+  fire on window { window.status.Text = text }       // runs in the UI group, the caller goes on
+  var name = await on window { return window.nameBox.Text }   // runs there and returns the result (the way back)
+  ```
+
+  The block is compiled like the body of a `fire`: what it takes from the caller is copied (`taking`, numbers and strings by default); inside the block
+  `window` is the real object. `on` names *where* the code runs (a window, later any pinned group or an actor); `pinned` stays the word of the
+  scheduler for "this task does not move". A library form `window.Dispatcher.Post(...)` is not possible as a plain lambda, because lambdas cannot go to
+  another thread.
 * The window thread of the windows package that presents the frames (GPU blit, DirectComposition) stays separate from drawing: a pinned task or a
   thread of its own, since presenting may block (vsync).
 * **Open:** is the main program itself the UI task (proposal: the main program always starts as a pinned task on the main thread and `Run()` makes it
