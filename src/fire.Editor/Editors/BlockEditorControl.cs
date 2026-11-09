@@ -321,105 +321,11 @@ namespace fire.Editor
             }
         }
 
-        // ---- the palette ---------------------------------------------------------------------------------------------------------------------
-        private sealed class PaletteStrip : Control
-        {
-            public const double Cell = 22;
-            public BlockModel Model = BlockModel.CreateDefault();
-            public int Current;
-            public event Action<int>? Picked;
-            public event Action<int>? EditRequested;
-
-            protected override Size MeasureOverride(Size availableSize)
-            {
-                int perRow = Math.Max(1, (int)((double.IsInfinity(availableSize.Width) ? 400 : availableSize.Width) / Cell));
-                return new Size(Math.Min(Model.Palette.Count, perRow) * Cell + 1, Math.Ceiling(Model.Palette.Count / (double)perRow) * Cell + 1);
-            }
-
-            private int PerRow => Math.Max(1, (int)(Bounds.Width / Cell));
-
-            protected override void OnPointerPressed(PointerPressedEventArgs e)
-            {
-                base.OnPointerPressed(e);
-                var p = e.GetPosition(this);
-                int i = (int)(p.Y / Cell) * PerRow + (int)(p.X / Cell);
-                if (i < 0 || i >= Model.Palette.Count) return;
-                if (e.ClickCount == 2) EditRequested?.Invoke(i); else Picked?.Invoke(i);
-            }
-
-            public override void Render(DrawingContext context)
-            {
-                int perRow = PerRow;
-                for (int i = 0; i < Model.Palette.Count; i++)
-                {
-                    uint rgb = Model.Palette[i];
-                    var r = new Rect((i % perRow) * Cell, (i / perRow) * Cell, Cell - 2, Cell - 2);
-                    context.FillRectangle(new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb)), r);
-                    context.DrawRectangle(null, new Pen(new SolidColorBrush(Color.FromArgb(0x60, 0xFF, 0xFF, 0xFF)), 1), r);   // (a dark colour on the dark ground)
-                    if (i == Current) context.DrawRectangle(null, new Pen(Brushes.White, 2), r.Deflate(1));
-                }
-            }
-        }
-
-        // ---- the timeline of an animation ------------------------------------------------------------------------------------------------------
-        private sealed class TimelineView : Control
-        {
-            public BlockModel.Animation? Animation;
-            public int CurrentPart;
-            public double Time;
-            public event Action<double>? TimeChosen;
-            private bool _down;
-
-            public TimelineView() { Height = 30; MinWidth = 260; Cursor = new Cursor(StandardCursorType.Hand); }
-
-            private double Length => Animation?.Length > 0 ? Animation.Length : 1;
-            private double X(double t) => 8 + (Bounds.Width - 16) * t / Length;
-
-            /// <summary>The time at a point of the timeline, on the frames of the model file (1/30 s).</summary>
-            private double TimeAt(Point p)
-            {
-                double t = (p.X - 8) / Math.Max(1, Bounds.Width - 16) * Length;
-                t = Math.Round(t * ModelConverter.FramesPerSecond) / ModelConverter.FramesPerSecond;
-                return Math.Clamp(t, 0, Length);
-            }
-
-            protected override void OnPointerPressed(PointerPressedEventArgs e) { base.OnPointerPressed(e); if (Animation == null) return; _down = true; e.Pointer.Capture(this); TimeChosen?.Invoke(TimeAt(e.GetPosition(this))); }
-            protected override void OnPointerMoved(PointerEventArgs e) { base.OnPointerMoved(e); if (_down) TimeChosen?.Invoke(TimeAt(e.GetPosition(this))); }
-            protected override void OnPointerReleased(PointerReleasedEventArgs e) { base.OnPointerReleased(e); _down = false; e.Pointer.Capture(null); }
-
-            public override void Render(DrawingContext context)
-            {
-                double w = Bounds.Width, h = Bounds.Height, mid = h / 2;
-                context.FillRectangle(EditorTheme.Solid(Color.FromRgb(0x24, 0x21, 0x28)), new Rect(0, 0, w, h));
-                if (Animation == null) return;
-                var tick = new Pen(new SolidColorBrush(Color.FromArgb(0x50, 0xFF, 0xFF, 0xFF)), 1);
-                double step = Length <= 2 ? 0.1 : Length <= 10 ? 0.5 : 1;
-                for (double t = 0; t <= Length + 1e-9; t += step)
-                {
-                    bool whole = Math.Abs(t - Math.Round(t)) < 1e-9;
-                    context.DrawLine(tick, new Point(X(t), whole ? 4 : mid - 3), new Point(X(t), whole ? h - 4 : mid + 3));
-                }
-                context.DrawLine(tick, new Point(X(0), mid), new Point(X(Length), mid));
-                foreach (var k in Animation.Keys)
-                {
-                    double x = X(Math.Min(k.Time, Length));
-                    if (k.Part == CurrentPart)
-                    {
-                        var g = new StreamGeometry();
-                        using (var c = g.Open()) { c.BeginFigure(new Point(x, mid - 6), true); c.LineTo(new Point(x + 6, mid)); c.LineTo(new Point(x, mid + 6)); c.LineTo(new Point(x - 6, mid)); c.EndFigure(true); }
-                        context.DrawGeometry(Brushes.Orange, null, g);
-                    }
-                    else context.FillRectangle(new SolidColorBrush(Color.FromArgb(0x90, 0xC0, 0xC0, 0xC0)), new Rect(x - 1.5, mid - 3, 3, 6));
-                }
-                context.DrawLine(new Pen(Brushes.White, 2), new Point(X(Time), 2), new Point(X(Time), h - 2));
-            }
-        }
-
         // ---- the control -------------------------------------------------------------------------------------------------------------------
         private BlockModel _model = BlockModel.CreateDefault();
         private readonly PreviewView _preview = new();
         private readonly LayerView _layerView = new() { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
-        private readonly PaletteStrip _palette = new();
+        private readonly ModelPaletteStrip _palette = new();
         private readonly TextBlock _layerText = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0), MinWidth = 64 };
         private readonly TextBlock _info = new() { Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0) };
         private readonly ToggleButton _mirror = new() { Content = "Mirror X" };
@@ -429,18 +335,8 @@ namespace fire.Editor
         private string _text = "";
         private int _color = 4, _layer;
         private bool _updatingParts;
-        // the animation that is shown (-1: the rest pose, where the blocks are built), its time, playing
-        private readonly ComboBox _anims = new() { MinWidth = 150 };
-        private readonly TimelineView _timeline = new() { Width = 300 };
-        private readonly TextBlock _timeText = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0), MinWidth = 70 };
-        private readonly ToggleButton _loop = new() { Content = "Loop" };
-        private readonly Button _play = new() { Content = "▶" };
-        private readonly NumericUpDown[] _rot = new NumericUpDown[3], _move = new NumericUpDown[3];
-        private readonly NumericUpDown _scale = new() { Minimum = 0.05m, Maximum = 20, Increment = 0.1m, FormatString = "0.##", Width = 58, ShowButtonSpinner = false };
-        private readonly Avalonia.Threading.DispatcherTimer _player = new() { Interval = TimeSpan.FromMilliseconds(33) };
-        private int _anim = -1;
-        private double _time;
-        private bool _updatingFields, _updatingAnims;
+        // the animation that is shown (the rest pose, where the blocks are built, or an animation at a time)
+        private readonly ModelAnimationBar _animBar = new("cells", 0.5m);
         private enum LayerTool { Draw, Fill, Select }
         private LayerTool _tool = LayerTool.Draw;
         private readonly ToggleButton[] _toolButtons = new ToggleButton[3];
@@ -499,7 +395,7 @@ namespace fire.Editor
             bar.Children.Add(Button_("Size...", "The size of the grid and of a block", async () => await AskSize()));
             bar.Children.Add(Button_("Preview", "scene3d draws the model as a program shows it (with the animation chosen)", () =>
             {
-                var window = new BlockPreviewWindow(BlockModel.Parse(_model.ToJson()), _anim);
+                var window = new BlockPreviewWindow(BlockModel.Parse(_model.ToJson()), _animBar.Index);
                 if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner); else window.Show();
             }));
             bar.Children.Add(Button_("Export .f3d...", "Writes the model file that scene3d reads (a program can also take the .fblocks as a resource: forge converts it)", async () => await Export()));
@@ -515,42 +411,11 @@ namespace fire.Editor
             paletteBar.Children.Add(_palette);
 
             // the second bar: the animations
-            _loop.Classes.Add("tool"); _play.Classes.Add("tool");
-            ToolTip.SetTip(_loop, "The animation starts again at its end (from its last key to its first)");
-            ToolTip.SetTip(_play, "Plays the animation");
-            for (int k = 0; k < 3; k++)
-            {
-                _rot[k] = new NumericUpDown { Minimum = -3600, Maximum = 3600, Increment = 15, FormatString = "0.#", Width = 58, ShowButtonSpinner = false, Watermark = "xyz"[k].ToString() };
-                _move[k] = new NumericUpDown { Minimum = -256, Maximum = 256, Increment = 0.5m, FormatString = "0.##", Width = 58, ShowButtonSpinner = false, Watermark = "xyz"[k].ToString() };
-                ToolTip.SetTip(_rot[k], $"Turn around {"xyz"[k]} in degrees (arrow keys: 15 degrees) - a change makes a key of the part at this time");
-                ToolTip.SetTip(_move[k], $"Move in {"xyz"[k]} in cells (arrow keys: half a cell) - a change makes a key of the part at this time");
-                _rot[k].ValueChanged += (_, _) => FieldChanged();
-                _move[k].ValueChanged += (_, _) => FieldChanged();
-            }
-            _scale.ValueChanged += (_, _) => FieldChanged();
-            var animBar = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 0, 4, 2) };
-            animBar.Children.Add(new TextBlock { Text = "Animation", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0) });
-            animBar.Children.Add(_anims);
-            animBar.Children.Add(Button_("+", "A new animation", async () => await AddAnimation()));
-            animBar.Children.Add(Button_("Edit...", "The name and the length (seconds) of the animation", async () => await EditAnimation()));
-            animBar.Children.Add(Button_("−", "Take the animation out", RemoveAnimation));
-            animBar.Children.Add(_loop);
-            animBar.Children.Add(_play);
-            animBar.Children.Add(_timeline);
-            animBar.Children.Add(_timeText);
-            animBar.Children.Add(Separator());
-            animBar.Children.Add(Label("Turn"));
-            foreach (var n in _rot) animBar.Children.Add(n);
-            animBar.Children.Add(Label("Move"));
-            foreach (var n in _move) animBar.Children.Add(n);
-            animBar.Children.Add(Label("Scale"));
-            animBar.Children.Add(_scale);
-            animBar.Children.Add(Button_("Delete key", "Takes the key of the part at this time away", DeleteKey));
-            _anims.SelectionChanged += (_, _) => { if (!_updatingAnims) ChooseAnimation(_anims.SelectedIndex - 1); };
-            _loop.Click += (_, _) => { if (_anim >= 0) { bool loop = _loop.IsChecked == true; Change(() => _model.Animations[_anim].Loop = loop); } };
-            _play.Click += (_, _) => TogglePlay();
-            _timeline.TimeChosen += t => { StopPlaying(); SetTime(t); };
-            _player.Tick += (_, _) => PlayStep();
+            _animBar.Animations = () => _model.Animations;
+            _animBar.CurrentPart = () => _preview.CurrentPart;
+            _animBar.Change = Change;
+            _animBar.PoseChanged += RefreshViews;
+            var animBar = _animBar;
 
             var layerScroll = new ScrollViewer
             {
@@ -597,23 +462,15 @@ namespace fire.Editor
             Attach(BlockModel.CreateDefault(), resetUndo: true);
         }
 
-        private static TextBlock Label(string text) => new() { Text = text, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 2, 0) };
+        private static Control Separator() => ModelEditorUi.Separator();
 
-        private static Control Separator() => new Border { Width = 1, Background = EditorTheme.Border, Margin = new Thickness(6, 2) };
-
-        private static Button Button_(string text, string tip, Action click)
-        {
-            var b = new Button { Content = text };
-            b.Classes.Add("tool");
-            ToolTip.SetTip(b, tip);
-            b.Click += (_, _) => click();
-            return b;
-        }
+        private static Button Button_(string text, string tip, Action click) => ModelEditorUi.Button(text, tip, click);
 
         private void Attach(BlockModel model, bool resetUndo)
         {
             _model = model;
-            _preview.Model = _layerView.Model = _palette.Model = model;
+            _preview.Model = _layerView.Model = model;
+            _palette.Palette = model.Palette;
             _layer = Math.Clamp(_layer, 0, model.SizeY - 1);
             _color = Math.Clamp(_color, 0, model.Palette.Count - 1);
             int part = Math.Clamp(_parts.SelectedIndex, 0, model.Parts.Count - 1);
@@ -622,18 +479,9 @@ namespace fire.Editor
             _text = model.ToJson();
             _preview.Zoom = Math.Clamp(260.0 / Math.Max(model.SizeX, Math.Max(model.SizeY, model.SizeZ)), 4, 60);
             _layerView.Cell = Math.Clamp(320.0 / Math.Max(model.SizeX, model.SizeZ), 6, 28);
-            if (_anim >= model.Animations.Count) _anim = model.Animations.Count - 1;
             RefreshParts();
-            RefreshAnimations();
+            _animBar.RefreshList();
             RefreshViews();
-        }
-
-        private void RefreshAnimations()
-        {
-            _updatingAnims = true;
-            _anims.ItemsSource = new[] { "(rest pose - build)" }.Concat(_model.Animations.Select(a => a.Name)).ToList();
-            _anims.SelectedIndex = _anim + 1;
-            _updatingAnims = false;
         }
 
         private void RefreshParts()
@@ -655,106 +503,21 @@ namespace fire.Editor
             _layerView.InvalidateMeasure(); _layerView.InvalidateVisual();
             _palette.InvalidateMeasure(); _palette.InvalidateVisual();
             // the animation: its pose in the 3D view, the timeline, the numbers of the part at this time
-            var anim = _anim >= 0 && _anim < _model.Animations.Count ? _model.Animations[_anim] : null;
-            if (anim != null) _time = Math.Clamp(_time, 0, anim.Length);
-            _preview.Pose = anim != null ? _model.PoseMatrices(anim, _time) : null;
-            _timeline.Animation = anim; _timeline.Time = _time; _timeline.CurrentPart = _preview.CurrentPart;
-            _timeline.InvalidateVisual();
-            _timeText.Text = anim != null ? $"{_time.ToString("0.00", CultureInfo.InvariantCulture)} / {anim.Length.ToString("0.##", CultureInfo.InvariantCulture)} s" : "";
-            _loop.IsChecked = anim?.Loop == true;
-            foreach (var c in new Control[] { _loop, _play, _timeline, _scale }.Concat(_rot).Concat(_move)) c.IsEnabled = anim != null;
-            _updatingFields = true;
-            var (rot, move, scale) = _model.PartPose(anim, _preview.CurrentPart, _time);
-            for (int k = 0; k < 3; k++) { _rot[k].Value = (decimal)Math.Round(rot[k], 3); _move[k].Value = (decimal)Math.Round(move[k], 3); }
-            _scale.Value = (decimal)Math.Round(scale[0], 3);
-            _updatingFields = false;
+            var anim = _animBar.Current;
+            _preview.Pose = anim != null ? _model.PoseMatrices(anim, _animBar.Time) : null;
+            _animBar.Refresh();
             _preview.InvalidateVisual();
         }
 
         // ---- animations ----
 
-        private BlockModel.Animation? CurrentAnimation => _anim >= 0 && _anim < _model.Animations.Count ? _model.Animations[_anim] : null;
+        private BlockModel.Animation? CurrentAnimation => _animBar.Current;
 
         /// <summary>Shows an animation (-1: the rest pose, where blocks are built).</summary>
-        public void ChooseAnimation(int index)
-        {
-            StopPlaying();
-            _anim = Math.Clamp(index, -1, _model.Animations.Count - 1);
-            _time = 0;
-            RefreshAnimations();
-            RefreshViews();
-        }
-
-        public void SetTime(double time) { _time = Math.Max(0, time); RefreshViews(); }
-        public double Time => _time;
-        public int AnimationIndex => _anim;
-
-        private void TogglePlay() { if (_player.IsEnabled) StopPlaying(); else if (CurrentAnimation != null) { _player.Start(); _play.Content = "■"; } }
-        private void StopPlaying() { _player.Stop(); _play.Content = "▶"; }
-
-        private void PlayStep()
-        {
-            var anim = CurrentAnimation;
-            if (anim == null) { StopPlaying(); return; }
-            double t = _time + _player.Interval.TotalSeconds;
-            if (t >= anim.Length) { if (anim.Loop) t -= anim.Length; else { t = anim.Length; StopPlaying(); } }
-            SetTime(t);
-        }
-
-        /// <summary>A number of the key fields changed: the part gets a key at this time with what the fields say.</summary>
-        private void FieldChanged()
-        {
-            if (_updatingFields || CurrentAnimation is not { } anim) return;
-            int part = _preview.CurrentPart;
-            double time = _time;
-            double[] rot = _rot.Select(n => (double)(n.Value ?? 0)).ToArray(), move = _move.Select(n => (double)(n.Value ?? 0)).ToArray();
-            double sc = (double)(_scale.Value ?? 1);
-            SetKey(anim, part, time, rot, move, new[] { sc, sc, sc });
-        }
-
-        /// <summary>Puts (or changes) the key of a part at a time.</summary>
-        public void SetKey(BlockModel.Animation anim, int part, double time, double[] rotate, double[] move, double[] scale) => Change(() =>
-        {
-            var key = BlockModel.KeyAt(anim, part, time);
-            if (key == null) { key = new BlockModel.Key { Part = part, Time = time }; anim.Keys.Add(key); }
-            key.Rotate = rotate; key.Move = move; key.Scale = scale;
-        });
-
-        private void DeleteKey()
-        {
-            if (CurrentAnimation is not { } anim || BlockModel.KeyAt(anim, _preview.CurrentPart, _time) is not { } key) return;
-            Change(() => anim.Keys.Remove(key));
-        }
-
-        private async Task AddAnimation()
-        {
-            string? name = await Input("The name of the new animation (a program plays it with obj.Play(\"name\")):", "New animation", "animation" + (_model.Animations.Count + 1));
-            if (string.IsNullOrWhiteSpace(name)) return;
-            Change(() => _model.Animations.Add(new BlockModel.Animation { Name = name.Trim(), Length = 1, Loop = true }));
-            ChooseAnimation(_model.Animations.Count - 1);
-        }
-
-        private async Task EditAnimation()
-        {
-            if (CurrentAnimation is not { } anim) return;
-            string? text = await Input("The name and the length in seconds, e.g. walk, 1.5:", "Animation", $"{anim.Name}, {anim.Length.ToString("0.###", CultureInfo.InvariantCulture)}");
-            if (text == null) return;
-            int comma = text.LastIndexOf(',');
-            string name = (comma >= 0 ? text[..comma] : text).Trim();
-            double length = anim.Length;
-            if (comma >= 0 && double.TryParse(text[(comma + 1)..].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double l) && l > 0) length = l;
-            if (name.Length == 0) return;
-            Change(() => { anim.Name = name; anim.Length = length; });
-            RefreshAnimations();
-        }
-
-        private void RemoveAnimation()
-        {
-            if (_anim < 0) return;
-            int index = _anim;
-            Change(() => _model.Animations.RemoveAt(index));
-            ChooseAnimation(Math.Min(index, _model.Animations.Count - 1));
-        }
+        public void ChooseAnimation(int index) => _animBar.Choose(index);
+        public void SetTime(double time) => _animBar.SetTime(time);
+        public double Time => _animBar.Time;
+        public int AnimationIndex => _animBar.Index;
 
         /// <summary>A change of the model: undo keeps the text before it.</summary>
         private void Change(Action change)
@@ -800,7 +563,7 @@ namespace fire.Editor
 
         private void OnPreviewHover(Point p)
         {
-            if (_anim >= 0) { if (_preview.Hover != null) { _preview.Hover = null; _preview.InvalidateVisual(); } return; }
+            if (_animBar.Index >= 0) { if (_preview.Hover != null) { _preview.Hover = null; _preview.InvalidateVisual(); } return; }
             var (o, d) = _preview.Ray(p);
             (int X, int Y, int Z, int Face)? hover = _model.Raycast(o, d, out var cell, out int face) ? (cell.X, cell.Y, cell.Z, face) : null;
             if (hover != _preview.Hover) { _preview.Hover = hover; _preview.InvalidateVisual(); }
@@ -808,7 +571,7 @@ namespace fire.Editor
 
         private void OnPreviewClick(PointerPoint point, KeyModifiers mods, Point p)
         {
-            if (_anim >= 0) { _info.Text = "Blocks are built in the rest pose (Animation: rest pose)."; return; }
+            if (_animBar.Index >= 0) { _info.Text = "Blocks are built in the rest pose (Animation: rest pose)."; return; }
             var (o, d) = _preview.Ray(p);
             if (!_model.Raycast(o, d, out var cell, out int face)) return;
             bool onFloor = cell.Y < 0;
@@ -829,7 +592,7 @@ namespace fire.Editor
 
         private void OnLayerPaint(int x, int z, PointerPoint point, KeyModifiers mods, bool first)
         {
-            if (_anim >= 0) { _info.Text = "Blocks are built in the rest pose (Animation: rest pose)."; return; }
+            if (_animBar.Index >= 0) { _info.Text = "Blocks are built in the rest pose (Animation: rest pose)."; return; }
             if (!_model.Inside(x, _layer, z)) return;
             if ((mods & KeyModifiers.Shift) != 0)
             {
@@ -968,8 +731,7 @@ namespace fire.Editor
             BlockModel model;
             try { model = BlockModel.Parse(text); }
             catch (InvalidDataException ex) { model = BlockModel.CreateDefault(); _info.Text = ex.Message; }
-            StopPlaying();
-            _anim = -1; _time = 0;
+            _animBar.Reset();
             Attach(model, resetUndo: true);
             _savedText = _text;   // (the text of the model in its own form: what is saved)
             ModifiedChanged?.Invoke();
@@ -1022,14 +784,14 @@ namespace fire.Editor
 
         private void FillSelection()
         {
-            if (_selection is not { } box || _anim >= 0) return;
+            if (_selection is not { } box || _animBar.Index >= 0) return;
             int c = _color, p = _preview.CurrentPart;
             Change(() => _model.FillBox(box, c, p));
         }
 
         public void Cut()
         {
-            if (_selection is not { } box || _anim >= 0) return;
+            if (_selection is not { } box || _animBar.Index >= 0) return;
             s_clipboard = _model.Copy(box);
             Change(() => _model.Delete(box));
         }
@@ -1039,7 +801,7 @@ namespace fire.Editor
         /// <summary>Puts the copied blocks with their corner at the cell under the pointer in the layer view (on the layer shown), else where the selection is.</summary>
         public void Paste()
         {
-            if (s_clipboard is not { } clip || _anim >= 0) return;
+            if (s_clipboard is not { } clip || _animBar.Index >= 0) return;
             int x, y = _layer, z;
             if (_layerView.Hover is { } hv) { x = hv.X; z = hv.Z; }
             else if (_selection is { } sel) { x = sel.X0; y = sel.Y0; z = sel.Z0; }
@@ -1049,7 +811,7 @@ namespace fire.Editor
             SetSelection(BlockModel.Box.Of(x, y, z, Math.Min(_model.SizeX - 1, x + clip.Width - 1), Math.Min(_model.SizeY - 1, y + clip.Height - 1), Math.Min(_model.SizeZ - 1, z + clip.Depth - 1)));
         }
 
-        public void Delete() { if (_selection is { } box && _anim < 0) Change(() => _model.Delete(box)); }
+        public void Delete() { if (_selection is { } box && _animBar.Index < 0) Change(() => _model.Delete(box)); }
 
         public void SelectAll() { SetTool(LayerTool.Select); SetSelection(BlockModel.Box.Of(0, 0, 0, _model.SizeX - 1, _model.SizeY - 1, _model.SizeZ - 1)); }
         public void Find() { }
