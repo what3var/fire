@@ -276,7 +276,7 @@
       },
       {
         "name": "__S3DTerrainHeight",
-        "returns": "float",
+        "returns": "any",
         "arguments": 3,
         "c": "fire_s3d_TerrainHeight"
       },
