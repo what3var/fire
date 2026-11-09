@@ -55,7 +55,14 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    *Done:* the test "ThreadSanitizer: die Thread-Faelle laufen ohne Data Race (mit GIL)" of the native group builds all thread cases (`Threads:`) with
    `-fsanitize=thread` and fails on any report; `FIRE_TEST_NO_GIL=1` builds the same cases without the GIL - the work list of 1b-1f. Before 1c/1d that run
    had races in 42 of the 52 cases (the first of each: the section queue, the slot table, the thread list and count, mailboxes, `terminate`, the globals).
-2. **1b** strings per thread: copied at the thread boundary, shared (atomic) only in the global scope.
+2. **1b** strings per thread: copied at the thread boundary, shared (atomic) only in the global scope. *First part done* (`FIRE_STR_CROSS`, with
+   `FIRE_NO_GIL`): `strCross` copies a string where it would cross - `taking` (the copier's `cross`), `sync` (case A and every string that goes back),
+   `handover` (the strings in the moved parts), the arguments of `fire global` and of actor messages, the value of `terminate`. The bit `R_SHARED` in the type
+   byte of a string or lambda makes its counts atomic (`retain`/`release` look at it first: one byte, a branch that is never taken in a program without
+   threads); the lambda of a `fire global` job carries it (made in the thread, let go of by the main program). `sync` writes into its original inside a
+   section, `originOf`/`copiesOf` have `g_originM`. *Second part with 1e:* a thread that reads a string of the global scope sets `R_SHARED` on it while
+   the lock of the globals holds the main program. Open: an original of another fire thread (not the main program) is written by `sync` while that thread
+   runs - it needs a section of its owner (that thread grants it at its safe points), see 1e.
 3. **1c** the slot table in segments. *Done* (only with `FIRE_NO_GIL`; the GIL build keeps the one array): `FIRE_SLOT_SEGMENTS` - a directory of 2^14
    segments of 2^14 slots that never move (the same two loads as before), the free slots cached per thread (64, exchanged half by half with the shared
    stack under `g_slotM`, given back when a thread ends), generations read and written atomically (relaxed: plain moves on x86 and arm).

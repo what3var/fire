@@ -1245,8 +1245,17 @@ enum { R_Str, R_Lam, R_Bytes };
 
 struct Ref {
     uint32_t rc;     /* number of holders; IMMORTAL for constants */
-    uint8_t type;    /* R_Str / R_Lam / R_Bytes (the temporary copy of bytesArg) */
+    uint8_t type;    /* R_Str / R_Lam / R_Bytes (the temporary copy of bytesArg); R_SHARED on top: counted atomically */
 };
+/* Strings without the GIL (docs/ROADMAP_TASKS.md step 1b): a string belongs to one thread, its counts are plain. Where it would cross to another thread
+ * (`taking`, `sync`, `handover`, the arguments of `fire global` and of actor messages, the value of `terminate`) it is copied (strCross). Only the global
+ * scope is shared: a string a thread reads there gets R_SHARED (while the main program is held by the lock of the globals) and is counted atomically from
+ * then on. With the GIL nothing of this is needed: FIRE_STR_CROSS is off. */
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+#define FIRE_STR_CROSS 1
+#endif
+#define R_SHARED 0x80u
+#define R_KIND(r) ((r)->type & 0x7Fu)
 
 /* Immutable UTF-16 string. A heap string stores its characters right behind the header. */
 typedef struct Str {
@@ -1644,16 +1653,35 @@ FIRE_FN Value LamV(Lam* l) { Value r; r.kind = K_Lambda; FIRE_PAD0(r) r.reserved
 
 FIRE_FN void freeRef(Ref* r);
 
+#ifdef FIRE_STR_CROSS
+#if defined(__GNUC__) || defined(__clang__)
+#define FIRE_RC_INC(r) __atomic_fetch_add(&(r)->rc, 1u, __ATOMIC_RELAXED)
+#define FIRE_RC_DEC(r) (__atomic_sub_fetch(&(r)->rc, 1u, __ATOMIC_ACQ_REL))
+#else
+#define FIRE_RC_INC(r) fire_atomic_add((fire_atomic32*)&(r)->rc, 1u)
+#define FIRE_RC_DEC(r) (fire_atomic_addAcqRel((fire_atomic32*)&(r)->rc, (uint32_t)-1) - 1u)
+#endif
+/* (a count of a string of the global scope: atomic) */
+FIRE_COLD FIRE_FN void retainShared(Ref* r) { FIRE_RC_INC(r); }
+FIRE_COLD FIRE_FN void releaseShared(Ref* r) { if (FIRE_RC_DEC(r) == 0) freeRef(r); }
+#define FIRE_REF_SHARED(r) FIRE_UNLIKELY((r)->type & R_SHARED)
+#else
+#define FIRE_REF_SHARED(r) 0
+#define retainShared(r) ((void)(r))
+#define releaseShared(r) ((void)(r))
+#endif
 FIRE_FN void retain(Value v) {
     if (isRef(v)) {
         Ref* r = refOf(v);
-        if (r->rc != IMMORTAL) r->rc++;
+        if (FIRE_REF_SHARED(r)) retainShared(r);   /* (first: a shared count is never immortal, and read only atomically) */
+        else if (r->rc != IMMORTAL) r->rc++;
     }
 }
 FIRE_FN void release(Value v) {
     if (isRef(v)) {
         Ref* r = refOf(v);
-        if (r->rc != IMMORTAL && --r->rc == 0) freeRef(r);
+        if (FIRE_REF_SHARED(r)) releaseShared(r);
+        else if (r->rc != IMMORTAL && --r->rc == 0) freeRef(r);
     }
 }
 
@@ -1672,7 +1700,8 @@ FIRE_FN uint32_t poolMark(void) { return g_pool.top; }
 FIRE_FN void poolRelease(uint32_t mark) {
     while (g_pool.top > mark) {
         Ref* r = g_pool.items[--g_pool.top];
-        if (--r->rc == 0) freeRef(r);
+        if (FIRE_REF_SHARED(r)) releaseShared(r);
+        else if (--r->rc == 0) freeRef(r);
     }
 }
 
@@ -2947,7 +2976,7 @@ FIRE_FN Value adoptV(Value v, OwnList* list) {
  * Memory of the reference-counted values
  * --------------------------------------------------------------------------------------------------------------------- */
 FIRE_FN void freeRef(Ref* r) {
-    if (r->type == R_Lam) {
+    if (R_KIND(r) == R_Lam) {
         Lam* l = (Lam*)r;
         Value* caps = lamCaps(l);
         uint32_t i;
@@ -2976,6 +3005,36 @@ FIRE_FN Str* allocStr(uint32_t length, OwnList* list) {
     return s;
 }
 FIRE_FN fire_char16* strChars(Str* s) { return (fire_char16*)s->data; }
+/* What a string becomes when it goes to another thread (FIRE_STR_CROSS, see struct Ref): a copy that no scope holds yet (count 0 - the place it goes to
+ * takes the first count); a literal (immortal) stays itself. Without FIRE_STR_CROSS: the string itself. Anything else: itself. */
+FIRE_FN Value strCross(Value v) {
+#ifdef FIRE_STR_CROSS
+    if (v.kind == K_String && refOf(v)->rc != IMMORTAL) {
+        const Str* src = strOf(v);
+        Str* c = (Str*)malloc(blockSize(sizeof(Str), src->length + 1, sizeof(fire_char16)));
+        fire_char16* d;
+        if (FIRE_UNLIKELY(!c)) allocFailed();
+        c->h.type = R_Str;
+        c->h.rc = 0;
+        c->length = src->length;
+        d = (fire_char16*)(c + 1);
+        memcpy(d, src->data, src->length * sizeof(fire_char16));
+        d[src->length] = 0;
+        c->data = d;
+        return StrV(c);
+    }
+#endif
+    return v;
+}
+/* A place that goes to another thread with its value (a field or an element of a part that `handover` moves): its string becomes a copy. */
+FIRE_FN void strCrossAt(Value* p) {
+#ifdef FIRE_STR_CROSS
+    Value n = strCross(*p);
+    if (n.p != p->p) { retain(n); release(*p); *p = n; }
+#else
+    (void)p;
+#endif
+}
 
 /* A new array; it belongs to `list` (the innermost scope of the creator, or the object that it is assigned to directly). */
 FIRE_FN Arr* allocArr(uint32_t length, OwnList* list) {
@@ -6536,6 +6595,7 @@ FIRE_FN void* fire_growPush(void* items, uint32_t* count, uint32_t* cap, size_t 
 typedef struct DeepCopier {
     OwnList* owner;
     bool taking;          /* a copy for a fire thread (`taking`): everything reachable is copied (whoever owns it), copies are marked; no lambdas/pointers */
+    bool cross;           /* a copy that goes to another thread (`taking`, `sync`, a job): its strings are copies too (strCross) */
     bool noCopy;          /* `copy x` (and the arguments of a job): an instance of a `[NoCopy]` class is an ArgumentException */
     const char* noCopyOp; /* ... its text: NULL for copy, else "taking"/"fire global"/"sync" (noCopyErrorOp) */
     CopyMap objects;      /* object -> copy (the objects found, which are copied) */
@@ -6653,7 +6713,7 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
             copyMapPut(&c->containers, src, r);
             return r;
         }
-        default: return v;
+        default: return c->cross ? strCross(v) : v;
     }
 }
 FIRE_FN Value copierRun(DeepCopier* c, Value root) {
@@ -6686,6 +6746,20 @@ FIRE_FN Value deepCopy(Value v, OwnList* owner) {
 }
 
 FIRE_FN Value copyValue(Value v, bool deep, OwnList* owner) { return deep ? deepCopy(v, owner) : flatCopy(v, owner); }
+/* A deep copy that goes to another thread (the arguments of `fire global`): its strings are copies too. */
+FIRE_FN Value deepCopyCross(Value v, OwnList* owner) {
+    if (v.kind == K_Class && leafAlive(v)) {
+        DeepCopier c;
+        Value r;
+        copierInit(&c, owner);
+        c.noCopy = true;
+        c.cross = true;
+        r = copierRun(&c, v);
+        copierFree(&c);
+        return r;
+    }
+    return deepCopy(v, owner);
+}
 
 /* `[NoCopy]` before a copy for another thread (`taking`, the arguments of `fire global`, case A of `sync`): false - the ArgumentException is thrown - when
  * an instance of a `[NoCopy]` class is reachable from v through fields and array elements. Only looks (the discovery of a deep copy), so it runs before
@@ -7389,8 +7463,8 @@ FIRE_FN void actorSend(Value self, MsgFn fn, const Value* args, uint32_t n) {
     if (!m.args) allocFailed();
     for (i = 0; i < n; i++) {
         Owned* o = ownedOf(args[i]);
-        m.args[i] = args[i];
-        retain(args[i]);
+        m.args[i] = strCross(args[i]);   /* (the actor's home is another thread) */
+        retain(m.args[i]);
         /* an unclaimed argument (a `new`, a call result, a copy - it travels in the argument list of the call) belongs to the message until it runs */
         if (o && o->owner && o->owner->mark == AL_MARK) {
             if (!m.own) { m.own = (OwnList*)malloc(sizeof(OwnList)); if (!m.own) allocFailed(); *m.own = scopeList(0xFFFFFFFFu); }
@@ -7598,6 +7672,15 @@ FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) {
     j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
     j->lam = lam;
+#ifdef FIRE_STR_CROSS
+    /* (the lambda is made here and let go of by the main program, which runs it: it is counted atomically from now on, its captures too) */
+    if (lam.kind == K_Lambda && refOf(lam)->rc != IMMORTAL) {
+        Lam* l = lamOf(lam);
+        uint32_t c;
+        l->h.type |= R_SHARED;
+        for (c = 0; c < l->ncaps; c++) if (isRef(lamCaps(l)[c]) && refOf(lamCaps(l)[c])->rc != IMMORTAL) refOf(lamCaps(l)[c])->type |= R_SHARED;
+    }
+#endif
     retain(lam);
     j->n = n;
     j->args = (Value*)malloc((n ? n : 1) * sizeof(Value));
@@ -7605,8 +7688,8 @@ FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) {
     if (!j->args || !j->holder) allocFailed();
     ownListInit(j->holder, 0, NULL);
     for (i = 0; i < n; i++) {
-        if (args[i].kind == K_Class) j->args[i] = deepCopy(args[i], j->holder);
-        else { j->args[i] = args[i]; retain(args[i]); }
+        if (args[i].kind == K_Class) j->args[i] = deepCopyCross(args[i], j->holder);
+        else { j->args[i] = strCross(args[i]); retain(j->args[i]); }
     }
     q.sec = NULL; q.job = j;
     reqPush(q);
@@ -7663,11 +7746,13 @@ FIRE_FN int drainQueue(void) {
  * then says `undefined`. */
 extern FIRE_RT_DATA PtrMap g_originOf;   /* copy -> original (null: destroyed) */
 extern FIRE_RT_DATA PtrMap g_copiesOf;   /* original -> PtrVec* of its copies */
+extern FIRE_RT_DATA fire_mutex g_originM;  /* (both maps: a thread makes copies for its own threads, another syncs or destroys at the same time) */
 FIRE_FN void originAdd(Obj* copy, Obj* original) {
     void** slot;
     PtrVec* copies;
     copy->h.flags |= 32;
     original->h.flags |= 4;
+    fire_mutex_lock(&g_originM);
     ptrMapPut(&g_originOf, copy, original);
     slot = ptrMapFind(&g_copiesOf, original);
     if (slot) copies = (PtrVec*)*slot;
@@ -7677,10 +7762,13 @@ FIRE_FN void originAdd(Obj* copy, Obj* original) {
         ptrMapPut(&g_copiesOf, original, copies);
     }
     ptrVecPush(copies, copy);
+    fire_mutex_unlock(&g_originM);
 }
 FIRE_FN void originFree(Obj* o) {
     uint32_t i;
     if (o->h.flags & 8) actorFree(o);
+    if (!(o->h.flags & (32 | 4))) return;
+    fire_mutex_lock(&g_originM);
     if (o->h.flags & 32) {
         void** slot = ptrMapFind(&g_originOf, o);
         if (slot) {
@@ -7706,6 +7794,7 @@ FIRE_FN void originFree(Obj* o) {
             ptrMapRemove(&g_copiesOf, o);
         }
     }
+    fire_mutex_unlock(&g_originM);
 }
 
 /* `fire ... taking x`: what the thread gets. An object, array or buffer is copied with everything reachable from it, whoever owns the parts (isolated,
@@ -7718,6 +7807,7 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
         case K_Class:
             copierInit(&c, travel);
             c.taking = true;
+            c.cross = true;
             copy = copierRun(&c, v);
             copierFree(&c);
             originAdd(asObj(copy), asObj(v));
@@ -7726,10 +7816,12 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
             if (!ownedOf(v)) return v;
             copierInit(&c, travel);
             c.taking = true;
+            c.cross = true;
             copy = copierRun(&c, v);
             copierFree(&c);
             return copy;
-        case K_String: case K_Lambda: retain(v); return v;
+        case K_String: v = strCross(v); retain(v); return v;
+        case K_Lambda: retain(v); return v;
         default: return v;
     }
 }
@@ -7836,7 +7928,8 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
     uint32_t count = 0, cap = 0, i;
     for (i = 0; i < n; i++) {
         out[i] = vs[i];
-        if (vs[i].kind == K_String || vs[i].kind == K_Lambda) retain(vs[i]);
+        if (vs[i].kind == K_String) { out[i] = strCross(vs[i]); retain(out[i]); }
+        else if (vs[i].kind == K_Lambda) retain(vs[i]);
         else handoverDiscover(vs[i], &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
     }
     for (i = 0; i < count; i++) {
@@ -7848,6 +7941,14 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
         }
     }
     for (i = 0; i < count; i++) parts[i]->flags &= (uint8_t)~F_SHARED;
+#ifdef FIRE_STR_CROSS
+    /* (the strings in the moved parts: the sender may hold them too - the thread gets copies) */
+    for (i = 0; i < count; i++) {
+        uint32_t k;
+        if (parts[i]->okind == O_Object) { Obj* o = (Obj*)parts[i]; for (k = 0; k < o->nfields; k++) strCrossAt(&objFields(o)[k]); }
+        else if (parts[i]->okind == O_Array && arrValues((Arr*)parts[i])) { Arr* a = (Arr*)parts[i]; for (k = 0; k < a->length; k++) strCrossAt(&arrItems(a)[k]); }
+    }
+#endif
 #ifndef FIRE_UNCHECKED
     for (i = 0; i < count; i++) {
         Owned* h = parts[i];
@@ -7856,7 +7957,9 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
             Obj* o = (Obj*)h;
             for (k = 0; k < o->nfields; k++) handoverRehome(&objFields(o)[k], &seen);
             if (h->flags & 4) {   /* an original with `taking` copies: for them it is gone (`sync` says undefined), as in the VM */
-                void** cs = ptrMapFind(&g_copiesOf, o);
+                void** cs;
+                fire_mutex_lock(&g_originM);
+                cs = ptrMapFind(&g_copiesOf, o);
                 if (cs) {
                     PtrVec* copies = (PtrVec*)*cs;
                     for (k = 0; k < copies->count; k++) ptrMapPut(&g_originOf, copies->items[k], NULL);
@@ -7864,6 +7967,7 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
                     free(copies);
                     ptrMapRemove(&g_copiesOf, o);
                 }
+                fire_mutex_unlock(&g_originM);
                 h->flags &= (uint8_t)~4;
             }
         } else if (h->okind == O_Array) {
@@ -7895,6 +7999,7 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
         DeepCopier c;
         Value r;
         copierInit(&c, objOwned(container));
+        c.cross = true;
         r = copierRun(&c, src);
         copierFree(&c);
         return r;
@@ -7944,7 +8049,7 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
         return BufV(nb);
     }
     if (src.kind == K_Lambda || isPtr(src)) takingViolation("'sync' does not support lambda or pointer values.");
-    return src;
+    return strCross(src);   /* (a string goes back to the original's thread as a copy) */
 }
 FIRE_FN void syncFields(Obj* src, Obj* tgt, bool flat) {
     uint32_t i;
@@ -7994,19 +8099,33 @@ FIRE_FN bool syncNoCopyFields(Obj* src, Obj* tgt, bool flat, CopyMap* seen) {
  * not exist any more. */
 FIRE_FN Value syncValue(Value v, bool flat) {
     Obj* copy;
+    Obj* original;
     void** slot;
+    bool known, ss;
     if (v.kind != K_Class) fatal("'sync' expects an object.");
     copy = asObj(v);
+    /* (the original is written while the main program is held: a section - also when it is not in the shared domain, which costs only a short wait.
+     * An original of another fire thread is not held by it: docs/ROADMAP_TASKS.md 1e, open.) */
+#ifdef FIRE_NO_GIL
+    ss = sectionScopeEnter(g_domainOn);
+#else
+    ss = false;   /* (the GIL holds the others) */
+#endif
+    fire_mutex_lock(&g_originM);
     slot = ptrMapFind(&g_originOf, copy);
-    if (!slot) fatal("sync: this object is not a 'taking' copy (no SyncOrigin set).");
-    if (!*slot) return Undef();
+    known = slot != NULL;
+    original = slot ? (Obj*)*slot : NULL;
+    fire_mutex_unlock(&g_originM);
+    if (!known) { sectionScopeExit(ss); fatal("sync: this object is not a 'taking' copy (no SyncOrigin set)."); }
+    if (!original) { sectionScopeExit(ss); return Undef(); }
     {
         CopyMap seen = {0};
-        bool ok = syncNoCopyFields(copy, (Obj*)*slot, flat, &seen);
+        bool ok = syncNoCopyFields(copy, original, flat, &seen);
         copyMapFree(&seen);
-        if (!ok) return Undef();   /* (the ArgumentException: nothing was written back) */
+        if (!ok) { sectionScopeExit(ss); return Undef(); }   /* (the ArgumentException: nothing was written back) */
     }
-    syncFields(copy, (Obj*)*slot, flat);
+    syncFields(copy, original, flat);
+    sectionScopeExit(ss);
     return Bool(true);
 }
 
@@ -8049,7 +8168,7 @@ FIRE_FN void terminateNow(Value v) {
         if (v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) {   /* the value outlives the scope that created it */
             Owned* o = ownedOf(v);
             if (o) { if (o->owner) ownUnlink(o); ownLink(&g_terminateOwn, o); }
-        } else retain(v);
+        } else { v = strCross(v); retain(v); }   /* (the main program reads it) */
         g_terminate.value = v;
         fire_atomic_store(&g_terminate.requested, 1);
     }
@@ -8271,6 +8390,7 @@ FIRE_FN void fire_threadsInit(void) {
     fire_mutex_init(&g_thrM);
     fire_mutex_init(&g_reqM);
     fire_mutex_init(&g_mailboxM);
+    fire_mutex_init(&g_originM);
     fire_atomic_store(&g_terminate.requested, 0);
     g_terminate.value = Undef();
     ownListInit(&g_terminateOwn, 0, NULL);
@@ -8346,6 +8466,7 @@ OwnList* g_domainRoot = NULL;
 ReqQueue g_reqs;
 PtrMap g_originOf;
 PtrMap g_copiesOf;
+fire_mutex g_originM;
 ThreadsCatch* g_threadsCatches = NULL;
 uint32_t g_threadsCatchCount = 0, g_threadsCatchCap = 0;
 Value (*g_terminateFn)(Value) = NULL;
