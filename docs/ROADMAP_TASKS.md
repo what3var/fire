@@ -92,6 +92,20 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    `fire_shareGlobals` there yet) and debug builds (the native debugger stops the threads through the GIL) keep the GIL; `FIRE_GIL` keeps it anywhere.
    The ThreadSanitizer test builds the default (`FIRE_TEST_GIL=1`: with the GIL). Left for later: the debugger without the GIL, the modules.
 
+### Step 2 in detail - state per task
+
+*Done:* `FIRE_TASK_STATE` (the default without the GIL; `FIRE_TLS_VARS` keeps the thread-local variables). The state of a strand - the list
+`FIRE_THREAD_VARS` in `fire_rt.h`: `g_unwind`, the temporary pool, the handlers, the slot cache, the reader flags, ... - is one structure (`ThreadLocals`);
+a worker holds only a pointer to the running one (`fire_curTask`, thread-local). A pointer read before a switch is still the task's after it - unlike the
+address of a thread-local variable, which a compiler may keep across a call and which names the old worker's after a move. Every access is
+`fire_curTask->name`, read without a test: every strand gets its structure before it runs fire code (the main program in `fire_threadsInit`, a fire thread
+in `threadEntry`; a thread of a package that calls into the runtime: `fire_strandAttach()`/`fire_strandDetach()` - the threads of the packages today
+(audio, circuits, scene3d, the window pump) do not). Measured with four strands on four cores (objects, methods, strings; the best of 7 runs): 383 ms with
+thread-local variables, 399 ms with the structure (a test for a missing structure on every access cost 12 % - it is gone), 487 ms with the GIL; the code is
+as big. Left per worker on purpose: two caches of unit factors and the last error text of circuits (pure caches, or read right after the call that set them -
+no switch in between). FreeRTOS, TinyCC and the scheduler of fire itself (`FIRE_TLS_STRUCT`) and the modules (`FIRE_DLL`) had a structure already; the
+switch of a task (step 3) sets `fire_curTask`.
+
 ## 3. The language: `fire` and `await`
 
 ```

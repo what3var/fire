@@ -56,6 +56,14 @@
 #if defined(FIRE_GIL) && defined(FIRE_NO_GIL)
 #undef FIRE_NO_GIL
 #endif
+/* The state of a strand (g_unwind, the temporary pool, the handlers, ... - FIRE_THREAD_VARS) per task, not per thread (docs/ROADMAP_TASKS.md step 2): a task
+ * may go on on another worker after a switch, so its state is a structure of its own and the worker holds only the current one (fire_curTask, one pointer of
+ * thread-local storage - a pointer read before a switch is still the task's after it, unlike the address of a thread-local variable). The default without
+ * the GIL; FIRE_TLS_VARS keeps the thread-local variables. FIRE_TLS_STRUCT (no thread-local storage of the compiler: FreeRTOS, TinyCC, the scheduler of
+ * fire itself) and FIRE_DLL have structures of their own already. */
+#if defined(FIRE_NO_GIL) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_DLL) && !defined(FIRE_TLS_VARS)
+#define FIRE_TASK_STATE 1
+#endif
 
 FIRE_CC_RUNTIME_BEGIN
 #define FIRE_FN static inline
@@ -374,7 +382,7 @@ typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCac
     X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */ \
     X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */
 
-#if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL))
+#if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL) || defined(FIRE_TASK_STATE))
 typedef struct ThreadLocals {
 #define FIRE_X(type, name, init) type name;
     FIRE_THREAD_VARS(FIRE_X)
@@ -393,6 +401,26 @@ static FIRE_TLS ThreadLocals fire_tlsBlock = { FIRE_THREAD_VARS(FIRE_XI) };
 #define FIRE_TLV(name) (fire_tl()->name)
 #endif
 FIRE_RT_FN ThreadLocals* fire_tl(void) FIRE_CONST_FN;
+#elif defined(FIRE_TASK_STATE)
+/* The structure of the running task: the worker's pointer to it - read without a test (a test on every access cost 12 % in a benchmark of four threads,
+ * without it the structure is as fast as thread-local variables). So every strand gets its structure before it runs fire code: the main program in
+ * fire_threadsInit, a fire thread in threadEntry; a thread of a package that calls into the runtime (strings, exceptions, fire code) calls
+ * fire_strandAttach() first and fire_strandDetach() at its end. */
+extern FIRE_TLS ThreadLocals* fire_curTask;
+FIRE_COLD FIRE_FN ThreadLocals* fire_tlNew(void) {
+#define FIRE_XI(type, name, init) init,
+    static const ThreadLocals init = { FIRE_THREAD_VARS(FIRE_XI) };
+#undef FIRE_XI
+    ThreadLocals* t = (ThreadLocals*)malloc(sizeof(ThreadLocals));
+    if (!t) { fputs("fire runtime error: Out of memory.\n", stderr); abort(); }
+    *t = init;
+    fire_curTask = t;
+    return t;
+}
+#define fire_tl() (fire_curTask)
+FIRE_FN void fire_strandAttach(void) { if (!fire_curTask) fire_tlNew(); }
+FIRE_FN void fire_strandDetach(void) { free(fire_curTask); fire_curTask = NULL; }
+#define FIRE_TLV(name) (fire_tl()->name)
 #else
 /* The structure of the calling task (made when the task first asks). */
 FIRE_FN ThreadLocals* fire_tl(void) {
@@ -7538,6 +7566,9 @@ FIRE_RT_FN void fire_dbgThreadBegin(void);
 FIRE_RT_FN void fire_dbgThreadEnd(void);
 #endif
 FIRE_FN void threadEntry(ThreadStart st) {
+#ifdef FIRE_TASK_STATE
+    fire_strandAttach();   /* (the state of this strand, before anything of it is touched) */
+#endif
     g_isThread = 1;
 #ifdef FIRE_NO_GIL
     g_domReader = 1;
@@ -7573,6 +7604,8 @@ FIRE_FN void threadEntry(ThreadStart st) {
 #ifdef FIRE_TLS_STRUCT
     free(fire_tl());   /* the state of this task (the GIL is gone, nothing of it is used any more) */
     fire_tls_set(NULL);
+#elif defined(FIRE_TASK_STATE)
+    fire_strandDetach();   /* (the state of this strand: nothing of it is used any more) */
 #endif
 }
 /* What the platform starts for a fire thread. */
@@ -8726,6 +8759,9 @@ FIRE_FN int mainExitCode(void) {
 
 /* Sets up the locks of the threads (the generated main calls it first). */
 FIRE_FN void fire_threadsInit(void) {
+#ifdef FIRE_TASK_STATE
+    fire_strandAttach();   /* (the main program's strand) */
+#endif
     fire_mutex_init(&g_gil.m);
     fire_cond_init(&g_gil.cv);
     fire_mutex_init(&g_evM);
@@ -8763,6 +8799,8 @@ fire_atomic32 g_hostPending;
 #endif
 #if defined(FIRE_THREADS) && defined(FIRE_DLL)
 ThreadLocals* fire_tl(void) { return &fire_tlsBlock; }   /* (linkage "shared" on Windows: the block of the calling thread) */
+#elif defined(FIRE_THREADS) && defined(FIRE_TASK_STATE)
+FIRE_TLS ThreadLocals* fire_curTask = NULL;
 #elif !(defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT))
 #define FIRE_X(type, name, init) FIRE_TLS type FIRE_CC_NEAR_DATA name = init;
 FIRE_THREAD_VARS(FIRE_X)

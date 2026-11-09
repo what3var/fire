@@ -200,6 +200,9 @@ class SensorKit {
   natives of one package one at a time - a lock per package, taken around each call; a native that waits (`gilRelease()` ... `gilAcquire()`, see below) and a
   callback into fire code that reaches a safe point let go of it meanwhile, so other threads can call the package then, just as with the old global lock. Set it
   only when your natives keep no state of their own, or protect it themselves.
+* A thread of your own (`fire_thread_start`, `pthread_create`, ...) that calls into the runtime - makes strings or arrays, throws, calls fire code - calls
+  `fire_strandAttach()` before and `fire_strandDetach()` at its end (a native build without the GIL keeps the state of a strand in a structure the thread
+  has to have, docs/ROADMAP_TASKS.md step 2). A thread that only computes, waits or talks to the system needs neither.
 * `host: true` (per function): in the virtual machine the host runs the function itself instead of the library. It is for what the C ABI cannot carry or what must not run inside a library:
   a wait that has to be abortable (`Sleep`), or a function that needs the unit of a value. The VM looks the function up by name in its own table (`fire.Runtime.HostNatives`), so this is for the
   standard packages; in a native build the `cpp` function is used as always.
