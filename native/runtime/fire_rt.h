@@ -541,6 +541,11 @@ FIRE_FN Value fireError(const char* cls, const char* utf8);
 
 FIRE_FN bool isNumeric(Value v) { return v.kind == K_Int || v.kind == K_Float; }
 FIRE_FN Real toR(Value v) { return v.kind == K_Float ? v.f : (Real)v.i; }
+/* The int of a Value for a typed native in C (docs/packages/README.md "Typed functions"): lenient like the natives read their Values - a float gives its whole part. */
+FIRE_FN int64_t fire_natI(Value v) { return v.kind == K_Float ? (int64_t)v.f : (int64_t)v.i; }
+/* (the same without a copy of the Value, for the generated code: `v` is a variable) */
+#define FIRE_NATI(v) ((v).kind == K_Float ? (int64_t)(v).f : (int64_t)(v).i)
+#define FIRE_NATR(v) ((v).kind == K_Float ? (v).f : (Real)(v).i)
 
 /* The fewest digits (`%.*e`) that read back as the same number: `digits` is d.ddde+XX. `single`: the number is a float32. */
 FIRE_FN void fire_shortestE(double v, bool single, char* sci, size_t cap) {
@@ -6256,17 +6261,25 @@ FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* 
 
 /* `try x.Take...(...)` (SPEC 2.2): only the owner moves the thing - it has to belong to a scope of the running call (`lists`) or to the current object
  * (`thisValue`). True when it moved. */
-FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
-    Owned* o = ownedOf(self);
-    bool mine = false;
+/* Does the running call own `o` (`try x.Take...`, `try take x`)? It belongs to a scope of the call (`lists`: its scopes), to the argument list the call was
+ * given (`myArgs`) or to the current object (`thisValue`). */
+FIRE_FN bool ownedByCall(Owned* o, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
     int i;
-    if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
-    for (i = 0; i < n && !mine; i++) mine = o->owner == lists[i];
+    if (!o || (o->flags & 1)) return false;
+    for (i = 0; i < n; i++) if (o->owner == lists[i] || (lists[i] && o->owner && o->owner->home == lists[i])) return true;
     /* the result of a call that was passed on (`f(g())`, `f(take x)`) belongs to the called function: natively it travels in the argument list of the call -
      * the one the running function was given (`myArgs`: the caller set g_argIn right before the call, the function took it on entry) */
-    if (!mine && myArgs && o->owner == myArgs) mine = true;
-    if (!mine && thisValue.kind == K_Class && leafAlive(thisValue)) mine = objOwns(objAt(thisValue), o);
-    if (!mine || (o->flags & 1)) return false;
+    if (myArgs && o->owner == myArgs) return true;
+    return thisValue.kind == K_Class && leafAlive(thisValue) && objOwns(objAt(thisValue), o);
+}
+
+/* `try take x` (SPEC 2.2): true when the running call owns x (then the take that follows moves it; otherwise nothing changes). */
+FIRE_FN bool tryTakeOwned(Value v, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) { return ownedByCall(ownedOf(v), lists, n, thisValue, myArgs); }
+
+FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
+    Owned* o = ownedOf(self);
+    if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
+    if (!ownedByCall(o, lists, n, thisValue, myArgs)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
     return true;
 }

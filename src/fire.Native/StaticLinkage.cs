@@ -135,10 +135,19 @@ namespace fire.Native
             else return sb.ToString();
             foreach (var (function, argc, needsList) in NativeFunctionsOf(own))
             {
-                string args = string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").Concat(needsList ? new[] { "list" } : Array.Empty<string>()));
-                sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)}) {{ return {function}({args}); }}");
+                sb.AppendLine(CnFunction(function, argc, needsList));
             }
             return sb.ToString();
+        }
+
+        /// <summary>The `fire_cn_` function of a native in C: Values in and out - a typed function (NativeCTypes) gets its Values converted.</summary>
+        private string CnFunction(string function, int argc, bool needsList)
+        {
+            var fn = _packageImports.Select(p => p.Import.Import.Native).Where(n => n is { IsC: true }).SelectMany(n => n!.Functions)
+                .FirstOrDefault(f => f.Symbol == function && f.Arguments == argc);
+            if (fn != null && NativeCTypes.IsTyped(fn, true)) return NativeCTypes.ValueWrapper($"fire_cn_{function}", function, fn, needsList, prefix: "");
+            string args = string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").Concat(needsList ? new[] { "list" } : Array.Empty<string>()));
+            return $"Value fire_cn_{function}({ThunkParams(argc, needsList)}) {{ return {function}({args}); }}";
         }
 
         /// <summary>Linkage "static": the natives in C of other files this generator calls (function -> arguments, scope list, import) - the `fire_cn_` functions of their
@@ -147,6 +156,14 @@ namespace fire.Native
 
         /// <summary>The C function a call of a native in C goes to: itself when it is part of this file, otherwise (linkage "static") the `fire_cn_` function of the module
         /// whose import it belongs to, or of the program.</summary>
+        /// <summary>A call of a native in C of this import goes to the function itself (it is part of this file) - SharedNative without its bookkeeping.</summary>
+        private bool NativeIsHere(string import)
+        {
+            if (!_separate) return true;
+            var owner = NativesOwner(import);
+            return owner == null ? !LibraryRole : ReferenceEquals(owner, _self);
+        }
+
         private string SharedNative(string function, int argc, bool needsList, string import)
         {
             if (!_separate) return function;
@@ -168,8 +185,7 @@ namespace fire.Native
             foreach (var (function, (argc, needsList, import)) in all)
             {
                 if (NativesOwner(import) != null) continue;   // (in the file of their module)
-                string args = string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").Concat(needsList ? new[] { "list" } : Array.Empty<string>()));
-                sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)}) {{ return {function}({args}); }}");
+                sb.AppendLine(CnFunction(function, argc, needsList));
             }
             foreach (var (function, (argc, needsList, _)) in _sharedNatives) sb.AppendLine($"Value fire_cn_{function}({ThunkParams(argc, needsList)});");
             return sb.ToString();

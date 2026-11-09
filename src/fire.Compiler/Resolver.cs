@@ -1889,7 +1889,7 @@ namespace fire.Compiler
         private readonly HashSet<Expr> _takeAllowed = new();
         private void ResolveExprAllowTake(Expr expr)
         {
-            if (expr is UnaryExpr { Op: UnaryOp.Take }) _takeAllowed.Add(expr);
+            if (expr is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake }) _takeAllowed.Add(expr);
             ResolveExpr(expr);
         }
 
@@ -1935,9 +1935,9 @@ namespace fire.Compiler
                     break;
 
                 case UnaryExpr u:
-                    if (u.Op == UnaryOp.Take && !_takeAllowed.Remove(u))
+                    if (u.Op is UnaryOp.Take or UnaryOp.TryTake && !_takeAllowed.Remove(u))
                         throw new ResolverException(
-                            "'take' is only valid as an argument of a call or on the right of '=' / 'var x =' (SPEC 2.2)", u.Line);
+                            $"'{(u.Op == UnaryOp.TryTake ? "try take" : "take")}' is only valid as an argument of a call or on the right of '=' / 'var x =' (SPEC 2.2)", u.Line);
                     if ((u.Op == UnaryOp.Dereference || u.Op == UnaryOp.AddressOf) && _unsafeDepth == 0)
                         throw new ResolverException(
                             $"'{(u.Op == UnaryOp.Dereference ? "*" : "&")}' is only valid inside an 'unsafe' block", u.Line);
@@ -2078,7 +2078,7 @@ namespace fire.Compiler
 
                 case AssignExpr asg:
                     ResolveExprAllowTake(asg.Value);
-                    if (asg.Value is UnaryExpr { Op: UnaryOp.Take } && asg.Target is UnaryExpr { Op: UnaryOp.Dereference })
+                    if (asg.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } && asg.Target is UnaryExpr { Op: UnaryOp.Dereference })
                         throw new ResolverException("'take' needs a holder: a variable, a field or an array element (not a pointer)", asg.Line);
                     ResolveAssignTarget(asg.Target);
                     break;

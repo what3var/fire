@@ -2285,6 +2285,12 @@ namespace fire.Runtime
                     TakeArgument(scope.SlotRef(i), scope);
                     continue;
                 }
+                if (bits == 8)
+                {
+                    // `f(try take x)` (SPEC 2.2): the same, but only when the caller owns x - a scope of its call or its `this` (the frame of the caller is on top)
+                    if (_frames.Count > 0 && CallerOwns(scope.SlotRef(i), _frames.Peek(), _frames.Count == 1)) TakeArgument(scope.SlotRef(i), scope);
+                    continue;
+                }
                 if (bits == 6)
                 {
                     // a claim site of a setter (SPEC 2.1 "Setters"): `Store(value)` - the value goes to the call if it still belongs to the setter call
@@ -2316,6 +2322,31 @@ namespace fire.Runtime
                 case ValueKind.Array when !arg.AsArray().IsDestroyed: LeafOwnership.Reparent(arg.AsArray(), calleeScope); break;
                 case ValueKind.Buffer when !arg.AsBuffer().IsDestroyed: LeafOwnership.Reparent(arg.AsBuffer(), calleeScope); break;
             }
+        }
+
+        /// <summary>`try take x` (SPEC 2.2): the value belongs to a scope of the running call (its statement temporaries, its blocks, its call scope with the
+        /// arguments it was given) or to `this` - like `try x.Take...`. A destroyed value or one of something else: false.</summary>
+        private bool OwnedByRunningCall(Value v)
+        {
+            var owner = OwnerOfValue(v);
+            return owner != null && (IsCurrentCallOwner(owner) || ReferenceEquals(owner, _currentThis));
+        }
+
+        /// <summary>The same for the caller whose frame is <paramref name="frame"/> (the callee's scope is already the current one); `topLevel`: the caller is the
+        /// top level, whose global scope counts.</summary>
+        private static bool CallerOwns(Value v, CallFrame frame, bool topLevel)
+        {
+            var owner = OwnerOfValue(v);
+            if (owner == null) return false;
+            if (frame.ReturnThis != null && ReferenceEquals(owner, frame.ReturnThis)) return true;
+            if (owner is not Scope s) return false;
+            s = s.Home;
+            for (var c = frame.ReturnScope; c != null; c = c.Parent)
+            {
+                if (ReferenceEquals(c, s)) return true;
+                if (c.Parent == null || c.Parent.IsGlobal) break;   // (the caller's function scope was the last)
+            }
+            return topLevel && s.IsGlobal;
         }
 
         /// <summary>`take x` on something destroyed: DestroyedException (true: it was thrown).</summary>
@@ -2355,6 +2386,7 @@ namespace fire.Runtime
             {
                 int bits = (int)(mask >> (4 * i)) & 15;
                 if (bits == 5) OwnershipWalk.TakeValue(args[i], message ?? _currentScope, this);   // built-in functions know no call scope: the value belongs to the current scope (a message: to it)
+                else if (bits == 8) { if (OwnedByRunningCall(args[i])) OwnershipWalk.TakeValue(args[i], message ?? _currentScope, this); }   // `try take`: only what this call owns
                 else if (bits == 3) args[i] = ReadRefArgument(args[i]);   // built-in functions and messages know no `ref`: the value
                 else if (bits is 1 or 2) args[i] = ObjectCloner.Clone(args[i], message ?? _currentScope.Temp, deep: bits == 2);   // (a built-in: the copy dies at the end of the statement, SPEC 2.4)
                 else if (message != null && bits is 4 or 7 && IsUnclaimed(args[i]))
@@ -4675,6 +4707,27 @@ namespace fire.Runtime
                 case OpCode.TakeCheck:
                     ThrowIfDeadForTake(_stack[_sp - 1]);
                     break;
+
+                // `try take x` (SPEC 2.2): like the three above, only when the running call owns the value - otherwise nothing changes
+                case OpCode.TryTakeToScope:
+                {
+                    int depth = ReadU16();
+                    if (OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), this);
+                    break;
+                }
+                case OpCode.TryTakeToObject:
+                {
+                    var holder = RequireObjectInstance(_stack[_sp - 2], "take");
+                    if (OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], holder, this);
+                    break;
+                }
+                case OpCode.TryTakeToArray:
+                {
+                    var holder = _stack[_sp - 3];
+                    if (IsDestroyedLeaf(holder)) { ThrowDestroyed(holder); break; }
+                    if (holder.Kind == ValueKind.Array && OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
+                    break;
+                }
 
                 case OpCode.ReleaseTemps:
                     _currentScope.ReleaseTemps(this);

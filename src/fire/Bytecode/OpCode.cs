@@ -262,6 +262,11 @@ namespace fire.Bytecode
         // `trust x` (SPEC 8.10b): the developer vouches that the value on top of the stack is not undefined. Nothing in the VM (a `defined` declaration
         // still checks it); a native release build takes it as a defined number of the kind it has (an undefined that was trusted counts as 0).
         Trust,               //                     : peek
+        // `try take x` (SPEC 2.2): like TakeToScope/TakeToObject/TakeToArray, but only when the running call owns the value (a scope of the call, the argument
+        // list of the call, `this`); otherwise nothing changes (the store that follows is a plain one). A destroyed value is let through.
+        TryTakeToScope,      // u16 depth
+        TryTakeToObject,     //                     : Stack [obj, value]
+        TryTakeToArray,      //                     : Stack [array, index, value]
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

@@ -2961,6 +2961,13 @@ namespace fire.Compiler
                     CompileRefArgument(args[i], i);
                     mask |= 3UL << (4 * i);
                 }
+                else if (args[i] is UnaryExpr { Op: UnaryOp.TryTake } tryTakeArg)
+                {
+                    // `f(try take x)` (SPEC 2.2): like `take x`, but only when the running call owns x (code 8 of the mask); a native or built-in: the current scope
+                    CompileExpr(tryTakeArg.Operand);
+                    if (scopeCreating && i < 16) mask |= 8UL << (4 * i);
+                    else { _chunk.EmitOp(OpCode.TryTakeToScope); _chunk.EmitU16(0); }
+                }
                 else if (args[i] is UnaryExpr { Op: UnaryOp.Take } takeArg)
                 {
                     // `f(take x)` (SPEC 2.2): x belongs to the call of f from now on; natives and built-ins have no call scope - there it goes to the current scope
@@ -3038,9 +3045,9 @@ namespace fire.Compiler
             }
         }
 
-        private void EmitTakeToScope(int depth)
+        private void EmitTakeToScope(int depth, bool tryTake = false)
         {
-            _chunk.EmitOp(OpCode.TakeToScope);
+            _chunk.EmitOp(tryTake ? OpCode.TryTakeToScope : OpCode.TakeToScope);
             _chunk.EmitU16(depth);
         }
 
@@ -3053,7 +3060,7 @@ namespace fire.Compiler
         {
             LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or AssignExpr or IncDecExpr or LambdaExpr or InterpolatedStringExpr
                 or IsOfExpr or IsInExpr or IsFromExpr or TryProcessExpr => false,   // (`a..b` is a call of __Range.Of: a new array, claimed like one)
-            UnaryExpr { Op: UnaryOp.Take } => false,
+            UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } => false,
             UnaryExpr { Op: UnaryOp.Trust } t => MayBeUnclaimed(t.Operand),
             ConditionalExpr c => MayBeUnclaimed(c.Then) || MayBeUnclaimed(c.Else),
             _ => true,
@@ -3066,7 +3073,7 @@ namespace fire.Compiler
             null or LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or LambdaExpr => false,
             AssignExpr a => (a.Target is not IdentifierExpr && MayLeaveTemps(a.Target)) || MayLeaveTemps(a.Value),
             IncDecExpr i => i.Target is not IdentifierExpr,
-            UnaryExpr { Op: UnaryOp.Take or UnaryOp.Trust } u => MayLeaveTemps(u.Operand),
+            UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake or UnaryOp.Trust } u => MayLeaveTemps(u.Operand),
             _ => true,
         };
 
@@ -3422,10 +3429,10 @@ namespace fire.Compiler
 
                 CompileExpr(me.Target);
 
-                if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeValue)
+                if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeValue)
                 {
                     CompileExpr(takeValue.Operand);          // [obj, value]
-                    _chunk.EmitOp(OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
+                    _chunk.EmitOp(takeValue.Op == UnaryOp.TryTake ? OpCode.TryTakeToObject : OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
                 }
                 else
                 {
@@ -3465,10 +3472,10 @@ namespace fire.Compiler
             {
                 CompileExpr(ix.Target);
                 CompileExpr(ix.Index);
-                if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeElement)
+                if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeElement)
                 {
                     CompileExpr(takeElement.Operand);
-                    _chunk.EmitOp(OpCode.TakeToArray);       // the array owns the value from now on (SPEC 2.2)
+                    _chunk.EmitOp(takeElement.Op == UnaryOp.TryTake ? OpCode.TryTakeToArray : OpCode.TakeToArray);       // the array owns the value from now on (SPEC 2.2)
                 }
                 else
                 {
@@ -3486,7 +3493,7 @@ namespace fire.Compiler
             // Bare field name in a class (`field = new X()` / `field = copy x`): like `this.field = ...` the new
             // object belongs to the object, not the scope (SPEC 2.1/2.4) - otherwise it would be destroyed on leaving the method,
             // while the field still points to it.
-            if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeVar)
+            if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeVar)
             {
                 CompileTakeAssign(id, takeVar);
                 return;
@@ -3577,26 +3584,26 @@ namespace fire.Compiler
                 case ResolvedRef.Local local:
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
                     EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
-                    EmitTakeToScope(local.ByRef ? 0 : local.Depth);
+                    EmitTakeToScope(local.ByRef ? 0 : local.Depth, take.Op == UnaryOp.TryTake);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
                     EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
-                    EmitTakeToScope(0xFFFF);
+                    EmitTakeToScope(0xFFFF, take.Op == UnaryOp.TryTake);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
                     break;
                 case ResolvedRef.ImplicitThisMember:
                     _chunk.EmitOp(OpCode.LoadThis);         // [value, this]
                     _chunk.EmitOp(OpCode.Swap);             // [this, value]
-                    _chunk.EmitOp(OpCode.TakeToObject);
+                    _chunk.EmitOp(take.Op == UnaryOp.TryTake ? OpCode.TryTakeToObject : OpCode.TakeToObject);
                     EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
                 default:
-                    throw new NotSupportedException($"'take' needs a holder: '{id.Name}' is not a variable or a field.");
+                    throw new NotSupportedException($"'{(take.Op == UnaryOp.TryTake ? "try take" : "take")}' needs a holder: '{id.Name}' is not a variable or a field.");
             }
         }
 
@@ -3798,11 +3805,12 @@ namespace fire.Compiler
                 _chunk.EmitOp(OpCode.Trust);
                 return;
             }
-            if (u.Op == UnaryOp.Take)
+            if (u.Op is UnaryOp.Take or UnaryOp.TryTake)
             {
-                // `var a = take x` (SPEC 2.2): x belongs to the current scope (other places - arguments, assignments - are handled where they occur)
+                // `var a = take x` (SPEC 2.2): x belongs to the current scope (other places - arguments, assignments - are handled where they occur); `try take`
+                // only when the running call owns it
                 CompileExpr(u.Operand);
-                EmitTakeToScope(0);
+                EmitTakeToScope(0, u.Op == UnaryOp.TryTake);
                 return;
             }
             if (u.Op is UnaryOp.FlatCopy or UnaryOp.DeepCopy)

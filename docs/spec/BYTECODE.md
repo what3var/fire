@@ -1849,6 +1849,10 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
   `ApplyCopyMask` - `TakeArgument` - unbedingt in die Argumentmenge der aufgerufenen Scope, `ReparentToArgument`, vorher prüft `TakeCheck` auf Totes); bei einer nativen Funktion/einem eingebauten Aufruf oder in `var a = take x` geht der Wert
   mit `TakeToScope 0` in den aktuellen Scope; `v = take x` mit `TakeToScope depth` (0xFFFF: global) in den Scope der Variablen, `obj.feld = take x` mit `TakeToObject` (Stack `[obj, wert]`), `a[i] = take x` mit `TakeToArray` (Stack `[array, index, wert]`).
   Alle laufen über `OwnershipWalk.TakeValue(wert, halter, runner)` (Zyklenprüfung, ein Ziel in Zerstörung nimmt den Wert mit).
+- **`try take x`** (SPEC 2.2): `UnaryOp.TryTake`, geparst in `ParseUnary` (`try` direkt vor `take`), dieselben erlaubten Stellen. Als Argument der Wert **8** im `CopyArgs`-Präfix: `ApplyCopyMask` nimmt den Wert nur,
+  wenn der Aufrufer ihn besitzt (`CallerOwns`: ein Scope seines Aufrufs ab `ReturnScope` bis zur Funktions-Scope, sein `this` (`ReturnThis`), auf oberster Ebene auch die globale Scope); bei einer nativen Funktion/einem
+  eingebauten Aufruf `TryTakeToScope 0`. Zuweisungen: `TryTakeToScope depth`, `TryTakeToObject`, `TryTakeToArray` - Stack und Ziel wie bei `TakeTo...`, verschoben wird nur, wenn `OwnedByRunningCall` (der Besitzer ist
+  ein Scope des laufenden Aufrufs - `IsCurrentCallOwner` - oder `_currentThis`) zutrifft. Ein totes Ding wird nicht genommen und wirft nicht.
 - **Zeiger-Bereiche.** `ScopeSlotPointerTarget`/`FieldPointerTarget` tragen einen Versatz (`Advance` addiert nur), benutzbar ist nur Versatz 0; `ElementPointerTarget` prüft Index und Zerstörtheit. Sie werfen `PointerRangeException`, die
   `TryReadPointer`/`TryWritePointer` der VM in `IndexOutOfBoundsException`/`DestroyedException` verwandeln. `ptr - ptr` ist `PointerTarget.DistanceTo`.
 

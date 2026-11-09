@@ -3725,6 +3725,14 @@ namespace fire.Compiler
                 return new UnaryExpr(trustTok.Line, UnaryOp.Trust, ParseUnary());
             }
 
+            // `try take x` (SPEC 2.2): like `take x`, but only what the running call owns moves
+            if (Check(TokenType.Try) && PeekAt(1).Type == TokenType.Take)
+            {
+                var tryTok = Advance();
+                Advance();   // take
+                return new UnaryExpr(tryTok.Line, UnaryOp.TryTake, ParseUnary());
+            }
+
             // `take x` (SPEC 2.2): as an argument or right of `=`/`var x =` - the ownership goes to the call or to the owner of the target
             if (Check(TokenType.Take))
             {

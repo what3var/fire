@@ -1449,7 +1449,7 @@ namespace fire.Native
             : _classList.Any(c => c.Rc.FindMethodWithAccess(name, argc).Proto != null);
 
         /// <summary>The natives of the imports of packages (C++ source that is put into the generated file): the fire name -> argument count and the C++ function.</summary>
-        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference, bool Host, bool Throws, bool IsC, string? Returns)> _packageNatives = new();
+        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference, bool Host, bool Throws, bool IsC, string? Returns, PackageNativeFunction Fn)> _packageNatives = new();
         /// <summary>The exception classes that natives of the imported packages throw (`exceptions` of the package): the runtime constructs them by name (`fireError`).</summary>
         private readonly List<string> _errorClasses = new();
         private readonly List<(InstalledImport Import, string Key)> _packageImports = new();
@@ -1485,7 +1485,9 @@ namespace fire.Native
                     throw new NativeNotSupportedException($"the package '{import.Package.Name}' (import '{import.Name}') has no C++ source for the target '{_target.Name}' (platform '{_target.Native.Platform}')");
                 foreach (var fn in native.Functions)
                 {
-                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Symbol, fn.NeedsList, fn.ReturnsReference, fn.Host, native.Exceptions.Count > 0, native.IsC, fn.Returns?.Trim()));
+                    if (fn.Parameters != null && (!native.IsC || fn.Parameters.Count != fn.Arguments))
+                        throw new NativeNotSupportedException($"the native '{fn.Name}' of the package '{import.Package.Name}' lists {fn.Parameters.Count} parameter type(s) for {fn.Arguments} argument(s)" + (native.IsC ? "" : " - typed functions (\"parameters\") are for packages in C"));
+                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Symbol, fn.NeedsList, fn.ReturnsReference, fn.Host, native.Exceptions.Count > 0, native.IsC, fn.Returns?.Trim(), fn));
                     _nativeImportOf.TryAdd(fn.Name, key);
                 }
                 foreach (var name in native.Exceptions) if (!_errorClasses.Contains(name)) _errorClasses.Add(name);
@@ -1899,9 +1901,9 @@ namespace fire.Native
             }
             else if (DebugBuild)
             {
-                sb.AppendLine($"{externC}int {entry.Name}(int argc, char** argv) {{");
+                sb.AppendLine($"{externC}int {entry.Name}({MainParams()}) {{");
                 sb.AppendLine("    int code_;");
-                sb.AppendLine("    fire_setArgs(argc, argv);   // (Environment.Args, ProgramPath)");
+                sb.AppendLine($"    {MainSetArgs()}   // (Environment.Args, ProgramPath)");
                 sb.AppendLine("    fire_init();");
                 sb.AppendLine("    fire_dbgStart(&kDbgProgram);   // FIRE_DEBUG: connect to the debugger and wait for it");
                 sb.AppendLine("    fire_main();");
@@ -1913,8 +1915,8 @@ namespace fire.Native
             }
             else
             {
-                sb.AppendLine($"{externC}int {entry.Name}(int argc, char** argv) {{");
-                sb.AppendLine("    fire_setArgs(argc, argv);   // (Environment.Args, ProgramPath)");
+                sb.AppendLine($"{externC}int {entry.Name}({MainParams()}) {{");
+                sb.AppendLine($"    {MainSetArgs()}   // (Environment.Args, ProgramPath)");
                 sb.AppendLine("    fire_init();\n    fire_main();");
                 sb.AppendLine("    fflush(stdout);");
                 sb.AppendLine(_usesThreads ? "    return mainExitCode();   // `terminate(n)` gives the exit code" : _usesExceptions ? "    return g_unwind.active ? 1 : 0;   // an exception that nothing caught" : "    return 0;");
@@ -1925,6 +1927,11 @@ namespace fire.Native
             if (_openWorld) programText = InsertAfterRuntime(programText, $"#define FIRE_PROG_END {_nextClassId}u   // the end of the program's class ids (the classes of plugins come after)\n");
             return ResolveLineResets(programText);
         }
+
+        /// <summary>The parameters of the process entry point: none in the browser (wasm) - there are no arguments, and Emscripten names `main(argc, argv)`
+        /// `__main_argc_argv`, which some of its versions (3.1.6 of the distributions) then do not call at all: the page loads and nothing runs.</summary>
+        private string MainParams() => _target.Native.Platform == "wasm" ? "void" : "int argc, char** argv";
+        private string MainSetArgs() => _target.Native.Platform == "wasm" ? "fire_setArgs(0, NULL);" : "fire_setArgs(argc, argv);";
 
         /// <summary>The first lines of every file of the program (the configuration of the runtime: the target, the switches, the mode) - the head of a library
         /// module's file and of a plugin's starts with them.</summary>
@@ -3749,6 +3756,16 @@ namespace fire.Native
         }
 
         /// <summary>The scalar shadow of slot k (after its type: a bool `_b`, an int `_n`); it is declared with the function.</summary>
+        /// <summary>A CallNative of a typed native in C whose every argument is a C number (NativeCTypes), called directly: it reads the scalar shadows
+        /// itself - the slots need not become Values first.</summary>
+        private bool TypedNativeCall(Instr ins)
+        {
+            if (ins.Op != OpCode.CallNative || ins.A[0] >= _natives.Count || !_packageNatives.TryGetValue(_natives[ins.A[0]], out var pn) || pn.Argc != ins.A[1]) return false;
+            if (!NativeCTypes.IsTyped(pn.Fn, pn.IsC) || !NativeIsHere(_nativeImportOf.GetValueOrDefault(_natives[ins.A[0]]) ?? "")) return false;
+            for (int i = 0; i < pn.Argc; i++) if (NativeCTypes.ParamCType(pn.Fn, i) == null) return false;
+            return true;
+        }
+
         private static string ScalarName(Func f, Flow st, int k)
         {
             byte kind = BaseKindOfType(st.Types[k]);
@@ -3859,7 +3876,7 @@ namespace fire.Native
             // (the Value of a slot that is no scalar, read)
             string VR(int k) => k >= 0 && k < 64 && st.Alias[k] is { } aliasedV ? aliasedV : SlotName(st.Region, k);
             if (AnyAlias(st) && !AliasAware(ins.Op)) MaterializeAliases(st, E);
-            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
+            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
                 && !GuardTopProven(st, ins)
                 && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 }) && CFieldAccess(f, st, ins) == null) MaterializeAll(f, st, E);
             // (a field that is a C number: CppGenerator.CFields.cs)
@@ -3903,6 +3920,17 @@ namespace fire.Native
             }
             // The label the code leaves for when an exception is unwinding (null: no exceptions, or no code is written)
             string? CheckExit() => _usesExceptions && sb != null ? ExitLabel(f, st, locals) : null;
+            // `try take x` (SPEC 2.2): the statement `take` runs only when the running call owns x (its scopes, the argument list it was given, `this`) -
+            // the same test as `try x.Take...` (ownedByCall); the function keeps the argument list of its call (MYARGS)
+            string TryTakeStmt(string value, string take)
+            {
+                if (!_usesTryDepth) { _usesTryDepth = true; _version++; }
+                f.UsesTryTake = true;
+                foreach (var sc in st.Scopes) { f.NeedsList.Add(sc.Id); f.NeedsList.Add(TempOf(sc.Id)); }
+                var lists = CallLists(f, st);
+                string decl = lists.Count == 0 ? "" : CArray("OwnList*", "TL_", lists);
+                return $"{{ {decl}if (tryTakeOwned({value}, {(lists.Count == 0 ? "NULL" : "TL_")}, {lists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS)) {take} }}";
+            }
             // A statement that always throws (destroyedError): it leaves for the handler right after it - the fast path has no check of the unwinding
             string Thrower(string stmt) => _usesExceptions && sb != null ? $"{{ {stmt} goto {ExitLabel(f, st, locals)}; }}" : stmt;
             // After an operation that throws only on its slow path: `failed` is a cheap test that holds whenever it may have thrown (an arithmetic result
@@ -4093,6 +4121,14 @@ namespace fire.Native
                         f.NeedsArgList = true;
                         if (IsSetterFunc(f)) E($"claimArg({S(first + i)}, MYAL, &{OwnerList()}, &AL);");
                     }
+                    else if (bits == 8)
+                    {
+                        // `f(try take x)` (SPEC 2.2): like `take x`, only when the running call owns x
+                        f.NeedsArgList = true;
+                        argsTravel++;
+                        E(TryTakeStmt(S(first + i), $"takeArg({S(first + i)}, &{OwnerList()}, &AL);"));
+                        Check();
+                    }
                     else if (bits == 5)
                     {
                         // `f(take x)` (SPEC 2.2): x belongs to the callee, whoever owned it - it travels in the argument list like a returned value
@@ -4114,6 +4150,34 @@ namespace fire.Native
             }
             // The arguments of a call of a C body (CAbi): a C parameter takes the C number of its slot - a slot whose type does not prove it is checked into
             // its shadow first (the check throws like the prologue would) - every other one the Value.
+            // An argument of a typed native in C (NativeCTypes): the C number of the slot when its type proves it, else the lenient conversion of its Value.
+            string NativeArgOf(int k, string cType)
+            {
+                if (IsScalar(k))
+                {
+                    // (the slot is a C number in its shadow now)
+                    byte sk = K(k);
+                    string sh = sk == KindFloat ? SF(k) : sk == KindBool ? SB(k) : sk == KindWord ? SW(k) : SN(k);
+                    return cType == "bool" ? $"({sh} != 0)" : $"({cType}){sh}";
+                }
+                switch (cType)
+                {
+                    case "Real":
+                        if (K(k) == KindFloat && IsScalar(k)) return SF(k);
+                        if (NarrowInt(k) && IsScalar(k)) return $"(Real){SN(k)}";
+                        // (a Value whose kind the type says - also one that may be undefined, whose number is 0: the field itself, no copy)
+                        if (BK(k) == KindFloat) return $"{VR(k)}.f";
+                        if (BK(k) == KindInt) return $"(Real){VR(k)}.i";
+                        return $"FIRE_NATR({VR(k)})";
+                    case "bool":
+                        if (K(k) == KindBool) return SB(k);
+                        return $"({VR(k)}.i != 0)";
+                    default:
+                        if (NarrowInt(k) && IsScalar(k)) return $"({cType}){SN(k)}";
+                        if (BK(k) is KindInt or KindBool) return $"({cType}){VR(k)}.i";
+                        return $"({cType})FIRE_NATI({VR(k)})";
+                }
+            }
             List<string> CAbiArgs(CAbi abi, int first, int argc)
             {
                 var result = new List<string>();
@@ -4150,7 +4214,7 @@ namespace fire.Native
                 if (argsTravel == 0) { argsTravel = -1; return; }
                 argsTravel = -1;
                 for (int i = 0; i < Math.Min(argc, 16); i++)
-                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4 or 5 or 6 or 7) { E($"finishArgs({result}, &AL);"); return; }
+                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4 or 5 or 6 or 7 or 8) { E($"finishArgs({result}, &AL);"); return; }
             }
             bool R(int k) => k >= 64 || (st.Refs >> k & 1UL) != 0;
             void SetR(int k, bool value)
@@ -4914,11 +4978,39 @@ namespace fire.Native
                         if (_nativeImportOf.TryGetValue(native, out var nativeImport)) _nativeImportsUsed.Add(nativeImport);
                         // a native of a package (C++ in the generated file): `Value cpp(Value a, ...)`, with the list of the scope as the last argument if it asks for it
                         int first = d - argc;
-                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(SR).Concat(packageNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        string cFunction = packageNative.IsC ? SharedNative(packageNative.Function, argc, packageNative.NeedsList, _nativeImportOf.GetValueOrDefault(native) ?? "") : "";
+                        // a typed function in C (`"parameters"` in its manifest) called directly: C numbers in, a C number out (a `fire_cn_` function of another
+                        // module has Values: it converts itself)
+                        bool typed = NativeCTypes.IsTyped(packageNative.Fn, packageNative.IsC) && cFunction == packageNative.Function;
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(k => typed && NativeCTypes.ParamCType(packageNative.Fn, k - first) is { } ct ? NativeArgOf(k, ct) : SR(k))
+                            .Concat(packageNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
                         if (packageNative.Throws) UseExceptions();   // its exception classes (`fireError`) need the exceptions of the runtime
                         if (packageNative.Host) NeedTimeObj();        // a function the VM runs itself waits and takes times: a TimeSpan is read from its `ticks`
                         // (a package in C: its function is part of this file; in C++: through the thunk into fire_natives.cpp)
-                        E($"{T(first)} = {(packageNative.IsC ? SharedNative(packageNative.Function, argc, packageNative.NeedsList, _nativeImportOf.GetValueOrDefault(native) ?? "") : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});");
+                        string typedRet = typed ? NativeCTypes.ReturnCType(packageNative.Fn) ?? "" : "";
+                        // (an int[64] result in a program with 32-bit ints, or no scalars here: the Value of the C number)
+                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32)))
+                        {
+                            E($"{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};");
+                            typedRet = "";
+                            Check();
+                            if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
+                            d = first + 1; SetR(first, false);
+                            int vtype = packageNative.Returns switch { "float" => TypeOf(KindFloat, 0), "bool" => TypeOf(KindBool, 0), _ => TypeOf(KindInt, 0) };
+                            SetT(first, vtype); _kindsKept = true;
+                            return Next();
+                        }
+                        if (typedRet != "")
+                        {
+                            // (the C result is the slot's C number: int, float or bool - "returns" types it below)
+                            int rtype = typedRet switch { "Real" => TypeOf(KindFloat, 0), "bool" => TypeOf(KindBool, 0), _ => TypeOf(KindInt, 0) };
+                            SetScalar(first, rtype, typedRet is "Real" or "bool" ? $"{packageNative.Function}({args})" : $"(FireInt){packageNative.Function}({args})");
+                            Check();
+                            if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
+                            d = first + 1; SetR(first, false); _kindsKept = true;
+                            return Next();
+                        }
+                        E($"{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});");
                         Check();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
@@ -5933,8 +6025,9 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.TakeToScope:
+                case OpCode.TryTakeToScope:
                 {
-                    // `var a = take x` / `v = take x` (SPEC 2.2): x belongs to the scope that holds the variable
+                    // `var a = take x` / `v = take x` (SPEC 2.2): x belongs to the scope that holds the variable (`try take`: only what the running call owns)
                     Need(1);
                     int depth = ins.A[0];
                     string list;
@@ -5945,7 +6038,8 @@ namespace fire.Native
                         f.NeedsList.Add(sc.Id);
                         list = "&" + ListName(sc.Id);
                     }
-                    E($"if (takeAlive({S(d - 1)})) takeToList({S(d - 1)}, {list});");
+                    if (ins.Op == OpCode.TryTakeToScope) E(TryTakeStmt(S(d - 1), $"takeToList({S(d - 1)}, {list});"));
+                    else E($"if (takeAlive({S(d - 1)})) takeToList({S(d - 1)}, {list});");
                     Check();
                     return Next();
                 }
@@ -6008,9 +6102,19 @@ namespace fire.Native
                     E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 2)}, {S(d - 1)});");
                     Check();
                     return Next();
+                case OpCode.TryTakeToObject:
+                    Need(2);
+                    E(TryTakeStmt(S(d - 1), $"takeToHolder({S(d - 2)}, {S(d - 1)});"));
+                    Check();
+                    return Next();
                 case OpCode.TakeToArray:
                     Need(3);
                     E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 3)}, {S(d - 1)});");
+                    Check();
+                    return Next();
+                case OpCode.TryTakeToArray:
+                    Need(3);
+                    E(TryTakeStmt(S(d - 1), $"takeToHolder({S(d - 3)}, {S(d - 1)});"));
                     Check();
                     return Next();
                 case OpCode.OwnValue:

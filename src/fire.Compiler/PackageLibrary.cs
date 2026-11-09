@@ -228,8 +228,13 @@ namespace fire.Compiler
             for (int i = 0; i < functions.Count; i++)
             {
                 var fn = functions[i];
-                var args = Enumerable.Range(0, fn.Arguments).Select(k => $"a[{k}]").Concat(fn.NeedsList ? new[] { "list" } : Array.Empty<string>());
-                sb.AppendLine($"static Value thunk_{i}(const Value* a, OwnList* list) {{ (void)a; (void)list; return {fn.Symbol}({string.Join(", ", args)}); }}");
+                // (a typed function - "parameters" in the manifest: the Values converted into its C numbers, its C result into a Value)
+                bool typed = fire.Native.NativeCTypes.IsTyped(fn, true);
+                var args = Enumerable.Range(0, fn.Arguments).Select(k => typed && fire.Native.NativeCTypes.ParamCType(fn, k) is { } ct ? fire.Native.NativeCTypes.FromValue(ct, $"a[{k}]") : $"a[{k}]")
+                    .Concat(fn.NeedsList ? new[] { "list" } : Array.Empty<string>());
+                string call = $"{fn.Symbol}({string.Join(", ", args)})";
+                if (typed && fire.Native.NativeCTypes.ReturnCType(fn) is { } rt) call = fire.Native.NativeCTypes.ToValue(rt, call);
+                sb.AppendLine($"static Value thunk_{i}(const Value* a, OwnList* list) {{ (void)a; (void)list; return {call}; }}");
             }
             sb.AppendLine("static const FirePkgFn kEntries[] = {");
             for (int i = 0; i < functions.Count; i++)

@@ -256,6 +256,10 @@ namespace fire.Package.Manager
         /// <summary>What the function returns, as a type of fire (`int`, `int[64]`, `float`, `bool`, `string`, `byte[]`, `any[]`, `undefined`, a class; null or
         /// `any`: not said) - the type checker gives a call this type, a result of `int`/`float`/`bool` is checked at run time (docs/packages/README.md).</summary>
         public string? Returns { get; set; }
+        /// <summary>The C types of the parameters of a function in C (`"parameters": ["int", "float", "any"]`, one per argument): with them the C function is typed -
+        /// `int` is an `int64_t`, `int[32]`/`int[16]` an `int32_t`/`int16_t`, `float` a `Real`, `bool` a `bool`, everything else a `Value` - and so is its
+        /// result when <see cref="Returns"/> is one of those (docs/packages/README.md "Typed functions"). Null: every parameter and the result are Values.</summary>
+        public List<string>? Parameters { get; set; }
     }
 
     public sealed class PackageException : Exception
