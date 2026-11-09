@@ -533,6 +533,23 @@ catch (ResolverException ex)
 }
 
 Console.WriteLine();
+Console.WriteLine("=== Typsystem-Test: 'try take' ausserhalb von Argument und Zuweisung (muss fehlschlagen) ===");
+try
+{
+    var program = Parser.Parse("class Box {\n    int v\n}\nvar b = new Box()\nprint(try take b == undefined)");
+    Resolver.Resolve(program);
+    Console.WriteLine("FEHLER: hätte ResolverException werfen müssen");
+}
+catch (ResolverException ex) when (ex.Message.Contains("'try take'"))
+{
+    Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: falsche Ausnahme: {ex.Message}");
+}
+
+Console.WriteLine();
 Console.WriteLine("=== Value.TruncateTo-Test ===");
 var wideVal = Value.MakeInt(300);
 Console.WriteLine($"300 (int64) -> TruncateTo(W8) = {wideVal.TruncateTo(NumericWidth.W8).AsInt()} (erwartet: 44, da 300 mod 256 - 256 = 44)");
@@ -7775,10 +7792,8 @@ packerTests:
                 "dos16, dos32, win16: das Programm heisst .exe (Standardausgabe und Projektausgabe)");
             string wasmCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#if wasm\nprint(\"browser\")\n#else\nprint(\"desktop\")\n#endif" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
             SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.h\"") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
-            string threadError = "";
-            try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release, null, wasm), wasm); }
-            catch (fire.Native.NativeNotSupportedException ex) { threadError = ex.Message; }
-            SfCheck(threadError.Contains("threads are not supported by the platform 'wasm'"), "wasm: ein fire-Thread wird beim Uebersetzen abgelehnt");
+            string threadCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
+            SfCheck(threadCpp.Contains("FIRE_THREADS") && threadCpp.Contains("int main(void)"), "wasm: ein fire-Thread wird uebersetzt (eigener Scheduler), main ohne Argumente (Emscripten ruft main(argc, argv) nicht immer)");
             // with Emscripten and node on this machine: the program is built for the browser's WebAssembly and runs (here under node); it prints what the VM prints (exceptions, floats, Sleep)
             string? FindOnPath(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
             if (FindOnPath("em++") != null && FindOnPath("node") != null)
@@ -22078,6 +22093,46 @@ else
             var c = new Item("c")
             T.Mid(take c, box)
             T.Pass(new Item("p"), box)
+            print("end")
+            """),
+        ("Besitz: try take als Argument und in Zuweisungen - nur was der laufende Aufruf besitzt (Scope, Argument, this), sonst bleibt der Besitz", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Box { string n
+              any held
+              any items = [undefined, undefined]
+              construct(string n) { this.n = n }
+              destruct() { print("~box " + this.n) }
+              undefined Keep(Item i) { this.held = try take i }
+              undefined KeepAt(Item i, int k) { this.items[k] = try take i }
+              undefined Own() { var mine = new Item("own"); this.held = try take mine; print("own kept") }
+              undefined Swap(Item i) { var local = try take i; print("local " + local.n) }
+            }
+            class T {
+              static undefined Store(Item i) { print("store " + i.n) }
+              static undefined Forward(Item i, Box b) { b.Keep(try take i) }
+            }
+            var b = new Box("b")
+            b.Keep(new Item("fresh"))
+            var mine = new Item("mine")
+            b.Keep(mine)
+            print("mine stays " + mine.n)
+            b.KeepAt(new Item("at"), 0)
+            b.KeepAt(mine, 1)
+            b.Own()
+            b.Swap(new Item("swap"))
+            print("after swap")
+            T.Store(try take new Item("arg"))
+            var top = new Item("top")
+            T.Store(try take top)
+            print("after top")
+            var other = new Box("other")
+            T.Forward(new Item("fwd"), other)
+            var keepMe = new Item("keep")
+            T.Forward(keepMe, other)
+            print("keep stays " + keepMe.n)
+            delete other
             print("end")
             """),
         ("Besitz: Takes.Locals ueber den Methoden-Verteiler", """

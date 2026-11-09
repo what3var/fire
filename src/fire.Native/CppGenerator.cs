@@ -1899,9 +1899,9 @@ namespace fire.Native
             }
             else if (DebugBuild)
             {
-                sb.AppendLine($"{externC}int {entry.Name}(int argc, char** argv) {{");
+                sb.AppendLine($"{externC}int {entry.Name}({MainParams()}) {{");
                 sb.AppendLine("    int code_;");
-                sb.AppendLine("    fire_setArgs(argc, argv);   // (Environment.Args, ProgramPath)");
+                sb.AppendLine($"    {MainSetArgs()}   // (Environment.Args, ProgramPath)");
                 sb.AppendLine("    fire_init();");
                 sb.AppendLine("    fire_dbgStart(&kDbgProgram);   // FIRE_DEBUG: connect to the debugger and wait for it");
                 sb.AppendLine("    fire_main();");
@@ -1913,8 +1913,8 @@ namespace fire.Native
             }
             else
             {
-                sb.AppendLine($"{externC}int {entry.Name}(int argc, char** argv) {{");
-                sb.AppendLine("    fire_setArgs(argc, argv);   // (Environment.Args, ProgramPath)");
+                sb.AppendLine($"{externC}int {entry.Name}({MainParams()}) {{");
+                sb.AppendLine($"    {MainSetArgs()}   // (Environment.Args, ProgramPath)");
                 sb.AppendLine("    fire_init();\n    fire_main();");
                 sb.AppendLine("    fflush(stdout);");
                 sb.AppendLine(_usesThreads ? "    return mainExitCode();   // `terminate(n)` gives the exit code" : _usesExceptions ? "    return g_unwind.active ? 1 : 0;   // an exception that nothing caught" : "    return 0;");
@@ -1925,6 +1925,11 @@ namespace fire.Native
             if (_openWorld) programText = InsertAfterRuntime(programText, $"#define FIRE_PROG_END {_nextClassId}u   // the end of the program's class ids (the classes of plugins come after)\n");
             return ResolveLineResets(programText);
         }
+
+        /// <summary>The parameters of the process entry point: none in the browser (wasm) - there are no arguments, and Emscripten names `main(argc, argv)`
+        /// `__main_argc_argv`, which some of its versions (3.1.6 of the distributions) then do not call at all: the page loads and nothing runs.</summary>
+        private string MainParams() => _target.Native.Platform == "wasm" ? "void" : "int argc, char** argv";
+        private string MainSetArgs() => _target.Native.Platform == "wasm" ? "fire_setArgs(0, NULL);" : "fire_setArgs(argc, argv);";
 
         /// <summary>The first lines of every file of the program (the configuration of the runtime: the target, the switches, the mode) - the head of a library
         /// module's file and of a plugin's starts with them.</summary>
@@ -3903,6 +3908,17 @@ namespace fire.Native
             }
             // The label the code leaves for when an exception is unwinding (null: no exceptions, or no code is written)
             string? CheckExit() => _usesExceptions && sb != null ? ExitLabel(f, st, locals) : null;
+            // `try take x` (SPEC 2.2): the statement `take` runs only when the running call owns x (its scopes, the argument list it was given, `this`) -
+            // the same test as `try x.Take...` (ownedByCall); the function keeps the argument list of its call (MYARGS)
+            string TryTakeStmt(string value, string take)
+            {
+                if (!_usesTryDepth) { _usesTryDepth = true; _version++; }
+                f.UsesTryTake = true;
+                foreach (var sc in st.Scopes) { f.NeedsList.Add(sc.Id); f.NeedsList.Add(TempOf(sc.Id)); }
+                var lists = CallLists(f, st);
+                string decl = lists.Count == 0 ? "" : CArray("OwnList*", "TL_", lists);
+                return $"{{ {decl}if (tryTakeOwned({value}, {(lists.Count == 0 ? "NULL" : "TL_")}, {lists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS)) {take} }}";
+            }
             // A statement that always throws (destroyedError): it leaves for the handler right after it - the fast path has no check of the unwinding
             string Thrower(string stmt) => _usesExceptions && sb != null ? $"{{ {stmt} goto {ExitLabel(f, st, locals)}; }}" : stmt;
             // After an operation that throws only on its slow path: `failed` is a cheap test that holds whenever it may have thrown (an arithmetic result
@@ -4093,6 +4109,14 @@ namespace fire.Native
                         f.NeedsArgList = true;
                         if (IsSetterFunc(f)) E($"claimArg({S(first + i)}, MYAL, &{OwnerList()}, &AL);");
                     }
+                    else if (bits == 8)
+                    {
+                        // `f(try take x)` (SPEC 2.2): like `take x`, only when the running call owns x
+                        f.NeedsArgList = true;
+                        argsTravel++;
+                        E(TryTakeStmt(S(first + i), $"takeArg({S(first + i)}, &{OwnerList()}, &AL);"));
+                        Check();
+                    }
                     else if (bits == 5)
                     {
                         // `f(take x)` (SPEC 2.2): x belongs to the callee, whoever owned it - it travels in the argument list like a returned value
@@ -4150,7 +4174,7 @@ namespace fire.Native
                 if (argsTravel == 0) { argsTravel = -1; return; }
                 argsTravel = -1;
                 for (int i = 0; i < Math.Min(argc, 16); i++)
-                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4 or 5 or 6 or 7) { E($"finishArgs({result}, &AL);"); return; }
+                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4 or 5 or 6 or 7 or 8) { E($"finishArgs({result}, &AL);"); return; }
             }
             bool R(int k) => k >= 64 || (st.Refs >> k & 1UL) != 0;
             void SetR(int k, bool value)
@@ -5933,8 +5957,9 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.TakeToScope:
+                case OpCode.TryTakeToScope:
                 {
-                    // `var a = take x` / `v = take x` (SPEC 2.2): x belongs to the scope that holds the variable
+                    // `var a = take x` / `v = take x` (SPEC 2.2): x belongs to the scope that holds the variable (`try take`: only what the running call owns)
                     Need(1);
                     int depth = ins.A[0];
                     string list;
@@ -5945,7 +5970,8 @@ namespace fire.Native
                         f.NeedsList.Add(sc.Id);
                         list = "&" + ListName(sc.Id);
                     }
-                    E($"if (takeAlive({S(d - 1)})) takeToList({S(d - 1)}, {list});");
+                    if (ins.Op == OpCode.TryTakeToScope) E(TryTakeStmt(S(d - 1), $"takeToList({S(d - 1)}, {list});"));
+                    else E($"if (takeAlive({S(d - 1)})) takeToList({S(d - 1)}, {list});");
                     Check();
                     return Next();
                 }
@@ -6008,9 +6034,19 @@ namespace fire.Native
                     E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 2)}, {S(d - 1)});");
                     Check();
                     return Next();
+                case OpCode.TryTakeToObject:
+                    Need(2);
+                    E(TryTakeStmt(S(d - 1), $"takeToHolder({S(d - 2)}, {S(d - 1)});"));
+                    Check();
+                    return Next();
                 case OpCode.TakeToArray:
                     Need(3);
                     E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 3)}, {S(d - 1)});");
+                    Check();
+                    return Next();
+                case OpCode.TryTakeToArray:
+                    Need(3);
+                    E(TryTakeStmt(S(d - 1), $"takeToHolder({S(d - 3)}, {S(d - 1)});"));
                     Check();
                     return Next();
                 case OpCode.OwnValue:

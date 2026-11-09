@@ -124,6 +124,9 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   es auf NULL - eine Funktion, die sie ohne Argumentliste aufruft, findet also keine; `finishArgs` setzt es nach dem Aufruf zurück (ein Aufgerufener, der keine fire-Funktion war). Eigen ist nur `MYARGS` -
   wie in der VM, wo das Argument nur dem Scope des Aufrufs gehört, nicht einem tieferen Aufgerufenen. Das Ergebnis ist `Bool`. (Früher zählte jede Funktion dafür die Aufruftiefe in einer Hülle `fN` um `fN_b` -
   das schaltete in jedem Programm mit Collections, deren Prelude `try value.TakeTo(this)` benutzt, die C-Schnittstellen ab; auf dos16 kostete die Hülle rund 100 Byte je Funktion.)
+* **`try take x`** (SPEC 2.2): dieselben Stellen wie `take x` (Argument: Bit-Wert 8 im `CopyArgs`-Präfix, Zuweisungen: `TryTakeToScope`/`TryTakeToObject`/`TryTakeToArray`), der Generator setzt die Übergabe
+  (`takeArg`, `takeToList`, `takeToHolder`) unter `if (tryTakeOwned(wert, TL_, n, self, MYARGS))` - dieselbe Prüfung wie `try x.Take...` (`ownedByCall`: die Listen der offenen Scopes und ihrer Temporären,
+  der eigene Argument-Besitz `MYARGS`, `self`). Eine Funktion mit `try take` nimmt deshalb wie eine mit `try x.Take...` `g_argIn` beim Eintritt.
 * Ein Array kann Objekte (und Arrays) besitzen, die `return`/`Takes` mitnehmen - nativ über seine Teileliste (`parts`), in der VM als `IOwner` (`ScriptArray`): sie sterben mit dem Array, auch wenn es weitergegeben wird.
 
 ### Speicher: Besitz für Objekte, Arrays und Puffer, Zähler für Strings und Lambdas

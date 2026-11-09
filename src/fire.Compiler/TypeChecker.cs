@@ -1689,7 +1689,7 @@ namespace fire.Compiler
                 UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Dynamic,
                 UnaryOp.LogicalNot => StaticType.Bool,
                 UnaryOp.BitNot => operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Int,
-                UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take or UnaryOp.Trust => operand,
+                UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take or UnaryOp.TryTake or UnaryOp.Trust => operand,
                 _ => StaticType.Dynamic,
             };
         }

@@ -146,7 +146,7 @@ namespace fire.Ast
     // FlatCopy (`flat x`) and DeepCopy (`copy x`) are copy prefixes (SPEC 2.4): `flat` copies the object itself
     // including its value-like members, references stay as in the original; `copy` is a deep copy (each
     // reachable instance copied exactly once). The compiler treats them like `new` when choosing the owner (SPEC 2.1).
-    public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy, Take, Trust }
+    public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy, Take, Trust, TryTake }
     public sealed record UnaryExpr(int Line, UnaryOp Op, Expr Operand) : Expr(Line);
 
     public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power }
