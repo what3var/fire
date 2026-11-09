@@ -1,8 +1,8 @@
 #import "windows"
 #import "scene3d"
 #import "time"
-// Models with parts and animations (docs/graphics/models.md). robot.gltf (glTF 2.0) and figure.fblocks (the block editor of spark: File > New > Block Model)
-// are resources of the program: forge makes each into fire's model file (.f3d) when the program is built.
+// Models with parts and animations (docs/graphics/models.md). robot.gltf (glTF 2.0), figure.fblocks (the block editor of spark: File > New > Block Model)
+// and house.fmesh (the CAD editor: File > New > Mesh Model) are resources of the program: forge makes each into fire's model file (.f3d) when the program is built.
 //   1 / 2 / 3  the robot waves, jumps, stands still
 //   F          the renderer: Software or Fast
 
@@ -31,7 +31,14 @@ var figure = new Object(Model.FromResource(new Resource("figure.fblocks")))
 figure.AnchorY = 0.0
 figure.Play("hop", true)
 scene.Add(figure)
-print("robot: " + robotModel.Parts + " parts, animations: " + robotModel.Animations.Count + "; figure: " + figure.Triangles + " triangles")
+// the house stands behind them; its roof (a part of its own) nods
+var house = new Object(Model.FromResource(new Resource("house.fmesh")))
+house.SetPosition(3.5m, 0m, -3m)
+house.AnchorY = 0.0
+house.RotationY = -30deg
+house.Play("nod", true)
+scene.Add(house)
+print("robot: " + robotModel.Parts + " parts, animations: " + robotModel.Animations.Count + "; figure: " + figure.Triangles + " triangles; house: " + house.Triangles + " triangles")
 
 var cam = new Camera(fb)
 cam.SetPosition(0m, 2.5m, 5m)

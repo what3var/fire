@@ -224,7 +224,7 @@ static class ProjectTests
                 catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
                 Check($"Beispiele: {sample.Title} (Projekt mit Schaltung) laeuft", lines.Count >= 4 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
             }
-            // the 3D samples open windows: they are only translated (with their resources: robot.gltf and figure.fblocks become model files)
+            // the 3D samples open windows: they are only translated (with their resources: robot.gltf, figure.fblocks and house.fmesh become model files)
             foreach (var sample in samples.Where(x => x.Name.StartsWith("Scene3D")))
             {
                 string error = "";
