@@ -871,9 +871,10 @@ namespace fire.Standard
                 if (id is { } oid) _byId[oid] = value;
                 var fields = FieldsOf(rc);
                 // `defined int n` (SPEC 8.10b): a field that is not in the text holds zero, `null` does not go in
-                foreach (var field in fields)
-                    if (rc.FindFieldRequiredKind(field.Name) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
-                        obj.Fields[field.Name] = DeclaredKind.ZeroOf(kind, rc.FindFieldRequiredUnit(field.Name)?.TrimStart('#') is { } zeroUnit && !zeroUnit.StartsWith("any", StringComparison.Ordinal) ? Unit.Parse(zeroUnit) : null);
+                // (every one of the class - also one that does not go to JSON)
+                foreach (var fieldName in rc.FlattenedFieldNames)
+                    if (rc.FindFieldRequiredKind(fieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
+                        obj.Fields[fieldName] = DeclaredKind.ZeroOf(kind, rc.FindFieldRequiredUnit(fieldName)?.TrimStart('#') is { } zeroUnit && !zeroUnit.StartsWith("any", StringComparison.Ordinal) ? Unit.Parse(zeroUnit) : null);
                 foreach (var (key, child) in o.Members)
                 {
                     if (key.StartsWith("$", StringComparison.Ordinal)) continue;

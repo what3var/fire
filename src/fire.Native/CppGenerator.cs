@@ -787,7 +787,9 @@ namespace fire.Native
                 + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "")
                 + (requiredArray != 0 && !arrayKnown ? FieldArrayCheck(rc, name) + " " : "");
             var (fieldSlot, fieldHalf) = FieldPlace(rc, index);
-            string put = fieldHalf < 0 ? $"setFieldAt({obj}, {fieldSlot}, x);" : $"nvSet(&objFields(objAt({obj}))[{fieldSlot}], {fieldHalf}, x);";
+            // (a field declared with a kind - int, float, bool, `defined ...` - holds nothing but numbers and undefined: no count to keep, the store is the C store)
+            string put = fieldHalf >= 0 ? $"nvSet(&objFields(objAt({obj}))[{fieldSlot}], {fieldHalf}, x);"
+                : declaredKind != 0 ? $"objFields(objAt({obj}))[{fieldSlot}] = x;" : $"setFieldAt({obj}, {fieldSlot}, x);";
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) {put}" : put;
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
             // (the setter of a restricted name takes the caller's class: here it may, see DirectFieldIndex)
@@ -3669,7 +3671,41 @@ namespace fire.Native
             string S(int k) { if (k >= 0 && k < 64 && (st.Scalar >> k & 1) != 0) Materialize(f, st, k, E); return SlotName(st.Region, k); }
             if (st.Scalar != 0 && !ScalarAware(ins.Op) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
                 && !GuardTopProven(st, ins)
-                && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 })) MaterializeAll(f, st, E);
+                && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 }) && CFieldAccess(f, st, ins) == null) MaterializeAll(f, st, E);
+            // (a field that is a C number: CppGenerator.CFields.cs)
+            if (CFieldAccess(f, st, ins) is { } cfield)
+            {
+                string fieldName = Str(ins.A[0]);
+                _fieldNames.Add(fieldName);
+                int ct = cfield.Type;
+                string Number(int k) => KindOfType(ct) switch { KindFloat => SF(k), KindBool => SB(k), KindWord => SW(k), _ => SN(k) };
+                switch (ins.Op)
+                {
+                    case OpCode.GetField:
+                    {
+                        string o = S(d - 1);
+                        SetScalar(d - 1, ct, $"FIRE_LIKELY(leafAlive({o})) ? {CFieldRead(cfield, $"objAt({o})")} : ({CTypeOf(ct)})(destroyedError({o}), 0)");
+                        Check();
+                        return Next();
+                    }
+                    case OpCode.SetField or OpCode.SetFieldClaim:
+                    {
+                        string o = S(d - 2);
+                        E($"if (FIRE_UNLIKELY(!leafAlive({o}))) destroyedError({o}); else {CFieldWrite(cfield, $"objAt({o})", Number(d - 1))}");
+                        Check();
+                        // (the value of the assignment)
+                        if (IsScalar(d - 1)) SetScalar(d - 2, Ty(d - 1), Number(d - 1));
+                        else { E($"{S(d - 2)} = {S(d - 1)};"); SetR(d - 2, false); SetT(d - 2, Ty(d - 1)); _kindsKept = true; }
+                        d--; return Next();
+                    }
+                    default:   // SetFieldOnThis
+                    {
+                        E($"if (FIRE_UNLIKELY(!leafAlive(self))) destroyedError(self); else {CFieldWrite(cfield, "objAt(self)", Number(d - 1))}");
+                        Check();
+                        d--; return Next();
+                    }
+                }
+            }
             // After an operation that can throw: if an exception is unwinding, leave (to the handler of this function, or out of it).
             void Check()
             {
@@ -4985,12 +5021,14 @@ namespace fire.Native
                     _fieldNames.Add(field);
                     bool setterValue = (ins.A[1] & 2) != 0 && IsSetterFunc(f);
                     string obj = S(d - 2), v = S(d - 1);
-                    string temp = OwnerList();
+                    string? direct = ObjSlot(d - 2) ? DirectSetField(ObjClass(Ty(d - 2)), field, obj, v, Ty(d - 1), f, IsNullable(Ty(d - 2))) : null;
+                    // (a number or a bool stored straight into the field: nothing to claim - the scope needs no list for it)
+                    bool plainStore = direct != null && IsPlainType(Ty(d - 1));
+                    string temp = plainStore ? "" : OwnerList();
                     string listsDecl = setterValue ? "" : CArray("OwnList*", "KL_", new[] { "&" + temp });
                     string lists = setterValue ? "NULL, 0" : "KL_, 1";
                     string mine = setterValue ? "MYAL" : "NULL";
-                    string keep = setterValue ? $"claimKeep({obj}, {v}, MYAL);" : $"claimToHolder({obj}, {v}, &{temp});";
-                    string? direct = ObjSlot(d - 2) ? DirectSetField(ObjClass(Ty(d - 2)), field, obj, v, Ty(d - 1), f, IsNullable(Ty(d - 2))) : null;
+                    string keep = plainStore ? "" : setterValue ? $"claimKeep({obj}, {v}, MYAL);" : $"claimToHolder({obj}, {v}, &{temp});";
                     var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
                     string store = direct ?? (setter != null
                         ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
@@ -4999,7 +5037,7 @@ namespace fire.Native
                     {
                         E(store);
                         Check();
-                        E(keep);
+                        if (keep.Length > 0) E(keep);
                     }
                     else
                     {

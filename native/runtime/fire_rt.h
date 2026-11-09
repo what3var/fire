@@ -2290,6 +2290,12 @@ FIRE_FN void nvSet(Value* slot, int half, Value v) {
     if (half) n.kind ^= K_Undefined;
     memcpy((char*)slot + (half ? 8 : 0), &n, sizeof n);
 }
+/* A `defined` narrow field (SPEC 8.10b, NATIVE_BACKEND.md "Felder als C-Typen"): its kind and unit never change after the field's initializer stored its zero -
+ * the generated code reads and writes the number alone. */
+FIRE_FN int32_t nvGetI(const Value* slot, int half) { int32_t x; memcpy(&x, (const char*)slot + (half ? 8 : 0) + offsetof(NValue, u), sizeof x); return x; }
+FIRE_FN void nvPutI(Value* slot, int half, int32_t x) { memcpy((char*)slot + (half ? 8 : 0) + offsetof(NValue, u), &x, sizeof x); }
+FIRE_FN float nvGetF(const Value* slot, int half) { float x; memcpy(&x, (const char*)slot + (half ? 8 : 0) + offsetof(NValue, u), sizeof x); return x; }
+FIRE_FN void nvPutF(Value* slot, int half, float x) { memcpy((char*)slot + (half ? 8 : 0) + offsetof(NValue, u), &x, sizeof x); }
 /* The list of what the object owns - made now if it has none yet (8 % of the objects of the test programs own something: 40 bytes saved on the others). */
 FIRE_FN OwnList* objOwned(Obj* o) {
     if (FIRE_UNLIKELY(!o->owned)) {
