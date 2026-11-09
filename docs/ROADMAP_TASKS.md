@@ -49,6 +49,9 @@ The state of a thread is already `thread_local` (`FIRE_THREAD_VARS`: unwinding, 
 Order, each step with the GIL still on (no change of behaviour, the suite stays green), the last one switches it off:
 
 1. **1a** a build switch `FIRE_NO_GIL` and the test setup: the thread tests of the native group also with `FIRE_NO_GIL` and under ThreadSanitizer (`-fsanitize=thread`), on 4 cores.
+   *Begun:* `FIRE_NO_GIL` makes `gilAcquire`/`gilRelease` empty. With the GIL a program with two fire threads, `taking` and `sync global` is clean under
+   ThreadSanitizer (gcc, 4 cores); without it ThreadSanitizer reports 9 races, all where the inventory expects them: the queue of section requests
+   (`reqPush`/`reqPop`/`drainQueue`/`sectionAcquire`/`sectionRelease`, 1d) and the slot table (`slotAcquire`, `allocArr`, 1c).
 2. **1b** biased reference counting.
 3. **1c** the slot table in segments.
 4. **1d** the maps and lists with their mutexes.

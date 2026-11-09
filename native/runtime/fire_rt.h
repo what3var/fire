@@ -7033,6 +7033,13 @@ typedef struct Gil { fire_mutex m; fire_cond cv; uint64_t next, serving; } Gil;
 extern FIRE_RT_DATA Gil g_gil;
 extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
 
+#ifdef FIRE_NO_GIL
+/* (docs/ROADMAP_TASKS.md step 1: fire code runs on all cores - the hand-over points of the GIL stay the safe points, the GIL itself is gone;
+ * what it protected has locks of its own. Being built step by step: until step 1g this switch is for the tests under ThreadSanitizer only.) */
+FIRE_FN void gilAcquire(void) { }
+FIRE_FN void gilRelease(void) { }
+FIRE_FN void gilYield(void) { FIRE_PLAT_YIELD(); }
+#else
 FIRE_FN void gilAcquire(void) {
     uint64_t ticket;
     fire_mutex_lock(&g_gil.m);
@@ -7055,6 +7062,7 @@ FIRE_FN void gilYield(void) {
     FIRE_PLAT_YIELD();   /* (a scheduler of fire itself: the others get their turn - a thread that has not started yet waits for nothing) */
     if (fire_atomic_load(&g_gilWaiting)) { gilRelease(); gilAcquire(); }
 }
+#endif
 
 /* An event: something changed that a waiting thread may be looking for (called with the GIL held, after the change). */
 extern FIRE_RT_DATA fire_mutex g_evM;
