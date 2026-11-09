@@ -65,7 +65,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   **Frame** (`struct FR_<funktion>`: die Handler, die Stackplätze der Catch-Blöcke und von Parametern, Stackplätzen, Locals und Besitzlisten nur die, die im Code der
   Catch-Funktionen vorkommen), `Handler.ctx` zeigt darauf. Alles andere bleibt eine gewöhnliche Variable, die der C-Compiler in einem Register halten kann. Der Code behält seine Namen: ein Makro je
   Variable macht aus `s0` ein `(FR->s0)`, in der Funktion und in ihren Catch-Funktionen (danach `#undef`). Funktionen ohne Catch-Block bleiben, wie sie waren.
-* **Aufruftiefe** (`try x.Take...`): statt eines RAII-Zählers ein Wrapper, der zählt und `<funktion>_b` aufruft (die Trampoline für Spezialisierungen rufen `_b` direkt).
+* **Die Argumentliste des eigenen Aufrufs** (`try x.Take...`): keine Hülle und kein Zähler - der Aufrufer setzt `g_argIn` direkt vor dem Aufruf, jede fire-Funktion übernimmt es beim Eintritt (siehe unten).
 * **Statische Initialisierung** (Einheitentabelle, Ressourcen, Hooks) läuft in `fire_init()` vor `fire_main()`; Globals beginnen mit `FIRE_UNDEF_INIT`.
 * Variadische Templates und `std::initializer_list` sind Compound Literals: `ownValueN(o, v, (OwnList* const[]){&OP, &O3}, 2)`, `internTArgsN(...)`. Die Tests
   generischer Parameter bei der Überladungswahl sind kleine Funktionen `ovg_N(value, owner)` statt sofort aufgerufener Lambdas.
@@ -119,8 +119,11 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Ein Besitzer zerstört zuerst seine Objekte (in Erzeugungsreihenfolge), dann seine Arrays und Puffer - wie die VM (`destroyList`).
 * **`try x.Take...(...)`** (`ownMethodTry`): der Compiler macht daraus einen Aufruf von `tryTake...`; verschoben wird nur, wenn das Ding einem Scope des laufenden Aufrufs (die Listen der offenen Scopes), dem
   aktuellen Objekt (`self`) oder dem Argument-Besitz des eigenen Aufrufs gehört: das Ergebnis eines weitergereichten Aufrufs `f(g())` und `f(take x)` reisen in der Argumentliste `AL` des Aufrufs (`AL_MARK`). Damit der
-  Aufgerufene seine eigene Liste erkennt, zählt jede Funktion die Aufruftiefe (`CallDepth`, `g_callDepth`; nur wenn das Programm ein `try x.Take...` enthält) und die Liste merkt sich die Tiefe des Aufrufers (`OwnList::depth`):
-  eigen ist nur eine Liste mit `depth + 1 == g_callDepth` - wie in der VM, wo das Argument nur dem Scope des Aufrufs gehört, nicht einem tieferen Aufgerufenen. Das Ergebnis ist `Bool`.
+  Aufgerufene seine eigene Liste erkennt (nur wenn das Programm ein `try x.Take...` enthält): der Aufrufer setzt `g_argIn = &AL` als letztes vor dem Aufruf (nach `ArgsBefore`; die Funktionen von
+  Standardwerten, die dazwischen laufen, setzen es danach wieder: `KeepArgIn`), jede fire-Funktion nimmt es beim Eintritt (`OwnList* const MYARGS = g_argIn;` nur in einer Funktion mit `try x.Take...`) und setzt
+  es auf NULL - eine Funktion, die sie ohne Argumentliste aufruft, findet also keine; `finishArgs` setzt es nach dem Aufruf zurück (ein Aufgerufener, der keine fire-Funktion war). Eigen ist nur `MYARGS` -
+  wie in der VM, wo das Argument nur dem Scope des Aufrufs gehört, nicht einem tieferen Aufgerufenen. Das Ergebnis ist `Bool`. (Früher zählte jede Funktion dafür die Aufruftiefe in einer Hülle `fN` um `fN_b` -
+  das schaltete in jedem Programm mit Collections, deren Prelude `try value.TakeTo(this)` benutzt, die C-Schnittstellen ab; auf dos16 kostete die Hülle rund 100 Byte je Funktion.)
 * Ein Array kann Objekte (und Arrays) besitzen, die `return`/`Takes` mitnehmen - nativ über seine Teileliste (`parts`), in der VM als `IOwner` (`ScriptArray`): sie sterben mit dem Array, auch wenn es weitergegeben wird.
 
 ### Speicher: Besitz für Objekte, Arrays und Puffer, Zähler für Strings und Lambdas
@@ -322,8 +325,24 @@ Funktionen mit `try`) wird von oben durchsucht:
   `EndFinally`). `return` durch ein `finally` läuft statisch: der Generator kennt die offenen Handler an der Stelle (`Flow.Handlers`) und springt
   ins `finally`; `EndFinally` setzt die Rückkehr fort.
 
+**Kopien von Values.** Ein Value hat 16 Byte; auf dem 8086 ist jede Kopie ein `rep movsw` mit rund 14 Byte Vorbereitung, auch ein Argument per Wert. Der Generator
+vermeidet sie, wo es ohne Änderung der Aufrufkonvention geht (gemessen am Beispiel "Scene3D Physics" auf dos16: ~5300 Kopien im erzeugten Code vorher, ~3000 danach):
+* **Alias-Slots** (`Flow.Alias`): `LoadLocal`/`LoadThis` eines Parameters, eines Block-Locals oder von `self` kopiert nicht, der Slot ist ein Alias der Variablen. Lesende
+  Stellen (`SR`: Argumente, Empfänger, Feldzugriffe, Operanden, Besitzübergaben, Speichern in eine Variable) nehmen die Variable selbst; wer den Slot schreibt (`T`) oder als
+  Value braucht (`S`), materialisiert ihn erst. Nur in geradem Code: jeder Sprung, jeder Fall in ein Sprungziel und jeder Befehl, der nicht `AliasAware` ist, materialisiert alle
+  Aliase, ein Schreiben einer Variablen die Aliase von ihr. Nicht in Debug-Builds, nicht in Funktionen mit `try` (die Catch-Blöcke sehen die Slots) und nicht in solchen, die
+  die Adresse eines Locals nehmen. Der Prolog `p = check(p)` (LoadLocal, CheckUnit, StoreLocal, Pop) prüft die Einheit am Parameter selbst (`adaptSlot(&P1, ...)`), und der
+  Wert einer Zuweisung (`obj.f = v`), auf die ein `Pop` folgt, wird nicht mehr in den Slot kopiert.
+* **Zeiger-Argumente**: Runtime-Funktionen, die einen Value nur lesen, gibt es auch mit Adresse (`leafAliveP`, `destroyedErrorP`, `retainP`, `releaseP`, `truthyP`, `objAtP`,
+  `ctorEndP`, `adoptP`, `hoistFromP`, `transferTreeP`, `finishArgsP`, `claimToListP`); der erzeugte Code (`PointerArgs`) nimmt sie, wo das Argument eine Variable oder ein
+  Slot ist. Wo der Compiler einbettet, ist der Code derselbe.
+
 Der Generator fügt die Prüfungen nur ein, wenn das Programm überhaupt `throw` oder `try` enthält (`FIRE_EXCEPTIONS`); sonst ändert sich der
-erzeugte Code nicht. Typisiertes `catch` ordnet die Klasse über eine erzeugte Tabelle zu (`excMatches`: Klasse, Basisklassen, Interfaces).
+erzeugte Code nicht. Wo nur der langsame Weg werfen kann, steht die Prüfung nur dort: ein Feldzugriff auf ein Objekt bekannter Klasse
+(`if (!leafAlive(o)) { destroyedError(o); goto U..; }` - `destroyedError` wirft immer), die Prüfung eines deklarierten Typs (`GuardStmt`: der schnelle Weg - Art, keine Einheit,
+kein Enum, die Breite - inline, sonst `guardSlot(&v, ...)`, das `true` gibt, wenn es geworfen hat) und die Prüfung einer Einheit (`adaptSlot(&v, ...)` an Ort und Stelle, ohne den
+Value hin und zurück zu kopieren). Ein `==` (und die anderen Operatoren) geht nur über den Verteiler der Überladungen, wenn links ein Objekt einer Klasse mit Überladung stehen kann
+(`LeftMayOverload`: eine Zahl, ein Bool, ein Array, `undefined`, ein Objekt einer Klasse ohne sie vergleicht direkt - `this.scene == undefined`). Typisiertes `catch` ordnet die Klasse über eine erzeugte Tabelle zu (`excMatches`: Klasse, Basisklassen, Interfaces).
 
 Bekannte Abweichungen zur VM:
 
@@ -849,7 +868,8 @@ Profil: gcc/clang `-Os -ffunction-sections -fdata-sections` und beim Linken `--g
 Ein nativer Build hat eine Richtung (`OptimizeFor`): die Befehlszeile (`--optimize`), dann das Projekt (`settings.optimize`), dann `fire.native.json` (`"optimize"`), dann
 das Ziel (`TargetProfile.Optimize`, `"optimize"` eines Ziels in der Datei; die PC-Ziele von Open Watcom - `dos16`, `dos32`, `win16`, `bios16` - sind `size`, alle anderen
 `speed`). Sie bestimmt die **Flags des C-Compilers** (`NativeBuilder.WithDirection`): `size` ist das kleine Profil (gcc/clang `-Os` mit Sektionen, die der Linker
-wegwirft, msvc `/O1 /Gy /Gw` und `/OPT:REF`, Watcom `-Os`), `speed` das Flag der Toolchain (`-O2`, `/O2`; ein eigenes wie `-O3` bleibt; Watcom `-Ot`). Ein Debug-Build
+wegwirft, msvc `/O1 /Gy /Gw` und `/OPT:REF`, Watcom `-Os -oe=0` - kein Inlining: die Ziele erlauben es sonst bis 20 Quads, für den erzeugten Code sind das die schnellen
+Wege der Runtime in jeder Funktion; das Beispiel "Scene3D Physics" auf dos16 716 -> 686 KB), `speed` das Flag der Toolchain (`-O2`, `/O2`; ein eigenes wie `-O3` bleibt; Watcom `-Ot`). Ein Debug-Build
 bleibt ohne Optimierung. Das Programm trägt sie (`LinkedProgram.Optimize`): bei `size` schreibt der Generator `#define FIRE_OPTIMIZE_SIZE 1`, und die Runtime bettet
 dann nichts über die Wahl des Compilers hinaus ein (`FIRE_ALWAYS_INLINE` ist leer; bei `speed` unter gcc/clang `always_inline` - z.B. `leave`, das nach fast jeder
 Anweisung läuft). Wo sich ein Umbau des Generators in eine der beiden Richtungen trimmen lässt, fragt er `_program.Optimize`. Gemessen (Dictionary-Benchmark, gcc,

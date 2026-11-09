@@ -3016,6 +3016,28 @@ FIRE_FN Value intProgram(Value v) { if (v.kind == K_Int && v.wide) { v.i = FIRE_
 #else
 #define intProgram(v) (v)
 #endif
+/* A unit check of the generated code in place (CheckUnit): adaptUnit on the variable. `flags`: 1 only the dimension (`: any m`), 2 into a float. True when it threw. */
+FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText);
+FIRE_FN bool adaptSlot(Value* v, uint32_t unit, uint8_t flags, const Str* expectedText) {
+    *v = adaptUnit(*v, unit, (flags & 1) != 0, (flags & 2) != 0, StrV(expectedText));
+#ifdef FIRE_EXCEPTIONS
+    return g_unwind.active;
+#else
+    return false;
+#endif
+}
+/* The slow path of the check of a declared kind in the generated code (its fast path is inline: the kind, the unit, the enum, the width): the conversion or the
+ * ArgumentException, in place. `flags`: 1 unitless, 2 `defined` (guardKindNN), 4 cut to the program's int. True when it threw. */
+FIRE_COLD FIRE_FN bool guardSlot(Value* v, uint8_t kind, uint8_t flags, const char* what, const Str* unitlessText) {
+    Value text = StrV(unitlessText);
+    *v = (flags & 2) ? guardKindNN(*v, kind, (flags & 1) != 0, what, text) : guardKind(*v, kind, (flags & 1) != 0, what, text);
+    if (flags & 4) *v = intProgram(*v);
+#ifdef FIRE_EXCEPTIONS
+    return g_unwind.active;
+#else
+    return false;
+#endif
+}
 /* A float declaration that takes every unit (`#any`): a whole number becomes a float, the unit stays. */
 FIRE_FN Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.unit) : v.kind == K_Word ? Float(wordReal(v)) : v; }
 
@@ -8638,6 +8660,22 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
 }
 #endif
 #endif
+
+
+/* The generated code passes a Value it only reads by its address (a variable or a slot): on a 16-bit machine a Value by value is a copy of 16 bytes at every call site;
+ * where the compiler inlines these the code is the same as with the Value. */
+FIRE_FN bool leafAliveP(const Value* v) { return leafAlive(*v); }
+FIRE_FN Value destroyedErrorP(const Value* v) { return destroyedError(*v); }
+FIRE_FN void retainP(const Value* v) { retain(*v); }
+FIRE_FN void releaseP(const Value* v) { release(*v); }
+FIRE_FN bool truthyP(const Value* v) { return truthy(*v); }
+FIRE_FN Obj* objAtP(const Value* v) { return objAt(*v); }
+FIRE_FN void adoptP(const Value* v, OwnList* list) { adopt(*v, list); }
+FIRE_FN void ctorEndP(const Value* o) { ctorEnd(*o); }
+FIRE_FN void hoistFromP(const Value* v, OwnList* from, OwnList* to) { hoistFrom(*v, from, to); }
+FIRE_FN void transferTreeP(const Value* v, OwnList* const* lists, int n) { transferTree(*v, lists, n); }
+FIRE_FN void finishArgsP(const Value* result, OwnList* al) { finishArgs(*result, al); }
+FIRE_FN void claimToListP(const Value* v, OwnList* from, OwnList* to) { claimToList(*v, from, to); }
 
 FIRE_END
 
