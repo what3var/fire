@@ -81,6 +81,8 @@ namespace fire.Editor
             Hex,
             /// <summary>The schematic of a circuit (.biscuit, docs/circuits/README.md), edited and simulated live.</summary>
             Circuit,
+            /// <summary>A model of blocks (.fblocks, docs/graphics/models.md) in the block editor.</summary>
+            Blocks,
         }
 
         /// <summary>An open tab. `Layout` is the docking element that shows the view (the view - the editor control - stays the same when the layout is rebuilt).</summary>
@@ -158,6 +160,7 @@ namespace fire.Editor
             if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
             if (ext == ".fxml") return DocumentKind.UiMarkup;
             if (ext == ".biscuit") return DocumentKind.Circuit;
+            if (ext == fire.Compiler.BlockModel.Extension) return DocumentKind.Blocks;
             if (ImageExtensions.Contains(ext)) return DocumentKind.Image;
             if (TextExtensions.Contains(ext) || CppHighlighter.IsCppFile(path)) return DocumentKind.Text;
             if (!ScriptExtensions.Contains(ext) && LooksBinary(path)) return DocumentKind.Hex;   // data that is no text: bytes
@@ -745,6 +748,7 @@ namespace fire.Editor
                 DocumentKind.Pixel => new PixelEditorControl(),
                 DocumentKind.Hex => new HexEditorControl(),
                 DocumentKind.Circuit => new CircuitEditorControl(),
+                DocumentKind.Blocks => new BlockEditorControl(),
                 _ => new ScriptEditorControl(),
             };
 

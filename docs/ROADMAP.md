@@ -828,6 +828,15 @@ nach Arbeiten auf `targets`).
    zur Bauzeit von forge umgewandelt (oder in spark exportiert).
    1. **Editor** in spark mit zwei Modi: **Blöcke** (Palette wählen, Modell aus Blöcken; beim Export nur die sichtbaren Flächen, gleiche Nachbarflächen
       verschmolzen) zuerst, danach **CAD** (2D-Ansichten und 3D, Vertex/Kante/Fläche, Extrudieren, Spiegeln).
+      **Blöcke umgesetzt:** das Format `.fblocks` (JSON, ein Block je Zeile; Größe, Kante eines Blocks in Metern, Palette, Teile mit Eltern und Drehpunkt) und
+      `BlockModel` (fire.Compiler: Text, sichtbare Flächen - keine zwischen Blöcken eines Teils, zwischen Teilen bleiben sie -, gierige Rechtecke je Teil/Farbe/
+      Richtung/Schicht, Strahl-Auswahl, `ToF3d`: je Teil ein Teil am Drehpunkt, darunter je Farbe eins); forge macht eine Ressource `x.fblocks` zu .f3d, `forge model
+      x.fblocks`. Der Editor in spark (`BlockEditorControl`, *File > New > Block Model*): 3D-Ansicht (orthografisch, drehen/zoomen, Klick setzt einen Block auf die
+      Fläche oder den Boden, rechts entfernt, Shift nimmt die Farbe), Schichtansicht (malen/radieren mit Linie zwischen den Punkten, ein Strich ein Undo-Schritt,
+      Bild auf/ab), Spiegeln X, Palette (wählen, ändern, hinzu, weg), Teile (neu, Drehpunkt), Größe, Export .f3d, Undo/Redo. Getestet: `FIRE_TESTS_ONLY=blocks`
+      (Text, Flächen, Verschmelzen, Umlaufsinn, Strahlen, Datei), Scene3DTests zeichnet eine Blockfigur aus einer Ressource (VM == nativ), der Editor in spark unter
+      Xvfb von Hand (Klicks, Striche, Undo/Redo, Speichern). **Offen:** Animationen im Editor (Schlüsselbilder je Teil), Auswahl/Kopieren von Bereichen, Füllen,
+      Vorschau mit scene3d selbst.
    2. **Animationen:** ein Modell trägt mehrere benannte Clips (Frames, fps, Schleife), zwischen den Frames interpoliert. Vorschlag: Modelle aus starren
       Teilen mit Hierarchie, ein Frame speichert eine Transformation je Teil (klein, billig); Frames je Vertex optional.
    **Umgesetzt (Format, Import, Animation):** das Format `.f3d` ([Models and animations](graphics/models.md), Byte für Byte in `s3d_model.h`): Teile im Baum

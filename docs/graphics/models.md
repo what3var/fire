@@ -30,6 +30,27 @@ while (running) {
   first material the part's colour. **Animations** become clips: translation, rotation and scale of the nodes, sampled at 30 frames per second (linear, step
   and cubic spline keys). Skins (bones that bend a mesh), morph targets, textures and lights are not read.
 
+## The block editor
+
+![A model of 434 blocks from the block editor in a scene: the software renderer and the lean one](../images/block-model-scene.png)
+
+spark builds models from **blocks** (*File > New > Block Model*, a `.fblocks` file; [spark](../tools/spark.md#the-block-editor)): a grid of cells (16 x 16 x 16 to start,
+up to 256 on a side; *Size...* also sets the edge of a block in meters), each empty or a block of a colour of the **palette**.
+
+| | |
+| --- | --- |
+| 3D view | a click puts a block on the face under the pointer (or on the floor), the right button takes it away, Shift + click takes its colour; the middle button or Ctrl + drag turns the view, the wheel zooms, the arrow keys turn it too |
+| layer view | one layer from above (the one below shines through): the left button draws, the right one erases (a stroke is one step of undo), Shift takes the colour; Page Up / Page Down or the arrows of the tool bar change the layer |
+| Mirror X | every block is put and taken away on the other side of the middle as well |
+| palette | a click chooses a colour, a double click (or *Edit...*) changes it; *+ Colour*, *− Colour* (its blocks take the first colour) |
+| parts | blocks belong to the part chosen; *+* adds a part under it, *Pivot...* sets where it turns - the parts are the parts of the model file that animations move |
+| Export .f3d... | writes the model file; Undo / Redo with Ctrl+Z / Ctrl+Y |
+
+The file is text (JSON, one block a line - it diffs well in git); a program takes it like a glTF file, as a resource: `Model.FromResource(new Resource("tree.fblocks"))`.
+forge builds only what can be seen: no face between two blocks of the same part, and neighbouring faces of one colour in a plane become one rectangle - the garden
+above has 434 blocks and 820 triangles. Each part becomes a part of the model file at its pivot, with one part under it for each colour it uses. The origin of the
+model is the middle of the bottom of the grid.
+
 ## Playing
 
 | | |
@@ -52,4 +73,4 @@ The robot of the tests - two parts, 24 triangles, two clips - is 3 KB (1.9 KB at
 scales whole parts - the way games of the 90s animated their figures, and cheap to compute on a small machine (also with the lean renderer, also on DOS).
 
 Planned (ROADMAP §16): textures in the file,
-blending from one clip into the next, the block editor in spark that writes `.f3d`.
+blending from one clip into the next, animations made in the block editor.

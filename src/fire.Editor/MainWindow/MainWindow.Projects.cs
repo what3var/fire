@@ -458,7 +458,7 @@ namespace fire.Editor
                     string name = values.Expand(rel);
                     string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, rel.Replace('/', Path.DirectorySeparatorChar))));
                     string ext = Path.GetExtension(name).ToLowerInvariant();
-                    var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".biscuit" => DocumentKind.Circuit, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
+                    var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".biscuit" => DocumentKind.Circuit, ".fblocks" => DocumentKind.Blocks, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
                     CreateDocument(kind, text, null, untitledName: Path.GetFileName(name));
                 }
             }

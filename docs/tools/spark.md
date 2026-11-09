@@ -27,6 +27,14 @@ picture puts the caret into the element; the *Properties* panel lists and edits 
 `.biscuit` files open in the circuit editor: a toolbox of parts on the left, the schematic simulating live in the middle, the properties of the
 selected part on the right ([circuits](../circuits/README.md#the-circuit-editor-of-spark)).
 
+## The block editor
+
+![The block editor: the model in 3D on the left, one layer of the grid on the right, the palette below](../images/block-editor.png)
+
+`.fblocks` files (*File > New > Block Model*) open in the block editor: a model built from blocks of a palette, like a world of blocks
+([models](../graphics/models.md#the-block-editor)). In the 3D view a click puts a block on the face under the pointer, the right button takes one away; the
+layer view on the right draws one layer of the grid from above. A program uses the file as a resource - forge makes fire's model file of it.
+
 ## More
 
 - [Projects and solutions](projects.md), [templates](templates.md) (*File > New*), [git](git.md), [notes](notes.md)
