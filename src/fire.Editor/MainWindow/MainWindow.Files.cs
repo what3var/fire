@@ -20,7 +20,8 @@ namespace fire.Editor
         private static readonly FilePickerFileType UiMarkupFiles = new("UI markup") { Patterns = new[] { "*.fxml" } };
         private static readonly FilePickerFileType CircuitFiles = new("Circuit") { Patterns = new[] { "*.biscuit" } };
         private static readonly FilePickerFileType BlockModelFiles = new("Block model") { Patterns = new[] { "*" + fire.Compiler.BlockModel.Extension } };
-        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.fire", "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*.biscuit", "*.fblocks", "*.h", "*.hpp", "*.cpp", "*.c", "*.txt", "*.png", "*.bmp", "*.gif", "*.jpg", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
+        private static readonly FilePickerFileType MeshModelFiles = new("Mesh model") { Patterns = new[] { "*" + fire.Compiler.MeshModel.Extension } };
+        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.fire", "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*.biscuit", "*.fblocks", "*.fmesh", "*.h", "*.hpp", "*.cpp", "*.c", "*.txt", "*.png", "*.bmp", "*.gif", "*.jpg", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
 
         private static string SafeFileName(string name) =>
             string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '-' : c));
@@ -63,6 +64,10 @@ namespace fire.Editor
         /// <summary>File > New Block Model: an empty grid of 16 x 16 x 16 cells in the block editor (saved as .fblocks; docs/graphics/models.md).</summary>
         private void NewBlockModel_Click(object? sender, RoutedEventArgs e) =>
             CreateDocument(DocumentKind.Blocks, fire.Compiler.BlockModel.CreateDefault().ToJson(), null, untitledName: "Untitled.fblocks");
+
+        /// <summary>File > New Mesh Model: a box of a meter in the CAD editor (saved as .fmesh; docs/graphics/models.md).</summary>
+        private void NewMeshModel_Click(object? sender, RoutedEventArgs e) =>
+            CreateDocument(DocumentKind.Mesh, fire.Compiler.MeshModel.CreateDefault().ToJson(), null, untitledName: "Untitled.fmesh");
 
         /// <summary>File > New Pixel Image: asks for the size and the kind (palette of 256 colours, or true colour) and opens a new picture in the pixel editor.</summary>
         private async void NewPixelImage_Click(object? sender, RoutedEventArgs e)
@@ -305,6 +310,7 @@ namespace fire.Editor
                 DocumentKind.UiMarkup => await PickSavePath("Save", suggested, "fxml", UiMarkupFiles),
                 DocumentKind.Circuit => await PickSavePath("Save", suggested, "biscuit", CircuitFiles),
                 DocumentKind.Blocks => await PickSavePath("Save", suggested, "fblocks", BlockModelFiles),
+                DocumentKind.Mesh => await PickSavePath("Save", suggested, "fmesh", MeshModelFiles),
                 DocumentKind.Text => await PickSavePath("Save", suggested, "txt"),
                 DocumentKind.Pixel => await PickSavePath("Save picture (PNG or BMP)", suggested, "png", PictureFiles),
                 DocumentKind.Hex => await PickSavePath("Save", suggested, "bin"),

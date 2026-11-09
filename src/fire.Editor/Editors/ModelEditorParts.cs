@@ -160,22 +160,19 @@ namespace fire.Editor
             Children.Add(ModelEditorUi.Button("−", "Take the animation out", RemoveAnimation));
             Children.Add(_loop);
             Children.Add(_play);
-            Children.Add(_timeline);
-            Children.Add(_timeText);
-            Children.Add(ModelEditorUi.Separator());
-            Children.Add(ModelEditorUi.Label("Turn"));
-            foreach (var n in _rot) Children.Add(n);
-            Children.Add(ModelEditorUi.Label("Move"));
-            foreach (var n in _move) Children.Add(n);
-            Children.Add(ModelEditorUi.Label("Scale"));
-            Children.Add(_scale);
-            Children.Add(ModelEditorUi.Button("Delete key", "Takes the key of the part at this time away", DeleteKey));
+            Children.Add(Group(_timeline, _timeText));
+            // (each group of numbers stays together when the bar wraps)
+            Children.Add(Group(new Control[] { ModelEditorUi.Label("Turn") }.Concat(_rot).ToArray()));
+            Children.Add(Group(new Control[] { ModelEditorUi.Label("Move") }.Concat(_move).ToArray()));
+            Children.Add(Group(ModelEditorUi.Label("Scale"), _scale, ModelEditorUi.Button("Delete key", "Takes the key of the part at this time away", DeleteKey)));
             _anims.SelectionChanged += (_, _) => { if (!_updatingAnims) Choose(_anims.SelectedIndex - 1); };
             _loop.Click += (_, _) => { if (Current is { } anim) { bool loop = _loop.IsChecked == true; Change(() => anim.Loop = loop); } };
             _play.Click += (_, _) => TogglePlay();
             _timeline.TimeChosen += t => { Stop(); SetTime(t); };
             _player.Tick += (_, _) => PlayStep();
         }
+
+        private static StackPanel Group(params Control[] items) { var g = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 }; foreach (var c in items) g.Children.Add(c); return g; }
 
         /// <summary>The animation shown (null: the rest pose).</summary>
         public BlockModel.Animation? Current { get { var list = Animations(); return _anim >= 0 && _anim < list.Count ? list[_anim] : null; } }

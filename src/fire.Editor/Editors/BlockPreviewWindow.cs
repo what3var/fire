@@ -41,7 +41,7 @@ namespace fire.Editor
         public BlockPreviewWindow(MeshModel model, int animation)
             : this(model.ToF3d, model.Animations, Extent(model, 0), Extent(model, 1), Extent(model, 2), model.TriangleCount, animation) { }
 
-        private static double Extent(MeshModel m, int axis) { var (min, max) = m.Bounds(); return Math.Max(0.1, axis == 1 ? max[1] - Math.Min(0, min[1]) : 2 * Math.Max(Math.Abs(min[axis]), Math.Abs(max[axis]))); }
+        private static double Extent(MeshModel m, int axis) { var (min, max) = m.Bounds(); return 1.6 * Math.Max(0.1, axis == 1 ? max[1] - Math.Min(0, min[1]) : 2 * Math.Max(Math.Abs(min[axis]), Math.Abs(max[axis]))); }   // (with room around it, as the grid of a block model has)
 
         /// <summary>Any model: the model file, its animations, its size in meters (for the camera), its triangles.</summary>
         public BlockPreviewWindow(Func<byte[]> f3d, List<BlockModel.Animation> animations, double width, double height, double depth, int triangles, int animation)
