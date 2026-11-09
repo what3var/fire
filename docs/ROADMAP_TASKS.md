@@ -37,7 +37,7 @@ fire taking list { Save(list) }
 
 var n = await Count(list)                        // runs as a task; the caller yields until it is done and gets the return value
 var s = await taking list { return list.Sum() }  // a block with return
-var (a, b) = await (Load("a.json"), Load("b.json"))   // open: several at once, waiting for all
+var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for all: the results as an array
 ```
 
 * **`fire`** stays fire and forget and returns nothing (no future). Arguments are copied by default (`copy`); `flat` or `handover` on request.
@@ -46,9 +46,12 @@ var (a, b) = await (Load("a.json"), Load("b.json"))   // open: several at once, 
   **thrown again at the `await`**, with its type; `catch threads` stays for `fire`.
 * **Lending:** while a direct `await` waits, the caller is stopped and nobody else can reach its objects (no shared memory) - also on several cores.
   So the awaited call may use `this` and the arguments **without a copy**; a copy only on request (`taking`, `flat`). Objects of the global scope keep
-  their lock. With several calls at once (`await (a, b)`) lending is only allowed when they share no objects; otherwise they get copies.
-* **Pooled is the default.** A task runs on a shared worker; a real thread of its own on request (**open**: the word, e.g. `dedicated`) for work that
-  blocks in natives for a long time.
+  their lock. With several calls at once lending is only allowed when they share no objects; otherwise they get copies.
+* **Several at once:** `await [f(), g()]`, written like an array literal, starts all calls, waits for all and returns an array of the results in the
+  order of the brackets. Its element type is the common type of the results (as for an array literal), `any` when they have nothing close in common.
+  When several fail, all are waited for and the first exception in the order of the brackets is thrown.
+* **Pooled is the default.** A task runs on a shared worker; a real thread of its own with **`dedicated`** (`fire dedicated { }`,
+  `await dedicated Work()`) for work that blocks in natives for a long time.
 * **Actors get their way back:** a method call on an actor already posts a message; with `await` it returns the result:
   `var count = await counter.Get()`. The home of an actor processes its mailbox as a task in the pool. This closes the open point of the single
   instances in docs/ROADMAP_HTTP.md.
@@ -103,8 +106,8 @@ All of it is a small part of the C runtime: native programs use it directly, the
   another thread.
 * The window thread of the windows package that presents the frames (GPU blit, DirectComposition) stays separate from drawing: a pinned task or a
   thread of its own, since presenting may block (vsync).
-* **Open:** is the main program itself the UI task (proposal: the main program always starts as a pinned task on the main thread and `Run()` makes it
-  the UI group - nothing changes for existing programs), or does it start the UI task and go on pooled?
+* **The main program is the UI task:** it always starts as a pinned task on the main thread, and `Run()` makes it the UI group - the most compatible
+  way, nothing changes for existing programs.
 
 ## 6. Cancellation
 
@@ -125,7 +128,4 @@ the waits of `net` wake **at once** when it is cancelled, nobody polls the flag.
 
 ## Open
 
-* `await (a, b)` for several calls at once - the syntax.
-* The word for a real thread of its own (`dedicated`?).
 * Tokens explicit or handed on automatically.
-* The main program as the UI task, or apart from it.
