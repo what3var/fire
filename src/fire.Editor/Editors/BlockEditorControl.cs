@@ -36,6 +36,7 @@ namespace fire.Editor
             public double[][]? Pose;
             public int CurrentPart;
             public (int X, int Y, int Z, int Face)? Hover;
+            public BlockModel.Box? Selection;
             public event Action<PointerPoint, KeyModifiers, Point>? Clicked;
             public event Action<Point>? Hovered;
             private Point? _drag;
@@ -200,6 +201,19 @@ namespace fire.Editor
                     var p = Project(q[0], q[1], q[2]);
                     context.DrawEllipse(null, new Pen(Brushes.Orange, 2), new Point(p.X, p.Y), 4, 4);
                 }
+                if (Selection is { } sel && Pose == null)
+                {
+                    // the box of the selection as wires
+                    var pen = new Pen(new SolidColorBrush(Color.FromRgb(0x60, 0xC0, 0xFF)), 1.5, new DashStyle(new double[] { 4, 3 }, 0));
+                    double[] xs = { sel.X0, sel.X1 + 1 }, ys = { sel.Y0, sel.Y1 + 1 }, zs = { sel.Z0, sel.Z1 + 1 };
+                    Point P(int i, int j, int k) { var q = Project(xs[i], ys[j], zs[k]); return new Point(q.X, q.Y); }
+                    for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++)
+                    {
+                        context.DrawLine(pen, P(0, a, b), P(1, a, b));
+                        context.DrawLine(pen, P(a, 0, b), P(a, 1, b));
+                        context.DrawLine(pen, P(a, b, 0), P(a, b, 1));
+                    }
+                }
                 if (Hover is { } h && Pose == null)
                 {
                     var pts = h.Y < 0 ? Corners(h.X, 0, h.Z, 3) : Corners(h.X, h.Y, h.Z, h.Face);
@@ -215,6 +229,7 @@ namespace fire.Editor
             public int Layer, CurrentPart;
             public double Cell = 16;
             public (int X, int Z)? Hover;
+            public BlockModel.Box? Selection;
             public event Action<int, int, PointerPoint, KeyModifiers, bool>? Painted;   // x, z, point, modifiers, first (pressed) or moved
             public event Action? StrokeEnded;
             private bool _down;
@@ -296,6 +311,12 @@ namespace fire.Editor
                 for (int z = 0; z <= Model.SizeZ; z++) context.DrawLine(pen, new Point(0, z * Cell + 0.5), new Point(w, z * Cell + 0.5));
                 var mid = new Pen(new SolidColorBrush(Color.FromArgb(0x80, 0x80, 0xC0, 0xFF)), 1);
                 context.DrawLine(mid, new Point(w / 2, 0), new Point(w / 2, h));
+                if (Selection is { } sel)
+                {
+                    bool here = Layer >= sel.Y0 && Layer <= sel.Y1;
+                    var selPen = new Pen(new SolidColorBrush(Color.FromArgb((byte)(here ? 0xFF : 0x70), 0x60, 0xC0, 0xFF)), 2, new DashStyle(new double[] { 3, 2 }, 0));
+                    context.DrawRectangle(here ? new SolidColorBrush(Color.FromArgb(0x30, 0x60, 0xC0, 0xFF)) : null, selPen, new Rect(sel.X0 * Cell + 1, sel.Z0 * Cell + 1, sel.Width * Cell - 2, sel.Depth * Cell - 2));
+                }
                 if (Hover is { } hv) context.DrawRectangle(null, new Pen(Brushes.White, 2), new Rect(hv.X * Cell + 1, hv.Z * Cell + 1, Cell - 2, Cell - 2));
             }
         }
@@ -420,6 +441,13 @@ namespace fire.Editor
         private int _anim = -1;
         private double _time;
         private bool _updatingFields, _updatingAnims;
+        private enum LayerTool { Draw, Fill, Select }
+        private LayerTool _tool = LayerTool.Draw;
+        private readonly ToggleButton[] _toolButtons = new ToggleButton[3];
+        private readonly ToggleButton _allLayers = new() { Content = "All layers" };
+        private BlockModel.Box? _selection;
+        private (int X, int Z) _selectStart;
+        private static BlockModel.Clip? s_clipboard;   // (shared by the block models of spark)
         private bool _stroke;              // a stroke of the layer view: its changes are one step of undo
         private bool _strokeRecorded;
 
@@ -442,6 +470,24 @@ namespace fire.Editor
             bar.Children.Add(Button_("▲", "The layer above (Page Up)", () => SetLayer(_layer + 1)));
             bar.Children.Add(Separator());
             bar.Children.Add(_mirror);
+            string[] toolNames = { "Draw", "Fill", "Select" };
+            string[] toolTips = { "The layer view draws (left) and erases (right)", "A click in the layer view fills the area of the same blocks (or of empty cells) with the colour",
+                                  "A drag in the layer view selects a box (All layers: through every layer); Ctrl+C / Ctrl+X / Ctrl+V (at the pointer) / Delete, Esc lets go" };
+            for (int t = 0; t < 3; t++)
+            {
+                var tool = (LayerTool)t;
+                var b = new ToggleButton { Content = toolNames[t], IsChecked = t == 0 };
+                b.Classes.Add("tool");
+                ToolTip.SetTip(b, toolTips[t]);
+                b.Click += (_, _) => SetTool(tool);
+                _toolButtons[t] = b;
+                bar.Children.Add(b);
+            }
+            _allLayers.Classes.Add("tool");
+            ToolTip.SetTip(_allLayers, "The selection reaches through every layer (else: the layer it was made in)");
+            _allLayers.Click += (_, _) => { if (_selection is { } sel) SetSelection(BlockModel.Box.Of(sel.X0, _allLayers.IsChecked == true ? 0 : _layer, sel.Z0, sel.X1, _allLayers.IsChecked == true ? _model.SizeY - 1 : _layer, sel.Z1)); };
+            bar.Children.Add(_allLayers);
+            bar.Children.Add(Button_("Fill box", "Fills the selection with the colour", FillSelection));
             bar.Children.Add(Button_("⟲", "Turn the view", () => Turn(-45)));
             bar.Children.Add(Button_("⟳", "Turn the view", () => Turn(45)));
             bar.Children.Add(Separator());
@@ -451,6 +497,11 @@ namespace fire.Editor
             bar.Children.Add(Button_("Pivot...", "Where the part turns (in cells, x, y, z)", async () => await EditPivot()));
             bar.Children.Add(Separator());
             bar.Children.Add(Button_("Size...", "The size of the grid and of a block", async () => await AskSize()));
+            bar.Children.Add(Button_("Preview", "scene3d draws the model as a program shows it (with the animation chosen)", () =>
+            {
+                var window = new BlockPreviewWindow(BlockModel.Parse(_model.ToJson()), _anim);
+                if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner); else window.Show();
+            }));
             bar.Children.Add(Button_("Export .f3d...", "Writes the model file that scene3d reads (a program can also take the .fblocks as a resource: forge converts it)", async () => await Export()));
             bar.Children.Add(_info);
 
@@ -785,6 +836,21 @@ namespace fire.Editor
                 if (_model.TryGet(x, _layer, z, out int c, out _)) CurrentColor = c;
                 return;
             }
+            if (_tool == LayerTool.Fill)
+            {
+                if (!first) return;
+                int c0 = _color, p0 = _preview.CurrentPart, y0 = _layer;
+                Change(() => _model.FloodFillLayer(x, y0, z, c0, p0));
+                return;
+            }
+            if (_tool == LayerTool.Select)
+            {
+                if (first) _selectStart = (x, z);
+                bool all = _allLayers.IsChecked == true;
+                int sx = Math.Clamp(_selectStart.X, 0, _model.SizeX - 1), sz = Math.Clamp(_selectStart.Z, 0, _model.SizeZ - 1);
+                SetSelection(BlockModel.Box.Of(sx, all ? 0 : _layer, sz, Math.Clamp(x, 0, _model.SizeX - 1), all ? _model.SizeY - 1 : _layer, Math.Clamp(z, 0, _model.SizeZ - 1)));
+                return;
+            }
             bool erase = point.Properties.IsRightButtonPressed;
             if (erase) { if (_model.TryGet(x, _layer, z, out _, out _)) TakeBlock(x, _layer, z); }
             else if (!_model.TryGet(x, _layer, z, out int c, out int part) || c != _color || part != _preview.CurrentPart) PutBlock(x, _layer, z);
@@ -796,6 +862,12 @@ namespace fire.Editor
             bool ctrl = (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0, shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
             if (ctrl && e.Key == Key.Z && !shift) { Undo(); e.Handled = true; return; }
             if (ctrl && (e.Key == Key.Y || (e.Key == Key.Z && shift))) { Redo(); e.Handled = true; return; }
+            if (ctrl && e.Key == Key.C) { Copy(); e.Handled = true; return; }
+            if (ctrl && e.Key == Key.X) { Cut(); e.Handled = true; return; }
+            if (ctrl && e.Key == Key.V) { Paste(); e.Handled = true; return; }
+            if (ctrl && e.Key == Key.A) { SelectAll(); e.Handled = true; return; }
+            if (e.Key == Key.Delete && _selection != null) { Delete(); e.Handled = true; return; }
+            if (e.Key == Key.Escape && _selection != null) { SetSelection(null); e.Handled = true; return; }
             switch (e.Key)
             {
                 case Key.PageUp: SetLayer(_layer + 1); e.Handled = true; break;
@@ -908,7 +980,7 @@ namespace fire.Editor
         public void FocusEditor() => _preview.Focus();
         public bool CanUndo => _undo.Count > 0;
         public bool CanRedo => _redo.Count > 0;
-        public bool HasSelection => false;
+        public bool HasSelection => _selection != null;
 
         public void Undo()
         {
@@ -930,11 +1002,56 @@ namespace fire.Editor
             ModifiedChanged?.Invoke();
         }
 
-        public void Cut() { }
-        public void Copy() { }
-        public void Paste() { }
-        public void Delete() { }
-        public void SelectAll() { }
+        // ---- tools and the selection ----
+
+        private void SetTool(LayerTool tool)
+        {
+            _tool = tool;
+            for (int t = 0; t < _toolButtons.Length; t++) _toolButtons[t].IsChecked = t == (int)tool;
+        }
+
+        public BlockModel.Box? Selection => _selection;
+
+        public void SetSelection(BlockModel.Box? box)
+        {
+            _selection = box;
+            _layerView.Selection = _preview.Selection = box;
+            _layerView.InvalidateVisual(); _preview.InvalidateVisual();
+            if (box is { } b) _info.Text = $"Selected: {b.Width} x {b.Height} x {b.Depth} cells - Ctrl+C, Ctrl+X, Ctrl+V at the pointer, Delete, Fill box, Esc";
+        }
+
+        private void FillSelection()
+        {
+            if (_selection is not { } box || _anim >= 0) return;
+            int c = _color, p = _preview.CurrentPart;
+            Change(() => _model.FillBox(box, c, p));
+        }
+
+        public void Cut()
+        {
+            if (_selection is not { } box || _anim >= 0) return;
+            s_clipboard = _model.Copy(box);
+            Change(() => _model.Delete(box));
+        }
+
+        public void Copy() { if (_selection is { } box) { s_clipboard = _model.Copy(box); _info.Text = $"Copied: {s_clipboard.Blocks.Count} blocks"; } }
+
+        /// <summary>Puts the copied blocks with their corner at the cell under the pointer in the layer view (on the layer shown), else where the selection is.</summary>
+        public void Paste()
+        {
+            if (s_clipboard is not { } clip || _anim >= 0) return;
+            int x, y = _layer, z;
+            if (_layerView.Hover is { } hv) { x = hv.X; z = hv.Z; }
+            else if (_selection is { } sel) { x = sel.X0; y = sel.Y0; z = sel.Z0; }
+            else { x = 0; z = 0; }
+            int part = _preview.CurrentPart;
+            Change(() => _model.Paste(clip, x, y, z, part));   // (the blocks join the part chosen)
+            SetSelection(BlockModel.Box.Of(x, y, z, Math.Min(_model.SizeX - 1, x + clip.Width - 1), Math.Min(_model.SizeY - 1, y + clip.Height - 1), Math.Min(_model.SizeZ - 1, z + clip.Depth - 1)));
+        }
+
+        public void Delete() { if (_selection is { } box && _anim < 0) Change(() => _model.Delete(box)); }
+
+        public void SelectAll() { SetTool(LayerTool.Select); SetSelection(BlockModel.Box.Of(0, 0, 0, _model.SizeX - 1, _model.SizeY - 1, _model.SizeZ - 1)); }
         public void Find() { }
         public void FindNext() { }
         public void FindPrevious() { }

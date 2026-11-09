@@ -139,6 +139,83 @@ namespace fire.Compiler
             }
         }
 
+        // ---- regions ----
+
+        /// <summary>A box of cells (both corners inside).</summary>
+        public readonly record struct Box(int X0, int Y0, int Z0, int X1, int Y1, int Z1)
+        {
+            public static Box Of(int xa, int ya, int za, int xb, int yb, int zb) => new(Math.Min(xa, xb), Math.Min(ya, yb), Math.Min(za, zb), Math.Max(xa, xb), Math.Max(ya, yb), Math.Max(za, zb));
+            public bool Contains(int x, int y, int z) => x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && z >= Z0 && z <= Z1;
+            public int Width => X1 - X0 + 1;
+            public int Height => Y1 - Y0 + 1;
+            public int Depth => Z1 - Z0 + 1;
+        }
+
+        /// <summary>Blocks taken out of a model (copied): their places relative to the corner of the box they came from.</summary>
+        public sealed class Clip
+        {
+            public int Width, Height, Depth;
+            public List<(int X, int Y, int Z, int Color, int Part)> Blocks = new();
+        }
+
+        public Clip Copy(Box box)
+        {
+            var clip = new Clip { Width = box.Width, Height = box.Height, Depth = box.Depth };
+            foreach (var (k, b) in _blocks.OrderBy(b => b.Key.Y).ThenBy(b => b.Key.Z).ThenBy(b => b.Key.X))
+                if (box.Contains(k.X, k.Y, k.Z)) clip.Blocks.Add((k.X - box.X0, k.Y - box.Y0, k.Z - box.Z0, b.Color, b.Part));
+            return clip;
+        }
+
+        /// <summary>Takes the blocks of a box away; how many.</summary>
+        public int Delete(Box box)
+        {
+            var keys = _blocks.Keys.Where(k => box.Contains(k.X, k.Y, k.Z)).ToList();
+            foreach (var k in keys) _blocks.Remove(k);
+            return keys.Count;
+        }
+
+        /// <summary>Puts copied blocks with their corner at (x, y, z) (what falls outside the grid is left out); `part` >= 0: they all belong to that part, else they
+        /// keep theirs (a part that the model does not have becomes part 0); how many.</summary>
+        public int Paste(Clip clip, int x, int y, int z, int part = -1)
+        {
+            int n = 0;
+            foreach (var b in clip.Blocks)
+                if (Set(x + b.X, y + b.Y, z + b.Z, b.Color, part >= 0 ? part : b.Part < Parts.Count ? b.Part : 0)) n++;
+            return n;
+        }
+
+        /// <summary>Fills a box with blocks of a colour and a part; how many cells.</summary>
+        public int FillBox(Box box, int color, int part)
+        {
+            int n = 0;
+            for (int y = box.Y0; y <= box.Y1; y++) for (int z = box.Z0; z <= box.Z1; z++) for (int x = box.X0; x <= box.X1; x++) if (Set(x, y, z, color, part)) n++;
+            return n;
+        }
+
+        /// <summary>Fills from a cell across its layer: every cell reached through sides that holds what the start cell holds (the same colour and part, or
+        /// nothing) becomes a block of the colour and part; how many cells changed.</summary>
+        public int FloodFillLayer(int x, int y, int z, int color, int part)
+        {
+            if (!Inside(x, y, z)) return 0;
+            bool full = _blocks.TryGetValue((x, y, z), out var start);
+            if (full && start.Color == color && start.Part == part) return 0;
+            var seen = new HashSet<(int, int)>();
+            var todo = new Stack<(int X, int Z)>();
+            todo.Push((x, z));
+            int n = 0;
+            while (todo.Count > 0)
+            {
+                var (cx, cz) = todo.Pop();
+                if (cx < 0 || cz < 0 || cx >= SizeX || cz >= SizeZ || !seen.Add((cx, cz))) continue;
+                bool here = _blocks.TryGetValue((cx, y, cz), out var b);
+                if (here != full || (full && b != start)) continue;
+                _blocks[(cx, y, cz)] = (color, part);
+                n++;
+                todo.Push((cx + 1, cz)); todo.Push((cx - 1, cz)); todo.Push((cx, cz + 1)); todo.Push((cx, cz - 1));
+            }
+            return n;
+        }
+
         // ---- text ----
 
         public static BlockModel Parse(string text)

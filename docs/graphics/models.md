@@ -44,6 +44,9 @@ up to 256 on a side; *Size...* also sets the edge of a block in meters), each em
 | Mirror X | every block is put and taken away on the other side of the middle as well |
 | palette | a click chooses a colour, a double click (or *Edit...*) changes it; *+ Colour*, *− Colour* (its blocks take the first colour) |
 | parts | blocks belong to the part chosen; *+* adds a part under it, *Pivot...* sets where it turns - the parts are the parts of the model file that animations move (below) |
+| tools of the layer view | *Draw* (left draws, right erases), *Fill* (a click fills the area of the same blocks - or of empty cells - in the layer with the colour), *Select* (a drag selects a box in the layer; *All layers*: through every layer) |
+| selection | Ctrl+C, Ctrl+X, Ctrl+V (the copied blocks with their corner at the cell under the pointer, on the layer shown; they join the part chosen), Delete, *Fill box*, Ctrl+A, Esc; the box shows in the 3D view as well |
+| Preview | scene3d itself draws the model as a program shows it - on a floor, in the sun, with an animation playing; the renderer (Software / Fast) and the side can be chosen |
 | Export .f3d... | writes the model file; Undo / Redo with Ctrl+Z / Ctrl+Y |
 
 ### Animations

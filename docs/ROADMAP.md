@@ -844,8 +844,10 @@ nach Arbeiten auf `targets`).
       Änderung setzt einen Schlüssel, Schlüssel löschen; die 3D-Ansicht zeigt die Pose (gebaut wird in der Ruhepose). Getestet: `FIRE_TESTS_ONLY=blocks`
       (Text, Interpolation, Schleife, Drehpunkt, Kinder, Teil entfernt, Clips), Scene3DTests spielt "nod"/"hop" der Blockfigur (VM == nativ), der Editor unter
       Xvfb (Wählen, Zeit, Schlüssel per Eingabe, Abspielen, Speichern).
-      **Offen:** Auswahl/Kopieren von Bereichen, Füllen,
-      Vorschau mit scene3d selbst.
+      **Nachgeholt:** Füllen in der Schicht (`BlockModel.FloodFillLayer`: Fläche gleicher Blöcke oder leerer Zellen über die Seiten), Auswahl einer Box (in der
+      Schicht oder durch alle Schichten; im 3D-Bild als Drahtbox) mit Kopieren/Ausschneiden/Einfügen am Zeiger (die Blöcke kommen in den gewählten Teil),
+      Löschen, Box füllen (`Copy/Delete/Paste/FillBox`, getestet); die Vorschau mit scene3d selbst (`BlockPreviewWindow`: das Modell als .f3d in der VM gezeichnet,
+      auf einem Boden, mit Schatten, mit der gewählten Animation - jedes 1/30 s ein Bild, im Kreis gezeigt; Renderer und Seite wählbar). Unter Xvfb geprüft.
    2. **Animationen:** ein Modell trägt mehrere benannte Clips (Frames, fps, Schleife), zwischen den Frames interpoliert. Vorschlag: Modelle aus starren
       Teilen mit Hierarchie, ein Frame speichert eine Transformation je Teil (klein, billig); Frames je Vertex optional.
    **Umgesetzt (Format, Import, Animation):** das Format `.f3d` ([Models and animations](graphics/models.md), Byte für Byte in `s3d_model.h`): Teile im Baum

@@ -119,6 +119,26 @@ static class BlockModelTests
         byte[] anim3d = fig2.ToF3d();
         Check("Modelldatei: zwei Clips", BitConverter.ToUInt16(anim3d, 8) == 2);
 
+        // ---- regions and filling ----
+        var r = BlockModel.CreateDefault(8, 4, 8);
+        for (int x = 0; x < 8; x++) { r.Set(x, 0, 3, 1); r.Set(3, 0, x, 1); }   // a cross of walls on layer 0
+        int filled = r.FloodFillLayer(0, 0, 0, 4, 0);
+        Check("Fuellen: die leere Ecke bis zu den Waenden (3 x 3 Zellen)", filled == 9 && r.TryGet(2, 0, 2, out int fc, out _) && fc == 4 && !r.TryGet(5, 0, 5, out _, out _), filled.ToString());
+        Check("Fuellen: Bloecke einer Farbe werden umgefaerbt (die Wand, 15 Bloecke)", r.FloodFillLayer(3, 0, 3, 6, 0) == 15 && r.TryGet(7, 0, 3, out fc, out _) && fc == 6);
+        Check("Fuellen: dieselbe Farbe nochmal aendert nichts", r.FloodFillLayer(3, 0, 3, 6, 0) == 0);
+        var box = BlockModel.Box.Of(4, 0, 4, 2, 1, 2);
+        Check("Box: Ecken in beliebiger Reihenfolge", box.X0 == 2 && box.X1 == 4 && box.Width == 3 && box.Height == 2);
+        var copied = r.Copy(box);
+        int before = r.Count;
+        Check("Kopieren: die Bloecke der Box relativ zu ihrer Ecke", copied.Blocks.Count == 6 && copied.Blocks.All(b => b.X >= 0 && b.X < 3 && b.Z >= 0 && b.Z < 3));
+        Check("Loeschen: die Bloecke der Box gehen", r.Delete(box) == 6 && r.Count == before - 6);
+        Check("Einfuegen: an anderer Stelle (zwei Ebenen hoeher)", r.Paste(copied, 2, 2, 2) == 6 && r.TryGet(3, 2, 2, out fc, out _) && fc == 6);
+        var p2 = BlockModel.CreateDefault(4, 4, 4);
+        var c2 = new BlockModel.Clip { Width = 2, Height = 1, Depth = 1, Blocks = { (0, 0, 0, 3, 0), (1, 0, 0, 3, 5) } };
+        Check("Einfuegen: am Rand abgeschnitten; ein fehlender Teil wird Teil 0, mit Teilangabe gehoeren alle zu ihm", p2.Paste(c2, 3, 0, 0) == 1 && p2.Paste(c2, 0, 0, 0) == 2 && p2.TryGet(1, 0, 0, out _, out int pp) && pp == 0
+            && p2.Paste(c2, 0, 2, 0, 0) == 2 && p2.Delete(BlockModel.Box.Of(0, 2, 0, 3, 2, 3)) == 2);
+        Check("Box fuellen", p2.FillBox(BlockModel.Box.Of(0, 1, 0, 3, 1, 3), 7, 0) == 16 && p2.Count == 3 + 16, p2.Count.ToString());
+
         Console.WriteLine(_failures == 0 ? "Alle Blockmodell-Pruefungen bestanden." : $"FEHLER: {_failures} Blockmodell-Pruefung(en) fehlgeschlagen.");
         return _failures;
     }
