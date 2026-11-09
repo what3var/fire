@@ -957,6 +957,11 @@ C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`.
 * der Speicher folgt mit A (heute 32 Byte je Ecke und 4 Byte je Höhe für `HeightAt`).
 
 **E. Auf `targets` gefunden** (nicht scene3d; dort zu beheben):
+* **Behoben (scene-revamp):** dos16-Programme hatten nur **2 KB Stapel** - `-mstack-size=32768` kommt bei owcc für `-bdos` nicht im Kopf des Programms an
+  (die Map: `Stack size: 0800`), wie schon bei win16. Seit die Werte 16 Byte haben (8ab2aa2), läuft der Stapel über, ohne Prüfung (`-fno-stack-check`)
+  still: falsche Werte, Hänger, "Invalid Opcode" - je nach Code. Jetzt `option stack=32768` für den Linker (TargetProfile.Pc). Damit laufen in DOSBox-X:
+  zwei Objekte aus Vorlagen (vorher Hänger), Körper und Schritte der Physik, die Effekte (Nebel ins Palettenbild), 60 Bilder mit Physik im schlanken
+  Renderer.
 * dos16-Programme stürzen seit 8ab2aa2 in DOSBox-X mit "Invalid Opcode" (INT 6) ab, je nach Code; mit 02e959e laufen sie. Damit ist scene3d (auch der
   schlanke Renderer und die Terrains) unter DOS bisher nicht ausgeführt, nur gebaut.
 * Der Generator erzeugt für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit ablehnt (E1078).

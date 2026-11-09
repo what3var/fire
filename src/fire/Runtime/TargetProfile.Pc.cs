@@ -27,7 +27,7 @@ namespace fire.Runtime
                 // of a segment (fire_cc_watcom.h copies and clears big blocks piece by piece); -zt=16 as on win16: data from 16 bytes on gets far segments of its
                 // own - DGROUP (64 KB) holds the stack and the small data, and a program with scene3d had more)
                 CompileArgs = new[] { "-bdos", "-mcmodel=h", "-march=i86", "-mstack-size=32768", "-Wc,-oe=20", "-Wc,-zt=16", "-Wc,-zu", "-fno-stack-check",
-                    "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87" },
+                    "-Wl,option", "-Wl,stack=32768", "-Wl,option", "-Wl,nodefaultlibs", "-Wl,library", "-Wl,clibl", "-Wl,library", "-Wl,math87l", "-Wl,library", "-Wl,emu87" },
             },
         };
 
