@@ -3667,7 +3667,8 @@ namespace fire.Native
             string fn = f.Name;
             // (a slot whose value is only in its scalar shadow becomes a Value first: every generic use goes through S)
             string S(int k) { if (k >= 0 && k < 64 && (st.Scalar >> k & 1) != 0) Materialize(f, st, k, E); return SlotName(st.Region, k); }
-            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !GuardTopProven(st, ins)
+            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
+                && !GuardTopProven(st, ins)
                 && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 })) MaterializeAll(f, st, E);
             // After an operation that can throw: if an exception is unwinding, leave (to the handler of this function, or out of it).
             void Check()
@@ -5173,6 +5174,21 @@ namespace fire.Native
                         var target = GetFunc(directProto, FuncKind.Method);
                         var (callee, specCondition) = Specialize(f, ins, target, d - argc, argc, S, Ty);
                         long mask = ArgMask();
+                        if (SlotScalars() && specCondition == null && mask == 0 && ReferenceEquals(CAbiMethodCallee(f, st, ins), callee) && CAbiOf(callee) is { } mabi)
+                        {
+                            // the C body (Ebene 2): the receiver is checked first (like the dispatcher would), then the arguments (like the prologue would)
+                            string notObj = IsNullable(Ty(slot)) ? $"if (FIRE_UNLIKELY({S(slot)}.kind != K_Class)) {S(slot)} = missingMethod({S(slot)}, {CString(method)}, {argc}); else " : "";
+                            E($"{notObj}if (FIRE_UNLIKELY(!leafAlive({S(slot)}))) {S(slot)} = destroyedError({S(slot)});");
+                            Check();
+                            string self = S(slot);
+                            var margs = CAbiArgs(mabi, d - argc, argc);
+                            string mcall = $"{CName(callee)}({string.Join(", ", new[] { self }.Concat(margs))})";
+                            if (mabi.RetType != 0) SetScalar(slot, mabi.RetType, mcall);
+                            else { E($"{S(slot)} = {mcall};"); SetR(slot, false); }
+                            Check();
+                            if (mabi.RetType == 0) AdoptResult(slot, ReturnType(callee));
+                            d = slot + 1; return Next();
+                        }
                         string specTest = specCondition != null ? $"({specCondition}) ? {callee.Name}(" : "";
                         ArgsBefore(d - argc, argc, mask);
                         var (dpre, dargs) = DefaultArgs(directProto, argc, S(slot), DefaultsList(directProto, argc));

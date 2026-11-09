@@ -142,6 +142,23 @@ namespace fire.Native
             return CAbiOf(target) != null ? target : null;
         }
 
+        /// <summary>Like CAbiStaticCallee for a CallMethod on an object of a known class whose method no derived class overrides (DirectMethod).</summary>
+        private Func? CAbiMethodCallee(Func f, Flow st, Instr ins)
+        {
+            if (!ScalarsOn) return null;
+            int argc = ins.A[1], slot = st.Depth - argc - 1;
+            if (slot < 0 || slot >= 64) return null;
+            string method = f.Chunk.Constants[ins.A[0]].AsString();
+            int at = f.IndexOf.TryGetValue(ins.Addr, out int index) ? index : -1;
+            if (at > 0 && f.Decoded[at - 1].Op is OpCode.ArgNames or OpCode.CopyArgs or OpCode.SetTypeArgs or OpCode.OverloadHint) return null;
+            int type = st.Types[slot];
+            if (BaseKindOfType(type) != KindObj || (type & TypeNone) != 0 || InterfaceOfType(type) != null) return null;
+            if (_usesReflection && ReflectionMethodNames.Contains(method)) return null;
+            if (DirectMethod(ObjClass(type), method, argc, f) is not { ParamCount: var count } proto || count != argc) return null;
+            var target = GetFunc(proto, FuncKind.Method);
+            return CAbiOf(target) != null ? target : null;
+        }
+
         /// <summary>The function with Values (`fN`) in front of the C body: the parameters are checked like the prologue would (a failed check returns,
         /// the caller sees the exception), the C result becomes a Value again.</summary>
         private string CAbiWrapper(Func f, CAbi abi)
