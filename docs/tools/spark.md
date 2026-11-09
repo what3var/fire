@@ -17,8 +17,9 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   before): CPU and memory of the last minute as curves, CPU now and on average, memory now and at its peak, threads, lines of output, for the VM the
   collections of the .NET heap, and the events of the run (start, pauses, errors, new threads, the end with exit code and duration). A native program is
   measured as its own process; the VM runs inside spark, so its numbers are those of spark's process.
-- **Profiler:** the *Profile* switch of the run tool strip profiles runs in the VM: when the program has ended, the *Profile* tab shows where the time
-  went (the lines with the most instructions of the VM, how often each was entered) and every own file with the counts beside each line - hot lines in
+- **Profiler:** the *Profile* switch of the run tool strip profiles runs in the VM and native debug runs: when the program has ended, the *Profile* tab
+  shows where the time went (in the VM the lines with the most instructions, natively the lines that took the longest in microseconds, and how often each
+  was entered) and every own file with the counts beside each line - hot lines in
   orange, lines with code that never ran in red (*Only what never ran* lists just those); a click on a line opens it in the editor.
 - **Panels:** Output, Build log, Error list, Solution Explorer, Test Explorer ([testing](testing.md)), Todo ([notes](notes.md)), Devices
   ([devices](../devices/README.md)), Properties, Runtime. All of them dock, float or auto-hide; *View > Reset Layout* brings the start layout back.

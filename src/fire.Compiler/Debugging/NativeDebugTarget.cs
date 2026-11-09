@@ -103,6 +103,16 @@ namespace fire.Debugging
         private Process? _process;
         /// <summary>The program's process (see <see cref="AttachProcess"/>), null over a framed transport (a board).</summary>
         public Process? Process => _process;
+
+        /// <summary>The profile the program sent at its end (after <see cref="StartProfile"/>): source, line, how often a thread entered it, microseconds spent in it.</summary>
+        public IReadOnlyList<(int Source, int Line, long Hits, long Micros)>? Profile { get; private set; }
+
+        /// <summary>The program counts its lines from now on (command `profile`, docs/spec/NATIVE_DEBUG_PROTOCOL.md); the counts come with its end (<see cref="Profile"/>).</summary>
+        public bool StartProfile()
+        {
+            try { return Request("profile", ("on", true)).TryGetValue("ok", out var ok) && ok is true; }
+            catch (NativeDebugException) { return false; }
+        }
         private readonly List<string> _bufferedOutput = new();
         private Action<IDebugThread?, string>? _output;
         private volatile bool _closed;
@@ -520,6 +530,12 @@ namespace fire.Debugging
                     break;
                 case "sources":
                     OnSources(message);
+                    break;
+                case "profile":
+                    // (the profiler's counts, sent before `exited`: [source, line, hits, microseconds] for every line with code)
+                    if (message.TryGetValue("lines", out var raw) && raw is List<object?> rows)
+                        Profile = rows.OfType<List<object?>>().Where(r => r.Count >= 4)
+                            .Select(r => ((int)Convert.ToInt64(r[0]), (int)Convert.ToInt64(r[1]), Convert.ToInt64(r[2]), Convert.ToInt64(r[3]))).ToList();
                     break;
                 case "exited":
                     MarkExited((int?)message.Num("code"));

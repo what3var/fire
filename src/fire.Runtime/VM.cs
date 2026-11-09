@@ -1380,7 +1380,9 @@ namespace fire.Runtime
                         rangeChunk = _currentChunk;
                         if (location != last)
                         {
-                            if (profile != null) { profile.Add(last, 0, ran); profile.Add(location, 1, 0); }
+                            // (entered: at the start of the line's code - not back from a call into its middle, not by a jump to the end of a block whose
+                            // code still counts as the line before)
+                            if (profile != null) { profile.Add(last, 0, ran); if (_ip == rangeStart) profile.Add(location, 1, 0); }
                             ran = 0;
                             last = location;
                             if (breakpoints.Contains(location)) return true;

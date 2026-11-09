@@ -84,7 +84,7 @@ namespace fire.Editor
             _body.Children.Add(new TextBlock { Text = $"Profile: {r.What}", FontSize = 18, FontWeight = FontWeight.SemiBold });
             _body.Children.Add(new TextBlock
             {
-                Text = $"{r.Seconds.ToString("0.0", CultureInfo.CurrentCulture)} s, {r.Instructions.ToString("N0", CultureInfo.CurrentCulture)} instructions of the VM  ·  "
+                Text = $"{r.Seconds.ToString("0.0", CultureInfo.CurrentCulture)} s, {(Micros(r) ? $"{(r.Instructions / 1000.0).ToString("N1", CultureInfo.CurrentCulture)} ms in the lines of the program" : $"{r.Instructions.ToString("N0", CultureInfo.CurrentCulture)} instructions of the VM")}  ·  "
                      + $"{ran} of {code} lines with code ran, {code - ran} never ({Percent(code - ran, code)})",
                 Opacity = 0.85, TextWrapping = TextWrapping.Wrap,
             });
@@ -92,10 +92,10 @@ namespace fire.Editor
             long max = Math.Max(1, all.Count == 0 ? 1 : all.Max(x => x.Line.Instructions));
             if (_onlyFallow.IsChecked != true)
             {
-                Section("Where the time goes: the lines with the most instructions");
+                Section(Micros(r) ? "Where the time goes: the lines that took the longest" : "Where the time goes: the lines with the most instructions");
                 var top = all.Where(x => x.Line.Instructions > 0).OrderByDescending(x => x.Line.Instructions).Take(25).ToList();
                 var grid = Grid(6);
-                AddRow(grid, Header("Instructions"), Header(""), Header(""), Header("Entered"), Header("Line"), Header("Code"));
+                AddRow(grid, Header(Micros(r) ? "µs" : "Instructions"), Header(""), Header(""), Header("Entered"), Header("Line"), Header("Code"));
                 foreach (var (file, line) in top)
                     AddRow(grid, Num(line.Instructions), Text(Percent(line.Instructions, r.Instructions), right: true), BarOf(line.Instructions, max, Hot), Num(line.Hits),
                         Link($"{Name(file)}:{line.Line}", file, line.Line), Code(line.Text.Trim()));
@@ -110,7 +110,7 @@ namespace fire.Editor
                 var fallow = Ranges(file.Lines.Where(l => l.Executable && !l.Ran).Select(l => l.Line).ToList());
                 if (fallow.Length > 0) _body.Children.Add(new TextBlock { Text = "Never ran: lines " + fallow, Opacity = 0.85, TextWrapping = TextWrapping.Wrap, Foreground = EditorTheme.Solid(Color.FromRgb(0xF8, 0x71, 0x71)) });
                 var grid = Grid(4);
-                AddRow(grid, Header("Line"), Header("Entered"), Header("Instructions"), Header("Code"));
+                AddRow(grid, Header("Line"), Header("Entered"), Header(Micros(r) ? "µs" : "Instructions"), Header("Code"));
                 foreach (var line in lines)
                 {
                     var row = new Control[] { Link(line.Line.ToString(CultureInfo.CurrentCulture), file, line.Line), Num(line.Hits), Num(line.Instructions), Code(line.Text) };
@@ -171,6 +171,8 @@ namespace fire.Editor
 
         private static Control BarOf(long n, long max, IBrush brush) =>
             new Border { Width = Math.Max(1, 160.0 * n / Math.Max(1, max)), Height = 9, Background = brush, CornerRadius = new CornerRadius(2), HorizontalAlignment = HorizontalAlignment.Left };
+
+        private static bool Micros(ProfileReport r) => r.Measure == "µs";
 
         private static string Name(ProfileFile f) => f.Path != null ? Path.GetFileName(f.Path) : $"source {f.SourceIndex}";
 

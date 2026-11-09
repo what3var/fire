@@ -106,13 +106,21 @@ namespace fire.Native
             return parent;
         }
 
+        /// <summary>The lines with code of this file (source, line) - every line that begins with a hook: the profiler reports those that never ran.</summary>
+        private readonly SortedSet<(int Src, int Line)> _dbgLines = new();
+
         /// <summary>Before instruction <paramref name="i"/> (pass 2): the position where a line begins (or a jump lands), else the scope state where it changed.</summary>
         private void DebugBeforeInstruction(Func f, FuncDebug d, Chunk chunk, Instr ins, int i, Flow st, Out o, bool isTarget, ISet<string> locals)
         {
             int lv = DebugLevelOf(f, d, st, locals);
             var (src, line) = chunk.GetLocationRange(ins.Addr, out int start, out _);
-            if (i == 0 || start == ins.Addr || isTarget)
+            if (i == 0 || start == ins.Addr)
+            {
                 o.Code.AppendLine($"    FIRE_DBG_L({DbgSrc(src)}, {line}, {lv});");
+                if (line > 0 && !LibraryRole) _dbgLines.Add((src, line));   // (the lines with code: the profiler's table, kDbgProgram)
+            }
+            else if (isTarget)
+                o.Code.AppendLine($"    FIRE_DBG_J({DbgSrc(src)}, {line}, {lv});");   // (a jump into the middle of a line: no new entry for the profiler)
             else if (lv != o.DbgLv)
                 o.Code.AppendLine($"    DF->lv = {lv};");
             o.DbgLv = lv;
@@ -294,7 +302,9 @@ namespace fire.Native
             sb.AppendLine("    setFieldAt(o, index, x);");
             sb.AppendLine("}");
             var (entrySrc, entryLine) = _program.Program.TopLevel.GetLocation(0);
-            sb.AppendLine($"static const DbgProgram kDbgProgram = {{{(nsources > 0 ? "kDbgSources" : "NULL")}, {nsources}, {_program.FirstUserSource}, {(nglobals > 0 ? "kDbgGlobals" : "NULL")}, {nglobals}, {entrySrc}, {entryLine}, {CString(_target.Name)}}};");
+            if (_dbgLines.Count > 0)
+                sb.AppendLine($"static const int32_t kDbgLines[] = {{{string.Join(",", _dbgLines.Select(l => $"{l.Src},{l.Line}"))}}};");
+            sb.AppendLine($"static const DbgProgram kDbgProgram = {{{(nsources > 0 ? "kDbgSources" : "NULL")}, {nsources}, {_program.FirstUserSource}, {(nglobals > 0 ? "kDbgGlobals" : "NULL")}, {nglobals}, {entrySrc}, {entryLine}, {CString(_target.Name)}, {(_dbgLines.Count > 0 ? "kDbgLines" : "NULL")}, {_dbgLines.Count}}};");
             return sb.ToString();
         }
     }

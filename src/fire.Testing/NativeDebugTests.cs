@@ -972,6 +972,27 @@ static class NativeDebugTests
                 }
             });
 
+        Check("Profiler: profile zaehlt die Zeilen (Schleifenrumpf 100-mal, ein Sprung ans Blockende ist kein Eintritt), sendet sie vor exited, mit den nie gelaufenen Zeilen", () =>
+        {
+            const string script = "var t = 0\nfor (var i = 0; i < 100; i++) {\n    t = t + i\n    if (i == 50) {\n        print(\"half\")\n    }\n}\nif (t < 0) {\n    print(\"never\")\n}\nprint(t)\n";
+            string? exe = Build(script, cxx, workDir, "dbgprof", flags, out string error);
+            if (exe == null) return (false, error);
+            using var c = NativeDebugClient.Launch(exe, workDir);
+            int first = c.Hello.GetProperty("firstUserSource").GetInt32();
+            c.NextEvent("stopped");
+            var on = c.Request("profile", new() { ["on"] = true });
+            c.Request("continue", new() { ["thread"] = 1, ["breakpoints"] = false });
+            var profile = c.NextEvent("profile");
+            var exited = c.NextEvent("exited");
+            var lines = new Dictionary<int, (long Hits, long Micros)>();
+            foreach (var row in profile.GetProperty("lines").EnumerateArray())
+                if (row[0].GetInt32() == first) lines[row[1].GetInt32()] = (row[2].GetInt64(), row[3].GetInt64());
+            long Hits(int line) => lines.TryGetValue(line, out var v) ? v.Hits : -1;
+            bool ok = on.GetProperty("ok").GetBoolean() && Hits(3) == 100 && Hits(5) == 1 && Hits(9) == 0 && Hits(11) == 1 && exited.GetProperty("code").GetInt32() == 0
+                && c.Output.Replace("\r", "").Contains("half\n4950\n");
+            return (ok, $"{string.Join(" ", lines.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value.Hits}/{kv.Value.Micros}"))}\n{c.Output}{c.Errors}");
+        });
+
         Check("pause haelt eine Endlosschleife an, terminate beendet das Programm", () =>
         {
             const string script = "var n = 0\nwhile (true) {\n    n = n + 1\n}\n";

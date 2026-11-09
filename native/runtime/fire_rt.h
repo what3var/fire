@@ -318,8 +318,17 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
 #else
 #define FIRE_DEBUG_THREAD_VARS(X)
 #endif
+/* Without the GIL: the free slots of the slot table this thread keeps (see FIRE_SLOT_SEGMENTS). */
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+#define FIRE_SLOT_CACHE 64u
+typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCache;
+#define FIRE_SLOT_THREAD_VARS(X) X(SlotCache, g_slotCache, FIRE_ZERO_INIT)
+#else
+#define FIRE_SLOT_THREAD_VARS(X)
+#endif
 #define FIRE_THREAD_VARS(X) \
     FIRE_DEBUG_THREAD_VARS(X) \
+    FIRE_SLOT_THREAD_VARS(X) \
     X(UnwindState, g_unwind, FIRE_ZERO_INIT) \
     X(Pool, g_pool, FIRE_ZERO_INIT) \
     X(Handler*, g_handlers, NULL) \
@@ -411,6 +420,9 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_deviceError FIRE_TLV(g_deviceError)
 #define g_gfxError FIRE_TLV(g_gfxError)
 #define g_acc FIRE_TLV(g_acc)
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+#define g_slotCache FIRE_TLV(g_slotCache)
+#endif
 #ifdef FIRE_DEBUG
 #define g_dbgTop FIRE_TLV(g_dbgTop)
 #define g_dbgNest FIRE_TLV(g_dbgNest)
@@ -1405,13 +1417,100 @@ FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
 #define FIRE_SLOT_HDR 1   /* the table knows the header in each slot */
 #endif
 #ifdef FIRE_SLOTS
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+/* Without the GIL (docs/ROADMAP_TASKS.md step 1c) the table is read by every thread while others add slots: it is made of segments that never move (a
+ * directory of FIRE_SLOT_SEGS pointers to FIRE_SLOT_SEG entries each - the same two loads as the one array), the slots an owner frees are kept by its thread
+ * (a cache of up to FIRE_SLOT_CACHE, exchanged half by half with the shared stack under g_slotM), and a generation is read and written atomically (a stale
+ * Value of an object another thread destroys or got handed over reads it while that thread writes it). */
+#define FIRE_SLOT_SEGMENTS 1
+#endif
 /* One slot: its generation and - when the table knows it - the header of the value in it, side by side (one load for `arrOf` and the check). */
 typedef struct SlotEntry {
 #ifdef FIRE_SLOT_HDR
     Owned* hdr;
 #endif
     FireGen gen;
+#ifdef FIRE_SLOT_SEGMENTS
+    FireGen born;   /* (see SlotTable.born) */
+#endif
 } SlotEntry;
+#ifdef FIRE_SLOT_SEGMENTS
+#define FIRE_SLOT_SEG_SHIFT 14
+#define FIRE_SLOT_SEG (1u << FIRE_SLOT_SEG_SHIFT)
+#define FIRE_SLOT_SEGS (1u << 14)
+typedef struct SlotTable {
+    SlotEntry* seg[FIRE_SLOT_SEGS];
+    fire_atomic32 count;   /* slots handed out so far (every one below lives in a segment) */
+    uint32_t* freed;       /* the shared stack of free slots (under g_slotM) */
+    uint32_t nfree, freedCap;
+} SlotTable;
+extern FIRE_RT_DATA SlotTable g_slots;
+extern FIRE_RT_DATA fire_mutex g_slotM;
+#define slotEntry(slot) (g_slots.seg[(uint32_t)(slot) >> FIRE_SLOT_SEG_SHIFT][(uint32_t)(slot) & (FIRE_SLOT_SEG - 1)])
+#if defined(__GNUC__) || defined(__clang__)
+#define slotGenGet(slot) __atomic_load_n(&slotEntry(slot).gen, __ATOMIC_RELAXED)
+#define slotGenSet(slot, g) __atomic_store_n(&slotEntry(slot).gen, (FireGen)(g), __ATOMIC_RELAXED)
+#else
+#define slotGenGet(slot) (*(volatile FireGen*)&slotEntry(slot).gen)
+#define slotGenSet(slot, g) (*(volatile FireGen*)&slotEntry(slot).gen = (FireGen)(g))
+#endif
+#define slotBorn(slot) (slotEntry(slot).born)
+#define slotInTable(slot) ((uint32_t)(slot) < fire_atomic_load(&g_slots.count))
+#ifdef FIRE_SLOT_HDR
+#define slotHdr(slot) (slotEntry(slot).hdr)
+#endif
+/* Takes up to `want` slots for this thread's cache (under g_slotM): freed ones first, then new ones - a new segment is made before its slots are handed out. */
+FIRE_COLD FIRE_FN void slotRefill(uint32_t want) {
+    fire_mutex_lock(&g_slotM);
+    while (g_slotCache.n < want && g_slots.nfree) g_slotCache.slot[g_slotCache.n++] = g_slots.freed[--g_slots.nfree];
+    while (g_slotCache.n < want) {
+        uint32_t next = fire_atomic_load(&g_slots.count);
+        uint32_t seg = next >> FIRE_SLOT_SEG_SHIFT;
+        if (FIRE_UNLIKELY(seg >= FIRE_SLOT_SEGS)) { fire_mutex_unlock(&g_slotM); fatal("Too many objects, arrays and buffers at once."); }
+        if (!g_slots.seg[seg]) {
+            SlotEntry* e = (SlotEntry*)calloc(FIRE_SLOT_SEG, sizeof(SlotEntry));
+            if (!e) { fire_mutex_unlock(&g_slotM); outOfMemory(); }
+            g_slots.seg[seg] = e;   /* (a thread reads it only for a slot it got after this, through the mutex or a Value handed over after it) */
+        }
+        g_slotCache.slot[g_slotCache.n++] = next;
+        fire_atomic_store(&g_slots.count, next + 1);
+    }
+    fire_mutex_unlock(&g_slotM);
+}
+/* Gives the cache of this thread down to `keep` slots back to the shared stack (a full cache; a thread that ends: 0). */
+FIRE_COLD FIRE_FN void slotSpill(uint32_t keep) {
+    fire_mutex_lock(&g_slotM);
+    while (g_slotCache.n > keep) {
+        if (g_slots.nfree == g_slots.freedCap) {
+            uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
+            uint32_t* freed = (uint32_t*)realloc(g_slots.freed, cap * sizeof(uint32_t));
+            if (!freed) { fire_mutex_unlock(&g_slotM); outOfMemory(); }
+            g_slots.freed = freed;
+            g_slots.freedCap = cap;
+        }
+        g_slots.freed[g_slots.nfree++] = g_slotCache.slot[--g_slotCache.n];
+    }
+    fire_mutex_unlock(&g_slotM);
+}
+FIRE_FN void slotAcquire(Owned* o) {
+    uint32_t slot;
+    if (FIRE_UNLIKELY(!g_slotCache.n)) slotRefill(FIRE_SLOT_CACHE / 2);
+    slot = g_slotCache.slot[--g_slotCache.n];
+    o->slot = slot;
+    o->gen = slotGenGet(slot);
+#ifdef FIRE_SLOT_HDR
+    slotHdr(slot) = o;
+#endif
+}
+FIRE_FN void slotRelease(Owned* o) {
+    uint32_t slot = o->slot;
+    FireGen g = (FireGen)((slotGenGet(slot) + 1) & FIRE_GEN_MASK);
+    slotGenSet(slot, g);
+    slotBorn(slot) = g;
+    if (FIRE_UNLIKELY(g_slotCache.n == FIRE_SLOT_CACHE)) slotSpill(FIRE_SLOT_CACHE / 2);
+    g_slotCache.slot[g_slotCache.n++] = slot;
+}
+#else
 typedef struct SlotTable {
     SlotEntry* e;
     /* the generation of each slot when its value was made (or the slot was freed): a stale Value of the value that lives in the slot now - its generation
@@ -1421,7 +1520,10 @@ typedef struct SlotTable {
     uint32_t count, cap, nfree, freedCap;
 } SlotTable;
 extern FIRE_RT_DATA SlotTable g_slots;
-#define slotGen(slot) (g_slots.e[slot].gen)
+#define slotGenGet(slot) (g_slots.e[slot].gen)
+#define slotGenSet(slot, g) (g_slots.e[slot].gen = (FireGen)(g))
+#define slotBorn(slot) (g_slots.born[slot])
+#define slotInTable(slot) ((uint32_t)(slot) < g_slots.cap)
 #ifdef FIRE_SLOT_HDR
 #define slotHdr(slot) (g_slots.e[slot].hdr)
 #endif
@@ -1449,15 +1551,15 @@ FIRE_FN void slotAcquire(Owned* o) {
         slot = g_slots.count++;
     }
     o->slot = slot;
-    o->gen = slotGen(slot);
+    o->gen = slotGenGet(slot);
 #ifdef FIRE_SLOT_HDR
     slotHdr(slot) = o;
 #endif
 }
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
-    slotGen(slot) = (FireGen)((slotGen(slot) + 1) & FIRE_GEN_MASK);
-    g_slots.born[slot] = slotGen(slot);
+    slotGenSet(slot, (slotGenGet(slot) + 1) & FIRE_GEN_MASK);
+    slotBorn(slot) = slotGenGet(slot);
     if (g_slots.nfree == g_slots.freedCap) {
         uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
         uint32_t* freed = (uint32_t*)realloc(g_slots.freed, cap * sizeof(uint32_t));
@@ -1467,10 +1569,11 @@ FIRE_FN void slotRelease(Owned* o) {
     }
     g_slots.freed[g_slots.nfree++] = slot;
 }
+#endif
 /* The next generation of a slot whose value lives on (a part that `fire handover` moves into a thread): every older Value of it is dead. */
 FIRE_FN void slotBump(Owned* o) {
-    slotGen(o->slot) = (FireGen)((slotGen(o->slot) + 1) & FIRE_GEN_MASK);
-    o->gen = slotGen(o->slot);
+    slotGenSet(o->slot, (slotGenGet(o->slot) + 1) & FIRE_GEN_MASK);
+    o->gen = slotGenGet(o->slot);
 }
 #else
 FIRE_FN void slotAcquire(Owned* o) { o->slot = 0; o->gen = 0; }
@@ -1510,7 +1613,7 @@ FIRE_FN bool leafAlive(Value v) {
     (void)v;
     return true;
 #else
-    return FIRE_LIKELY(slotGen(FIRE_VSLOT(v)) == FIRE_VGEN(v));
+    return FIRE_LIKELY(slotGenGet(FIRE_VSLOT(v)) == FIRE_VGEN(v));
 #endif
 }
 /* A dead Value of an object, array or buffer that still lives - in a fire thread it was handed over to (`fire handover`, handOverAll): the sender's reference
@@ -1521,9 +1624,9 @@ FIRE_FN bool handedOverRef(Value v) {
     return false;
 #else
     FireGen born;
-    if ((v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) || FIRE_VSLOT(v) >= g_slots.cap) return false;
-    born = g_slots.born[FIRE_VSLOT(v)];
-    return ((FIRE_VGEN(v) - born) & FIRE_GEN_MASK) < ((slotGen(FIRE_VSLOT(v)) - born) & FIRE_GEN_MASK);
+    if ((v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) || !slotInTable(FIRE_VSLOT(v))) return false;
+    born = slotBorn(FIRE_VSLOT(v));
+    return ((FIRE_VGEN(v) - born) & FIRE_GEN_MASK) < ((slotGenGet(FIRE_VSLOT(v)) - born) & FIRE_GEN_MASK);
 #endif
 }
 
@@ -5377,7 +5480,7 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
         int64_t index, length;
         uint32_t slot = ptrSlot(p);
         intptr_t addr = (intptr_t)ptrAddr(p);
-        if (FIRE_UNLIKELY(slotGen(slot) != FIRE_VGEN(p))) {
+        if (FIRE_UNLIKELY(slotGenGet(slot) != FIRE_VGEN(p))) {
             Value leaf = Undef();
             leaf.kind = p.kind == K_PtrByte ? K_Buffer : K_Array;
             *err = destroyedError(leaf);
@@ -5437,7 +5540,7 @@ FIRE_FN void ptrWrite(Value p, Value v) {
         return;
     }
 #ifdef FIRE_ELEMPTRS
-    if (p.kind == K_PtrElem && (FIRE_UNCHECKED_OR(slotGen(ptrSlot(p)) == FIRE_VGEN(p)))) {
+    if (p.kind == K_PtrElem && (FIRE_UNCHECKED_OR(slotGenGet(ptrSlot(p)) == FIRE_VGEN(p)))) {
         /* an element of a typed array (unpacked when the pointer was taken): the value is converted like `a[i] = v`, or it is the exception */
         Arr* arr = (Arr*)slotHdr(ptrSlot(p));
         if (FIRE_UNLIKELY(arr->typed != NULL)) {
@@ -7033,6 +7136,13 @@ typedef struct Gil { fire_mutex m; fire_cond cv; uint64_t next, serving; } Gil;
 extern FIRE_RT_DATA Gil g_gil;
 extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
 
+#ifdef FIRE_NO_GIL
+/* (docs/ROADMAP_TASKS.md step 1: fire code runs on all cores - the hand-over points of the GIL stay the safe points, the GIL itself is gone;
+ * what it protected has locks of its own. Being built step by step: until step 1g this switch is for the tests under ThreadSanitizer only.) */
+FIRE_FN void gilAcquire(void) { }
+FIRE_FN void gilRelease(void) { }
+FIRE_FN void gilYield(void) { FIRE_PLAT_YIELD(); }
+#else
 FIRE_FN void gilAcquire(void) {
     uint64_t ticket;
     fire_mutex_lock(&g_gil.m);
@@ -7055,6 +7165,7 @@ FIRE_FN void gilYield(void) {
     FIRE_PLAT_YIELD();   /* (a scheduler of fire itself: the others get their turn - a thread that has not started yet waits for nothing) */
     if (fire_atomic_load(&g_gilWaiting)) { gilRelease(); gilAcquire(); }
 }
+#endif
 
 /* An event: something changed that a waiting thread may be looking for (called with the GIL held, after the change). */
 extern FIRE_RT_DATA fire_mutex g_evM;
@@ -7072,8 +7183,14 @@ FIRE_FN void notifyEvent(void) {
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4 };
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 
-typedef struct TerminateState { bool requested; Value value; } TerminateState;
+/* `requested` is read by every thread at its safe points (atomic); the claim (the first call wins) and `value` are under g_thrM. */
+typedef struct TerminateState { fire_atomic32 requested; Value value; } TerminateState;
 extern FIRE_RT_DATA TerminateState g_terminate;
+#define terminateRequested() (fire_atomic_load(&g_terminate.requested) != 0)
+/* The small tables of the threads (docs/ROADMAP_TASKS.md step 1d): g_thrM for the thread list, the live count, their exceptions, the graveyard and the
+ * terminate value; g_reqM for the queue of sections and jobs; g_mailboxM for the mailboxes of the actors. Each is held only for the change itself (never
+ * while fire code runs or a thread waits). */
+extern FIRE_RT_DATA fire_mutex g_thrM, g_reqM, g_mailboxM;
 extern FIRE_RT_DATA OwnList g_terminateOwn;   /* what a terminate value owns lives on until the process ends */
 
 FIRE_FN int64_t steadyMs(void) { return fire_plat_nowMs(); }
@@ -7085,7 +7202,7 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
         int64_t now, slice = 5;
         uint64_t seen;
         if (pred(ctx)) return true;
-        if (stopOnTerminate && g_terminate.requested) return false;
+        if (stopOnTerminate && terminateRequested()) return false;
         now = steadyMs();
         if (deadlineMs && now >= deadlineMs) return false;
         fire_mutex_lock(&g_evM);
@@ -7103,15 +7220,37 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
 #ifndef FIRE_THREAD_STACK_BYTES
 #define FIRE_THREAD_STACK_BYTES 0   /* 0: the platform's own default */
 #endif
-extern FIRE_RT_DATA int g_threadsLive;
+extern FIRE_RT_DATA fire_atomic32 g_threadsLive;   /* fire threads that have not ended */
 extern FIRE_RT_DATA PtrVec g_threadList;     /* fire_thread* */
 /* unhandled exceptions of fire threads that wait for the main program */
 typedef struct ValueQueue { Value* items; uint32_t count, cap; } ValueQueue;
 extern FIRE_RT_DATA ValueQueue g_pendingExc;
 extern FIRE_RT_DATA PtrVec g_graveyard;      /* the global scopes of threads that ended with an unhandled exception (never freed: the exception is handed on) */
 FIRE_FN void pendingExcPush(Value e) {
+    fire_mutex_lock(&g_thrM);
     g_pendingExc.items = (Value*)fire_growPush(g_pendingExc.items, &g_pendingExc.count, &g_pendingExc.cap, sizeof(Value));
     g_pendingExc.items[g_pendingExc.count++] = e;
+    fire_mutex_unlock(&g_thrM);
+}
+/* Takes the oldest exception of a thread (false: none). */
+FIRE_FN bool pendingExcPop(Value* e) {
+    bool any;
+    fire_mutex_lock(&g_thrM);
+    any = g_pendingExc.count > 0;
+    if (any) {
+        *e = g_pendingExc.items[0];
+        memmove(g_pendingExc.items, g_pendingExc.items + 1, (g_pendingExc.count - 1) * sizeof(Value));
+        g_pendingExc.count--;
+    }
+    fire_mutex_unlock(&g_thrM);
+    return any;
+}
+FIRE_FN uint32_t pendingExcCount(void) {
+    uint32_t n;
+    fire_mutex_lock(&g_thrM);
+    n = g_pendingExc.count;
+    fire_mutex_unlock(&g_thrM);
+    return n;
 }
 
 typedef struct ThreadStart {
@@ -7143,7 +7282,10 @@ FIRE_FN void threadEntry(ThreadStart st) {
     free(st.args);
     free(g_pool.items);
     g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
-    g_threadsLive--;
+#ifdef FIRE_SLOT_SEGMENTS
+    slotSpill(0);   /* (the free slots this thread kept go back to the others) */
+#endif
+    fire_atomic_add(&g_threadsLive, (uint32_t)-1);
     notifyEvent();
     gilRelease();
 #ifdef FIRE_TLS_STRUCT
@@ -7169,8 +7311,13 @@ FIRE_FN void fireThread(void (*fn)(const Value*), const Value* args, uint32_t n,
     boxed->travel = travel;
     if (!boxed->args) allocFailed();
     for (i = 0; i < n; i++) boxed->args[i] = args[i];
-    g_threadsLive++;
-    ptrVecPush(&g_threadList, fire_thread_start(threadMain, boxed, FIRE_THREAD_STACK_BYTES));
+    fire_atomic_add(&g_threadsLive, 1);
+    {
+        fire_thread* t = fire_thread_start(threadMain, boxed, FIRE_THREAD_STACK_BYTES);
+        fire_mutex_lock(&g_thrM);
+        ptrVecPush(&g_threadList, t);
+        fire_mutex_unlock(&g_thrM);
+    }
 }
 
 /* The list that carries the copies for a new thread from the spawner to the thread. */
@@ -7211,13 +7358,23 @@ FIRE_FN Msg mailboxPop(Mailbox* b) {
     b->count--;
     return m;
 }
-FIRE_FN Mailbox* mailboxOf(Obj* o) { void** slot = ptrMapFind(&g_mailboxes, o); return slot ? (Mailbox*)*slot : NULL; }
+FIRE_FN Mailbox* mailboxOf(Obj* o) {
+    void** slot;
+    Mailbox* b;
+    fire_mutex_lock(&g_mailboxM);
+    slot = ptrMapFind(&g_mailboxes, o);
+    b = slot ? (Mailbox*)*slot : NULL;
+    fire_mutex_unlock(&g_mailboxM);
+    return b;
+}
 FIRE_FN void markActor(Value v) {
     Obj* o = asObj(v);
     Mailbox* b = (Mailbox*)calloc(1, sizeof(Mailbox));
     if (!b) allocFailed();
     o->h.flags |= 8;
+    fire_mutex_lock(&g_mailboxM);
     ptrMapPut(&g_mailboxes, o, b);
+    fire_mutex_unlock(&g_mailboxM);
 }
 /* A call of an actor's method: it does not run, it is queued (the arguments travel with the message and are released after it ran). */
 FIRE_FN void actorSend(Value self, MsgFn fn, const Value* args, uint32_t n) {
@@ -7241,13 +7398,18 @@ FIRE_FN void actorSend(Value self, MsgFn fn, const Value* args, uint32_t n) {
             ownLink(m.own, o);
         }
     }
+    fire_mutex_lock(&g_mailboxM);
     mailboxPush(b, m);
+    fire_mutex_unlock(&g_mailboxM);
     notifyEvent();
 }
 FIRE_FN void actorFree(Obj* o) {
     Mailbox* b = mailboxOf(o);
     uint32_t i;
     if (!b) return;
+    fire_mutex_lock(&g_mailboxM);
+    ptrMapRemove(&g_mailboxes, o);
+    fire_mutex_unlock(&g_mailboxM);
     while (b->count) {
         Msg m = mailboxPop(b);
         for (i = 0; i < m.n; i++) release(m.args[i]);
@@ -7256,9 +7418,16 @@ FIRE_FN void actorFree(Obj* o) {
     }
     free(b->items);
     free(b);
-    ptrMapRemove(&g_mailboxes, o);
 }
-FIRE_FN bool fire_actorReady(void* ctx) { Mailbox* b = mailboxOf((Obj*)ctx); return !b || b->count > 0; }
+FIRE_FN bool fire_actorReady(void* ctx) {
+    bool ready;
+    void** slot;
+    fire_mutex_lock(&g_mailboxM);
+    slot = ptrMapFind(&g_mailboxes, ctx);
+    ready = !slot || ((Mailbox*)*slot)->count > 0;
+    fire_mutex_unlock(&g_mailboxM);
+    return ready;
+}
 /* `process x` / `try process x`: runs one message of the actor. 1: a message ran; 0: none there (`try`); -1: terminate cut the wait short. */
 FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
     Obj* a;
@@ -7274,7 +7443,9 @@ FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
     }
     b = mailboxOf(a);
     if (!b) return 0;
+    fire_mutex_lock(&g_mailboxM);
     m = mailboxPop(b);
+    fire_mutex_unlock(&g_mailboxM);
     r = m.fn(v, m.args, list);
     /* what the message owned and the method did not keep dies with the call */
     if (m.own) { transferOut(r, m.own); leave(m.own); free(m.own); }
@@ -7326,38 +7497,56 @@ FIRE_FN bool sharedValue(Value v) {
     return false;
 }
 
-struct SectionReq { bool granted, done; int refs; };
+struct SectionReq { fire_atomic32 granted, done, refs; };   /* (granted/done: read by the other side while it waits) */
 typedef struct JobReq { Value lam; Value* args; uint32_t n; OwnList* holder; } JobReq;
 typedef struct Req { SectionReq* sec; JobReq* job; } Req;
 /* The requests of the threads (a ring queue). */
 typedef struct ReqQueue { Req* items; uint32_t head, count, cap; } ReqQueue;
 extern FIRE_RT_DATA ReqQueue g_reqs;
 FIRE_FN void reqPush(Req r) {
+    fire_mutex_lock(&g_reqM);
     if (g_reqs.count == g_reqs.cap) {
         uint32_t cap = g_reqs.cap ? g_reqs.cap * 2 : 8, i;
         Req* items = (Req*)malloc(cap * sizeof(Req));
-        if (!items) allocFailed();
+        if (!items) { fire_mutex_unlock(&g_reqM); allocFailed(); }
         for (i = 0; i < g_reqs.count; i++) items[i] = g_reqs.items[(g_reqs.head + i) % g_reqs.cap];
         free(g_reqs.items);
         g_reqs.items = items; g_reqs.head = 0; g_reqs.cap = cap;
     }
     g_reqs.items[(g_reqs.head + g_reqs.count) % g_reqs.cap] = r;
     g_reqs.count++;
+    fire_mutex_unlock(&g_reqM);
 }
-FIRE_FN Req reqPop(void) {
-    Req r = g_reqs.items[g_reqs.head];
-    g_reqs.head = (g_reqs.head + 1) % g_reqs.cap;
-    g_reqs.count--;
-    return r;
+/* Takes the oldest request (false: none). */
+FIRE_FN bool reqPop(Req* r) {
+    bool any;
+    fire_mutex_lock(&g_reqM);
+    any = g_reqs.count > 0;
+    if (any) {
+        *r = g_reqs.items[g_reqs.head];
+        g_reqs.head = (g_reqs.head + 1) % g_reqs.cap;
+        g_reqs.count--;
+    }
+    fire_mutex_unlock(&g_reqM);
+    return any;
+}
+FIRE_FN uint32_t reqCount(void) {
+    uint32_t n;
+    fire_mutex_lock(&g_reqM);
+    n = g_reqs.count;
+    fire_mutex_unlock(&g_reqM);
+    return n;
 }
 
-FIRE_FN bool fire_sectionGranted(void* ctx) { return ((SectionReq*)ctx)->granted; }
-FIRE_FN bool fire_sectionDone(void* ctx) { return ((SectionReq*)ctx)->done; }
+FIRE_FN bool fire_sectionGranted(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->granted) != 0; }
+FIRE_FN bool fire_sectionDone(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->done) != 0; }
+/* One side lets go of the request (the last one frees it). */
+FIRE_FN void sectionReqDrop(SectionReq* r) { if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) free(r); }
 FIRE_FN void sectionAcquire(void) {
     SectionReq* r = (SectionReq*)malloc(sizeof(SectionReq));
     Req q;
     if (!r) allocFailed();
-    r->granted = false; r->done = false; r->refs = 2;
+    fire_atomic_store(&r->granted, 0); fire_atomic_store(&r->done, 0); fire_atomic_store(&r->refs, 2);
     q.sec = r; q.job = NULL;
     reqPush(q);
     fire_atomic_or(&g_attn, ATTN_SECT);
@@ -7369,9 +7558,9 @@ FIRE_FN void sectionRelease(void) {
     SectionReq* r = g_curSection;
     g_curSection = NULL;
     if (!r) return;
-    r->done = true;
+    fire_atomic_storeRelease(&r->done, 1);
     notifyEvent();
-    if (--r->refs == 0) free(r);
+    sectionReqDrop(r);
 }
 FIRE_FN void sectionAbort(void) { if (g_curSection) { g_secDepth = 0; sectionRelease(); } }
 /* Waiting for something else (Sleep, a device, ...) inside a section: the thread gives its section back for the time of the wait - else the main program,
@@ -7455,15 +7644,15 @@ FIRE_FN void runJob(JobReq* j) {
 /* The main program serves the queue: each section is granted in turn (it waits until it ends), each job runs. Returns how many entries it handled. */
 FIRE_FN int drainQueue(void) {
     int handled = 0;
-    while (g_reqs.count) {
-        Req r = reqPop();
+    Req r;
+    while (reqPop(&r)) {
         handled++;
         if (r.sec) {
             SectionReq* sec = r.sec;
-            sec->granted = true;
+            fire_atomic_storeRelease(&sec->granted, 1);
             notifyEvent();
             blockUntil(fire_sectionDone, sec, false, 0);
-            if (--sec->refs == 0) free(sec);
+            sectionReqDrop(sec);
         } else runJob(r.job);
     }
     fire_atomic_and(&g_attn, ~(uint32_t)ATTN_SECT);
@@ -7843,7 +8032,9 @@ FIRE_FN void graveyardAdd(OwnList* list) {
     *heap = *list;
     for (o = heap->head; o; o = o->next) o->owner = heap;
     list->head = list->tail = NULL;
+    fire_mutex_lock(&g_thrM);
     ptrVecPush(&g_graveyard, heap);
+    fire_mutex_unlock(&g_thrM);
 }
 
 /* `leave`: the thread that calls it goes straight into the unwinding. */
@@ -7851,17 +8042,31 @@ FIRE_FN void leaveNow(void) { startLeave(); }
 
 /* `terminate(value)`: the first call wins; every thread notices at its next safe point (or wait) and leaves. */
 FIRE_FN void terminateNow(Value v) {
-    if (!g_terminate.requested) {
+    bool first;
+    fire_mutex_lock(&g_thrM);
+    first = !terminateRequested();
+    if (first) {
         if (v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) {   /* the value outlives the scope that created it */
             Owned* o = ownedOf(v);
             if (o) { if (o->owner) ownUnlink(o); ownLink(&g_terminateOwn, o); }
         } else retain(v);
         g_terminate.value = v;
-        g_terminate.requested = true;
+        fire_atomic_store(&g_terminate.requested, 1);
+    }
+    fire_mutex_unlock(&g_thrM);
+    if (first) {
         fire_atomic_or(&g_attn, ATTN_ALL);
         notifyEvent();
     }
     startLeave();
+}
+/* The value of `terminate` (after it was requested). */
+FIRE_FN Value terminateValue(void) {
+    Value v;
+    fire_mutex_lock(&g_thrM);
+    v = g_terminate.value;
+    fire_mutex_unlock(&g_thrM);
+    return v;
 }
 
 /* A fire thread ends with an exception that nothing caught: it unwinds (finally blocks run) and the exception goes to the main program. */
@@ -7926,12 +8131,10 @@ enum { GJ_SYNC = 0, GJ_SAFEPOINTS = 1, GJ_SLEEP = 2 };
 extern FIRE_RT_DATA uint8_t g_globalJobs;
 /* The exceptions of the fire threads (and of the jobs) that reached the main program: `catch threads`, or the program ends. */
 FIRE_FN void deliverThreadExceptions(void) {
-    while (g_pendingExc.count && !g_unwind.active) {
-        Value e = g_pendingExc.items[0];
+    Value e;
+    while (!g_unwind.active && pendingExcPop(&e)) {
         Value (*handler)(Value) = NULL;
         uint32_t i;
-        memmove(g_pendingExc.items, g_pendingExc.items + 1, (g_pendingExc.count - 1) * sizeof(Value));
-        g_pendingExc.count--;
         for (i = 0; i < g_threadsCatchCount; i++)
             if (g_threadsCatches[i].typeId < 0 || excMatches(e, g_threadsCatches[i].typeId)) { handler = g_threadsCatches[i].fn; break; }
         if (!handler) { reportUnhandled(e); exitNow(1); }
@@ -7939,7 +8142,7 @@ FIRE_FN void deliverThreadExceptions(void) {
         handler(e);
         g_noSyncDepth--;
     }
-    if (!g_pendingExc.count) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
+    if (!pendingExcCount()) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
 }
 /* The main program at a safe point: what the fire threads left for it - their exceptions, and (as the mode says: `waiting` = Sleep or a wait function, else a loop's
  * jump back) the sections, jobs and host services. */
@@ -7953,7 +8156,7 @@ FIRE_FN void mainPoll(bool waiting) {
 
 FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
     if (g_leaving) return false;
-    if (g_terminate.requested) { startLeave(); return true; }
+    if (terminateRequested()) { startLeave(); return true; }
     if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
     return g_unwind.active != 0;
 }
@@ -8021,30 +8224,38 @@ FIRE_FN bool fire_mainDone(void* ctx) {
     deliverThreadExceptions();
     drainQueue();
     if (!g_unwind.active) hostServe();
-    return g_threadsLive == 0 && g_pendingExc.count == 0 && g_reqs.count == 0 && ((int32_t)fire_atomic_load(&g_hostHolds) <= 0 || g_terminate.requested);
+    return fire_atomic_load(&g_threadsLive) == 0 && pendingExcCount() == 0 && reqCount() == 0 && ((int32_t)fire_atomic_load(&g_hostHolds) <= 0 || terminateRequested());
 }
 FIRE_FN void mainFinish(void) {
     uint32_t i;
     clearUnwind();
     g_leaving = 0;
-    if (g_terminate.requested && g_terminateFn) {
+    if (terminateRequested() && g_terminateFn) {
         g_leaving = 1;   /* no more signals while the handler runs */
         g_noSyncDepth++;
-        g_terminateFn(g_terminate.value);
+        g_terminateFn(terminateValue());
         g_noSyncDepth--;
         clearUnwind();
         g_leaving = 0;
     }
     /* (open windows of a window manager's thread hold the program, unless it is terminating; their cycles run here meanwhile) */
     blockUntil(fire_mainDone, NULL, false, 0);
-    for (i = 0; i < g_threadList.count; i++) fire_thread_join((fire_thread*)g_threadList.items[i]);
-    g_threadList.count = 0;
+    /* (every thread has ended its fire code: nobody adds to the list any more - the lock only orders the reads after the writes; the joins wait outside it) */
+    {
+        PtrVec list;
+        fire_mutex_lock(&g_thrM);
+        list = g_threadList;
+        g_threadList.items = NULL; g_threadList.count = 0; g_threadList.cap = 0;
+        fire_mutex_unlock(&g_thrM);
+        for (i = 0; i < list.count; i++) fire_thread_join((fire_thread*)list.items[i]);
+        free(list.items);
+    }
     g_leaving = 1;   /* the globals are destroyed now: nothing interrupts the destructors */
 }
 
 /* The exit code of the process: a `terminate` with a whole number gives it. */
 FIRE_FN int mainExitCode(void) {
-    if (g_terminate.requested && g_terminate.value.kind == K_Int) return (int)g_terminate.value.i;
+    if (terminateRequested()) { Value v = terminateValue(); if (v.kind == K_Int) return (int)v.i; }
     return 0;
 }
 
@@ -8054,7 +8265,13 @@ FIRE_FN void fire_threadsInit(void) {
     fire_cond_init(&g_gil.cv);
     fire_mutex_init(&g_evM);
     fire_cond_init(&g_evCv);
-    g_terminate.requested = false;
+#ifdef FIRE_SLOT_SEGMENTS
+    fire_mutex_init(&g_slotM);
+#endif
+    fire_mutex_init(&g_thrM);
+    fire_mutex_init(&g_reqM);
+    fire_mutex_init(&g_mailboxM);
+    fire_atomic_store(&g_terminate.requested, 0);
     g_terminate.value = Undef();
     ownListInit(&g_terminateOwn, 0, NULL);
 }
@@ -8090,6 +8307,9 @@ const TextUnit* g_textUnits = NULL;
 uint32_t g_textUnitCount = 0;
 #ifdef FIRE_SLOTS
 SlotTable g_slots;
+#ifdef FIRE_SLOT_SEGMENTS
+fire_mutex g_slotM;
+#endif
 #endif
 FireFieldPtr** g_fieldPtrs;
 uint32_t g_fieldPtrCount, g_fieldPtrCap;
@@ -8115,8 +8335,9 @@ fire_cond g_evCv;
 uint64_t g_evCount = 0;
 fire_atomic32 g_attn;
 TerminateState g_terminate;
+fire_mutex g_thrM, g_reqM, g_mailboxM;
 OwnList g_terminateOwn;
-int g_threadsLive = 0;
+fire_atomic32 g_threadsLive;
 PtrVec g_threadList;
 ValueQueue g_pendingExc;
 PtrVec g_graveyard;

@@ -28,6 +28,7 @@ typedef struct DbgProgram {
     const DbgGlobal* globals; int32_t nglobals;
     int32_t entrySrc, entryLine;   /* the position of the first instruction of the program (where the main thread waits at the start) */
     const char* target;
+    const int32_t* lines; int32_t nlines;   /* the lines with code (source, line pairs): the profiler reports those that never ran too */
 } DbgProgram;
 
 /* The frame of a running fire function (on the C stack of its wrapper). `vars` points to the addresses of its variables, `thisSlot` to its `this` (null: none). */
@@ -55,6 +56,8 @@ FIRE_HOST_EXTERN const DbgClass* fire_dbgClass(uint32_t cls);
 FIRE_HOST_EXTERN void fire_dbgSetField(Value o, uint32_t index, Value x);
 
 FIRE_RT_FN void fire_dbgLine(DbgFrame* f);
+/* The same at a position the code reaches in the middle of its line (a jump to the end of a block, back from a call): the profiler does not count it as entered. */
+FIRE_RT_FN void fire_dbgLineAt(DbgFrame* f, int entered);
 FIRE_RT_FN void fire_dbgRet(DbgFrame* caller);
 FIRE_RT_FN void fire_dbgStart(const DbgProgram* program);
 /* A plugin is registered (fireRegisterPlugin, before its static initialisers): its sources get the next indexes after the program's (p->srcMap), the debugger hears
@@ -82,6 +85,8 @@ FIRE_FN void fire_dbgLeave(DbgFrame* f) {
 }
 /* A line begins (`src`, `line`, scope state `lv`). */
 #define FIRE_DBG_L(s, l, v) do { DF->src = (s); DF->line = (l); DF->lv = (v); if (FIRE_UNLIKELY(g_dbgArmed)) fire_dbgLine(DF); } while (0)
+/* A jump lands in the middle of a line (the position is the same for the debugger; the profiler does not count it as entered). */
+#define FIRE_DBG_J(s, l, v) do { DF->src = (s); DF->line = (l); DF->lv = (v); if (FIRE_UNLIKELY(g_dbgArmed)) fire_dbgLineAt(DF, 0); } while (0)
 /* Code that the VM runs nested, called from the runtime (ToString() for a text, the constructor of an exception the runtime makes). */
 #define FIRE_DBG_NESTED(...) do { g_dbgNest++; __VA_ARGS__; g_dbgNest--; } while (0)
 
@@ -93,6 +98,7 @@ volatile int g_dbgStdin = 0;
 #ifndef FIRE_DEBUG_AGENT
 /* No agent on this platform (yet): the program runs without a debugger. */
 void fire_dbgLine(DbgFrame* f) { (void)f; }
+void fire_dbgLineAt(DbgFrame* f, int entered) { (void)f; (void)entered; }
 void fire_dbgRet(DbgFrame* caller) { (void)caller; }
 void fire_dbgStart(const DbgProgram* program) { (void)program; }
 #ifdef FIRE_MODULES
@@ -414,6 +420,8 @@ struct DbgThread {
     int resumeExc;              /* `resume`: ignore it */
     const void* declined;       /* the exception the user let go on (its rethrows do not stop again) */
     DbgTask* task;              /* `set`: work the stopped thread does itself */
+    int32_t profSrc, profLine;  /* the profiler: the line the thread is in and since when (its time goes to that line) */
+    int64_t profT;
 };
 
 typedef struct DbgBuf { char* p; size_t n, cap; } DbgBuf;
@@ -428,6 +436,60 @@ struct DbgTask {
 static dbg_mutex g_dbgM;
 static dbg_cond g_dbgCv;
 static const DbgProgram* g_dbgProg;
+
+/* ---- the profiler (command `profile`, docs/spec/NATIVE_DEBUG_PROTOCOL.md): per line how often a thread entered it and the time until its next line, sent
+ * with the end of the program (event `profile`, before `exited`). Counted under the GIL, by the threads themselves; a paused thread's waiting is not counted. ---- */
+typedef struct DbgProfLine { int32_t src, line; uint64_t hits; int64_t ns; } DbgProfLine;
+static volatile int g_dbgProfile;
+static DbgProfLine* g_dbgProf;
+static uint32_t g_dbgProfCap, g_dbgProfCount;
+
+static int64_t dbgProfClock(void) {
+#if defined(_WIN32)
+    LARGE_INTEGER c, f;
+    QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f);
+    return (int64_t)((double)c.QuadPart * 1e9 / (double)f.QuadPart);
+#elif defined(CLOCK_MONOTONIC)
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (int64_t)t.tv_sec * 1000000000 + t.tv_nsec;
+#else
+    return fire_plat_nowMs() * 1000000;
+#endif
+}
+
+static DbgProfLine* dbgProfSlot(int32_t src, int32_t line) {
+    uint32_t i, h;
+    if (g_dbgProfCount * 10 >= g_dbgProfCap * 7) {
+        uint32_t cap = g_dbgProfCap ? g_dbgProfCap * 2 : 1024, j;
+        DbgProfLine* grown = (DbgProfLine*)calloc(cap, sizeof(DbgProfLine));
+        if (!grown) return NULL;
+        for (j = 0; j < g_dbgProfCap; j++)
+            if (g_dbgProf[j].line > 0) {
+                h = ((uint32_t)g_dbgProf[j].src * 2654435761u ^ (uint32_t)g_dbgProf[j].line * 40503u) & (cap - 1);
+                while (grown[h].line > 0) h = (h + 1) & (cap - 1);
+                grown[h] = g_dbgProf[j];
+            }
+        free(g_dbgProf);
+        g_dbgProf = grown; g_dbgProfCap = cap;
+    }
+    h = ((uint32_t)src * 2654435761u ^ (uint32_t)line * 40503u) & (g_dbgProfCap - 1);
+    for (i = 0; i < g_dbgProfCap; i++, h = (h + 1) & (g_dbgProfCap - 1)) {
+        DbgProfLine* e = &g_dbgProf[h];
+        if (e->line == line && e->src == src) return e;
+        if (e->line <= 0) { e->src = src; e->line = line; g_dbgProfCount++; return e; }
+    }
+    return NULL;
+}
+
+/* The thread is at `src`/`line` now (`entered`: it came to the start of the line). */
+static void dbgProfHit(DbgThread* t, int32_t src, int32_t line, int entered) {
+    int64_t now = dbgProfClock();
+    DbgProfLine* e;
+    if (t->profLine > 0 && (e = dbgProfSlot(t->profSrc, t->profLine)) != NULL) e->ns += now - t->profT;
+    if (line > 0 && entered && (e = dbgProfSlot(src, line)) != NULL) e->hits++;
+    t->profSrc = src; t->profLine = line; t->profT = now;
+}
 static DbgThread* g_dbgThreads;
 static DbgThread g_dbgMain;
 static int g_dbgNextId = 1, g_dbgFireCount = 0;
@@ -708,6 +770,7 @@ static void dbgPark(DbgThread* t, const char* reason, int gil) {
         dbgWait(&g_dbgCv, &g_dbgM);
     }
     t->state = DBG_RUNNING;
+    if (g_dbgProfile) t->profT = dbgProfClock();   /* (the time it stood is no time of its line) */
     dbgUnlock(&g_dbgM);
 #ifdef FIRE_THREADS
     if (gil) gilAcquire();
@@ -722,9 +785,11 @@ static bool dbgBreakpointAt(int32_t src, int32_t line) {
     return false;
 }
 
-void fire_dbgLine(DbgFrame* f) {
+void fire_dbgLine(DbgFrame* f) { fire_dbgLineAt(f, 1); }
+void fire_dbgLineAt(DbgFrame* f, int entered) {
     DbgThread* t = g_dbgSelf;
     const char* reason = NULL;
+    if (t && g_dbgProfile) dbgProfHit(t, f->src, f->line, entered);
     if (!t || g_dbgNest || !g_dbgArmed) return;
     if (t->pauseReq) reason = "pause";
     else switch (t->mode) {
@@ -745,7 +810,7 @@ void fire_dbgLine(DbgFrame* f) {
 }
 void fire_dbgRet(DbgFrame* caller) {
     if (g_unwind.active) return;   /* unwinding (an exception, a catch block leaving): the VM goes straight to the handler */
-    fire_dbgLine(caller);
+    fire_dbgLineAt(caller, 0);
 }
 
 /* An exception that no catch of this thread takes (fire_rt.h knows that): stop at the throw. 1 = the debugger ignores it (`resume`). */
@@ -1333,6 +1398,13 @@ static void dbgCommand(const char* json) {
         _Exit(code);
 #endif
     }
+    else if (strcmp(cmd, "profile") == 0) {
+        /* on: counting begins (anew); off: it stops - the counts are sent with the end of the program */
+        int on = dbgBool(json, "on", 1);
+        if (on) { free(g_dbgProf); g_dbgProf = NULL; g_dbgProfCap = 0; g_dbgProfCount = 0; }
+        g_dbgProfile = on;
+        dbgReplyHead(&b, id, 1); dbgPut(&b, "}"); dbgSendLine(&b);
+    }
     else if (strcmp(cmd, "detach") == 0) {
         dbgReplyHead(&b, id, 1); dbgPut(&b, "}"); dbgSendLine(&b);
         g_dbgArmed = 0;
@@ -1604,6 +1676,26 @@ void fire_dbgExited(int code) {
     if (!g_dbgConnected) return;
     dbgLock(&g_dbgM);
     if (g_dbgTransport != DBG_T_NONE && !g_dbgGaveUp) {
+        if (g_dbgProfile) {
+            /* the profile: every line that ran (hits, microseconds) and the lines with code that never did */
+            DbgThread* self = g_dbgSelf;
+            uint32_t i; int32_t k; int first = 1;
+            g_dbgProfile = 0;
+            if (self) dbgProfHit(self, 0, 0, 0);   /* (the time of the last line) */
+            if (g_dbgProg) for (k = 0; k < g_dbgProg->nlines; k++) dbgProfSlot(g_dbgProg->lines[2 * k], g_dbgProg->lines[2 * k + 1]);
+            dbgPut(&b, "{\"event\":\"profile\",\"lines\":[");
+            for (i = 0; i < g_dbgProfCap; i++) {
+                DbgProfLine* e = &g_dbgProf[i];
+                if (e->line <= 0) continue;
+                if (!first) dbgPut(&b, ",");
+                first = 0;
+                dbgPut(&b, "["); dbgPutI(&b, e->src); dbgPut(&b, ","); dbgPutI(&b, e->line); dbgPut(&b, ","); dbgPutI(&b, (long long)e->hits);
+                dbgPut(&b, ","); dbgPutI(&b, e->ns / 1000); dbgPut(&b, "]");
+            }
+            dbgPut(&b, "]}");
+            dbgSendLine(&b);
+            b.n = 0;
+        }
         dbgPut(&b, "{\"event\":\"exited\",\"code\":"); dbgPutI(&b, code); dbgPut(&b, "}");
         dbgSendLine(&b);
         dbgTransportClose();

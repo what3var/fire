@@ -12,6 +12,8 @@
  *                       - always called with the mutex held
  *   fire_thread*        fire_thread_start(fn, arg, stackBytes) / fire_thread_join(t)   (stackBytes 0: the default)
  *   uint32_t            fire_atomic_load / fire_atomic_store / fire_atomic_or / fire_atomic_and / fire_atomic_add / fire_atomic_exchange   (on a fire_atomic32)
+ *                       - relaxed; fire_atomic_loadAcquire / fire_atomic_storeRelease / fire_atomic_addAcqRel order what was written before (a hand-over, a
+ *                       count whose end frees the memory)
  *
  * and where the compiler has no thread-local storage (FIRE_TLS_STRUCT, e.g. FreeRTOS tasks): fire_tls_get / fire_tls_set (one pointer per thread).
  *
@@ -44,6 +46,9 @@ static inline uint32_t fire_atomic_or(fire_atomic32* a, uint32_t x) { return __a
 static inline uint32_t fire_atomic_and(fire_atomic32* a, uint32_t x) { return __atomic_fetch_and(&a->v, x, __ATOMIC_RELAXED); }
 static inline uint32_t fire_atomic_add(fire_atomic32* a, uint32_t x) { return __atomic_fetch_add(&a->v, x, __ATOMIC_RELAXED); }
 static inline uint32_t fire_atomic_exchange(fire_atomic32* a, uint32_t x) { return __atomic_exchange_n(&a->v, x, __ATOMIC_RELAXED); }
+static inline uint32_t fire_atomic_loadAcquire(fire_atomic32* a) { return __atomic_load_n(&a->v, __ATOMIC_ACQUIRE); }
+static inline void fire_atomic_storeRelease(fire_atomic32* a, uint32_t x) { __atomic_store_n(&a->v, x, __ATOMIC_RELEASE); }
+static inline uint32_t fire_atomic_addAcqRel(fire_atomic32* a, uint32_t x) { return __atomic_fetch_add(&a->v, x, __ATOMIC_ACQ_REL); }
 #elif defined(_MSC_VER)
 #include <intrin.h>
 static inline uint32_t fire_atomic_load(fire_atomic32* a) { return a->v; }
@@ -52,6 +57,9 @@ static inline uint32_t fire_atomic_or(fire_atomic32* a, uint32_t x) { return (ui
 static inline uint32_t fire_atomic_and(fire_atomic32* a, uint32_t x) { return (uint32_t)_InterlockedAnd((volatile long*)&a->v, (long)x); }
 static inline uint32_t fire_atomic_add(fire_atomic32* a, uint32_t x) { return (uint32_t)_InterlockedExchangeAdd((volatile long*)&a->v, (long)x); }
 static inline uint32_t fire_atomic_exchange(fire_atomic32* a, uint32_t x) { return (uint32_t)_InterlockedExchange((volatile long*)&a->v, (long)x); }
+static inline uint32_t fire_atomic_loadAcquire(fire_atomic32* a) { return (uint32_t)_InterlockedOr((volatile long*)&a->v, 0); }
+static inline void fire_atomic_storeRelease(fire_atomic32* a, uint32_t x) { (void)_InterlockedExchange((volatile long*)&a->v, (long)x); }
+static inline uint32_t fire_atomic_addAcqRel(fire_atomic32* a, uint32_t x) { return (uint32_t)_InterlockedExchangeAdd((volatile long*)&a->v, (long)x); }
 #else
 static inline uint32_t fire_atomic_load(fire_atomic32* a) { return a->v; }
 static inline void fire_atomic_store(fire_atomic32* a, uint32_t x) { a->v = x; }
@@ -59,6 +67,9 @@ static inline uint32_t fire_atomic_or(fire_atomic32* a, uint32_t x) { uint32_t o
 static inline uint32_t fire_atomic_and(fire_atomic32* a, uint32_t x) { uint32_t old = a->v; a->v = old & x; return old; }
 static inline uint32_t fire_atomic_add(fire_atomic32* a, uint32_t x) { uint32_t old = a->v; a->v = old + x; return old; }
 static inline uint32_t fire_atomic_exchange(fire_atomic32* a, uint32_t x) { uint32_t old = a->v; a->v = x; return old; }
+static inline uint32_t fire_atomic_loadAcquire(fire_atomic32* a) { return a->v; }
+static inline void fire_atomic_storeRelease(fire_atomic32* a, uint32_t x) { a->v = x; }
+static inline uint32_t fire_atomic_addAcqRel(fire_atomic32* a, uint32_t x) { uint32_t old = a->v; a->v = old + x; return old; }
 #endif
 
 #endif
