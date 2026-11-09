@@ -80,6 +80,9 @@ var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for
 * **Several at once:** `await [f(), g()]`, written like an array literal, starts all calls, waits for all and returns an array of the results in the
   order of the brackets. Its element type is the common type of the results (as for an array literal), `any` when they have nothing close in common.
   When several fail, all are waited for and the first exception in the order of the brackets is thrown.
+  **What each call gets** is written with the call, inside the brackets, with the clauses of `fire` (`taking`, `handover`, `flat`, `copy`):
+  `await [Load(a) taking a, Merge(x, y) handover y, taking list { return list.Sum() }]`. Lending applies per call (section above): what a call names
+  in no clause and shares with none of the others is lent; what two calls share is copied for all but one, unless a clause says otherwise.
 * **Pooled is the default.** A task runs on a shared worker; a real thread of its own with **`dedicated`** (`fire dedicated { }`,
   `await dedicated Work()`) for work that blocks in natives for a long time.
 * **Actors get their way back:** a method call on an actor already posts a message; with `await` it returns the result:

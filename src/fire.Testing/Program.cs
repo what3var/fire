@@ -27694,6 +27694,8 @@ else
         if (TestSelected(tsanTitle))
         {
             string tsan = "-fsanitize=thread -g";
+            // (FIRE_TEST_NO_GIL=1: the same cases without the GIL - the work list of steps 1b-1f)
+            string noGil = Environment.GetEnvironmentVariable("FIRE_TEST_NO_GIL") == "1" ? " -DFIRE_NO_GIL" : "";
             {
                 string probeFile = Path.Combine(workDir, "tsanprobe.c");
                 File.WriteAllText(probeFile, "#include <pthread.h>\nstatic int n;\nstatic void* run(void* a) { (void)a; n++; return 0; }\nint main(void) { pthread_t t; pthread_create(&t, 0, run, 0); pthread_join(t, 0); return n - 1; }\n");
@@ -27711,7 +27713,7 @@ else
                     try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
                     catch (fire.Native.NativeNotSupportedException) { return; }
                     string exe = Path.Combine(workDir, $"tsan{i}.bin");
-                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"tsan{i}", $"-pthread {NativeTestBuild.Opt} {tsan}", exe, out int buildExit);
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"tsan{i}", $"-pthread {NativeTestBuild.Opt} {tsan}{noGil}", exe, out int buildExit);
                     if (buildExit != 0) { tsanReports.Add((i, $"{c.Name}: C/C++-Compiler: {build}")); return; }
                     var (_, stderr, _) = TestProcess.Run(exe, "", workDir, environment: new Dictionary<string, string?> { ["TSAN_OPTIONS"] = "halt_on_error=0 report_signal_unsafe=0" }, timeoutMs: 120_000);
                     int at = stderr.IndexOf("WARNING: ThreadSanitizer", StringComparison.Ordinal);
