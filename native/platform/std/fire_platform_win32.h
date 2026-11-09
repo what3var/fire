@@ -59,6 +59,9 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 #endif
 }
 
+#ifdef FIRE_THREADS
+#define FIRE_PLAT_PARALLEL 1   /* the threads run on all cores at once (fire_rt.h: then without the GIL) */
+#endif
 #if defined(FIRE_THREADS) || defined(FIRE_LIBRARY)   /* (a library for the VM: a package with a thread of its own) */
 typedef struct { SRWLOCK l; } fire_mutex;
 typedef struct { CONDITION_VARIABLE c; } fire_cond;

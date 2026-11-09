@@ -27688,14 +27688,14 @@ else
             }
         natPipeline.Join();
 
-        // Tasks step 1 (docs/ROADMAP_TASKS.md): the thread cases built with ThreadSanitizer instead of ASan (the two do not go together). With the GIL no data
-        // race may show up; without it (FIRE_NO_GIL) the races are the work list of steps 1b-1f - from step 1g on that build is the one checked here.
-        const string tsanTitle = "ThreadSanitizer: die Thread-Faelle laufen ohne Data Race (mit GIL)";
+        // Tasks step 1 (docs/ROADMAP_TASKS.md): the thread cases built with ThreadSanitizer instead of ASan (the two do not go together) - the default build,
+        // which runs without the GIL on this platform (step 1g): no data race may show up.
+        const string tsanTitle = "ThreadSanitizer: die Thread-Faelle laufen ohne Data Race (ohne GIL, auf allen Kernen)";
         if (TestSelected(tsanTitle))
         {
             string tsan = "-fsanitize=thread -g";
-            // (FIRE_TEST_NO_GIL=1: the same cases without the GIL - the work list of steps 1b-1f)
-            string noGil = Environment.GetEnvironmentVariable("FIRE_TEST_NO_GIL") == "1" ? " -DFIRE_NO_GIL" : "";
+            // (FIRE_TEST_GIL=1: the same cases with the GIL, as the targets with a scheduler of fire itself run them)
+            string noGil = Environment.GetEnvironmentVariable("FIRE_TEST_GIL") == "1" ? " -DFIRE_GIL" : "";
             {
                 string probeFile = Path.Combine(workDir, "tsanprobe.c");
                 File.WriteAllText(probeFile, "#include <pthread.h>\nstatic int n;\nstatic void* run(void* a) { (void)a; n++; return 0; }\nint main(void) { pthread_t t; pthread_create(&t, 0, run, 0); pthread_join(t, 0); return n - 1; }\n");

@@ -15,6 +15,9 @@
 #if (defined(FIRE_THREADS) || defined(FIRE_LIBRARY)) && !defined(FIRE_GREEN_THREADS)   /* (a library for the VM: a package with a thread of its own) */
 #include <pthread.h>
 #endif
+#if defined(FIRE_THREADS) && !defined(FIRE_GREEN_THREADS)
+#define FIRE_PLAT_PARALLEL 1   /* the threads run on all cores at once (fire_rt.h: then without the GIL) */
+#endif
 
 #if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_GREEN_THREADS)
 /* TinyCC has no thread-local storage: the state of a thread hangs on a key of pthreads instead (fire_rt.h: FIRE_TLS_STRUCT, fire_tl()) */

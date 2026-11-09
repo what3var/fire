@@ -44,6 +44,19 @@
 #endif
 #include FIRE_PLATFORM_HEADER
 
+/* Without the GIL (docs/ROADMAP_TASKS.md step 1): fire code runs on all cores, the shared parts have locks of their own (the slot table, the tables of the
+ * threads, the lock of the globals, a lock per package; strings are copied where they cross to another thread). The default where the threads of the
+ * platform are real ones (FIRE_PLAT_PARALLEL: posix, windows) and the compiler has atomics; a scheduler of fire itself (dos, win16, wasm), FreeRTOS
+ * (FIRE_TLS_STRUCT), the modules (FIRE_MODULES, FIRE_DLL) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL keeps it
+ * anywhere. */
+#if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_MODULES) \
+    && !defined(FIRE_DLL) && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER))
+#define FIRE_NO_GIL 1
+#endif
+#if defined(FIRE_GIL) && defined(FIRE_NO_GIL)
+#undef FIRE_NO_GIL
+#endif
+
 FIRE_CC_RUNTIME_BEGIN
 #define FIRE_FN static inline
 
