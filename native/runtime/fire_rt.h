@@ -483,6 +483,11 @@ FIRE_THREAD_VARS(FIRE_X)
 #undef FIRE_X
 #endif
 
+#if !(defined(FIRE_THREADS) && defined(FIRE_TASK_STATE))
+#define fire_strandAttach() ((void)0)   /* (a thread of a package that calls into the runtime: nothing to do here - see FIRE_TASK_STATE) */
+#define fire_strandDetach() ((void)0)
+#endif
+
 /* A run-time error that the language reports as an exception (see the exceptions section): the exception is thrown, or - when the program has no exceptions
  * at all - it ends the program. */
 FIRE_FN Value indexError(const char* what, int64_t index, int64_t length);
