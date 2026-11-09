@@ -52,9 +52,17 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    *Begun:* `FIRE_NO_GIL` makes `gilAcquire`/`gilRelease` empty. With the GIL a program with two fire threads, `taking` and `sync global` is clean under
    ThreadSanitizer (gcc, 4 cores); without it ThreadSanitizer reports 9 races, all where the inventory expects them: the queue of section requests
    (`reqPush`/`reqPop`/`drainQueue`/`sectionAcquire`/`sectionRelease`, 1d) and the slot table (`slotAcquire`, `allocArr`, 1c).
+   *Done:* the test "ThreadSanitizer: die Thread-Faelle laufen ohne Data Race (mit GIL)" of the native group builds all thread cases (`Threads:`) with
+   `-fsanitize=thread` and fails on any report; `FIRE_TEST_NO_GIL=1` builds the same cases without the GIL - the work list of 1b-1f. Before 1c/1d that run
+   had races in 42 of the 52 cases (the first of each: the section queue, the slot table, the thread list and count, mailboxes, `terminate`, the globals).
 2. **1b** strings per thread: copied at the thread boundary, shared (atomic) only in the global scope.
-3. **1c** the slot table in segments.
-4. **1d** the maps and lists with their mutexes.
+3. **1c** the slot table in segments. *Done* (only with `FIRE_NO_GIL`; the GIL build keeps the one array): `FIRE_SLOT_SEGMENTS` - a directory of 2^14
+   segments of 2^14 slots that never move (the same two loads as before), the free slots cached per thread (64, exchanged half by half with the shared
+   stack under `g_slotM`, given back when a thread ends), generations read and written atomically (relaxed: plain moves on x86 and arm).
+4. **1d** the maps and lists with their mutexes. *Done for the threads' own tables:* `g_reqM` (the queue of sections and jobs; a section request
+   counts its two holders atomically and is handed over with release/acquire), `g_mailboxM` (actors), `g_thrM` (the thread list, their exceptions, the
+   graveyard, the value of `terminate`; `terminate` requested and the live count are atomic). The platform layer got `fire_atomic_loadAcquire`,
+   `fire_atomic_storeRelease`, `fire_atomic_addAcqRel`. Still open: probes, `originOf`/`copiesOf`, run-time units, host services.
 5. **1e** the reader/writer lock of the globals.
 6. **1f** a lock per package instead of the GIL around natives.
 7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests.
