@@ -202,7 +202,7 @@ namespace fire.Compiler
             foreach (int r in roots) Visit(r, -1);
 
             // the clips
-            var clips = new List<(string Name, int Frames, double[][][] Poses)>();
+            var clips = new List<(string Name, int Frames, double[][][] Poses, bool Loop)>();
             if (root.TryGetProperty("animations", out var anims))
             {
                 int ai = 0;
@@ -244,7 +244,7 @@ namespace fire.Compiler
                         }
                     }
                     if (name.Length > 31) name = name.Substring(0, 31);
-                    clips.Add((name, frames, poses));
+                    clips.Add((name, frames, poses, true));
                 }
                 if (clips.Count > 65535) throw new InvalidDataException("Too many animations.");
             }
@@ -253,7 +253,7 @@ namespace fire.Compiler
         }
 
         /// <summary>The bytes of an .f3d: the parts (parent before child) and the clips (frames x parts of translation, rotation, scale - 10 numbers).</summary>
-        internal static byte[] Write(List<Part> parts, List<(string Name, int Frames, double[][][] Poses)> clips, int fps)
+        internal static byte[] Write(List<Part> parts, List<(string Name, int Frames, double[][][] Poses, bool Loop)> clips, int fps)
         {
             // the box of the whole model in its rest pose
             var world = new double[parts.Count][];
@@ -311,7 +311,7 @@ namespace fire.Compiler
             foreach (var c in clips)
             {
                 WriteName(w, c.Name);
-                w.Write((byte)1);
+                w.Write((byte)(c.Loop ? 1 : 0));
                 w.Write((ushort)c.Frames);
                 w.Write((float)fps);
                 foreach (var frame in c.Poses)
@@ -384,6 +384,16 @@ namespace fire.Compiler
             }
             for (int i = 0; i < a.Length; i++) r[i] = a[i] + (b[i] - a[i]) * f;
             return r;
+        }
+
+        /// <summary>The quaternion (x, y, z, w) of a rotation matrix (row major 3x3 in the first entries of a 4x4).</summary>
+        internal static double[] QuatOf(double[] m)
+        {
+            double r00 = m[0], r01 = m[1], r02 = m[2], r10 = m[4], r11 = m[5], r12 = m[6], r20 = m[8], r21 = m[9], r22 = m[10], tr = r00 + r11 + r22;
+            if (tr > 0) { double s = Math.Sqrt(tr + 1) * 2; return new[] { (r21 - r12) / s, (r02 - r20) / s, (r10 - r01) / s, s / 4 }; }
+            if (r00 > r11 && r00 > r22) { double s = Math.Sqrt(1 + r00 - r11 - r22) * 2; return new[] { s / 4, (r01 + r10) / s, (r02 + r20) / s, (r21 - r12) / s }; }
+            if (r11 > r22) { double s = Math.Sqrt(1 + r11 - r00 - r22) * 2; return new[] { (r01 + r10) / s, s / 4, (r12 + r21) / s, (r02 - r20) / s }; }
+            { double s = Math.Sqrt(1 + r22 - r00 - r11) * 2; return new[] { (r02 + r20) / s, (r12 + r21) / s, s / 4, (r10 - r01) / s }; }
         }
 
         /// <summary>Row major 4x4 (applied to column vectors) of T * R(q) * S.</summary>

@@ -15,7 +15,9 @@ namespace fire.Compiler
     ///   "block": 0.1,                  the edge of a block in meters
     ///   "palette": ["#C83232", ...],   the colours
     ///   "parts": [{"name": "body", "parent": -1, "pivot": [8, 0, 8]}],   pivot in cells (fractions allowed); a parent comes before its children
-    ///   "blocks": [[x, y, z, colour], [x, y, z, colour, part], ...]      part 0 when it is left out
+    ///   "blocks": [[x, y, z, colour], [x, y, z, colour, part], ...],     part 0 when it is left out
+    ///   "animations": [{"name": "wave", "length": 1, "loop": true, "keys": [
+    ///     {"part": 1, "time": 0.5, "rotate": [0, 0, 90], "move": [0, 0, 0], "scale": [1, 1, 1]}, ...]}]   degrees (x, y, z), cells, factors
     /// }
     /// </code>
     /// The model file gets only what can be seen: a face between two blocks of the same part is left out (between two parts it stays - they move apart),
@@ -32,7 +34,27 @@ namespace fire.Compiler
             public double[] Pivot = { 0, 0, 0 };
         }
 
+        /// <summary>A key of an animation: where a part is at a time - turned around its pivot (degrees around x, y, z: R = Ry * Rx * Rz, as scene3d turns objects),
+        /// moved (cells) and scaled, relative to its rest pose. Between two keys of a part the numbers go linearly; before its first key and after its last a part
+        /// keeps them (a looping animation goes from its last key to its first).</summary>
+        public sealed class Key
+        {
+            public int Part;
+            public double Time;
+            public double[] Rotate = { 0, 0, 0 }, Move = { 0, 0, 0 }, Scale = { 1, 1, 1 };
+            public Key Clone() => new() { Part = Part, Time = Time, Rotate = (double[])Rotate.Clone(), Move = (double[])Move.Clone(), Scale = (double[])Scale.Clone() };
+        }
+
+        public sealed class Animation
+        {
+            public string Name = "animation";
+            public double Length = 1;
+            public bool Loop = true;
+            public List<Key> Keys = new();
+        }
+
         public int SizeX = 16, SizeY = 16, SizeZ = 16;
+        public List<Animation> Animations = new();
         public double BlockSize = 0.1;
         public List<uint> Palette = new();   // 0xRRGGBB
         public List<Part> Parts = new();
@@ -107,6 +129,7 @@ namespace fire.Compiler
             foreach (var p in Parts) if (p.Parent == index) p.Parent = parent;
             foreach (var p in Parts) if (p.Parent > index) p.Parent--;
             Parts.RemoveAt(index);
+            foreach (var a in Animations) { a.Keys.RemoveAll(k => k.Part == index); foreach (var k in a.Keys) if (k.Part > index) k.Part--; }
             if (parent > index) parent--;
             foreach (var key in _blocks.Keys.ToList())
             {
@@ -149,6 +172,27 @@ namespace fire.Compiler
                     m.Parts.Add(part);
                 }
             if (m.Parts.Count == 0) m.Parts.Add(new Part { Name = "body", Pivot = new double[] { m.SizeX / 2.0, 0, m.SizeZ / 2.0 } });
+            if (root.TryGetProperty("animations", out var anims))
+                foreach (var a in anims.EnumerateArray())
+                {
+                    var anim = new Animation
+                    {
+                        Name = a.TryGetProperty("name", out var an) ? an.GetString() ?? "animation" : "animation",
+                        Length = a.TryGetProperty("length", out var al) && al.GetDouble() > 0 ? al.GetDouble() : 1,
+                        Loop = !a.TryGetProperty("loop", out var lp) || lp.GetBoolean(),
+                    };
+                    double[] Three(JsonElement k, string name, double def) =>
+                        k.TryGetProperty(name, out var v) ? v.EnumerateArray().Select(e => e.GetDouble()).Concat(new[] { def, def, def }).Take(3).ToArray() : new[] { def, def, def };
+                    if (a.TryGetProperty("keys", out var keys))
+                        foreach (var k in keys.EnumerateArray())
+                            anim.Keys.Add(new Key
+                            {
+                                Part = k.TryGetProperty("part", out var kp) ? kp.GetInt32() : 0,
+                                Time = k.TryGetProperty("time", out var kt) ? Math.Max(0, kt.GetDouble()) : 0,
+                                Rotate = Three(k, "rotate", 0), Move = Three(k, "move", 0), Scale = Three(k, "scale", 1),
+                            });
+                    m.Animations.Add(anim);
+                }
             if (root.TryGetProperty("blocks", out var blocks))
                 foreach (var b in blocks.EnumerateArray())
                 {
@@ -191,7 +235,28 @@ namespace fire.Compiler
                 sb.Append(i == 0 ? "\n    " : ",\n    ");
                 sb.Append($"[{k.X}, {k.Y}, {k.Z}, {b.Color}").Append(b.Part != 0 ? $", {b.Part}]" : "]");
             }
-            sb.Append(ordered.Count > 0 ? "\n  ]\n}\n" : "]\n}\n");
+            sb.Append(ordered.Count > 0 ? "\n  ]" : "]");
+            if (Animations.Count > 0)
+            {
+                string N(double v) => v.ToString("R", inv);
+                string V(double[] v) => "[" + string.Join(", ", v.Select(N)) + "]";
+                sb.Append(",\n  \"animations\": [\n");
+                for (int i = 0; i < Animations.Count; i++)
+                {
+                    var a = Animations[i];
+                    sb.Append("    {\"name\": ").Append(JsonSerializer.Serialize(a.Name)).Append(", \"length\": ").Append(N(a.Length)).Append(", \"loop\": ").Append(a.Loop ? "true" : "false").Append(", \"keys\": [");
+                    var keys = a.Keys.OrderBy(k => k.Part).ThenBy(k => k.Time).ToList();
+                    for (int k = 0; k < keys.Count; k++)
+                    {
+                        var key = keys[k];
+                        sb.Append(k == 0 ? "\n      " : ",\n      ");
+                        sb.Append($"{{\"part\": {key.Part}, \"time\": {N(key.Time)}, \"rotate\": {V(key.Rotate)}, \"move\": {V(key.Move)}, \"scale\": {V(key.Scale)}}}");
+                    }
+                    sb.Append(keys.Count > 0 ? "\n    ]}" : "]}").Append(i + 1 < Animations.Count ? ",\n" : "\n");
+                }
+                sb.Append("  ]");
+            }
+            sb.Append("\n}\n");
             return sb.ToString();
         }
 
@@ -311,8 +376,97 @@ namespace fire.Compiler
                 }
             }
             if (parts.Count > 32767) throw new InvalidDataException("Too many parts.");
-            return ModelConverter.Write(parts, new List<(string, int, double[][][])>(), ModelConverter.FramesPerSecond);
+            // the clips: every frame the place of every part of the file (the parts of the colours stay where their part is)
+            int fps = ModelConverter.FramesPerSecond;
+            var clips = new List<(string, int, double[][][], bool)>();
+            foreach (var anim in Animations)
+            {
+                int frames = Math.Max(1, (int)Math.Round(anim.Length * fps) + (anim.Loop ? 0 : 1));
+                var poses = new double[frames][][];
+                for (int f = 0; f < frames; f++)
+                {
+                    poses[f] = new double[parts.Count][];
+                    for (int k = 0; k < parts.Count; k++) poses[f][k] = new double[] { 0, 0, 0, 0, 0, 0, 1, 1, 1, 1 };
+                    for (int i = 0; i < Parts.Count; i++)
+                    {
+                        var (rot, move, scale) = PartPose(anim, i, (double)f / fps);
+                        var p = Parts[i];
+                        double[] parentPivot = p.Parent >= 0 ? Parts[p.Parent].Pivot : new[] { ox, 0, oz };
+                        var q = ModelConverter.QuatOf(Rotation(rot));
+                        poses[f][indexOf[i]] = new[]
+                        {
+                            (p.Pivot[0] - parentPivot[0] + move[0]) * s, (p.Pivot[1] - parentPivot[1] + move[1]) * s, (p.Pivot[2] - parentPivot[2] + move[2]) * s,
+                            q[0], q[1], q[2], q[3], scale[0], scale[1], scale[2],
+                        };
+                    }
+                }
+                clips.Add((anim.Name.Length > 31 ? anim.Name[..31] : anim.Name, frames, poses, anim.Loop));
+            }
+            return ModelConverter.Write(parts, clips, fps);
         }
+
+        // ---- poses ----
+
+        /// <summary>The rotation (row major 4x4) of angles in degrees around x, y, z: Ry * Rx * Rz (as scene3d turns objects).</summary>
+        public static double[] Rotation(double[] deg)
+        {
+            double ax = deg[0] * Math.PI / 180, ay = deg[1] * Math.PI / 180, az = deg[2] * Math.PI / 180;
+            double cx = Math.Cos(ax), sx = Math.Sin(ax), cy = Math.Cos(ay), sy = Math.Sin(ay), cz = Math.Cos(az), sz = Math.Sin(az);
+            double[] rx = { 1, 0, 0, 0, 0, cx, -sx, 0, 0, sx, cx, 0, 0, 0, 0, 1 };
+            double[] ry = { cy, 0, sy, 0, 0, 1, 0, 0, -sy, 0, cy, 0, 0, 0, 0, 1 };
+            double[] rz = { cz, -sz, 0, 0, sz, cz, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+            return Mul(ry, Mul(rx, rz));
+        }
+
+        public static double[] Mul(double[] a, double[] b)
+        {
+            var r = new double[16];
+            for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) { double v = 0; for (int k = 0; k < 4; k++) v += a[i * 4 + k] * b[k * 4 + j]; r[i * 4 + j] = v; }
+            return r;
+        }
+
+        private static double[] Translation(double x, double y, double z) => new double[] { 1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z, 0, 0, 0, 1 };
+        private static double[] Scaling(double[] v) => new double[] { v[0], 0, 0, 0, 0, v[1], 0, 0, 0, 0, v[2], 0, 0, 0, 0, 1 };
+        public static readonly double[] Identity = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+
+        /// <summary>Where a part is at a time of an animation (relative to its rest pose): rotation (degrees), movement (cells), scale - between its keys linearly.</summary>
+        public (double[] Rotate, double[] Move, double[] Scale) PartPose(Animation? anim, int part, double time)
+        {
+            var keys = anim?.Keys.Where(k => k.Part == part).OrderBy(k => k.Time).ToList();
+            if (anim == null || keys == null || keys.Count == 0) return (new double[3], new double[3], new double[] { 1, 1, 1 });
+            double len = anim.Length > 0 ? anim.Length : 1;
+            double t = anim.Loop ? time - Math.Floor(time / len) * len : Math.Clamp(time, 0, len);
+            (double[], double[], double[]) Of(Key k) => ((double[])k.Rotate.Clone(), (double[])k.Move.Clone(), (double[])k.Scale.Clone());
+            (double[], double[], double[]) Lerp(Key a, Key b, double ta, double tb)
+            {
+                double f = tb > ta ? (t - ta) / (tb - ta) : 0;
+                double[] L(double[] p, double[] q) => new[] { p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f, p[2] + (q[2] - p[2]) * f };
+                return (L(a.Rotate, b.Rotate), L(a.Move, b.Move), L(a.Scale, b.Scale));
+            }
+            if (keys.Count == 1) return Of(keys[0]);
+            if (t < keys[0].Time) return anim.Loop ? Lerp(keys[^1], keys[0], keys[^1].Time - len, keys[0].Time) : Of(keys[0]);
+            for (int i = 0; i + 1 < keys.Count; i++)
+                if (t < keys[i + 1].Time) return Lerp(keys[i], keys[i + 1], keys[i].Time, keys[i + 1].Time);
+            return anim.Loop ? Lerp(keys[^1], keys[0], keys[^1].Time, keys[0].Time + len) : Of(keys[^1]);
+        }
+
+        /// <summary>For every part the matrix (row major 4x4, cells) that takes a point of its rest pose to where it is at the time of the animation (null: the rest pose).</summary>
+        public double[][] PoseMatrices(Animation? anim, double time)
+        {
+            var result = new double[Parts.Count][];
+            for (int i = 0; i < Parts.Count; i++)
+            {
+                var (rot, move, scale) = PartPose(anim, i, time);
+                var pv = Parts[i].Pivot;
+                var local = Mul(Translation(pv[0] + move[0], pv[1] + move[1], pv[2] + move[2]), Mul(Rotation(rot), Mul(Scaling(scale), Translation(-pv[0], -pv[1], -pv[2]))));
+                int parent = Parts[i].Parent;
+                result[i] = parent >= 0 && parent < i ? Mul(result[parent], local) : local;
+            }
+            return result;
+        }
+
+        /// <summary>A key of a part at a time (exactly that time), or null.</summary>
+        public static Key? KeyAt(Animation anim, int part, double time) => anim.Keys.FirstOrDefault(k => k.Part == part && Math.Abs(k.Time - time) < 1e-6);
 
         // ---- picking ----
 

@@ -835,7 +835,15 @@ nach Arbeiten auf `targets`).
       Fläche oder den Boden, rechts entfernt, Shift nimmt die Farbe), Schichtansicht (malen/radieren mit Linie zwischen den Punkten, ein Strich ein Undo-Schritt,
       Bild auf/ab), Spiegeln X, Palette (wählen, ändern, hinzu, weg), Teile (neu, Drehpunkt), Größe, Export .f3d, Undo/Redo. Getestet: `FIRE_TESTS_ONLY=blocks`
       (Text, Flächen, Verschmelzen, Umlaufsinn, Strahlen, Datei), Scene3DTests zeichnet eine Blockfigur aus einer Ressource (VM == nativ), der Editor in spark unter
-      Xvfb von Hand (Klicks, Striche, Undo/Redo, Speichern). **Offen:** Animationen im Editor (Schlüsselbilder je Teil), Auswahl/Kopieren von Bereichen, Füllen,
+      Xvfb von Hand (Klicks, Striche, Undo/Redo, Speichern).
+      **Animationen im Editor umgesetzt:** in `.fblocks` `"animations"` (Name, Länge, Schleife, Schlüssel je Teil: Zeit, Drehung in Grad Ry*Rx*Rz, Verschieben in
+      Zellen, Skalieren; dazwischen linear, eine Schleife geht vom letzten zum ersten), `BlockModel.PartPose/PoseMatrices` (um den Drehpunkt, Kinder gehen mit),
+      `ToF3d` schreibt je Animation einen Clip (30 fps, Schleifen-Flag je Clip im gemeinsamen Writer). Im Editor eine zweite Leiste: Animation wählen/neu/ändern/
+      löschen, Loop, Abspielen, Zeitleiste (Schlüssel des Teils als Rauten, Klick/Ziehen auf 1/30 s), Drehen/Verschieben/Skalieren des Teils zur Zeit - eine
+      Änderung setzt einen Schlüssel, Schlüssel löschen; die 3D-Ansicht zeigt die Pose (gebaut wird in der Ruhepose). Getestet: `FIRE_TESTS_ONLY=blocks`
+      (Text, Interpolation, Schleife, Drehpunkt, Kinder, Teil entfernt, Clips), Scene3DTests spielt "nod"/"hop" der Blockfigur (VM == nativ), der Editor unter
+      Xvfb (Wählen, Zeit, Schlüssel per Eingabe, Abspielen, Speichern).
+      **Offen:** Auswahl/Kopieren von Bereichen, Füllen,
       Vorschau mit scene3d selbst.
    2. **Animationen:** ein Modell trägt mehrere benannte Clips (Frames, fps, Schleife), zwischen den Frames interpoliert. Vorschlag: Modelle aus starren
       Teilen mit Hierarchie, ein Frame speichert eine Transformation je Teil (klein, billig); Frames je Vertex optional.

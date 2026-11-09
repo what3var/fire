@@ -43,8 +43,18 @@ up to 256 on a side; *Size...* also sets the edge of a block in meters), each em
 | layer view | one layer from above (the one below shines through): the left button draws, the right one erases (a stroke is one step of undo), Shift takes the colour; Page Up / Page Down or the arrows of the tool bar change the layer |
 | Mirror X | every block is put and taken away on the other side of the middle as well |
 | palette | a click chooses a colour, a double click (or *Edit...*) changes it; *+ Colour*, *− Colour* (its blocks take the first colour) |
-| parts | blocks belong to the part chosen; *+* adds a part under it, *Pivot...* sets where it turns - the parts are the parts of the model file that animations move |
+| parts | blocks belong to the part chosen; *+* adds a part under it, *Pivot...* sets where it turns - the parts are the parts of the model file that animations move (below) |
 | Export .f3d... | writes the model file; Undo / Redo with Ctrl+Z / Ctrl+Y |
+
+### Animations
+
+![Animating in the block editor: the head of the figure has three keys on the timeline and is tilted at 0.27 s](../images/block-editor-animation.png)
+
+The second bar animates the parts: *Animation* chooses one (or the rest pose, where blocks are built), *+* adds one, *Edit...* sets its name and length,
+*Loop* lets it start again at its end. The **timeline** shows the keys of the part chosen (diamonds) and of the others (marks); a click or a drag chooses the time
+(on the frames of the model file, 1/30 s), ▶ plays it. **Turn** (degrees around x, y, z), **Move** (cells) and **Scale** show where the part is at that time; a change
+makes a **key** of the part there, *Delete key* takes it away. Between two keys of a part the numbers go linearly; a part turns around its pivot and takes its
+children with it. In the model file every animation becomes a clip that `obj.Play("name")` plays (a clip without Loop stops at its end).
 
 The file is text (JSON, one block a line - it diffs well in git); a program takes it like a glTF file, as a resource: `Model.FromResource(new Resource("tree.fblocks"))`.
 forge builds only what can be seen: no face between two blocks of the same part, and neighbouring faces of one colour in a plane become one rectangle - the garden
@@ -73,4 +83,4 @@ The robot of the tests - two parts, 24 triangles, two clips - is 3 KB (1.9 KB at
 scales whole parts - the way games of the 90s animated their figures, and cheap to compute on a small machine (also with the lean renderer, also on DOS).
 
 Planned (ROADMAP §16): textures in the file,
-blending from one clip into the next, animations made in the block editor.
+blending from one clip into the next.

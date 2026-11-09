@@ -19,6 +19,15 @@ static class BlockModelTests
         m.Parts.Add(new BlockModel.Part { Name = "head", Parent = 0, Pivot = new double[] { 3, 5, 2 } });
         for (int x = 1; x < 5; x++) for (int y = 0; y < 5; y++) for (int z = 1; z < 3; z++) m.Set(x, y, z, y < 2 ? 10 : 4);
         for (int x = 2; x < 4; x++) for (int y = 5; y < 7; y++) for (int z = 1; z < 3; z++) m.Set(x, y, z, 15, 1);
+        // "nod": the head turns around x (0, 30, 0 degrees in a second); "hop": the body goes up and down once (half a second, no loop)
+        var nod = new BlockModel.Animation { Name = "nod", Length = 1, Loop = true };
+        nod.Keys.Add(new BlockModel.Key { Part = 1, Time = 0 });
+        nod.Keys.Add(new BlockModel.Key { Part = 1, Time = 0.5, Rotate = new double[] { 30, 0, 0 } });
+        var hop = new BlockModel.Animation { Name = "hop", Length = 0.5, Loop = false };
+        hop.Keys.Add(new BlockModel.Key { Part = 0, Time = 0 });
+        hop.Keys.Add(new BlockModel.Key { Part = 0, Time = 0.25, Move = new double[] { 0, 2, 0 }, Scale = new double[] { 1.1, 0.9, 1.1 } });
+        hop.Keys.Add(new BlockModel.Key { Part = 0, Time = 0.5 });
+        m.Animations.Add(nod); m.Animations.Add(hop);
         return m.ToJson();
     }
 
@@ -79,6 +88,36 @@ static class BlockModelTests
         Check("Modelldatei: die Box ist das Gitter um den Ursprung unten in der Mitte", Math.Abs(BitConverter.ToSingle(f3d, 12) + 0.2f) < 1e-6 && Math.Abs(BitConverter.ToSingle(f3d, 28) - 0.7f) < 1e-6,
             $"{BitConverter.ToSingle(f3d, 12)} .. {BitConverter.ToSingle(f3d, 28)}");
         Check("forge: ConvertFile nimmt .fblocks", ModelConverter.IsModelSource("a.fblocks") && ModelConverter.ConvertBlocks(Figure()).SequenceEqual(f3d));
+
+        // ---- animations ----
+        var figText = Figure();
+        var fig2 = BlockModel.Parse(figText);
+        Check("Animationen: Text hin und zurueck (Name, Laenge, Schleife, Schluessel)", fig2.ToJson() == figText && fig2.Animations.Count == 2 && !fig2.Animations[1].Loop && fig2.Animations[1].Keys.Count == 3, figText);
+        var nodA = fig2.Animations[0];
+        bool Near(double[] a, params double[] b) => a.Zip(b).All(p => Math.Abs(p.First - p.Second) < 1e-9);
+        Check("Pose: zwischen zwei Schluesseln linear (0.25 s: 15 Grad)", Near(fig2.PartPose(nodA, 1, 0.25).Rotate, 15, 0, 0));
+        Check("Pose: Schleife - nach dem letzten Schluessel zurueck zum ersten (0.75 s: 15 Grad), 1.25 s wie 0.25 s",
+            Near(fig2.PartPose(nodA, 1, 0.75).Rotate, 15, 0, 0) && Near(fig2.PartPose(nodA, 1, 1.25).Rotate, 15, 0, 0));
+        Check("Pose: ein Teil ohne Schluessel bleibt in Ruhe", Near(fig2.PartPose(nodA, 0, 0.3).Move, 0, 0, 0) && Near(fig2.PartPose(nodA, 0, 0.3).Scale, 1, 1, 1));
+        var hopA = fig2.Animations[1];
+        Check("Pose: ohne Schleife bleibt das Ende (2 s wie 0.5 s), Verschieben und Skalieren", Near(fig2.PartPose(hopA, 0, 0.125).Move, 0, 1, 0) && Near(fig2.PartPose(hopA, 0, 0.125).Scale, 1.05, 0.95, 1.05)
+            && Near(fig2.PartPose(hopA, 0, 2).Move, 0, 0, 0));
+        var turn = BlockModel.CreateDefault(4, 4, 4);
+        turn.Parts.Add(new BlockModel.Part { Name = "arm", Parent = 0, Pivot = new double[] { 1, 1, 1 } });
+        var spin = new BlockModel.Animation { Name = "spin" };
+        spin.Keys.Add(new BlockModel.Key { Part = 1, Time = 0, Rotate = new double[] { 0, 0, 90 } });
+        turn.Animations.Add(spin);
+        turn.Animations.Add(new BlockModel.Animation { Name = "lift", Keys = { new BlockModel.Key { Part = 0, Time = 0, Move = new double[] { 0, 1, 0 } } } });
+        var mats = turn.PoseMatrices(spin, 0);
+        double[] Apply(double[] m, double x, double y, double z) => new[] { m[0] * x + m[1] * y + m[2] * z + m[3], m[4] * x + m[5] * y + m[6] * z + m[7], m[8] * x + m[9] * y + m[10] * z + m[11] };
+        Check("Pose: ein Teil dreht um seinen Drehpunkt (90 Grad um z: (2, 1, 1) -> (1, 2, 1)), der Drehpunkt bleibt",
+            Near(Apply(mats[1], 2, 1, 1), 1, 2, 1) && Near(Apply(mats[1], 1, 1, 1), 1, 1, 1) && Near(Apply(mats[0], 2, 1, 1), 2, 1, 1));
+        var lifted = turn.PoseMatrices(turn.Animations[1], 0);
+        Check("Pose: ein Kind geht mit seinem Eltern-Teil", Near(Apply(lifted[1], 2, 1, 1), 2, 2, 1));
+        turn.RemovePart(1);
+        Check("Ein Teil entfernt: seine Schluessel gehen mit", turn.Animations[0].Keys.Count == 0 && turn.Animations[1].Keys.Count == 1);
+        byte[] anim3d = fig2.ToF3d();
+        Check("Modelldatei: zwei Clips", BitConverter.ToUInt16(anim3d, 8) == 2);
 
         Console.WriteLine(_failures == 0 ? "Alle Blockmodell-Pruefungen bestanden." : $"FEHLER: {_failures} Blockmodell-Pruefung(en) fehlgeschlagen.");
         return _failures;

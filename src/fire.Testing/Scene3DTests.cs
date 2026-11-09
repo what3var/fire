@@ -313,6 +313,16 @@ static class Scene3DTests
         print("blocks " + figure.Width + " " + figure.Height + " " + figure.Triangles + " " + Model.FromResource(new Resource("{FIGURE}")).Parts)
         cam.Render()
         print("blocks picture " + H.Sum(frame))
+        var figureModel = Model.FromResource(new Resource("{FIGURE}"))
+        print("blocks animations " + figureModel.Animations.Count + " " + figureModel.Animations[0] + " " + figureModel.AnimationLength("nod") + " " + figureModel.AnimationLength("hop"))
+        figure.Play("nod")
+        figure.Advance(250ms)
+        cam.Render()
+        print("blocks nod " + H.Sum(frame) + " " + figure.Playing)
+        figure.Play("hop")
+        figure.Advance(1s)
+        cam.Render()
+        print("blocks hop " + figure.Playing + " " + figure.AnimationTime + " " + H.Sum(frame))
         scene.Remove(figure)
         try { robot.Play("dance") } catch (Scene3DException e) { print("error " + e.message) }
         try { Model.FromBytes(new byte[10]) } catch (Scene3DException e) { print("error " + e.message) }
