@@ -10,7 +10,7 @@ namespace fire.Native
 {
     /// <summary>What the generator made of one fire function (`forge build --stats`, docs/ROADMAP.md section 16): where it comes from, and what of it is a C type and
     /// what a Value.</summary>
-    /// <param name="CName">The C function (the body is `CName_b` when a wrapper counts the call depth, `CName_c` with C parameters).</param>
+    /// <param name="CName">The C function (the body is `CName_b` when a wrapper counts the call depth, `CName_c` with C parameters, `CName_p` with the pointer convention).</param>
     /// <param name="FireName">`Class.Method`, or a description.</param>
     /// <param name="Module">The module of its source: "core" (the prelude), an import, or "program".</param>
     /// <param name="Params">The parameters (without `this`); <paramref name="CParams"/> of them are C numbers.</param>
@@ -81,8 +81,8 @@ namespace fire.Native
         private static string BaseName(string section)
         {
             string fn = section;
-            foreach (var suffix in new[] { "_b", "_c" })
-                if (fn.EndsWith(suffix, StringComparison.Ordinal) && Regex.IsMatch(fn, @"f\d+_[bc]$")) { fn = fn[..^2]; break; }
+            foreach (var suffix in new[] { "_b", "_c", "_p" })
+                if (fn.EndsWith(suffix, StringComparison.Ordinal) && Regex.IsMatch(fn, @"f\d+_[bcp]$")) { fn = fn[..^2]; break; }
             return fn;
         }
 

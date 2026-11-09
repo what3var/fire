@@ -1923,6 +1923,7 @@ namespace fire.Native
                 sb.AppendLine("}");
             }
             string programText = sb.ToString();
+            if (PointerCallsOn) programText = PointerCallsPass(programText);
             // (a program that loads plugins: the classes from its first own id up to this are its own - a plugin's come after them)
             if (_openWorld) programText = InsertAfterRuntime(programText, $"#define FIRE_PROG_END {_nextClassId}u   // the end of the program's class ids (the classes of plugins come after)\n");
             return ResolveLineResets(programText);
@@ -2849,7 +2850,7 @@ namespace fire.Native
         {
             var chain = new List<string>();
             for (var rc = cls.Rc; rc != null; rc = rc.Base)
-                if (rc.Destructor != null) chain.Add($"{_funcByProto[rc.Destructor].Name}(ObjV(o));");
+                if (rc.Destructor != null) chain.Add($"{{ Value ov_ = ObjV(o); {_funcByProto[rc.Destructor].Name}(ov_); }}");   // (a variable: a call by address, CppGenerator.PointerCalls.cs)
             string destroy = "NULL";
             if (chain.Count > 0)
             {
@@ -3414,6 +3415,10 @@ namespace fire.Native
                 else sb.AppendLine(f.Kind == FuncKind.FireBody ? $"{{ {call}; }}" : $"{{ return {call}; }}");
             }
             f.Code = PointerArgs(sb.ToString());
+            // (the pointer convention: CppGenerator.PointerCalls.cs - not for a function with a frame, a C body, a wrapper or an export)
+            if (PointerCallsOn && !framed && dbg == null && f.CAbi == null && defName == f.Name && f.Export == null && !f.External && f.Kind is not (FuncKind.Main or FuncKind.FireBody))
+                f.Code = PointerFunction(f, f.Code, defSignature);
+            else _pointerFuncs.Remove(f.Name);
             NoteCReturn(f);
         }
 

@@ -209,6 +209,10 @@ namespace fire.Runtime
         /// fire lines. `"lineDirectives": false` in the target of fire.native.json switches them off (the C file is then read as C).</summary>
         public bool LineDirectives { get; init; } = true;
 
+        /// <summary>fire functions take their Values by address (`fN_p(const Value* P0_p, ...)`, docs/spec/NATIVE_BACKEND.md "Zeigerkonvention"): on the 16- and 32-bit x86
+        /// of Open Watcom a Value by value is a copy of 16 bytes at every call site; a pointer is 4 bytes. Off on the targets that pass small structs in registers.</summary>
+        public bool PointerCalls { get; init; }
+
         /// <summary>The name of the toolchain that builds for this target (a key of the configuration's `toolchains`, or `files`: only write the sources);
         /// null: the toolchain of the machine.</summary>
         public string? Toolchain { get; init; }
