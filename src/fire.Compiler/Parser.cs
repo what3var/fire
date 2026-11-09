@@ -1247,6 +1247,21 @@ namespace fire.Compiler
         /// parameter types.</summary>
         private TypeRef ParseTypeRef(bool allowArray = false)
         {
+            // `defined int n` (SPEC 8.10b): a value type that never holds undefined - the word stands in front of the type
+            if (!DefinedAhead(0)) return ParseTypeRefCore(allowArray);
+            var definedTok = Advance();
+            var type = ParseTypeRefCore(allowArray);
+            if (type.PointerDepth > 0) throw Error($"'defined' marks a value that never holds undefined - a pointer is written '{type.BaseName}*' without it", definedTok);
+            return type with { NonNull = true };
+        }
+
+        /// <summary>`defined` (a word of its own only here) followed by a value type: int, float, bool, word, char, byte.</summary>
+        private bool DefinedAhead(int offset) =>
+            PeekAt(offset).Type == TokenType.Identifier && PeekAt(offset).Lexeme == "defined"
+            && PeekAt(offset + 1).Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwWord or TokenType.KwChar or TokenType.KwByte;
+
+        private TypeRef ParseTypeRefCore(bool allowArray)
+        {
             string baseName = ParseTypeAnnotationName();
             var namespaces = CurrentNamespaces();
 
@@ -1280,19 +1295,17 @@ namespace fire.Compiler
             {
                 if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
                     throw Error("'word' has the width of the target's machine word - no '[...]' may follow (use int[16], int[32] or int for a fixed width)", Peek());
-                bool wordNonNull = ParseNonNullMark("word");
                 int wordPointerDepth = 0;
                 while (Match(TokenType.Star)) wordPointerDepth++;
-                return new TypeRef("word", null, wordPointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray), NonNull: wordNonNull);
+                return new TypeRef("word", null, wordPointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
             }
             if (baseName == "byte")
             {
                 if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
                     throw Error("'byte' already has a fixed width of 8 bits - no additional '[...]' may follow", Peek());
-                bool byteNonNull = ParseNonNullMark("byte");
                 int bytePointerDepth = 0;
                 while (Match(TokenType.Star)) bytePointerDepth++;
-                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray), Unsigned: true, NonNull: byteNonNull);
+                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray), Unsigned: true);
             }
 
             // `[8]` = bit width; empty brackets `[]` belong to the array return type (see below).
@@ -1310,32 +1323,20 @@ namespace fire.Compiler
             if (width == null && !TypeKeywords.Contains(Previous().Type) && Check(TokenType.Lt) && TypeArgListEnd(0) > 0)
                 typeArgs = ParseTypeArgRefs();
 
-            // `int! n`, `float[32]! x`: a value type without undefined (SPEC 8.11) - the mark comes after the width, before the unit
-            bool nonNull = typeArgs == null && ParseNonNullMark(baseName);
+            // (`int! n`: a value without undefined is written `defined int n`, SPEC 8.10b)
+            if (Check(TokenType.Bang) && PeekAt(1).Type == TokenType.Identifier && TypeRef.CanBeNonNull(baseName))
+                throw Error($"A value that is never undefined is declared 'defined {baseName}', not '{baseName}!'", Peek());
 
             // `float:m Len()`, `int : mm count`: the unit at the type (a number type only; a name has to follow the unit)
             string? unit = baseName is "int" or "float" ? ParseUnitAtType() : null;
 
             int pointerDepth = 0;
             while (Match(TokenType.Star)) pointerDepth++;
-            if (nonNull && pointerDepth > 0) throw Error($"'{baseName}!' is a value without undefined - a pointer to it is written '{baseName}*'", Previous());
 
             return new TypeRef(baseName, width, pointerDepth, Unit: unit, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray),
-                TypeArgCount: typeArgs?.Count ?? 0, TypeArgs: typeArgs, NonNull: nonNull);
+                TypeArgCount: typeArgs?.Count ?? 0, TypeArgs: typeArgs);
         }
 
-        /// <summary>The `!` behind a value type (`int!`, SPEC 8.11): it is followed by the name of the declaration, its unit (`float! : m x`) or the empty
-        /// brackets of an array return type. Behind any other type it is an error.</summary>
-        private bool ParseNonNullMark(string baseName)
-        {
-            if (!Check(TokenType.Bang) || Peek().NewlineBefore) return false;
-            var next = PeekAt(1).Type;
-            if (next is not (TokenType.Identifier or TokenType.Colon or TokenType.LBracket or TokenType.Star) && !IsCustomUnitWordAt(1)) return false;
-            var bang = Advance();
-            if (!TypeRef.CanBeNonNull(baseName))
-                throw Error($"'!' marks a value type that never holds undefined (int!, float!, bool!, word!, char!, byte!) - '{baseName}' is not one", bang);
-            return true;
-        }
 
         /// <summary>`&lt;T1, ..., Tn&gt;` with full type references (nested ones included).</summary>
         private List<TypeRef> ParseTypeArgRefs()
@@ -1344,6 +1345,7 @@ namespace fire.Compiler
             var args = new List<TypeRef>();
             do
             {
+                if (DefinedAhead(0)) throw Error($"'defined {PeekAt(1).Lexeme}' cannot be a type argument - 'defined' belongs to variables, parameters, fields, properties and return types", Peek());
                 var arg = ParseTypeRef(allowArray: true);
                 // `Box<int : cm>`, `List<float : any>`, `Box<int : any m>`: a number type argument with its unit (without one it is unitless)
                 if (arg is { BaseName: "int" or "float", Unit: null, ArrayRank: 0 } && Check(TokenType.Colon) && (PeekAt(1).Type == TokenType.Identifier || IsCustomUnitWordAt(1)))
@@ -1507,7 +1509,7 @@ namespace fire.Compiler
         /// declaration).</summary>
         private bool NextLooksLikeTypeThenName()
         {
-            if (TypeKeywords.Contains(Peek().Type)) return true;
+            if (TypeKeywords.Contains(Peek().Type) || DefinedAhead(0)) return true;
             // 'lambda' as a type name (see ParseTypeRef) can - unlike a
             // class name - also be followed by '<' instead of a further
             // identifier ('lambda<int> x'), which the chain check
@@ -1536,6 +1538,7 @@ namespace fire.Compiler
         private bool TypeThenOperatorAhead()
         {
             int offset;
+            if (DefinedAhead(0) && PeekAt(2).Type == TokenType.Operator) return true;
             if (TypeKeywords.Contains(Peek().Type)) offset = 1;
             else if (Check(TokenType.Identifier))
             {
@@ -3711,6 +3714,15 @@ namespace fire.Compiler
             {
                 var copyTok = Advance();
                 return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
+            }
+
+            // `trust x` (SPEC 8.10b): the developer vouches that x is not undefined - no warning where a `defined` value is expected, and a native
+            // release build passes it on without the check. (`trust` is a word of its own only in front of an operand on the same line.)
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "trust" && !PeekAt(1).NewlineBefore
+                && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.True or TokenType.False or TokenType.CharLiteral)
+            {
+                var trustTok = Advance();
+                return new UnaryExpr(trustTok.Line, UnaryOp.Trust, ParseUnary());
             }
 
             // `take x` (SPEC 2.2): as an argument or right of `=`/`var x =` - the ownership goes to the call or to the owner of the target

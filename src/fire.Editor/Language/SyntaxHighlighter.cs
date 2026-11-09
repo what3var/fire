@@ -174,6 +174,10 @@ namespace fire.Editor
                 "to" => i > 0 && tokens[i - 1].Lexeme == "coerce",
                 "inline" => At(i + 1).Lexeme == "c" && At(i + 1).Type == TokenType.Identifier && At(i + 1).Line == t.Line && At(i + 2).Type != TokenType.Assign,
                 "c" => i > 0 && tokens[i - 1].Lexeme == "inline" && tokens[i - 1].Line == t.Line && At(i + 1).Type != TokenType.Assign,
+                // `defined int n`, `trust x` (SPEC 8.10b) - like the parser: in front of a value type / an operand on the same line
+                "defined" => At(i + 1).Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwWord or TokenType.KwChar or TokenType.KwByte,
+                "trust" => i + 1 < tokens.Count && !At(i + 1).NewlineBefore
+                    && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.True or TokenType.False or TokenType.CharLiteral,
                 _ => false,
             };
         }

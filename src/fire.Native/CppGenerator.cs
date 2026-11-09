@@ -102,6 +102,9 @@ namespace fire.Native
             public SortedDictionary<string, string> Scalars = new(StringComparer.Ordinal);
             public Flow?[] Entry = Array.Empty<Flow?>();
             public Out Root = new();
+            /// <summary>The C interface of this round (CAbiOf) and the signature of the C body (null: none).</summary>
+            public CAbi? CAbi;
+            public string? CSig;
             public int FinSignature => FinReturn.Count + FinJumps.Values.Sum(v => v.Count);
             public string Signature => SignatureOf(Name, "");
             /// <summary>The C signature with the function's name `name` and `suffix` after the names of its parameters (a function with a frame copies them in).</summary>
@@ -1155,7 +1158,7 @@ namespace fire.Native
         private bool ScalarsOn => !DebugBuild && _program.IntWidth is 32 or 64;
         /// <summary>A variable that is a C FireInt (Ebene 2): a local of the function (no parameter, no global, no variable of a thread) whose every store is a narrow
         /// int without a unit (its joined type), that nothing points to and that holds no reference.</summary>
-        private bool ScalarVarOf(Func f, string v) => ScalarsOn && (v[0] == 'B' || v[0] == 'P' && int.Parse(v.AsSpan(1)) >= f.ParamLike)
+        private bool ScalarVarOf(Func f, string v) => ScalarsOn && (v[0] == 'B' || v[0] == 'P' && (int.Parse(v.AsSpan(1)) is var pi && (pi >= f.ParamLike || f.CAbi is { } abi && pi < abi.ParamType.Length && abi.ParamType[pi] != 0)))
             && _varType.TryGetValue(VarKey(f, v), out int type) && (IsNarrowIntType(type) || KindOfType(type) is KindWord or KindFloat)
             && !VarRef(VarKey(f, v));
         /// <summary>The C type of a variable that is a C number (ScalarVarOf).</summary>
@@ -2493,8 +2496,8 @@ namespace fire.Native
             return DeclaredKind.TagOf(declared) == TypeTag.Int && !DeclaredKind.KeepsWidth(declared) && _program.IntWidth < 64 ? $"intProgram({call})" : call;
         }
         /// <summary>What a parameter, field or return value declared int/float/bool (DeclaredKind) certainly holds after its check: that kind (or undefined) in
-        /// the unit it demands (`demand`: its unit demand, null: none). A plain `int` holds the program's int - but maybe a value of an enum (CutBit); `int!`
-        /// (SPEC 8.11) neither undefined nor an enum (NarrowBit). TypeUnknown when the unit is open.</summary>
+        /// the unit it demands (`demand`: its unit demand, null: none). A plain `int` holds the program's int - but maybe a value of an enum (CutBit); `defined int`
+        /// (SPEC 8.10b) neither undefined nor an enum (NarrowBit). TypeUnknown when the unit is open.</summary>
         private int DeclaredValueType(byte declared, string? demand)
         {
             byte kind = KindOfDeclared(declared);
@@ -2972,6 +2975,8 @@ namespace fire.Native
             if (f.External) return;   // (a member of another module: that module generates it)
             var chunk = f.Chunk;
             _cur = f;
+            f.CAbi = CAbiOf(f);
+            f.CSig = null;
             string name = f.Name;
             var code = OpInfo.Decode(chunk.Code);
             var indexOfAddr = new Dictionary<int, int>();
@@ -3005,6 +3010,7 @@ namespace fire.Native
             {
                 if (!scalarParams.Contains(i)) MarkVarRef(VarKey(f, $"P{i}"));
                 if (!f.GuardAddr.ContainsKey(i)) JoinVarType(VarKey(f, $"P{i}"), TypeUnknown);
+                else if (f.CAbi is { } entryAbi && i < entryAbi.ParamType.Length && entryAbi.ParamType[i] != 0) JoinVarType(VarKey(f, $"P{i}"), entryAbi.ParamType[i]);   // (from the start)
             }
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) f.NeedsList.Add(GlobalScope);   // thrown exceptions, TakeGlobal and TakeUpwards need the list of the global scope
 
@@ -3125,13 +3131,18 @@ namespace fire.Native
                 if (framed) Var("uint32_t", "ACCB", "g_acc.top"); else decl.AppendLine("    uint32_t const ACCB = g_acc.top;");
             }
             if (f.Kind == FuncKind.FireBody) pre.AppendLine("    (void)args;");
-            if (!f.IsTop && _usesThreads) pre.AppendLine("    if (FIRE_UNLIKELY(pollSignals())) return Undef();");
+            if (!f.IsTop && _usesThreads) pre.AppendLine($"    if (FIRE_UNLIKELY(pollSignals())) return {UndefReturnOf(f.CAbi)};");
             if (f.Kind == FuncKind.Lambda)
             {
                 if (framed) Var("Value", "self", "lamOn(lam)"); else decl.AppendLine("    Value self = lamOn(lam); (void)self;");
                 for (int i = 0; i < f.CaptureCount; i++)
                     if (framed) Var("Value", $"P{f.ParamCount + i}", $"lamCapture(lam, {i})"); else decl.AppendLine($"    Value P{f.ParamCount + i} = lamCapture(lam, {i}); (void)P{f.ParamCount + i};");
             }
+            // (a C parameter that is no variable of a C number: the body has its Value)
+            if (f.CAbi is { } boxAbi)
+                for (int i = 0; i < f.ParamCount; i++)
+                    if (boxAbi.ParamType[i] != 0 && !ScalarVarOf(f, $"P{i}"))
+                        pre.AppendLine($"    Value P{i} = {ScalarValueOf(KindOfType(boxAbi.ParamType[i]), 0, $"P{i}_c")};");
             for (int i = 0; i < f.ParamCount; i++) pre.AppendLine($"    (void)P{i};");
             if (dbg != null && !framed) pre.AppendLine("    DbgFrame* const DF = g_dbgTop;");
             if (f.Root.MaxDepth > 0)
@@ -3235,6 +3246,7 @@ namespace fire.Native
             }
             var inFrame = new HashSet<string>(members.Select(m => m.Name), StringComparer.Ordinal);
             string defSignature = f.SignatureOf(defName, p => framed && inFrame.Contains(p) ? "_in" : "");
+            if (f.CAbi is { } sigAbi) defSignature = f.CSig = CSignature(f, sigAbi);
             if (framed)
             {
                 sb.AppendLine($"typedef struct {frame} {{ {string.Join(" ", members.Select(m => m.Decl + ";"))} }} {frame};");
@@ -3265,6 +3277,7 @@ namespace fire.Native
             if (framed) foreach (var m in members) sb.AppendLine($"#undef {m.Name}");
             if (dbg != null) foreach (var region in catchRegions) sb.AppendLine(DebugCatchWrapper(f, CatchName(f, region)));
             // `try x.Take...`: every function counts the call depth (the callee knows which argument list is its own); a debug build keeps its frame
+            if (f.CAbi is { } wrapAbi) sb.Append(CAbiWrapper(f, wrapAbi));
             if (defName != f.Name)
             {
                 string call = $"{defName}({string.Join(", ", (f.Kind == FuncKind.FireBody ? new[] { "args" } : Array.Empty<string>()).Concat(f.ParamNames))})";
@@ -3275,6 +3288,7 @@ namespace fire.Native
                     : $"{{ ++g_callDepth; Value r_ = {call}; --g_callDepth; return r_; }}");
             }
             f.Code = sb.ToString();
+            NoteCReturn(f);
         }
 
         /// <summary>The function of the catch blocks of a `try` statement.</summary>
@@ -3412,7 +3426,7 @@ namespace fire.Native
             if (local != null) E($"goto LAND{local.Value.Region.Template};");
             else if (st.Region != null) E("return;");
             else if (f.IsTop) { HaltCode(f, E); E("return;"); }
-            else { if (f.AccTrack) E("if (g_acc.top > ACCB) g_acc.top = ACCB;"); E("return Undef();"); }
+            else { if (f.AccTrack) E("if (g_acc.top > ACCB) g_acc.top = ACCB;"); E($"return {UndefReturnOf(f.CAbi)};"); }
             string text = body.ToString();
             if (!o.Exits.TryGetValue(text, out int id))
             {
@@ -3623,12 +3637,29 @@ namespace fire.Native
                 if (k != except1 && k != except2) Materialize(f, st, k, emit);
         }
         /// <summary>The operations that look at scalar slots themselves (everything else sees the Values: MaterializeAll before it).</summary>
+        /// <summary>A GuardTop of `defined int` (`float`, `bool`, `word`) whose slot certainly holds such a number already: nothing to check.</summary>
+        private static bool GuardTopProven(Flow st, Instr ins)
+        {
+            if (ins.Op != OpCode.GuardTop || st.Depth < 1 || st.Depth > 64) return false;
+            byte declared = (byte)(ins.A[0] + 1);
+            if (!DeclaredKind.IsNonNull(declared)) return false;
+            int type = st.Types[st.Depth - 1];
+            return KindOfDeclared(declared) switch
+            {
+                KindInt => IsNarrowIntType(type) && !DeclaredKind.KeepsWidth(declared),
+                KindFloat => KindOfType(type) == KindFloat,
+                KindBool => KindOfType(type) == KindBool,
+                KindWord => KindOfType(type) == KindWord,
+                _ => false,
+            };
+        }
+
         private static bool ScalarAware(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal
             or OpCode.Add or OpCode.Sub or OpCode.Mul or OpCode.Mod or OpCode.Lt or OpCode.LtEq or OpCode.Gt or OpCode.GtEq or OpCode.Eq or OpCode.NotEq
             or OpCode.JumpIfFalse or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq
             or OpCode.Pop or OpCode.ReleaseTemps or OpCode.EnterScope or OpCode.ExitScope or OpCode.ClaimToScope or OpCode.ArithLocalConstPop
             or OpCode.BitAnd or OpCode.BitOr or OpCode.BitXor or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ConvertWidth or OpCode.ArrayGet
-            or OpCode.Div or OpCode.Neg or OpCode.LogicalNot or OpCode.CheckUnit or OpCode.Dup or OpCode.StepAdd or OpCode.StepSub;
+            or OpCode.Div or OpCode.Neg or OpCode.LogicalNot or OpCode.CheckUnit or OpCode.Dup or OpCode.StepAdd or OpCode.StepSub or OpCode.Trust;
 
         private StepResult StepCore(Func f, Chunk chunk, Instr ins, Flow st, StringBuilder? sb, ISet<string> locals)
         {
@@ -3636,7 +3667,9 @@ namespace fire.Native
             string fn = f.Name;
             // (a slot whose value is only in its scalar shadow becomes a Value first: every generic use goes through S)
             string S(int k) { if (k >= 0 && k < 64 && (st.Scalar >> k & 1) != 0) Materialize(f, st, k, E); return SlotName(st.Region, k); }
-            if (st.Scalar != 0 && !ScalarAware(ins.Op)) MaterializeAll(f, st, E);
+            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
+                && !GuardTopProven(st, ins)
+                && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 })) MaterializeAll(f, st, E);
             // After an operation that can throw: if an exception is unwinding, leave (to the handler of this function, or out of it).
             void Check()
             {
@@ -3839,6 +3872,38 @@ namespace fire.Native
                     }
                 }
             }
+            // The arguments of a call of a C body (CAbi): a C parameter takes the C number of its slot - a slot whose type does not prove it is checked into
+            // its shadow first (the check throws like the prologue would) - every other one the Value.
+            List<string> CAbiArgs(CAbi abi, int first, int argc)
+            {
+                var result = new List<string>();
+                for (int i = 0; i < argc; i++)
+                {
+                    int k = first + i, type = abi.ParamType[i];
+                    if (type == 0) { result.Add(S(k)); continue; }
+                    byte kind = KindOfType(type);
+                    int unit = UnitOfType(type);
+                    bool proven = kind switch
+                    {
+                        KindInt => NarrowInt(k) && U(k) == unit,
+                        KindFloat => (K(k) == KindFloat || NarrowInt(k)) && U(k) == unit,
+                        _ => K(k) == KindWord,
+                    };
+                    if (!proven)
+                    {
+                        // (a parameter with a unit: the value is converted into it first, like the CheckUnit of the prologue - then checked)
+                        if (abi.ParamDemand[i] is { } demand)
+                        {
+                            E($"{S(k)} = {AdaptUnitCall(S(k), demand)};");
+                            Check();
+                        }
+                        SetScalar(k, type, CNumberOf(type, $"({GuardKindCall(S(k), CDeclared(type), abi.ParamWhat[i])})"));
+                        Check();
+                    }
+                    result.Add(kind switch { KindFloat => SF(k), KindWord => SW(k), _ => SN(k) });
+                }
+                return result;
+            }
             void ArgsAfter(int argc, long mask, string result)
             {
                 for (int i = 0; i < Math.Min(argc, 16); i++)
@@ -3901,7 +3966,8 @@ namespace fire.Native
             string Num(int k) => BK(k) == KindFloat ? $"{S(k)}.f" : $"(Real){S(k)}.i";
             string Dbl(int k) => BK(k) == KindFloat ? $"(double){S(k)}.f" : $"(double){S(k)}.i";
             // A parameter in the prologue before its GuardLocal still holds what the caller passed.
-            bool RawParam(string variable) => variable[0] == 'P' && f.GuardAddr.TryGetValue(int.Parse(variable.AsSpan(1)), out int guardAt) && ins.Addr < guardAt;
+            bool RawParam(string variable) => variable[0] == 'P' && int.Parse(variable.AsSpan(1)) is var rawIndex && !(f.CAbi is { } rawAbi && rawIndex < rawAbi.ParamType.Length && rawAbi.ParamType[rawIndex] != 0)
+                && f.GuardAddr.TryGetValue(rawIndex, out int guardAt) && ins.Addr < guardAt;   // (a C parameter: its caller checked it)
             // What a load of a variable certainly gives. A global is only trusted in the main program: another function can run before its declaration.
             int LoadType(string variable)
             {
@@ -4722,6 +4788,18 @@ namespace fire.Native
                     var (callee, specCondition) = staticNames != null ? (target, null) : Specialize(f, ins, target, d - argc, argc, S, Ty);
                     if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                     long mask = ArgMask();
+                    if (SlotScalars() && specCondition == null && mask == 0 && ReferenceEquals(CAbiStaticCallee(f, ins), callee) && CAbiOf(callee) is { } cabi)
+                    {
+                        // the C body (Ebene 2): the arguments as C numbers - checked here when their type does not prove them - and the result as one
+                        var cargs = CAbiArgs(cabi, d - argc, argc);
+                        string ccall = $"{CName(callee)}({string.Join(", ", cargs)})";
+                        int rslot = d - argc;
+                        if (cabi.RetType != 0) SetScalar(rslot, cabi.RetType, ccall);
+                        else { E($"{S(rslot)} = {ccall};"); SetR(rslot, false); }
+                        Check();
+                        if (cabi.RetType == 0) AdoptResult(rslot, ReturnType(callee));
+                        d = rslot + 1; return Next();
+                    }
                     string specTest = specCondition != null ? $"({specCondition}) ? {callee.Name}(" : "";
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = staticNames != null ? ("", "") : DefaultArgs(proto, argc, "Undef()", DefaultsList(proto, argc));
@@ -4746,6 +4824,18 @@ namespace fire.Native
                     if (!isCtor) JoinVarType(ReturnKey(f), Ty(d - 1));
                     bool anything = st.Scopes.Any(sc => f.NeedsList.Contains(sc.Id) || ScopeVariables(f, sc.Id, locals).Any(v => VarRef(VarKey(f, v))));
                     bool tryActive = st.Region != null || st.Handlers.Count > 0;
+                    if (f.CAbi is { RetType: not 0 } retAbi)
+                    {
+                        // the C body: the number itself (a slot of another type only in a round that has not settled yet - the next one has no C return then)
+                        int rk = d - 1;
+                        string number = KindOfType(retAbi.RetType) switch { KindBool => SB(rk), KindWord => SW(rk), KindFloat => SF(rk), _ => SN(rk) };
+                        if (!anything) { E($"return {number};"); return new StepResult(false, null); }
+                        E($"{{ {CTypeOf(retAbi.RetType)} r = {number};");
+                        if (f.AccTrack) E("  if (g_acc.top > ACCB) g_acc.top = ACCB;");
+                        ReleaseScopes(f, st, st.Scopes.Count, 0, false, locals, sb == null ? _ => { } : x => E("  " + x), null);
+                        E("  return r; }");
+                        return new StepResult(false, null);
+                    }
                     if (!isCtor && !tryActive && !R(d - 1) && !anything) { E($"return {S(d - 1)};"); return new StepResult(false, null); }
                     // the value is on its way to the caller: it keeps a count, and an object that the leaving scopes owned goes along
                     E($"{{ Value r = {S(d - 1)}; (void)r;");
@@ -5091,6 +5181,21 @@ namespace fire.Native
                         var target = GetFunc(directProto, FuncKind.Method);
                         var (callee, specCondition) = Specialize(f, ins, target, d - argc, argc, S, Ty);
                         long mask = ArgMask();
+                        if (SlotScalars() && specCondition == null && mask == 0 && ReferenceEquals(CAbiMethodCallee(f, st, ins), callee) && CAbiOf(callee) is { } mabi)
+                        {
+                            // the C body (Ebene 2): the receiver is checked first (like the dispatcher would), then the arguments (like the prologue would)
+                            string notObj = IsNullable(Ty(slot)) ? $"if (FIRE_UNLIKELY({S(slot)}.kind != K_Class)) {S(slot)} = missingMethod({S(slot)}, {CString(method)}, {argc}); else " : "";
+                            E($"{notObj}if (FIRE_UNLIKELY(!leafAlive({S(slot)}))) {S(slot)} = destroyedError({S(slot)});");
+                            Check();
+                            string self = S(slot);
+                            var margs = CAbiArgs(mabi, d - argc, argc);
+                            string mcall = $"{CName(callee)}({string.Join(", ", new[] { self }.Concat(margs))})";
+                            if (mabi.RetType != 0) SetScalar(slot, mabi.RetType, mcall);
+                            else { E($"{S(slot)} = {mcall};"); SetR(slot, false); }
+                            Check();
+                            if (mabi.RetType == 0) AdoptResult(slot, ReturnType(callee));
+                            d = slot + 1; return Next();
+                        }
                         string specTest = specCondition != null ? $"({specCondition}) ? {callee.Name}(" : "";
                         ArgsBefore(d - argc, argc, mask);
                         var (dpre, dargs) = DefaultArgs(directProto, argc, S(slot), DefaultsList(directProto, argc));
@@ -5304,8 +5409,13 @@ namespace fire.Native
                     // the end of the prologue: the parameter holds its declared kind or undefined, in the unit that was checked before it
                     string v = Var(st, 0, ins.A[0], locals);
                     byte declared = (byte)((ins.A[1] & 0x7F) + 1 | ins.A[1] & DeclaredKind.UnitlessBit);
-                    E($"{v} = {GuardKindCall(v, declared, Str(ins.A[2]))};");
-                    Check();
+                    // (a C parameter: the caller - or the function with Values in front of the C body - checked it)
+                    bool cParam = f.CAbi is { } guardAbi && ins.A[0] < guardAbi.ParamType.Length && guardAbi.ParamType[ins.A[0]] != 0;
+                    if (!cParam)
+                    {
+                        E($"{v} = {GuardKindCall(v, declared, Str(ins.A[2]))};");
+                        Check();
+                    }
                     // (the unit that was checked before it: GuardLocal names its demand, or 0xFFFF for an open one)
                     JoinVarType(VarKey(f, v), KindOfDeclared(declared) is KindBool or KindWord ? DeclaredValueType(declared, null)
                         : ins.A[3] == 0xFFFF ? TypeUnknown : DeclaredValueType((byte)(declared & ~DeclaredKind.UnitlessBit), Str(ins.A[3])));
@@ -5335,6 +5445,22 @@ namespace fire.Native
                     else E($"TArgs ctargs = {(f.SpecTArgs != null ? TArgsExpr(f, f.SpecTArgs) : "((TArgs)g_callTArgs)")}; g_callTArgs = NULL; g_explicitTArgs = 0; (void)ctargs;");
                     _kindsKept = true;
                     return Next();
+                case OpCode.Trust:
+                {
+                    // `trust x` (SPEC 8.10b): a release build takes a value of a known kind as a defined number of it - a `defined` parameter takes it without
+                    // the check (an undefined that was trusted counts as 0); one of an unknown kind is still checked. A debug build checks as the VM does.
+                    if (!DebugBuild && d >= 1 && d <= 64)
+                    {
+                        int tt = Ty(d - 1);
+                        byte tk = BaseKindOfType(tt);
+                        if (tk == KindInt && (tt & (CutBit | NarrowBit)) != 0) SetT(d - 1, tt & ~(NullableBit | TypeNone | CutBit) | NarrowBit);
+                        else if (tk is KindFloat or KindBool or KindWord) SetT(d - 1, tt & ~(NullableBit | TypeNone));
+                        _kindsKept = true;
+                    }
+                    return Next();
+                }
+                case OpCode.GuardTop when GuardTopProven(st, ins):
+                    return Next();   // (`defined`: the slot certainly holds such a number - SPEC 8.10b)
                 case OpCode.GuardTop:
                 {
                     // a value going into a local whose declaration the type checker could not prove: its kind (a whole number for a float is converted)
@@ -5343,7 +5469,7 @@ namespace fire.Native
                     E($"{S(d - 1)} = {GuardKindCall(S(d - 1), declared, Str(ins.A[1]))};");
                     Check();
                     byte kind = KindOfDeclared(declared);
-                    // (`int!` - a return value, SPEC 8.11: the number of the kind, in the unit the value had; a plain declaration only keeps a known kind)
+                    // (`defined int` - a return value, SPEC 8.10b: the number of the kind, in the unit the value had; a plain declaration only keeps a known kind)
                     if (DeclaredKind.IsNonNull(declared) && kind is KindInt or KindFloat && KindOfType(Ty(d - 1)) == kind) SetT(d - 1, Ty(d - 1) & ~(NullableBit | TypeNone | CutBit) | (kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? NarrowBit : 0));
                     else if (DeclaredKind.IsNonNull(declared) && kind is KindBool or KindWord) SetT(d - 1, TypeOf(kind, 0));
                     else if (KindOfType(Ty(d - 1)) != kind) SetT(d - 1, kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : TypeUnknown);

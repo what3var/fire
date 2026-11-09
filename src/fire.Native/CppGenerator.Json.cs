@@ -146,6 +146,9 @@ namespace fire.Native
             return Math.Min(count, 255);
         }
 
+        /// <summary>The kind of a `defined` field for JsonFieldInfo.defined (SPEC 8.10b), "0" for any other.</summary>
+        private static string DefinedKindOf(byte declared) => declared != 0 && DeclaredKind.IsNonNull(declared) ? KindConstant(declared) : "0";
+
         /// <summary>The JSON row of a class (a JsonClassInfo) and the table of its fields (written to <paramref name="sb"/> as <paramref name="fieldTable"/>). A plugin
         /// (<paramref name="unitFixups"/>): the table is not const and the units of its fields are set when the plugin is registered (the program's numbers).</summary>
         private string JsonRow(ClassInfo ci, string fieldTable, int flags, StringBuilder sb, List<string>? unitFixups)
@@ -155,7 +158,7 @@ namespace fire.Native
             if (fields.Count > 0)
             {
                 sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", fields.Select(f =>
-                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}}}")) + "};");
+                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}}}")) + "};");
                 if (unitFixups != null)
                     for (int j = 0; j < fields.Count; j++)
                         if (UnitId(fields[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");

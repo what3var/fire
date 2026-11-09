@@ -120,6 +120,16 @@ static class TypeTests
         Check("Natives der Pakete haben den Typ ihres Manifests (\"returns\"): var aus einem Native ist strikt still, int[64]-Ticks sind TC021 an einem int (#intwidth 32)",
             Run("#import \"io\"\nvar e = __IOLastError()\nint x = e + 1\nprint(x > -100)", TypeCheckMode.Strict) is var nat && nat == "|True"
             && Run("#intwidth 32\n#import \"time\"\nvar now = __time_now()\nint[64] t = now\nint small = now\nprint(t > 0)") == "TC021|True", nat);
+        Check("defined (SPEC 8.10b): ein Wert, der undefined sein kann, an ein defined-Ziel ist TC022 (Parameter, Feld, lokale defined, Rueckgabe); Literale, Rechnungen, defined und hergeleitete lokale sind still",
+            Run("class K { static defined int T(defined int x) { return x * 2 } static defined int G(int y) { return K.T(trust y) } }\nint s = 0\nfor (int i = 0; i < 3; i++) { s = s + i }\nvar w = s * 2\nprint(K.T(s) + K.T(w) + K.T(4) + K.T(s + 1) + K.G(5))") is var quiet && quiet == "|44"
+            && Run("class K { static defined int T(defined int x) { return x } static defined int R(int y) { return y } }\nint u\ntry { K.T(u) } catch (ArgumentException e) { print(e.message) }\nprint(K.R(3))") is var warn && warn == "TC022 TC022|Parameter 'x' is an int and never undefined.\n3"
+            && Run("class K { defined int c }\nvar k = new K()\nint u\ndefined int d = 1\ntry { d = u } catch (ArgumentException e) { print(e.message) }\ntry { k.c = undefined } catch (ArgumentException e) { print(e.message) }\nprint(k.c + d)") is var more
+               && more == "TC022 TC022|Variable 'd' is an int and never undefined.\nField 'c' is an int and never undefined.\n1", quiet + " / " + warn);
+        Check("defined (SPEC 8.10b): ein Feld, eine lokale defined starten bei 0; ein Enum wird zur Zahl; trust bleibt ein Name, wo kein Operand folgt",
+            Run("enum C { A, B }\nclass K { defined int n\ndefined float f\ndefined bool b\nstatic string S(defined int v) { return \"\" + v } }\nvar k = new K()\ndefined int d\nvar trust = 3\nprint(k.n + \" \" + k.f + \" \" + k.b + \" \" + d + \" \" + K.S(C.B!int) + \" \" + (trust + 1))") is var zero && zero == "|0 0 False 0 1 4", zero);
+        Check("defined (SPEC 8.10b): 'int!' sagt, wie es heisst; defined an einem Array, einem string oder als Typargument ist ein Fehler",
+            Run("class K { int! n }") is var bang && bang.StartsWith("|ERROR E3000")
+            && Run("class K { defined int a[] }").StartsWith("|ERROR") && Run("class K { defined string s }").StartsWith("|ERROR") && Run("var l = new List<defined int>()").StartsWith("|ERROR"), bang);
         Check("var a = [] hat keine Elementtypen: TC020 (any[]), int a[] = [] ist still",
             Run("var a = []\nprint(a.length)", TypeCheckMode.Strict) == "TC020|0" && Run("int a[] = []\nprint(a.length)", TypeCheckMode.Strict) == "|0");
         Check("Namen im eigenen Namespace: Parameter, Felder und Aufrufe (UI.M.Max) haben ihren Typ", Run("""

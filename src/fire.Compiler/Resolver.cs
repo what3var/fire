@@ -1095,19 +1095,17 @@ namespace fire.Compiler
                 throw new ResolverException($"'{plain}' is generic with {parameters} type parameter(s), not {typeArgs.Count}", line);
             foreach (var arg in typeArgs)
             {
-                if (arg.NonNull) throw new ResolverException($"'{arg.BaseName}!' cannot be a type argument - the '!' belongs to parameters, fields, properties and return types", line);
+                if (arg.NonNull) throw new ResolverException($"'defined {arg.BaseName}' cannot be a type argument - 'defined' belongs to variables, parameters, fields, properties and return types", line);
                 ValidateTypeRef(arg, line);
             }
         }
 
-        /// <summary>`int!` (SPEC 8.11) stands at a parameter, a field, a property or a return type - not at a variable or an array.</summary>
-        private static void ValidateNonNull(TypeRef? type, int arrayRanks, int line, bool allowed = true)
+        /// <summary>`defined int` (SPEC 8.10b) is a single value - not an array.</summary>
+        private static void ValidateNonNull(TypeRef? type, int arrayRanks, int line)
         {
             if (type is not { NonNull: true }) return;
-            if (!allowed)
-                throw new ResolverException($"'{type.BaseName}!' is for parameters, fields, properties and return types - a variable declared '{type.BaseName}' already holds what it is given", line);
             if (arrayRanks > 0 || type.ArrayRank > 0)
-                throw new ResolverException($"'{type.BaseName}!' cannot be an array - the elements of a typed array are never undefined anyway", line);
+                throw new ResolverException($"'defined {type.BaseName}' is a single value that is never undefined - not an array", line);
         }
 
         /// <summary>Validates a complete TypeRef: base name like
@@ -1377,7 +1375,7 @@ namespace fire.Compiler
                 case VarDeclStmt vd:
                     if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
-                    ValidateNonNull(vd.Type, vd.ArrayRanks.Count, vd.Line, allowed: false);
+                    ValidateNonNull(vd.Type, vd.ArrayRanks.Count, vd.Line);
                     ResolveArrayRanks(vd.ArrayRanks);
                     if (vd.Initializer == null && vd.ArrayRanks.Count == 0 && (vd.Type == null || vd.Type.IsInferred))
                         throw new ResolverException($"'var {vd.Name}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {vd.Name}')", vd.Line);

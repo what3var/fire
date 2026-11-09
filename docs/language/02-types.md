@@ -94,6 +94,36 @@ try { Show.Of(o) } catch (ArgumentException e) { print(e.message) }   // Paramet
 The native compiler relies on this promise: with it the arithmetic on such parameters and fields is plain C++ on the number, and the fields and
 methods of a parameter or field of a class are reached directly (by index, without asking the class at run time).
 
+### `defined`: never `undefined`
+
+Write `defined` in front of a value type (`int`, `float`, `bool`, `word`, `char`, `byte`, with or without a width or a unit) and the declaration
+never holds `undefined`: a parameter, a field, a property, a return value or a variable.
+
+```fire
+class Stats {
+    defined int count                      // starts at 0
+    defined float : m distance             // starts at 0m
+    static defined int Mix(defined int a, defined int b) { return a * 31 + b }
+}
+var s = new Stats()
+print(s.count)                             // 0
+int total = 0
+for (int i = 0; i < 5; i++) { total = Stats.Mix(total, i) }
+print(total)
+int missing
+try { Stats.Mix(missing, 1) } catch (ArgumentException e) { print(e.message) }   // Parameter 'a' is an int and never undefined.
+```
+
+- `undefined` going in is an `ArgumentException`, a value of an enum becomes its number, everything else is checked as above.
+- A field or variable declared `defined` without an initializer starts at zero (in its unit), `false`, the word 0 or the char 0.
+- A method declared `defined int` must return a number on every path: the end of its body (which would return `undefined`) is the exception.
+- The type checker warns (`TC022`) where something that may be `undefined` goes in - a parameter, field or uninitialized variable declared without
+  `defined`, the literal `undefined`. A local variable counts as defined while it was only given numbers (`int total = 0` above), so ordinary code
+  stays quiet. When you know better, say so with **`trust`**: `Stats.Mix(trust missing, 1)` - no warning (the VM still checks).
+
+Natively `defined` pays off: such parameters and return values are passed as plain C numbers, without packing them into values - on a 16-bit
+target the code of a small arithmetic method shrinks to a fraction.
+
 ## The type checker: lax and strict
 
 The checker runs after every compile and in the editor while you type. Its findings have codes:

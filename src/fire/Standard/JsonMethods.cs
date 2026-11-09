@@ -870,6 +870,10 @@ namespace fire.Standard
                 var value = Value.MakeClassRef(obj);
                 if (id is { } oid) _byId[oid] = value;
                 var fields = FieldsOf(rc);
+                // `defined int n` (SPEC 8.10b): a field that is not in the text holds zero, `null` does not go in
+                foreach (var field in fields)
+                    if (rc.FindFieldRequiredKind(field.Name) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
+                        obj.Fields[field.Name] = DeclaredKind.ZeroOf(kind, rc.FindFieldRequiredUnit(field.Name)?.TrimStart('#') is { } zeroUnit && !zeroUnit.StartsWith("any", StringComparison.Ordinal) ? Unit.Parse(zeroUnit) : null);
                 foreach (var (key, child) in o.Members)
                 {
                     if (key.StartsWith("$", StringComparison.Ordinal)) continue;
@@ -879,6 +883,8 @@ namespace fire.Standard
                     // a field declared as a typed array without a unit (FieldInfo.RequiredArray) holds a typed array, like after any other assignment
                     if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null)
                         TypeArrayDeep(built, (byte)(requiredArray & 0xFF), requiredArray >> 8, 1, path + "." + key);
+                    if (built.Kind == ValueKind.Undefined && rc.FindFieldRequiredKind(field.Name) is var declared and not 0 && DeclaredKind.IsNonNull(declared))
+                        throw _host.Error("ArgumentException", $"{path}.{key} is {(DeclaredKind.ValueKindOf(declared) switch { ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool" })} and never undefined.");
                     obj.Fields[field.Name] = built;
                 }
                 if (HasOnDeserialized(rc)) Hooks.Add(obj);

@@ -2348,6 +2348,57 @@ native reads machine words from an argument with `wordsArg` (a word buffer witho
 docs/packages/natives.md). Natively the generator writes word arithmetic, comparisons and the elements of buffers it made
 itself out in C (`uintN_t` arithmetic on the bits; NATIVE_BACKEND.md).
 
+### 8.10b Values that are never undefined (`defined`) and `trust`
+
+```
+class Counter {
+    defined int count                              // starts at 0, never undefined
+    defined float : m length                       // starts at 0m
+    defined int Count { get { return this.count } set { this.count = value } }
+    static defined int Mix(defined int a, defined int b, defined int c) { return a * 31 + b * 7 + c }
+}
+int s = 0
+for (int i = 0; i < 10; i++) { s = Counter.Mix(s, i, 3) }   // quiet: s holds what it was given, a number
+int u                                                      // undefined
+Counter.Mix(u, 1, 2)        // TC022 (a warning): u may be undefined - at run time: ArgumentException
+Counter.Mix(trust u, 1, 2)  // no warning: the developer vouches for u (the VM still checks)
+defined int d               // a variable: starts at 0, every value stored is checked
+```
+
+A declaration of a value type - `int` (any width, `byte`), `float` (any width), `bool`, `word`, `char` - normally holds
+its kind **or `undefined`** (a parameter that is not passed, a field that was never set, 8.2). With the word `defined` in
+front of the type it **never holds `undefined`**: a parameter, a field, a property, a return value or a variable.
+
+* **What goes in is checked**, like any declared kind (an `int` into a `float` becomes a float, another kind is an
+  `ArgumentException`) - and `undefined` is an `ArgumentException` too ("Parameter 'a' is an int and never undefined.").
+  A value of an **enum** becomes its number (`defined int` holds only the number).
+* **A field, a property's field and a variable without an initializer start at zero** in the unit they demand (`0`, `0.0`,
+  `False`, the word 0, the char 0).
+* **A return value**: every `return` is checked, and the end of the body (which returns `undefined`) is the exception.
+* **JSON and reflection** keep the promise: `Json.Deserialize` leaves a `defined` field that is not in the text at zero (reading JSON runs no
+  initializers) and a `null` for it is an `ArgumentException` (`$.n is an int and never undefined.`); `Reflect.Set` checks like an assignment.
+* `defined` stands in front of the type and its width (`defined int[16] x`, `defined byte b`, `defined float : m len`); it is
+  a word of its own only there (a variable may still be called `defined`). Not for an array (the elements of a typed array
+  are a matter of the array, 8.4.2), a pointer or a type argument (`List<defined int>` is an error). `int!` is an error
+  that names `defined int`. Overloads do not differ by `defined` alone.
+
+**The type checker** (docs/spec/TYPES.md) knows what is certainly defined - a literal, what an operator computes (an
+undefined operand throws), a `defined` declaration, a call of a method with a `defined` return value - and what may be
+`undefined` as far as the code says: a parameter, a field or a property declared without `defined`, a variable without an
+initializer, the literal `undefined`. **A variable is as defined as what it was given** (in the order of the code): `int s = 0`
+is defined until something that may be undefined goes in. Such a value going where `defined` is declared is **`TC022`**, a
+warning (an error with `#strict`): it is checked at run time all the same.
+
+**`trust x`** says the developer has checked that `x` is defined: no `TC022`. It is a word of its own only in front of an
+operand on the same line (`trust u`, `trust this.n`). In the VM (and a native debug build) the check still runs. A native
+release build takes a trusted value whose kind it knows (a parameter or field declared `int`, `float`, `bool`, `word`) as a defined number
+of it: it goes into a `defined` parameter without the check - an `undefined` that was trusted is then the number 0. A value of a kind it does
+not know (`any`) is still checked.
+
+**Natively** (docs/spec/NATIVE_BACKEND.md, "Parameter und Rückgaben als C-Typen") a method with `defined int`/`float`/`word`
+parameters or a `defined` return value has a body with C types: a direct call passes C numbers and takes one back, without
+packing them into Values.
+
 ### 8.11 Streams (`#import "io"`) and files (`#import "filesystem"`)
 
 `#import "io"` unlocks the namespace `IO` with the streams (the package `fire-io`: its prelude and the C of `packages/io/native/fire_bridge_io.h`; in the VM a library built

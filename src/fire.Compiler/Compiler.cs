@@ -1172,13 +1172,17 @@ namespace fire.Compiler
                 if (!isStatic) inner._chunk.EmitOp(OpCode.ClaimToObject);
                 else inner.EmitClaimToScope(0xFFFF, unclaimed: true, hoist: false);
             }
-            // `int! count` (SPEC 8.11): a field that never holds undefined starts at zero (in the unit it demands)
+            // `defined int count` (SPEC 8.10b): a field that never holds undefined starts at zero (in the unit it demands)
             else if (arrayRanks is not { Count: > 0 } && type is { NonNull: true } && DeclaredKind.Of(type) is var nonNullKind and not 0)
-                inner.EmitLoadConst(DeclaredKind.ZeroOf(nonNullKind, type.RequiredUnit is { } zeroUnit && !zeroUnit.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(zeroUnit) : null));
+                inner.EmitLoadConst(DeclaredKind.ZeroOf(nonNullKind, ZeroUnitOf(type)));
             else inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
             return new FunctionProto(inner._chunk, 0, AccessModifier.Private);
         }
+
+        /// <summary>The unit the zero of a `defined` declaration without an initializer has (SPEC 8.10b): the one it demands, none for an open one.</summary>
+        private static fire.Values.Unit? ZeroUnitOf(TypeRef type) =>
+            type.RequiredUnit is { } unit && !unit.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(unit) : null;
 
         /// <summary>Emits for every parameter with a lambda-signature
         /// type annotation (`lambda&lt;P1,...,Pn&gt;`, see Ast.TypeRef.
@@ -1476,7 +1480,7 @@ namespace fire.Compiler
             inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
-            // `int! Count()` (SPEC 8.11): every value it returns is checked - undefined (also the end of the body) is an ArgumentException
+            // `defined int Count()` (SPEC 8.10b): every value it returns is checked - undefined (also the end of the body) is an ArgumentException
             if (returnType is { NonNull: true } && DeclaredKind.Of(returnType) is var returnKind and not 0) { inner._returnKind = returnKind; inner._returnWhat = $"The return value of '{name}'"; }
             // SPEC "Static members": a static method has no
             // bound 'this' - the inner compiler remembers that in order to
@@ -1695,6 +1699,8 @@ namespace fire.Compiler
                         // from there on the slots stay 'undefined', as before with
                         // a completely undetermined-size declarator.
                         CompileArrayAlloc(vd.ArrayRanks, 0, IsByteBuffer(vd.Type, vd.ArrayRanks.Count));
+                    else if (vd.Type is { NonNull: true } && DeclaredKind.Of(vd.Type) is var zeroKind and not 0)
+                        EmitLoadConst(DeclaredKind.ZeroOf(zeroKind, ZeroUnitOf(vd.Type)));   // (`defined int n` starts at 0: SPEC 8.10b)
                     else
                         EmitLoadConst(Value.MakeUndefined());
 
@@ -2441,11 +2447,11 @@ namespace fire.Compiler
         /// <summary>The unit a method with a unit at its return type (`float:m Len()`) or the getter of a property with a unit (`float X : m { get ... }`)
         /// converts its return values into, otherwise null.</summary>
         private string? _returnUnit;
-        /// <summary>`int! Count()`: the DeclaredKind its return values are checked against (GuardTop), 0: none; and how the error names the value.</summary>
+        /// <summary>`defined int Count()`: the DeclaredKind its return values are checked against (GuardTop), 0: none; and how the error names the value.</summary>
         private byte _returnKind;
         private string _returnWhat = "";
 
-        /// <summary>The value on top of the stack goes back from a method declared `int!` (`float!`, ...): it is checked like a parameter (GuardTop).</summary>
+        /// <summary>The value on top of the stack goes back from a method declared `defined int` (`defined float`, ...): it is checked like a parameter (GuardTop).</summary>
         private void EmitReturnGuard()
         {
             if (_returnKind == 0) return;
@@ -3048,6 +3054,7 @@ namespace fire.Compiler
             LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or AssignExpr or IncDecExpr or LambdaExpr or InterpolatedStringExpr
                 or IsOfExpr or IsInExpr or IsFromExpr or TryProcessExpr => false,   // (`a..b` is a call of __Range.Of: a new array, claimed like one)
             UnaryExpr { Op: UnaryOp.Take } => false,
+            UnaryExpr { Op: UnaryOp.Trust } t => MayBeUnclaimed(t.Operand),
             ConditionalExpr c => MayBeUnclaimed(c.Then) || MayBeUnclaimed(c.Else),
             _ => true,
         };
@@ -3059,7 +3066,7 @@ namespace fire.Compiler
             null or LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or LambdaExpr => false,
             AssignExpr a => (a.Target is not IdentifierExpr && MayLeaveTemps(a.Target)) || MayLeaveTemps(a.Value),
             IncDecExpr i => i.Target is not IdentifierExpr,
-            UnaryExpr { Op: UnaryOp.Take } u => MayLeaveTemps(u.Operand),
+            UnaryExpr { Op: UnaryOp.Take or UnaryOp.Trust } u => MayLeaveTemps(u.Operand),
             _ => true,
         };
 
@@ -3783,6 +3790,14 @@ namespace fire.Compiler
                 return;
             }
 
+            if (u.Op == UnaryOp.Trust)
+            {
+                // `trust x` (SPEC 8.10b): the value itself - the developer vouches that it is not undefined (the VM still checks where `defined` is declared;
+                // a native release build takes it as a defined number)
+                CompileExpr(u.Operand);
+                _chunk.EmitOp(OpCode.Trust);
+                return;
+            }
             if (u.Op == UnaryOp.Take)
             {
                 // `var a = take x` (SPEC 2.2): x belongs to the current scope (other places - arguments, assignments - are handled where they occur)

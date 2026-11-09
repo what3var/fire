@@ -51,7 +51,7 @@ namespace fire.Ast
     [MemoryPackable]
     public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0, IReadOnlyList<TypeRef>? TypeArgs = null, bool Unsigned = false, bool NonNull = false)
     {
-        /// <summary>`int!`, `float[32]!`, `bool!`, `word!`, `char!` (SPEC 8.11): a value type that never holds `undefined` - a parameter, field, property or
+        /// <summary>`defined int`, `defined float[32]`, `defined bool`, `defined word`, `defined char` (SPEC 8.10b): a value type that never holds `undefined` - a parameter, field, property or
         /// return value declared with it takes only a value of that kind (undefined is an ArgumentException, a value of an enum becomes its number);
         /// a field starts at 0 (false, '\0').</summary>
         public static bool CanBeNonNull(string baseName) => baseName is "int" or "float" or "bool" or "word" or "char";

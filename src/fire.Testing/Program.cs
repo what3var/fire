@@ -23375,6 +23375,137 @@ else
             print(U.Mixed())
             print(U.Narrow())
             """),
+        ("defined (SPEC 8.10b): C-Parameter und -Rueckgaben - statisch, Instanz, Rekursion, float/word/bool, ueber Interface und Lambda, Felder mit 0, lokale defined", """
+            interface IScale { defined float Scale(defined float x) }
+            class Vec : IScale {
+                defined float k = 2.5
+                defined int hits
+                defined float Scale(defined float x) { this.hits++; return x * this.k }
+                defined bool Big(defined int n) { return n > 10 }
+                defined word Mask(defined word w, defined int n) { return w & (n!word) }
+                static defined int Fib(defined int n) { if (n < 2) { return n } return Vec.Fib(n - 1) + Vec.Fib(n - 2) }
+                static defined int Mix(defined int a, defined int b, defined int c) { return a * 31 + b * 7 + c }
+                static defined float Half(defined float x) { return x / 2 }
+                static string Show(defined int n) { return "n=" + n }
+            }
+            class Base { defined int Get(defined int a) { return a + 1 } }
+            class Derived : Base { defined int Get(defined int a) { return a + 100 } }
+            enum Color { Red, Green, Blue }
+            var v = new Vec()
+            print(v.Scale(4.0) + " " + v.Scale(3) + " " + v.Big(11) + " " + v.Big(3) + " " + v.Mask(255!word, 15))
+            print(Vec.Fib(20) + " " + Vec.Half(5) + " " + Vec.Show(Color.Blue!int) + " " + v.hits)
+            IScale s = v
+            var f = x => s.Scale(x)
+            print(s.Scale(2.0) + " " + f(10.0))
+            Base b = new Derived()
+            print(b.Get(1) + " " + new Base().Get(1))
+            int acc = 0
+            for (int i = 0; i < 20000; i++) { acc = Vec.Mix(acc, i, 3) % 1000003; if (v.Big(i % 20)) { acc = acc + Vec.Fib(i % 12) } }
+            print(acc)
+            defined int d
+            defined float g
+            print(d + " " + g)
+            d = acc % 7
+            print(d)
+            """),
+        ("defined (SPEC 8.10b), #intwidth 32 / #floatwidth 32: dieselben C-Parameter", """
+            #intwidth 32
+            #floatwidth 32
+            class M {
+                static defined int Mix(defined int a, defined int b, defined int c) { return a * 31 + b * 7 + c }
+                static defined float Lerp(defined float a, defined float b, defined float t) { return a + (b - a) * t }
+                static defined int Wrap(defined int x) { return x * 65599 + 1 }
+            }
+            int acc = 0
+            for (int i = 0; i < 20000; i++) { acc = M.Mix(acc, i, 3) % 1000003 }
+            print(acc)
+            print(M.Lerp(1.0, 3.0, 0.25) + " " + M.Wrap(2000000000) + " " + M.Wrap(-7))
+            int[64] wide = 5000000000
+            print(M.Wrap(wide))
+            """),
+        ("defined (SPEC 8.10b): C-Parameter mit Einheit - gleiche Einheit direkt, cm in m und int in float umgerechnet, falsche Dimension, undefined, ueber ein Interface", """
+            interface IArea { defined float : m Side(defined float : m x) }
+            class G : IArea {
+                static defined float : m Twice(defined float : m x) { return x * 2 }
+                static defined int : mm Pad(defined int : mm x, defined int n) { return x + n * 1mm }
+                static defined float Ratio(defined float : m a, defined float : m b) { return a / b }
+                static defined float : s Time(defined float : m d, defined float : m/s v) { return d / v }
+                defined float : m Side(defined float : m x) { return x + 1m }
+            }
+            print(G.Twice(3m) + " " + G.Twice(250cm) + " " + G.Twice(2.5m))
+            print(G.Pad(5mm, 3) + " " + G.Pad(2cm, 1))
+            print(G.Ratio(1m, 50cm) + " " + G.Time(100m, 20m / 4s))
+            float : m acc = 0m
+            for (int i = 0; i < 1000; i++) { acc = G.Twice(acc / 2 + 1cm) }
+            print(acc)
+            IArea a = new G()
+            print(a.Side(30cm) + " " + new G().Side(2m))
+            any k = 3kg
+            try { print(G.Twice(k)) } catch (UnitMismatchException e) { print("mismatch " + e.message) }
+            float : m u
+            try { print(G.Twice(u)) } catch (ArgumentException e) { print(e.message) }
+            any s = "x"
+            try { print(G.Twice(s)) } catch (Exception e) { print(e.message) }
+            """),
+        ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
+            class K {
+                defined int n
+                int plain = 4
+                static defined int T(defined int x) { return x * 2 }
+                static defined float F(defined float x) { return x + 1 }
+                static defined int G(int y) { return K.T(trust y) }
+                static defined float H(float y) { return K.F(trust y) }
+                defined int P() { return K.T(trust this.plain) }
+            }
+            print(K.G(5) + " " + K.H(1.5) + " " + new K().P())
+            any a = "s"
+            try { print(K.T(trust a)) } catch (ArgumentException e) { print(e.message) }
+            int total = 0
+            for (int i = 0; i < 1000; i++) { total = total + K.G(i) }
+            print(total)
+            """),
+        ("defined (SPEC 8.10b): JSON - ein fehlendes defined-Feld ist 0, null ist die ArgumentException; Reflection prueft wie eine Zuweisung", """
+            #import "json"
+            #import "reflection"
+            class P {
+                defined int n
+                defined float : m len
+                int plain
+            }
+            var a = Json.Deserialize<P>("{\"plain\": 3}")
+            print(a.n + " " + a.len + " " + a.plain)
+            var b = Json.Deserialize<P>("{\"n\": 7, \"len\": 2}")
+            print(b.n + " " + b.len)
+            try { var c = Json.Deserialize<P>("{\"n\": null}"); print("c " + c.n) } catch (ArgumentException e) { print(e.message) }
+            try { Reflect.Set(b, "n", undefined) } catch (ArgumentException e) { print(e.message) }
+            print(Json.Serialize(b))
+            """),
+        ("defined (SPEC 8.10b): undefined, ein falscher Typ und Exceptions - an der Aufrufstelle, im Rumpf, bei Rueckgabe, Feld und Property wie in der VM", """
+            class M {
+                defined int count
+                int plain
+                defined int Count { get { return this.count } set { this.count = value } }
+                static defined int Twice(defined int x) { return x * 2 }
+                static defined int Fail(defined int n) { if (n > 3) { throw new ArgumentException("too big") } return n }
+                static defined int NoReturn(int x) { if (x > 0) { return x } }
+                static defined int Store(defined int a, int b) { a = b; return a }
+            }
+            var m = new M()
+            int u
+            any text = "x"
+            try { print(M.Twice(u)) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Twice(trust u)) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Twice(text)) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Fail(5)) } catch (ArgumentException e) { print("caught " + e.message) }
+            print(M.Fail(2) + " " + M.NoReturn(4))
+            try { print(M.NoReturn(-1)) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Store(1, u)) } catch (ArgumentException e) { print(e.message) }
+            try { m.count = u } catch (ArgumentException e) { print(e.message) }
+            try { m.Count = u } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Twice(m.plain)) } catch (ArgumentException e) { print(e.message) }
+            m.Count = 21
+            print(M.Twice(m.Count) + " " + m.count)
+            """),
         ("Felder mit typisiertem Array: jede Zuweisung typisiert (direkt, ueber any, Reflection, JSON, statisch), ein Nicht-Array ist die ArgumentException, Elemente direkt gelesen", """
             #import "json"
             #import "reflection"
