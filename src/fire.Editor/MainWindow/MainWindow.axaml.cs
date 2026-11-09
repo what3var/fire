@@ -86,6 +86,8 @@ namespace fire.Editor
             Blocks,
             /// <summary>The statistics of a native build (.stats.json, BuildStatsViewerControl), to look at.</summary>
             BuildStats,
+            /// <summary>The profile of a run (ProfileViewerControl), to look at.</summary>
+            Profile,
         }
 
         /// <summary>An open tab. `Layout` is the docking element that shows the view (the view - the editor control - stays the same when the layout is rebuilt).</summary>
@@ -178,6 +180,7 @@ namespace fire.Editor
             {
                 UpdateRunButtons();   // (Stop is grey while nothing runs)
                 tbBuildStats.IsChecked = _settings.BuildStats;
+                tbProfile.IsChecked = _settings.Profile;
             };
             // our caption buttons (see SparkDecorations in MainWindow.axaml): set explicitly, since the decorations do not see Window.Resources
             WindowDecorationsTheme = (Avalonia.Styling.ControlTheme)Resources["SparkDecorations"]!;
@@ -768,6 +771,7 @@ namespace fire.Editor
                 DocumentKind.Circuit => new CircuitEditorControl(),
                 DocumentKind.Blocks => new BlockEditorControl(),
                 DocumentKind.BuildStats => new BuildStatsViewerControl(),
+                DocumentKind.Profile => new ProfileViewerControl(),
                 _ => new ScriptEditorControl(),
             };
 
@@ -792,6 +796,8 @@ namespace fire.Editor
 
             if (doc.Design is { } design)
                 design.ShowScriptRequested += () => ShowGeneratedScript(doc);
+
+            if (view is ProfileViewerControl profileView) profileView.OpenLineRequested += OpenProfileLine;
 
             if (view is ImageViewerControl viewer)
                 viewer.EditRequested += () => { if (viewer.FilePath != null) OpenFile(viewer.FilePath, forceKind: DocumentKind.Pixel); };

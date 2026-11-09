@@ -46,15 +46,20 @@ namespace fire.Editor
         private void UpdateRuntimePanel()
         {
             bool active = _nativeRun != null || (_session.HasProgram && _session.IsStarted && !_session.IsFinished);
+            // (a profiled run that ended or was stopped - also one too short to have been seen running)
+            if (_profile != null && !active && (!_session.HasProgram || _session.IsFinished)) FinishProfile();
             if (active == _runtimeActive) return;
             _runtimeActive = active;
             _tools.TryGetValue("runtime", out var tool);
             if (active)
             {
                 _runtimeHide?.Stop();
-                _runtimeProcess = _nativeRun ?? (_session.Target as fire.Debugging.NativeDebugTarget)?.Process;
-                string what = _runtimeProcess != null ? $"native, {_session.ActiveExecutionMode ?? _session.ExecutionMode}" : $"VM, {_session.ActiveExecutionMode ?? _session.ExecutionMode}";
-                _runtimePanel.Start(_runtimeProcess, what);
+                // (a native program: its own process - also while it is debugged; on a board over its serial line there is none here)
+                var nativeTarget = _session.Target as fire.Debugging.NativeDebugTarget;
+                _runtimeProcess = _nativeRun ?? nativeTarget?.Process;
+                bool remote = _nativeRun == null && nativeTarget != null && _runtimeProcess == null;
+                string what = _runtimeProcess != null || nativeTarget != null ? $"native, {_session.ActiveExecutionMode ?? _session.ExecutionMode}" : $"VM, {_session.ActiveExecutionMode ?? _session.ExecutionMode}";
+                _runtimePanel.Start(_runtimeProcess, what, remote);
                 if (tool != null && !IsToolVisible(tool))
                 {
                     _runtimeAutoShown = true;
@@ -67,11 +72,70 @@ namespace fire.Editor
             catch (InvalidOperationException) { }
             _runtimePanel.Stop(exitCode);
             _runtimeProcess = null;
+            FinishProfile();
             if (!_runtimeAutoShown || tool == null) return;
             _runtimeHide ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
             _runtimeHide.Tick -= RuntimeHideTick;
             _runtimeHide.Tick += RuntimeHideTick;
             _runtimeHide.Start();
+        }
+
+        // The profiler (Profile switch, fire.Runtime.LineProfile): a run in the VM counts its lines; when it has ended, the Profile tab shows them (ProfileReport).
+        private fire.Runtime.LineProfile? _profile;
+        private string _profileWhat = "";
+        private System.Diagnostics.Stopwatch _profileClock = new();
+
+        private void Profile_Click(object? sender, RoutedEventArgs e)
+        {
+            _settings.Profile = !_settings.Profile;
+            tbProfile.IsChecked = _settings.Profile;
+            _settings.Save();
+            UpdateStatus(_settings.Profile ? "Runs in the VM are profiled: the Profile tab opens when the program has ended." : "Runs without profiling.");
+        }
+
+        /// <summary>A program for the VM is compiled: with the Profile switch on, its run counts into a new profile.</summary>
+        private void BeginProfile(string what)
+        {
+            fire.Runtime.LineProfile.Active = _profile = _settings.Profile && _session.Target is fire.Debugging.VmDebugTarget ? new fire.Runtime.LineProfile() : null;
+            _profileWhat = what;
+            _profileClock = System.Diagnostics.Stopwatch.StartNew();
+        }
+
+        /// <summary>The profiled run has ended: its report in the Profile tab.</summary>
+        private void FinishProfile()
+        {
+            var profile = _profile;
+            if (profile == null) return;
+            _profile = null;
+            if (ReferenceEquals(fire.Runtime.LineProfile.Active, profile)) fire.Runtime.LineProfile.Active = null;
+            if ((_session.Target as fire.Debugging.VmDebugTarget)?.Session?.CompiledProgram is not { } program) return;
+            var files = _session.SourceFiles;
+            var report = ProfileReport.Build(_profileWhat, _profileClock.Elapsed.TotalSeconds, profile.Snapshot(), fire.Runtime.LineProfile.ExecutableLines(program),
+                _session.FirstUserSourceIndex, i =>
+                {
+                    string? path = i < files.Count ? files[i] : null;
+                    if (path != null && _documents.FirstOrDefault(d => d.View.FilePath != null && string.Equals(Path.GetFullPath(d.View.FilePath), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase)) is { } open)
+                        return (path, open.View.GetText());
+                    if (path != null && File.Exists(path))
+                    {
+                        try { return (path, File.ReadAllText(path)); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return (path, null); }
+                    }
+                    return (path, path == null && i == _session.FirstUserSourceIndex ? _debugDocument?.View.GetText() : null);
+                });
+            string json = report.ToJson();
+            var tab = _documents.FirstOrDefault(d => d.Kind == DocumentKind.Profile);
+            if (tab != null) { tab.View.ResetTo(json, null); Activate(tab); }
+            else CreateDocument(DocumentKind.Profile, json, null, untitledName: "Profile");
+        }
+
+        /// <summary>A line in the Profile tab was clicked: the file (or the program's unsaved document) at that line.</summary>
+        private void OpenProfileLine(string? path, int line)
+        {
+            var doc = path != null ? OpenFile(path) : _debugDocument;
+            if (doc == null) return;
+            Activate(doc);
+            Dispatcher.UIThread.Post(() => doc.View.GoToLine(line), DispatcherPriority.Loaded);
         }
 
         private void RuntimeHideTick(object? sender, EventArgs e)
@@ -338,6 +402,7 @@ namespace fire.Editor
             EndBuildJob(job, BuildOutcome.Succeeded);
 
             _session.UpdateBreakpoints(BreakpointLocations());   // now with the source indexes of this program
+            BeginProfile(input.What);
             UpdateStatus(project != null ? $"Compiled {project.Name} ({plan!.Sources.Count} file{(plan.Sources.Count == 1 ? "" : "s")}) - ready to step, continue or run to the end." : "Compiled - ready to step, continue or run to the end.");
             _debugger.Refresh(BreakpointDescriptions());
             return true;

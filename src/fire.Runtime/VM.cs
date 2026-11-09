@@ -1358,33 +1358,49 @@ namespace fire.Runtime
             var last = CurrentLocation;
             Chunk? rangeChunk = null;
             int rangeStart = 0, rangeEnd = 0, counter = 0;
+            // (the profiler of a debug run: the instructions of each line and how often a line is entered, LineProfile)
+            var profile = LineProfile.Active;
+            long ran = 0;
 
-            while (true)
+            try
             {
-                var op = (OpCode)ReadByte();
-                if (op == OpCode.Halt) return FinishAtHalt();
-                Step(op);
-                if (!AfterStep()) return false;
-
-                if ((++counter & 255) == 0 && isPauseRequested()) return true;
-
-                if (!ReferenceEquals(_currentChunk, rangeChunk) || _ip < rangeStart || _ip >= rangeEnd)
+                while (true)
                 {
-                    var location = _currentChunk.GetLocationRange(_ip, out rangeStart, out rangeEnd);
-                    rangeChunk = _currentChunk;
-                    if (location != last)
+                    var op = (OpCode)ReadByte();
+                    if (op == OpCode.Halt) return FinishAtHalt();
+                    Step(op);
+                    ran++;
+                    if (!AfterStep()) return false;
+
+                    if ((++counter & 255) == 0 && isPauseRequested()) return true;
+
+                    if (!ReferenceEquals(_currentChunk, rangeChunk) || _ip < rangeStart || _ip >= rangeEnd)
                     {
-                        last = location;
-                        if (breakpoints.Contains(location)) return true;
+                        var location = _currentChunk.GetLocationRange(_ip, out rangeStart, out rangeEnd);
+                        rangeChunk = _currentChunk;
+                        if (location != last)
+                        {
+                            if (profile != null) { profile.Add(last, 0, ran); profile.Add(location, 1, 0); }
+                            ran = 0;
+                            last = location;
+                            if (breakpoints.Contains(location)) return true;
+                        }
                     }
                 }
             }
+            finally
+            {
+                if (profile != null && ran > 0) profile.Add(last, 0, ran);
+            }
         }
+
+        private static readonly HashSet<(int SourceIndex, int Line)> NoBreakpoints = new();
 
         /// <summary>Runs until the program end or a pause request ("Run to end"). true = stopped, false = ended.</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
         public bool RunUntilEnd(Func<bool> isPauseRequested)
         {
+            if (LineProfile.Active != null) return RunUntilBreakpoint(NoBreakpoints, isPauseRequested);   // (profiling: the loop that knows the lines)
             if (IsHalted) return false;
             if (!_steppingStarted) BeginStepping();
 

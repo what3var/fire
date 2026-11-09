@@ -104,6 +104,9 @@ namespace fire.Projects
         /// <summary>Native builds write their statistics (`--stats`) and open them in a viewer afterwards (the Statistics button of the build tool strip).</summary>
         public bool BuildStats { get; set; }
 
+        /// <summary>Runs in the VM are profiled (the Profile switch of the run tool strip): afterwards a tab shows how often each line ran and which never did.</summary>
+        public bool Profile { get; set; }
+
         /// <summary>The ESP-IDF folder for Run and Debug on an ESP32 (null: the environment variable IDF_PATH).</summary>
         public string? IdfPath { get; set; }
 

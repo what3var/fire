@@ -279,6 +279,26 @@ static partial class DebuggerTests
         }
 
         {
+            // the profiler (spark's Profile switch): a run counts how often each line is entered and the instructions in it; lines with code that never ran are fallow
+            VM.ResetTerminateForTests();
+            using var target = VmDebugTarget.Build(new[] { "var t = 0\nfor (var i = 0; i < 100; i++) {\n    t = t + i\n}\nif (t < 0) {\n    print(\"never\")\n}\nprint(t)\n" }, VmExecutionMode.Debug);
+            int src = target.FirstUserSourceIndex;
+            var profile = new LineProfile();
+            LineProfile.Active = profile;
+            bool ended;
+            try { ended = !target.MainThread.RunUntilEnd(() => false); }
+            finally { LineProfile.Active = null; }
+            var counts = profile.Snapshot();
+            var lines = LineProfile.ExecutableLines(target.Session!.CompiledProgram);
+            long Hits(int line) => counts.TryGetValue((src, line), out var c) ? c.Hits : 0;
+            long Work(int line) => counts.TryGetValue((src, line), out var c) ? c.Instructions : 0;
+            Check(ended && Hits(3) == 100 && Work(3) > Work(8) && Hits(6) == 0 && Work(6) == 0 && lines.Contains((src, 6)) && Hits(8) == 1,
+                "Profiler: Zeilen zaehlen (Schleifenrumpf 100-mal, mehr Befehle als eine Zeile ausserhalb), die nie gelaufene Zeile hat Code und keine Zaehlung",
+                $"{ended} 3:{Hits(3)}/{Work(3)} 6:{Hits(6)}/{Work(6)} 8:{Hits(8)}/{Work(8)} {lines.Contains((src, 6))}");
+            VM.ResetTerminateForTests();
+        }
+
+        {
             // threads: `fire` announces a thread of its own (it runs only when the subscriber drives it); its output names it
             VM.ResetTerminateForTests();
             var output = new ConcurrentQueue<(IDebugThread? Thread, string Text)>();

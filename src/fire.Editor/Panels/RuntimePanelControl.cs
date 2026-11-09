@@ -33,6 +33,7 @@ namespace fire.Editor
         private readonly ScrollViewer _eventsScroll;
 
         private Process? _process;            // the native program; null: the VM in spark's own process
+        private bool _remote;                 // a program on a board (debugged over its serial line): no process here to measure
         private Stopwatch _clock = new();
         private TimeSpan _lastCpu;
         private DateTime _lastSample;
@@ -88,9 +89,10 @@ namespace fire.Editor
         }
 
         /// <summary>A run begins: `process` is the native program (null: the virtual machine, which runs in spark), `what` says which (shown at the top).</summary>
-        public void Start(Process? process, string what)
+        public void Start(Process? process, string what, bool remote = false)
         {
             _process = process;
+            _remote = remote;
             _clock = Stopwatch.StartNew();
             _events.Clear();
             _cpu.Clear(); _memory.Clear();
@@ -100,7 +102,8 @@ namespace fire.Editor
             _lastCpu = CpuTime();
             _lastSample = DateTime.UtcNow;
             _state.Text = $"Running: {what}";
-            _source.Text = process != null ? $"the process of the program (pid {SafePid(process)})" : "the virtual machine runs inside spark: the numbers are those of spark's process";
+            _source.Text = remote ? "the program runs on a board: no CPU or memory of it here, only what happens"
+                : process != null ? $"the process of the program (pid {SafePid(process)})" : "the virtual machine runs inside spark: the numbers are those of spark's process";
             IsWatching = true;
             Event($"started ({what})");
             _timer.Start();
@@ -164,6 +167,12 @@ namespace fire.Editor
 
         private void Sample()
         {
+            if (_remote)
+            {
+                _cpuText.Text = _memoryText.Text = "-";
+                _numbers.Text = $"running {Duration(_clock.Elapsed)}  ·  {_threads} thread{(_threads == 1 ? "" : "s")}  ·  {_outputLines} line{(_outputLines == 1 ? "" : "s")} of output";
+                return;
+            }
             var now = DateTime.UtcNow;
             var cpu = CpuTime();
             double wall = (now - _lastSample).TotalMilliseconds;
