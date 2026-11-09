@@ -294,6 +294,7 @@ namespace fire.Editor
                     return true;
                 };
             _debugger.Refresh(BreakpointDescriptions());
+            BeginProfile(input.What);   // (the Profile switch: the program counts its lines; the counts come with its end)
             _isBusy = false;
             BeginStep();
             switch (first)
