@@ -27621,6 +27621,8 @@ else
                 && System.Text.RegularExpressions.Regex.IsMatch(icpp, @"= icall_IShape_Area_1\(s\d+, s\d+\);"), body.Length > 0 ? body : icpp);
         }
 
+        // (the thread cases for the run under ThreadSanitizer below - before the filter: that test has a title of its own)
+        var natThreadCases = natCases.Where(c => c.Name.StartsWith("Threads:", StringComparison.Ordinal) || c.Name.StartsWith("[NoCopy] Threads:", StringComparison.Ordinal)).ToArray();
         natCases = natCases.Where(c => TestSelected(c.Name)).ToArray();
         // First the VM runs the cases here, one after the other and alone, as before: the precision of float (Value.SingleFloats) and the handlers of
         // `terminate` are process-wide while a program runs (the compiler must not make its constants while a VM with 32-bit floats runs), and some thread
@@ -27685,6 +27687,39 @@ else
                 CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
             }
         natPipeline.Join();
+
+        // Tasks step 1 (docs/ROADMAP_TASKS.md): the thread cases built with ThreadSanitizer instead of ASan (the two do not go together). With the GIL no data
+        // race may show up; without it (FIRE_NO_GIL) the races are the work list of steps 1b-1f - from step 1g on that build is the one checked here.
+        const string tsanTitle = "ThreadSanitizer: die Thread-Faelle laufen ohne Data Race (mit GIL)";
+        if (TestSelected(tsanTitle))
+        {
+            string tsan = "-fsanitize=thread -g";
+            {
+                string probeFile = Path.Combine(workDir, "tsanprobe.c");
+                File.WriteAllText(probeFile, "#include <pthread.h>\nstatic int n;\nstatic void* run(void* a) { (void)a; n++; return 0; }\nint main(void) { pthread_t t; pthread_create(&t, 0, run, 0); pthread_join(t, 0); return n - 1; }\n");
+                var (_, probeErr, probeExit) = TestProcess.Run(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-pthread {tsan} \"{probeFile}\" -o \"{probeFile}.bin\"", workDir);
+                if (probeExit != 0 || TestProcess.Run(probeFile + ".bin", "", workDir).Exit != 0) tsan = "";
+            }
+            if (tsan.Length == 0) Console.WriteLine("(ThreadSanitizer nicht verfuegbar - die Thread-Faelle laufen nicht darunter)");
+            else
+            {
+                var tsanReports = new System.Collections.Concurrent.ConcurrentBag<(int Index, string Text)>();
+                Parallel.For(0, natThreadCases.Length, new ParallelOptions { MaxDegreeOfParallelism = TestJobs.Count }, i =>
+                {
+                    var c = natThreadCases[i];
+                    fire.Native.NativeSources generated;
+                    try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
+                    catch (fire.Native.NativeNotSupportedException) { return; }
+                    string exe = Path.Combine(workDir, $"tsan{i}.bin");
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"tsan{i}", $"-pthread {NativeTestBuild.Opt} {tsan}", exe, out int buildExit);
+                    if (buildExit != 0) { tsanReports.Add((i, $"{c.Name}: C/C++-Compiler: {build}")); return; }
+                    var (_, stderr, _) = TestProcess.Run(exe, "", workDir, environment: new Dictionary<string, string?> { ["TSAN_OPTIONS"] = "halt_on_error=0 report_signal_unsafe=0" }, timeoutMs: 120_000);
+                    int at = stderr.IndexOf("WARNING: ThreadSanitizer", StringComparison.Ordinal);
+                    if (at >= 0) tsanReports.Add((i, $"{c.Name}:\n{stderr.Substring(at, Math.Min(4000, stderr.Length - at))}"));
+                });
+                CheckNat(tsanTitle, tsanReports.IsEmpty, string.Join("\n\n", tsanReports.OrderBy(r => r.Index).Select(r => r.Text)));
+            }
+        }
 
         // (the trim cases and the TLS case under Wine at the same time)
         TestJobs.Concurrently(() =>

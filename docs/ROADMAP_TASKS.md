@@ -21,7 +21,7 @@ What the GIL protects today, and what replaces it:
 | state of a strand (`g_unwind`, pool, handlers, ...) | fine, already `thread_local` (later: per task, section 4) | - |
 | objects, owner lists | fine, every object belongs to exactly one thread | - |
 | **globals of the main program** (threads read them directly) | torn values, use after free | reader/writer lock as in the VM; the objects of the global scope are already marked (flag 64, `domainLink`) |
-| **reference counts** of strings (`rc++`, not atomic) | strings cross threads (globals, `taking`, results) | **biased counting**: plain counts in the owning thread; a string that crosses a thread boundary gets a "shared" bit and counts atomically from then on; literals stay immortal |
+| **reference counts** of strings (`rc++`, not atomic) | strings cross threads (globals, `taking`, results) | **a string belongs to one thread**: its counts stay plain; where it crosses a thread boundary (`taking`, `fire` arguments, `sync`, messages, results, exceptions of a thread) it is **copied** like the objects. Only the global scope is shared: a string stored there (a global, a field of an object of the global scope, flag 64) once the first `fire` ran is marked *shared* and counts atomically. A lock alone is not enough there, because a count taken under the lock is let go after it; literals stay immortal |
 | slot table of generations (`g_slots`) | `realloc` while others read, one free list | segments that never move, free slots cached per thread, generations read and written atomically |
 | global maps: probes, mailboxes, `originOf`/`copiesOf`, run-time units, host services, thread list | changed at the same time | one small mutex each (rarely used); probes may move to the object later |
 | natives of packages (today under the library's lock) | not written for parallel calls | one lock per package by default; a package that declares itself thread safe in the ABI runs without it |
@@ -37,7 +37,7 @@ The state of a thread is already `thread_local` (`FIRE_THREAD_VARS`: unwinding, 
 |---|---|---|
 | `g_enums`, `g_unitTo/From`, `g_textUnits`, `g_classDescs`, `g_resources`, `g_argc/argv`, `g_enumerateItems`, `g_defaultTimeoutTicks`, `g_terminateFn`, `g_globalJobs` | no - set before `fire_main` (`fire_init`, unit init) | nothing (read-only); an assertion in debug builds that they are not written after the first thread started |
 | `g_slots` (generations, free list, `born`/`freed`) | yes - every object, array, buffer | 1c: segments that never move (a table of segment pointers), free slots cached per thread and refilled in batches under a mutex, generations as atomics |
-| reference counts (`retain`/`release`, `rc++`) | yes - strings cross threads (globals, `taking`, results, messages) | 1b: biased counting - a "shared" bit set where a string leaves its thread (copy into another domain, global read, message); shared counts atomically |
+| reference counts (`retain`/`release`, `rc++`) | yes - strings cross threads (globals, `taking`, results, messages) | 1b: strings are copied at the thread boundary (like objects); strings of the global scope are marked shared and count atomically (`retain`: one branch on the bit) |
 | `g_ud`, `g_udCount` (units made at run time) | yes, rarely | 1d: a mutex for adding; readers see a published count (release/acquire) |
 | `g_fieldPtrs`, `g_targsHead`, `g_probeNodes`/`g_probeNextId`, `g_pluginRf`, `g_hostServices`, `g_threadsCatches` | yes, rarely | 1d: one small mutex each |
 | `g_mailboxes`, `g_originOf`/`g_copiesOf` (actors, copies across threads) | yes | 1d: one mutex each (the maps are only touched at copies and messages) |
@@ -52,7 +52,7 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    *Begun:* `FIRE_NO_GIL` makes `gilAcquire`/`gilRelease` empty. With the GIL a program with two fire threads, `taking` and `sync global` is clean under
    ThreadSanitizer (gcc, 4 cores); without it ThreadSanitizer reports 9 races, all where the inventory expects them: the queue of section requests
    (`reqPush`/`reqPop`/`drainQueue`/`sectionAcquire`/`sectionRelease`, 1d) and the slot table (`slotAcquire`, `allocArr`, 1c).
-2. **1b** biased reference counting.
+2. **1b** strings per thread: copied at the thread boundary, shared (atomic) only in the global scope.
 3. **1c** the slot table in segments.
 4. **1d** the maps and lists with their mutexes.
 5. **1e** the reader/writer lock of the globals.
@@ -76,7 +76,7 @@ var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for
   **thrown again at the `await`**, with its type; `catch threads` stays for `fire`.
 * **Lending:** while a direct `await` waits, the caller is stopped and nobody else can reach its objects (no shared memory) - also on several cores.
   So the awaited call may use `this` and the arguments **without a copy**; a copy only on request (`taking`, `flat`). Objects of the global scope keep
-  their lock. With several calls at once lending is only allowed when they share no objects; otherwise they get copies.
+  their lock. With several calls at once lending is only allowed when they share no objects; otherwise they get copies. Strings lent to several calls running at once are copied for all but one (their counts are plain, section 2).
 * **Several at once:** `await [f(), g()]`, written like an array literal, starts all calls, waits for all and returns an array of the results in the
   order of the brackets. Its element type is the common type of the results (as for an array literal), `any` when they have nothing close in common.
   When several fail, all are waited for and the first exception in the order of the brackets is thrown.
