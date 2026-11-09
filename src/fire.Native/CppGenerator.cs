@@ -2321,7 +2321,7 @@ namespace fire.Native
                 sb.AppendLine("        case K_Array: case K_Buffer: case K_String: {");   // (a string: the enumerator indexes it, `text[i]` is a char)
                 sb.AppendLine("            bool ok;");
                 sb.AppendLine("            Value count = lengthOf(self, &ok);");
-                sb.AppendLine($"            Value e = newObject({info.Id}, {SlotCount(info)}, list);");
+                sb.AppendLine($"            Value e = {NewObjectCall(info, "list")};");
                 sb.AppendLine($"            {Nested($"{ctor.Name}(e, self, count);")}");   // (the VM makes it nested)
                 sb.AppendLine("            return e;");
                 sb.AppendLine("        }");
@@ -2674,19 +2674,19 @@ namespace fire.Native
                 var destroyedClass = _classes.GetValueOrDefault("DestroyedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DestroyedException");
                 var divideClass = _classes.GetValueOrDefault("DivideByZeroException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DivideByZeroException");
                 sb.AppendLine("Value makeDivideError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({divideClass.Id}, {SlotCount(divideClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(divideClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[divideClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 sb.AppendLine("Value makeDestroyedError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({destroyedClass.Id}, {SlotCount(destroyedClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(destroyedClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[destroyedClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 if (_usesReflection && _classes.GetValueOrDefault("ReflectionException") is { } reflectClass)
                 {
                     sb.AppendLine("Value makeReflectError(Value message) {");
-                    sb.AppendLine($"    Value o = newObject({reflectClass.Id}, {SlotCount(reflectClass)}, g_globalOwn);");
+                    sb.AppendLine($"    Value o = {NewObjectCall(reflectClass, "g_globalOwn")};");
                     sb.AppendLine($"    {Nested($"{_funcByProto[reflectClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                     sb.AppendLine("    return o;");
                     sb.AppendLine("}");
@@ -2698,18 +2698,18 @@ namespace fire.Native
                 }
                 var accessClass = _classes.GetValueOrDefault("AccessDeniedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class AccessDeniedException");
                 sb.AppendLine("Value makeAccessError(Value message) {");
-                sb.AppendLine($"    Value o = newObject({accessClass.Id}, {SlotCount(accessClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(accessClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[accessClass.Rc.FindConstructor(1)!].Name}(o, message);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 var unitClass = _classes.GetValueOrDefault("UnitMismatchException") ?? throw new NativeNotSupportedException("exceptions need the prelude class UnitMismatchException");
                 sb.AppendLine("Value makeUnitError(Value message, Value expected, Value actual) {");
-                sb.AppendLine($"    Value o = newObject({unitClass.Id}, {SlotCount(unitClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(unitClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[unitClass.Rc.FindConstructor(3)!].Name}(o, message, expected, actual);")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 sb.AppendLine("Value makeIndexError(Value message, int64_t index, int64_t length) {");
-                sb.AppendLine($"    Value o = newObject({indexClass.Id}, {SlotCount(indexClass)}, g_globalOwn);");
+                sb.AppendLine($"    Value o = {NewObjectCall(indexClass, "g_globalOwn")};");
                 sb.AppendLine($"    {Nested($"{_funcByProto[indexClass.Rc.FindConstructor(3)!].Name}(o, message, Int(index), Int(length));")}");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
@@ -2721,7 +2721,7 @@ namespace fire.Native
                     var errorClass = _classes.GetValueOrDefault(name);
                     if (errorClass == null || errorClass.Rc.FindConstructor(1) is not { ParamCount: 1 } ctor) continue;
                     sb.AppendLine($"    if (strcmp(cls, {CString(name)}) == 0) {{");
-                    sb.AppendLine($"        Value o = newObject({errorClass.Id}, {SlotCount(errorClass)}, g_globalOwn);");
+                    sb.AppendLine($"        Value o = {NewObjectCall(errorClass, "g_globalOwn")};");
                     sb.AppendLine($"        {Nested($"{_funcByProto[ctor].Name}(o, message);")}");
                     sb.AppendLine("        return o;");
                     sb.AppendLine("    }");
@@ -2785,8 +2785,9 @@ namespace fire.Native
                 sb.AppendLine($"static void {destroy}(Obj* o) {{ {string.Join(" ", chain)} }}");
             }
             string toString = cls.Rc.FindMethodWithAccess("ToString", 0).Proto is { ParamCount: 0 } m ? _funcByProto[m].Name : "NULL";
-            int message = _usesExceptions && cls.Rc.FieldIndex.TryGetValue("message", out int mi) ? mi : -1;
-            int ticks = _needsTimeObj && cls.Rc.FieldIndex.TryGetValue("ticks", out int ti) ? ti : -1;
+            // (the slots of the fields - a packed field before them takes none)
+            int message = _usesExceptions && cls.Rc.FieldIndex.TryGetValue("message", out int mi) ? FieldPlace(cls.Rc, mi).Slot : -1;
+            int ticks = _needsTimeObj && cls.Rc.FieldIndex.TryGetValue("ticks", out int ti) ? FieldPlace(cls.Rc, ti).Slot : -1;
             string types = "NULL";
             if (_usesExceptions && excTypes)
             {

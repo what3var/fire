@@ -2300,6 +2300,40 @@ FIRE_FN int32_t nvGetI(const Value* slot, int half) { int32_t x; memcpy(&x, (con
 FIRE_FN void nvPutI(Value* slot, int half, int32_t x) { memcpy((char*)slot + (half ? 8 : 0) + offsetof(NValue, u), &x, sizeof x); }
 FIRE_FN float nvGetF(const Value* slot, int half) { float x; memcpy(&x, (const char*)slot + (half ? 8 : 0) + offsetof(NValue, u), sizeof x); return x; }
 FIRE_FN void nvPutF(Value* slot, int half, float x) { memcpy((char*)slot + (half ? 8 : 0) + offsetof(NValue, u), &x, sizeof x); }
+/* Where a field lives in an object (FirePlace; for those that do not know the layout by heart - JSON, the debugger): a Value slot, the half of a narrow slot
+ * (half >= 0), or a packed C number behind the slots (raw: its kind - FIRE_RAW_INT FireInt, _REAL Real, _BOOL a byte, _WORD FireWord - at byte `off`
+ * of objRaw, in the static unit `unit`). */
+typedef struct FirePlace { uint16_t slot; int8_t half; uint8_t raw; uint16_t off; uint32_t unit; } FirePlace;
+#define FIRE_RAW_INT 1
+#define FIRE_RAW_REAL 2
+#define FIRE_RAW_BOOL 3
+#define FIRE_RAW_WORD 4
+/* The packed fields, as Values. */
+FIRE_FN Value rawGet(Obj* o, uint8_t raw, uint16_t off, uint32_t unit) {
+    const char* r = objRaw(o) + off;
+    switch (raw) {
+        case FIRE_RAW_INT: { FireInt x; memcpy(&x, r, sizeof x); return Int(x, unit); }
+        case FIRE_RAW_REAL: { Real x; memcpy(&x, r, sizeof x); return Float(x, unit); }
+        case FIRE_RAW_BOOL: return Bool(*r != 0);
+        default: { FireWord x; memcpy(&x, r, sizeof x); return WordV((uint64_t)x); }
+    }
+}
+/* Stores a Value of the field's kind (its declaration has checked it) into a packed field. */
+FIRE_FN void rawSet(Obj* o, uint8_t raw, uint16_t off, Value v) {
+    char* r = objRaw(o) + off;
+    switch (raw) {
+        case FIRE_RAW_INT: { FireInt x = (FireInt)v.i; memcpy(r, &x, sizeof x); break; }
+        case FIRE_RAW_REAL: { Real x = v.kind == K_Float ? (Real)v.f : (Real)v.i; memcpy(r, &x, sizeof x); break; }
+        case FIRE_RAW_BOOL: *r = (char)(v.i != 0); break;
+        default: { FireWord x = (FireWord)v.w; memcpy(r, &x, sizeof x); break; }
+    }
+}
+FIRE_FN Value placeGet(Obj* o, const FirePlace* p) {
+    if (p->raw) return rawGet(o, p->raw, p->off, p->unit);
+    if (p->half >= 0) return nvGet(&objFields(o)[p->slot], p->half);
+    return objFields(o)[p->slot];
+}
+
 /* The part of an object that most objects never need: the list of what it owns and its type arguments. */
 typedef struct ObjExt { OwnList owned; TArgs targs; } ObjExt;
 FIRE_FN ObjExt* objExt(Obj* o) {
@@ -7610,6 +7644,7 @@ FIRE_FN void syncFields(Obj* src, Obj* tgt, bool flat) {
         objFields(tgt)[i] = n;
         release(t);
     }
+    if (src->nraw && src->nraw == tgt->nraw) memcpy(objRaw(tgt), objRaw(src), src->nraw);   /* (the packed fields: numbers) */
 }
 
 /* The walk of syncFields without writing anything (`[NoCopy]`, SPEC 5.12): case A of anything that reaches an instance of a `[NoCopy]` class, and case C of a

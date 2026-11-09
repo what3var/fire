@@ -409,7 +409,7 @@ namespace fire.Native
                     string guard = CheckAccess && access != AccessModifier.Public
                         ? $"if (!{AllowedExpr(rc, access)}) return {(LibraryRole ? "rfFail" : "accessDeniedNew")}({CStr($"The constructor of '{rc.Name}' is {DescribeAccess(access)} and cannot be called from here.")}); "
                         : "";
-                    byArgc.Add($"            case {argc}: {{ {guard}Value o = newObject({ClassIdExpr(info)}, {info.Fields.Count}, list); {pre}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); ctorEnd(o); return o; }}");
+                    byArgc.Add($"            case {argc}: {{ {guard}Value o = {NewObjectCall(info, "list")}; {pre}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); ctorEnd(o); return o; }}");
                 }
             }
             return byArgc;
@@ -785,7 +785,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             var arms = new List<(int, string)>();
             foreach (var cls in _classList)
             {
-                if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) arms.Add((cls.Id, $"return objFields(o)[{index}];"));
+                if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) arms.Add((cls.Id, $"return {FieldRead(cls.Rc, index, "o")};"));
                 else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) arms.Add((cls.Id, $"{{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}"));
             }
             sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{MergedCases(arms)}        default: return Undef();\n    }}\n}}");

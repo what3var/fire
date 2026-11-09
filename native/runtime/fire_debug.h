@@ -22,7 +22,7 @@ typedef struct DbgLevel { int32_t parent; uint8_t functionTop; uint16_t count; c
 typedef struct DbgFunc { const char* name; const DbgLevel* levels; } DbgFunc;
 typedef struct DbgGlobal { const char* name; Value* slot; } DbgGlobal;          /* by global slot (slot null: no variable) */
 typedef struct DbgSource { const char* file; const char* hash; } DbgSource;     /* by source index (null: the prelude, no file) */
-typedef struct DbgClass { const char* name; uint32_t nfields; const char* const* fields; } DbgClass;
+typedef struct DbgClass { const char* name; uint32_t nfields; const char* const* fields; const FirePlace* places; } DbgClass;   /* (places: where each field lives - NULL when field i is slot i) */
 typedef struct DbgProgram {
     const DbgSource* sources; int32_t nsources; int32_t firstUser;
     const DbgGlobal* globals; int32_t nglobals;
@@ -845,6 +845,7 @@ static const DbgLevel* dbgThreadGlobals(DbgThread* t, DbgFrame** bottom) {
 
 /* Resolves a ref (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Werte"): the slot of the value, or null with a reason. `thread` is the thread a `l:`/`t:` ref names. */
 static Value* dbgResolveField(const char* ref, const char** error, DbgThread** thread, Value* object, long* field);
+static Value g_dbgScratch;   /* a packed field, read for the debugger (dbgResolveField) */
 static Value* dbgResolve(const char* ref, const char** error, DbgThread** thread) {
     Value object;
     long field;
@@ -904,7 +905,15 @@ static Value* dbgResolveField(const char* ref, const char** error, DbgThread** t
         Value v = *slot;
         if (!dbgAlive(v)) { *error = "the value is gone"; return NULL; }
         *field = -1;
-        if (v.kind == K_Class && k >= 0 && (uint32_t)k < objAt(v)->nfields) { slot = &objFields(objAt(v))[k]; *object = v; *field = k; }
+        const DbgClass* kc = v.kind == K_Class ? dbgClassOf(objAt(v)->cls) : NULL;
+        if (kc && kc->places && k >= 0 && (uint32_t)k < kc->nfields) {
+            /* (a field by its place: a packed one is read into a copy - `set` writes it through the setter) */
+            const FirePlace* pl = &kc->places[k];
+            if (pl->raw || pl->half >= 0) { g_dbgScratch = placeGet(objAt(v), pl); slot = &g_dbgScratch; }
+            else slot = &objFields(objAt(v))[pl->slot];
+            *object = v; *field = k;
+        }
+        else if (v.kind == K_Class && k >= 0 && (uint32_t)k < objAt(v)->nfields) { slot = &objFields(objAt(v))[k]; *object = v; *field = k; }
         else if (v.kind == K_Array && k >= 0 && (uint32_t)k < arrOf(v)->length) slot = &arrItems(arrOf(v))[k];
         else { *error = "the value is gone"; return NULL; }
     }
@@ -990,6 +999,11 @@ static void dbgRunTask(DbgThread* t) {
             return;
         }
         nv = *slot;
+        if (slot == &g_dbgScratch) {
+            /* (a packed field: its new value from its place) */
+            const DbgClass* sc = dbgClassOf(asObj(object)->cls);
+            nv = placeGet(asObj(object), &sc->places[field]);
+        }
     }
     else {
         retain(nv);
@@ -1102,12 +1116,13 @@ static void dbgWriteChildren(DbgBuf* b, Value v, const char* ref) {
     if (v.kind == K_Class) {
         Obj* o = objAt(v);
         const DbgClass* cls = dbgClassOf(o->cls);
-        for (i = 0; i < o->nfields; i++) {
+        uint32_t n = cls && cls->places ? cls->nfields : o->nfields;   /* (packed fields: by their places) */
+        for (i = 0; i < n; i++) {
             char name[32];
             if (i) dbgPut(b, ",");
             snprintf(child, sizeof child, "%s/%u", ref, (unsigned)i);
             if (!cls || i >= cls->nfields) snprintf(name, sizeof name, "(field %u)", (unsigned)i);
-            dbgPutValue(b, cls && i < cls->nfields ? cls->fields[i] : name, objFields(o)[i], child);
+            dbgPutValue(b, cls && i < cls->nfields ? cls->fields[i] : name, cls && cls->places ? placeGet(o, &cls->places[i]) : objFields(o)[i], child);
         }
     }
     else if (v.kind == K_Array) {

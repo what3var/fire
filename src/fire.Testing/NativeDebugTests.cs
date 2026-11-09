@@ -874,6 +874,42 @@ static class NativeDebugTests
             return (ok, detail + c.Output + c.Errors);
         });
 
+        // packed objects (docs/spec/NATIVE_BACKEND.md "Gepackte Objekte"): `defined` fields are C numbers behind the slots - the debugger shows and sets them by their places
+        Check("expand und set: gepackte Felder (defined) zwischen Value-Feldern - in der Reihenfolge der Felder, set ueber den Setter", () =>
+        {
+            const string script = "class P {\n    defined int n = 1\n    string name = \"p\"\n    defined float : m len\n    int x = 3\n}\nvar p = new P()\nprint(p.n)\nprint(p.n + \" \" + p.len + \" \" + p.name + \" \" + p.x)\n";
+            string? exe = Build(script, cxx, workDir, "dbgpacked", flags, out string error);
+            if (exe == null) return (false, error);
+            using var c = NativeDebugClient.Launch(exe, workDir);
+            int first = c.Hello.GetProperty("firstUserSource").GetInt32(), main = c.Hello.GetProperty("mainThread").GetInt32();
+            c.NextEvent("stopped");
+            c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 9 } } });
+            c.Request("continue", new() { ["thread"] = main });
+            var stop = c.NextEvent("stopped");
+            var p = Find(c.Request("globals").GetProperty("variables"), "p");
+            var children = c.Request("expand", new() { ["ref"] = p.GetProperty("ref").GetString() }).GetProperty("children");
+            var detail = new StringBuilder($"{stop}\n{children}\n");
+            bool ok = stop.GetProperty("line").GetInt32() == 9
+                && string.Join(",", children.EnumerateArray().Select(v => v.GetProperty("name").GetString() + "=" + v.GetProperty("display").GetString())) == "n=1,name=p,len=0m,x=3";
+            string Set(string reference, string literal)
+            {
+                var reply = c.Request("set", new() { ["thread"] = main, ["ref"] = reference, ["value"] = literal });
+                detail.Append(reply).Append('\n');
+                return NativeDebugClient.Ok(reply) ? reply.GetProperty("value").GetProperty("display").GetString()! : "error";
+            }
+            ok &= Set(children[0].GetProperty("ref").GetString()!, "7") == "7";
+            ok &= Set(children[2].GetProperty("ref").GetString()!, "2.5") == "2.5m";
+            ok &= Set(children[0].GetProperty("ref").GetString()!, "undefined") == "error";   // (defined: undefined does not go in)
+            var again = c.Request("expand", new() { ["ref"] = p.GetProperty("ref").GetString() }).GetProperty("children");
+            ok &= string.Join(",", again.EnumerateArray().Select(v => v.GetProperty("name").GetString() + "=" + v.GetProperty("display").GetString())) == "n=7,name=p,len=2.5m,x=3";
+            c.Request("continue", new() { ["thread"] = main });
+            c.NextEvent("exited");
+            c.WaitExit(NativeDebugClient.Timeout);
+            Thread.Sleep(50);
+            ok &= c.Output == "1\n7 2.5m p 3\n";
+            return (ok, detail + c.Output + c.Errors);
+        });
+
         Check("hello: Quellen mit Datei und SHA-256, Ziel, Modus; ohne FIRE_DEBUG laeuft der Debug-Build einfach; detach laesst das Programm zu Ende laufen", () =>
         {
             string firePath = Path.Combine(workDir, "dbghello.fire");

@@ -337,7 +337,7 @@ namespace fire.Native
                     sb.AppendLine("        case K_Array: case K_Buffer: case K_String: {");
                     sb.AppendLine("            bool ok;");
                     sb.AppendLine("            Value count = lengthOf(self, &ok);");
-                    sb.AppendLine($"            Value e = newObject({ClassIdExpr(info)}, {info.Fields.Count}, list);");
+                    sb.AppendLine($"            Value e = {NewObjectCall(info, "list")};");
                     sb.AppendLine($"            {Nested($"{ctor.Name}(e, self, count);")}");
                     sb.AppendLine("            return e;");
                     sb.AppendLine("        }");

@@ -11,7 +11,8 @@ namespace fire.Native
     // programs as the narrow fields (NarrowFieldsOn: no threads, reflection, probes, JSON, debugger, modules); copies copy the bytes (copyValue, the deep copier).
     public sealed partial class CppGenerator
     {
-        private bool PackedOn => NarrowFieldsOn && ScalarsOn;
+        // (not across the modules of a program, a plugin or a library: they share the objects but not their layout)
+        private bool PackedOn => !Modular && !_openWorld && !_separate && !_dll && !LibraryRole;
         private readonly Dictionary<string, int> _rawType = new(StringComparer.Ordinal);
         private readonly Dictionary<RuntimeClass, (int[] Off, int Bytes)> _rawLayout = new();
 
@@ -81,6 +82,24 @@ namespace fire.Native
         {
             KindFloat => $"(Real){x}.f", KindWord => $"(FireWord){x}.w", KindBool => $"(uint8_t)({x}.i != 0)", _ => $"(FireInt){x}.i",
         };
+
+        /// <summary>The kind (FIRE_RAW_*) and the offset of a packed field for the tables of JSON and the debugger ("0, 0" for a Value slot).</summary>
+        private string RawPlaceOf(RuntimeClass rc, int index)
+        {
+            var (off, _) = RawLayoutOf(rc);
+            if (index >= off.Length || off[index] < 0) return "0, 0";
+            int type = RawType(rc.FlattenedFieldNames[index]);
+            string raw = KindOfType(type) switch { KindFloat => "FIRE_RAW_REAL", KindBool => "FIRE_RAW_BOOL", KindWord => "FIRE_RAW_WORD", _ => "FIRE_RAW_INT" };
+            return $"{raw}, {off[index]}";
+        }
+
+        /// <summary>The FirePlace of the field `index` of `rc` (the debugger).</summary>
+        private string PlaceOf(RuntimeClass rc, int index)
+        {
+            var (slot, half) = FieldPlace(rc, index);
+            int unit = RawType(rc.FlattenedFieldNames[index]) is var t and not 0 ? UnitOfType(t) : 0;
+            return $"{{{Math.Max(0, slot)}, {half}, {RawPlaceOf(rc, index)}, {(unit == 0 ? "0" : UnitC(unit))}}}";
+        }
 
         /// <summary>`newObject` of the class - with the bytes of its packed fields.</summary>
         private string NewObjectCall(ClassInfo cls, string owner)

@@ -219,8 +219,12 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   (`RawLayoutOf`) - ein direkter Zugriff auf eine Basis kennt ihren Offset deshalb auch in abgeleiteten Objekten; haben alle Klassen, die das Objekt sein
   kann, gleich viele Slots, ist der Offset eine Konstante (sonst `objRaw`: `nfields * sizeof(Value)` zur Laufzeit). `newObjectR` legt sie mit Nullen an,
   `copyValue` (`flat`) und der tiefe Kopierer (`copy`) kopieren die Bytes. Die Feld-Helfer (`gf_`/`sf_`) gehen für solche Namen pro Klasse wie die einer
-  Property. Nur wo nichts die Felder eines Objekts über ihren Index liest, ohne das Layout zu kennen - dieselben Programme wie bei den schmalen Feldern
-  (`NarrowFieldsOn`: keine Threads, Reflection, Sonden, JSON, kein Debugger, keine Module) - und nicht für Felder, deren Adresse genommen wird.
+  Property. Wer die Felder eines Objekts ohne das Layout zu kennen liest, geht über ihre Plätze (`FirePlace`: Slot, schmale Hälfte oder gepackte C-Zahl;
+  `placeGet`, `rawGet`/`rawSet`): JSON (`JsonFieldInfo.raw`/`rawOff`, `JsonClassInfo.nraw` für die Objekte, die es anlegt), der Debugger (`DbgClass.places`:
+  `expand` zeigt die Felder in ihrer Reihenfolge, `set` geht über den Setter und liest den neuen Wert vom Platz), Reflection und Sonden über die
+  Feld-Helfer, Threads über `syncFields` (`sync x` kopiert die Bytes zurück; `taking` über den tiefen Kopierer). Nur Module, Plugins und getrennte
+  Bibliotheken haben keine gepackten Objekte (sie teilen die Objekte, nicht ihr Layout) - und nicht Felder, deren Adresse genommen wird. Auch
+  Debug-Builds packen (ohne Skalare: über die Value-Wege des Generators).
   Gemessen: 300 000 Objekte mit drei `defined int` und einem `defined bool` 45 -> 35 MB (64 Bit), 35 -> 31 MB (`#intwidth 32`, dort waren die schmalen
   Felder schon kompakt); der Code bleibt gleich groß (dos16: 1063 -> 1096 Byte für die Methode mit drei Feldänderungen).
 * **Der Objektkopf.** Was die meisten Objekte nie brauchen - die Liste dessen, was ein Objekt besitzt, und seine Typargumente - liegt in einem Block

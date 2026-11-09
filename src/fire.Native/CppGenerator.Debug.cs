@@ -249,9 +249,14 @@ namespace fire.Native
             if (nglobals > 0)
                 sb.AppendLine("static const DbgGlobal kDbgGlobals[] = {" + string.Join(", ", Enumerable.Range(0, nglobals).Select(i =>
                     $"{{{(_globalNames.TryGetValue(i, out var n) ? CString(n) : "NULL")}, {(_globals.Contains(i) ? $"&G{i}" : "NULL")}}}")) + "};");
+            // (a class whose fields are not slot by slot - packed or narrow ones: where each of them lives)
+            bool Placed(ClassInfo c) => Enumerable.Range(0, c.Fields.Count).Any(i => FieldPlace(c.Rc, i) is var p && (p.Slot != i || p.Half >= 0));
             foreach (var cls in _classList)
+            {
                 if (cls.Fields.Count > 0) sb.AppendLine($"static const char* const kDbgFields{cls.Id}[] = {{{string.Join(", ", cls.Fields.Select(CString))}}};");
-            sb.AppendLine("static const DbgClass kDbgClasses[] = {" + string.Join(", ", _classList.Select(c => $"{{{CString(c.Rc.Name)}, {c.Fields.Count}, {(c.Fields.Count > 0 ? $"kDbgFields{c.Id}" : "NULL")}}}").DefaultIfEmpty("{\"\", 0, NULL}")) + "};");
+                if (cls.Fields.Count > 0 && Placed(cls)) sb.AppendLine($"static const FirePlace kDbgPlaces{cls.Id}[] = {{{string.Join(", ", Enumerable.Range(0, cls.Fields.Count).Select(i => PlaceOf(cls.Rc, i)))}}};");
+            }
+            sb.AppendLine("static const DbgClass kDbgClasses[] = {" + string.Join(", ", _classList.Select(c => $"{{{CString(c.Rc.Name)}, {c.Fields.Count}, {(c.Fields.Count > 0 ? $"kDbgFields{c.Id}" : "NULL")}, {(c.Fields.Count > 0 && Placed(c) ? $"kDbgPlaces{c.Id}" : "NULL")}}}").DefaultIfEmpty("{\"\", 0, NULL, NULL}")) + "};");
             sb.AppendLine("const DbgClass* fire_dbgClass(uint32_t cls) {");
             if (_classList.Count > 0)
             {
