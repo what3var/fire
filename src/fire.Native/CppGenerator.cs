@@ -3297,7 +3297,7 @@ namespace fire.Native
             if (framed) foreach (var m in members) sb.AppendLine($"#undef {m.Name}");
             if (dbg != null) foreach (var region in catchRegions) sb.AppendLine(DebugCatchWrapper(f, CatchName(f, region)));
             // `try x.Take...`: every function counts the call depth (the callee knows which argument list is its own); a debug build keeps its frame
-            if (f.CAbi is { } wrapAbi) sb.Append(CAbiWrapper(f, wrapAbi, defName));
+            if (f.CAbi is { } wrapAbi) sb.Append(CAbiWrapper(f, wrapAbi));
             if (defName != f.Name)
             {
                 string call = $"{defName}({string.Join(", ", (f.Kind == FuncKind.FireBody ? new[] { "args" } : Array.Empty<string>()).Concat(f.ParamNames))})";

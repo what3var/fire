@@ -906,13 +906,13 @@ nach Arbeiten auf `targets`).
   (Ruhe in der Ferne, weniger Cache-Fehler); auf dos16 RGBA-Texturen nach dem Umrechnen verwerfen.
 
 **`defined` im scene3d-Prelude (gemessen, Stand nach M4):** die Hilfsfunktionen mit Zahlen (`S3D.Rgb`, `Rgba`, `Red/Green/Blue`, `Degrees`, `Meters`,
-`Speed`) sind `defined` - ihr Rumpf ist natives C ohne Values. dos16 (ein Programm mit Szene, Licht, Kamera; mit `scene3d.effects`): 431 314 -> 430 335 Byte
-(443 330 -> 441 919). **Nicht** übernommen: die Handles als `defined int h` (+2,6 KB auf dos16 - sie gehen fast nur an Natives, die Values nehmen, und
-werden dafür jedes Mal neu eingepackt) und die Eigenschaften als `defined` (keine Änderung: Accessoren bekommen keinen C-Rumpf); Ausnahme die drei
-Geschwindigkeiten (`TextureScrollX/Y`, `Emitter.Speed`), damit `S3D.Speed` ohne Laufzeitprüfung bleibt. Nativ (Linux, 200 000 Eigenschaftszugriffe) und in
-der VM (~2,2 s) kein messbarer Unterschied. Dabei gefunden und behoben: auf Zielen, die die Aufruftiefe zählen (dos16, `try x.TakeTo`), schrieb der
-Generator die Value-Hülle einer Methode mit C-Rumpf unter `fN` statt `fN_b` (doppelt definiert, `fN_b` fehlte); `FIRE_TESTS_ONLY=scene3d` prüft das C für
-dos16 jetzt mit. Lohnen würde sich `defined` erst, wenn auch die Natives C-Zahlen nehmen (`__S3DGetF(int, int)` ohne Values) - ein Punkt für `targets`.
+`Speed`) und die drei Geschwindigkeiten (`TextureScrollX/Y`, `Emitter.Speed`) sind `defined`. Zuerst gemessen: dos16 431 314 -> 430 335 Byte (C-Rümpfe
+ohne Values). Dabei fiel ein Generatorfehler auf (Value-Hülle unter `fN` statt `fN_b` auf Zielen, die die Aufruftiefe zählen); `targets` hat ihn mit
+1c2af40 grundsätzlich gelöst: ein Programm, das die Aufruftiefe zählt, hat keine C-Rümpfe. scene3d-Programme zählen sie immer (`Scene.Add` nimmt mit
+`try TakeTo`) - `defined` ist hier darum heute neutral (dos16 431 752 -> 431 766 Byte; nativ und VM ohne messbaren Unterschied). **Nicht** übernommen:
+die Handles als `defined int h` (+2,6 KB auf dos16: sie gehen fast nur an Natives, die Values nehmen, und werden dafür neu eingepackt) und die übrigen
+Eigenschaften (keine Änderung: Accessoren bekommen keinen C-Rumpf). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
+C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`. `FIRE_TESTS_ONLY=scene3d` prüft das dos16-C weiter mit.
 
 **B. Größe und Speicher (Rest von Meilenstein 1):**
 * **640x480 auf dos16:** der Paletten-Framebuffer (300 KB) passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher. Wege: (a) eine Kamera, die
