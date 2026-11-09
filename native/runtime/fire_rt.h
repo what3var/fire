@@ -1302,6 +1302,17 @@ FIRE_FN OwnList scopeList(uint32_t mark) {
     l.home = NULL;
     return l;
 }
+/* The lists of the scopes of a generated function, all at once (a function optimised for size: one call instead of one per list). `kinds`: two characters per list -
+ * its mark ('f' the end of the pool: a list of statement temporaries, 'p' the pool's height now, 'z' 0) and its home ('-' none, else '0' + the index of the list). */
+FIRE_FN uint32_t poolMark(void);
+FIRE_FN void scopeListsInit(OwnList* l, int n, const char* kinds) {
+    int i;
+    for (i = 0; i < n; i++) {
+        char k = kinds[2 * i], h = kinds[2 * i + 1];
+        l[i] = scopeList(k == 'f' ? 0xFFFFFFFFu : k == 'p' ? poolMark() : 0);
+        if (h != '-') l[i].home = &l[(unsigned char)h - '0'];
+    }
+}
 FIRE_FN void ownListInit(OwnList* l, uint32_t mark, Owned* holder) {
     l->head = l->tail = NULL;
     l->mark = mark;

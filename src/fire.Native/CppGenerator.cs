@@ -782,7 +782,11 @@ namespace fire.Native
 
         /// <summary>`obj.name = value` on an object of a known class: the checks of the field's declaration (unit, kind) and the store by index, like sf_
         /// (a destroyed object throws first); null when the field helpers are needed.</summary>
-        private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType, Func from, bool nullable = false)
+        /// <summary>DirectSetField: whether the store it gave can throw (the check of the kind, the unit, the class, a destroyed or undefined object, a probe's setter) -
+        /// otherwise the caller needs no check of the unwinding after it.</summary>
+        private bool _lastSetMayThrow;
+
+        private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType, Func from, bool nullable = false, bool objAlive = false)
         {
             if (DirectFieldIndex(rc, name, from) is not int index) return null;
             string? unit = rc.FindFieldRequiredUnit(name);
@@ -810,14 +814,18 @@ namespace fire.Native
             string put = RawRef(rc, index, $"objAt({obj})") is { } rawPut ? $"{rawPut} = {RawFromValue(RawTypeAt(LayoutClass(rc, index), index), "x")};"
                 : fieldHalf >= 0 ? $"nvSet(&objFields(objAt({obj}))[{fieldSlot}], {fieldHalf}, x);"
                 : declaredKind != 0 ? $"objFields(objAt({obj}))[{fieldSlot}] = x;" : $"setFieldAt({obj}, {fieldSlot}, x);";
-            string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) {put}" : put;
+            bool checksThrow = unit != null || kind != 0 || requiredType != null || requiredArray != 0 && !arrayKnown;
+            string store = checksThrow && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) {put}" : put;
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
             // (the setter of a restricted name takes the caller's class: here it may, see DirectFieldIndex)
             string tail = FieldTail(name, from, () => "NULL");
-            string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", name)}({obj}, x{tail}); " : "";
+            string probed = _usesProbes ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", name)}({obj}, x{tail}); else " : "";
             // (a receiver that may be undefined: the setter reports that)
             string notObject = nullable ? $"if (FIRE_UNLIKELY({obj}.kind != K_Class)) {FieldFn("sf", name)}({obj}, x{tail}); else " : "";
-            return $"{{ Value x = {value}; {notObject}if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); {probed}else {{ {checks}{store} }} }}";
+            // (an object known to be alive - `self` right after a check of it, Flow.SelfAlive - needs no check)
+            string dead = objAlive && !nullable ? "" : $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else ";
+            _lastSetMayThrow = checksThrow || nullable || dead.Length > 0 || _usesProbes;
+            return $"{{ Value x = {value}; {notObject}{dead}{probed}{{ {checks}{store} }} }}";
         }
 
         /// <summary>The one method `name(argc)` every object an `rc` can be runs (no derived class overrides it); null when there is none, several, an
@@ -1441,7 +1449,7 @@ namespace fire.Native
             : _classList.Any(c => c.Rc.FindMethodWithAccess(name, argc).Proto != null);
 
         /// <summary>The natives of the imports of packages (C++ source that is put into the generated file): the fire name -> argument count and the C++ function.</summary>
-        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference, bool Host, bool Throws, bool IsC)> _packageNatives = new();
+        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference, bool Host, bool Throws, bool IsC, string? Returns)> _packageNatives = new();
         /// <summary>The exception classes that natives of the imported packages throw (`exceptions` of the package): the runtime constructs them by name (`fireError`).</summary>
         private readonly List<string> _errorClasses = new();
         private readonly List<(InstalledImport Import, string Key)> _packageImports = new();
@@ -1477,7 +1485,7 @@ namespace fire.Native
                     throw new NativeNotSupportedException($"the package '{import.Package.Name}' (import '{import.Name}') has no C++ source for the target '{_target.Name}' (platform '{_target.Native.Platform}')");
                 foreach (var fn in native.Functions)
                 {
-                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Symbol, fn.NeedsList, fn.ReturnsReference, fn.Host, native.Exceptions.Count > 0, native.IsC));
+                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Symbol, fn.NeedsList, fn.ReturnsReference, fn.Host, native.Exceptions.Count > 0, native.IsC, fn.Returns?.Trim()));
                     _nativeImportOf.TryAdd(fn.Name, key);
                 }
                 foreach (var name in native.Exceptions) if (!_errorClasses.Contains(name)) _errorClasses.Add(name);
@@ -2882,13 +2890,19 @@ namespace fire.Native
             /// <summary>Slot k holds the value of this variable (`self`, a parameter, a local of a block) - it was loaded without a copy (AliasOn); the slot's Value is
             /// stale until it is materialized. Only within straight code: every jump, every fall into a target and every instruction that is not AliasAware materializes.</summary>
             public string?[] Alias = new string?[64];
+            /// <summary>Bit i: the list of statement temporaries of scope i (Scopes[i]) may hold something - OwnerList handed it out since its last ReleaseTemps. Without
+            /// it ReleaseTemps leaves nothing (no `leave` of an empty list).</summary>
+            public ulong TempsDirty;
+            /// <summary>`self` was checked to be alive (a field access of `self`), and nothing since could have destroyed it - the next access of a field of `self`
+            /// needs no check. Never at a jump target that is reached without it.</summary>
+            public bool SelfAlive;
             public List<HEntry> Handlers = new();
             /// <summary>The catch lambda this code belongs to (null: the function itself).</summary>
             public Region? Region;
             /// <summary>The `finally` blocks that this code is inside of (their entry addresses), outermost first.</summary>
             public List<int> Fins = new();
 
-            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Scalar = Scalar, Alias = (string?[])Alias.Clone(), Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
+            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Scalar = Scalar, Alias = (string?[])Alias.Clone(), TempsDirty = TempsDirty, SelfAlive = SelfAlive, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
 
             /// <summary>Forgets the types of the slots from <paramref name="from"/> on.</summary>
             public void ClearTypes(int from)
@@ -3106,6 +3120,8 @@ namespace fire.Native
                 if (!existing.SameShape(state))
                     throw new NativeNotSupportedException($"inconsistent stack/scope state at {addr} ({name}), reached from {from}");
                 if ((existing.Refs | state.Refs) != existing.Refs) { existing.Refs |= state.Refs; work.Push(target); }
+                if ((existing.TempsDirty | state.TempsDirty) != existing.TempsDirty) { existing.TempsDirty |= state.TempsDirty; work.Push(target); }
+                if (existing.SelfAlive && !state.SelfAlive) { existing.SelfAlive = false; work.Push(target); }
                 // (a slot is scalar here only if it is on every way - a jump target never is: every jump and every fall into a target materializes)
                 if ((existing.Scalar & state.Scalar) != existing.Scalar) { existing.Scalar &= state.Scalar; work.Push(target); }
                 // a slot keeps its kind only if every way here agrees
@@ -3255,10 +3271,27 @@ namespace fire.Native
             }
             // (a list of statement temporaries leaves no pool - the pool belongs to the scope; the list of a catch block that never ran: leaving it is a no-op)
             string ListInit(int i) => IsTempId(i) ? "scopeList(0xFFFFFFFFu)" : i < 0 ? "scopeList(poolMark())" : i >= f.Chunk.Code.Count ? "scopeList(0xFFFFFFFFu)" : "scopeList(0)";
+            // (optimised for size: the lists are one array that one call fills - their names are macros for its elements, #undef after the function)
+            var listMacros = new List<string>();
             if (f.NeedsList.Count > 0)
             {
-                if (framed) foreach (int i in f.NeedsList.OrderBy(i => i)) Var("OwnList", ListName(i), ListInit(i));
-                else decl.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + " = " + ListInit(i))) + ";");
+                var ordered = f.NeedsList.OrderBy(i => i).ToList();
+                if (framed) foreach (int i in ordered) Var("OwnList", ListName(i), ListInit(i));
+                else if (_program.Optimize == OptimizeFor.Size && ordered.Count >= 2 && ordered.Count < 200)
+                {
+                    var kinds = new StringBuilder();
+                    foreach (int i in ordered)
+                    {
+                        string init = ListInit(i);
+                        kinds.Append(init.Contains("0xFFFFFFFF") ? 'f' : init.Contains("poolMark") ? 'p' : 'z');
+                        int home = IsTempId(i) ? ordered.IndexOf(HomeOf(i)) : -1;
+                        kinds.Append(home < 0 ? '-' : (char)('0' + home));
+                    }
+                    decl.AppendLine($"    OwnList OL_[{ordered.Count}];");
+                    for (int k = 0; k < ordered.Count; k++) { listMacros.Add(ListName(ordered[k])); decl.AppendLine($"#define {ListName(ordered[k])} (OL_[{k}])"); }
+                    post.Insert(0, $"    scopeListsInit(OL_, {ordered.Count}, {CString(kinds.ToString())});\n");
+                }
+                else decl.AppendLine("    OwnList " + string.Join(", ", ordered.Select(i => ListName(i) + " = " + ListInit(i))) + ";");
             }
             if (f.NeedsArgList)
             {
@@ -3279,8 +3312,9 @@ namespace fire.Native
                 for (int i = 0; i < f.ThreadArgs; i++)
                     post.AppendLine(VarRef(VarKey(f, $"T{f.GlobalSlotCount + i}")) ? $"    T{f.GlobalSlotCount + i} = args[{i}]; retain(T{f.GlobalSlotCount + i});" : $"    T{f.GlobalSlotCount + i} = args[{i}];");
             }
-            foreach (int t in f.NeedsList.Where(IsTempId).OrderBy(i => i))
-                if (f.NeedsList.Contains(HomeOf(t))) post.AppendLine($"    {ListName(t)}.home = &{ListName(HomeOf(t))};");
+            if (listMacros.Count == 0)
+                foreach (int t in f.NeedsList.Where(IsTempId).OrderBy(i => i))
+                    if (f.NeedsList.Contains(HomeOf(t))) post.AppendLine($"    {ListName(t)}.home = &{ListName(HomeOf(t))};");
             if (!f.IsTop && _usesTakeUpwards && f.NeedsList.Contains(FunctionScope)) post.AppendLine("    OP.parent = g_globalOwn;   // the parent scope of a function scope is the global scope");
             // Parameters are variables: they hold what was passed.
             for (int i = 0; i < f.ParamLike; i++)
@@ -3351,12 +3385,16 @@ namespace fire.Native
             sb.Append(post);
             sb.Append(f.Root.Code);
             sb.Append(f.Root.Tail);
-            if (!f.IsTop) sb.AppendLine("    fatal(\"control flow fell off the end of a function\");");
+            // (only when the code can fall off its end: the last statement of the function and of its exits is a `return` or a `goto` mostly)
+            string lastLine = (f.Root.Tail.Length > 0 ? f.Root.Tail.ToString() : f.Root.Code.ToString()).TrimEnd().Split('\n')[^1].Trim();
+            bool endsClosed = lastLine.StartsWith("return", StringComparison.Ordinal) || lastLine.StartsWith("goto ", StringComparison.Ordinal);
+            if (!f.IsTop && !endsClosed) sb.AppendLine("    fatal(\"control flow fell off the end of a function\");");
             sb.AppendLine("}");
             if (_target.Native.LineDirectives) sb.AppendLine(LineResetMarker);
             sb.Append(catchCode);
             if (_target.Native.LineDirectives && catchCode.Length > 0) sb.AppendLine(LineResetMarker);
             if (framed) foreach (var m in members) sb.AppendLine($"#undef {m.Name}");
+            foreach (var m in listMacros) sb.AppendLine($"#undef {m}");
             if (dbg != null) foreach (var region in catchRegions) sb.AppendLine(DebugCatchWrapper(f, CatchName(f, region)));
             // a debug build keeps its frame
             if (f.CAbi is { } wrapAbi) sb.Append(CAbiWrapper(f, wrapAbi));
@@ -3508,8 +3546,20 @@ namespace fire.Native
             void E(string text) => body.Append("    ").AppendLine(text);
             HEntry? local = st.Handlers.Count > 0 && st.Handlers[^1].Region.Outer == st.Region ? st.Handlers[^1] : null;
             int baseCount = st.Region?.ScopeBase ?? (f.IsTop ? 1 : 0);
-            ReleaseScopes(f, st, st.Scopes.Count, local?.Region.ScopeBase ?? baseCount, local != null || st.Region != null, locals, E, null);
-            if (local != null) E($"goto LAND{local.Value.Region.Template};");
+            int downTo = local?.Region.ScopeBase ?? baseCount;
+            if (st.Scopes.Count > downTo)
+            {
+                // (the exits are a chain: this one leaves the innermost scope and goes on to the exit of the scope around it - the outer scopes are left once,
+                // not again in every exit)
+                ReleaseScopes(f, st, st.Scopes.Count, st.Scopes.Count - 1, local != null || st.Region != null, locals, E, null);
+                var outer = st.Clone();
+                outer.Scopes.RemoveAt(outer.Scopes.Count - 1);
+                E($"goto {ExitLabel(f, outer, locals)};");
+            }
+            else
+            ReleaseScopes(f, st, st.Scopes.Count, downTo, local != null || st.Region != null, locals, E, null);
+            if (st.Scopes.Count > downTo) { }
+            else if (local != null) E($"goto LAND{local.Value.Region.Template};");
             else if (st.Region != null) E("return;");
             else if (f.IsTop) { HaltCode(f, E); E("return;"); }
             else { if (f.AccTrack) E("if (g_acc.top > ACCB) g_acc.top = ACCB;"); E($"return {UndefReturnOf(f.CAbi)};"); }
@@ -3670,10 +3720,15 @@ namespace fire.Native
             // an operand that has no value yet (TypeNone) gives a result without one
             bool fromNone = false;
             for (int k = Math.Max(0, before - 3); k < Math.Min(before, 64); k++) fromNone |= st.Types[k] == TypeNone;
+            bool selfAliveBefore = st.SelfAlive;
+            _selfAliveAfter = null;
             var result = StepCore(f, chunk, ins, st, sb, locals);
+            // (`self` stays checked across what runs no code of its own and destroys nothing; a field access of `self` says itself)
+            st.SelfAlive = _selfAliveAfter ?? (selfAliveBefore && SelfNeutral(ins.Op));
             // (slots that were popped are no scalars; a fall into a jump target makes the scalars Values - the target expects them there)
             st.Scalar &= st.Depth >= 64 ? ~0UL : (1UL << Math.Max(st.Depth, 0)) - 1;
             for (int k = Math.Max(st.Depth, 0); k < 64; k++) st.Alias[k] = null;
+            st.TempsDirty &= st.Scopes.Count >= 64 ? ~0UL : (1UL << st.Scopes.Count) - 1;   // (the bits of scopes that were left)
             if (result.FallsThrough && AnyAlias(st) && f.IndexOf.TryGetValue(ins.Addr, out int atA) && atA + 1 < f.Decoded.Count && f.Targets.Contains(f.Decoded[atA + 1].Addr))
                 MaterializeAliases(st, line => sb?.Append("    ").AppendLine(line));
             if (st.Scalar != 0 && result.FallsThrough && f.IndexOf.TryGetValue(ins.Addr, out int at) && at + 1 < f.Decoded.Count && f.Targets.Contains(f.Decoded[at + 1].Addr))
@@ -3732,6 +3787,10 @@ namespace fire.Native
             for (int k = 0; k < 64; k++)
                 if (st.Alias[k] is { } a && (variable == null || a == variable)) MaterializeAlias(st, k, emit);
         }
+        /// <summary>Set by an instruction that leaves `self` known to be alive (or not), see Flow.SelfAlive; null: SelfNeutral decides.</summary>
+        private bool? _selfAliveAfter;
+        private static bool SelfNeutral(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.LoadThis or OpCode.LoadGlobal or OpCode.Pop or OpCode.Dup
+            or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal or OpCode.ClaimToScope or OpCode.CopyArgs or OpCode.GuardTop;
         private static bool AnyAlias(Flow st) { foreach (var a in st.Alias) if (a != null) return true; return false; }
         /// <summary>A load of a variable may leave the slot an alias of it (Flow.Alias): not in a debug build, not in a function with `try` (its catch blocks see
         /// the slots), not in one that takes the address of a local (a write through the pointer would not be seen).</summary>
@@ -3878,6 +3937,7 @@ namespace fire.Native
             // What is created or handed back at this point belongs to the statement temporaries of the innermost scope (SPEC 2.1); a slot claims it.
             string OwnerList()
             {
+                if (st.Scopes.Count - 1 < 64) st.TempsDirty |= 1UL << (st.Scopes.Count - 1);
                 int home = st.Scopes[^1].Id;
                 f.NeedsList.Add(home);
                 f.NeedsList.Add(TempOf(home));
@@ -4861,7 +4921,18 @@ namespace fire.Native
                         Check();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
-                        d = first + 1; SetR(first, packageNative.ReturnsReference); return Next();
+                        d = first + 1; SetR(first, packageNative.ReturnsReference);
+                        // (what its manifest says it returns - `"returns": "float"`, docs/packages/README.md: a number without a unit, a bool - is the type of the slot:
+                        // the code after it computes with C numbers, `* 1m` needs no dispatcher of operators and no check of the unit)
+                        int nativeType = packageNative.Returns switch
+                        {
+                            "float" => TypeOf(KindFloat, 0),
+                            "bool" => TypeOf(KindBool, 0),
+                            "int" => TypeOf(KindInt, 0),   // (no NarrowBit: a native int keeps its 64 bits when it does not fit the program's int)
+                            _ => TypeUnknown,
+                        };
+                        if (nativeType != TypeUnknown && !packageNative.ReturnsReference) { SetT(first, nativeType); _kindsKept = true; }
+                        return Next();
                     }
                     throw new NativeNotSupportedException($"native function '{native}' (called in {fn})");
                 }
@@ -5098,7 +5169,8 @@ namespace fire.Native
                         string read = FieldRead(ObjClass(Ty(d - 1)), fieldIndex, $"objAt({gfObj})");
                         if (IsNullable(Ty(d - 1))) { string tail = FieldTail(field, f, () => "NULL"); E($"{T(d - 1)} = FIRE_LIKELY({gfObj}.kind == K_Class && leafAlive({gfObj})) ? {read} : {FieldFn("gf", field)}({gfObj}{tail});"); Check(); }
                         // (only a destroyed object throws: the check of the unwinding is on that path)
-                        else { string thrower = Thrower($"destroyedError({gfObj});"); E($"if (FIRE_UNLIKELY(!leafAlive({gfObj}))) {thrower} {T(d - 1)} = {read};"); }
+                        else if (gfObj == "self" && st.SelfAlive) { E($"{T(d - 1)} = {read};"); _selfAliveAfter = true; }
+                        else { string thrower = Thrower($"destroyedError({gfObj});"); E($"if (FIRE_UNLIKELY(!leafAlive({gfObj}))) {thrower} {T(d - 1)} = {read};"); if (gfObj == "self") _selfAliveAfter = true; }
                     }
                     else if (ObjSlot(d - 1) && !IsNullable(Ty(d - 1)) && DirectAccessor(ObjClass(Ty(d - 1)), field, false, f) is { } getter)
                     {
@@ -5217,10 +5289,17 @@ namespace fire.Native
                     Need(1); RequireSelf();
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass && DirectSetField(selfClass, field, "self", S(d - 1), Ty(d - 1), f) is { } direct) E(direct);
+                    string thisValue = SR(d - 1);
+                    if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass && DirectSetField(selfClass, field, "self", thisValue, Ty(d - 1), f, objAlive: st.SelfAlive) is { } direct)
+                    {
+                        E(direct);
+                        if (_lastSetMayThrow) Check();
+                        _selfAliveAfter = !_usesProbes;   // (checked: `self` lives - unless a probe's setter ran)
+                        d--; return Next();
+                    }
                     else if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass2 && DirectAccessor(selfClass2, field, true, f) is { } selfSetter)
-                        E($"if (FIRE_UNLIKELY(!leafAlive(self))) destroyedError(self); else {{ Value r_ = {GetFunc(selfSetter, FuncKind.Method).Name}(self, {S(d - 1)}); adopt(r_, &{OwnerList()}); }}");
-                    else E($"{FieldFn("sf", field)}(self, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
+                        E($"if (FIRE_UNLIKELY(!leafAlive(self))) destroyedError(self); else {{ Value r_ = {GetFunc(selfSetter, FuncKind.Method).Name}(self, {thisValue}); adopt(r_, &{OwnerList()}); }}");
+                    else E($"{FieldFn("sf", field)}(self, {thisValue}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     d--; return Next();
                 }
@@ -5876,7 +5955,12 @@ namespace fire.Native
                 case OpCode.ReleaseTemps:
                 {
                     int temp = TempOf(st.Scopes[^1].Id);
-                    if (f.NeedsList.Contains(temp)) E($"leave(&{ListName(temp)});");
+                    int scopeBit = st.Scopes.Count - 1;
+                    // (nothing went into the list since the last end of a statement: nothing to leave)
+                    bool dirty = scopeBit >= 64 || (st.TempsDirty >> scopeBit & 1) != 0;
+                    if (f.NeedsList.Contains(temp) && dirty) E($"leave(&{ListName(temp)});");
+                    else _selfAliveAfter = st.SelfAlive;   // (nothing was left: nothing destroyed)
+                    if (scopeBit < 64) st.TempsDirty &= ~(1UL << scopeBit);
                     return Next();
                 }
                 case OpCode.ClaimToScope:
