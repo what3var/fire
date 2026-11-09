@@ -190,6 +190,7 @@ class SensorKit {
   `float`, `bool`, `string`, `byte[]`, `any[]`, a class, `undefined` (nothing); without it (or `any`) the result has no type. The type checker gives a
   call this type (`var n = __sk_crc8(frame)` is an `int`; without `returns` it would be TC019), and a result declared `int`, `float` or `bool` is
   checked where it is used (an ArgumentException when the function returns something else). `undefined` always fits (a failure).
+* `parameters` (a package in C only, optional): the C types of the arguments, one per argument - this makes the function **typed** (see "Typed functions" below).
 * `needsList: true`: the function gets `OwnList* list` as an extra **last** parameter. Everything you allocate for the result (`allocStr`, `allocArr`, `allocBuf`)
   is allocated in that list: it belongs to the scope of the caller, like any value a fire function creates. `returnsReference: true`: the result is such a value.
 * `linkLibraries` (in `native`, optional): system libraries the C++ needs on one platform or target, by the same keys as `platformSources`, e.g. `"linkLibraries": { "windows": [ "ws2_32" ] }` - the build links them (`-lws2_32`, `ws2_32.lib`).
@@ -199,6 +200,37 @@ class SensorKit {
   a wait that has to be abortable (`Sleep`), or a function that needs the unit of a value. The VM looks the function up by name in its own table (`fire.Runtime.HostNatives`), so this is for the
   standard packages; in a native build the `cpp` function is used as always.
 * Then: `ember forge sensorkit.json`, `ember install build\sensorkit-1.0.0.fpk`, and in a script `#import "sensorkit"`.
+
+### Typed functions (C)
+
+A function in C can take and give C numbers instead of Values: list the types of its arguments in `"parameters"`. Then
+
+| manifest type | C type |
+|---|---|
+| `int`, `int[64]` | `int64_t` |
+| `int[32]` | `int32_t` |
+| `int[16]` | `int16_t` |
+| `float` | `Real` |
+| `bool` | `bool` |
+| anything else (`any`, `string`, `byte[]`, ...) | `Value` |
+
+and its result is the C type of `returns` when that is one of them (otherwise a `Value`). For example
+
+```json
+{ "name": "__S3DGetF", "returns": "float", "arguments": 2, "c": "fire_s3d_GetF", "parameters": ["int[32]", "int[32]"] }
+```
+
+```c
+static Real fire_s3d_GetF(int32_t h, int32_t slot) { ... }
+```
+
+The generated code passes the C number of an argument directly - without building a Value, without copying it - and keeps the result as a C number
+(`__S3DGetF(h, 0) * 1m` is a C multiplication). Where a Value has to be converted - an argument whose type the compiler does not know, the library of the
+VM, the functions that modules of linkage "static"/"shared" call - the conversion is lenient, as a native reads its Values: an int takes the whole part
+of a float (and the `i` of anything else: a bool is 0 or 1, `undefined` 0), a float takes an int as a number, a bool is "not 0". Nothing is checked
+or thrown, so the function behaves the same in the VM and natively. A typed function cannot return `undefined`: give a function that can
+(`__S3DTerrainHeight` outside the terrain) a Value result (`"returns": "any"`). Pays off for small functions called often - getters and setters by
+handle; on dos16 the 12 typed getters and setters of scene3d saved 1.4 KB.
 
 ## 2. The value API
 

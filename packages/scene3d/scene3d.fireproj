@@ -152,37 +152,43 @@
         "name": "__S3DGetF",
         "returns": "float",
         "arguments": 2,
-        "c": "fire_s3d_GetF"
+        "c": "fire_s3d_GetF",
+        "parameters": ["int[32]", "int[32]"]
       },
       {
         "name": "__S3DSetF",
         "returns": "bool",
         "arguments": 3,
-        "c": "fire_s3d_SetF"
+        "c": "fire_s3d_SetF",
+        "parameters": ["int[32]", "int[32]", "float"]
       },
       {
         "name": "__S3DSetF3",
         "returns": "bool",
         "arguments": 6,
-        "c": "fire_s3d_SetF3"
+        "c": "fire_s3d_SetF3",
+        "parameters": ["int[32]", "int[32]", "float", "float", "float", "bool"]
       },
       {
         "name": "__S3DGetI",
         "returns": "int",
         "arguments": 2,
-        "c": "fire_s3d_GetI"
+        "c": "fire_s3d_GetI",
+        "parameters": ["int[32]", "int[32]"]
       },
       {
         "name": "__S3DGetB",
         "returns": "bool",
         "arguments": 2,
-        "c": "fire_s3d_GetB"
+        "c": "fire_s3d_GetB",
+        "parameters": ["int[32]", "int[32]"]
       },
       {
         "name": "__S3DSetI",
         "returns": "bool",
         "arguments": 3,
-        "c": "fire_s3d_SetI"
+        "c": "fire_s3d_SetI",
+        "parameters": ["int[32]", "int[32]", "int"]
       },
       {
         "name": "__S3DObjMesh",
@@ -348,19 +354,22 @@
         "name": "__S3DEmitterSet",
         "returns": "bool",
         "arguments": 3,
-        "c": "fire_s3d_EmitterSet"
+        "c": "fire_s3d_EmitterSet",
+        "parameters": ["int[32]", "int[32]", "float"]
       },
       {
         "name": "__S3DEmitterGet",
         "returns": "float",
         "arguments": 2,
-        "c": "fire_s3d_EmitterGet"
+        "c": "fire_s3d_EmitterGet",
+        "parameters": ["int[32]", "int[32]"]
       },
       {
         "name": "__S3DEmitterInt",
         "returns": "int",
         "arguments": 4,
-        "c": "fire_s3d_EmitterInt"
+        "c": "fire_s3d_EmitterInt",
+        "parameters": ["int[32]", "int[32]", "int", "bool"]
       },
       {
         "name": "__S3DEmitterBurst",
@@ -390,13 +399,15 @@
         "name": "__S3DBodySet",
         "returns": "bool",
         "arguments": 3,
-        "c": "fire_s3d_BodySet"
+        "c": "fire_s3d_BodySet",
+        "parameters": ["int[32]", "int[32]", "float"]
       },
       {
         "name": "__S3DBodyGet",
         "returns": "float",
         "arguments": 2,
-        "c": "fire_s3d_BodyGet"
+        "c": "fire_s3d_BodyGet",
+        "parameters": ["int[32]", "int[32]"]
       },
       {
         "name": "__S3DBodyTouch",
@@ -420,7 +431,8 @@
         "name": "__S3DRayInfo",
         "returns": "float",
         "arguments": 1,
-        "c": "fire_s3d_RayInfo"
+        "c": "fire_s3d_RayInfo",
+        "parameters": ["int[32]"]
       },
       {
         "name": "__S3DObjAdvance",

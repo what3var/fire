@@ -541,6 +541,11 @@ FIRE_FN Value fireError(const char* cls, const char* utf8);
 
 FIRE_FN bool isNumeric(Value v) { return v.kind == K_Int || v.kind == K_Float; }
 FIRE_FN Real toR(Value v) { return v.kind == K_Float ? v.f : (Real)v.i; }
+/* The int of a Value for a typed native in C (docs/packages/README.md "Typed functions"): lenient like the natives read their Values - a float gives its whole part. */
+FIRE_FN int64_t fire_natI(Value v) { return v.kind == K_Float ? (int64_t)v.f : (int64_t)v.i; }
+/* (the same without a copy of the Value, for the generated code: `v` is a variable) */
+#define FIRE_NATI(v) ((v).kind == K_Float ? (int64_t)(v).f : (int64_t)(v).i)
+#define FIRE_NATR(v) ((v).kind == K_Float ? (v).f : (Real)(v).i)
 
 /* The fewest digits (`%.*e`) that read back as the same number: `digits` is d.ddde+XX. `single`: the number is a float32. */
 FIRE_FN void fire_shortestE(double v, bool single, char* sci, size_t cap) {

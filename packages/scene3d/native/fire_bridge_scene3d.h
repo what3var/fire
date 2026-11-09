@@ -355,37 +355,38 @@ static Value fire_s3d_Free(Value h) {
     return Bool(true);
 }
 
-static Value fire_s3d_GetF(Value h, Value slot) {
-    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
-    return Float(it && slot.i >= 0 && slot.i < FIRE_S3D_FLOATS ? it->f[slot.i] : (Real)0);
+/* (typed natives, "parameters" in the manifest: the hot getters and setters of the prelude take and give C numbers - docs/packages/README.md "Typed functions") */
+static Real fire_s3d_GetF(int32_t h, int32_t slot) {
+    FireS3dItem* it = fire_s3d_itemAt(h, 0);
+    return it && slot >= 0 && slot < FIRE_S3D_FLOATS ? it->f[slot] : (Real)0;
 }
-static Value fire_s3d_SetF(Value h, Value slot, Value v) {
-    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
-    if (!it || slot.i < 0 || slot.i >= FIRE_S3D_FLOATS) return Bool(false);
-    it->f[slot.i] = toR(v);
-    return Bool(true);
+static bool fire_s3d_SetF(int32_t h, int32_t slot, Real v) {
+    FireS3dItem* it = fire_s3d_itemAt(h, 0);
+    if (!it || slot < 0 || slot >= FIRE_S3D_FLOATS) return false;
+    it->f[slot] = v;
+    return true;
 }
 /* Three slots at once (a position, a rotation, ...); `add`: added to them. */
-static Value fire_s3d_SetF3(Value h, Value slot, Value x, Value y, Value z, Value add) {
-    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
-    if (!it || slot.i < 0 || slot.i + 3 > FIRE_S3D_FLOATS) return Bool(false);
-    if (add.i) { it->f[slot.i] = it->f[slot.i] + toR(x); it->f[slot.i + 1] = it->f[slot.i + 1] + toR(y); it->f[slot.i + 2] = it->f[slot.i + 2] + toR(z); }
-    else { it->f[slot.i] = toR(x); it->f[slot.i + 1] = toR(y); it->f[slot.i + 2] = toR(z); }
-    return Bool(true);
+static bool fire_s3d_SetF3(int32_t h, int32_t slot, Real x, Real y, Real z, bool add) {
+    FireS3dItem* it = fire_s3d_itemAt(h, 0);
+    if (!it || slot < 0 || slot + 3 > FIRE_S3D_FLOATS) return false;
+    if (add) { it->f[slot] = it->f[slot] + x; it->f[slot + 1] = it->f[slot + 1] + y; it->f[slot + 2] = it->f[slot + 2] + z; }
+    else { it->f[slot] = x; it->f[slot + 1] = y; it->f[slot + 2] = z; }
+    return true;
 }
-static Value fire_s3d_GetI(Value h, Value slot) {
-    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
-    return Int(it && slot.i >= 0 && slot.i < FIRE_S3D_INTS ? it->n[slot.i] : 0);
+static int64_t fire_s3d_GetI(int32_t h, int32_t slot) {
+    FireS3dItem* it = fire_s3d_itemAt(h, 0);
+    return it && slot >= 0 && slot < FIRE_S3D_INTS ? it->n[slot] : 0;
 }
-static Value fire_s3d_GetB(Value h, Value slot) {
-    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
-    return Bool(it && slot.i >= 0 && slot.i < FIRE_S3D_INTS && it->n[slot.i] != 0);
+static bool fire_s3d_GetB(int32_t h, int32_t slot) {
+    FireS3dItem* it = fire_s3d_itemAt(h, 0);
+    return it && slot >= 0 && slot < FIRE_S3D_INTS && it->n[slot] != 0;
 }
-static Value fire_s3d_SetI(Value h, Value slot, Value v) {
-    FireS3dItem* it = fire_s3d_itemAt(h.i, 0);
-    if (!it || slot.i < 0 || slot.i >= FIRE_S3D_INTS) return Bool(false);
-    it->n[slot.i] = v.kind == K_Float ? (int64_t)v.f : v.kind == K_Bool ? (v.i ? 1 : 0) : v.i;
-    return Bool(true);
+static bool fire_s3d_SetI(int32_t h, int32_t slot, int64_t v) {
+    FireS3dItem* it = fire_s3d_itemAt(h, 0);
+    if (!it || slot < 0 || slot >= FIRE_S3D_INTS) return false;
+    it->n[slot] = v;
+    return true;
 }
 
 /* ---- objects ---- */
@@ -532,25 +533,26 @@ static Value fire_s3d_Emitter(Value h) {
     if (it->emitter == NULL) it->emitter = s3d_emitterNew();
     return Bool(it->emitter != NULL);
 }
-static Value fire_s3d_EmitterSet(Value h, Value slot, Value v) {
-    S3dEmitter* e = fire_s3d_emitterAt(h);
-    if (!e || slot.i < 0 || slot.i >= S3D_EM_COUNT_SETTINGS) return Bool(false);
-    e->st[slot.i] = (float)toR(v);
-    return Bool(true);
+static S3dEmitter* fire_s3d_emitterOf(int32_t h) { FireS3dItem* it = fire_s3d_itemAt(h, FIRE_S3D_OBJECT); return it ? it->emitter : NULL; }
+static bool fire_s3d_EmitterSet(int32_t h, int32_t slot, Real v) {
+    S3dEmitter* e = fire_s3d_emitterOf(h);
+    if (!e || slot < 0 || slot >= S3D_EM_COUNT_SETTINGS) return false;
+    e->st[slot] = (float)v;
+    return true;
 }
-static Value fire_s3d_EmitterGet(Value h, Value slot) {
-    S3dEmitter* e = fire_s3d_emitterAt(h);
-    return Float(e && slot.i >= 0 && slot.i < S3D_EM_COUNT_SETTINGS ? (Real)e->st[slot.i] : (Real)0);
+static Real fire_s3d_EmitterGet(int32_t h, int32_t slot) {
+    S3dEmitter* e = fire_s3d_emitterOf(h);
+    return e && slot >= 0 && slot < S3D_EM_COUNT_SETTINGS ? (Real)e->st[slot] : (Real)0;
 }
 /* `which`: 0 the colour at the start of a life, 1 at its end, 2 the seed of its chance, 3 how many particles live (read only); `set`: v becomes it. Returns it. */
-static Value fire_s3d_EmitterInt(Value h, Value which, Value v, Value set) {
-    S3dEmitter* e = fire_s3d_emitterAt(h);
+static int64_t fire_s3d_EmitterInt(int32_t h, int32_t which, int64_t v, bool set) {
+    S3dEmitter* e = fire_s3d_emitterOf(h);
     uint32_t* at;
-    if (!e) return Int(0);
-    if (which.i == 3) return Int(e->n);
-    at = which.i == 0 ? &e->color0 : which.i == 1 ? &e->color1 : &e->seed;
-    if (set.i) { *at = (uint32_t)(v.kind == K_Float ? (int64_t)v.f : v.i); if (which.i == 2 && *at == 0) *at = 1; }
-    return Int((int64_t)*at);
+    if (!e) return 0;
+    if (which == 3) return e->n;
+    at = which == 0 ? &e->color0 : which == 1 ? &e->color1 : &e->seed;
+    if (set) { *at = (uint32_t)v; if (which == 2 && *at == 0) *at = 1; }
+    return (int64_t)*at;
 }
 /* A ready emitter (s3d_emitterPreset): its settings and colours. */
 static Value fire_s3d_EmitterPreset(Value h, Value kind, Value size) {
@@ -1257,11 +1259,12 @@ static Value fire_s3d_BodyRemove(Value h) {
  * (a box: half its sizes; a sphere: 8 the radius; a capsule: 8 the radius, 9 half its middle), 11..13 its centre from the position, 14 step height, 15 the steepest slope
  * (radians), 16, 17 walk x, z (m/s), 18 jump (m/s), 19 trigger; read only: 20 on the ground, 21 kind, 22 shape, 23 how many it touches */
 static S3dBody* fire_s3d_bodyAt(Value h) { FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT); return it ? it->body : NULL; }
-static Value fire_s3d_BodySet(Value h, Value slot, Value value) {
-    S3dBody* b = fire_s3d_bodyAt(h);
-    float v = (float)toR(value);
-    if (!b) return Bool(false);
-    switch ((int)slot.i) {
+static S3dBody* fire_s3d_bodyOf(int32_t h) { FireS3dItem* it = fire_s3d_itemAt(h, FIRE_S3D_OBJECT); return it ? it->body : NULL; }
+static bool fire_s3d_BodySet(int32_t h, int32_t slot, Real value) {
+    S3dBody* b = fire_s3d_bodyOf(h);
+    float v = (float)value;
+    if (!b) return false;
+    switch ((int)slot) {
         case 0: b->invMass = b->kind == S3D_BODY_DYNAMIC && v > 0 ? 1 / v : 0; break;
         case 1: b->bounce = v; break;
         case 2: b->friction = v; break;
@@ -1282,15 +1285,15 @@ static Value fire_s3d_BodySet(Value h, Value slot, Value value) {
         case 17: b->walkZ = v; break;
         case 18: b->jump = v; break;
         case 19: b->trigger = v != 0; break;
-        default: return Bool(false);
+        default: return false;
     }
-    return Bool(true);
+    return true;
 }
-static Value fire_s3d_BodyGet(Value h, Value slot) {
-    S3dBody* b = fire_s3d_bodyAt(h);
+static Real fire_s3d_BodyGet(int32_t h, int32_t slot) {
+    S3dBody* b = fire_s3d_bodyOf(h);
     float v = 0;
-    if (!b) return Float((Real)0);
-    switch ((int)slot.i) {
+    if (!b) return (Real)0;
+    switch ((int)slot) {
         case 0: v = b->invMass > 0 ? 1 / b->invMass : 0; break;
         case 1: v = b->bounce; break;
         case 2: v = b->friction; break;
@@ -1317,7 +1320,7 @@ static Value fire_s3d_BodyGet(Value h, Value slot) {
         case 23: v = (float)b->touchN; break;
         default: break;
     }
-    return Float((Real)v);
+    return (Real)v;
 }
 /* The object the body touched in the last step (i: 0 .. how many - 1; 0 none) - and whether it touched `other`. */
 static Value fire_s3d_BodyTouch(Value h, Value i) {
@@ -1361,10 +1364,10 @@ static Value fire_s3d_Raycast(Value scene, Value x, Value y, Value z, Value dx, 
     return Int(result);
 }
 /* the last ray's hit: 0 distance, 1..3 the point, 4..6 the normal */
-static Value fire_s3d_RayInfo(Value k) {
-    float v = k.i == 0 ? g_s3dRay.dist : k.i == 1 ? g_s3dRay.point.x : k.i == 2 ? g_s3dRay.point.y : k.i == 3 ? g_s3dRay.point.z
-            : k.i == 4 ? g_s3dRay.normal.x : k.i == 5 ? g_s3dRay.normal.y : k.i == 6 ? g_s3dRay.normal.z : 0;
-    return Float((Real)v);
+static Real fire_s3d_RayInfo(int32_t k) {
+    float v = k == 0 ? g_s3dRay.dist : k == 1 ? g_s3dRay.point.x : k == 2 ? g_s3dRay.point.y : k == 3 ? g_s3dRay.point.z
+            : k == 4 ? g_s3dRay.normal.x : k == 5 ? g_s3dRay.normal.y : k == 6 ? g_s3dRay.normal.z : 0;
+    return (Real)v;
 }
 
 /* ---- the effects of a picture (s3d_effects.h): fog, particles, tint ---- */
