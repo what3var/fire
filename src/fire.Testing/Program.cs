@@ -23487,6 +23487,86 @@ else
             for (int i = 0; i < 1000; i++) { p.Step(i) }
             print(p.x + " " + p.y + " " + p.len + " " + P.Sum(p))
             """),
+        ("Gepackte Objekte: defined-Felder hinter den Slots - Vererbung, gemischte Felder, Zugriff ueber die Basisklasse, flat und copy, viele Objekte", """
+            class Base {
+                defined int id
+                string name = "b"
+                defined bool active
+                Touch() { this.id = this.id + 1; this.active = !this.active }
+            }
+            class Item : Base {
+                defined float : m len
+                defined word mask
+                Base parent
+                defined int count = 7
+                Grow(defined float : m by) { this.len = this.len + by; this.count++; this.mask = this.mask | (this.count!word) }
+            }
+            class Holder { Item item; defined int n }
+            var a = new Item()
+            a.name = "a"
+            a.Touch(); a.Touch(); a.Touch()
+            a.Grow(1.5m); a.Grow(20cm)
+            Base b = a
+            b.Touch()
+            print(a.id + " " + a.active + " " + a.len + " " + a.count + " " + a.mask + " " + a.name)
+            var c = flat a
+            c.id = 100
+            print(c.id + " " + a.id + " " + c.len + " " + c.count + " " + c.name)
+            var h = new Holder()
+            h.item = new Item()
+            h.item.Grow(3m)
+            h.n = 5
+            var d = copy h
+            d.item.Grow(1m)
+            d.n = 9
+            print(h.item.len + " " + d.item.len + " " + h.n + " " + d.n + " " + d.item.count)
+            int sum = 0
+            Item many[] = new Item[1000]
+            for (int i = 0; i < 1000; i++) { many[i] = new Item(); many[i].id = i; many[i].Grow(1m) }
+            for (int i = 0; i < 1000; i++) { sum = sum + many[i].id + many[i].count }
+            print(sum)
+            """),
+        ("Gepackte Objekte, #intwidth 32 / #floatwidth 32: dieselben Felder mit FireInt und Real von 32 Bit", """
+            #intwidth 32
+            #floatwidth 32
+            class Base {
+                defined int id
+                string name = "b"
+                defined bool active
+                Touch() { this.id = this.id + 1; this.active = !this.active }
+            }
+            class Item : Base {
+                defined float : m len
+                defined word mask
+                Base parent
+                defined int count = 7
+                Grow(defined float : m by) { this.len = this.len + by; this.count++; this.mask = this.mask | (this.count!word) }
+            }
+            class Holder { Item item; defined int n }
+            var a = new Item()
+            a.name = "a"
+            a.Touch(); a.Touch(); a.Touch()
+            a.Grow(1.5m); a.Grow(20cm)
+            Base b = a
+            b.Touch()
+            print(a.id + " " + a.active + " " + a.len + " " + a.count + " " + a.mask + " " + a.name)
+            var c = flat a
+            c.id = 100
+            print(c.id + " " + a.id + " " + c.len + " " + c.count + " " + c.name)
+            var h = new Holder()
+            h.item = new Item()
+            h.item.Grow(3m)
+            h.n = 5
+            var d = copy h
+            d.item.Grow(1m)
+            d.n = 9
+            print(h.item.len + " " + d.item.len + " " + h.n + " " + d.n + " " + d.item.count)
+            int sum = 0
+            Item many[] = new Item[1000]
+            for (int i = 0; i < 1000; i++) { many[i] = new Item(); many[i].id = i; many[i].Grow(1m) }
+            for (int i = 0; i < 1000; i++) { sum = sum + many[i].id + many[i].count }
+            print(sum)
+            """),
         ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
             class K {
                 defined int n

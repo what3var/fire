@@ -2255,7 +2255,8 @@ FIRE_FN bool truthy(Value v) {
 typedef struct Obj {
     Owned h;
     uint32_t cls;      /* class id (assigned by the generator) */
-    uint32_t nfields;
+    uint16_t nfields;  /* the Value slots of the fields */
+    uint16_t nraw;     /* the bytes of its packed fields behind them (objRaw; docs/spec/NATIVE_BACKEND.md "Gepackte Objekte"), 0 for most */
     OwnList* owned;    /* what this object owns: made when it first owns something (objOwned; most objects never do), NULL until then */
     TArgs targs;       /* the type arguments it was created with (null: none known) */
 #ifdef __cplusplus
@@ -2263,6 +2264,8 @@ typedef struct Obj {
 #endif
 } Obj;
 FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
+/* The packed fields of an object (`defined int n`: a C number, laid out by the generator - CppGenerator.Packed.cs): right behind its Value slots. */
+FIRE_FN char* objRaw(Obj* o) { return (char*)objFields(o) + (size_t)o->nfields * sizeof(Value); }
 /* ---- Narrow fields (docs/spec/NATIVE_BACKEND.md "Schmale Felder"): a field declared `int` (with `#intwidth 32`/`16`), `float` (with `#floatwidth 32`) or
  * `bool` holds nothing but a number or a bool of that kind, or `undefined` - 8 bytes are enough (kind, a unit of 16 bits, 32 bits of payload), and two such
  * fields share the slot of one Value (the generator lays them out per class: CppGenerator.LayoutOf). Half 0 lies over the head of the slot's Value, so the
@@ -2538,11 +2541,14 @@ FIRE_FN void dataCopy(void* to, const void* from, uint32_t bytes) {
 #endif
 }
 
-FIRE_FN Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
-    void* memory = malloc(blockSize(FIRE_HDR(Obj), fieldCount, sizeof(Value)));
+/* An object of the class `cls` with `fieldCount` Value slots and `rawBytes` bytes of packed fields (zero: their numbers start at 0). */
+FIRE_FN Value newObjectR(uint32_t cls, uint32_t fieldCount, uint32_t rawBytes, OwnList* owner) {
+    void* memory;
     Obj* o;
     Value* f;
     uint32_t i;
+    if (FIRE_UNLIKELY(fieldCount > 0xFFFFu || rawBytes > 0xFFFFu)) fatal("A class with too many fields.");
+    memory = malloc(blockSize(FIRE_HDR(Obj) + rawBytes, fieldCount, sizeof(Value)));
     if (FIRE_UNLIKELY(!memory)) allocFailed();
     o = (Obj*)memory;
     o->h.okind = O_Object;
@@ -2550,13 +2556,16 @@ FIRE_FN Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
     o->cls = cls;
     o->h.flags = 0;
     o->owned = NULL;
-    o->nfields = fieldCount;
+    o->nfields = (uint16_t)fieldCount;
+    o->nraw = (uint16_t)rawBytes;
     o->targs = NULL;
     f = objFields(o);
     for (i = 0; i < fieldCount; i++) f[i] = Undef();
+    if (rawBytes) memset(objRaw(o), 0, rawBytes);
     ownLink(owner, &o->h);
     return ObjV(o);
 }
+FIRE_FN Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) { return newObjectR(cls, fieldCount, 0, owner); }
 
 FIRE_FN void destroyList(OwnList* list);
 FIRE_FN void destroyLeaf(Owned* o);
@@ -6174,10 +6183,11 @@ FIRE_FN Value flatCopy(Value v, OwnList* owner) {
             if (FIRE_UNLIKELY(!leafAlive(v))) return copyDestroyedError();
             src = asObj(v);
             if (FIRE_UNLIKELY(classNoCopy(src->cls))) return noCopyError(src->cls, false);
-            c = newObject(src->cls, src->nfields, owner);
+            c = newObjectR(src->cls, src->nfields, src->nraw, owner);
             dst = asObj(c);
             dst->targs = src->targs;
             for (i = 0; i < src->nfields; i++) { objFields(dst)[i] = objFields(src)[i]; retain(objFields(dst)[i]); }
+            if (src->nraw) memcpy(objRaw(dst), objRaw(src), src->nraw);   /* (the packed fields: numbers) */
             return c;
         }
         case K_Array: {
@@ -6346,7 +6356,7 @@ FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
         Value holderCopy = copierMaterialize(c, (Obj*)o->h.owner->holder);
         target = objOwned(asObj(holderCopy));
     }
-    copy = newObject(o->cls, o->nfields, target);
+    copy = newObjectR(o->cls, o->nfields, o->nraw, target);
     asObj(copy)->targs = o->targs;
     if (c->taking) asObj(copy)->h.flags |= 16;   /* a copy for a thread: its destructor does not run when the thread ends */
     *copyMapFind(&c->objects, o) = copy;   /* replaces the "found" marker */
@@ -6399,6 +6409,7 @@ FIRE_FN Value copierRun(DeepCopier* c, Value root) {
         Obj* src = c->order[i];
         Obj* dst = asObj(*copyMapFind(&c->objects, src));
         for (f = 0; f < src->nfields; f++) { objFields(dst)[f] = copierMap(c, objFields(src)[f]); retain(objFields(dst)[f]); }
+        if (src->nraw) memcpy(objRaw(dst), objRaw(src), src->nraw);   /* (the packed fields: numbers) */
     }
     return copierMap(c, root);
 }
