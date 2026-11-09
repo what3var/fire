@@ -1,0 +1,50 @@
+// Picture of docs/graphics/effects.md (left Software, right Fast; the two PNGs are put side by side): FIRE_TESTS_ONLY=scene3d FIRE_SCENE_FILE=scene3d-effects.fire fire.Testing
+#import "graphics"
+#import "scene3d"
+#import "scene3d.effects"
+#import "filesystem"
+var frame = new Framebuffer(400, 250)
+var scene = new Scene()
+var ground = new Object(Template.Plane, 0m, 0m, 0m, 40m, 0m, 40m)
+ground.Texture = Texture.Checker(64, 2, S3D.Rgb(70, 90, 70), S3D.Rgb(60, 80, 60))
+ground.TextureWidth = 2m
+ground.TextureHeight = 2m
+scene.Add(ground)
+for (var i = 0; i < 8; i++) {
+    var b = new Object(Template.Box, (i % 2 * 2 - 1) * (2m + i * 0.3m), 0.75m, -i * 2.5m, 1.5m, 1.5m, 1.5m)
+    b.Color = S3D.Rgb(150, 130, 110)
+    b.RotationY = i * 17deg
+    scene.Add(take b)
+}
+for (var i = 0; i < 5; i++) {
+    var log = new Object(Template.Cylinder, 0m, 0.08m, 0.5m, 0.16m, 0.9m, 0.16m)
+    log.RotationZ = 90deg
+    log.RotationY = i * 36deg
+    log.Color = S3D.Rgb(90, 60, 40)
+    scene.Add(take log)
+}
+scene.AmbientColor = S3D.Rgb(120, 130, 170)
+scene.AmbientIntensity = 0.35
+scene.Add(Light.Directional(-0.4, -1.0, -0.5))
+scene.Add(Light.Point(0m, 0.8m, 0.5m, S3D.Rgb(255, 160, 80), 1.2))
+scene.Add(Emitter.Fire(0m, 0.1m, 0.5m))
+scene.Add(Emitter.Smoke(0m, 1m, 0.5m))
+scene.Add(Emitter.Sparks(0m, 0.3m, 0.5m))
+scene.Add(Emitter.Snow(0m, 6m, -2m, 16m))
+var boom = Emitter.Explosion(3m, 1.5m, -5m, 120)
+scene.Add(boom)
+scene.Fog(S3D.Rgb(140, 150, 175), 5m, 22m)
+var cam = new Camera(frame)
+cam.SetPosition(0.5m, 1.8m, 5m)
+cam.LookAt(0m, 0.8m, -1m)
+scene.Add(cam)
+for (var i = 0; i < 60; i++) {
+    scene.Advance(33ms)
+    if (i == 45) { boom.Burst(120) }
+}
+cam.Render()
+IO.File.WriteAllBytes("doc-sw.png", frame.ToPng())
+scene.Renderer = RenderMode.Fast
+cam.Render()
+IO.File.WriteAllBytes("doc-fast.png", frame.ToPng())
+print("ok")

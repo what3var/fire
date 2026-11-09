@@ -59,7 +59,7 @@ files of a folder, ready to be put on a web page together with them. A source th
 ## The standard libraries (`packages/`, `Source/`)
 
 The libraries of fire - `graphics`, `windows`, `devices`, `io`, `filesystem`, `dialogs`, `ui`, `ui.docking`, `linq`, `reflection`, `time`, `random`, `json`, `circuits`, `circuits.ui`, `testing`, `net`, `tls`, `http`, `gpio`, `i2c`, `spi`, `wifi`, `audio`,
-`tracker`, `scene3d`, `scene3d.terrain` - are ordinary **library projects** ([Projects and solutions](../tools/projects.md)) that you can open, change and test like your own: the folder `packages/` of the repository holds the solution
+`tracker`, `scene3d`, `scene3d.terrain`, `scene3d.effects` - are ordinary **library projects** ([Projects and solutions](../tools/projects.md)) that you can open, change and test like your own: the folder `packages/` of the repository holds the solution
 `Packages.firesln` with one project per import:
 
 ```

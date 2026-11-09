@@ -864,6 +864,16 @@ nach Arbeiten auf `targets`).
    und Vorgaben (`Fire`, `Smoke`, `Sparks`, `Rain`, `Snow`, `Explosion`). Statt programmierbarer Pixel-Shader Materialeffekte zum Einschalten (laufende UVs,
    Farbrotation über die Palette, Flackern, Wellen auf den Vertices, Toon) und Effekte auf das ganze Bild (Abblenden, Tönung, Nebel); später evtl. eine
    fire-Funktion als Vertex-Shader.
+   **Umgesetzt** (Unterpaket `scene3d.effects`, [Partikel und Effekte](graphics/effects.md)): `s3d_effects.h` - je Emitter ein Pool fester Größe
+   (32 Byte je Partikel, bis 16000), eigener Zufall (xorshift, `Seed`: VM == nativ), Kegel um eine Richtung, Box als Startfläche, Schwerkraft, Luftwiderstand,
+   Farbe/Größe über das Leben; gezeichnet nach den Dreiecken als weiche Scheiben mit Tiefentest (voller Renderer: NDC-z, schlanker: `uint16` je Band,
+   über `S3dLean.post`), von fern nach nah, additiv oder überblendet, auch ins Palettenbild. `Emitter : Object` mit Eigenschaften und den Vorgaben
+   `Fire`/`Smoke`/`Sparks`/`Rain`/`Snow`/`Explosion` (eine Tabelle in C: das Paket kostet auf dos16 12,7 KB statt 31 KB als fire-Code). In `scene3d`
+   selbst: `Scene.Fog(color, start, end)` (der Hintergrund ganz Nebel; im schlanken Renderer 16 Stufen ohne Division je Pixel, für Paletten eine Tabelle
+   16 x 256), `Scene.Tint(color, amount)`, `Scene.Advance(dt)`/`Object.Advance(dt)` (Partikel, Animation, `SpinX/Y/Z`, `TextureScrollX/Y`). Test: VM == nativ
+   (Software, Fast, Palette, Nebel, Tönung); dos16 baut. **Offen:** Nebel im GPU-Renderer (heute: Partikel und Tönung über dem GPU-Bild, ohne Tiefe),
+   Partikel mit Textur (Funken als Striche, Rauch mit Flocken), Emitter-Richtung im Raum des Objekts, die übrigen Materialeffekte (Farbrotation der
+   Palette, Flackern, Wellen, Toon).
 5. **Physik** (`scene3d.physics`): einfach, schnell, leicht zu bedienen - Kugel, Box (achsenparallel), Kapsel, Heightfield, statische Meshes; Character
    Controller (Laufen, Springen, Stufen), Raycasts, Trigger; fester Zeitschritt, Gitter als Vorauswahl; mit Einheiten (`Body.Dynamic(mass: 2kg)`,
    `scene.Gravity = 9.81m/s²`) und Vorgaben (`Body.Bouncy`, `Body.Ice`). Starrkörper mit Rotation später.
