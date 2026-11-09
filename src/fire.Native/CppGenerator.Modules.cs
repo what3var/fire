@@ -484,6 +484,7 @@ namespace fire.Native
         private void FunctionPrototypes(StringBuilder sb)
         {
             foreach (var f in _funcs) sb.AppendLine(f.Signature + ";");
+            foreach (var f in _funcs.Where(f => f.CSig != null)) sb.AppendLine(f.CSig + ";");   // (the C bodies, Ebene 2: CppGenerator.CAbi.cs)
             foreach (var (callback, body) in _catchCallbacks) sb.AppendLine($"static Value {callback}(Value e) {{ {body} }}");
             if (Wrapped)   // (the functions proper behind the wrappers that count the call depth: the trampolines call them directly)
                 foreach (var f in _funcs.Where(f => f.Kind != FuncKind.Main && !f.External)) sb.AppendLine(f.SignatureOf(f.Name + "_b", "") + ";");

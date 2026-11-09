@@ -1535,7 +1535,12 @@ namespace fire.Compiler
             _returnType = returnType;
             (_returnTypeRef, _returnWhat) = (returnTypeRef, what);
             Push();
-            foreach (var p in parameters) Declare(p.Name, MayBeUndefined(DeclaredOrDynamic(p.Type, p.ArrayRanks.Count)));
+            foreach (var p in parameters)
+            {
+                Declare(p.Name, MayBeUndefined(DeclaredOrDynamic(p.Type, p.ArrayRanks.Count)));
+                // (a `defined int` parameter checks what the body stores into it, like a variable: SPEC 8.11)
+                if (p.Type is { NonNull: true, ArrayRank: 0, PointerDepth: 0 } && p.ArrayRanks.Count == 0 && !p.ByRef) DeclareLocalType(p.Name, p.Type);
+            }
             foreach (var s in body.Statements) Check(s);
             Pop();
             _returnType = previousReturn;

@@ -1323,6 +1323,10 @@ namespace fire.Compiler
             if (width == null && !TypeKeywords.Contains(Previous().Type) && Check(TokenType.Lt) && TypeArgListEnd(0) > 0)
                 typeArgs = ParseTypeArgRefs();
 
+            // (`int! n`: a value without undefined is written `defined int n`, SPEC 8.11)
+            if (Check(TokenType.Bang) && PeekAt(1).Type == TokenType.Identifier && TypeRef.CanBeNonNull(baseName))
+                throw Error($"A value that is never undefined is declared 'defined {baseName}', not '{baseName}!'", Peek());
+
             // `float:m Len()`, `int : mm count`: the unit at the type (a number type only; a name has to follow the unit)
             string? unit = baseName is "int" or "float" ? ParseUnitAtType() : null;
 
