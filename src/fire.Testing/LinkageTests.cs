@@ -277,7 +277,7 @@ static class LinkageTests
             string filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") ?? "";
             // (=cancel: only the progress and the cancelling of a build, spark's build window)
             if (filter.Contains("plugindebug", StringComparison.OrdinalIgnoreCase)) PluginDebug(root);   // (only debugging a plugin)
-            else if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
+            else if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) { Plugins(root); PackedPlugins(root); }
             else if (filter.Contains("library", StringComparison.OrdinalIgnoreCase)) LibraryLoad(root);
             else if (filter.Contains("cancel", StringComparison.OrdinalIgnoreCase)) ProgressAndCancel(root);
             else if (filter.Contains("vmgraphics", StringComparison.OrdinalIgnoreCase)) VmGraphicsForWindows(root);
@@ -538,6 +538,7 @@ static class LinkageTests
 
         // ---- fire plugins (phase D b) ----
         Plugins(root);
+        PackedPlugins(root);
 
         // ---- a program that cannot be split (it declares a class of the prelude anew): linkage source, with a note ----
         const string own = "class Exception { string message; construct(string message = \"\") { this.message = message } }\ntry { throw new Exception(\"x\") } catch (e) { print(\"caught \" + e.message) }\n";
@@ -810,6 +811,89 @@ static class LinkageTests
 
     private const string PluginJsonExpected = "{\"$type\":\"Kit.Settings\",\"title\":\"kit\",\"level\":3,\"marks\":[1,2],\"dev\":{\"$type\":\"Kit.FastDevice\",\"id\":\"j0\"}}\n"
         + "kit 3 2 2 fast j0 9 Kit.Settings\nfast j1 9\n{\"$type\":\"Meter.Reading\",\"level\":3.0,\"span\":2.5,\"heat\":20.0,\"loose\":{\"$value\":4.0,\"$unit\":\"bn\"}}\n3pears 2.5km 20C 293.15K 4bn\n";
+
+    /// <summary>Packed objects across modules (docs/spec/NATIVE_BACKEND.md "Gepackte Objekte"): a class of the library `Api` with `defined` fields, a class of the plugin
+    /// `Kit` and one of the program derived from it - every module lays out the base alike (by the declaration), methods of each module read and write the packed
+    /// fields of objects of the others, reflection and `flat` too.</summary>
+    private static void PackedPlugins(string root)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        string s = Path.Combine(root, "plugpacked");
+        Write(s, "Api/api.script", PackedApi);
+        Write(s, "Api/Api.fireproj", """{ "name": "Api", "type": "library" }""");
+        Write(s, "Kit/kit.script", PackedKit);
+        Write(s, "Kit/Kit.fireproj", """{ "name": "Kit", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "plugin" } }""");
+        Write(s, "Host/main.script", PackedHost);
+        Write(s, "Host/Host.fireproj", """{ "name": "Host", "references": [ { "project": "../Api/Api.fireproj" } ], "settings": { "linkage": "shared" } }""");
+        string sln = Write(s, "All.firesln", """{ "name": "All", "projects": ["Api/Api.fireproj", "Kit/Kit.fireproj", "Host/Host.fireproj"], "startup": "Host" }""");
+        BuildPlan Plan(string name) { var ws = Workspace.Open(sln); return BuildPlan.Create(ws, ws.FindByName(name)!); }
+        string? before = Environment.GetEnvironmentVariable("FIRE_TEST_PLUGIN");
+        try
+        {
+            var hostPlan = Plan("Host");
+            var host = Build(hostPlan.SourceTexts, "shared", Path.Combine(root, "plugpacked-host", "host"), plan: hostPlan);
+            var kitPlan = Plan("Kit");
+            var config = new NativeConfig { Linkage = "plugin", Host = host.Exe };
+            var kit = NativeBuilder.BuildSafe(kitPlan.SourceTexts, config, TargetProfile.Host, config.ResolveToolchain(TargetProfile.Host, "gcc"), Path.Combine(root, "plugpacked-kit", "kit"), plan: kitPlan);
+            Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugpacked-kit", "kit.so"));
+            string native = host.Ok && kit.Ok ? Exec(host.Exe) : "";
+            Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", Path.Combine(root, "plugpacked-kit", "kit.fireplugin"));
+            string vm = Vm(hostPlan.SourceTexts, hostPlan);
+            Check("Gepackte Objekte ueber Module: Basisklasse der Bibliothek, Ableitung im Plugin und im Programm - Methoden aller drei, Reflection, flat (nativ == VM)",
+                native == PackedExpected && vm == PackedExpected, $"{native}\n---\n{vm}\n{host.Log}\n{kit.Log}");
+        }
+        finally { Environment.SetEnvironmentVariable("FIRE_TEST_PLUGIN", before); }
+    }
+
+    private const string PackedApi = """
+        namespace Api {
+            class Counter {
+                string name = "c"
+                defined int hits
+                defined float : m dist
+                defined bool lit
+                Hit() { this.hits++; this.dist = this.dist + 50cm; this.lit = !this.lit }
+                string Show() { return this.name + " " + this.hits + " " + this.dist + " " + this.lit }
+                string Extra() { return "-" }
+            }
+        }
+        """;
+    private const string PackedKit = """
+        #import "Api"
+        namespace Kit {
+            class Fast : Api.Counter {
+                defined int extra = 1
+                string tag = "fast"
+                Boost() { this.hits = this.hits + 10; this.extra = this.extra * 3; this.dist = this.dist + 1m }
+                string Extra() { this.Boost(); return this.tag + " " + this.extra + " " + this.hits }
+            }
+        }
+        """;
+    private const string PackedHost = """
+        #import "Api"
+        #import "reflection"
+        class Local : Api.Counter {
+            defined int mine = 7
+            string Extra() { this.hits = this.hits + this.mine; return "local " + this.mine }
+        }
+        any lib = undefined
+        try { lib = Library.Load(Environment.Get("FIRE_TEST_PLUGIN")) } catch (LibraryException e) { print("load: " + e.message); terminate(3) }
+        Api.Counter f = Reflect.New("Kit.Fast", [])
+        f.Hit(); f.Hit()
+        print(f.Extra())
+        print(f.Show())
+        f.hits = f.hits + 100
+        print(f.hits + " " + f.dist + " " + Reflect.Get(f, "extra") + " " + Reflect.Get(f, "hits"))
+        Reflect.Set(f, "extra", 5)
+        print(f.Extra())
+        var l = new Local()
+        l.Hit()
+        print(l.Extra() + " | " + l.Show())
+        var c = flat f
+        c.hits = 1
+        print(c.hits + " " + f.hits + " " + c.Show())
+        """;
+    private const string PackedExpected = "fast 3 12\nc 12 2m False\n112 2m 3 112\nfast 15 122\nlocal 7 | c 8 0.5m True\n1 122 c 1 3m False\n";
 
     private const string PluginExpected = "classes Kit.FastDevice Kit.KitError Kit.MyDriver Kit.Probe Kit.Settings Kit.Tuner True\nmy driver 1 Fast 1\n42 -100\ndriver error negative -3\nTrue\nmy driver 2 Fast 2\n"
         + "device mine 1 True\nfast x1 9 True\nx1 10 Kit.FastDevice\nagain 6\nnope: Unknown class 'Kit.Nope'.\n"

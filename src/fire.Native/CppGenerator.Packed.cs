@@ -11,8 +11,8 @@ namespace fire.Native
     // programs as the narrow fields (NarrowFieldsOn: no threads, reflection, probes, JSON, debugger, modules); copies copy the bytes (copyValue, the deep copier).
     public sealed partial class CppGenerator
     {
-        // (not across the modules of a program, a plugin or a library: they share the objects but not their layout)
-        private bool PackedOn => !Modular && !_openWorld && !_separate && !_dll && !LibraryRole;
+        // (every program: in one of modules - a library, a plugin, a program of them - by the declaration alone, RawTypeAt)
+        private bool PackedOn => true;
         private readonly Dictionary<string, int> _rawType = new(StringComparer.Ordinal);
         private readonly Dictionary<RuntimeClass, (int[] Off, int Bytes)> _rawLayout = new();
 
@@ -36,6 +36,22 @@ namespace fire.Native
             return result;
         }
 
+        /// <summary>Is the field `index` of `rc` packed, and its static type (0: a Value slot)? In a program of one piece by the name (RawType: every class that has
+        /// the field agrees); in one of modules by the declaration of the field alone - `defined`, a static kind and unit - which every module that knows the class
+        /// sees alike (a class derived in another module, a plugin, lays out its base like the base's module does).</summary>
+        private int RawTypeAt(RuntimeClass rc, int index)
+        {
+            var names = rc.FlattenedFieldNames;
+            if (index < 0 || index >= names.Count) return 0;
+            if (!Modular) return RawType(names[index]);
+            FieldInfo? info = null;
+            for (var c = rc; c != null && info == null; c = c.Base) c.OwnFieldInfo.TryGetValue(names[index], out info);
+            if (info is not { IsStatic: false } || info.RequiredKind == 0 || !DeclaredKind.IsNonNull(info.RequiredKind)) return 0;
+            int type = DeclaredValueType(info.RequiredKind, info.RequiredUnit);
+            byte kind = KindOfType(type);
+            return IsNarrowIntType(type) || kind is KindFloat or KindBool or KindWord ? type : 0;
+        }
+
         /// <summary>The C type a packed field of this static type is stored as.</summary>
         private static string RawCType(int type) => KindOfType(type) switch { KindFloat => "Real", KindWord => "FireWord", KindBool => "uint8_t", _ => "FireInt" };
         private int RawSize(int type) => KindOfType(type) switch
@@ -52,7 +68,7 @@ namespace fire.Native
             int at = 0;
             for (int i = 0; i < names.Count; i++)
             {
-                int type = RawType(names[i]);
+                int type = RawTypeAt(rc, i);
                 if (type == 0) { off[i] = -1; continue; }
                 int size = RawSize(type);
                 at = (at + size - 1) / size * size;
@@ -70,10 +86,11 @@ namespace fire.Native
             var cls = LayoutClass(rc, index);
             var (off, _) = RawLayoutOf(cls);
             if (index >= off.Length || off[index] < 0) return null;
-            string type = RawCType(RawType(cls.FlattenedFieldNames[index]));
-            // (every class the object can be has as many Value slots: the packed fields start at a constant offset - no multiplication at run time)
+            string type = RawCType(RawTypeAt(cls, index));
+            // (every class the object can be has as many Value slots: the packed fields start at a constant offset - no multiplication at run time; not
+            // with modules: a class of another module, a plugin, may derive from it)
             var slots = InstancesOf(rc).Where(c => index < c.Rc.FlattenedFieldNames.Count).Select(SlotCount).Distinct().ToList();
-            if (slots.Count == 1) return $"(*({type}*)((char*)({obj}) + FIRE_HDR(Obj) + {slots[0]} * sizeof(Value) + {off[index]}))";
+            if (slots.Count == 1 && !Modular) return $"(*({type}*)((char*)({obj}) + FIRE_HDR(Obj) + {slots[0]} * sizeof(Value) + {off[index]}))";
             return $"(*({type}*)(objRaw({obj}) + {off[index]}))";
         }
 
@@ -88,7 +105,7 @@ namespace fire.Native
         {
             var (off, _) = RawLayoutOf(rc);
             if (index >= off.Length || off[index] < 0) return "0, 0";
-            int type = RawType(rc.FlattenedFieldNames[index]);
+            int type = RawTypeAt(rc, index);
             string raw = KindOfType(type) switch { KindFloat => "FIRE_RAW_REAL", KindBool => "FIRE_RAW_BOOL", KindWord => "FIRE_RAW_WORD", _ => "FIRE_RAW_INT" };
             return $"{raw}, {off[index]}";
         }
@@ -97,9 +114,13 @@ namespace fire.Native
         private string PlaceOf(RuntimeClass rc, int index)
         {
             var (slot, half) = FieldPlace(rc, index);
-            int unit = RawType(rc.FlattenedFieldNames[index]) is var t and not 0 ? UnitOfType(t) : 0;
+            int unit = RawTypeAt(rc, index) is var t and not 0 ? UnitOfType(t) : 0;
             return $"{{{Math.Max(0, slot)}, {half}, {RawPlaceOf(rc, index)}, {(unit == 0 ? "0" : UnitC(unit))}}}";
         }
+
+        /// <summary>The slot of a field for the member tables of the modules (FireField.index): -1 for a packed one (its module's helpers read it).</summary>
+        private int TableSlotOf(RuntimeClass rc, string name) =>
+            rc.FieldIndex.TryGetValue(name, out int index) && RawTypeAt(rc, index) == 0 ? FieldPlace(rc, index).Slot : -1;
 
         /// <summary>`newObject` of the class - with the bytes of its packed fields.</summary>
         private string NewObjectCall(ClassInfo cls, string owner)

@@ -687,14 +687,14 @@ namespace fire.Native
             if (restricted && from == null) return null;
             int? index = null;
             int? rawOff = null;
-            bool raw = RawType(name) != 0;
             foreach (var c in InstancesOf(rc))
             {
                 if (!c.Rc.FieldIndex.TryGetValue(name, out int i) || index is { } known && known != i) return null;
                 if (restricted && c.Rc.FindFieldAccess(name) is { } access && !AccessAllowed(from!.Chunk.OwnerClass, access.DeclaringClass, access.Access)) return null;
-                // (a packed field: at the same offset in every one of them, too)
-                if (raw && RawLayoutOf(c.Rc).Off[i] is var off && (rawOff is { } knownOff && knownOff != off)) return null;
-                if (raw) rawOff = RawLayoutOf(c.Rc).Off[i];
+                // (packed or not, and at the same offset, in every one of them, too)
+                int off = RawLayoutOf(c.Rc).Off[i];
+                if (rawOff is { } knownOff && knownOff != off) return null;
+                rawOff = off;
                 index = i;
             }
             return index;
@@ -742,7 +742,7 @@ namespace fire.Native
             int next = 0, open = -1;
             for (int i = 0; i < names.Count; i++)
             {
-                if (RawType(names[i]) != 0) { slot[i] = -1; half[i] = -1; continue; }   // (a packed field: behind the slots, CppGenerator.Packed.cs)
+                if (RawTypeAt(rc, i) != 0) { slot[i] = -1; half[i] = -1; continue; }   // (a packed field: behind the slots, CppGenerator.Packed.cs)
                 if (NarrowName(names[i]))
                 {
                     if (open >= 0) { slot[i] = open; half[i] = 1; open = -1; }
@@ -759,7 +759,7 @@ namespace fire.Native
         {
             if (RawRef(rc, index, obj) is { } rawRef)
             {
-                int rawType = RawType(LayoutClass(rc, index).FlattenedFieldNames[index]);
+                int rawType = RawTypeAt(LayoutClass(rc, index), index);
                 return ScalarValueOf(KindOfType(rawType), UnitOfType(rawType), rawRef);
             }
             var layout = LayoutOf(LayoutClass(rc, index));
@@ -799,7 +799,7 @@ namespace fire.Native
                 + (requiredArray != 0 && !arrayKnown ? FieldArrayCheck(rc, name) + " " : "");
             var (fieldSlot, fieldHalf) = FieldPlace(rc, index);
             // (a field declared with a kind - int, float, bool, `defined ...` - holds nothing but numbers and undefined: no count to keep, the store is the C store)
-            string put = RawRef(rc, index, $"objAt({obj})") is { } rawPut ? $"{rawPut} = {RawFromValue(RawType(name), "x")};"
+            string put = RawRef(rc, index, $"objAt({obj})") is { } rawPut ? $"{rawPut} = {RawFromValue(RawTypeAt(LayoutClass(rc, index), index), "x")};"
                 : fieldHalf >= 0 ? $"nvSet(&objFields(objAt({obj}))[{fieldSlot}], {fieldHalf}, x);"
                 : declaredKind != 0 ? $"objFields(objAt({obj}))[{fieldSlot}] = x;" : $"setFieldAt({obj}, {fieldSlot}, x);";
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) {put}" : put;
@@ -2441,7 +2441,7 @@ namespace fire.Native
             foreach (var cls in _classList)
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) indexByClass[cls.Id] = index;
             // (a packed field: its offset is the class's - the helpers by class, like those of a property)
-            if (Modular || HasProperty(name) || RestrictedField(name) || RawType(name) != 0) return PropertyHelpers(name, indexByClass);
+            if (Modular || HasProperty(name) || RestrictedField(name) || _classList.Any(c => c.Rc.FieldIndex.TryGetValue(name, out int ri) && RawTypeAt(c.Rc, ri) != 0)) return PropertyHelpers(name, indexByClass);
             // (the place of the field: its slot - of a narrow one slot * 2 + half, the helpers below take it apart)
             bool narrow = NarrowName(name);
             foreach (var cls in _classList)
@@ -2583,7 +2583,7 @@ namespace fire.Native
                     if (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck)
                         unit += arrayCheck + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     var (armSlot, armHalf) = FieldPlace(cls.Rc, index);
-                    if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawType(name), "x")}; return; }}")); continue; }
+                    if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawTypeAt(cls.Rc, index), "x")}; return; }}")); ptrArms.Add((label, $"return packedFieldAddress({CString(name)});")); continue; }
                     setArms.Add((label, armHalf >= 0 ? $"{{ {fieldGuardSet}{unit}nvSet(&objFields(o)[{armSlot}], {armHalf}, x); return; }}"
                         : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; retain(x); release(old); return; }}"));
                     ptrArms.Add((label, $"return PtrV(&objFields(o)[{armSlot}]);"));

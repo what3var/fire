@@ -2334,6 +2334,9 @@ FIRE_FN Value placeGet(Obj* o, const FirePlace* p) {
     return objFields(o)[p->slot];
 }
 
+/* `&obj.n` of a packed field (`defined int n` in a program of modules: a C number behind the slots, no Value to point to). */
+FIRE_COLD FIRE_FN Value packedFieldAddress(const char* name);
+
 /* The part of an object that most objects never need: the list of what it owns and its type arguments. */
 typedef struct ObjExt { OwnList owned; TArgs targs; } ObjExt;
 FIRE_FN ObjExt* objExt(Obj* o) {
@@ -4450,6 +4453,12 @@ FIRE_COLD FIRE_FN Value missingMethod(Value self, const char* name, int argc) {
     if (self.kind == K_Class) snprintf(text, sizeof text, "Method '%s' not found on '%s'.", name, className(asObj(self)->cls));
     else snprintf(text, sizeof text, "'%s' (%d argument(s)) is not a known built-in method on a value of type %s.", name, argc, valueKindText(self));
     return fireError("MissingMemberException", text);
+}
+
+FIRE_COLD FIRE_FN Value packedFieldAddress(const char* name) {
+    char text[300];
+    snprintf(text, sizeof text, "The address of the field '%s' cannot be taken in this native build: it is declared 'defined' and lives packed in the object (a program of modules).", name);
+    return fireError("ArgumentException", text);
 }
 
 /* A field that the value does not have: a MissingMemberException (the texts of the VM). */
@@ -8296,6 +8305,7 @@ Value fireProbeRawGet(Value obj, const char* name, OwnList* list) {
     const FireMethod* m;
     char accessor[200];
     if (f && f->index >= 0) return objFields(asObj(obj))[f->index];
+    if (f && f->get) { Value r = f->get(k, obj, list, 0xFFFFFFFFu); adopt(r, list); return r; }   /* (a packed field: its place is its module's) */
     snprintf(accessor, sizeof accessor, "get_%s", name);
     m = fireFindMethod(asObj(obj)->cls, accessor, 0, &k);
     if (m) { Value r = m->fn(k, obj, NULL, list, 0xFFFFFFFFu); adopt(r, list); return r; }

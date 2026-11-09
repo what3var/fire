@@ -222,9 +222,14 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Property. Wer die Felder eines Objekts ohne das Layout zu kennen liest, geht über ihre Plätze (`FirePlace`: Slot, schmale Hälfte oder gepackte C-Zahl;
   `placeGet`, `rawGet`/`rawSet`): JSON (`JsonFieldInfo.raw`/`rawOff`, `JsonClassInfo.nraw` für die Objekte, die es anlegt), der Debugger (`DbgClass.places`:
   `expand` zeigt die Felder in ihrer Reihenfolge, `set` geht über den Setter und liest den neuen Wert vom Platz), Reflection und Sonden über die
-  Feld-Helfer, Threads über `syncFields` (`sync x` kopiert die Bytes zurück; `taking` über den tiefen Kopierer). Nur Module, Plugins und getrennte
-  Bibliotheken haben keine gepackten Objekte (sie teilen die Objekte, nicht ihr Layout) - und nicht Felder, deren Adresse genommen wird. Auch
-  Debug-Builds packen (ohne Skalare: über die Value-Wege des Generators).
+  Feld-Helfer, Threads über `syncFields` (`sync x` kopiert die Bytes zurück; `taking` über den tiefen Kopierer). Auch Debug-Builds packen (ohne
+  Skalare: über die Value-Wege des Generators). **Module und Plugins** (Linkage `static`/`shared`, `--linkage plugin`): jedes Modul legt eine Klasse aus,
+  die es kennt - auch eine Basis aus einer anderen Bibliothek -, deshalb entscheidet dort allein die Deklaration des Felds (`RawTypeAt`: `defined`, eine
+  statische Art und Einheit), die jedes Modul aus der Schnittstelle der Klasse gleich sieht; ein Modul kennt nicht alle abgeleiteten Klassen (ein Plugin
+  kann ableiten), der Offset kommt deshalb immer über `objRaw` (die Slots des Objekts zur Laufzeit). Die Tabellen der Mitglieder (`FireField.index`) nennen
+  den Slot, -1 für ein gepacktes Feld (es geht über seine get/set-Funktionen des Moduls). Die Adresse eines gepackten Felds (`&obj.n`) gibt es in einem
+  Programm aus Modulen nicht (eine ArgumentException, `packedFieldAddress`); in einem Programm aus einem Stück wird ein Feld, dessen Adresse genommen
+  wird, nicht gepackt.
   Gemessen: 300 000 Objekte mit drei `defined int` und einem `defined bool` 45 -> 35 MB (64 Bit), 35 -> 31 MB (`#intwidth 32`, dort waren die schmalen
   Felder schon kompakt); der Code bleibt gleich groß (dos16: 1063 -> 1096 Byte für die Methode mit drei Feldänderungen).
 * **Der Objektkopf.** Was die meisten Objekte nie brauchen - die Liste dessen, was ein Objekt besitzt, und seine Typargumente - liegt in einem Block
