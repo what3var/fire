@@ -656,8 +656,10 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 9. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
    gepackt pro Klasse später.
    **Begonnen:** Stufe 1 (typisierte Arrays im Generator, `KindArr`, auch Felder), Stufe 2a (Merkmal „schmal“, skalare Plätze und Variablen für Ints der
-   Programmbreite, floats, Zahlen mit Einheit, bools aus Vergleichen und `word`; docs/spec/NATIVE_BACKEND.md "Skalare"). Offen: Parameter und Rückgaben
-   als C-Typen.
+   Programmbreite, floats, Zahlen mit Einheit, bools aus Vergleichen und `word`; docs/spec/NATIVE_BACKEND.md "Skalare"), Stufe 2b (Parameter und Rückgaben
+   als C-Typen: über `defined int`/`float`/`word`/`bool` und `trust` - SPEC 8.10b, der Typprüfer warnt mit TC022 -, ein C-Rumpf je Methode und die
+   Value-Funktion davor; NATIVE_BACKEND.md "Parameter und Rückgaben als C-Typen"). Offen: Felder als C-Typen (gepackte Objekte), C-Parameter mit Einheit,
+   `trust` nativ ohne Prüfung an der Aufrufstelle.
    **Messung (Frage des Benutzers: woher die 350 KB eines Grafikprogramms auf dos16 kommen).** Grafik-C ~85 KB (~23 Byte je Zeile, normal), Runtime 75 KB,
    C-Bibliothek 46 KB - und **109 KB aus fire übersetzter Code** für 725 Zeilen (Prelude der Grafik + Programm), ~150 Byte je Zeile: `DrawRoundRect` (4 Zeilen,
    reicht an ein Native weiter) wird 298 Zeilen C und 4,7 KB. gcc `-m32 -Os` erzeugt aus demselben C ebenso viel (108 KB) - es ist der allgemeine Code, nicht
@@ -665,8 +667,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Gültigkeitslisten (`leave`/`adopt`/`transferTree`) ~8 KB, Prüfungen der Parameter ~8 KB, `retain`/`release` ~4 KB; der Rest (~70 KB) sind die 8-Byte-`Value`s
    selbst (Kopien, Aufrufe mit Values, Feldzugriffe) - das nimmt erst diese Ebene 2. Schon umgesetzt: kein `retain`/`release` für Parameter, die nach ihrer
    Prüfung `int`/`float`/`bool` sind (DOS 109 -> 103 KB, gcc 108 -> 79 KB), der Zustand des Threads im Datensegment unter Watcom/Huge (`FIRE_CC_NEAR_DATA`).
-   Noch offen dort: Methoden mit erklärtem skalaren Rückgabetyp ohne `adopt` (braucht den Rückgabetyp im Bytecode und eine Regel, wann er gilt - der
-   Typprüfer prüft ihn, die VM erzwingt ihn nicht).
+   Methoden mit erklärtem skalaren Rückgabetyp ohne `adopt`: mit `defined` (die VM erzwingt ihn, der Generator gibt die C-Zahl zurück).
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
 Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),

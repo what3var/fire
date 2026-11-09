@@ -8,7 +8,7 @@ using fire.Standard;
 namespace fire.Native
 {
     // Ebene 2, Stufe 2b (docs/spec/NATIVE_BACKEND.md "Parameter und Rückgaben als C-Typen"): a method whose parameters or return value are declared
-    // `defined int` / `defined float` / `defined word` (`defined bool` for the return value, SPEC 8.11) gets a body with those C types (`fN_c`) - its direct
+    // `defined int` / `defined float` / `defined word` (`defined bool` for the return value, SPEC 8.10b) gets a body with those C types (`fN_c`) - its direct
     // callers pass C numbers and take a C number back. `fN` stays the function with Values for everything else (dispatchers, lambdas, reflection): it checks
     // the parameters like the prologue would and puts the result into a Value.
     public sealed partial class CppGenerator

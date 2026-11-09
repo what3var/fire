@@ -1247,7 +1247,7 @@ namespace fire.Compiler
         /// parameter types.</summary>
         private TypeRef ParseTypeRef(bool allowArray = false)
         {
-            // `defined int n` (SPEC 8.11): a value type that never holds undefined - the word stands in front of the type
+            // `defined int n` (SPEC 8.10b): a value type that never holds undefined - the word stands in front of the type
             if (!DefinedAhead(0)) return ParseTypeRefCore(allowArray);
             var definedTok = Advance();
             var type = ParseTypeRefCore(allowArray);
@@ -1323,7 +1323,7 @@ namespace fire.Compiler
             if (width == null && !TypeKeywords.Contains(Previous().Type) && Check(TokenType.Lt) && TypeArgListEnd(0) > 0)
                 typeArgs = ParseTypeArgRefs();
 
-            // (`int! n`: a value without undefined is written `defined int n`, SPEC 8.11)
+            // (`int! n`: a value without undefined is written `defined int n`, SPEC 8.10b)
             if (Check(TokenType.Bang) && PeekAt(1).Type == TokenType.Identifier && TypeRef.CanBeNonNull(baseName))
                 throw Error($"A value that is never undefined is declared 'defined {baseName}', not '{baseName}!'", Peek());
 
@@ -1345,6 +1345,7 @@ namespace fire.Compiler
             var args = new List<TypeRef>();
             do
             {
+                if (DefinedAhead(0)) throw Error($"'defined {PeekAt(1).Lexeme}' cannot be a type argument - 'defined' belongs to variables, parameters, fields, properties and return types", Peek());
                 var arg = ParseTypeRef(allowArray: true);
                 // `Box<int : cm>`, `List<float : any>`, `Box<int : any m>`: a number type argument with its unit (without one it is unitless)
                 if (arg is { BaseName: "int" or "float", Unit: null, ArrayRank: 0 } && Check(TokenType.Colon) && (PeekAt(1).Type == TokenType.Identifier || IsCustomUnitWordAt(1)))
@@ -3715,7 +3716,7 @@ namespace fire.Compiler
                 return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
             }
 
-            // `trust x` (SPEC 8.11): the developer vouches that x is not undefined - no warning where a `defined` value is expected, and a native
+            // `trust x` (SPEC 8.10b): the developer vouches that x is not undefined - no warning where a `defined` value is expected, and a native
             // release build passes it on without the check. (`trust` is a word of its own only in front of an operand on the same line.)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "trust" && !PeekAt(1).NewlineBefore
                 && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.True or TokenType.False or TokenType.CharLiteral)

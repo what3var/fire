@@ -2904,7 +2904,7 @@ FIRE_FN Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, 
     return guardKindSlow(v, kind, unitless, what, unitlessText);
 }
 
-/* `int!`, `float!`, `bool!`, `word!`, `char!` (SPEC 8.11): undefined is an ArgumentException, a value of an enum becomes its number. */
+/* `defined int`, `defined float`, `defined bool`, `defined word`, `defined char` (SPEC 8.10b): undefined is an ArgumentException, a value of an enum becomes its number. */
 FIRE_COLD FIRE_FN Value guardKindNNSlow(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
     if (v.kind == K_Undefined) {
         char text[200];

@@ -184,6 +184,22 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Funktion mit catch-Blöcken im Rahmen); `x += c` auf ihnen ist C. Nicht in Debug-Builds (der Debugger liest die Values) und nicht mit `#intwidth 16`.
   Gemessen auf dos16 (Open Watcom, `-Os`): eine Schleife `s = (s * 31 + i) % 1000003` mit `i < n` gegen den Parameter 1012 -> 334 Byte, eine
   Float-Schleife `a = a + x * x; x = x + 0.25` 1001 -> 351 Byte. Mit gcc `-O2` gleich schnell wie vorher (gcc hielt die Values schon in Registern).
+* **Parameter und Rückgaben als C-Typen (Ebene 2, Stufe 2b).** Grundlage ist `defined` (SPEC 8.10b): ein `defined int`-Parameter ist nie `undefined` und
+  kein Enum-Wert, eine `defined`-Rückgabe ebenso - das macht den Rumpf einer Methode skalar, ohne dass der Generator die Aufrufer kennen muss
+  (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern ohne Einheit oder mit einer `defined`-Rückgabe
+  (auch `bool`), deren Rückgabewerte eine statische Art und Einheit haben, bekommt einen **C-Rumpf** `fN_c` mit diesen C-Typen (`FireInt`, `Real`,
+  `FireWord`, `bool`): die C-Parameter sind Variablen, die C-Zahlen sind (`ScalarVarOf`; eine, in die der Rumpf etwas anderes speichert, wird am Anfang
+  zum Value `Pi` aus `Pi_c`), ihr `GuardLocal` entfällt, ein `return` gibt die Zahl zurück (ein Ausstieg durch eine Ausnahme 0). `fN` bleibt die Funktion
+  mit Values für alles Übrige (Dispatcher, Interfaces, Lambdas, Reflection, Überschreibungen): sie prüft die C-Parameter wie der Prolog (`guardKindNN`),
+  ruft `fN_c` und packt das Ergebnis in einen Value. Ein **direkter Aufruf** (`CallStaticMethod`, `CallMethod` auf einem Objekt einer bekannten Klasse,
+  deren Methode keine abgeleitete Klasse überschreibt) ruft `fN_c`: ein Argument, dessen Typ die Zahl beweist (eine schmale Zahl ohne Einheit, ein float,
+  ein word), geht als C-Zahl hinein, jedes andere wird an der Aufrufstelle in seinen Schatten geprüft (dieselbe Ausnahme wie im Prolog, vor dem Aufruf);
+  das Ergebnis landet im Schatten des Platzes. Die Skalare der Aufrufstelle bleiben dabei Skalare (die Operation materialisiert nur, was sie als Value
+  braucht). Ein `GuardTop` einer `defined`-Rückgabe, deren Platz die Zahl schon beweist, erzeugt nichts. Nicht für generische Methoden (Trampolin),
+  Accessoren, Methoden mit `try` (der Rahmen hält Values), Module, Debug-Builds und `#intwidth 16`. Ob eine Methode eine C-Rückgabe hat, hängt am
+  zusammengeführten Rückgabetyp: ändert er sich, läuft eine weitere Runde (`NoteCReturn`).
+  Gemessen (`Mix(a, b, c) = a * 31 + b * 7 + c` in einer Schleife mit `% 1000003`): dos16 (Open Watcom, `-Os`) 1476 -> 131 Byte Code für beide
+  Methoden; x86-64 gcc `-Os` 6,27 -> 1,55 s, `-O2` gleich (gcc bettet die kleinen Funktionen dort ohnehin ein und entfernt die Values selbst).
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit

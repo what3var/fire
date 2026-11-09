@@ -1100,7 +1100,7 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>`defined int` (SPEC 8.11) is a single value - not an array.</summary>
+        /// <summary>`defined int` (SPEC 8.10b) is a single value - not an array.</summary>
         private static void ValidateNonNull(TypeRef? type, int arrayRanks, int line)
         {
             if (type is not { NonNull: true }) return;

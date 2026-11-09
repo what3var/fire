@@ -189,6 +189,12 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   narrow value where it is known, the wide one only for `any`). For the same reason no operation has a type that depends on a value: `int / int` is an
   `int` (`7 / 2` is 3), a power is always a `float` (`2 ^ 3` is 8.0). `var a = []` says nothing about its elements: `TC020`, an `any[]`
   (`int a[] = []` says it).
+* **`defined` (SPEC 8.10b).** A static type of a value type carries what the checker knows about `undefined` (`StaticType.Null`): *defined* - a
+  literal, the result of an operator, a `defined` declaration, a call of a method whose return value is `defined`, `trust x`; *may be undefined* - a
+  parameter, field or property declared without `defined`, a variable without an initializer, the literal `undefined`; *inferred* - a variable that was
+  only given defined values so far (in the order of the source: a loop may give it something else later, so a `defined` variable still checks what it
+  takes from it); *unknown* - everything else (the natives, the standard library). A value that may be undefined going into a `defined` parameter,
+  field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.
 * **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;
   same dimension -> `a * factor`; otherwise `UnitMismatchException`. The factor is cached per (source unit, target unit) at the site; where the source unit is also static the whole thing

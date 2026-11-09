@@ -13,7 +13,7 @@ namespace fire.Bytecode
         /// <summary>An int declared with an explicit width beyond the program's (`int[64]`, `int[32]`): a value keeps the width it has (Value.Wide). A plain `int`
         /// holds the program's int - with `#intwidth 32`/`16` a wider value is cut when it goes in (like a store into `int[32]`; natively a narrow field).</summary>
         public const byte KeepsWidthBit = 0x40;
-        /// <summary>`int!`, `float!`, `bool!`, `word!`, `char!` (SPEC 8.11): undefined does not fit (an ArgumentException), a value of an enum becomes its
+        /// <summary>`defined int`, `defined float`, `defined bool`, `defined word`, `defined char` (SPEC 8.10b): undefined does not fit (an ArgumentException), a value of an enum becomes its
         /// number. `word!`/`char!` are the only declarations of a word or a char that are checked here (their stores convert or check the rest).</summary>
         public const byte NonNullBit = 0x20;
 
@@ -74,7 +74,7 @@ namespace fire.Bytecode
             if (IsNonNull(required))
             {
                 if (value.Kind == ValueKind.Undefined) return $"{what} is {Expected(required)} and never undefined.";
-                if (value.IsEnum) value = value.WithoutEnum();   // (`int!` takes the number of a value of an enum)
+                if (value.IsEnum) value = value.WithoutEnum();   // (`defined int` takes the number of a value of an enum)
             }
             if (value.Kind == ValueKind.Undefined || value.Kind == ValueKindOf(required)) return null;
             if (ValueKindOf(required) == ValueKind.Float && value.Kind == ValueKind.Int)
@@ -95,7 +95,7 @@ namespace fire.Bytecode
             ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool",
         };
 
-        /// <summary>The value a field declared `int!` (`float!`, `bool!`, `word!`, `char!`) starts with: zero in the unit it demands.</summary>
+        /// <summary>The value a field declared `defined int` (`defined float`, `bool`, `word`, `char`) starts with: zero in the unit it demands.</summary>
         public static Value ZeroOf(byte required, Unit? unit) => ValueKindOf(required) switch
         {
             ValueKind.Int => Value.MakeInt(0, unit),

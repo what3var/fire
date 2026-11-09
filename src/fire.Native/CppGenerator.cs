@@ -2496,8 +2496,8 @@ namespace fire.Native
             return DeclaredKind.TagOf(declared) == TypeTag.Int && !DeclaredKind.KeepsWidth(declared) && _program.IntWidth < 64 ? $"intProgram({call})" : call;
         }
         /// <summary>What a parameter, field or return value declared int/float/bool (DeclaredKind) certainly holds after its check: that kind (or undefined) in
-        /// the unit it demands (`demand`: its unit demand, null: none). A plain `int` holds the program's int - but maybe a value of an enum (CutBit); `int!`
-        /// (SPEC 8.11) neither undefined nor an enum (NarrowBit). TypeUnknown when the unit is open.</summary>
+        /// the unit it demands (`demand`: its unit demand, null: none). A plain `int` holds the program's int - but maybe a value of an enum (CutBit); `defined int`
+        /// (SPEC 8.10b) neither undefined nor an enum (NarrowBit). TypeUnknown when the unit is open.</summary>
         private int DeclaredValueType(byte declared, string? demand)
         {
             byte kind = KindOfDeclared(declared);
@@ -5439,7 +5439,7 @@ namespace fire.Native
                     _kindsKept = true;
                     return Next();
                 case OpCode.GuardTop when GuardTopProven(st, ins):
-                    return Next();   // (`defined`: the slot certainly holds such a number - SPEC 8.11)
+                    return Next();   // (`defined`: the slot certainly holds such a number - SPEC 8.10b)
                 case OpCode.GuardTop:
                 {
                     // a value going into a local whose declaration the type checker could not prove: its kind (a whole number for a float is converted)
@@ -5448,7 +5448,7 @@ namespace fire.Native
                     E($"{S(d - 1)} = {GuardKindCall(S(d - 1), declared, Str(ins.A[1]))};");
                     Check();
                     byte kind = KindOfDeclared(declared);
-                    // (`int!` - a return value, SPEC 8.11: the number of the kind, in the unit the value had; a plain declaration only keeps a known kind)
+                    // (`defined int` - a return value, SPEC 8.10b: the number of the kind, in the unit the value had; a plain declaration only keeps a known kind)
                     if (DeclaredKind.IsNonNull(declared) && kind is KindInt or KindFloat && KindOfType(Ty(d - 1)) == kind) SetT(d - 1, Ty(d - 1) & ~(NullableBit | TypeNone | CutBit) | (kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? NarrowBit : 0));
                     else if (DeclaredKind.IsNonNull(declared) && kind is KindBool or KindWord) SetT(d - 1, TypeOf(kind, 0));
                     else if (KindOfType(Ty(d - 1)) != kind) SetT(d - 1, kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : TypeUnknown);
