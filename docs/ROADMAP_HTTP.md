@@ -14,9 +14,10 @@ Therefore:
   state is always consistent.
 * Handing over: sockets are integer handles in the bridge of `net`, so the number can go to the worker in an actor message. To check: the same for
   the state of a `Tls.Stream`.
-* **Single instances** cannot be shared objects. Idea: they are `actor`s.
-  **Open:** an actor call has no way back (no return value, only messages). A form of request/answer is needed before this works - to be designed.
-  Fallback: one instance per worker.
+* **Single instances** cannot be shared objects: they are `actor`s. The way back (an actor call with a result) comes with `await`
+  (docs/ROADMAP_TASKS.md): `var n = await counter.Get()`.
+* With the task scheduler of docs/ROADMAP_TASKS.md every connection is a pooled task, so thousands of connections (WebSockets of FXML pages) are cheap,
+  also on small devices; the workers of section 1 are then groups of tasks rather than threads.
 
 ## 2. Router chain
 
@@ -94,6 +95,5 @@ Resolves in this order: explicit routes (lambdas), RPC/FXML, static files, fallb
 
 ## Open
 
-* The way back for actors (request/answer), needed for single instances.
-* A further language/runtime feature that touches this plan (to be discussed).
+* Builds on tasks and `await` (docs/ROADMAP_TASKS.md), which also give the way back for actors.
 * Which FXML elements the browser covers first.
