@@ -47,12 +47,12 @@ namespace fire.Editor
             "public", "private", "protected",
             "namespace",
             "with", "extends", "switch", "case", "default", "break", "continue", "where",
-            "fire", "taking", "handover", "sync", "flat", "copy", "take", "leave", "terminate", "actor", "process", "operator",
+            "fire", "taking", "handover", "sync", "flat", "copy", "take", "leave", "terminate", "actor", "process", "operator", "defined", "trust",
             "true", "false", "undefined", "and", "or",
             "unit", "prefixed", "unprefixed", "coerce",
         };
 
-        private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte", "any" };
+        private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte", "word", "any" };
 
         public static string? GetCurrentKeyword(string source, int offset)
         {

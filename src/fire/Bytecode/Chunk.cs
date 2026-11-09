@@ -67,6 +67,10 @@ namespace fire.Bytecode
         /// <summary>The source of the first line of the chunk (null: it has no line information) - the module its code belongs to (ROADMAP 9).</summary>
         [MemoryPackIgnore]
         public int? FirstSourceIndex => _lineTable.Count > 0 ? _lineTable[0].SourceIndex : null;
+
+        /// <summary>The source lines this chunk has code for (the profiler's lines that can run, LineProfile.ExecutableLines).</summary>
+        [MemoryPackIgnore]
+        public IEnumerable<(int SourceIndex, int Line)> Lines => _lineTable.Where(e => e.Line > 0).Select(e => (e.SourceIndex, e.Line));
         private int _lastMarkedSourceIndex = -1;
         private int _lastMarkedLine = -1;
 

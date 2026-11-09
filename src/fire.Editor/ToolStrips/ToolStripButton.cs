@@ -27,6 +27,10 @@ namespace fire.Editor
     {
         public static readonly StyledProperty<int?> IconSizeProperty = AvaloniaProperty.Register<ToolStripButton, int?>(nameof(IconSize));
 
+        /// <summary>A switch: the button shows that it is on (pseudo class `:checked`); the Click handler changes it.</summary>
+        public static readonly StyledProperty<bool> IsCheckedProperty = AvaloniaProperty.Register<ToolStripButton, bool>(nameof(IsChecked));
+        public bool IsChecked { get => GetValue(IsCheckedProperty); set => SetValue(IsCheckedProperty, value); }
+
         /// <summary>The icon: any control (an <c>Image</c>, a <c>PathIcon</c>); it is shown 16 x 16.</summary>
         public static readonly StyledProperty<Control?> IconProperty = AvaloniaProperty.Register<ToolStripButton, Control?>(nameof(Icon));
 
@@ -70,6 +74,7 @@ namespace fire.Editor
             LabelProperty.Changed.AddClassHandler<ToolStripButton>((b, _) => b.UpdateLabel());
             MenuProperty.Changed.AddClassHandler<ToolStripButton>((b, e) => b.MenuChanged(e.OldValue as MenuFlyout, e.NewValue as MenuFlyout));
             IconSizeProperty.Changed.AddClassHandler<ToolStripButton>((b, _) => b.UpdateIcon());
+            IsCheckedProperty.Changed.AddClassHandler<ToolStripButton>((b, e) => b.PseudoClasses.Set(":checked", e.NewValue is true));
         }
 
         public ToolStripButton()

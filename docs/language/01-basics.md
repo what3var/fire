@@ -82,7 +82,14 @@ int width               // a typed declaration may leave out the value: it start
 print(name + " " + count + " " + ratio + " " + ready + " " + width)
 ```
 
-- `var` needs a value (`var x` alone is the error `E4058`); the type of a variable never changes afterwards.
+- `var` needs a value (`var x` alone is the error `E4058`); the type of a variable never changes afterwards. `var count = 3` is an `int` for good:
+  `count += 0.5` is a type conflict (`TC001`; at run time an `ArgumentException`) - write `var count = 3.` (or `3.0`) for a `float`, or convert
+  (`count = (count + 0.5)!int`).
+- The value must say the type. `var x = undefined` takes the type of its first assignment (warning `TC020`: say it in the declaration,
+  `Dog x = undefined`); a value whose type the compiler does not know (`var x = someAny[i]`) or `undefined` that nothing gives a type is `TC019` - an
+  error in strict mode, in lax mode a loud warning and the variable is `any`. Write `any x = ...` when every kind of value is really meant.
+- Values of related types join: `var x = c ? 1 : 2.5` is a `float`, `var a = c ? new Dog() : new Cat()` the nearest common base class or interface
+  (`Animal`); unrelated ones (`c ? 1 : "one"`, `[1, "one"]`) make `any` with the warning `TC020`.
 - The type stands **before** the name (`int x`). A `:` after the name fixes a [unit](05-units.md), not a type: `var len : mm = 5`.
 - A variable lives in the block it is declared in. An inner block may declare a name of an outer block again; inside, the inner one counts.
 - Variables at the top level of the program are **global**: they are visible in every method and lambda.
@@ -100,7 +107,7 @@ print(Pi * 2)
 | Literal | Examples | Type |
 |---|---|---|
 | whole number | `42`, `-7`, `0x1F`, `0b1010`, `1_000_000` (`_` between digits separates groups) | `int` |
-| decimal number | `2.5`, `0.001` (a leading digit is needed: `0.5`, not `.5`), `1e3`, `2.5E-3` (scientific notation: always a `float`) | `float` |
+| decimal number | `2.5`, `0.001` (a leading digit is needed: `0.5`, not `.5`), `3.` (the digits after the point may be left out: `var x = 0.` is a `float`, `var x = 0` an `int`), `1e3`, `2.5E-3` (scientific notation: always a `float`) | `float` |
 | number with unit | `5mm`, `2.5kg`, `500ms`, `0xFFmm`, `1m3` (a power as digits: `m^3`) | `int`/`float` with a unit |
 | text | `"Hello"`, `"line\n"` | `string` |
 | interpolated text | `$"x = {x}"` | `string` |

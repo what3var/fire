@@ -1,4 +1,4 @@
-// The tests of $name$ (`forge test`, docs/TESTING.md): the folder testing/ is not part of the package.
+// The tests of $name$ (`forge test`, docs/tools/testing.md): the folder testing/ is not part of the package.
 #import "testing"
 
 class GreeterTests {

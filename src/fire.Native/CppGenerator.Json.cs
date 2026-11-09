@@ -7,7 +7,7 @@ using fire.Standard;
 namespace fire.Native
 {
     /// <summary>
-    /// JSON (`#import "json"`, docs/JSON.md) in the native backend: the program calls `__JsonCall`, the runtime part is native/runtime/fire_json.h (C)
+    /// JSON (`#import "json"`, docs/stdlib/json.md) in the native backend: the program calls `__JsonCall`, the runtime part is native/runtime/fire_json.h (C)
     /// (put into the generated file), and the generator writes the tables it reads - per class its fields as JSON sees them (JsonMethods.JsonFieldsOf),
     /// the slots of List and JsonObject, and the texts of the type arguments. Every class of the program is generated: `"$type"` can name any of them.
     /// </summary>
@@ -86,7 +86,7 @@ namespace fire.Native
 
         private static readonly HashSet<string> JsonPlainTypes = new(StringComparer.Ordinal)
         {
-            "int", "float", "bool", "string", "char", "byte", "long", "short", "double", "buffer", "undefined",
+            "int", "float", "bool", "string", "char", "byte", "word", "long", "short", "double", "buffer", "undefined",
             "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float32", "float64",
         };
 
@@ -146,25 +146,32 @@ namespace fire.Native
             return Math.Min(count, 255);
         }
 
+        /// <summary>The kind of a `defined` field for JsonFieldInfo.defined (SPEC 8.10b), "0" for any other.</summary>
+        private static string DefinedKindOf(byte declared) => declared != 0 && DeclaredKind.IsNonNull(declared) ? KindConstant(declared) : "0";
+
         /// <summary>The JSON row of a class (a JsonClassInfo) and the table of its fields (written to <paramref name="sb"/> as <paramref name="fieldTable"/>). A plugin
         /// (<paramref name="unitFixups"/>): the table is not const and the units of its fields are set when the plugin is registered (the program's numbers).</summary>
         private string JsonRow(ClassInfo ci, string fieldTable, int flags, StringBuilder sb, List<string>? unitFixups)
         {
             var rc = ci.Rc;
             var fields = JsonMethods.JsonFieldsOf(rc).Where(f => rc.FieldIndex.ContainsKey(f.Name)).ToList();
-            if (fields.Count > 0)
+            // (behind them the `defined` fields that do not go to JSON: a read object holds their zeros too)
+            var extra = rc.FieldIndex.Keys.Where(n => fields.All(f => f.Name != n) && rc.FindFieldRequiredKind(n) is var k and not 0 && DeclaredKind.IsNonNull(k))
+                .Select(n => new JsonMethods.JsonField(n, n, "", rc.FindFieldRequiredUnit(n)?.TrimStart('#') is { Length: > 0 } demand && !demand.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(demand) : null)).ToList();
+            var rows = fields.Concat(extra).ToList();
+            if (rows.Count > 0)
             {
-                sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", fields.Select(f =>
-                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}}}")) + "};");
+                sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", rows.Select(f =>
+                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0}};");
                 if (unitFixups != null)
-                    for (int j = 0; j < fields.Count; j++)
-                        if (UnitId(fields[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");
+                    for (int j = 0; j < rows.Count; j++)
+                        if (UnitId(rows[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");
             }
             else fieldTable = "NULL";
             if (rc.IsActor) flags |= 1;
             if (rc.IsNotSerializable()) flags |= 16;
             if (JsonMethods.HasOnDeserialized(rc)) flags |= 2;
-            return $"{{{CString(rc.Name)}, {CString(GenericClassNames.PlainName(rc.Name))}, {ci.Fields.Count}, {fieldTable}, {fields.Count}, {flags}, {JsonTypeParamCount(rc)}}}";
+            return $"{{{CString(rc.Name)}, {CString(GenericClassNames.PlainName(rc.Name))}, {SlotCount(ci)}, {fieldTable}, {fields.Count}, {flags}, {JsonTypeParamCount(rc)}, {(PackedOn ? RawLayoutOf(rc).Bytes : 0)}}}";
         }
 
         /// <summary>A plugin whose program has JSON: the rows of its classes and its type arguments (FirePlugin.jsonAt, ...: the program's jsonClassAt asks for a class
@@ -212,22 +219,22 @@ namespace fire.Native
             int jsonIds = _classList.Count == 0 ? 0 : _classList.Max(c => c.Id) + 1;
             for (int jsonId = 0; jsonId < jsonIds; jsonId++)
             {
-                if (!jsonById.TryGetValue(jsonId, out var ci)) { rows.Add("{\"\", \"\", 0, NULL, 0, 0, 0}"); continue; }   // (an id without a class, see ClassDescTable)
+                if (!jsonById.TryGetValue(jsonId, out var ci)) { rows.Add("{\"\", \"\", 0, NULL, 0, 0, 0, 0}"); continue; }   // (an id without a class, see ClassDescTable)
                 var rc = ci.Rc;
                 int flags = 0;
                 if (rc.Name == "List" && rc.FieldIndex.TryGetValue("items", out int items) && rc.FieldIndex.TryGetValue("count", out int count))
                 {
                     flags |= 4;
-                    (listCls, listItems, listCount) = (ci.Id, items, count);
+                    (listCls, listItems, listCount) = (ci.Id, FieldPlace(rc, items).Slot, FieldPlace(rc, count).Slot);
                 }
                 if (rc.Name == "JsonObject" && rc.FieldIndex.TryGetValue("keys", out int keys) && rc.FieldIndex.TryGetValue("values", out int values) && rc.FieldIndex.TryGetValue("count", out int n))
                 {
                     flags |= 8;
-                    (objCls, objKeys, objValues, objCount) = (ci.Id, keys, values, n);
+                    (objCls, objKeys, objValues, objCount) = (ci.Id, FieldPlace(rc, keys).Slot, FieldPlace(rc, values).Slot, FieldPlace(rc, n).Slot);
                 }
                 rows.Add(JsonRow(ci, $"kJsonF{ci.Id}", flags, sb, null));
             }
-            sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
+            sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
             sb.AppendLine($"static const uint32_t kJsonClassCount = {rows.Count};");
             sb.AppendLine($"static const JsonSpecial kJsonSpecial = {{{listCls}, {listItems}, {listCount}, {objCls}, {objKeys}, {objValues}, {objCount}}};");
             var targs = _targIds.OrderBy(kv => kv.Value).ToList();

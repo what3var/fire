@@ -87,7 +87,7 @@ namespace UI {
             var scale = size * 1.0 / box
             var pen = new Pen(__GRPHBshGetColor(brush.id), UI.M.Max(1, size / 8))
             for (var i = 0; i < g.figures.Count; i = i + 1) {
-                var f = g.figures[i]
+                any f = g.figures[i]
                 if (f.Count() < 2) { continue }
                 var pts = new float[f.points.Count]
                 for (var k = 0; k < f.points.Count; k = k + 2) {
@@ -292,7 +292,7 @@ namespace UI {
         }
 
         static bool IsSpace(string s, int index) {
-            var code = s.CharAt(index).ToInt()
+            any code = s.CharAt(index).ToInt()
             return code == 32 || code == 9 || code == 10
         }
 
@@ -311,7 +311,7 @@ namespace UI {
                 return
             }
             if (kind != 0 && this.done > 0 && !this.sealed) {
-                var step = this.steps[this.done - 1]
+                any step = this.steps[this.done - 1]
                 if (step.kind == kind && now - step.time <= this.pause) {
                     if (kind == 1 && removed == "" && start == step.start + step.inserted.Length &&
                         !(step.inserted.Length > 0 && UI.TextHistory.IsSpace(step.inserted, step.inserted.Length - 1) && inserted.Length > 0 && !UI.TextHistory.IsSpace(inserted, 0))) {
@@ -358,7 +358,7 @@ namespace UI {
         // The caret and selection after the last step (a drop selects what it inserted).
         undefined SetAfter(int caret, int anchor) {
             if (this.done == 0) { return }
-            var step = this.steps[this.done - 1]
+            any step = this.steps[this.done - 1]
             step.caretAfter = caret
             step.anchorAfter = anchor
         }
@@ -494,7 +494,7 @@ namespace UI {
         undefined EditText(int start, int count, string value, int kind) {
             this.history.Check(this.Text)
             var before = this.Text
-            var removed = before.Substring(start, count)
+            any removed = before.Substring(start, count)
             var caretBefore = this.caret
             var anchorBefore = this.anchor
             if (anchorBefore == caretBefore) { anchorBefore = -1 }

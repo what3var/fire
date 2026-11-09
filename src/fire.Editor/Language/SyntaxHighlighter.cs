@@ -81,7 +81,7 @@ namespace fire.Editor
         private static readonly HashSet<TokenType> TypeKeywords = new()
         {
             TokenType.KwBool, TokenType.KwInt, TokenType.KwFloat, TokenType.KwChar, TokenType.KwString,
-            TokenType.KwByte,
+            TokenType.KwByte, TokenType.KwWord,
         };
 
         /// <summary>Like <see cref="Highlight(string)"/>, and the lines of branches of `#if` that are not taken under <paramref name="symbols"/> are greyed out (SPEC 8.1.7): what is in them is
@@ -141,6 +141,14 @@ namespace fire.Editor
 
                 ScanCommentsInGap(source, lastEnd, start, spans);
 
+                if (tok.Type == TokenType.InlineCode)
+                {
+                    // the C body of an `inline c` function: coloured as C
+                    foreach (var c in CppHighlighter.Highlight(source.Substring(start, length)))
+                        spans.Add(new HighlightSpan(start + c.Start, c.Length, c.Category));
+                    lastEnd = start + length;
+                    continue;
+                }
                 var category = IsContextKeyword(tokens, index) ? HighlightCategory.Keyword : CategoryOf(tok.Type);
                 if (category != HighlightCategory.Default)
                     spans.Add(new HighlightSpan(start, length, category));
@@ -164,6 +172,12 @@ namespace fire.Editor
                 "unit" => At(i + 2).Type == TokenType.Colon && (i == 0 || t.NewlineBefore || tokens[i - 1].Lexeme is "prefixed" or "unprefixed" or ";" or "}"),
                 "coerce" => (t.NewlineBefore || i > 0 && tokens[i - 1].Type == TokenType.LBrace) && At(i + 1).Type != TokenType.Assign,
                 "to" => i > 0 && tokens[i - 1].Lexeme == "coerce",
+                "inline" => At(i + 1).Lexeme == "c" && At(i + 1).Type == TokenType.Identifier && At(i + 1).Line == t.Line && At(i + 2).Type != TokenType.Assign,
+                "c" => i > 0 && tokens[i - 1].Lexeme == "inline" && tokens[i - 1].Line == t.Line && At(i + 1).Type != TokenType.Assign,
+                // `defined int n`, `trust x` (SPEC 8.10b) - like the parser: in front of a value type / an operand on the same line
+                "defined" => At(i + 1).Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwWord or TokenType.KwChar or TokenType.KwByte,
+                "trust" => i + 1 < tokens.Count && !At(i + 1).NewlineBefore
+                    && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.True or TokenType.False or TokenType.CharLiteral,
                 _ => false,
             };
         }

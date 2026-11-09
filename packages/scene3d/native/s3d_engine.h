@@ -1,4 +1,4 @@
-/* fire scene3d: the renderer behind `#import "scene3d"` (docs/SCENE3D.md). Plain C99 that knows nothing of fire: triangles go in, RGBA pixels come out.
+/* fire scene3d: the renderer behind `#import "scene3d"` (docs/graphics/3d.md). Plain C99 that knows nothing of fire: triangles go in, RGBA pixels come out.
  *
  * What it does: a perspective camera (vertical field of view), the model matrix of an object from its position, rotation, scale and pivot, clipping against the near plane, back-face
  * culling, a depth buffer (1/w interpolation of z in screen space), perspective-correct interpolation of the texture coordinates, the normal and the world position, textures (repeat,
@@ -26,6 +26,34 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* The memory of the engine: its buffers (depth, shadow maps, textures, meshes) can be larger than a size_t of 16 bits holds (win16, dos16 in the huge
+ * model). s3d_size counts them (32 bits there); S3D_MALLOC/S3D_FREE/S3D_COPY/S3D_ZERO get and fill them - the C library unless the includer gives others
+ * (fire's bridge gives the allocator of its runtime: dataAlloc, which takes such blocks from the system). */
+#if defined(__WATCOMC__) && defined(_M_I86)
+typedef uint32_t s3d_size;
+#else
+typedef size_t s3d_size;
+#endif
+#if !defined(S3D_MALLOC) && defined(FIRE_RT_H)
+/* (inside a fire program or package library: fire's runtime, whose dataAlloc takes a block beyond 64 KB from the system - elsewhere it is malloc) */
+#define S3D_MALLOC(bytes) dataAlloc(0, (uint32_t)(bytes), 1)
+#define S3D_FREE(p) dataFree(p)
+#define S3D_COPY(to, from, bytes) dataCopy((to), (from), (uint32_t)(bytes))
+#define S3D_ZERO(p, bytes) dataZero((p), (uint32_t)(bytes))
+#endif
+#ifndef S3D_MALLOC
+#define S3D_MALLOC(bytes) malloc((size_t)(bytes))
+#define S3D_FREE(p) free(p)
+#define S3D_COPY(to, from, bytes) memcpy((to), (from), (size_t)(bytes))
+#define S3D_ZERO(p, bytes) memset((p), 0, (size_t)(bytes))
+#endif
+static void* s3d_calloc(s3d_size count, s3d_size elem) {
+    s3d_size bytes = count * elem;
+    void* p = S3D_MALLOC(bytes ? bytes : 1);
+    if (p != NULL) S3D_ZERO(p, bytes);
+    return p;
+}
 
 #if !defined(FIRE_S3D_NO_THREADS) && !defined(__EMSCRIPTEN__) && !defined(ESP_PLATFORM) && (defined(_WIN32) || defined(__unix__) || defined(__APPLE__))
 #define S3D_THREADS 1
@@ -93,14 +121,15 @@ static inline S3dVec3 s3d_transformDir(const S3dMat4* m, S3dVec3 p) {
 }
 
 /* Makes room for `need` elements of `elem` bytes in a growing array: 1, or 0 when the memory is gone (the array is unchanged then). */
-static int s3d_grow(void** data, size_t* cap, size_t need, size_t elem) {
-    size_t c;
+static int s3d_grow(void** data, s3d_size* cap, s3d_size need, s3d_size elem) {
+    s3d_size c;
     void* p;
     if (need <= *cap) return 1;
     c = *cap ? *cap : 16;
     while (c < need) c *= 2;
-    p = realloc(*data, c * elem);
+    p = S3D_MALLOC(c * elem);
     if (p == NULL) return 0;
+    if (*data != NULL) { S3D_COPY(p, *data, *cap * elem); S3D_FREE(*data); }
     *data = p;
     *cap = c;
     return 1;
@@ -109,16 +138,28 @@ static int s3d_grow(void** data, size_t* cap, size_t need, size_t elem) {
 
 /* ---- meshes and textures ----------------------------------------------------------------------------------------------------------------- */
 /* A triangle mesh: positions, texture coordinates, and the vertex normals (computed here as the area weighted average of the faces around a vertex). A mesh does not change after
- * s3d_meshFinish (the hardware backend keeps a copy of it on the GPU). */
+ * s3d_meshFinish (the hardware backend keeps a copy of it on the GPU).
+ * It is built with floats (s3d_addVertex, s3d_addTriangle, or the arrays directly); s3d_meshFinish makes it COMPACT and lets the floats go: positions as 16-bit numbers in the
+ * box of the mesh, normals in two bytes (octahedral), texture coordinates as 16-bit numbers (none when they are all 0), indices of 16 bits when there are fewer than 65536
+ * corners - 8 to 12 bytes a corner and 2 an index instead of 32 and 4 (ROADMAP 16.1 A). The renderers read a finished mesh through s3d_meshPos, s3d_meshNrm, s3d_meshUv and
+ * s3d_meshIdx. (Where the memory for the compact form is missing, the floats stay; S3D_MESH_FLOAT keeps them always.) */
 typedef struct S3dMesh {
-    float* pos; size_t posN, posCap;      /* 3 per vertex */
-    float* uv; size_t uvN, uvCap;         /* 2 per vertex */
+    float* pos; s3d_size posN, posCap;      /* 3 per vertex */
+    float* uv; s3d_size uvN, uvCap;         /* 2 per vertex */
     float* nrm;                           /* 3 per vertex */
-    uint32_t* idx; size_t idxN, idxCap;   /* 3 per triangle */
+    uint32_t* idx; s3d_size idxN, idxCap;   /* 3 per triangle */
     S3dVec3 bmin, bmax;
     int refs;                             /* the users of the mesh (see MeshFree) */
     int bad;                              /* the memory ran out while it was made */
+    int nrmGiven;                         /* the normals came with the mesh (a model file): s3d_meshFinish keeps them */
     void* gpu;                            /* the copy of the hardware backend, or NULL */
+    /* the compact form (compact = 1 after s3d_meshFinish) */
+    int compact;
+    int16_t* qpos;                        /* 3 per vertex: bmin + (q + 32768) * qstep */
+    int8_t* qnrm;                         /* 2 per vertex: octahedral, / 127 */
+    int16_t* quv;                         /* 2 per vertex: q * uvStep (NULL: all 0) */
+    uint16_t* idx16;                      /* the indices, when they fit 16 bits (else `idx` stays) */
+    float qstep[3], uvStep;
 } S3dMesh;
 
 typedef struct S3dTexture S3dTexture;
@@ -127,15 +168,16 @@ static void s3d_gpu_releaseMesh(S3dMesh* m);
 static void s3d_gpu_releaseTexture(S3dTexture* t);
 
 static S3dMesh* s3d_meshNew(void) {
-    S3dMesh* m = (S3dMesh*)calloc(1, sizeof(S3dMesh));
+    S3dMesh* m = (S3dMesh*)s3d_calloc(1, sizeof(S3dMesh));
     if (m) m->refs = 1;
     return m;
 }
 static void s3d_meshFree(S3dMesh* m) {
     if (m == NULL) return;
     s3d_gpu_releaseMesh(m);
-    free(m->pos); free(m->uv); free(m->nrm); free(m->idx);
-    free(m);
+    S3D_FREE(m->pos); S3D_FREE(m->uv); S3D_FREE(m->nrm); S3D_FREE(m->idx);
+    S3D_FREE(m->qpos); S3D_FREE(m->qnrm); S3D_FREE(m->quv); S3D_FREE(m->idx16);
+    S3D_FREE(m);
 }
 static void s3d_addVertex(S3dMesh* m, float x, float y, float z, float u, float v) {
     if (!S3D_GROW(m->pos, m->posCap, m->posN + 3) || !S3D_GROW(m->uv, m->uvCap, m->uvN + 2)) { m->bad = 1; return; }
@@ -147,16 +189,116 @@ static void s3d_addTriangle(S3dMesh* m, uint32_t a, uint32_t b, uint32_t c) {
     m->idx[m->idxN++] = a; m->idx[m->idxN++] = b; m->idx[m->idxN++] = c;
 }
 
-/* The bounds and the vertex normals; the texture coordinates get one pair per vertex. 0 when the memory is gone. */
+/* ---- the compact form ---- */
+static inline S3dVec3 s3d_meshPos(const S3dMesh* m, s3d_size i) {
+    if (m->compact) {
+        const int16_t* q = m->qpos + i * 3;
+        return s3d_v3(m->bmin.x + (float)((int32_t)q[0] + 32768) * m->qstep[0], m->bmin.y + (float)((int32_t)q[1] + 32768) * m->qstep[1],
+                      m->bmin.z + (float)((int32_t)q[2] + 32768) * m->qstep[2]);
+    }
+    return s3d_v3(m->pos[i * 3], m->pos[i * 3 + 1], m->pos[i * 3 + 2]);
+}
+/* The normal (unit length) of an octahedral pair. */
+static inline S3dVec3 s3d_octDecode(int32_t a, int32_t b) {
+    float x = (float)a / 127.0f, y = (float)b / 127.0f, z = 1.0f - fabsf(x) - fabsf(y);
+    if (z < 0) {
+        float ox = x;
+        x = (1.0f - fabsf(y)) * (ox >= 0 ? 1.0f : -1.0f);
+        y = (1.0f - fabsf(ox)) * (y >= 0 ? 1.0f : -1.0f);
+    }
+    return s3d_normalize(s3d_v3(x, y, z));
+}
+static inline void s3d_octEncode(S3dVec3 n, int8_t* out) {
+    float l = fabsf(n.x) + fabsf(n.y) + fabsf(n.z), x, y;
+    if (l < 1e-20f) { out[0] = 0; out[1] = 127; return; }
+    x = n.x / l; y = n.y / l;
+    if (n.z < 0) { float ox = x; x = (1.0f - fabsf(y)) * (ox >= 0 ? 1.0f : -1.0f); y = (1.0f - fabsf(ox)) * (y >= 0 ? 1.0f : -1.0f); }
+    out[0] = (int8_t)(x * 127.0f + (x >= 0 ? 0.5f : -0.5f));
+    out[1] = (int8_t)(y * 127.0f + (y >= 0 ? 0.5f : -0.5f));
+}
+static inline S3dVec3 s3d_meshNrm(const S3dMesh* m, s3d_size i) {
+    if (m->compact) return s3d_octDecode(m->qnrm[i * 2], m->qnrm[i * 2 + 1]);
+    return s3d_v3(m->nrm[i * 3], m->nrm[i * 3 + 1], m->nrm[i * 3 + 2]);
+}
+static inline void s3d_meshUv(const S3dMesh* m, s3d_size i, float* u, float* v) {
+    if (m->compact) {
+        if (m->quv == NULL) { *u = 0; *v = 0; return; }
+        *u = (float)m->quv[i * 2] * m->uvStep; *v = (float)m->quv[i * 2 + 1] * m->uvStep;
+        return;
+    }
+    *u = m->uv[i * 2]; *v = m->uv[i * 2 + 1];
+}
+static inline uint32_t s3d_meshIdx(const S3dMesh* m, s3d_size k) { return m->idx16 ? (uint32_t)m->idx16[k] : m->idx[k]; }
+
+/* Makes a finished mesh compact (its bounds and normals are there) and lets the floats go; without the memory it stays as it is. */
+static void s3d_meshCompact(S3dMesh* m) {
+#ifdef S3D_MESH_FLOAT
+    (void)m;
+#else
+    s3d_size n = m->posN / 3, i, k;
+    float ext[3], uvMax = 0;
+    int16_t* qpos;
+    int8_t* qnrm;
+    int16_t* quv = NULL;
+    uint16_t* idx16 = NULL;
+    if (m->compact || n == 0) return;
+    ext[0] = m->bmax.x - m->bmin.x; ext[1] = m->bmax.y - m->bmin.y; ext[2] = m->bmax.z - m->bmin.z;
+    for (i = 0; i < n * 2; i++) { float a = fabsf(m->uv[i]); if (a > uvMax) uvMax = a; }
+    qpos = (int16_t*)S3D_MALLOC(n * 3 * sizeof(int16_t));
+    qnrm = (int8_t*)S3D_MALLOC(n * 2);
+    if (uvMax > 0) quv = (int16_t*)S3D_MALLOC(n * 2 * sizeof(int16_t));
+    if (n < 65536) idx16 = (uint16_t*)S3D_MALLOC(m->idxN * sizeof(uint16_t) + 2);
+    if (qpos == NULL || qnrm == NULL || (uvMax > 0 && quv == NULL) || (n < 65536 && idx16 == NULL)) { S3D_FREE(qpos); S3D_FREE(qnrm); S3D_FREE(quv); S3D_FREE(idx16); return; }
+    for (k = 0; k < 3; k++) m->qstep[k] = ext[k] > 0 ? ext[k] / 65535.0f : 0.0f;
+    for (i = 0; i < n; i++) {
+        const float* p = m->pos + i * 3;
+        float lo[3];
+        lo[0] = m->bmin.x; lo[1] = m->bmin.y; lo[2] = m->bmin.z;
+        for (k = 0; k < 3; k++) {
+            float q = ext[k] > 0 ? (p[k] - lo[k]) / ext[k] * 65535.0f + 0.5f : 0.0f;
+            int32_t v = (int32_t)q;
+            qpos[i * 3 + k] = (int16_t)((v < 0 ? 0 : v > 65535 ? 65535 : v) - 32768);
+        }
+        s3d_octEncode(s3d_v3(m->nrm[i * 3], m->nrm[i * 3 + 1], m->nrm[i * 3 + 2]), qnrm + i * 2);
+    }
+    if (quv) {
+        m->uvStep = uvMax <= 32.0f ? 1.0f / 1024.0f : uvMax / 32767.0f;
+        for (i = 0; i < n * 2; i++) { float q = m->uv[i] / m->uvStep; quv[i] = (int16_t)(q >= 0 ? q + 0.5f : q - 0.5f); }
+    }
+    if (idx16) { for (i = 0; i < m->idxN; i++) idx16[i] = (uint16_t)m->idx[i]; S3D_FREE(m->idx); m->idx = NULL; m->idxCap = 0; }
+    S3D_FREE(m->pos); S3D_FREE(m->uv); S3D_FREE(m->nrm);
+    m->pos = NULL; m->uv = NULL; m->nrm = NULL; m->posCap = m->uvCap = 0;
+    m->qpos = qpos; m->qnrm = qnrm; m->quv = quv; m->idx16 = idx16;
+    m->compact = 1;
+#endif
+}
+
+/* The bytes a mesh takes (its arrays; for the measurements). */
+static s3d_size s3d_meshBytes(const S3dMesh* m) {
+    s3d_size n = m->posN / 3;
+    if (m->compact) return n * 3 * 2 + n * 2 + (m->quv ? n * 4 : 0) + m->idxN * (m->idx16 ? 2 : 4);
+    return n * 32 + m->idxN * 4;
+}
+
+/* The bounds and the vertex normals; the texture coordinates get one pair per vertex; then the mesh is made compact. 0 when the memory is gone. */
+static int s3d_meshFinishFloats(S3dMesh* m);
 static int s3d_meshFinish(S3dMesh* m) {
-    size_t n = m->posN / 3, i, t;
+    if (!s3d_meshFinishFloats(m)) return 0;
+    s3d_meshCompact(m);
+    return 1;
+}
+static int s3d_meshFinishFloats(S3dMesh* m) {
+    s3d_size n = m->posN / 3, i, t;
     if (m->bad) return 0;
     if (!S3D_GROW(m->uv, m->uvCap, n * 2)) return 0;
     for (i = m->uvN; i < n * 2; i++) m->uv[i] = 0.0f;
     m->uvN = n * 2;
-    free(m->nrm);
-    m->nrm = (float*)calloc(n * 3 + 1, sizeof(float));
-    if (m->nrm == NULL) return 0;
+    if (!m->nrmGiven || m->nrm == NULL) {
+        S3D_FREE(m->nrm);
+        m->nrm = (float*)s3d_calloc(n * 3 + 1, sizeof(float));
+        if (m->nrm == NULL) return 0;
+        m->nrmGiven = 0;
+    }
     if (n == 0) { m->bmin = m->bmax = s3d_v3(0, 0, 0); return 1; }
     m->bmin = m->bmax = s3d_v3(m->pos[0], m->pos[1], m->pos[2]);
     for (i = 0; i < n; i++) {
@@ -164,6 +306,7 @@ static int s3d_meshFinish(S3dMesh* m) {
         m->bmin = s3d_v3(s3d_minf(m->bmin.x, p[0]), s3d_minf(m->bmin.y, p[1]), s3d_minf(m->bmin.z, p[2]));
         m->bmax = s3d_v3(s3d_maxf(m->bmax.x, p[0]), s3d_maxf(m->bmax.y, p[1]), s3d_maxf(m->bmax.z, p[2]));
     }
+    if (m->nrmGiven) return 1;
     for (t = 0; t + 2 < m->idxN; t += 3) {
         uint32_t v[3];
         S3dVec3 pa, pb, pc, fn;
@@ -190,16 +333,20 @@ struct S3dTexture {
     int hasAlpha;      /* some texel is not opaque (see s3d_texPrepare) */
     uint32_t version;  /* counts the changes (the bump map): the hardware backend loads the texture again */
     void* gpu;         /* the copy of the hardware backend, or NULL */
+    int refs;          /* (the bridge: the users of the texture - its fire object and the objects that show it) */
+    uint8_t* lean;     /* the lean renderer (s3d_lean.h): the texels as indices of the palette `leanKey`, or NULL */
+    uint32_t leanKey;
+    float strength;    /* (the bridge: how strongly the bump map tilts the light, Texture.BumpStrength) */
 };
 
 static void s3d_texFree(S3dTexture* t) {
     if (t == NULL) return;
     s3d_gpu_releaseTexture(t);
-    free(t->rgba); free(t->bump);
-    free(t);
+    S3D_FREE(t->rgba); S3D_FREE(t->bump); S3D_FREE(t->lean);
+    S3D_FREE(t);
 }
 static void s3d_texPrepare(S3dTexture* t) {
-    size_t i, n = (size_t)t->w * (size_t)t->h * 4;
+    s3d_size i, n = (s3d_size)t->w * (s3d_size)t->h * 4;
     t->hasAlpha = 0;
     for (i = 3; i < n; i += 4) if (t->rgba[i] != 255) { t->hasAlpha = 1; break; }
     t->version++;
@@ -207,21 +354,21 @@ static void s3d_texPrepare(S3dTexture* t) {
 
 /* The heights from the brightness of the texture itself (a little smoothed: a sharp edge gives a bevel, not a one texel crack). 0 when the memory is gone. */
 static int s3d_texBumpFromColors(S3dTexture* t) {
-    size_t n = (size_t)t->w * (size_t)t->h, i;
+    s3d_size n = (s3d_size)t->w * (s3d_size)t->h, i;
     int x, y, dx, dy, w = t->w, h = t->h;
-    float* lum = (float*)malloc(n * sizeof(float) + 1);
-    uint8_t* bump = (uint8_t*)malloc(n + 1);
-    if (lum == NULL || bump == NULL) { free(lum); free(bump); return 0; }
+    float* lum = (float*)S3D_MALLOC(n * sizeof(float) + 1);
+    uint8_t* bump = (uint8_t*)S3D_MALLOC(n + 1);
+    if (lum == NULL || bump == NULL) { S3D_FREE(lum); S3D_FREE(bump); return 0; }
     for (i = 0; i < n; i++) lum[i] = 0.299f * t->rgba[i * 4] + 0.587f * t->rgba[i * 4 + 1] + 0.114f * t->rgba[i * 4 + 2];
     for (y = 0; y < h; y++)
         for (x = 0; x < w; x++) {
             float sum = 0;
             for (dy = -1; dy <= 1; dy++)
-                for (dx = -1; dx <= 1; dx++) sum += lum[(size_t)((y + dy + h) % h) * (size_t)w + (size_t)((x + dx + w) % w)] * ((dx == 0 && dy == 0) ? 4.0f : (dx == 0 || dy == 0) ? 2.0f : 1.0f);
-            bump[(size_t)y * (size_t)w + (size_t)x] = (uint8_t)s3d_minf(255.0f, sum / 16.0f + 0.5f);
+                for (dx = -1; dx <= 1; dx++) sum += lum[(s3d_size)((y + dy + h) % h) * (s3d_size)w + (s3d_size)((x + dx + w) % w)] * ((dx == 0 && dy == 0) ? 4.0f : (dx == 0 || dy == 0) ? 2.0f : 1.0f);
+            bump[(s3d_size)y * (s3d_size)w + (s3d_size)x] = (uint8_t)s3d_minf(255.0f, sum / 16.0f + 0.5f);
         }
-    free(lum);
-    free(t->bump);
+    S3D_FREE(lum);
+    S3D_FREE(t->bump);
     t->bump = bump;
     t->version++;
     return 1;
@@ -230,22 +377,22 @@ static int s3d_texBumpFromColors(S3dTexture* t) {
 /* The heights from a picture of another size: `data` holds `channels` bytes per pixel (1: heights, 3 or 4: colours, whose brightness is the height); it is scaled to this texture. */
 static int s3d_texSetBump(S3dTexture* t, const uint8_t* data, int dw, int dh, int channels) {
     int x, y;
-    uint8_t* bump = (uint8_t*)malloc((size_t)t->w * (size_t)t->h + 1);
+    uint8_t* bump = (uint8_t*)S3D_MALLOC((s3d_size)t->w * (s3d_size)t->h + 1);
     if (bump == NULL) return 0;
     for (y = 0; y < t->h; y++)
         for (x = 0; x < t->w; x++) {
             int sx = s3d_mini(dw - 1, (int)((int64_t)x * dw / t->w)), sy = s3d_mini(dh - 1, (int)((int64_t)y * dh / t->h));
-            const uint8_t* p = data + ((size_t)sy * (size_t)dw + (size_t)sx) * (size_t)channels;
+            const uint8_t* p = data + ((s3d_size)sy * (s3d_size)dw + (s3d_size)sx) * (s3d_size)channels;
             float v = channels == 1 ? (float)p[0] : 0.299f * p[0] + 0.587f * p[1] + 0.114f * p[2];
-            bump[(size_t)y * (size_t)t->w + (size_t)x] = (uint8_t)s3d_minf(255.0f, v + 0.5f);
+            bump[(s3d_size)y * (s3d_size)t->w + (s3d_size)x] = (uint8_t)s3d_minf(255.0f, v + 0.5f);
         }
-    free(t->bump);
+    S3D_FREE(t->bump);
     t->bump = bump;
     t->version++;
     return 1;
 }
 
-static void s3d_texClearBump(S3dTexture* t) { free(t->bump); t->bump = NULL; t->version++; }
+static void s3d_texClearBump(S3dTexture* t) { S3D_FREE(t->bump); t->bump = NULL; t->version++; }
 
 /* ---- lights, camera, surfaces ------------------------------------------------------------------------------------------------------------ */
 enum { S3D_LIGHT_AMBIENT = 0, S3D_LIGHT_DIRECTIONAL = 1, S3D_LIGHT_POINT = 2 };
@@ -301,13 +448,15 @@ static S3dSurface s3d_surfaceDefault(void) {
 typedef struct S3dObjectParams {
     S3dVec3 pos, scale, pivot;   /* the pivot is a point of the mesh (in mesh space) that sits at `pos` */
     float rx, ry, rz;
+    int hasMatrix;               /* 1: `model` and `normalM` are given (a part of a model: the object's matrix times the part's) and the fields above are not used */
+    S3dMat4 model, normalM;
 } S3dObjectParams;
 
 static void s3d_clearPixels(uint8_t* rgba, int w, int h, uint32_t color) {
     uint8_t bytes[4];
     uint32_t packed;
     uint32_t* p = (uint32_t*)(void*)rgba;
-    size_t i, n = (size_t)w * (size_t)h;
+    s3d_size i, n = (s3d_size)w * (s3d_size)h;
     bytes[0] = (uint8_t)(color & 255); bytes[1] = (uint8_t)((color >> 8) & 255); bytes[2] = (uint8_t)((color >> 16) & 255); bytes[3] = (uint8_t)((color >> 24) & 255);
     memcpy(&packed, bytes, 4);
     for (i = 0; i < n; i++) p[i] = packed;
@@ -350,7 +499,7 @@ typedef struct S3dBatch {
     float sortKey;               /* the distance to the camera: blended objects are drawn from far to near */
     int blended;
     int bumpWanted;
-    S3dClipVertex* cv; size_t cvN, cvCap;   /* software: the vertices in world space, with the transformed texture coordinates and the clip space position */
+    S3dClipVertex* cv; s3d_size cvN, cvCap;   /* software: the vertices in world space, with the transformed texture coordinates and the clip space position */
 } S3dBatch;
 
 /* A triangle ready to be filled: its place on the screen and the planes of the attributes (value at vertex 0 and the change per pixel in x and y). */
@@ -371,7 +520,7 @@ typedef struct S3dShadowMap {
     S3dMat4 view;                /* world -> light view (looking down -z) */
     float sx, sy, ox, oy;        /* ortho: u = x*sx + ox ; v = y*sy + oy */
     float f;                     /* perspective: u = x/d*f*0.5 + 0.5 */
-    float* depth; size_t depthCap;
+    float* depth; s3d_size depthCap;
 } S3dShadowMap;
 
 typedef struct S3dShadowSet {
@@ -393,8 +542,8 @@ typedef struct S3dPreparedLight {
 typedef struct S3dContext {
     S3dVec3 eye;
     S3dVec3 ambient;
-    S3dPreparedLight* lights; size_t lightN, lightCap;
-    S3dShadowSet* shadows; size_t shadowCap, shadowInit;   /* the depth buffers are kept from frame to frame (shadowInit: the sets that were ever used) */
+    S3dPreparedLight* lights; s3d_size lightN, lightCap;
+    S3dShadowSet* shadows; s3d_size shadowCap, shadowInit;   /* the depth buffers are kept from frame to frame (shadowInit: the sets that were ever used) */
     int shadowN;
 } S3dContext;
 
@@ -410,52 +559,53 @@ typedef struct S3dFrame {
     int w, h;
     float* depth;
     uint32_t clearColor;       /* the colour of FrameClear (the hardware backend clears with it) */
-    S3dBatch* batches; size_t batchN, batchCap, batchInit;   /* batchInit: the slots that were ever used (their vertex memory is kept) */
-    S3dTri* opaque; size_t opaqueN, opaqueCap;
-    S3dTri* blended; size_t blendedN, blendedCap;
-    int* order; size_t orderCap; int* orderTmp; size_t orderTmpCap;   /* the blended triangles from far to near */
+    S3dBatch* batches; s3d_size batchN, batchCap, batchInit;   /* batchInit: the slots that were ever used (their vertex memory is kept) */
+    S3dTri* opaque; s3d_size opaqueN, opaqueCap;
+    S3dTri* blended; s3d_size blendedN, blendedCap;
+    int* order; s3d_size orderCap; int* orderTmp; s3d_size orderTmpCap;   /* the blended triangles from far to near */
     S3dContext ctx;
     int lastBackend;           /* who drew the last picture (S3D_BACKEND_*) */
     void* gpu;                 /* the targets of the hardware backend, or NULL */
     void* direct;              /* DirectDrawing: the windows the camera draws into (s3d_gpu_attach), or NULL */
 } S3dFrame;
 
+#ifndef FIRE_S3D_LEAN_ONLY   /* (a build with the lean renderer only, s3d_lean.h: the frames, shadows and rows of the full renderer are not in it) */
 static void s3d_gpu_releaseFrame(S3dFrame* f);
 
 static void s3d_frameEmpty(S3dFrame* f) { f->batchN = 0; f->opaqueN = 0; f->blendedN = 0; }
 static int s3d_frameResize(S3dFrame* f, int nw, int nh) {
-    size_t n = (size_t)nw * (size_t)nh, i;
-    float* d = (float*)malloc(n * sizeof(float) + 1);
+    s3d_size n = (s3d_size)nw * (s3d_size)nh, i;
+    float* d = (float*)S3D_MALLOC(n * sizeof(float) + 1);
     if (d == NULL) return 0;
     for (i = 0; i < n; i++) d[i] = 1e30f;
-    free(f->depth);
+    S3D_FREE(f->depth);
     f->depth = d;
     f->w = nw; f->h = nh;
     s3d_frameEmpty(f);
     return 1;
 }
 static void s3d_frameClearDepth(S3dFrame* f) {
-    size_t i, n = (size_t)f->w * (size_t)f->h;
+    s3d_size i, n = (s3d_size)f->w * (s3d_size)f->h;
     for (i = 0; i < n; i++) f->depth[i] = 1e30f;
     s3d_frameEmpty(f);
 }
 static S3dFrame* s3d_frameNew(int w, int h) {
-    S3dFrame* f = (S3dFrame*)calloc(1, sizeof(S3dFrame));
+    S3dFrame* f = (S3dFrame*)s3d_calloc(1, sizeof(S3dFrame));
     if (f == NULL) return NULL;
-    if (!s3d_frameResize(f, w, h)) { free(f); return NULL; }
+    if (!s3d_frameResize(f, w, h)) { S3D_FREE(f); return NULL; }
     return f;
 }
 static void s3d_frameFree(S3dFrame* f) {
-    size_t i;
+    s3d_size i;
     int k, j;
     if (f == NULL) return;
     s3d_gpu_releaseFrame(f);
-    for (i = 0; i < f->batchInit; i++) free(f->batches[i].cv);
-    free(f->batches); free(f->opaque); free(f->blended); free(f->order); free(f->orderTmp); free(f->depth);
-    free(f->ctx.lights);
-    for (k = 0; k < (int)f->ctx.shadowInit; k++) for (j = 0; j < 6; j++) free(f->ctx.shadows[k].maps[j].depth);
-    free(f->ctx.shadows);
-    free(f);
+    for (i = 0; i < f->batchInit; i++) S3D_FREE(f->batches[i].cv);
+    S3D_FREE(f->batches); S3D_FREE(f->opaque); S3D_FREE(f->blended); S3D_FREE(f->order); S3D_FREE(f->orderTmp); S3D_FREE(f->depth);
+    S3D_FREE(f->ctx.lights);
+    for (k = 0; k < (int)f->ctx.shadowInit; k++) for (j = 0; j < 6; j++) S3D_FREE(f->ctx.shadows[k].maps[j].depth);
+    S3D_FREE(f->ctx.shadows);
+    S3D_FREE(f);
 }
 
 static int s3d_shadowProject(const S3dShadowMap* m, S3dVec3 p, float* u, float* v, float* d) {
@@ -475,7 +625,7 @@ static float s3d_shadowFactor(const S3dShadowSet* set, S3dVec3 lightPos, int dir
     float u, v, depth, texel, bias, fx, fy, tx, ty, limit, s00, s10, s01, s11;
     int x0, y0, x1, y1, last;
     const float* d;
-    size_t R;
+    s3d_size R;
     S3dVec3 q;
     if (!directional) {
         S3dVec3 dd = s3d_sub(p, lightPos);
@@ -500,15 +650,15 @@ static float s3d_shadowFactor(const S3dShadowSet* set, S3dVec3 lightPos, int dir
     x1 = s3d_mini(last, x0 + 1); y1 = s3d_mini(last, y0 + 1);
     x0 = s3d_maxi(0, x0); y0 = s3d_maxi(0, y0);
     d = map->depth;
-    R = (size_t)map->res;
+    R = (s3d_size)map->res;
     limit = depth - bias;
-    s00 = limit <= d[(size_t)y0 * R + (size_t)x0] ? 1.0f : 0.0f; s10 = limit <= d[(size_t)y0 * R + (size_t)x1] ? 1.0f : 0.0f;
-    s01 = limit <= d[(size_t)y1 * R + (size_t)x0] ? 1.0f : 0.0f; s11 = limit <= d[(size_t)y1 * R + (size_t)x1] ? 1.0f : 0.0f;
+    s00 = limit <= d[(s3d_size)y0 * R + (s3d_size)x0] ? 1.0f : 0.0f; s10 = limit <= d[(s3d_size)y0 * R + (s3d_size)x1] ? 1.0f : 0.0f;
+    s01 = limit <= d[(s3d_size)y1 * R + (s3d_size)x0] ? 1.0f : 0.0f; s11 = limit <= d[(s3d_size)y1 * R + (s3d_size)x1] ? 1.0f : 0.0f;
     return (s00 * (1 - tx) + s10 * tx) * (1 - ty) + (s01 * (1 - tx) + s11 * tx) * ty;
 }
 
 /* The four texels around (u, v) in repeat mode and the weights: v = 0 is the top row of the picture. */
-typedef struct S3dTexels { size_t i00, i10, i01, i11; float tx, ty; } S3dTexels;
+typedef struct S3dTexels { s3d_size i00, i10, i01, i11; float tx, ty; } S3dTexels;
 static inline S3dTexels s3d_texels(int w, int h, float u, float v) {
     S3dTexels r;
     float x = (u - (float)s3d_floorInt(u)) * (float)w - 0.5f, y = (v - (float)s3d_floorInt(v)) * (float)h - 0.5f;
@@ -521,8 +671,8 @@ static inline S3dTexels s3d_texels(int w, int h, float u, float v) {
     if (y1 >= h) y1 -= h;
     if (x0 >= w) x0 = w - 1;
     if (y0 >= h) y0 = h - 1;
-    r.i00 = (size_t)y0 * (size_t)w + (size_t)x0; r.i10 = (size_t)y0 * (size_t)w + (size_t)x1;
-    r.i01 = (size_t)y1 * (size_t)w + (size_t)x0; r.i11 = (size_t)y1 * (size_t)w + (size_t)x1;
+    r.i00 = (s3d_size)y0 * (s3d_size)w + (s3d_size)x0; r.i10 = (s3d_size)y0 * (s3d_size)w + (s3d_size)x1;
+    r.i01 = (s3d_size)y1 * (s3d_size)w + (s3d_size)x0; r.i11 = (s3d_size)y1 * (s3d_size)w + (s3d_size)x1;
     return r;
 }
 
@@ -564,7 +714,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
         float xl = 1e30f, xr = -1e30f, dx0, dy0;
         float cur[S3D_ATTRS];
         int crossings = 0, xs, xe;
-        size_t di;
+        s3d_size di;
         for (e = 0; e < 3; e++) {
             int j = (e + 1) % 3;
             float ya = t->sy[e], yb = t->sy[j], lo, hi, cx;
@@ -581,7 +731,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
         if (xs > xe) continue;
         dx0 = (float)xs + 0.5f - t->sx[0]; dy0 = py - t->sy[0];
         for (k = 0; k < S3D_ATTRS; k++) cur[k] = t->base[k] + t->gx[k] * dx0 + t->gy[k] * dy0;
-        di = (size_t)y * (size_t)f->w + (size_t)xs;
+        di = (s3d_size)y * (s3d_size)f->w + (s3d_size)xs;
         for (x = xs; x <= xe; x++, di++) {
             float z = cur[0];
             int visible = z < f->depth[di] && cur[1] > 0;
@@ -623,7 +773,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                     else {
                         S3dVec3 diffuse = ctx->ambient, spec = s3d_v3(0, 0, 0), viewDir = s3d_v3(0, 0, 0);
                         int haveView = 0;
-                        size_t li;
+                        s3d_size li;
                         for (li = 0; li < ctx->lightN; li++) {
                             const S3dPreparedLight* L = &ctx->lights[li];
                             S3dVec3 toLight;
@@ -712,6 +862,8 @@ static int s3d_setupTri(S3dTri* t, const S3dScreenVertex* a, const S3dScreenVert
     return 1;
 }
 
+#endif /* FIRE_S3D_LEAN_ONLY */
+
 /* The view and projection of a camera for a picture of w x h (OpenGL style clip space: -w <= z <= w). */
 static S3dMat4 s3d_viewProjection(const S3dCamera* cam, int w, int h) {
     /* view = inverse(T(cam) * R) = R^-1 * T(-cam) */
@@ -729,15 +881,12 @@ static S3dMat4 s3d_viewProjection(const S3dCamera* cam, int w, int h) {
     return s3d_mul(proj, view);
 }
 
-/* Queues one mesh for the frame: its matrices and its look; nothing is transformed or drawn before `s3d_flush`. The camera places the mesh (and a billboard faces it). The mesh and the
- * texture have to live until the flush. */
-static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh, const S3dObjectParams* obj, const S3dSurface* surf, const S3dTexture* tex) {
-    S3dMat4 rotation, model;
-    S3dVec3 invS, centre;
-    S3dBatch* batch;
-    if (f->w <= 0 || f->h <= 0 || mesh->idxN < 3) return;
-    if (!S3D_GROW(f->batches, f->batchCap, f->batchN + 1)) return;
-    /* model = T(pos) * R * S * T(-pivot); a billboard replaces R by a turn towards the camera */
+/* The matrices of an object: model = T(pos) * R * S * T(-pivot) (a billboard replaces R by a turn towards the camera) and the normal matrix (R * S^-1, the inverse transpose of the
+ * model's 3x3 part for a rotation and a non uniform scale). Both renderers place an object with them. */
+static void s3d_objectMatrices(const S3dCamera* cam, const S3dObjectParams* obj, const S3dSurface* surf, S3dMat4* model, S3dMat4* normalM) {
+    S3dMat4 rotation;
+    S3dVec3 invS;
+    if (obj->hasMatrix) { *model = obj->model; *normalM = obj->normalM; return; }
     rotation = s3d_rotationXYZ(obj->rx, obj->ry, obj->rz);
     if (surf->billboard != 0) {
         S3dVec3 toCam = s3d_sub(cam->pos, obj->pos), zaxis, xaxis, yaxis;
@@ -752,16 +901,28 @@ static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh
         S3D_AT(b, 0, 2) = zaxis.x; S3D_AT(b, 1, 2) = zaxis.y; S3D_AT(b, 2, 2) = zaxis.z;
         rotation = s3d_mul(b, s3d_rotationZ(obj->rz));
     }
-    model = s3d_mul(s3d_translation(obj->pos), s3d_mul(rotation, s3d_mul(s3d_scaling(obj->scale), s3d_translation(s3d_scale(obj->pivot, -1.0f)))));
-    /* the normal matrix: the inverse transpose of the model's 3x3 part. For rotation and a non uniform scale that is (R * S^-1). */
+    *model = s3d_mul(s3d_translation(obj->pos), s3d_mul(rotation, s3d_mul(s3d_scaling(obj->scale), s3d_translation(s3d_scale(obj->pivot, -1.0f)))));
     invS = s3d_v3(obj->scale.x != 0 ? 1.0f / obj->scale.x : 0, obj->scale.y != 0 ? 1.0f / obj->scale.y : 0, obj->scale.z != 0 ? 1.0f / obj->scale.z : 0);
+    *normalM = s3d_mul(rotation, s3d_scaling(invS));
+}
+
+#ifndef FIRE_S3D_LEAN_ONLY   /* (the full renderer: queueing, set-up, threads) */
+/* Queues one mesh for the frame: its matrices and its look; nothing is transformed or drawn before `s3d_flush`. The camera places the mesh (and a billboard faces it). The mesh and the
+ * texture have to live until the flush. */
+static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh, const S3dObjectParams* obj, const S3dSurface* surf, const S3dTexture* tex) {
+    S3dMat4 model, normalM;
+    S3dVec3 centre;
+    S3dBatch* batch;
+    if (f->w <= 0 || f->h <= 0 || mesh->idxN < 3) return;
+    if (!S3D_GROW(f->batches, f->batchCap, f->batchN + 1)) return;
+    s3d_objectMatrices(cam, obj, surf, &model, &normalM);
 
     /* a slot that was used before keeps its vertex memory; a new one starts empty */
     if (f->batchN >= f->batchInit) { memset(&f->batches[f->batchN], 0, sizeof(S3dBatch)); f->batchInit = f->batchN + 1; }
     batch = &f->batches[f->batchN];
     {
         S3dClipVertex* keep = batch->cv;
-        size_t keepCap = batch->cvCap;
+        s3d_size keepCap = batch->cvCap;
         memset(batch, 0, sizeof *batch);
         batch->cv = keep; batch->cvCap = keepCap;
     }
@@ -771,7 +932,7 @@ static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh
     batch->mesh = mesh;
     batch->cam = *cam;
     batch->model = model;
-    batch->normalM = s3d_mul(rotation, s3d_scaling(invS));
+    batch->normalM = normalM;
     batch->vp = s3d_viewProjection(cam, f->w, f->h);
     batch->blended = surf->cutoff <= 0 && (surf->opacity < 1.0f || (batch->tex && batch->tex->hasAlpha));
     centre = s3d_transformPoint(&model, s3d_scale(s3d_add(mesh->bmin, mesh->bmax), 0.5f));
@@ -802,15 +963,16 @@ static int s3d_transformBatch(S3dBatch* batch) {
     const S3dMesh* mesh = batch->mesh;
     const S3dSurface* surf = &batch->s;
     const S3dMat4* vp = &batch->vp;
-    size_t vertexCount = mesh->posN / 3, i;
+    s3d_size vertexCount = mesh->posN / 3, i;
     batch->cvN = 0;
     if (!S3D_GROW(batch->cv, batch->cvCap, vertexCount + 1)) return 0;
     batch->cvN = vertexCount;
     for (i = 0; i < vertexCount; i++) {
-        S3dVec3 wp = s3d_transformPoint(&batch->model, s3d_v3(mesh->pos[i * 3], mesh->pos[i * 3 + 1], mesh->pos[i * 3 + 2]));
-        S3dVec3 wn = s3d_normalize(s3d_transformDir(&batch->normalM, s3d_v3(mesh->nrm[i * 3], mesh->nrm[i * 3 + 1], mesh->nrm[i * 3 + 2])));
+        S3dVec3 wp = s3d_transformPoint(&batch->model, s3d_meshPos(mesh, i));
+        S3dVec3 wn = s3d_normalize(s3d_transformDir(&batch->normalM, s3d_meshNrm(mesh, i)));
         S3dClipVertex* c = &batch->cv[i];
-        float u = mesh->uv[i * 2], v = mesh->uv[i * 2 + 1];
+        float u, v;
+        s3d_meshUv(mesh, i, &u, &v);
         c->wx = wp.x; c->wy = wp.y; c->wz = wp.z; c->nx = wn.x; c->ny = wn.y; c->nz = wn.z;
         c->u = surf->tm[0] * u + surf->tm[1] * v + surf->tm[2];   /* the texture mapping is applied to the corners: the rest is interpolated */
         c->v = surf->tm[3] * u + surf->tm[4] * v + surf->tm[5];
@@ -828,13 +990,13 @@ static void s3d_setupBatch(S3dFrame* f, int batchIndex) {
     const S3dMesh* mesh = batch->mesh;
     const S3dSurface* surf = &batch->s;
     const S3dClipVertex* cv = batch->cv;
-    size_t vertexCount = batch->cvN, t;
+    s3d_size vertexCount = batch->cvN, t;
     S3dVec3 campos = batch->cam.pos;
     /* a blended object that is drawn from both sides shows its far side first */
     int sweeps = (batch->blended && surf->twoSided) ? 2 : 1, sweep;
     for (sweep = 0; sweep < sweeps; sweep++)
         for (t = 0; t + 2 < mesh->idxN; t += 3) {
-            uint32_t i0 = mesh->idx[t], i1 = mesh->idx[t + 1], i2 = mesh->idx[t + 2];
+            uint32_t i0 = s3d_meshIdx(mesh, t), i1 = s3d_meshIdx(mesh, t + 1), i2 = s3d_meshIdx(mesh, t + 2);
             S3dVec3 wa, wb, wc, fn, tangent, bitangent;
             int facing, count = 0, e, i, constNormal;
             S3dClipVertex poly[4];
@@ -940,11 +1102,11 @@ static int s3d_hardwareThreads(void) {
 #endif
 }
 
-static int s3d_workerCount(const S3dFlushSettings* st, size_t items) {
+static int s3d_workerCount(const S3dFlushSettings* st, s3d_size items) {
 #ifdef S3D_THREADS
     int n = st->threads;
     if (n <= 0) { n = s3d_hardwareThreads(); if (n <= 0) n = 1; if (n > 8) n = 8; }
-    if ((size_t)n > items) n = (int)items;
+    if ((s3d_size)n > items) n = (int)items;
     return n < 1 ? 1 : n;
 #else
     (void)st; (void)items;
@@ -986,6 +1148,8 @@ static void s3d_parallelFor(int count, int workers, S3dTask fn, void* arg) {
     for (q.next = 0; q.next < count; q.next++) fn(arg, q.next);
 }
 
+#endif /* FIRE_S3D_LEAN_ONLY */
+
 /* ---------------------------------------------------------------------------------------------------------------------------------------------
  * Shadow maps: the depth of what casts a shadow, seen from the light (an orthographic view for a directional light, six views for a point light)
  * --------------------------------------------------------------------------------------------------------------------------------------------- */
@@ -1002,6 +1166,7 @@ static S3dMat4 s3d_lookAtMatrix(S3dVec3 eye, S3dVec3 forward, S3dVec3 upHint) {
     return r;
 }
 
+#ifndef FIRE_S3D_LEAN_ONLY   /* (the full renderer: shadow maps, lights, flush) */
 typedef struct S3dDepthVertex { float sx, sy, d; } S3dDepthVertex;
 
 static void s3d_rasterDepth(S3dShadowMap* m, const S3dDepthVertex* a, const S3dDepthVertex* b, const S3dDepthVertex* c) {
@@ -1033,7 +1198,7 @@ static void s3d_rasterDepth(S3dShadowMap* m, const S3dDepthVertex* a, const S3dD
         if (crossings < 2) continue;
         xs = s3d_maxi(0, (int)ceilf(xl - 0.5f)); xe = s3d_mini(m->res - 1, (int)ceilf(xr - 0.5f) - 1);
         value = base + gx * ((float)xs + 0.5f - sx[0]) + gy * (py - sy[0]);
-        row = &m->depth[(size_t)y * (size_t)m->res];
+        row = &m->depth[(s3d_size)y * (s3d_size)m->res];
         for (x = xs; x <= xe; x++, value += gx) {
             float d = m->ortho ? value : (value > 0 ? 1.0f / value : 1e30f);
             if (d < row[x]) row[x] = d;
@@ -1043,9 +1208,9 @@ static void s3d_rasterDepth(S3dShadowMap* m, const S3dDepthVertex* a, const S3dD
 
 /* Draws the casters (every batch that casts shadows) into the map. The view of the map is set; the triangles are cut against its near plane when it is a perspective one. */
 static void s3d_renderShadowMap(S3dShadowMap* m, const S3dFrame* f, float nearPlane) {
-    size_t n = (size_t)m->res * (size_t)m->res, i, bi, t;
+    s3d_size n = (s3d_size)m->res * (s3d_size)m->res, i, bi, t;
     S3dVec3* view = NULL;
-    size_t viewCap = 0;
+    s3d_size viewCap = 0;
     for (i = 0; i < n; i++) m->depth[i] = 1e30f;
     for (bi = 0; bi < f->batchN; bi++) {
         const S3dBatch* b = &f->batches[bi];
@@ -1058,7 +1223,7 @@ static void s3d_renderShadowMap(S3dShadowMap* m, const S3dFrame* f, float nearPl
             S3dVec3 poly[4];
             S3dDepthVertex dv[4];
             int count = 0, e, k;
-            ix[0] = mesh->idx[t]; ix[1] = mesh->idx[t + 1]; ix[2] = mesh->idx[t + 2];
+            ix[0] = s3d_meshIdx(mesh, t); ix[1] = s3d_meshIdx(mesh, t + 1); ix[2] = s3d_meshIdx(mesh, t + 2);
             if (ix[0] >= b->cvN || ix[1] >= b->cvN || ix[2] >= b->cvN) continue;
             for (e = 0; e < 3; e++) {
                 S3dVec3 cur = view[ix[e]], nxt = view[ix[(e + 1) % 3]];
@@ -1080,7 +1245,7 @@ static void s3d_renderShadowMap(S3dShadowMap* m, const S3dFrame* f, float nearPl
             for (k = 1; k + 1 < count; k++) s3d_rasterDepth(m, &dv[0], &dv[k], &dv[k + 1]);
         }
     }
-    free(view);
+    S3D_FREE(view);
 }
 
 typedef struct S3dShadowJob { S3dShadowMap** maps; const S3dFrame* f; } S3dShadowJob;
@@ -1088,16 +1253,16 @@ static void s3d_shadowTask(void* arg, int i) { S3dShadowJob* j = (S3dShadowJob*)
 
 /* The shadow maps of the lights that cast shadows, around the casters whose bounds are lo..hi (world): one orthographic map for a directional light, six for a point light. Sets their
  * views and sizes (not their depth); the n-th light that casts shadows has the n-th set. Also used by the hardware backend. */
-static void s3d_planShadows(S3dContext* ctx, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st, S3dVec3 lo, S3dVec3 hi) {
+static void s3d_planShadows(S3dContext* ctx, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st, S3dVec3 lo, S3dVec3 hi) {
     int res = s3d_maxi(64, s3d_mini(4096, st->shadowResolution));
-    size_t li;
+    s3d_size li;
     ctx->shadowN = 0;
     for (li = 0; li < lightCount; li++) {
         const S3dLight* l = &lights[li];
         S3dShadowSet* set;
         if (!l->castShadows || l->kind == S3D_LIGHT_AMBIENT) continue;
-        if (!S3D_GROW(ctx->shadows, ctx->shadowCap, (size_t)ctx->shadowN + 1)) break;
-        if ((size_t)ctx->shadowN >= ctx->shadowInit) { memset(&ctx->shadows[ctx->shadowN], 0, sizeof(S3dShadowSet)); ctx->shadowInit = (size_t)ctx->shadowN + 1; }
+        if (!S3D_GROW(ctx->shadows, ctx->shadowCap, (s3d_size)ctx->shadowN + 1)) break;
+        if ((s3d_size)ctx->shadowN >= ctx->shadowInit) { memset(&ctx->shadows[ctx->shadowN], 0, sizeof(S3dShadowSet)); ctx->shadowInit = (s3d_size)ctx->shadowN + 1; }
         set = &ctx->shadows[ctx->shadowN];
         if (l->kind == S3D_LIGHT_DIRECTIONAL) {
             S3dVec3 forward = s3d_normalize(l->dir);
@@ -1141,10 +1306,10 @@ static void s3d_planShadows(S3dContext* ctx, const S3dLight* lights, size_t ligh
 }
 
 /* Software: plans the shadow maps around the casters (from their transformed vertices) and draws them. */
-static void s3d_buildShadows(S3dContext* ctx, const S3dFrame* f, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static void s3d_buildShadows(S3dContext* ctx, const S3dFrame* f, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     int any = 0, k, i, count = 0;
     S3dVec3 lo = s3d_v3(1e30f, 1e30f, 1e30f), hi = s3d_v3(-1e30f, -1e30f, -1e30f);
-    size_t bi, vi;
+    s3d_size bi, vi;
     S3dShadowJob job;
     ctx->shadowN = 0;
     if (!st->shadows) return;
@@ -1161,24 +1326,24 @@ static void s3d_buildShadows(S3dContext* ctx, const S3dFrame* f, const S3dLight*
     }
     if (!any) return;
     s3d_planShadows(ctx, lights, lightCount, st, lo, hi);
-    job.maps = (S3dShadowMap**)malloc(sizeof(S3dShadowMap*) * ((size_t)ctx->shadowN * 6 + 1));
+    job.maps = (S3dShadowMap**)S3D_MALLOC(sizeof(S3dShadowMap*) * ((s3d_size)ctx->shadowN * 6 + 1));
     if (job.maps == NULL) { ctx->shadowN = 0; return; }
     for (k = 0; k < ctx->shadowN; k++)
         for (i = 0; i < ctx->shadows[k].count; i++) {
             S3dShadowMap* m = &ctx->shadows[k].maps[i];
-            if (!S3D_GROW(m->depth, m->depthCap, (size_t)m->res * (size_t)m->res)) { ctx->shadowN = k; goto draw; }
+            if (!S3D_GROW(m->depth, m->depthCap, (s3d_size)m->res * (s3d_size)m->res)) { ctx->shadowN = k; goto draw; }
             job.maps[count++] = m;
         }
 draw:
     job.f = f;
-    s3d_parallelFor(count, s3d_workerCount(st, (size_t)count), s3d_shadowTask, &job);
-    free(job.maps);
+    s3d_parallelFor(count, s3d_workerCount(st, (s3d_size)count), s3d_shadowTask, &job);
+    S3D_FREE(job.maps);
 }
 
 /* The lights as the pixels use them (the ambient ones summed up); the n-th light that casts shadows gets the n-th shadow set, when there is one. */
-static void s3d_prepareLights(S3dContext* ctx, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static void s3d_prepareLights(S3dContext* ctx, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     int shadowIndex = 0;
-    size_t i;
+    s3d_size i;
     ctx->eye = cam->pos;
     ctx->ambient = s3d_v3(0, 0, 0);
     ctx->lightN = 0;
@@ -1204,15 +1369,15 @@ static void s3d_prepareLights(S3dContext* ctx, const S3dCamera* cam, const S3dLi
  * --------------------------------------------------------------------------------------------------------------------------------------------- */
 /* The blended triangles from far to near, stable (objects at the same distance keep their order): a merge sort of their indices. */
 static int s3d_sortBlended(S3dFrame* f) {
-    size_t n = f->blendedN, width, i;
+    s3d_size n = f->blendedN, width, i;
     int *a, *b;
     if (!S3D_GROW(f->order, f->orderCap, n + 1) || !S3D_GROW(f->orderTmp, f->orderTmpCap, n + 1)) return 0;
     a = f->order; b = f->orderTmp;
     for (i = 0; i < n; i++) a[i] = (int)i;
     for (width = 1; width < n; width *= 2) {
-        size_t lo;
+        s3d_size lo;
         for (lo = 0; lo < n; lo += 2 * width) {
-            size_t mid = lo + width < n ? lo + width : n, hi = lo + 2 * width < n ? lo + 2 * width : n, p = lo, q = mid, k = lo;
+            s3d_size mid = lo + width < n ? lo + width : n, hi = lo + 2 * width < n ? lo + 2 * width : n, p = lo, q = mid, k = lo;
             while (p < mid && q < hi) {
                 /* the right one goes first only when it is farther: equal keys keep their order */
                 if (f->batches[f->blended[a[q]].batch].sortKey > f->batches[f->blended[a[p]].batch].sortKey) b[k++] = a[q++];
@@ -1223,7 +1388,7 @@ static int s3d_sortBlended(S3dFrame* f) {
         }
         { int* sw = a; a = b; b = sw; }
     }
-    if (a != f->order) memcpy(f->order, a, n * sizeof(int));
+    if (a != f->order) S3D_COPY(f->order, a, n * sizeof(int));
     return 1;
 }
 
@@ -1232,15 +1397,15 @@ static void s3d_bandTask(void* arg, int bi) {
     S3dBandJob* j = (S3dBandJob*)arg;
     S3dFrame* f = j->f;
     int y0 = bi * j->band, y1 = s3d_mini(f->h - 1, y0 + j->band - 1);
-    size_t i;
+    s3d_size i;
     for (i = 0; i < f->opaqueN; i++) { const S3dTri* t = &f->opaque[i]; if (t->maxY >= y0 && t->minY <= y1) s3d_rasterTri(j->rgba, f, j->ctx, t, y0, y1, 0); }
     for (i = 0; i < f->blendedN; i++) { const S3dTri* t = &f->blended[f->order[i]]; if (t->maxY >= y0 && t->minY <= y1) s3d_rasterTri(j->rgba, f, j->ctx, t, y0, y1, 1); }
 }
 
 /* Software: draws the queue into `rgba` (the camera's picture, already cleared). Opaque objects first (in the order they were queued), then the transparent ones from the far to the near.
  * The rows are shared between threads in bands of 16; a pixel is only ever touched by the thread of its band, so the result does not depend on the number of threads. */
-static void s3d_flushSoftware(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
-    size_t bi;
+static void s3d_flushSoftware(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
+    s3d_size bi;
     S3dBandJob job;
     int bands, workers;
     f->opaqueN = 0; f->blendedN = 0;
@@ -1254,16 +1419,16 @@ static void s3d_flushSoftware(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, 
     if (!s3d_sortBlended(f)) f->blendedN = 0;
     job.rgba = rgba; job.f = f; job.ctx = &f->ctx; job.band = 16;
     bands = (f->h + job.band - 1) / job.band;
-    workers = (size_t)f->w * (size_t)f->h < 20000 ? 1 : s3d_workerCount(st, (size_t)bands);
+    workers = (s3d_size)f->w * (s3d_size)f->h < 20000 ? 1 : s3d_workerCount(st, (s3d_size)bands);
     s3d_parallelFor(bands, workers, s3d_bandTask, &job);
 }
 
 /* The hardware backend (s3d_gpu_vk.h): 1 when it drew the queue into `rgba`, 2 when it drew it for the windows of the camera only (DirectDrawing), 0 when it cannot (no Vulkan,
  * no device, an error): then the software renderer draws. */
-static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st);
+static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st);
 
 /* Draws everything that was queued with `s3d_queueMesh` into `rgba` (the camera's picture, already cleared with FrameClear) and empties the queue. */
-static void s3d_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static void s3d_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     int drawn;
     if (f->w <= 0 || f->h <= 0 || f->batchN == 0) { s3d_frameEmpty(f); f->lastBackend = S3D_BACKEND_SOFTWARE; return; }
     drawn = st->backend == S3D_BACKEND_HARDWARE ? s3d_gpu_flush(rgba, f, cam, lights, lightCount, st) : 0;
@@ -1271,6 +1436,8 @@ static void s3d_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3
     else { s3d_flushSoftware(rgba, f, cam, lights, lightCount, st); f->lastBackend = S3D_BACKEND_SOFTWARE; }
     s3d_frameEmpty(f);
 }
+
+#endif /* FIRE_S3D_LEAN_ONLY */
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------------
  * Meshes: the templates (a unit size, centred on the origin) and the Wavefront OBJ reader
@@ -1368,14 +1535,14 @@ static S3dMesh* s3d_makeTemplate(int kind, int detail) {
 
 /* The vertices of an OBJ by their (v, vt) pair: an open addressing table of indices into the keys (the mesh's vertices). */
 typedef struct S3dObjKey { int64_t vi, ti; } S3dObjKey;
-typedef struct S3dObjKeys { S3dObjKey* keys; size_t n, cap; int64_t* slots; size_t slotCount; } S3dObjKeys;
-static size_t s3d_objHash(int64_t vi, int64_t ti, size_t mask) {
+typedef struct S3dObjKeys { S3dObjKey* keys; s3d_size n, cap; int64_t* slots; s3d_size slotCount; } S3dObjKeys;
+static s3d_size s3d_objHash(int64_t vi, int64_t ti, s3d_size mask) {
     uint64_t h = (uint64_t)vi * 0x9E3779B97F4A7C15ull ^ ((uint64_t)ti + 0x632BE59BD9B4E019ull) * 0xC2B2AE3D27D4EB4Full;
     h ^= h >> 29;
-    return (size_t)h & mask;
+    return (s3d_size)h & mask;
 }
 static int64_t s3d_objFind(const S3dObjKeys* k, int64_t vi, int64_t ti) {
-    size_t mask, i;
+    s3d_size mask, i;
     if (k->slotCount == 0) return -1;
     mask = k->slotCount - 1;
     for (i = s3d_objHash(vi, ti, mask);; i = (i + 1) & mask) {
@@ -1385,17 +1552,17 @@ static int64_t s3d_objFind(const S3dObjKeys* k, int64_t vi, int64_t ti) {
     }
 }
 static int s3d_objInsert(S3dObjKeys* k, int64_t vi, int64_t ti) {
-    size_t mask, i;
+    s3d_size mask, i;
     if (!S3D_GROW(k->keys, k->cap, k->n + 1)) return 0;
     if ((k->n + 1) * 2 > k->slotCount) {
-        size_t count = k->slotCount ? k->slotCount * 2 : 64, j;
-        int64_t* slots = (int64_t*)malloc(count * sizeof(int64_t));
+        s3d_size count = k->slotCount ? k->slotCount * 2 : 64, j;
+        int64_t* slots = (int64_t*)S3D_MALLOC(count * sizeof(int64_t));
         if (slots == NULL) return 0;
         for (j = 0; j < count; j++) slots[j] = -1;
-        free(k->slots);
+        S3D_FREE(k->slots);
         k->slots = slots; k->slotCount = count;
         for (j = 0; j < k->n; j++) {
-            size_t p = s3d_objHash(k->keys[j].vi, k->keys[j].ti, count - 1);
+            s3d_size p = s3d_objHash(k->keys[j].vi, k->keys[j].ti, count - 1);
             while (slots[p] >= 0) {
                 if (k->keys[slots[p]].vi == k->keys[j].vi && k->keys[slots[p]].ti == k->keys[j].ti) break;   /* the first one stays (as a search from the start finds it) */
                 p = (p + 1) & (count - 1);
@@ -1413,40 +1580,40 @@ static int s3d_objInsert(S3dObjKeys* k, int64_t vi, int64_t ti) {
     return 1;
 }
 
-typedef struct S3dObjState { S3dMesh* m; float* vp; size_t vpN, vpCap; float* vt; size_t vtN, vtCap; S3dObjKeys keys; } S3dObjState;
+typedef struct S3dObjState { S3dMesh* m; float* vp; s3d_size vpN, vpCap; float* vt; s3d_size vtN, vtCap; S3dObjKeys keys; } S3dObjState;
 
 /* The vertex of the mesh for a (v, vt) reference of a face: an earlier one, or a new one; -1 when the reference is not there. (The pair is looked up as written and kept with the index of
  * v counted from the start: as the reader always did.) */
 static int64_t s3d_objVertexFor(S3dObjState* o, int64_t vi, int64_t ti) {
     int64_t found = s3d_objFind(&o->keys, vi, ti);
-    size_t nv = o->vpN / 3;
+    s3d_size nv = o->vpN / 3;
     float u = 0, v = 0;
     if (found >= 0) return found;
     if (vi < 0) vi += (int64_t)nv + 1;
-    if (vi < 1 || (size_t)vi > nv) return -1;
+    if (vi < 1 || (s3d_size)vi > nv) return -1;
     if (ti != 0) {
-        size_t nt = o->vtN / 2;
+        s3d_size nt = o->vtN / 2;
         int64_t t = ti < 0 ? ti + (int64_t)nt + 1 : ti;
-        if (t >= 1 && (size_t)t <= nt) { u = o->vt[(size_t)(t - 1) * 2]; v = 1.0f - o->vt[(size_t)(t - 1) * 2 + 1]; }
+        if (t >= 1 && (s3d_size)t <= nt) { u = o->vt[(s3d_size)(t - 1) * 2]; v = 1.0f - o->vt[(s3d_size)(t - 1) * 2 + 1]; }
     }
-    s3d_addVertex(o->m, o->vp[(size_t)(vi - 1) * 3], o->vp[(size_t)(vi - 1) * 3 + 1], o->vp[(size_t)(vi - 1) * 3 + 2], u, v);
+    s3d_addVertex(o->m, o->vp[(s3d_size)(vi - 1) * 3], o->vp[(s3d_size)(vi - 1) * 3 + 1], o->vp[(s3d_size)(vi - 1) * 3 + 2], u, v);
     if (!s3d_objInsert(&o->keys, vi, ti)) { o->m->bad = 1; return -1; }
     return (int64_t)o->keys.n - 1;
 }
 
 /* Reads a Wavefront OBJ: `v`, `vt` and `f` (triangles, quads and polygons are fanned; `v`, `v/vt`, `v//vn` and `v/vt/vn` are understood, negative indices count from the end). `vn` is ignored:
  * the normals are computed (smooth). NULL when nothing usable is in the text. */
-static S3dMesh* s3d_parseObj(const char* text, size_t size) {
+static S3dMesh* s3d_parseObj(const char* text, s3d_size size) {
     S3dObjState o;
     char* line = NULL;
-    size_t lineCap = 0, pos = 0;
+    s3d_size lineCap = 0, pos = 0;
     int64_t* face = NULL;
-    size_t faceCap = 0;
+    s3d_size faceCap = 0;
     memset(&o, 0, sizeof o);
     o.m = s3d_meshNew();
     if (o.m == NULL) return NULL;
     while (pos < size && !o.m->bad) {
-        size_t end = pos, len, k;
+        s3d_size end = pos, len, k;
         const char* p;
         while (end < size && text[end] != '\n') end++;
         len = end - pos;
@@ -1470,7 +1637,7 @@ static S3dMesh* s3d_parseObj(const char* text, size_t size) {
                 o.vt[o.vtN++] = u; o.vt[o.vtN++] = v;
             }
         } else if (p[0] == 'f' && (p[1] == ' ' || p[1] == '\t')) {
-            size_t faceN = 0, i;
+            s3d_size faceN = 0, i;
             const char* q = p + 1;
             while (*q) {
                 char* e;
@@ -1495,7 +1662,7 @@ static S3dMesh* s3d_parseObj(const char* text, size_t size) {
             for (i = 1; i + 1 < faceN; i++) s3d_addTriangle(o.m, (uint32_t)face[0], (uint32_t)face[i], (uint32_t)face[i + 1]);
         }
     }
-    free(line); free(face); free(o.vp); free(o.vt); free(o.keys.keys); free(o.keys.slots);
+    S3D_FREE(line); S3D_FREE(face); S3D_FREE(o.vp); S3D_FREE(o.vt); S3D_FREE(o.keys.keys); S3D_FREE(o.keys.slots);
     if (o.m->bad || o.m->idxN == 0 || !s3d_meshFinish(o.m)) { s3d_meshFree(o.m); return NULL; }
     return o.m;
 }

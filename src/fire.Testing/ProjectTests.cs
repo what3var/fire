@@ -4,7 +4,7 @@ using fire.Projects;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>Projects and solutions (docs/PROJECTS.md): the model, the files, the workspace, the build plan, the settings precedence, libraries and their packing.</summary>
+/// <summary>Projects and solutions (docs/tools/projects.md): the model, the files, the workspace, the build plan, the settings precedence, libraries and their packing.</summary>
 static class ProjectTests
 {
     private static int _failures;
@@ -28,7 +28,7 @@ static class ProjectTests
         var output = new StringBuilder();
         var session = RuntimeSession.Build(plan.SourceTexts, null, args => { output.AppendLine(args.Length > 0 ? args[0].ToString() : ""); return Value.MakeUndefined(); }, plan: plan);
         session.Run();
-        Value.SingleFloats = false; Value.Ints32 = false;
+        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
         return output.ToString().Replace("\r\n", "\n");
     }
 
@@ -224,6 +224,21 @@ static class ProjectTests
                 catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
                 Check($"Beispiele: {sample.Title} (Projekt mit Schaltung) laeuft", lines.Count >= 4 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
             }
+            // the 3D samples open windows: they are only translated (with their resources: robot.gltf and figure.fblocks become model files)
+            foreach (var sample in samples.Where(x => x.Name.StartsWith("Scene3D")))
+            {
+                string error = "";
+                try
+                {
+                    var s3dWs = new Workspace();
+                    s3dWs.Load(Path.Combine(sample.Folder, sample.ProjectFile));
+                    var s3dPlan = BuildPlan.Create(s3dWs, s3dWs.Projects[0]);
+                    RuntimeSession.Build(s3dPlan.SourceTexts, null, args => Value.MakeUndefined(), plan: s3dPlan);
+                }
+                catch (Exception ex) { error = Describe(ex); }
+                Check($"Beispiele: {sample.Title} wird uebersetzt", error == "", error);
+            }
+            Check("Beispiele: die 3D-Beispiele (Szene, Benchmark, Effekte, Terrain, Modelle, Physik) sind da", samples.Count(x => x.Name.StartsWith("Scene3D")) == 6, string.Join(", ", samples.Select(x => x.Name)));
             Check("Beispiele: die Kategorie Circuits hat ihre zwei Beispiele", samples.Count(x => x.Category == "Circuits") == 2, string.Join(", ", samples.Select(x => x.Category + "/" + x.Name)));
         }
 
@@ -315,7 +330,7 @@ static class ProjectTests
         Check("Lauf: Projekt mit zwei Dateien und zwei Bibliotheken; Einstellungen des Projekts vor den Tags im Quelltext", ran == "Hello, projects!\n42\n0.3\nPRJ\n", ran);
         var tagsOnly = BuildPlan.Create(ws, ws.FindByName("Tool")!);
         Check("Lauf: ein Projekt ohne Einstellungen folgt den Tags", RunPlan(tagsOnly) == "tool\n");
-        // settings.globalJobs (docs/THREADING_DESIGN.md section 7): goes before `#globaljobs` in the source; --global-jobs goes before it
+        // settings.globalJobs (docs/spec/THREADING_DESIGN.md section 7): goes before `#globaljobs` in the source; --global-jobs goes before it
         Write(s, "Jobs/Jobs.fireproj", """{ "name": "Jobs", "settings": { "globalJobs": "sync" } }""");
         Write(s, "Jobs/main.script", "#globaljobs safepoints\nfire global { print(\"job\") }\nfor (var i = 0; i < 2; i++) { print(\"loop \" + i) }\nprint(\"n \" + (sync globals))\n");
         var jobsWs = Workspace.Open(Path.Combine(s, "Jobs", "Jobs.fireproj"));
@@ -579,7 +594,7 @@ static class ProjectTests
         standalone.Load(alone);
         Check("Vorlagen: ein Projekt ohne Mappe bekommt ebenfalls seinen Ordner", alone == Path.Combine(t, "alone", "Solo", "Solo.fireproj") && standalone.Solution == null && standalone.Projects.Count == 1);
 
-        // ---- templates as folders (docs/TEMPLATES.md): code templates, placeholders in names and text, the user's folder, packages ---------------------------
+        // ---- templates as folders (docs/tools/templates.md): code templates, placeholders in names and text, the user's folder, packages ---------------------------
         var codeTitles = catalog.Code.Select(x => x.Title).ToList();
         Check("Vorlagen: die eingebauten Code-Vorlagen", codeTitles.SequenceEqual(new[] { "Script", "Fire Class", "Test Class", "FXML Window", "FXML View", "Circuit" }) && catalog.Code.All(x => x.Source == "Local" && x.Description != null && x.Scope == TemplateScope.Code), string.Join(",", codeTitles));
         Check("Vorlagen: die Erweiterung kommt aus der Datei mit $name$ im Namen", Tpl(TemplateScope.Code, "Script").Extension == ".fire" && Tpl(TemplateScope.Code, "Fire Class").Extension == ".fire" && Tpl(TemplateScope.Code, "FXML Window").Extension == ".fxml" && Tpl(TemplateScope.Code, "FXML View").Extension == ".fxml");
@@ -856,6 +871,49 @@ static class ProjectTests
         string posix = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "posix" }));
         string common = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "windows" }));
         Check("Bau-Reihenfolge: sortiert nach order, stabil (ohne order 0, Plattformquellen zuerst)", posix == "b,q,a,c,p" && common == "b,a,c", posix + " | " + common);
+        // `vm`: the library of the VM gets only that layer; `default`: a platform without a key of its own (ROADMAP 13.3b - console, machine, dos, xms)
+        var layered = new fire.Package.Manager.PackageNative();
+        layered.Sources.Add("bridge");
+        layered.PlatformSources["dos16"] = new fire.Package.Manager.NativeSourceList { "real" };
+        layered.PlatformSources["posix"] = new fire.Package.Manager.NativeSourceList { "term" };
+        layered.PlatformSources["vm"] = new fire.Package.Manager.NativeSourceList { "none" };
+        layered.PlatformSources["default"] = new fire.Package.Manager.NativeSourceList { "none" };
+        string Layer(params string[] keys) => string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(layered, keys));
+        string withoutVm = string.Join(",", fire.Package.Manager.PackageNativeExtensions.SourcesFor(pn, new[] { "vm", "posix" }));
+        Check("Plattformquellen: `vm` allein fuer die Bibliothek der VM, `default` fuer eine Plattform ohne eigenen Schluessel, ohne `vm`-Eintrag die Plattform",
+            Layer("vm", "posix", "linux") == "none,bridge" && Layer("posix", "linux") == "term,bridge" && Layer("dos16", "dos16") == "real,bridge" && Layer("esp32", "esp32") == "none,bridge"
+            && withoutVm == posix && fire.Package.Manager.PackageNativeExtensions.SupportsAny(layered, new[] { "wasm" }),
+            $"{Layer("vm", "posix", "linux")} | {Layer("posix", "linux")} | {Layer("esp32", "esp32")} | {withoutVm}");
+        string used(params string[] keys) => string.Join(",", fire.Package.Manager.PackageNativeExtensions.PlatformLayerFor(layered, keys));
+        Check("native.uses: ein anderes Package bekommt nur die Plattformschicht (ohne die eigenen Quellen)", used("dos16") == "real" && used("esp32") == "none" && used("vm", "posix") == "none",
+            $"{used("dos16")} | {used("esp32")} | {used("vm", "posix")}");
+        var uses = System.Text.Json.JsonSerializer.Deserialize<List<fire.Package.Manager.NativeUse>>("[ \"io\", { \"import\": \"audio\", \"platforms\": [ \"posix\", \"vm\" ] } ]")!;
+        string usesBack = System.Text.Json.JsonSerializer.Serialize(uses);
+        Check("native.uses: ein Eintrag als Name (ueberall) oder mit Plattformen (nur dort), und zurueck geschrieben", uses.Count == 2 && uses[0].AppliesTo(new[] { "esp32" })
+            && !uses[1].AppliesTo(new[] { "esp32", "esp32" }) && uses[1].AppliesTo(new[] { "vm", "posix", "linux" }) && uses[1].AppliesTo(new[] { "POSIX" })
+            && usesBack == "[\"io\",{\"import\":\"audio\",\"platforms\":[\"posix\",\"vm\"]}]", usesBack);
+        {
+            // native.headers: put in where they are included (inside #if too), at the top level once; a source of the build is not put in
+            var files = new Dictionary<string, string> {
+                ["/h/c.h"] = "#ifndef C_H\n#define C_H\nint common;\n#endif\n",
+                ["/h/a.h"] = "#ifndef A_H\n#define A_H\n#include \"c.h\"\nint a;\n#endif\n",
+                ["/h/b.h"] = "#ifndef B_H\n#define B_H\n#include \"c.h\"\nint b;\n#endif\n" };
+            var headers = new Dictionary<string, string> { ["c.h"] = "/h/c.h", ["a.h"] = "/h/a.h", ["b.h"] = "/h/b.h", ["src.h"] = "/h/src.h" };
+            var placed = new HashSet<string>();
+            string sel = fire.Package.Manager.NativeHeaders.Inline("#ifndef S_H\n#define S_H\n#if X\n#include \"a.h\"\n#else\n#include \"b.h\"\n#endif\n#include \"src.h\"\n#endif\n",
+                headers, new HashSet<string> { "src.h" }, f => files[f], placed);
+            string bridge = fire.Package.Manager.NativeHeaders.Inline("#include \"c.h\"\n#include \"c.h\"\nint bridge;\n", headers, new HashSet<string> { "src.h" }, f => files[f], placed);
+            int Count(string t, string w) => (t.Length - t.Replace(w, "").Length) / w.Length;
+            Check("native.headers: eingesetzt, wo sie eingebunden werden (auch in #if), oben nur einmal, eine Quelle des Builds nicht",
+                sel.Contains("int a;") && sel.Contains("int b;") && Count(sel, "int common;") == 2 && sel.Contains("#include \"src.h\"") && !sel.Contains("#include \"a.h\"")
+                && Count(bridge, "int common;") == 1 && bridge.Contains("// (in this file already) #include \"c.h\""), sel + "\n----\n" + bridge);
+        }
+        {
+            string pointed = fire.Package.Manager.NativeHeaders.Point("#if A\n#include \"x11.h\"  /* why */\n#endif\n#include \"src.h\"\n#include <stdio.h>\n",
+                new Dictionary<string, string> { ["x11.h"] = "pkg/windows/x11.h", ["src.h"] = "pkg/windows/src.h" }, new HashSet<string> { "src.h" });
+            Check("native.headers eines installierten Pakets: das #include nennt die Datei im Build (pkg/<import>/), eine Quelle des Builds bleibt", pointed.Contains("#include \"pkg/windows/x11.h\"  /* why */")
+                && pointed.Contains("#include \"src.h\"") && pointed.Contains("<stdio.h>"), pointed);
+        }
         var problems = fire.Package.Manager.NativeSourceOrder.CheckIncludes(new[] { ("native/top.h", "// top\n#include \"mid.h\"\n"), ("native/mid.h", "#include <stdio.h>\n#include \"base.h\"\n"), ("native/base.h", "#include \"base.h\"\n") });
         Check("Bau-Reihenfolge: die Pruefung nennt Datei und Zeile des #include, das auf eine spaetere Quelle zeigt", problems.Count == 2
             && problems[0].StartsWith("native/top.h:2: #include \"mid.h\"") && problems[0].Contains("give 'native/mid.h' a smaller build order") && problems[1].StartsWith("native/mid.h:2: #include \"base.h\""), string.Join("\n", problems));

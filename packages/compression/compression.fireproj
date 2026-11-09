@@ -19,11 +19,13 @@
     "functions": [
       {
         "name": "__CmpLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_compression_LastError"
       },
       {
         "name": "__CmpLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -31,61 +33,73 @@
       },
       {
         "name": "__CmpOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_compression_OpenCount"
       },
       {
         "name": "__CmpInflateNew",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_compression_InflateNew"
       },
       {
         "name": "__CmpInflateFeed",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_compression_InflateFeed"
       },
       {
         "name": "__CmpInflateEnd",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_compression_InflateEnd"
       },
       {
         "name": "__CmpInflateRead",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_compression_InflateRead"
       },
       {
         "name": "__CmpInflateDone",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_compression_InflateDone"
       },
       {
         "name": "__CmpDeflateNew",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_compression_DeflateNew"
       },
       {
         "name": "__CmpDeflateWrite",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_compression_DeflateWrite"
       },
       {
         "name": "__CmpDeflateFlush",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_compression_DeflateFlush"
       },
       {
         "name": "__CmpDeflateRead",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_compression_DeflateRead"
       },
       {
         "name": "__CmpClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_compression_Close"
       },
       {
         "name": "__CmpCompress",
+        "returns": "byte[]",
         "arguments": 3,
         "needsList": true,
         "returnsReference": true,
@@ -93,6 +107,7 @@
       },
       {
         "name": "__CmpDecompress",
+        "returns": "byte[]",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -100,26 +115,31 @@
       },
       {
         "name": "__CmpCrc32",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_compression_Crc32"
       },
       {
         "name": "__CmpGetLE",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_compression_GetLE"
       },
       {
         "name": "__CmpPutLE",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_compression_PutLE"
       },
       {
         "name": "__CmpCopy",
+        "returns": "bool",
         "arguments": 5,
         "c": "fire_compression_Copy"
       },
       {
         "name": "__CmpFindLast",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_compression_FindLast"
       }

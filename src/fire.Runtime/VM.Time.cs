@@ -61,7 +61,7 @@ namespace fire.Runtime
 
         private bool WaitUntilTicks(Func<bool> condition, long ticks)
         {
-            // like Sleep: a thread waiting inside a method of a shared object gives its section back meanwhile (docs/THREADING_DESIGN.md section 7)
+            // like Sleep: a thread waiting inside a method of a shared object gives its section back meanwhile (docs/spec/THREADING_DESIGN.md section 7)
             int heldSections = YieldGlobalsSection();
             try { return WaitUntilTicksCore(condition, ticks); }
             finally { RegainGlobalsSection(heldSections); }
@@ -90,7 +90,7 @@ namespace fire.Runtime
         public void SleepTicks(long ticks)
         {
             // A method of an object of the shared area runs as a whole while the thread holds the section of the globals, and the main program waits for it
-            // (docs/THREADING_DESIGN.md section 7). Sleeping is waiting for something else: the section is handed back for the time of the sleep, otherwise a
+            // (docs/spec/THREADING_DESIGN.md section 7). Sleeping is waiting for something else: the section is handed back for the time of the sleep, otherwise a
             // method that waits (a socket accept, a retry loop) would hold the main program for as long as it waits. Afterwards the thread queues for it again.
             int heldSections = YieldGlobalsSection();
             try { SleepTicksCore(ticks); }

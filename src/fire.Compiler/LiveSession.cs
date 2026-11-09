@@ -85,7 +85,7 @@ namespace fire.Compiler
         public event Action<string>? Message;
         /// <summary>A new picture is there (on the thread of the program): take it with <see cref="CopyFrame"/>.</summary>
         public event Action? FrameReady;
-        /// <summary>The program wants another mouse pointer over its picture (SDL numbering: 0 arrow, 1 text, ... 11 hand, see UI.Cursor); on the thread of the program.</summary>
+        /// <summary>The program wants another mouse pointer over its picture (the numbering of UI.Cursor: 0 arrow, 1 text, ... 11 hand); on the thread of the program.</summary>
         public event Action<int>? CursorChanged;
 
         /// <summary>The mouse pointer the program wants now.</summary>
@@ -153,7 +153,7 @@ namespace fire.Compiler
         /// <summary>The wheel (dy > 0: up) at (x, y).</summary>
         public void Wheel(double dx, double dy, double x, double y) => Post(new HostDisplayEvent { Type = (int)EventType.MouseScroll, Dx = (float)dx, Dy = (float)dy, X = (float)x, Y = (float)y });
 
-        /// <summary>A key with the codes of SDL (letters are their lower case character, see UI.Keys) and its modifiers (1/2 shift, 64/128 ctrl, 256/512 alt).</summary>
+        /// <summary>A key with the codes of UI.Keys (letters are their lower case character, see UI.Keys) and its modifiers (1/2 shift, 64/128 ctrl, 256/512 alt).</summary>
         public void Key(int keyCode, int modifiers, bool down) =>
             Post(new HostDisplayEvent { Type = (int)(down ? EventType.KeyDown : EventType.KeyUp), KeyCode = keyCode, Modifiers = modifiers });
 

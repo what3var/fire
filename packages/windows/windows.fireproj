@@ -15,6 +15,55 @@
       "native/fire_bridge_windows.h"
     ],
     "discover": false,
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "posix": [
+        "native/fire_display_select.h"
+      ],
+      "windows": [
+        "native/fire_display_select.h"
+      ],
+      "wasm": [
+        "native/fire_display_wasm.h"
+      ],
+      "dos16": [
+        "native/fire_display_dos.h"
+      ],
+      "esp32": [
+        "native/fire_display_none.h"
+      ],
+      "freertos": [
+        "native/fire_display_none.h"
+      ],
+      "default": [
+        "native/fire_display_none.h"
+      ],
+      "dos32": [
+        "native/fire_display_dos.h"
+      ],
+      "win16": [
+        "native/fire_display_win16.h"
+      ]
+    },
+    "headers": [
+      "native/fire_display_c.h",
+      "native/fire_display_cocoa.h",
+      "native/fire_display_common.h",
+      "native/fire_display_dcomp.h",
+      "native/fire_display_desktop.h",
+      "native/fire_display_dos.h",
+      "native/fire_display_headless.h",
+      "native/fire_display_joystick.h",
+      "native/fire_display_keys.h",
+      "native/fire_display_none.h",
+      "native/fire_display_wayland.h",
+      "native/fire_display_web.h",
+      "native/fire_display_win32.h",
+      "native/fire_display_x11.h",
+      "native/fire_dragout.h",
+      "native/fire_systheme.h",
+      "native/fire_display_select.h",
+      "native/fire_display_wasm.h"
+    ]
   }
 }

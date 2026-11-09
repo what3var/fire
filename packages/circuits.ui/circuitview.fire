@@ -1,7 +1,7 @@
 #import "ui"
 #import "circuits"
 
-// circuits.ui (docs/CIRCUITS.md, "CircuitView"): a circuit as a live schematic in the user interface. The view draws the elements of the schematic of a circuit
+// circuits.ui (docs/circuits/README.md, "CircuitView"): a circuit as a live schematic in the user interface. The view draws the elements of the schematic of a circuit
 // (Circuits.Schematic) on a grid, colours the wires by their voltage (green positive, red negative, grey 0 V) and lets dots run with the current, the way
 // Paul Falstad's simulator does. While `running`, it simulates in real time at the pace of the circuit (Circuit.Speed: slow motion or faster). A click toggles switches and logic inputs; unless `readOnly`, the
 // schematic can be edited right in the view: select, move, stretch, rotate, flip, delete, draw wires, place elements (BeginPlace, from a palette outside the view),
@@ -380,17 +380,17 @@ namespace UI {
                 if (!(list[i] is of JsonObject)) { continue }
                 JsonObject eo = list[i]!JsonObject
                 var type = "" + eo.Get("type")
-                var a = eo.Get("from")
-                var b = eo.Get("to")
+                any a = eo.Get("from")
+                any b = eo.Get("to")
                 if (!Circuits.Symbols.Known(type) || a == undefined || b == undefined) { continue }
                 var name = ""
-                var n = eo.Get("name")
+                any n = eo.Get("name")
                 if (n != undefined && s.Find("" + n) == undefined && s.PortDefinition("" + n) == undefined) { name = "" + n }
                 var e = s.Add(type, Math.Round(a[0])!int + d, Math.Round(a[1])!int + d, Math.Round(b[0])!int + d, Math.Round(b[1])!int + d, "", name)
                 foreach (k in eo.Keys()) {
                     string key = k
                     if (key == "type" || key == "from" || key == "to" || key == "name") { continue }
-                    var value = eo.Get(k)
+                    any value = eo.Get(k)
                     if (value is of bool) {
                         if (value) { e.Set(key, "true") } else { e.Set(key, "false") }
                     } else { e.Set(key, "" + value) }
@@ -407,7 +407,7 @@ namespace UI {
         /// <summary>Selects the next element (after the selected one, around to the start) whose name, kind or a property value contains `text` (any case) and
         /// moves the view to it. False if there is none.</summary>
         bool FindNext(string text, bool backwards = false) {
-            var t = text.ToLower()
+            any t = text.ToLower()
             if (t == "") { return false }
             var els = this.Schematic.Elements()
             var n = els.Count
@@ -456,7 +456,7 @@ namespace UI {
             foreach (e in list) {
                 var any = false
                 if (e.name.Contains(find)) {
-                    var name = e.name.Replace(find, replace)
+                    any name = e.name.Replace(find, replace)
                     if (Circuits.Schematic.IsName(name) && s.Find(name) == undefined) {
                         s.Rename(e, name)
                         any = true
@@ -525,7 +525,7 @@ namespace UI {
         /// value is not valid.</summary>
         bool SetCircuitProperty(string key, string value) {
             var s = this.Schematic
-            var v = value.Trim()
+            any v = value.Trim()
             if (key == "class") {
                 if (s.className == v) { return true }
                 this.Remember()
@@ -536,7 +536,7 @@ namespace UI {
                 s.namespaceName = v
             } else if (key == "speed") {
                 // simulated seconds per second: a number ("0.01") or a fraction ("1/100")
-                var parsed = UI.CircuitView.ParseSpeed(v)
+                any parsed = UI.CircuitView.ParseSpeed(v)
                 if (parsed == undefined) { return false }
                 float sp = parsed!float
                 if (sp < 0.0001 || sp > 1000.0) { return false }
@@ -544,9 +544,9 @@ namespace UI {
                 this.Remember()
                 this.circuit.Speed = sp
             } else if (key == "timeStep") {
-                var text = v
+                any text = v
                 if (text.EndsWith("s")) { text = text.Substring(0, text.Length - 1) }
-                var dt = Circuits.Symbols.Number(text)
+                any dt = Circuits.Symbols.Number(text)
                 if (dt == undefined || dt <= 0.0 || dt > 1.0) { return false }
                 if (Math.Abs(this.circuit.StepRaw() - dt) <= dt * 0.000001) { return true }
                 this.Remember()
@@ -569,11 +569,11 @@ namespace UI {
 
         /// <summary>A pace as text: a number ("0.01", "10") or a fraction ("1/100"); undefined if it is neither.</summary>
         static any ParseSpeed(string text) {
-            var t = text.Trim().Replace("x", "").Replace("×", "").Trim()
-            var slash = t.IndexOf("/")
+            any t = text.Trim().Replace("x", "").Replace("×", "").Trim()
+            any slash = t.IndexOf("/")
             if (slash > 0) {
-                var a = t.Substring(0, slash).Trim().TryToFloat()
-                var b = t.Substring(slash + 1).Trim().TryToFloat()
+                any a = t.Substring(0, slash).Trim().TryToFloat()
+                any b = t.Substring(slash + 1).Trim().TryToFloat()
                 if (a == undefined || b == undefined) { return undefined }
                 float fa = a!float
                 float fb = b!float
@@ -822,7 +822,7 @@ namespace UI {
         undefined FrameAt(int x1, int y1, int x2, int y2) {
             float dx = x2 - x1
             float dy = y2 - y1
-            var len = Math.Sqrt(dx * dx + dy * dy)
+            any len = Math.Sqrt(dx * dx + dy * dy)
             this.flen = len
             this.fx = (this.ax + this.offsetX + x1 * this.scale) * this.dev
             this.fy = (this.ay + this.offsetY + y1 * this.scale) * this.dev
@@ -946,7 +946,7 @@ namespace UI {
 
         // a path of points (s, t) in the frame, with a colour that goes from c1 to c2
         undefined Poly(Root root, any pts, int c1, int c2) {
-            var n = pts.length / 2
+            any n = pts.length / 2
             for (int i = 0; i + 1 < n; i++) {
                 var c = c1
                 if (i >= n / 2) { c = c2 }
@@ -1112,14 +1112,14 @@ namespace UI {
                 this.infoType = t
                 this.infoProps = new List()
                 var entry = Circuits.Symbols.Entry(t)
-                var parts = entry.Split("|")
+                any parts = entry.Split("|")
                 if (parts.length > 2 && parts[2] != "") {
                     foreach (prop in parts[2].Split(";")) {
                         string ps = prop
-                        var colon = ps.IndexOf(":")
-                        var eq = ps.IndexOf("=")
+                        any colon = ps.IndexOf(":")
+                        any eq = ps.IndexOf("=")
                         if (colon < 0 || eq < colon) { continue }
-                        var kind = ps.Substring(colon + 1, eq - colon - 1)
+                        any kind = ps.Substring(colon + 1, eq - colon - 1)
                         if (kind == "bool" || kind == "int" || kind == "text" || kind == "" || kind.StartsWith("choice") || kind.StartsWith("model")) { continue }
                         this.infoProps.Add(ps.Substring(0, colon))
                         if (kind == "Ohm") { kind = "Ω" }
@@ -1150,7 +1150,7 @@ namespace UI {
                 for (int k = 0; k < n; k++) {
                     var label = "V" + (k + 1)
                     if (k < e.nets.Count && e.nets[k] != undefined) {
-                        var p = e.nets[k]
+                        any p = e.nets[k]
                         if (p.name != "" && e.part != undefined) { label = "V(" + p.name + ")" }
                     }
                     lines.Add(label + " = " + UI.CircuitView.Show(e.PinVoltage(k), "V"))
@@ -1184,10 +1184,10 @@ namespace UI {
             this.StatLines(stats, unit, lines)
             if (e.Get("display") == "spectrum") {
                 var size = 512
-                var sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
+                any sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
                 if (sizeText != undefined && sizeText >= 16.0) { size = Math.Round(sizeText)!int }
                 var fmax = 0.0
-                var fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
+                any fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
                 if (fmaxText != undefined && fmaxText > 0.0) { fmax = fmaxText }
                 var mags = scope.Spectrum("y", size, fmax)
                 if (mags.length >= 9) {
@@ -1271,21 +1271,21 @@ namespace UI {
         /// <summary>A number for the eye: 3 significant digits with an SI prefix ("1.81", "47.5m").</summary>
         static string Short(float v) {
             if (v == 0.0) { return "0" }
-            var a = Math.Abs(v)
-            var digits = Math.Floor(Math.Log(a) / Math.Log(10.0))
-            var unit = 10.0 ^ (digits - 2.0)
+            any a = Math.Abs(v)
+            any digits = Math.Floor(Math.Log(a) / Math.Log(10.0))
+            any unit = 10.0 ^ (digits - 2.0)
             return Circuits.Schematic.Format(Math.Round(v / unit) * unit)
         }
 
         /// <summary>The color of "#RRGGBB" (or "RRGGBB", "0xRRGGBB"); gray if it is none.</summary>
         static any HexColor(string text) {
-            var t = text.Trim()
+            any t = text.Trim()
             if (t.StartsWith("#")) { t = t.Substring(1) }
             else if (t.StartsWith("0x") || t.StartsWith("0X")) { t = t.Substring(2) }
             if (t.Length != 6) { return UI.Color.Rgb(160, 160, 160) }
             var v = 0
             for (int i = 0; i < 6; i++) {
-                var d = "0123456789abcdef".IndexOf(t.Substring(i, 1).ToLower())
+                any d = "0123456789abcdef".IndexOf(t.Substring(i, 1).ToLower())
                 if (d < 0) { return UI.Color.Rgb(160, 160, 160) }
                 v = v * 16 + d
             }
@@ -1307,7 +1307,7 @@ namespace UI {
                 root.renderer.FillCircle(px, py, r, this.brush)
                 this.thin.Color = UI.CircuitView.HexColor(d.color)
                 root.renderer.DrawCircle(px, py, r + this.Dp(2), this.thin)
-                var label = d.name
+                any label = d.name
                 if (d.direction == "output") { label = d.name + " >" } else { label = "> " + d.name }
                 this.textBrush.Color = UI.CircuitView.HexColor(d.color)
                 this.DrawString(root, px + r + this.Dp(3), py - r - this.TextHeight(root), label, this.textBrush)
@@ -1435,8 +1435,8 @@ namespace UI {
                 for (int i = 0; i < steps; i++) {
                     var a = i * 4.0 / steps
                     var b = (i + 1) * 4.0 / steps
-                    var ya = -Math.Abs(Math.Sin(a * Math.PI)) * 0.9
-                    var yb = -Math.Abs(Math.Sin(b * Math.PI)) * 0.9
+                    any ya = -Math.Abs(Math.Sin(a * Math.PI)) * 0.9
+                    any yb = -Math.Abs(Math.Sin(b * Math.PI)) * 0.9
                     this.Seg(root, m - 2.0 + a, ya, m - 2.0 + b, yb, this.VoltageColor(v0 + (v1 - v0) * i / (steps - 1.0)))
                 }
                 this.Value(root, e, "inductance", "H", m, -1.2)
@@ -1516,7 +1516,7 @@ namespace UI {
                 this.EndText(root, L + 1.4, "GPIO" + Circuits.Symbols.Line(e), UI.Color.Rgb(120, 200, 230))
             } else if (t == "LogicOutput") {
                 this.Seg(root, 0.0, 0.0, L - 1.0, 0.0, c0)
-                var th = Circuits.Symbols.Number(e.Get("threshold"))
+                any th = Circuits.Symbols.Number(e.Get("threshold"))
                 if (th == undefined) { th = 2.5 }
                 if (v0 > th) {
                     this.Dot(root, L, 0.0, 1.0, UI.Color.Rgb(40, 200, 40))
@@ -1721,7 +1721,7 @@ namespace UI {
         // "4.7k" + "Ω": "4.7kΩ"; a text that is not a number stays as it is
         string Pretty(Circuits.Element e, string key, string unit) {
             var text = e.Get(key)
-            var v = Circuits.Symbols.Number(text)
+            any v = Circuits.Symbols.Number(text)
             if (v == undefined) { return text }
             return Circuits.Schematic.Format(v) + unit
         }
@@ -1818,7 +1818,7 @@ namespace UI {
             var mt = at0 + (at1 - at0) * 0.7
             var ds = ax1 - ax0
             var dt = at1 - at0
-            var dl = Math.Sqrt(ds * ds + dt * dt)
+            any dl = Math.Sqrt(ds * ds + dt * dt)
             ds = ds / dl
             dt = dt / dl
             this.Seg(root, ms, mt, ms - ds * 0.6 + dt * 0.4, mt - dt * 0.6 - ds * 0.4, this.VoltageColor(ve))
@@ -1958,7 +1958,7 @@ namespace UI {
             }
             var end = ps[8]
             var x0 = 2.0
-            var h = Math.Abs(ps[1]) + 1.5
+            any h = Math.Abs(ps[1]) + 1.5
             // the triangle from x0 to the output, a bit before it
             var tip = end - 2.0
             this.Seg(root, x0, -h, x0, h, white)
@@ -2146,8 +2146,8 @@ namespace UI {
 
         // a chip in Falstad's layout: the box between the pins of all four sides
         undefined DrawFalstadChip(Root root, Circuits.Element e) {
-            var parts = Circuits.Symbols.FalstadLayout(e).Split("|")
-            var size = parts[0].Split(",")
+            any parts = Circuits.Symbols.FalstadLayout(e).Split("|")
+            any size = parts[0].Split(",")
             var sx = Circuits.Symbols.Int(size[0])
             var sy = Circuits.Symbols.Int(size[1])
             float cs = Circuits.Symbols.FalstadCell(e)
@@ -2161,7 +2161,7 @@ namespace UI {
             var i = 0
             foreach (p in parts[1].Split(";")) {
                 string pin = p
-                var f = pin.Split(":")
+                any f = pin.Split(":")
                 float px = e.PinX(i)
                 float py = e.PinY(i)
                 this.pen.Color = this.VoltageColor(e.PinVoltage(i))
@@ -2170,7 +2170,7 @@ namespace UI {
                 if (f[0] == "W") { ex = left } else if (f[0] == "E") { ex = right } else if (f[0] == "N") { ey = top } else { ey = bottom }
                 root.renderer.DrawLine(this.SX(px), this.SY(py), this.SX(ex), this.SY(ey), this.pen)
                 this.textBrush.Color = UI.Color.Rgb(170, 170, 170)
-                var name = f[2]
+                any name = f[2]
                 var tw = this.TextWidth(root, name)
                 var th = this.TextHeight(root)
                 if (f[0] == "W") { this.DrawString(root, this.SX(ex) + this.Dp(3), this.SY(ey) - th / 2, name, this.textBrush) }
@@ -2205,7 +2205,7 @@ namespace UI {
 
         // the digit of a 7-segment display in its box: the segments a..g (and the point) lit while their pin is high
         undefined DrawDigit(Root root, Circuits.Element e, float left, float top, float right, float bottom) {
-            var supply = Circuits.Symbols.Number(e.Get("supply"))
+            any supply = Circuits.Symbols.Number(e.Get("supply"))
             if (supply == undefined) { supply = 5.0 }
             var w = (right - left) * 0.36
             var h = (bottom - top) * 0.32
@@ -2242,9 +2242,9 @@ namespace UI {
                 this.DrawFalstadChip(root, e)
                 return
             }
-            var sides = Circuits.Symbols.ChipPins(e).Split("|")
-            var left = Circuits.Symbols.Names(sides[0])
-            var right = Circuits.Symbols.Names(sides[1])
+            any sides = Circuits.Symbols.ChipPins(e).Split("|")
+            any left = Circuits.Symbols.Names(sides[0])
+            any right = Circuits.Symbols.Names(sides[1])
             var width = Circuits.Symbols.ChipWidth(e)
             var rows = UI.M.Max(left.length, right.length)
             var sp = Circuits.Symbols.ChipSpacing(e)
@@ -2296,23 +2296,23 @@ namespace UI {
         // half circles along the line from (s, t) in steps of (ds, dt), `bumps` of them, bulging to the side `side` (+1 / -1)
         undefined Coil(Root root, float s, float t, float ds, float dt, int bumps, float side, float va, float vb) {
             var steps = bumps * 6
-            var len = Math.Sqrt(ds * ds + dt * dt)
-            var ns = dt / len * side
-            var nt = -ds / len * side
+            any len = Math.Sqrt(ds * ds + dt * dt)
+            any ns = dt / len * side
+            any nt = -ds / len * side
             for (int i = 0; i < steps; i++) {
                 var a = i * 1.0 / steps
                 var b = (i + 1) * 1.0 / steps
-                var ha = Math.Abs(Math.Sin(a * bumps * Math.PI)) * 0.8
-                var hb = Math.Abs(Math.Sin(b * bumps * Math.PI)) * 0.8
+                any ha = Math.Abs(Math.Sin(a * bumps * Math.PI)) * 0.8
+                any hb = Math.Abs(Math.Sin(b * bumps * Math.PI)) * 0.8
                 this.Seg(root, s + ds * a + ns * ha, t + dt * a + nt * ha, s + ds * b + ns * hb, t + dt * b + nt * hb, this.VoltageColor(va + (vb - va) * a))
             }
         }
 
         undefined DrawPotentiometer(Root root, Circuits.Element e) {
-            var ex = e.pins[2]
-            var ey = e.pins[3]
-            var wx = e.pins[4]
-            var wy = e.pins[5]
+            any ex = e.pins[2]
+            any ey = e.pins[3]
+            any wx = e.pins[4]
+            any wy = e.pins[5]
             this.FrameAt(e.x1, e.y1, ex, ey)
             var L = this.flen
             var m = L / 2
@@ -2342,8 +2342,8 @@ namespace UI {
             // the side of the wiper in the frame
             float fdx = ex - e.x1
             float fdy = ey - e.y1
-            var flen = Math.Sqrt(fdx * fdx + fdy * fdy)
-            var side = ((wx - e.x1) * fdy - (wy - e.y1) * fdx) / flen
+            any flen = Math.Sqrt(fdx * fdx + fdy * fdy)
+            any side = ((wx - e.x1) * fdy - (wy - e.y1) * fdx) / flen
             var sgn = 1.0
             if (side < 0.0) { sgn = -1.0 }
             this.Seg(root, m, side, at, side, this.VoltageColor(vw))
@@ -2357,7 +2357,7 @@ namespace UI {
             var end = Circuits.Symbols.AxisEnd(e)
             this.FrameAt(e.x1, e.y1, end[0], end[1])
             var L = this.flen
-            var w = e.Get("width").TryToInt()
+            any w = e.Get("width").TryToInt()
             if (w == undefined || w == 0) { w = 4 }
             float g = -Circuits.Symbols.Dsign(e) * w
             if (e.Flag("flip")) { g = -g }
@@ -2376,8 +2376,8 @@ namespace UI {
             var inward = 1.0
             if (g < 0.0) { inward = -1.0 }
             // leads, windings (the bulges face the core), the core
-            var s1 = Math.Min(1.5, L / 4)
-            var s2 = L - s1
+            any s1 = Math.Min(1.5, L / 4)
+            any s2 = L - s1
             this.Seg(root, 0.0, 0.0, s1, 0.0, this.VoltageColor(vp1))
             this.Seg(root, 0.0, g, s1, g, this.VoltageColor(vp2))
             this.Seg(root, s2, 0.0, L, 0.0, this.VoltageColor(top))
@@ -2411,7 +2411,7 @@ namespace UI {
                 pulled = relay.Energized
             }
             // the switch: common to a pivot, the blade to NC (-open) or NO (+open)
-            var pivot = Math.Min(2.0, L / 3)
+            any pivot = Math.Min(2.0, L / 3)
             var tip = L - 1.5
             this.Seg(root, 0.0, 0.0, pivot, 0.0, this.VoltageColor(vcom))
             this.Dot(root, pivot, 0.0, 0.25, white)
@@ -2507,7 +2507,7 @@ namespace UI {
             var end = Circuits.Symbols.AxisEnd(e)
             this.FrameAt(e.x1, e.y1, end[0], end[1])
             var L = this.flen
-            var w = e.Get("width").TryToInt()
+            any w = e.Get("width").TryToInt()
             if (w == undefined || w == 0) { w = 4 }
             var ds = 1
             if (end[1] == e.y1) {
@@ -2667,12 +2667,12 @@ namespace UI {
             }
             // over time: the time base (10 divisions across), the trigger, the power as v * i
             var perDiv = 0.0
-            var perDivText = Circuits.Symbols.Number(e.Get("timePerDiv").Replace("s", ""))
+            any perDivText = Circuits.Symbols.Number(e.Get("timePerDiv").Replace("s", ""))
             if (perDivText != undefined && perDivText > 0.0) { perDiv = perDivText }
             var trigger = 0
             if (e.Get("trigger") == "rising") { trigger = 1 } else if (e.Get("trigger") == "falling") { trigger = 2 }
             var level = 0.0
-            var levelText = Circuits.Symbols.Number(e.Get("triggerLevel"))
+            any levelText = Circuits.Symbols.Number(e.Get("triggerLevel"))
             if (levelText != undefined) { level = levelText }
             var other = ""
             if (quantity == "power") { other = "x" }
@@ -2689,7 +2689,7 @@ namespace UI {
             this.thin.Color = UI.Color.Rgb(90, 90, 90)
             root.renderer.DrawLine(x0, y0 + h / 2, x1, y0 + h / 2, this.thin)
             // the scale and the points of the curve in one native call (a loop per column in the script cost milliseconds per scope)
-            var range = Circuits.Symbols.Number(e.Get("range"))
+            any range = Circuits.Symbols.Number(e.Get("range"))
             if (range == undefined) { range = 0.0 }
             var scale = Circuits.Scope.TraceRange(trace, range)
             var lo = scale[0]
@@ -2772,10 +2772,10 @@ namespace UI {
         // strongest line, from 0 Hz to maxFrequency (0: at the rate of the simulation, up to a little above the highest line that is not 60 dB down)
         undefined DrawSpectrum(Root root, Circuits.Element e, Circuits.Scope scope, int x0, int y0, int w, int h, string label) {
             var size = 512
-            var sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
+            any sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
             if (sizeText != undefined && sizeText >= 16.0) { size = Math.Round(sizeText)!int }
             var fmax = 0.0
-            var fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
+            any fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
             if (fmaxText != undefined && fmaxText > 0.0) { fmax = fmaxText }
             var spectrum = scope.Spectrum("y", size, fmax)
             this.textBrush.Color = UI.Color.Rgb(140, 200, 140)
@@ -2842,8 +2842,8 @@ namespace UI {
             var counts = new List()
             foreach (e in s.Elements()) {
                 for (int i = 0; i < e.pins.Count / 2; i++) {
-                    var x = e.pins[i * 2]
-                    var y = e.pins[i * 2 + 1]
+                    any x = e.pins[i * 2]
+                    any y = e.pins[i * 2 + 1]
                     var found = -1
                     for (int k = 0; k < xs.Count; k++) {
                         if (xs[k] == x && ys[k] == y) {
@@ -2902,7 +2902,7 @@ namespace UI {
             var i = 0
             foreach (e in els) {
                 var cur = 0.0
-                var t = e.type
+                any t = e.type
                 if (t == "Wire") { cur = wires[i] } else { cur = this.CurrentOf(e) }
                 if (Math.Abs(cur) > 0.000000001 && i < this.phases.Count) {
                     // the speed grows with the logarithm of the current
@@ -2910,7 +2910,7 @@ namespace UI {
                     if (mag < 0.0) { mag = 0.0 }
                     var speed = mag * 0.05 * this.currentSpeed * cycles
                     if (cur < 0.0) { speed = -speed }
-                    var ph = this.phases[i] + speed
+                    any ph = this.phases[i] + speed
                     while (ph >= 2.0) { ph = ph - 2.0 }
                     while (ph < 0.0) { ph = ph + 2.0 }
                     root.painting = true
@@ -2919,7 +2919,7 @@ namespace UI {
                     this.Frame(e)
                     var L = this.flen
                     if (t == "Rail" || t == "LogicInput" || t == "Sweep") { L = L - 1.0 }
-                    var d = ph
+                    any d = ph
                     while (d < L) {
                         this.Dot(root, d, 0.0, 0.18, yellow)
                         d = d + 2.0
@@ -2997,7 +2997,7 @@ namespace UI {
             var idx = 0
             foreach (e in els) {
                 result.Add(0.0)
-                var t = e.type
+                any t = e.type
                 if (t == "Wire" || t == "Label" || t == "LogicOutput" || t == "Probe" || t == "Text" || t == "Scope") {
                     idx = idx + 1
                     continue
@@ -3066,7 +3066,7 @@ namespace UI {
         // the element under the point (grid units), undefined if none
         Circuits.Element ElementAt(float ux, float uy) {
             var els = this.Schematic.Elements()
-            var best = undefined
+            Circuits.Element best = undefined
             var bestD = 1.2
             for (int i = els.Count - 1; i >= 0; i--) {
                 Circuits.Element e = els[i]
@@ -3087,7 +3087,7 @@ namespace UI {
                 var y0 = UI.M.Min(e.y1, e.y2) + 0.0
                 var y1 = UI.M.Max(e.y1, e.y2) + 0.0
                 if (Circuits.Symbols.IsFalstadChip(e)) {
-                    var size = Circuits.Symbols.FalstadLayout(e).Split("|")[0].Split(",")
+                    any size = Circuits.Symbols.FalstadLayout(e).Split("|")[0].Split(",")
                     float cs = Circuits.Symbols.FalstadCell(e)
                     x0 = e.x1 + cs / 2.0
                     y0 = e.y1 - cs / 2.0
@@ -3448,10 +3448,10 @@ namespace UI {
                     this.Changed()
                 } else { this.undo.RemoveAt(this.undo.Count - 1) }
             } else if (mode == 2) {
-                var x0 = Math.Min(this.downX, this.mouseUX)
-                var x1 = Math.Max(this.downX, this.mouseUX)
-                var y0 = Math.Min(this.downY, this.mouseUY)
-                var y1 = Math.Max(this.downY, this.mouseUY)
+                any x0 = Math.Min(this.downX, this.mouseUX)
+                any x1 = Math.Max(this.downX, this.mouseUX)
+                any y0 = Math.Min(this.downY, this.mouseUY)
+                any y1 = Math.Max(this.downY, this.mouseUY)
                 this.selection.Clear()
                 foreach (e in s.Elements()) {
                     if (UI.M.Min(e.x1, e.x2) >= x0 && UI.M.Max(e.x1, e.x2) <= x1 && UI.M.Min(e.y1, e.y2) >= y0 && UI.M.Max(e.y1, e.y2) <= y1) { this.selection.Add(e) }
@@ -3670,8 +3670,8 @@ namespace UI {
         /// <summary>What a row of the context menu does (see ShowContextMenu): "scope <quantity> <display>", "display <how>", "edit", "rotate", ...</summary>
         undefined MenuAction(string action) {
             var e = this.contextElement
-            var p = action.Split(" ")
-            var a = p[0]
+            any p = action.Split(" ")
+            any a = p[0]
             if (a == "scope") { this.AttachScope(e, p[1], p[2]) }
             else if (a == "pinscope") { this.AttachScope(e, "voltage", p[1], this.contextPin) }
             else if (a == "bind") {
@@ -3797,14 +3797,14 @@ namespace UI {
             this.nameBox = new UI.TextBox(element.name, 0, 0, 200)
             stack.Add(this.Row("name", this.nameBox))
             var entry = Circuits.Symbols.Entry(element.type)
-            var props = entry.Split("|")[2]
+            any props = entry.Split("|")[2]
             if (props != "") {
                 foreach (p in props.Split(";")) {
                     string prop = p
-                    var colon = prop.IndexOf(":")
-                    var eq = prop.LastIndexOf("=")
-                    var key = prop.Substring(0, colon)
-                    var kind = prop.Substring(colon + 1, eq - colon - 1)
+                    any colon = prop.IndexOf(":")
+                    any eq = prop.LastIndexOf("=")
+                    any key = prop.Substring(0, colon)
+                    any kind = prop.Substring(colon + 1, eq - colon - 1)
                     var value = element.Get(key)
                     any field = undefined
                     if (kind == "bool") {
@@ -3863,7 +3863,7 @@ namespace UI {
             var e = this.element
             for (int i = 0; i < this.keys.Count; i++) {
                 string key = this.keys[i]
-                var field = this.fields[i]
+                any field = this.fields[i]
                 var value = ""
                 if (field is of UI.CheckBox) {
                     UI.CheckBox c = field!UI.CheckBox

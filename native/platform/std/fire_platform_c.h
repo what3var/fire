@@ -5,7 +5,7 @@
  *   void    fire_plat_sleepMs(int64_t ms)    the calling thread sleeps
  *   void    fire_plat_exit(int code)         ends the program (the streams are flushed already); never returns
  *
- * and with FIRE_THREADS (fire threads, see docs/NATIVE_BACKEND.md):
+ * and with FIRE_THREADS (fire threads, see docs/spec/NATIVE_BACKEND.md):
  *
  *   fire_mutex          fire_mutex_init / fire_mutex_lock / fire_mutex_unlock      (not recursive)
  *   fire_cond           fire_cond_init / fire_cond_wait(c, m) / fire_cond_waitFor(c, m, ms) (0: timed out) / fire_cond_notifyAll(c)
@@ -21,11 +21,16 @@
 
 #include <stdint.h>
 
-#if defined(__GNUC__) || defined(__clang__)
-#define FIRE_NORETURN __attribute__((noreturn))
-#elif defined(_MSC_VER)
-#define FIRE_NORETURN __declspec(noreturn)
-#else
+/* A scheduler of fire itself (fire_sched.h; a platform without threads): a safepoint gives the turn to the other fire threads (FIRE_PLAT_YIELD), and asks whether a
+ * timer wants that early (FIRE_PLAT_PREEMPTED). Real threads need neither. */
+#ifndef FIRE_PLAT_YIELD
+#define FIRE_PLAT_YIELD() ((void)0)
+#endif
+#ifndef FIRE_PLAT_PREEMPTED
+#define FIRE_PLAT_PREEMPTED() 0
+#endif
+
+#ifndef FIRE_NORETURN   /* (fire_rt.h includes the dialect of the compiler first, cc/fire_cc.h) */
 #define FIRE_NORETURN
 #endif
 

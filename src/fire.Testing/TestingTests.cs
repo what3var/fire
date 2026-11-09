@@ -2,7 +2,7 @@ using System.Text;
 using fire.Compiler;
 using fire.Projects;
 
-/// <summary>`forge test` (docs/TESTING.md): attributes, the generated driver, `Testing.Assert`, the report and the folder `testing/` of a project.</summary>
+/// <summary>`forge test` (docs/tools/testing.md): attributes, the generated driver, `Testing.Assert`, the report and the folder `testing/` of a project.</summary>
 static class TestingTests
 {
     private static int _failures;
@@ -25,7 +25,7 @@ static class TestingTests
     {
         var output = new StringWriter();
         int exit = CommandLineRunner.Run(args, output, output);
-        fire.Values.Value.SingleFloats = false; fire.Values.Value.Ints32 = false;
+        fire.Values.Value.SingleFloats = false; fire.Values.Value.Ints32 = false; fire.Values.Value.Ints16 = false;
         return (exit, output.ToString().Replace("\r\n", "\n"));
     }
 

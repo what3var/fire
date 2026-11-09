@@ -104,6 +104,144 @@ namespace fire.Package.Manager
         }
     }
 
+    /// <summary>An entry of `native.uses`: an import whose platform layer a package builds on - everywhere (`"io"`), or only on some platforms
+    /// (`{ "import": "audio", "platforms": [ "posix", "windows", "vm" ] }`, the keys of `platformSources`).</summary>
+    [JsonConverter(typeof(NativeUseConverter))]
+    public sealed class NativeUse
+    {
+        public string Import { get; set; } = "";
+        /// <summary>The keys the entry is for; empty: every build.</summary>
+        public List<string> Platforms { get; set; } = new();
+
+        public NativeUse() { }
+        public NativeUse(string import) { Import = import; }
+
+        /// <summary>Is the entry for a build with these keys (the platform package, the target, `vm` for the library of the VM)?</summary>
+        public bool AppliesTo(IEnumerable<string> platformKeys) =>
+            Platforms.Count == 0 || platformKeys.Any(k => Platforms.Any(p => string.Equals(p, k, StringComparison.OrdinalIgnoreCase)));
+
+        public static implicit operator NativeUse(string import) => new(import);
+        public override string ToString() => Platforms.Count == 0 ? Import : Import + " (" + string.Join(", ", Platforms) + ")";
+    }
+
+    /// <summary>Reads an entry of `native.uses` as a string or as `{ "import": "...", "platforms": [ ... ] }`; writes the string form when it is for every build.</summary>
+    public sealed class NativeUseConverter : JsonConverter<NativeUse>
+    {
+        public override NativeUse Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String) return new NativeUse(reader.GetString()!);
+            if (reader.TokenType != JsonTokenType.StartObject) throw new JsonException("An entry of 'uses' is \"import\" or { \"import\": \"name\", \"platforms\": [ \"posix\", ... ] }.");
+            var use = new NativeUse();
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName) throw new JsonException("An entry of 'uses' has 'import' and 'platforms'.");
+                string name = reader.GetString()!;
+                reader.Read();
+                if (string.Equals(name, "import", StringComparison.OrdinalIgnoreCase))
+                    use.Import = reader.TokenType == JsonTokenType.String ? reader.GetString()! : throw new JsonException("'import' of an entry of 'uses' is the name of an import.");
+                else if (string.Equals(name, "platforms", StringComparison.OrdinalIgnoreCase))
+                    use.Platforms = JsonSerializer.Deserialize<List<string>>(ref reader, options) ?? new();
+                else throw new JsonException($"An entry of 'uses' has 'import' and 'platforms', not '{name}'.");
+            }
+            if (string.IsNullOrWhiteSpace(use.Import)) throw new JsonException("An entry of 'uses' { ... } needs 'import'.");
+            return use;
+        }
+
+        public override void Write(Utf8JsonWriter writer, NativeUse value, JsonSerializerOptions options)
+        {
+            if (value.Platforms.Count == 0) { writer.WriteStringValue(value.Import); return; }
+            writer.WriteStartObject();
+            writer.WriteString("import", value.Import);
+            writer.WritePropertyName("platforms");
+            JsonSerializer.Serialize(writer, value.Platforms, options);
+            writer.WriteEndObject();
+        }
+    }
+
+    /// <summary>
+    /// The headers of an import (`native.headers`): an installed package's are files of the build (<see cref="Point"/>, PackageHeaders writes them); a project's are put where a
+    /// source includes them (<see cref="Inline"/>) - a selector can include the implementation it picks within `#if` and keep working, though all sources of a build go into one file. A header that is a source of the build is not put in (the source is in the file already). A header included at the top level
+    /// (outside any `#if` of the file, its include guard not counted) is put in once; within an `#if` every time - its include guard keeps the second copy from counting.
+    /// </summary>
+    public static class NativeHeaders
+    {
+        private static readonly Regex Include = new(@"^[ \t]*#[ \t]*include[ \t]+""([^""\r\n]+)""", RegexOptions.Compiled);
+        private static readonly Regex Opens = new(@"^[ \t]*#[ \t]*if(n?def)?\b", RegexOptions.Compiled);
+        private static readonly Regex Closes = new(@"^[ \t]*#[ \t]*endif\b", RegexOptions.Compiled);
+        private static readonly Regex Directive = new(@"^[ \t]*#[ \t]*(\w+)[ \t]*(\w*)", RegexOptions.Compiled);
+
+        /// <summary>The folder of the headers of the installed imports in a build (next to the generated program).</summary>
+        public const string Folder = "pkg";
+
+        /// <summary>The path an include of a header of an installed import names: `pkg/<import>/<file>`.</summary>
+        public static string BuildPath(string import, string file) => Folder + "/" + import + "/" + file;
+
+        /// <summary>Points the includes of headers of installed imports to their files in the build (`#include "x.h"` becomes `#include "pkg/io/x.h"`), unless the header
+        /// is a source of the build.</summary>
+        public static string Point(string text, IReadOnlyDictionary<string, string> headers, ISet<string> sources) =>
+            headers.Count == 0 ? text : Regex.Replace(text, @"^([ \t]*#[ \t]*include[ \t]+"")([^""\r\n]+)("")", m =>
+            {
+                string name = NativeSourceOrder.FileNameOf(m.Groups[2].Value);
+                return !sources.Contains(name) && headers.TryGetValue(name, out var path) ? m.Groups[1].Value + path + m.Groups[3].Value : m.Value;
+            }, RegexOptions.Multiline);
+
+        /// <param name="headers">The headers by file name (as an `#include` names them) with their full paths.</param>
+        /// <param name="sources">The file names of the sources of the build (not put in).</param>
+        /// <param name="placed">The headers already put in at the top level, for the whole build.</param>
+        public static string Inline(string text, IReadOnlyDictionary<string, string> headers, ISet<string> sources, Func<string, string> read, HashSet<string> placed) =>
+            Inline(text, headers, sources, read, placed, 0, 0);
+
+        private static string Inline(string text, IReadOnlyDictionary<string, string> headers, ISet<string> sources, Func<string, string> read, HashSet<string> placed, int outer, int nesting)
+        {
+            if (headers.Count == 0) return text;
+            string[] lines = text.Split('\n');
+            int guard = GuardDepth(lines), depth = 0;
+            var sb = new System.Text.StringBuilder(text.Length);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                var m = Include.Match(line);
+                string name = m.Success ? NativeSourceOrder.FileNameOf(m.Groups[1].Value) : "";
+                if (m.Success && !sources.Contains(name) && headers.TryGetValue(name, out var path))
+                {
+                    int level = outer + Math.Max(0, depth - guard);
+                    if (level == 0 && !placed.Add(name)) sb.Append("// (in this file already) #include \"").Append(m.Groups[1].Value).Append('"');
+                    else
+                    {
+                        if (nesting > 32) throw new PackageException($"The headers include each other without end ('{name}').");
+                        sb.Append("/* ---- ").Append(name).Append(" (a header, put in where it is included) */\n");
+                        sb.Append(Inline(read(path).Replace("\r\n", "\n"), headers, sources, read, placed, level, nesting + 1).TrimEnd('\n')).Append('\n');
+                        sb.Append("/* ---- end of ").Append(name).Append(" */");
+                    }
+                }
+                else sb.Append(line);
+                if (i < lines.Length - 1) sb.Append('\n');
+                if (Opens.IsMatch(line)) depth++;
+                else if (Closes.IsMatch(line)) depth--;
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>1 when the first two directives of the file are its include guard (`#ifndef X` / `#define X`), else 0.</summary>
+        private static int GuardDepth(string[] lines)
+        {
+            string? first = null;
+            foreach (var l in lines)
+            {
+                var d = Directive.Match(l);
+                if (!d.Success) continue;
+                if (first == null)
+                {
+                    if (d.Groups[1].Value != "ifndef") return 0;
+                    first = d.Groups[2].Value;
+                    continue;
+                }
+                return d.Groups[1].Value == "define" && d.Groups[2].Value == first ? 1 : 0;
+            }
+            return 0;
+        }
+    }
+
     /// <summary>
     /// The build order of the native sources and its check. The sources of an import are put into one file in that order; an `#include "x.h"` of another source of the
     /// same import is taken out there (the source is in the file already) - so whatever a source includes has to come before it. <see cref="CheckIncludes"/> says where not.

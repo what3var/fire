@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "name": "fire-dos",
+  "type": "library",
+  "import": "dos",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'dos' of fire: interrupts of DOS and the BIOS, DOS memory, interrupt vectors (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      {
+        "file": "native/fire_dos_c.h",
+        "order": -1
+      },
+      "native/fire_bridge_dos.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__DosUnavailable",
+        "returns": "string",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_dos_Unavailable"
+      },
+      {
+        "name": "__DosInt",
+        "returns": "any[]",
+        "arguments": 9,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_dos_Int"
+      },
+      {
+        "name": "__DosFarOf",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_dos_FarOf"
+      }
+    ],
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_dos_real.h"
+      ],
+      "vm": [
+        "native/fire_dos_none.h"
+      ],
+      "default": [
+        "native/fire_dos_none.h"
+      ],
+      "dos32": [
+        "native/fire_dos_dpmi.h"
+      ],
+      "bios16-dos": [
+        "native/fire_dos_real.h"
+      ]
+    }
+  }
+}

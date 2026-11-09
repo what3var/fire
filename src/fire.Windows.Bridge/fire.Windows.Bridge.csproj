@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The window bridge (`#import "windows"`): the SDL window for a framebuffer of the graphics bridge (fire.Terminal.Bridge). A project of its own, so that
-    `graphics` alone needs neither SDL nor fire.Terminal.Windows (embedded targets include a display instead of a window).
+    The window bridge (`#import "windows"`): the window for a framebuffer of the graphics bridge (fire.Terminal.Bridge). A project of its own, so that
+    `graphics` alone does not need fire.Terminal.Windows (embedded targets include a display instead of a window).
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>

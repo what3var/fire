@@ -9,7 +9,7 @@ namespace fire.Compiler
     /// Conditional compilation for the preprocessor (SPEC 8.1.6): `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#define`, `#undef`, `#error`.
     /// A line of a branch that is not taken is replaced by an empty line (line numbers stay), so what it contains - also `#import` and `#include` - is never read.
     /// The symbols are plain names (case-insensitive): the target (`windows`, `linux`, `macos`, `posix`, `esp32`, `freertos`), the engine (`vm`, `native`),
-    /// `float32`, `int32`, whatever `-D name` / `#define name` adds. An unknown name is false.
+    /// `float32`, `int32`, `word16`/`word32`/`word64`, whatever `-D name` / `#define name` adds. An unknown name is false.
     /// </summary>
     public static class ConditionalSymbols
     {
@@ -26,6 +26,8 @@ namespace fire.Compiler
             set.Add(string.IsNullOrWhiteSpace(engine) ? DefaultEngine : engine);
             if ((floatWidth ?? target.FloatWidth) == 32) set.Add("float32");
             if ((intWidth ?? target.IntWidth) == 32) set.Add("int32");
+            if ((intWidth ?? target.IntWidth) == 16) set.Add("int16");
+            set.Add("word" + target.WordWidth);   // (the machine word of the target: word16, word32 or word64, SPEC 8.10)
             if (defines != null) foreach (var d in defines) if (!string.IsNullOrWhiteSpace(d)) set.Add(d.Trim());
             return set;
         }
@@ -115,14 +117,70 @@ namespace fire.Compiler
             var state = new ConditionalState();
             var lines = source.Split('\n');
             var inactive = new bool[lines.Length];
+            var inlineC = new InlineCScan();   // (the `#if` of an `inline c` body is C's)
             for (int n = 0; n < lines.Length; n++)
             {
                 string line = lines[n].TrimEnd('\r');
+                if (inlineC.InBody) { inlineC.Feed(line); inactive[n] = !state.Active; continue; }
                 var m = Preprocessor.DirectiveLineRegex.Match(line);
+                if (!m.Success && state.Active) inlineC.Feed(line);
                 bool handled = m.Success && state.TryHandle(m.Groups[1].Value, m.Groups[2].Success ? m.Groups[2].Value : "", n + 1, copy, throwOnError: false);
                 inactive[n] = !handled && !state.Active;
             }
             return inactive;
+        }
+    }
+
+    /// <summary>Follows the lines of a source through `inline c [Type] Name(params) { C }` (ROADMAP 13.2): from the first `{` outside the parentheses to its `}`
+    /// the lines are C - braces in C strings, character literals and comments do not count (the same rules as Lexer.ReadInlineCode).</summary>
+    public sealed class InlineCScan
+    {
+        private static readonly Regex Start = new(@"^\s*(?:(?:public|private|protected|static)\s+)*inline\s+c\s+[A-Za-z_]", RegexOptions.Compiled);
+        private bool _armed, _blockComment;
+        private int _parens, _depth, _waitLines;
+
+        public bool InBody => _depth > 0;
+
+        public void Feed(string line)
+        {
+            int i = 0;
+            if (!_armed && _depth == 0)
+            {
+                var m = Start.Match(line);
+                if (!m.Success) return;
+                _armed = true;
+                _parens = 0;
+                _waitLines = 0;
+                i = m.Length - 1;
+            }
+            else if (_armed && _parens <= 0 && _waitLines++ > 0 && line.Trim().Length > 0 && !line.TrimStart().StartsWith('{'))
+            {
+                _armed = false;   // (the body `{` comes on the line of the parameters or the next one)
+                return;
+            }
+            for (; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (_blockComment) { if (c == '*' && i + 1 < line.Length && line[i + 1] == '/') { _blockComment = false; i++; } continue; }
+                if (_depth == 0)
+                {
+                    if (c == '(') _parens++;
+                    else if (c == ')') _parens--;
+                    else if (c == '=' && _parens <= 0) { _armed = false; return; }
+                    else if (c == '{' && _parens <= 0) { _armed = false; _depth = 1; }
+                    else if (c == ';' || (c == '/' && i + 1 < line.Length && line[i + 1] == '/')) { if (_parens <= 0) { _armed = false; return; } }
+                    continue;
+                }
+                if (c == '/' && i + 1 < line.Length && line[i + 1] == '/') return;
+                if (c == '/' && i + 1 < line.Length && line[i + 1] == '*') { _blockComment = true; i++; continue; }
+                if (c == '"' || c == '\'')
+                {
+                    for (i++; i < line.Length && line[i] != c; i++) if (line[i] == '\\') i++;
+                    continue;
+                }
+                if (c == '{') _depth++;
+                else if (c == '}' && --_depth == 0) return;
+            }
         }
     }
 

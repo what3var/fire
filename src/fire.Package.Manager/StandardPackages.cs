@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace fire.Package.Manager
 {
     /// <summary>
-    /// The standard libraries of fire as packages (docs/PACKAGES.md): one package per import (<c>fire-io</c>, <c>fire-time</c>, ...). Their sources are projects - the folder <c>Source</c> next to
+    /// The standard libraries of fire as packages (docs/packages/README.md): one package per import (<c>fire-io</c>, <c>fire-time</c>, ...). Their sources are projects - the folder <c>Source</c> next to
     /// the programs holds <c>Packages.firesln</c> with one library project per import; when spark or forge start they pack and install the projects that are missing or changed
     /// (fire.Compiler's <c>StandardSources</c>). ember has no compiler: <see cref="EnsureInstalled"/> asks forge next to it to do that.
     /// </summary>
@@ -12,7 +12,7 @@ namespace fire.Package.Manager
         public const string Prefix = "fire-";
 
         /// <summary>The standard libraries: the names of their imports.</summary>
-        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "process", "hash", "compression", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "ui.docking", "json", "circuits", "circuits.ui" };
+        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "process", "hash", "compression", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics", "ui.docking", "json", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86" };
 
         public static string PackageNameOf(string bridge) => Prefix + bridge;
 

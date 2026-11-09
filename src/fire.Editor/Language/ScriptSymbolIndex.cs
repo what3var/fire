@@ -1072,7 +1072,7 @@ namespace fire.Editor
         // -----------------------------------------------------------
 
         private static bool IsTypeKeyword(TokenType t) =>
-            t is TokenType.KwBool or TokenType.KwInt or TokenType.KwFloat or TokenType.KwChar or TokenType.KwString or TokenType.KwByte;
+            t is TokenType.KwBool or TokenType.KwInt or TokenType.KwFloat or TokenType.KwChar or TokenType.KwString or TokenType.KwByte or TokenType.KwWord;
 
         /// <summary>Index of the closing '}' belonging to `_tokens[openBraceIdx]`
         /// (must be '{').</summary>

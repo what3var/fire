@@ -1,0 +1,201 @@
+# Gradual typing
+
+Goal: a leaner and faster native backend (and VM) by proving types where the program states them, without losing what the dynamic language can do today
+(reflection, properties by name, probes/bindings, units from data).
+
+## Starting point (measured before step 1; the steps below changed it)
+
+* The parser already keeps `TypeRef` for declarations, parameters, return types, fields, `catch` and `is of` (`src/fire/Ast/TypeRef.cs`), and `var` exists.
+* **Annotations are not enforced.** `int x = 3; x = "hello"` and `int y = "text"` run and print the string; a parameter `int a` accepts `"s"`. Types are documentation only.
+* The native backend therefore treats every value as a tagged `Value`; every method call goes through `call_<name>_<argc>` (a switch over all registered classes), every field
+  access through `gf_/sf_/fp_<name>` (a switch over class ids). In the 3D sample that is about a quarter of the generated lines; the C++ compiler already drops the unused ones.
+
+## Steps
+
+0. **Inventory** (this document): what carries types, what is enforced, what a dispatcher costs.
+1. **Make annotations mean something (checker only, no codegen change).** A new pass after the resolver computes a static type for every expression where it can
+   (literals, annotated variables/parameters/returns/fields, `new`, `var x = <typed expr>`), with a distinguished `dynamic` type for everything else.
+   Incompatible assignments, arguments and returns between two *known* types are reported (first as warnings, `E`-codes in `ErrorCatalog`, later errors by project setting).
+   `dynamic` never reports, so existing code keeps running. Units stay out of the first cut (`int` vs `int:m` is the same type here).
+2. **Runtime guard for annotated slots that the checker cannot prove** (`int x = f()` where `f` is dynamic): a cheap tag check at the assignment, throwing a catchable
+   exception, switchable per project. This makes the annotation a promise the backend may rely on.
+3. **Backend use.** Typed locals/params of `int`/`float`/`bool` unboxed in C++ (and typed opcodes in the VM); calls on a receiver with a proven class go straight to the
+   method (virtual only if a subclass overrides it); field access by index without the `gf_` switch. Everything unproven keeps the dispatcher.
+4. **Units in the type** (`int:m`, `float:unitless`): static unit mismatch errors where both units are known; `::` / `:` coercions typed.
+5. **Optional strictness**: a project/file setting `types: strict` makes `dynamic` an error outside explicit `dynamic` declarations.
+
+Each step is independently shippable and tested VM == native.
+
+## Status
+
+Step 1 is in: `src/fire.Compiler/TypeChecker.cs` runs after the resolver on the code of the user (not the preludes and libraries). It reports conflicts between two known types as `TC001`
+(assignment, initializer, field), `TC002` (argument of a method or constructor with exactly one candidate) and `TC003` (return value, reserved); in lax mode as warnings, in strict mode as errors.
+Select the mode with `--types lax|strict` (compiler switch, wins), the project setting `typeChecking`, and `#lax` / `#strict` in a file (wins for that file). The editor shows the same diagnostics while
+typing. `var x` without an initializer is the error `E4058` (fields declared `var name` in a class stay allowed: the libraries use them as untyped fields). Step 2 (the language and the standard library): `any`, `class` for objects only, no `var` fields/properties (`E4059`/`E4060`), untyped parameters reported (`TC004`), the unit `: any`. Step 2b: return types - a method without one is reported (`TC005`; constructors, destructors and operators are exempt), `undefined` is the type of "nothing", a bare `return` is `return undefined`, and a method that returns a value or nothing declares the value's type (`undefined` fits every type); calls of static methods (`Class.Method()`) are looked at too, and operators may carry a return type (`bool operator==(any o)`). The generated code of the `.fxml` markup is typed. All preludes and the UI
+library are typed (fields, properties, parameters, callbacks with their number of parameters) and a test compiles every import in strict mode with the checker looking at the library code, too
+(`FIRE_TYPECHECK_ALL=1` does the same for a build).
+
+Step 3a: arrays (element types from declarations, `new`, literals; elements, `length`, `foreach`), indexers (`operator[]`), strings (`s[i]` is a `char`, `Length`), typed
+lambdas (parameter and result types from the target or from the lambda's own declaration, arity of calls and assignments), `fire` blocks (with their `taking`/`with`
+variables), `class extends`, interface signatures (`TC004`/`TC005`) and calls of lambdas in fields and variables are checked.
+
+Step 3b: generics - type arguments in declarations (`List<int>`, nested, on base classes and interfaces), substitution of the type parameters in fields, properties,
+methods, constructors and indexers, `foreach` over an `IEnumerable<T>` (or via `GetEnumerator()`/`GetCurrent()`), the raw form (`new List()`: every type argument `any`);
+interfaces are types; `List<T>`, `IEnumerable<T>`, `IEnumerator<T>` in the prelude (at runtime nothing changes: no specialisation).
+
+Step 3c: units (SPEC 3.5) - a value carries its unit in the static type (literals, declarations, `:`/`::`, the algebra of `+ - * /` and the comparisons). A declaration
+with a unit converts a value of the same dimension into it (at run time `CheckUnit`, an `int` that does not fit is an `OverflowException`), another dimension is `TC006`;
+a declaration without a unit takes the unit of its initializer (`int a = 5mm`), otherwise it is unitless (only `var` stays free, and an initializer of unknown unit leaves it free), `: any` takes every unit, `: any m` every unit of one dimension; the unit can stand at the type (`float:m Len()` converts the return value); a `float` declaration converts a whole number into a float. Where the compiler cannot see the unit of a value
+that goes to a unitless declaration, it emits a run-time check. A whole number converted into a coarser unit is `TC007` (always a warning). Properties carry a unit
+(`float X : m { get ... set ... }`: the setter's `value` and the getter's result are converted); Scene3D declares its lengths (`: m`, parameters `: any m`) and angles (`: any`).
+
+Step 3e: generic methods (`R Select<R>(R lambda<T> fn)`, `static Box<U> Of<U>(U value)`) take their type parameters from the arguments, one after the other
+(`IEnumerable<T>` from a `List<int>` or an `int[]`, `R` from the result of a lambda argument; what is not found is `any`). Linq is typed: `Linq.From(xs)` is a `Query<T>`,
+`Where`/`OrderBy`/`Take`/... keep `T`, `Select<R>`/`Zip<U, R>`/`Aggregate<A>`/`Sum<R>` take their result types from the lambdas, `First`/`Last`/`Min`/`Max` return `T`,
+`ToList()` a `List<T>`; the operators of a `List<T>` are the same, those of an array take `any` (at run time nothing changes). A member that a fully known class does
+not have (`e.Message` on an `Exception`) is `TC008`, a call with a number of arguments no overload takes is `TC002`. Assignments to fields and properties without
+`this.` (also inherited ones) are checked like those with it. A `private`/`protected` member that the code may not use is `TC012` (an error in lax mode too, with the
+message of the `AccessDeniedException`): on a receiver whose class is known (also `this`, a member without `this.`, `ClassName.Static`, `new`, `base.M()` and the
+call of the base constructor), when every class the object can be denies it (a derived class that declares the name again with another access leaves it to the
+run time); `any` and reflection are checked at run time. A method, property or operator that replaces an inherited one without `override` is `TC014`;
+`override` on one that replaces nothing (nothing of that name and parameters in the base classes) is `TC015` (an error in lax mode too; SPEC 5.1). A member of an interface is public (a class implements it with a public method or property, `E4063`), so a call
+through a value of an interface type has nothing to report. A property of an interface has its declared type and unit through a value of the interface; writing
+one the interface declares without `set` (or reading one without `get`) is `TC016` (an error in lax mode too). An interface that extends others (`interface
+IConnection : IO.IStream`) is assignable to each of them without a cast, and its members include theirs (SPEC 8.5).
+`byte` and `word` are raw data without a unit (SPEC 8.10/8.10a): a value with a unit stored there, or a unit at such a declaration, is `TC017` (an error in
+lax mode too). `word` is a static type of its own: an `int` goes into a `word`, a `word` into a `float` or a `byte`; a `word` into an `int` wants `w!int`
+(`TC001`); `word op int` and `int op word` are `word`, with a float `float`.
+
+Known gaps: `SelectMany` and the selector projections (`SelectMember`, ...) are `Query` of `any`.
+
+Step 3 (backend use), first part: the native generator (`src/fire.Native/CppGenerator.cs`) proves types from the bytecode itself, with the same fixpoint as
+the ownership analysis (`VarRef`): every stack slot carries a static type (an `int`, `float` or `bool` without a bit width, and the static unit of a number),
+joined where paths meet; every variable (local, global, parameter) joins the types of everything stored into it, and a variable written through a pointer,
+a parameter or a value of unknown type is unknown. Instructions that are not taught about types forget the types of the slots they write, so an
+unknown instruction can never make the generator believe a wrong type. Globals are trusted only in the main program (a method can run before their declaration). Two more kinds are
+known where the generator made the value itself: a machine word (`KindWord`: a conversion into a `word`, an element of a word buffer, word arithmetic) and a buffer
+(`KindBuf`: `byte a[n]`, `new byte[n]`, `word a[n]`, `new word[n]`; bytes or words) - word arithmetic and comparisons, `byte`/`word` stores of a known int and the
+elements and `length` of a known buffer are written out in C (a checksum loop over a byte buffer: about ten times faster). The locals themselves stay 16-byte values;
+`uint8_t`/`uintN_t` C variables for `byte`/`word` locals are not done (ROADMAP 13, item 2).
+With the types known the C++ is the operation itself: `+ - * / %` (ints wrap; `/` and `%` by 0 throw), the comparisons and the conditional jumps (no
+`truthy`), `-x`, `!b`, `x++`/`x += k`, no ownership bookkeeping for numbers (`HoistValue`, `adopt` after a call). Units: `+ - %` and the comparisons
+of two numbers of the same unit keep it, `* /` with a number without a unit keep the other one, a float plus a number of another unit of the same dimension
+is converted by the factor of `alignUnits` (looked up once per pair), `:`/`::` and the unit check of a declaration disappear where the unit is already
+the right one. The return type of a method is the join of its `return` values; a call of a known method (static, base, initializer) or a dispatcher call
+whose candidates all return the same type gives it. In a loop like `for (int i ...) { sum += i % 7 }` the generated code is plain C++ on the
+`Value` fields (30M iterations: 0.19 s -> 0.027 s; `float:m len = len + 0.5mm`: 0.67 s -> 0.071 s).
+
+Step 2 (the guard): a parameter or field declared `int`/`float`/`bool` holds that kind or `undefined` (nullable), checked at run time (`DeclaredKind`):
+the parameters at the end of the prologue of a method (`GuardLocal`), the fields in their setter (VM: the slow route and one compare in the inline
+cache; native: `sf_`), static fields on every assignment. A whole number for a `float` becomes a float, another kind is an `ArgumentException`, a number
+declared without a unit and without an initializer (or with a number literal as initializer) is converted into `unitless` (another dimension:
+`UnitMismatchException`; an initializer with a unit gives the declaration that unit, checked where it is assigned as before, so its unit is not static). With that the generator types parameters and fields
+too: the type "kind or undefined" runs the C++ operation behind a test of the kind (`a.kind == K_Float ? Float(a.f * b.f) : mul(a, b)`; the generic
+function throws for `undefined`). The result of a call of a function whose `return`s were not seen yet is "nothing yet" (it joins to the other side),
+and which scopes need an ownership list is found again in every round, so a type that becomes known later still makes the code lean.
+
+Objects of a known class: `new C(...)` and `this` in a method of `C` give the type "an object of `C` or of a class derived from it", carried
+through variables like the other types. A field of such an object is read and written by its index (the fields of a base class come first, so the index
+is the same in every derived class; the declaration's unit and kind checks stay, unless the stored value's type already fits), and a method that no
+derived class overrides is called directly instead of through the dispatcher (a destroyed object still throws). An object with probes (its flag 2)
+is written through the setter, which tells them - one compare per write, every other object is written by the index. Properties, members with an
+access check, ownership methods and programs with threads or actors keep the helpers.
+
+Parameters and fields declared with a class (`Point p`, `Node next`) are a promise, too: `undefined` or `is of` the class, checked like the
+numbers (VM: `GuardLocalClass` at the end of the prologue, `FieldInfo.RequiredClass` in the setter and the inline cache; native: `isof_` in the
+prologue and in `sf_`). Interfaces and type parameters with `where` are checked roughly, by the same guard: the declaration is encoded as
+alternatives of conditions (`DeclaredType`: `is of` a class, interface or basic type, `is in` a unit) - an interface by the classes that declare
+it (`IEnumerable` also takes arrays, buffers and strings), `T` by its `where` (a single `is of` a class also gives the native type of an object of
+it). The type arguments are kept at run time: an object keeps those of its `new` (`ObjectInstance.TypeArgs`, natively a pointer `targs` in the
+object head to an interned list of `TArg`s; `new Box<int>()` costs one pointer, `class IntBox : Box<int>` gives them through
+`RuntimeClass.BaseTypeArgs`, `new Box<T>()` inside generic code takes them from the running code), and a call of a generic method gets those the
+type checker found (`SetTypeArgs` before the call, `TakeCallTypeArgs` in the method: `Scope.TypeArgs`, natively `ctargs`). A `T` whose type argument
+is known is checked exactly (`Box<int>`: only an int - a whole number for a `float` is converted; `Cage<Dog>` with `where T is of Animal`: only a
+`Dog`); without one (`new Box()`, the raw form) by its `where` alone, and `T` without `where` not at all. `any` and `class` stay unchecked.
+**Hybrid generics (native):** a call of a generic method whose type arguments are constant and include `int`, `float` or `bool` (`Max(i % 7, 3)`)
+calls a copy of the method made for them, in which those parameters are numbers of that kind without a unit - typed operations instead of generic
+ones; the call site tests the arguments when their types do not already say so and calls the generic method otherwise (`5cm` through `any`). One
+copy per method and type arguments, object types share the generic one. 30M calls of `Max`/`Clamp`/`Sum3` with ints and floats: 0.96 s -> 0.09 s.
+A type parameter found to be `int` becomes `float` when a later argument is a float (`Max(2, 3.5)`), and the whole number is converted at the call,
+so the call takes the float copy. Copies are also made for the constant type arguments of classes (`new Acc<int>()`, `class IntBox : Box<int>`,
+passed on to base classes) and for the calls the program makes; a generic method starts with a **trampoline** that sends a call whose type
+arguments and arguments fit a copy there - so calls through the dispatcher, lambdas and generic code reach the copies too. Methods of
+`Acc<int>`/`Acc<float>`, partly through `any`: 0.30 s -> 0.20 s for 25M calls.
+A type parameter of the running method or class is passed on as a type argument (`Outer<V>` calling `Nested(v, 3)`, a generic class passing
+`item` or `this.item`); a lambda made in generic code takes the ones it uses along (SetTypeArgs before MakeLambda, `LambdaValue.TypeArgs`,
+natively `Lam::targs`; its body names the i-th `$i@`, nested lambdas pass them on).
+**Number type arguments carry their unit:** `int` is a whole number without a unit (like a declared `int`), `int:cm` one in cm, `int:any` one in
+any unit, `int:any m` one of a dimension (`Box<int : cm>`; texts in ObjectInstance.TypeArgs, `DeclaredType.NumberDemand`). A value of the kind is
+converted into the unit (`Value.AdaptToUnit`; another dimension is a `UnitMismatchException`). The type checker keeps the unit when it replaces
+`T` (`Put(5mm)` on a `Box<int : cm>` is TC007, `Put(3kg)` TC006). Natively a `TArg` has its kind and a conversion function (`taa_N`); the copies
+of generic methods are made for a known unit (`int : cm` too), and in a copy for the type arguments of a class a field of `this` declared `T`
+is typed (its setter converts every value into the type argument; `Acc<int>`/`Acc<float>` with two `T` fields: 0.48 s -> 0.36 s).
+
+**Local variables** are checked at run time where the type checker cannot prove their declaration (`int x = someAny`, `Dog d = animal`,
+`T w = other`; a conflict it reports stays a warning in lax mode, and the program runs on as before): `ResolveResult.LocalGuards` marks the value, the compiler emits `GuardTop` (int/float/bool, without a unit demand - a local
+takes the unit of its value) or `GuardTopType` (DeclaredType). A value whose static type already fits is not checked, so typed code pays nothing.
+Their type "object of the class or undefined" reaches the
+fields and methods directly, too - the object is tested to be one (`kind == K_Class`), and `undefined` takes the helper, which reports it. A
+comparison with `undefined` of a number, a bool or an object of a known class is a test of the kind (unless a class overloads `==`). A linked
+list walked through typed parameters and fields (`Step(Body first, float dt)`, `b.pos.x`, `b = b.next`) runs a third fewer instructions.
+
+**Return values** are checked the same way: a `return` of a method (or getter) with a declared type whose value the type checker cannot prove
+(`int F() { any v = ...; return v }`) is checked at run time ("Return value of 'F' ..."), so the declared type of a call holds for its result.
+
+**Overloads chosen at compile time.** Where the static types of the arguments decide which overload by type a call takes (SPEC 5.4.3), the type
+checker records the overload and what it assumed of each argument (`ResolveResult.OverloadHints`; a kind, a class or an interface - or nothing for
+an argument all overloads take untyped). The compiler puts `OverloadHint` in front of the call. At run time the arguments are compared with the
+assumptions (one test each): when they hold, the overload is taken without scoring the candidates, and the call site's inline cache keeps it
+(`SiteCache.Guard` - a cache hit checks the assumptions again); when they do not (a lax program after a warning, a value from code that was not
+checked), the call scores the candidates as before - the hint only saves time, it never changes the choice. No hint is made when the choice
+depends on more than the static types: a dynamic argument where an overload is typed, a parameter typed with a type parameter of the class or one
+with `where` conditions, or (on an object) a class derived from the receiver's that adds an overload of its own. The native backend does the same:
+a hinted call tests the assumptions and calls the method directly. `FIRE_NO_OVERLOAD_HINTS=1` switches the hints off (to compare or to find a
+wrong one).
+
+Field access on something that is not an object (`undefined.x`, `5.x = 1`) is an `ArgumentException` in the native code as in the VM.
+A scope that owns nothing (nothing in it creates an object or a temporary string) keeps no bookkeeping: hoisting a value out of it is
+dropped, and so is its list (`leave` in every loop iteration) and that of the function when only the hoist needed it. In the linked list above the
+instructions go from 685M to 418M (-39%).
+
+Unboxed C++ locals (`int64_t`/`double` instead of `Value`) were measured and left out: with wrapper types for the typed locals the number of
+instructions of a loop is the same to the instruction (62.0M each), and so is a loop over globals of the main program compared with locals
+(13.0M) - the C++ compiler already keeps the fields of a `Value` that do not escape in registers and drops the stores of `kind` and `unit`.
+The unit stays static in the type either way.
+
+Typed opcodes in the VM were measured and left out, too: an instruction of the VM costs about 20 ns on the test machine whatever it does
+(`s = t` - load, hoist, store - takes 65 ns, `s = s + t` 120 ns), so the test of the kinds in `Add`/`Lt`/... is a small part of it; what
+costs is the dispatch of each instruction and the copying of `Value`s on the stack. Two cheap things were done instead: `HoistValue` (every
+assignment) and the guards of the prologue (`GuardLocal`, `GuardLocalType`) go through the fast `Step` instead of `Execute`, and the main loop
+(`RunLoopCore`, entered once) is compiled fully optimised straight away (about 4 % on the benchmarks). What would really help the VM is fewer
+instructions (more fused ones, or registers instead of the stack) - a step of its own.
+
+## Decisions
+
+* **TypeChecking mode `lax` | `strict`.** Project-wide (project setting), per file (`#lax` / `#strict`), or by compiler switch. `lax`: an incompatible assignment, argument or return between two
+  known types is a warning; `strict`: an error. `dynamic` values never report in either mode.
+* **`var` is inferred from the initializer only.** The initializer may be a value, another variable, a return value, or `undefined!TypeName` (a typed null). `var` without an initializer is
+  illegal (unlike a declaration with a type). The type of a target never changes - at run time either: an assignment the type checker cannot prove
+  (or a conflict it reported, a warning in lax mode) is guarded like one into a declared local (`GuardTop`/`GuardTopType`), so `var x = 0; x += 0.5`
+  is TC001 and an `ArgumentException`, never a float in an int. `0.` is a float literal (the fraction digits may be left out), `0` an int.
+  Where the type does not come from the initializer:
+  - `var x = undefined` takes the type of its first assignment (in the order of the source) - `TC020`, always a warning: the declaration should say it;
+  - an initializer whose type the checker does not know (an `any[i]`, a call on an `any`), or `undefined` that no assignment types, is `TC019`: an
+    error in strict mode, in lax mode a loud warning and the variable is `any`;
+  - an initializer declared `any` (an `any` field, parameter or return value), or values of unrelated types (`c ? 1 : "one"`, `[1, "one"]`) make `any`
+    with `TC020`; `any x = ...` says it on purpose and is quiet.
+  Values of related types join: `int`/`float` to `float` (the whole number is converted at run time), objects to the nearest class or interface all of
+  them are (`c ? new Dog() : new Cat()` is an `Animal`). The point of all this is that every variable has one static type the backend can lay out (a
+  narrow value where it is known, the wide one only for `any`). For the same reason no operation has a type that depends on a value: `int / int` is an
+  `int` (`7 / 2` is 3), a power of two ints an `int` (`2 ^ 3` is 8) unless its target is a `float` (then 8.0, SPEC 1.1). `var a = []` says nothing about its elements: `TC020`, an `any[]`
+  (`int a[] = []` says it).
+* **`defined` (SPEC 8.10b).** A static type of a value type carries what the checker knows about `undefined` (`StaticType.Null`): *defined* - a
+  literal, the result of an operator, a `defined` declaration, a call of a method whose return value is `defined`, `trust x`; *may be undefined* - a
+  parameter, field or property declared without `defined`, a variable without an initializer, the literal `undefined`; *inferred* - a variable that was
+  only given defined values so far (in the order of the source: a loop may give it something else later, so a `defined` variable still checks what it
+  takes from it); *unknown* - everything else (the natives, the standard library). A value that may be undefined going into a `defined` parameter,
+  field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.
+* **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
+* **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;
+  same dimension -> `a * factor`; otherwise `UnitMismatchException`. The factor is cached per (source unit, target unit) at the site; where the source unit is also static the whole thing
+  folds at compile time (no-op or a constant multiply). A variable whose unit is statically known does not need a unit field in its unboxed representation at all.

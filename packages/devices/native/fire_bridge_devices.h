@@ -7,7 +7,7 @@
  *   - a native build: FIRE_DEVICES, a string with the drivers in the order they are registered: "serial" (the default: the serial ports of the platform),
  *     "loopback" (a simulated device that sends back what it gets, identifier `loopback:echo`), e.g. -DFIRE_DEVICES="\"loopback,serial\""  (target
  *     configuration: defines); FIRE_DEFAULT_DEVICE is the identifier of the default device (`Device.Default`); none by default. The serial ports come from the
- *     platform layer (FIRE_PLATFORM_DEV_C_HEADER: fire_dev_serialNames and FireDevSerialPort, see platform/std/fire_dev_c.h, 115200 baud 8N1); a board without
+ *     package (fire_dev_serialNames and FireDevSerialPort; one file per platform, platformSources of devices.fireproj, see fire_dev_c.h, 115200 baud 8N1); a board without
  *     one has none and so no `serial` devices.
  *   - the library for the VM: the driver "host" - the devices are those of the host (the device manager of the editor with its drivers, sharing and packet
  *     trace; the callbacks `dev_*` of `fire_host`), the identifiers are the host's. The receive buffer, the handles and the matching of `WaitFor` stay in this
@@ -22,7 +22,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_DEV_C_HEADER
+#include "fire_dev_c.h"
 
 #ifndef FIRE_DEVICES
 #ifdef FIRE_LIBRARY
@@ -764,12 +764,11 @@ static Value fire_devices_WriteString(Value handle, Value text) {
 }
 static Value fire_devices_Write(Value handle, Value buffer) {
     FireDevbSlot* s;
-    Buf* b;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    FireBytes b;
+    if (!bytesArg(buffer, "Device.Write", &b)) return Undef();
     s = fire_devb_resolve(handle);
     if (!s) return Bool(false);
-    b = bufOf(buffer);
-    return Bool(fire_devb_write(s->device, b->data, b->length));
+    return Bool(fire_devb_write(s->device, b.data, b.length));
 }
 
 #ifndef FIRE_LIBRARY
@@ -798,12 +797,11 @@ static Value fire_devices_WaitForString(Value handle, Value text, Value timeout)
 }
 static Value fire_devices_WaitFor(Value handle, Value buffer, Value timeout) {
     FireDevbBytes pattern;
-    Buf* b;
+    FireBytes b;
     Value result;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    b = bufOf(buffer);
+    if (!bytesArg(buffer, "Device.WaitFor", &b)) return Undef();
     /* (a copy: the buffer of the program may change while the wait serves the other threads) */
-    if (!fire_devb_bytesOf(&pattern, b->data, b->length)) return Int(0);
+    if (!fire_devb_bytesOf(&pattern, b.data, b.length)) return Int(0);
     result = fire_devb_waitFor(handle, pattern.data, pattern.n, timeout);
     free(pattern.data);
     return result;
@@ -814,12 +812,11 @@ static Value fire_devices_WaitFor(Value handle, Value buffer, Value timeout) {
  * `pattern` if it is there. 1: found, 0: not yet, 2: not there and the device is disconnected (nothing more will come). */
 static Value fire_devices_WaitStep(Value handle, Value buffer) {
     FireDevbSlot* s;
-    Buf* b;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    FireBytes b;
+    if (!bytesArg(buffer, "Device.WaitFor", &b)) return Undef();
     s = fire_devb_resolve(handle);
     if (!s) return Int(2);
-    b = bufOf(buffer);
-    if (fire_devb_consumeThrough(&s->buffer, b->data, b->length)) return Int(1);
+    if (fire_devb_consumeThrough(&s->buffer, b.data, b.length)) return Int(1);
     return Int(fire_devb_connected(s->device) ? 0 : 2);
 }
 

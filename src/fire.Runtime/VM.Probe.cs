@@ -6,7 +6,7 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// `probe`/`silence` (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md, SPEC 8.14): handlers for write accesses to members of an object. An object with
+    /// `probe`/`silence` (docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md, SPEC 8.14): handlers for write accesses to members of an object. An object with
     /// probes carries a <see cref="ProbeTable"/> and thus an <see cref="ObjectInstance.AccessGuard"/>: its write accesses go via the
     /// slow path (<see cref="SetFieldSlow"/>), all other objects keep the inline-cache fast paths.
     /// </summary>

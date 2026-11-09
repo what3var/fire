@@ -3,7 +3,7 @@ using MemoryPack;
 
 namespace fire.Bytecode
 {
-    /// <summary>A declared member of a class for reflection (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): what is otherwise lost at runtime
+    /// <summary>A declared member of a class for reflection (docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md): what is otherwise lost at runtime
     /// - the declared type names and parameter names. Names and access are known to the runtime even without it.</summary>
     [MemoryPackable]
     public sealed partial class MemberMeta

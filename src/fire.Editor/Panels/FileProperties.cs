@@ -133,7 +133,7 @@ namespace fire.Editor
         }
     }
 
-    /// <summary>The native build options of a C/C++ file of a project (docs/PROJECTS.md, "Natives"): whether it is built, for which platforms and its build order.</summary>
+    /// <summary>The native build options of a C/C++ file of a project (docs/tools/projects.md, "Natives"): whether it is built, for which platforms and its build order.</summary>
     public sealed class NativeBuildFileProperties : IFilePropertiesProvider
     {
         private const string Category = "Native build";

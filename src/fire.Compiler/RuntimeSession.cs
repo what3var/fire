@@ -159,7 +159,9 @@ namespace fire.Compiler
 
             var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode, floatWidth);
             Value.SingleFloats = linkedProgram.FloatWidth == 32; // the precision of float is process-wide while a program runs
-            Value.Ints32 = linkedProgram.IntWidth == 32;     // (likewise the width of int, SPEC 8.2.1)
+            Value.Ints32 = linkedProgram.IntWidth <= 32;     // (likewise the width of int, SPEC 8.2.1)
+            Value.Ints16 = linkedProgram.IntWidth == 16;
+            Value.WordBits = linkedProgram.WordWidth;        // (and of word, SPEC 8.10)
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))
             {
@@ -178,7 +180,7 @@ namespace fire.Compiler
 
             var session = new RuntimeSession(linkedProgram.Program);
             
-            // the C implementation of graphics and windows (the same as a native build: fire's own display, no SDL) - docs/UI_PLATFORM.md, part 2. Where the host drives the
+            // the C implementation of graphics and windows (the same as a native build: fire's own display) - docs/spec/UI_PLATFORM.md, part 2. Where the host drives the
             // windows (`hostWindows`: the editor's live and design views), the program gets a copy of the library of its own; the C# implementation stays where the host
             // renders them itself (`windowRenderer` alone: the tests' renderers), where FIRE_VM_GRAPHICS=cs asks for it, and where the library cannot be had (no C compiler)
             string? graphicsFile = null;
@@ -214,10 +216,10 @@ namespace fire.Compiler
                     return File.ReadAllBytes(fullPath);
                 });
 
-                // `#import "windows"`: the SDL window for the framebuffer (registered directly behind graphics, as when translating)
+                // `#import "windows"`: the window for the framebuffer (registered directly behind graphics, as when translating)
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
-                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer ?? (hostWindows != null ? () => new HostRenderer(hostWindows.Display) : null), d => session.VirtualMachine?.AddHostHold(d));   // windowRenderer: null = a SDL window
+                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer ?? (hostWindows != null ? () => new HostRenderer(hostWindows.Display) : null), d => session.VirtualMachine?.AddHostHold(d));   // windowRenderer: null = the windows of the C library (or none)
                     // no renderer, no display: `new Window` throws why (the build of the C library failed: its compiler output; FIRE_VM_GRAPHICS=cs) - never a window that silently counts as closed
                     if (windowRenderer == null && hostWindows == null)
                         windowManager.NoDisplayReason = GraphicsLibrary.Wanted(false)

@@ -15,7 +15,8 @@ print("main goes on")
 ```
 
 - `fire { ... }` runs the block in a new thread. It has no result and ends at the end of its block (or earlier with `leave`).
-- Inside a class, `fire Method(args)` runs a method of `this` in a new thread.
+- Inside a class, `fire Method(args)` runs a method of `this` in a new thread. Its arguments are copied like `taking` - except a direct `new`
+  (`fire Work(new Job())`), which is handed over to the thread without a copy.
 - The program waits at its end for all running threads.
 - Which thread prints first is decided by the scheduler; the examples use `Sleep` from `#import "time"` to wait.
 
@@ -134,7 +135,7 @@ print(sync globals)                                  // 0: nothing left
 - A call and a native function (`print`) are never such a point; with `safepoints` the job above would run after `loop 0`.
 - `sync globals` runs everything that is queued and returns how many entries that were.
 - Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
-- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive (docs/PROJECTS.md).
+- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive ([Projects and solutions](../tools/projects.md)).
 
 ## Actors
 
@@ -164,6 +165,8 @@ print(try process logger)                   // False - the mailbox is empty
 - `process a` waits for the next message and runs it; `try process a` runs one if there is one and returns `True`/`False`.
 - References to actors may be passed to threads with `fire with a` - the one controlled exception to "no shared memory".
 - A thread that needs an answer sends a message back to an actor of its caller; threads have no return values.
+- The arguments of a message: a direct `new` (`logger.log(new Entry())`) is handed over to the actor's home thread; another new value (`copy x`, a call
+  result) belongs to the message and then to the method that runs it; a variable or a field is passed as a reference and stays with its owner.
 
 ## Ending: `leave` and `terminate`
 

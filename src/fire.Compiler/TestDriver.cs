@@ -4,7 +4,7 @@ using fire.Ast;
 namespace fire.Compiler
 {
     /// <summary>
-    /// The driver of `forge test` (docs/TESTING.md): fire source that runs the tests of a program. Every class with a `[Test]` method gets one object (like NUnit); then `[PrepareTesting]` once,
+    /// The driver of `forge test` (docs/tools/testing.md): fire source that runs the tests of a program. Every class with a `[Test]` method gets one object (like NUnit); then `[PrepareTesting]` once,
     /// for every test (and every set of `[Parameters]`) `[PrepareTest]`, the test and `[CleanTest]`, at the end `[CleanTesting]`. The driver reports with lines that start with
     /// <see cref="Marker"/> (<see cref="TestProtocol"/> reads them, in the VM and from a native program alike); everything else the tests print is their output.
     ///

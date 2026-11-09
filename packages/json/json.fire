@@ -1,4 +1,4 @@
-// JSON (docs/JSON.md): objects to JSON text and back, and free JSON as JsonObject. The work is done by the runtime (__JsonCall).
+// JSON (docs/stdlib/json.md): objects to JSON text and back, and free JSON as JsonObject. The work is done by the runtime (__JsonCall).
 
 /// <summary>A JSON text that cannot be read (with line and column), or a value that does not fit the type it is read into.</summary>
 class JsonException : Exception {
@@ -115,16 +115,16 @@ class Json {
     /// <summary>Reads JSON text into a value of type T (`Json.Deserialize<Person>(text)`): the classes come from `$type` or from the declared types.
     /// Constructors do not run; a class with a method `OnDeserialized()` gets it called once everything is read.</summary>
     static T Deserialize<T>(string text) {
-        var read = __JsonCall(2, text)
-        var hooks = read[1]
+        any read = __JsonCall(2, text)
+        any hooks = read[1]
         for (int i = 0; i < hooks.length; i++) { hooks[i].OnDeserialized() }
         return read[0]
     }
 
     /// <summary>Like Deserialize<T>, with the class given by its name ("Person", "List<Point>").</summary>
     static any Deserialize(string text, string typeName) {
-        var read = __JsonCall(2, text, typeName)
-        var hooks = read[1]
+        any read = __JsonCall(2, text, typeName)
+        any hooks = read[1]
         for (int i = 0; i < hooks.length; i++) { hooks[i].OnDeserialized() }
         return read[0]
     }

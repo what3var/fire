@@ -1,7 +1,7 @@
 using fire.Compiler;
 
 // Command line of the compiler, see CommandLineParser (run / build / native / test).
-// `prebuild-standard <Source> <Prebuilt>`: for the build of the solution - builds the libraries of the standard packages for this machine (docs/PACKAGES.md).
+// `prebuild-standard <Source> <Prebuilt>`: for the build of the solution - builds the libraries of the standard packages for this machine (docs/packages/README.md).
 if (args.Length >= 3 && args[0] == "prebuild-standard")
 {
     foreach (var file in StandardSources.Prebuild(args[1], args[2], Console.Error.WriteLine)) Console.WriteLine(file);
@@ -14,7 +14,7 @@ if (args.Length >= 1 && args[0] == "install-standard")
     return 0;
 }
 
-// `falstad <circuit.txt> [-o <file.biscuit>]`: a circuit of Falstad's simulator (File > Export As Text) as a schematic (docs/CIRCUITS.md); without -o to the output.
+// `falstad <circuit.txt> [-o <file.biscuit>]`: a circuit of Falstad's simulator (File > Export As Text) as a schematic (docs/circuits/README.md); without -o to the output.
 if (args.Length >= 2 && args[0] == "falstad")
 {
     try
@@ -33,8 +33,28 @@ if (args.Length >= 2 && args[0] == "falstad")
     }
 }
 
-// `ui <file.fxml> [-o <file>]` / `biscuit <file.biscuit> [-o <file>]`: writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) or from the
-// schematic of a circuit (docs/CIRCUITS.md); without -o to the output.
+// `model <file.gltf|file.glb> [-o <file.f3d>] [--fps n]`: fire's model file (docs/graphics/models.md) from glTF 2.0 - what a resource "x.gltf" becomes when a program is built.
+if (args.Length >= 2 && args[0] == "model")
+{
+    try
+    {
+        int o = Array.IndexOf(args, "-o"), f = Array.IndexOf(args, "--fps");
+        int fps = f >= 0 && f + 1 < args.Length && int.TryParse(args[f + 1], out int n) && n > 0 && n <= 240 ? n : ModelConverter.FramesPerSecond;
+        byte[] f3d = ModelConverter.ConvertFile(args[1], fps);
+        string output = o >= 0 && o + 1 < args.Length ? args[o + 1] : Path.ChangeExtension(args[1], ".f3d");
+        File.WriteAllBytes(output, f3d);
+        Console.WriteLine($"{output} ({f3d.Length} bytes)");
+        return 0;
+    }
+    catch (Exception ex) when (ex is IOException or InvalidDataException or FormatException or KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException)
+    {
+        Console.Error.WriteLine($"{args[1]}: {ex.Message}");
+        return 1;
+    }
+}
+
+// `ui <file.fxml> [-o <file>]` / `biscuit <file.biscuit> [-o <file>]`: writes the script generated from the markup of a user interface (docs/ui/markup.md) or from the
+// schematic of a circuit (docs/circuits/README.md); without -o to the output.
 if (args.Length >= 2 && (args[0] == "ui" || args[0] == "biscuit"))
 {
     try

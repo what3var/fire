@@ -6,7 +6,7 @@ using fire.Runtime;
 namespace fire.Compiler
 {
     /// <summary>
-    /// `graphics` and `windows` in the virtual machine through their C implementation (docs/UI_PLATFORM.md, part 2): the same bridges and the same display as a native build,
+    /// `graphics` and `windows` in the virtual machine through their C implementation (docs/spec/UI_PLATFORM.md, part 2): the same bridges and the same display as a native build,
     /// as one shared library (PackageLibrary.EnsureGraphics) whose natives are bound like those of a package (PackageNativeBinding). The names are registered in the order of the
     /// compiler's stubs (GraphicsBridge, WindowsBridge: the calls address natives by index).
     /// </summary>
@@ -68,7 +68,7 @@ namespace fire.Compiler
         private static void SyncEnvironment()
         {
             var names = Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(n => n.StartsWith("FIRE_", StringComparison.Ordinal))
-                .Concat(new[] { "FIRE_DISPLAY", "FIRE_SYSTEM_THEME", "FIRE_FONT_DIRS", "FIRE_GFX_GPU", "SDL_VIDEODRIVER", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" }).Distinct();
+                .Concat(new[] { "FIRE_DISPLAY", "FIRE_SYSTEM_THEME", "FIRE_FONT_DIRS", "FIRE_GFX_GPU", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" }).Distinct();
             foreach (string name in names)
             {
                 string? value = Environment.GetEnvironmentVariable(name);
@@ -320,7 +320,7 @@ namespace fire.Compiler
 
     /// <summary>One event a host hands to a program's window (<see cref="IHostDisplay.NextEvent"/>): <see cref="Type"/> as EventType (mouse, keys, text, resize, close);
     /// positions in pixels of the window. MouseDown/Up: Button, X, Y; MouseMove: X, Y (the buttons the window keeps itself); MouseScroll: Dx, Dy (notches, Dy &gt; 0: up), X, Y;
-    /// KeyDown/Up: KeyCode, Modifiers (SDL's numbers, see UI.Keys); TextInput: Text; Resize: Width, Height; Touch*: Finger, X, Y, Pressure; Joystick*: Joystick, Index, Value;
+    /// KeyDown/Up: KeyCode, Modifiers (the numbers of UI.Keys); TextInput: Text; Resize: Width, Height; Touch*: Finger, X, Y, Pressure; Joystick*: Joystick, Index, Value;
     /// DropFiles/DropText: Data, X, Y; DragHover: X, Y; DragLeave; Close.</summary>
     public struct HostDisplayEvent
     {
@@ -345,7 +345,7 @@ namespace fire.Compiler
         bool NextEvent(int window, out HostDisplayEvent e);
         /// <summary>A picture of the window (R,G,B,A per word, row by row; only valid during the call). With <paramref name="vsync"/>, the host waits like the vertical blank.</summary>
         void Present(int window, ReadOnlySpan<uint> rgba, int width, int height, bool vsync);
-        /// <summary>The mouse pointer the program wants over the window (SDL numbering, see UI.Cursor).</summary>
+        /// <summary>The mouse pointer the program wants over the window (the numbering of UI.Cursor).</summary>
         void Cursor(int window, int cursor);
         /// <summary>Window.StartDrag: the program drags text and/or files out of the window - 0 nothing happened, 1 copied, 2 moved.</summary>
         int StartDrag(int window, string text, string[] files) => 0;

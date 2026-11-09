@@ -303,7 +303,7 @@ namespace Gpio {
         /// <summary>The line `line` as a pin of this port (claimed on first use; the port gives it back on Disconnect).</summary>
         Gpio.Pin PinAt(int line) {
             if (line < 0 || line >= this.width) { throw new GpioException("The port '" + this.name + "' has no line " + line + ".", 3) }
-            var pin = this.pins[line]
+            any pin = this.pins[line]
             if (pin == undefined) {
                 var made = new Gpio.Pin(this.chip, line)
                 made.TakeTo(this)
@@ -348,7 +348,7 @@ namespace Gpio {
         /// <summary>Gives all lines back.</summary>
         override undefined Disconnect() {
             for (int i = 0; i < this.width; i++) {
-                var pin = this.pins[i]
+                any pin = this.pins[i]
                 if (pin != undefined) { pin.Close() }
                 this.pins[i] = undefined
             }

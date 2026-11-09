@@ -1,0 +1,71 @@
+{
+  "format": 1,
+  "name": "fire-xms",
+  "type": "library",
+  "import": "xms",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'xms' of fire: extended memory above 1 MB through the XMS driver of DOS (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      {
+        "file": "native/fire_xms_c.h",
+        "order": -1
+      },
+      "native/fire_bridge_xms.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__XmsUnavailable",
+        "returns": "string",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_xms_Unavailable"
+      },
+      {
+        "name": "__XmsCall",
+        "returns": "any[]",
+        "arguments": 2,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_xms_Call"
+      },
+      {
+        "name": "__XmsAlloc",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_xms_Alloc"
+      },
+      {
+        "name": "__XmsFree",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_xms_Free"
+      },
+      {
+        "name": "__XmsMove",
+        "returns": "int",
+        "arguments": 6,
+        "c": "fire_xms_Move"
+      }
+    ],
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_xms_real.h"
+      ],
+      "vm": [
+        "native/fire_xms_none.h"
+      ],
+      "default": [
+        "native/fire_xms_none.h"
+      ]
+    }
+  }
+}

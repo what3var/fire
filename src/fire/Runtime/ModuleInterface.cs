@@ -11,7 +11,7 @@ using MemoryPack;
 namespace fire.Runtime
 {
     /// <summary>
-    /// The interface of a library module (ROADMAP 9.7, docs/NATIVE_BACKEND.md "Cache und Schnittstelle"): the hash of what other modules see of it - its classes with their
+    /// The interface of a library module (ROADMAP 9.7, docs/spec/NATIVE_BACKEND.md "Cache und Schnittstelle"): the hash of what other modules see of it - its classes with their
     /// bases, interfaces, fields (layout, declared kinds, units, types, access) and members (parameters, types, access, defaults). A module that only changes the code of its
     /// methods keeps it. The native backend names its libraries by it; a fire plugin is checked against the program by it (ROADMAP 9.6), natively and in the VM.
     /// </summary>
@@ -33,7 +33,7 @@ namespace fire.Runtime
                 sb.Append(" layout ").Append(string.Join(",", rc.FlattenedFieldNames)).Append('\n');
                 foreach (var (field, info) in rc.OwnFieldInfo.OrderBy(f => f.Key, StringComparer.Ordinal))
                     sb.Append(" field ").Append(field).Append(' ').Append(info.IsStatic).Append(' ').Append(info.AccessModifier).Append(' ').Append(info.RequiredKind).Append(' ')
-                        .Append(info.RequiredUnit).Append(' ').Append(info.RequiredType).Append(' ').Append(info.TypeText).Append('\n');
+                        .Append(info.RequiredUnit).Append(' ').Append(info.RequiredType).Append(' ').Append(info.TypeText).Append(info.RequiredArray != 0 ? " a" + info.RequiredArray : "").Append('\n');
                 void Proto(string what, FunctionProto p) =>
                     sb.Append(' ').Append(what).Append(" (").Append(p.ParamCount).Append(") ").Append(p.Access).Append(p.IsStatic ? " static" : "").Append(" t").Append(p.TypeParamCount)
                         .Append(" r").Append(p.RefMask).Append(" [").Append(string.Join(",", (p.ParamTypes ?? Array.Empty<string?>()).Select(t => t ?? "?"))).Append("] d")

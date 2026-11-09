@@ -5,7 +5,7 @@ using System.Text;
 
 namespace fire.Native
 {
-    /// <summary>The phases of a build, in the order they come (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"): a phase that a build does not have is left out.</summary>
+    /// <summary>The phases of a build, in the order they come (docs/spec/NATIVE_BACKEND.md "Fortschritt und Abbrechen"): a phase that a build does not have is left out.</summary>
     public enum BuildPhase
     {
         /// <summary>The fire compiler: parsing, names, types, bytecode (the VM's program is ready after it).</summary>

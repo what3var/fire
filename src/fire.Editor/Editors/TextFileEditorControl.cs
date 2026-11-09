@@ -12,7 +12,7 @@ namespace fire.Editor
 {
     /// <summary>
     /// A plain text editor that is tied to nothing: no project, no completion, no diagnostics - so it takes what is not valid code on its own: the C++ of the natives, notes, data, and the files of
-    /// a template (docs/TEMPLATES.md; `$name$` is no fire). The file gets colours by its extension: C and C++, fire (.fire) or markup (.fxml). Used for every text file that no other editor takes,
+    /// a template (docs/tools/templates.md; `$name$` is no fire). The file gets colours by its extension: C and C++, fire (.fire) or markup (.fxml). Used for every text file that no other editor takes,
     /// and for "Open as Text".
     /// </summary>
     public sealed class TextFileEditorControl : UserControl, IDocumentView

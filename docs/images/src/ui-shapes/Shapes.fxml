@@ -1,0 +1,13 @@
+<Window Class="Shapes" Title="Shapes" Width="560" Height="160">
+  <StackPanel Orientation="Horizontal" Spacing="16" Margin="16">
+    <Rectangle Width="80" Height="60" Fill="#2B579A" Stroke="#1A365F,2"/>
+    <Ellipse Width="80" Height="60" Fill="#E8A33D"/>
+    <Path Data="M 0 60 L 40 0 L 80 60 Z" Fill="#3DA35D" Stroke="#1F5E33,2"/>
+    <StackPanel Spacing="6">
+      <Button Text="Home" Icon="Home" Width="-1"/>
+      <Button Text="Folder" Icon="Folder" Width="-1"/>
+      <Button Icon="M 8 1 L 15 8 L 1 8 Z" Width="34"/>
+    </StackPanel>
+    <DrawingCanvas Name="wave" Width="140" Height="120" OnPaint="PaintWave"/>
+  </StackPanel>
+</Window>

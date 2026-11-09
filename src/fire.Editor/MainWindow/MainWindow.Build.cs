@@ -243,13 +243,39 @@ namespace fire.Editor
                 string defaultName;
                 try { defaultName = config.ResolveTarget(ProjectTargetSetting()).Name; }
                 catch (fire.Native.NativeConfigException) { defaultName = "?"; }
-                var items = new List<ComboBoxItem> { new() { Content = $"Default ({defaultName})", Tag = "" } };
-                foreach (string name in config.TargetNames) items.Add(new ComboBoxItem { Content = name, Tag = name });
+                var items = new List<ComboBoxItem> { new() { Content = $"Default ({TargetTitle(config, defaultName)})", Tag = "" } };
+                items.AddRange(TargetTreeItems(config));
                 cmbTarget.ItemsSource = items;
                 int index = _nativeTargetChoice == null ? 0 : items.FindIndex(i => string.Equals((string?)i.Tag, _nativeTargetChoice, StringComparison.OrdinalIgnoreCase));
                 cmbTarget.SelectedIndex = Math.Max(0, index);
             }
             finally { _updatingTargetUi = false; }
+        }
+
+        /// <summary>The targets as a tree: a heading per group (OS, Native, Embedded; not selectable), under it the targets with their display names (the name of a target
+        /// as its tooltip). Tag: the name of the target (null for a heading).</summary>
+        internal static IEnumerable<ComboBoxItem> TargetTreeItems(fire.Native.NativeConfig config)
+        {
+            var targets = config.TargetProfiles.ToList();
+            foreach (var group in new[] { (fire.Runtime.TargetCategory.Os, "OS"), (fire.Runtime.TargetCategory.Native, "Native"), (fire.Runtime.TargetCategory.Embedded, "Embedded") })
+            {
+                var members = targets.Where(t => t.Category == group.Item1).ToList();
+                if (members.Count == 0) continue;
+                yield return new ComboBoxItem { Content = group.Item2, IsEnabled = false, FontWeight = Avalonia.Media.FontWeight.SemiBold, Tag = null };
+                foreach (var t in members)
+                    yield return new ComboBoxItem
+                    {
+                        Content = t.Title, Tag = t.Name, Padding = new Avalonia.Thickness(22, 3, 8, 3),
+                        [ToolTip.TipProperty] = t.DisplayName != null ? t.Name : null,
+                    };
+            }
+        }
+
+        /// <summary>The display name of a target (its name when it has none or is unknown).</summary>
+        internal static string TargetTitle(fire.Native.NativeConfig config, string name)
+        {
+            try { return config.ResolveTarget(name).Title; }
+            catch (fire.Native.NativeConfigException) { return name; }
         }
 
         /// <summary>The target that the settings of the project of the active file name (null: none).</summary>
@@ -262,7 +288,7 @@ namespace fire.Editor
             _nativeTargetChoice = tag.Length == 0 ? null : tag;
             _settings.NativeTarget = _nativeTargetChoice;
             _settings.Save();
-            UpdateStatus(_nativeTargetChoice == null ? "Native target: the default." : $"Native target: {_nativeTargetChoice}.");
+            UpdateStatus(_nativeTargetChoice == null ? "Native target: the default." : $"Native target: {(cmbTarget.SelectedItem is ComboBoxItem { Content: string title } ? title : _nativeTargetChoice)}.");
         }
 
         // -----------------------------------------------------------
@@ -330,7 +356,7 @@ namespace fire.Editor
                 // a project builds into its folder, without asking: bin/<target>-<mode>/ (a toolchain that only writes files: that folder)
                 string folder = ProjectOutput.Folder(project.Directory, target.Name, RunModeName);
                 Directory.CreateDirectory(folder);
-                output = toolchain.EffectiveKind == "files" ? folder : ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, RunModeName, target.Name == "windows");
+                output = toolchain.EffectiveKind == "files" ? folder : ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, RunModeName, target.ProgramExtension);
             }
             else if (toolchain.EffectiveKind == "files")
             {
@@ -340,8 +366,9 @@ namespace fire.Editor
             }
             else
             {
-                bool windows = target.Name == "windows" || OperatingSystem.IsWindows();
-                var path = await PickSavePath("Build Native", windows ? "program.exe" : "program", windows ? "exe" : "");
+                // (the extension of the target - `.exe` also for Windows 3.x and DOS; a program for this machine on Windows has one too)
+                string extension = target.ProgramExtension.Length > 0 ? target.ProgramExtension : OperatingSystem.IsWindows() && target.Name == fire.Runtime.TargetProfile.Host.Name ? ".exe" : "";
+                var path = await PickSavePath("Build Native", "program" + extension, extension.TrimStart('.'));
                 if (path == null) return;
                 output = path;
             }
@@ -360,6 +387,7 @@ namespace fire.Editor
             NativeBuildResult result;
             try
             {
+                config.Stats = _settings.BuildStats;   // (the Statistics switch: the report next to the program, shown below)
                 result = await Task.Run(() =>
                     fire.Compiler.NativeBuilder.BuildSafe(sources, config, target, toolchain, output, mode, null, false, baseDirectory, null, plan, job.Monitor));
             }
@@ -381,11 +409,35 @@ namespace fire.Editor
             {
                 EndBuildJob(job, BuildOutcome.Succeeded);
                 UpdateStatus($"Built {result.Output} (native, {target.Name}).");
+                if (_settings.BuildStats && result.Output is { } built) ShowBuildStats(built + ".stats.json");
                 return;
             }
             EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
             UpdateStatus("The native build failed.");
             if (!FailureShown(job)) await Dialogs.Message(this, result.Log, "Build Native");
+        }
+
+        /// <summary>The Statistics switch of the build tool strip: native builds write their statistics and show them in a tab (kept in the settings of spark).</summary>
+        private void BuildStats_Click(object? sender, RoutedEventArgs e)
+        {
+            _settings.BuildStats = !_settings.BuildStats;
+            tbBuildStats.IsChecked = _settings.BuildStats;
+            _settings.Save();
+            UpdateStatus(_settings.BuildStats ? "Native builds show their statistics." : "Native builds without statistics.");
+        }
+
+        /// <summary>The statistics of the build just made: its tab, opened or shown again with the new numbers.</summary>
+        private void ShowBuildStats(string statsPath)
+        {
+            if (!File.Exists(statsPath))
+            {
+                UpdateStatus("The build wrote no statistics (the toolchain gives no map of the program, or linkage static with another target).");
+                return;
+            }
+            var open = _documents.FirstOrDefault(d => d.Kind == DocumentKind.BuildStats && d.View.FilePath != null
+                && string.Equals(Path.GetFullPath(d.View.FilePath), Path.GetFullPath(statsPath), StringComparison.OrdinalIgnoreCase));
+            if (open != null) { open.View.ResetTo("", statsPath); Activate(open); }
+            else OpenFile(statsPath, forceKind: DocumentKind.BuildStats);
         }
 
         /// <summary>The name of the mode of the run (`debug`, `release`, `performance`).</summary>

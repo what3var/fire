@@ -21,7 +21,7 @@ namespace fire.UI.Markup
         public static readonly MarkupCompletionResult None = new(0, Array.Empty<MarkupCompletionItem>());
     }
 
-    /// <summary>IntelliSense for markup files (.fxml, docs/UI_MARKUP.md): which elements fit where the caret is, the attributes of the element, and the values of an attribute
+    /// <summary>IntelliSense for markup files (.fxml, docs/ui/markup.md): which elements fit where the caret is, the attributes of the element, and the values of an attribute
     /// (by the type of the property, the keys of the resources, the options of a binding, the namespace prefixes). Works on a text that is being typed (not well formed), without
     /// the editor: a small scanner reads the text up to the caret.</summary>
     public static class MarkupCompletion

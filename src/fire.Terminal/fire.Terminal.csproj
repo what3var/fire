@@ -1,17 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    PLATFORM-INDEPENDENT core (see docs/CONSOLE.md): framebuffer,
+    PLATFORM-INDEPENDENT core (see docs/spec/GRAPHICS_LAYER.md): framebuffer,
     PixelColor, renderer, IGlyphFont, IFramebufferRenderer - deliberately
-    WITHOUT any Windows/SDL/GDI-specific dependency, so that a later
+    WITHOUT any Windows/GDI-specific dependency, so that a later
     port (e.g. to C++, or a scripting-language bridge directly on
     this layer) stays as simple as possible. Concrete implementations
-    (SDL renderer, GDI glyph rasterisation, the composing window)
+    (renderers, GDI glyph rasterisation, the composing window)
     deliberately live in separate projects of their own:
-    fire.Terminal.Sdl / fire.Terminal.Windows.
+    fire.Terminal.Windows.
 
     Therefore explicitly "net8.0" (NOT "net8.0-windows") and NO references
-    to SDL/System.Drawing/WPF/etc.
+    to System.Drawing/WPF/etc.
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>

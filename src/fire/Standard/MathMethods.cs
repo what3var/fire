@@ -65,13 +65,13 @@ namespace fire.Standard
                 }
                 /// The average of the numbers of an array or a List, a float in the unit of the first value (an ArgumentException for an empty one).
                 static any Average(any values) {
-                    var numbers = Math.Numbers(values, "Average")
+                    any numbers = Math.Numbers(values, "Average")
                     if (numbers.length == 0) { throw new ArgumentException("Math.Average of an empty array or List.") }
                     return Math.Sum(numbers) / (numbers.length * 1.0)
                 }
                 /// The smallest number of an array or a List (an ArgumentException for an empty one); units are converted for the comparison.
                 static any Min(any values) {
-                    var numbers = Math.Numbers(values, "Min")
+                    any numbers = Math.Numbers(values, "Min")
                     if (numbers.length == 0) { throw new ArgumentException("Math.Min of an empty array or List.") }
                     any best = numbers[0]
                     foreach (v in numbers) { if (v < best) { best = v } }
@@ -79,7 +79,7 @@ namespace fire.Standard
                 }
                 /// The largest number of an array or a List (an ArgumentException for an empty one).
                 static any Max(any values) {
-                    var numbers = Math.Numbers(values, "Max")
+                    any numbers = Math.Numbers(values, "Max")
                     if (numbers.length == 0) { throw new ArgumentException("Math.Max of an empty array or List.") }
                     any best = numbers[0]
                     foreach (v in numbers) { if (v > best) { best = v } }
@@ -131,6 +131,18 @@ namespace fire.Standard
                 static float Exp(any x) { return {{NativeName}}({{(int)MathMethod.Exp}}, x) }
             }
 
+            /// The machine word of the target (`word`, SPEC 8.10): unsigned, without a unit.
+            class Word {
+            #if word16
+                /// The width of a word in bits on the target the program is built for: 16, 32 or 64.
+                static int Bits = 16
+            #elif word32
+                static int Bits = 32
+            #else
+                static int Bits = 64
+            #endif
+            }
+
             """;
 
         /// <summary>The hash of a key (MathMethod.Hash; fire_rt.h: keyHash): numbers by their value in the base unit (an integral one like an int), strings
@@ -151,6 +163,7 @@ namespace fire.Standard
                     if (b == Math.Floor(b) && Math.Abs(b) < 9e15) return Mix((ulong)(long)b);
                     return Mix((ulong)BitConverter.DoubleToInt64Bits(b));
                 }
+                case ValueKind.Word: return Mix(x.AsWord());   // (like an int with the same bits: `==` takes them as equal)
                 case ValueKind.String:
                 {
                     ulong h = 1469598103934665603UL;

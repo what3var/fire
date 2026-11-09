@@ -1,0 +1,25 @@
+// Screenshot of docs/graphics/3d.md (hand-written: the quick start of the page with a few more objects; renders once and saves).
+#import "windows"
+#import "scene3d"
+#include "shot.fire"
+
+var fb = new Framebuffer(480, 320)
+var scene = new Scene()
+
+var floor = new Object(Template.Box, 0m, -0.05m, 0m, 6m, 0.1m, 6m)
+floor.Texture = Texture.Checker(64, 8)
+scene.Add(floor)
+var box = new Object(Template.Box, -0.8m, 0.5m, 0m, 1m, 1m, 1m)
+box.Texture = Texture.Checker(32, 4)
+box.Rotate(0deg, 30deg, 0deg)
+scene.Add(box, "crate")
+var ball = new Object(Template.Sphere, 0.9m, 0.5m, 0.3m, 1m, 1m, 1m)
+scene.Add(ball)
+scene.Add(Light.Directional(-0.5, -1.0, -0.4))
+
+var cam = new Camera(fb)
+cam.SetPosition(0m, 2m, 4m)
+cam.LookAt(0m, 0.5m, 0m)
+scene.Add(cam)
+cam.Render()
+Shot.SaveFramebuffer(fb, "graphics-3d.png")

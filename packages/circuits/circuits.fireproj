@@ -30,151 +30,181 @@
     "functions": [
       {
         "name": "__CirNew",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_cir_New"
       },
       {
         "name": "__CirFree",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_Free"
       },
       {
         "name": "__CirConductance",
+        "returns": "undefined",
         "arguments": 4,
         "c": "fire_cir_Conductance"
       },
       {
         "name": "__CirVoltageBranch",
+        "returns": "undefined",
         "arguments": 4,
         "c": "fire_cir_VoltageBranch"
       },
       {
         "name": "__CirAddReactive",
+        "returns": "int",
         "arguments": 7,
         "c": "fire_cir_AddReactive"
       },
       {
         "name": "__CirAddSource",
+        "returns": "int",
         "arguments": 9,
         "c": "fire_cir_AddSource"
       },
       {
         "name": "__CirSetSource",
+        "returns": "bool",
         "arguments": 6,
         "c": "fire_cir_SetSource"
       },
       {
         "name": "__CirCompile",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_cir_Compile"
       },
       {
         "name": "__CirBegin",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_Begin"
       },
       {
         "name": "__CirRhsAdd",
+        "returns": "undefined",
         "arguments": 3,
         "c": "fire_cir_RhsAdd"
       },
       {
         "name": "__CirRhsSet",
+        "returns": "undefined",
         "arguments": 3,
         "c": "fire_cir_RhsSet"
       },
       {
         "name": "__CirFinish",
+        "returns": "float",
         "arguments": 1,
         "c": "fire_cir_Finish"
       },
       {
         "name": "__CirRun",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_cir_Run"
       },
       {
         "name": "__CirTime",
+        "returns": "float",
         "arguments": 1,
         "c": "fire_cir_Time"
       },
       {
         "name": "__CirNode",
+        "returns": "float",
         "arguments": 2,
         "c": "fire_cir_Node"
       },
       {
         "name": "__CirSetNode",
+        "returns": "undefined",
         "arguments": 3,
         "c": "fire_cir_SetNode"
       },
       {
         "name": "__CirUnknown",
+        "returns": "float",
         "arguments": 2,
         "c": "fire_cir_Unknown"
       },
       {
         "name": "__CirState",
+        "returns": "float",
         "arguments": 4,
         "c": "fire_cir_State"
       },
       {
         "name": "__CirSourceValue",
+        "returns": "float",
         "arguments": 2,
         "c": "fire_cir_SourceValue"
       },
       {
         "name": "__CirAddProbe",
+        "returns": "bool",
         "arguments": 7,
         "c": "fire_cir_AddProbe"
       },
       {
         "name": "__CirInfo",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_cir_Info"
       },
       {
         "name": "__CirRecNew",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_cir_RecNew"
       },
       {
         "name": "__CirRecFree",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_RecFree"
       },
       {
         "name": "__CirRecChannel",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_cir_RecChannel"
       },
       {
         "name": "__CirRecPut",
+        "returns": "undefined",
         "arguments": 3,
         "c": "fire_cir_RecPut"
       },
       {
         "name": "__CirRecTime",
+        "returns": "undefined",
         "arguments": 2,
         "c": "fire_cir_RecTime"
       },
       {
         "name": "__CirRecCount",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_cir_RecCount"
       },
       {
         "name": "__CirRecClear",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_RecClear"
       },
       {
         "name": "__CirRecLast",
+        "returns": "float",
         "arguments": 2,
         "c": "fire_cir_RecLast"
       },
       {
         "name": "__CirLastError",
+        "returns": "string",
         "arguments": 0,
         "c": "fire_cir_LastError",
         "needsList": true,
@@ -182,6 +212,7 @@
       },
       {
         "name": "__CirRecSamples",
+        "returns": "any[]",
         "arguments": 2,
         "c": "fire_cir_RecSamples",
         "needsList": true,
@@ -189,6 +220,7 @@
       },
       {
         "name": "__CirRecTrace",
+        "returns": "any[]",
         "arguments": 7,
         "c": "fire_cir_RecTrace",
         "needsList": true,
@@ -196,6 +228,7 @@
       },
       {
         "name": "__CirTraceRange",
+        "returns": "any[]",
         "arguments": 2,
         "c": "fire_cir_TraceRange",
         "needsList": true,
@@ -203,6 +236,7 @@
       },
       {
         "name": "__CirTracePoints",
+        "returns": "any[]",
         "arguments": 6,
         "c": "fire_cir_TracePoints",
         "needsList": true,
@@ -210,6 +244,7 @@
       },
       {
         "name": "__CirRecPairs",
+        "returns": "any[]",
         "arguments": 4,
         "c": "fire_cir_RecPairs",
         "needsList": true,
@@ -217,6 +252,7 @@
       },
       {
         "name": "__CirRecStats",
+        "returns": "any[]",
         "arguments": 3,
         "c": "fire_cir_RecStats",
         "needsList": true,
@@ -224,6 +260,7 @@
       },
       {
         "name": "__CirRecSpectrum",
+        "returns": "any[]",
         "arguments": 4,
         "c": "fire_cir_RecSpectrum",
         "needsList": true,
@@ -231,66 +268,79 @@
       },
       {
         "name": "__CirAddNonlinear",
+        "returns": "int",
         "arguments": 9,
         "c": "fire_cir_AddNonlinear"
       },
       {
         "name": "__CirNlState",
+        "returns": "float",
         "arguments": 3,
         "c": "fire_cir_NlState"
       },
       {
         "name": "__CirAddLine",
+        "returns": "int",
         "arguments": 7,
         "c": "fire_cir_AddLine"
       },
       {
         "name": "__CirEntry",
+        "returns": "undefined",
         "arguments": 4,
         "c": "fire_cir_Entry"
       },
       {
         "name": "__CirNlSet",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_cir_NlSet"
       },
       {
         "name": "__CirAddGate",
+        "returns": "int",
         "arguments": 8,
         "c": "fire_cir_AddGate"
       },
       {
         "name": "__CirAddChip",
+        "returns": "int",
         "arguments": 11,
         "c": "fire_cir_AddChip"
       },
       {
         "name": "__CirChipGet",
+        "returns": "float",
         "arguments": 4,
         "c": "fire_cir_ChipGet"
       },
       {
         "name": "__CirChipSet",
+        "returns": "bool",
         "arguments": 5,
         "c": "fire_cir_ChipSet"
       },
       {
         "name": "__CirGateState",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_cir_GateState"
       },
       {
         "name": "__CirAddTube",
+        "returns": "int",
         "arguments": 7,
         "c": "fire_cir_AddTube"
       },
       {
         "name": "__CirAddFormula",
+        "returns": "int",
         "arguments": 7,
         "c": "fire_cir_AddFormula"
       },
       {
         "name": "__CirCheckFormula",
+        "returns": "string",
         "arguments": 3,
         "c": "fire_cir_CheckFormula",
         "needsList": true,
@@ -298,71 +348,85 @@
       },
       {
         "name": "__CirEvalFormula",
+        "returns": "float",
         "arguments": 4,
         "c": "fire_cir_EvalFormula"
       },
       {
         "name": "__CirSetCaps",
+        "returns": "bool",
         "arguments": 8,
         "c": "fire_cir_SetCaps"
       },
       {
         "name": "__CirProcess",
+        "returns": "int",
         "arguments": 13,
         "c": "fire_cir_Process"
       },
       {
         "name": "__CirAddCoupled",
+        "returns": "int",
         "arguments": 12,
         "c": "fire_cir_AddCoupled"
       },
       {
         "name": "__CirGateExtra",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_cir_GateExtra"
       },
       {
         "name": "__CirStartRunner",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_cir_StartRunner"
       },
       {
         "name": "__CirStopRunner",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_StopRunner"
       },
       {
         "name": "__CirRunnerInfo",
+        "returns": "any",
         "arguments": 2,
         "c": "fire_cir_RunnerInfo"
       },
       {
         "name": "__CirHoldBegin",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_HoldBegin"
       },
       {
         "name": "__CirHoldEnd",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_HoldEnd"
       },
       {
         "name": "__CirStreamNew",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_cir_StreamNew"
       },
       {
         "name": "__CirStreamFree",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_StreamFree"
       },
       {
         "name": "__CirStreamWrite",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_cir_StreamWrite"
       },
       {
         "name": "__CirStreamRead",
+        "returns": "any[]",
         "arguments": 2,
         "c": "fire_cir_StreamRead",
         "needsList": true,
@@ -370,61 +434,73 @@
       },
       {
         "name": "__CirStreamWritePcm",
+        "returns": "int",
         "arguments": 6,
         "c": "fire_cir_StreamWritePcm"
       },
       {
         "name": "__CirStreamReadPcm",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_cir_StreamReadPcm"
       },
       {
         "name": "__CirStreamInfo",
+        "returns": "any",
         "arguments": 2,
         "c": "fire_cir_StreamInfo"
       },
       {
         "name": "__CirStreamClear",
+        "returns": "undefined",
         "arguments": 1,
         "c": "fire_cir_StreamClear"
       },
       {
         "name": "__CirAddTap",
+        "returns": "bool",
         "arguments": 4,
         "c": "fire_cir_AddTap"
       },
       {
         "name": "__CirAddFeed",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_cir_AddFeed"
       },
       {
         "name": "__CirStreamPlay",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_cir_StreamPlay"
       },
       {
         "name": "__CirStreamRecord",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_cir_StreamRecord"
       },
       {
         "name": "__CirStreamDetach",
+        "returns": "undefined",
         "arguments": 2,
         "c": "fire_cir_StreamDetach"
       },
       {
         "name": "__CirStreamPump",
+        "returns": "undefined",
         "arguments": 0,
         "c": "fire_cir_StreamPump"
       },
       {
         "name": "__CirStreamDeviceInfo",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_cir_StreamDeviceInfo"
       },
       {
         "name": "__CirStreamSimPlayed",
+        "returns": "any[]",
         "arguments": 1,
         "c": "fire_cir_StreamSimPlayed",
         "needsList": true,
@@ -432,11 +508,22 @@
       },
       {
         "name": "__CirStreamSimInput",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_cir_StreamSimInput"
       }
     ],
     "reset": "fire_cir_reset",
-    "language": "c"
+    "language": "c",
+    "uses": [
+      {
+        "import": "audio",
+        "platforms": [
+          "posix",
+          "windows",
+          "vm"
+        ]
+      }
+    ]
   }
 }

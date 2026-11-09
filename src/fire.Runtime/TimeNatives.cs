@@ -24,7 +24,7 @@ namespace fire.Runtime
             double perSecond;
             try { perSecond = unit.ConversionFactorTo(Unit.Parse("s")); }
             catch (Exception) { return VM.CurrentThreadVm is { } vm ? vm.NativeFail("TimeException", $"'{unit}' is not a unit of time.") : throw new InvalidOperationException($"'{unit}' is not a unit of time."); }
-            return Value.MakeInt((long)Math.Round(Num(v) * perSecond * TicksPerSecond));
+            return Value.MakeNativeInt((long)Math.Round(Num(v) * perSecond * TicksPerSecond));
         }
 
         /// <summary>A time specification as ticks, as `Sleep` understands it: a `TimeSpan`, a value with a time unit (`500ms`, `2s`) or a number in milliseconds.

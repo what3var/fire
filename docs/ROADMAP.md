@@ -23,10 +23,14 @@ Leitlinien:
 | 3 | [Zip / Deflate](#7-zip--deflate) | 0, 6 (CRC/Hash-Infrastruktur) | `.fpk` ist ein Zip |
 | 4 | [Debugging nativer Builds](#8-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
-| 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
+| 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht und VM-Seite |
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
 | 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
+| 6 | [UI-Markup: fehlende Eigenschaften](#14-ui-markup-fehlende-eigenschaften) | - | klein; `.fxml` ist der Hauptweg für Oberflächen, dort fehlen ToolTip, Cursor und Drag & Drop |
+| 0 | [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
+| 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
+| 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -48,7 +52,7 @@ weiter als C++ gegen `fire_rt.h` (das als C++ in `extern "C"` + `namespace fire`
 Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_program.c`) gegen `fire_rt.h`; `fire_rt.hpp` ist entfernt.
 
 1. ~~Der Generator erzeugt C gegen `fire_rt.h`~~ - Catch-Blöcke sind eigene Funktionen mit dem Frame ihrer Funktion, Sections und Aufruftiefe explizit,
-   `fire_init()` statt statischer Initialisierung (docs/NATIVE_BACKEND.md, "C statt C++").
+   `fire_init()` statt statischer Initialisierung ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md), "C statt C++").
 2. ~~JSON und Reflection nach C~~ - `fire_json.h` (die Engine in C), die Reflection-Tabellen ohne C++.
 3. ~~Package-Natives als eigene Übersetzungseinheit~~ - `fire_natives.cpp` mit `fire_rt_cpp.hpp`, Aufrufe über `fire_nat_N` (C-Linkage).
 4. ~~VM-Seite~~ - die Bibliotheken der Packages für die VM bauen gegen `fire_rt.h` (als C++, `FIRE_LIBRARY`).
@@ -57,7 +61,7 @@ Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_progr
 6. ~~`fire_rt.hpp` entfernen~~.
 
 Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native Fälle wie vor dem Umbau, gcc und clang ohne Warnungen (`-Wall -Wextra`, clang
-auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher (docs/NATIVE_BACKEND.md, "Benchmarks vor und nach dem C-Port"): der Programmstart
+auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md), "Benchmarks vor und nach dem C-Port"): der Programmstart
 ist als C gut 0,5 ms kürzer, die Rechenzeit gleich oder bis 20 % besser ; `method` war durch den Zugriffsschutz knapp 4x langsamer (`this.count`
 über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist; ebenso private/geschützte Methoden und Properties. Die Zugriffsregeln entscheidet der Typprüfer, wo die Klasse des Objekts bekannt ist (`TC012`, auch lax ein Fehler); zur Laufzeit geprüft werden nur noch `any` und die Reflection. Aufrufe über ein Interface brauchen keine Prüfung: die Implementierung eines Interface-Mitglieds muss öffentlich sein (`E4063`), nativ gehen sie an einen eigenen Verteiler ohne Aufruferklasse. Interfaces haben Properties (`int ReadTimeout { get; set; }`, implementiert von einer öffentlichen Property, `E4064`/`E4065`/`E4066`, `TC016`) und erweitern andere Interfaces (`interface IConnection : IO.IStream`, Zyklen `E4068`) - VM und nativ gleich, auch über Module und Plugins (SPEC 8.5); `Net.IConnection` nutzt beides. Ein Mitglied, das ein Interface-Typ (samt seinen Basis-Interfaces) nicht deklariert, ist `TC008` wie bei einer bekannten Klasse (lax Warnung, strikt Fehler; die Besitz-Methoden `TakeTo`/`TakeLocal`/... gehen immer, der Cast `x!Klasse` erreicht den Rest); `Type.Interfaces` der Reflection listet alle Interfaces, die die Klasse erreicht (auch über Basisklassen und Interface-Vererbung, volle Namen), `Type.DeclaredInterfaces` nur die genannten - VM und nativ gleich, auch Module und Plugins. Offen dabei: der Typ einer implementierenden Property wird nur bei Werttypen und Einheiten mit dem des Interfaces verglichen. Emscripten (6.0): ein Programm unter node und ein Fenster im Browser (Testgruppe `packer`). Offen: MSVC und
 macOS sind hier nicht installiert. ESP32: mit ESP-IDF 5.5 gebaut (ohne Warnung) und im Emulator von Espressif (QEMU) ausgeführt - Ausgabe wie in der VM;
@@ -66,7 +70,7 @@ auf echter Hardware noch nicht.
 Danach: ~~die Natives der Standard-Packages in C~~ - **umgesetzt**: process, time, io, net, tls (OpenSSL, mbedTLS, SChannel), gpio, i2c, spi, usb, wifi,
 devices, audio, tracker, graphics und windows sind C99 (`"language": "c"` im Manifest), ihre Plattformschichten ebenso (`native/platform/std/fire_<teil>_c.h`).
 Ein Programm mit diesen Packages ist reines C und lässt sich mit TinyCC bauen (`--toolchain tcc`). Auch die 3D-Engine `scene3d` ist C99 (Branch `scene-c`:
-derselbe Software-Renderer, bytegleiche Bilder wie vorher, dazu ein optionaler Hardware-Renderer über Vulkan, docs/SCENE3D.md "Hardware"), und der Simulator
+derselbe Software-Renderer, bytegleiche Bilder wie vorher, dazu ein optionaler Hardware-Renderer über Vulkan, [3D scenes](graphics/3d.md) "Hardware"), und der Simulator
 `circuits` (Branch `circuits-c`: derselbe Kern, jede Rechnung in derselben Reihenfolge - die Ausgaben der Tests sind bytegleich, auch ungerundet). Kein
 Standard-Package braucht mehr C++; `fire_rt_cpp.hpp` und `fire_platform.hpp` bleiben für Packages, die ihre Natives in C++ schreiben. Geprüft: die Testsuite (VM == nativ, ASan/UBSan),
 die Fälle der Packages zusätzlich mit TinyCC und - wo möglich - für Windows (MinGW) unter Wine; ESP32/FreeRTOS nur mit Ersatz-Headern übersetzt.
@@ -141,14 +145,14 @@ wirkt `Set` nur auf die Sicht des Programms (nicht auf spark/forge). Unter Windo
 * POSIX: `posix_spawn` + `pipe`/`poll`; Windows: `CreateProcessW` + Pipes; kein Prozess auf Embedded-Zielen (`NotSupportedException`).
 * Ein Paket `process` (Import `"process"`), Natives in C.
 
-Stand: umgesetzt (docs/PROCESS.md) - `Process.Run`/`Start`, `ProcessOptions` (Arbeitsordner, Umgebung, Umleitungen, `MergeError`), `ProcessStream` als
+Stand: umgesetzt ([Processes:](stdlib/process.md)) - `Process.Run`/`Start`, `ProcessOptions` (Arbeitsordner, Umgebung, Umleitungen, `MergeError`), `ProcessStream` als
 `IO.Stream`, `WaitForExit(timeout)`, `Kill`, `ExitCode`, `Id`, Zeilen als Ereignisse (`OnOutput`/`OnError`/`OnExit`, ausgeliefert von `Pump()`, ohne zu
 blockieren). Die Natives sind - wie bei den anderen Standardpaketen - C99 (`fire_bridge_process.h`, `"language": "c"`; auch mit TinyCC), in der VM als Shared Library; POSIX mit `fork`/`execvp`
 statt `posix_spawn` (der Arbeitsordner braucht sonst `posix_spawn_file_actions_addchdir_np`); Windows unter Wine geprüft.
 
 ## 6. SHA-256
 
-Stand: **umgesetzt** (docs/HASH.md) - Paket `hash`: MD5, SHA-1, SHA-256/384/512, CRC-32, Adler-32 und HMAC in reinem C (gegen die Testvektoren von
+Stand: **umgesetzt** ([Hash functions](stdlib/hash.md)) - Paket `hash`: MD5, SHA-1, SHA-256/384/512, CRC-32, Adler-32 und HMAC in reinem C (gegen die Testvektoren von
 FIPS 180, RFC 1321/2202/4231 und gegen Python geprüft; VM, gcc und TinyCC gleich). Der Zustand eines Hashers ist ein Byte-Puffer des fire-Objekts (keine
 Handle-Tabelle). Eine Anbindung an mbedTLS/OpenSSL gibt es nicht - die eigene Implementierung ist überall gleich und schnell genug.
 
@@ -159,7 +163,7 @@ Reines C ohne Abhängigkeiten (läuft auch auf dem ESP32); auf Zielen mit mbedTL
 
 ## 7. Zip / Deflate
 
-Stand: **umgesetzt** (docs/COMPRESSION.md) - Paket `compression`: Deflate/Inflate in eigenem C (streamfähig, gegen Python-zlib und mit 1500 kaputten
+Stand: **umgesetzt** ([Compression and Zip](stdlib/compression.md)) - Paket `compression`: Deflate/Inflate in eigenem C (streamfähig, gegen Python-zlib und mit 1500 kaputten
 Strömen unter ASan geprüft; Größe wie zlib), `DeflateStream`/`GZipStream`/`ZLibStream`, Einmal-Funktionen, `Zip.Archive` lesen (Zip64, Datendeskriptoren,
 CP437/UTF-8) und schreiben (auch streamend), Entpacken mit Schutz vor Pfaden außerhalb des Ziels. Zip64 auch beim Schreiben: Einträge über 4 GB (Zip64-Extra-Feld
 im zentralen Verzeichnis, im lokalen Header bei bekannter Größe bzw. mit dem Parameter `zip64` von `CreateEntry` und bei `AddFile` großer Dateien, Datendeskriptoren mit
@@ -178,10 +182,10 @@ Ursprünglicher Plan:
 
 Ein Debug-Agent im nativen Debug-Build, damit spark native Programme genauso debuggt wie die VM - auf jedem Ziel, ohne gdb/lldb.
 
-Stand: **Generator, Runtime und Agent umgesetzt** (Punkte 1, 3, 4, 5 für TCP, stdio und die UART des ESP32, 6, 7; docs/NATIVE_BACKEND.md "Zeilen des Programms im C" und "Debug-Builds",
-Protokoll: [NATIVE_DEBUG_PROTOCOL.md](NATIVE_DEBUG_PROTOCOL.md)); getestet gegen die VM (`NativeDebugTests.cs`). spark-Seite (2, 8) ebenfalls umgesetzt (`IDebugTarget`, `NativeDebugTarget`, Engine-Box, natives Run/Debug; Tests `FIRE_TESTS_ONLY=debugger`).
+Stand: **Generator, Runtime und Agent umgesetzt** (Punkte 1, 3, 4, 5 für TCP, stdio und die UART des ESP32, 6, 7; [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Zeilen des Programms im C" und "Debug-Builds",
+Protokoll: [NATIVE_DEBUG_PROTOCOL.md](spec/NATIVE_DEBUG_PROTOCOL.md)); getestet gegen die VM (`NativeDebugTests.cs`). spark-Seite (2, 8) ebenfalls umgesetzt (`IDebugTarget`, `NativeDebugTarget`, Engine-Box, natives Run/Debug; Tests `FIRE_TESTS_ONLY=debugger`).
 **ESP32 umgesetzt** (8.6): Transport UART gerahmt (CRC-16), 3 s Wartezeit, Standardeingabe durch den Agenten, spark baut/flasht über `idf.py` und debuggt bzw. zeigt die Konsole
-über die serielle Schnittstelle (docs/NATIVE_BACKEND.md "Ziel `esp32`: Run und Debug auf dem Board"); getestet unter QEMU, nicht auf einem echten Board. Offen:
+über die serielle Schnittstelle ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Ziel `esp32`: Run und Debug auf dem Board"); getestet unter QEMU, nicht auf einem echten Board. Offen:
 WLAN (TCP auf dem Board), andere Chips (USB-Serial-JTAG der C3/S3) als eigene Ziele, wasm. Die serielle Schnittstelle, die Baudrate und der Ordner von ESP-IDF sind in spark einzustellen (Projekteigenschaften, Toolchain Settings; nicht von Hand durchgeklickt). Nicht getestet: `set` eines Felds mit Probes (die gibt es nur mit Reflection; geprüft ist der Setter mit der Prüfung
 der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Windows).
 
@@ -203,16 +207,16 @@ der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Wind
 6. ~~**Threads**~~: Anhalten aller Threads über die GIL; ein angehaltener Thread wartet ohne GIL (wie `Sleep`), damit `ContinueThread` einzelne Threads laufen lässt.
 7. ~~**Unbehandelte Ausnahmen**~~: anhalten vor dem Abrollen, wenn kein Handler da ist; `resume` wie `TryResumeUnhandled` der VM.
 8. ~~`NativeDebugTarget` in spark; *Run > Debug* mit der Engine `native` (und dem Ziel aus dem Projekt)~~ (umgesetzt, spark-Seite): `NativeDebugTarget`/`NativeDebugThread`
-   sprechen das Protokoll (docs/NATIVE_DEBUG_PROTOCOL.md); spark lauscht, übergibt `FIRE_DEBUG`, nimmt eine Verbindung mit dem Token an. Engine-Box *VM/Native* neben der
+   sprechen das Protokoll ([Debug-Protokoll nativer Programme](spec/NATIVE_DEBUG_PROTOCOL.md)); spark lauscht, übergibt `FIRE_DEBUG`, nimmt eine Verbindung mit dem Token an. Engine-Box *VM/Native* neben der
    Modus-Box (gespeichert in `settings.engine`), natives *Run* (Release/Performance: Ausgabe ins Output-Panel) und *Debug* (Build mit `-O0 -g` nach `bin/<ziel>-dbg`),
-   Stack-Panel bei nativ ausgeblendet (docs/NATIVE_BACKEND.md "Ausführen und Debuggen aus spark"). Getestet gegen einen Schein-Agenten; Ende-zu-Ende-Test gegen einen
+   Stack-Panel bei nativ ausgeblendet ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Ausführen und Debuggen aus spark"). Getestet gegen einen Schein-Agenten; Ende-zu-Ende-Test gegen einen
    echten Debug-Build, sobald die Runtime den Agenten hat. ESP32 (8.6): Ziel `esp32` + Run/Debug baut das ESP-IDF-Projekt in `bin/esp32-<modus>`, `idf.py build flash`,
    öffnet die serielle Schnittstelle (`port`/`baud` aus Projekt oder Ziel, sonst erkannt) - Debug über `SerialFramedTransport`, Run mit der Konsole im Output-Panel
    und einer Eingabezeile darunter. Ein fire-Thread zeigt in der Scope-Ansicht seine eigenen Variablen der obersten Ebene (`globals` mit `thread`). Offen: die
    Oberfläche ist nicht von Hand durchgeklickt, kein echtes Board.
 9. ~~**Build-Fenster**~~ (umgesetzt): jeder Bau aus spark (F5 mit der VM, nativ, ESP32, Build, Pack) zeigt nach 0,5 s ein Fenster mit Phase, Fortschritt (die Library-Module
    von linkage `static`/`shared` gezählt, sonst unbestimmt) und Log, *Hide* (Fortschritt in der Statusleiste) und *Cancel* (Prozessbaum der Compiler beendet, nichts
-   Halbes bleibt) - `BuildMonitor` (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"). Offen: das Fenster ist nicht von Hand durchgeklickt; `idf.py` abbrechen nur
+   Halbes bleibt) - `BuildMonitor` ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Fortschritt und Abbrechen"). Offen: das Fenster ist nicht von Hand durchgeklickt; `idf.py` abbrechen nur
    ohne echtes ESP-IDF geprüft. Die Natives eines Packages, die für die VM gebaut werden, sind eine eigene Phase (*natives of packages*, je Paket gezählt) und abbrechbar.
 
 Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
@@ -221,7 +225,7 @@ Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 
 Zwei Teile: **getrennte Übersetzung** (Code teilen, schneller bauen) und **dynamisches Laden** (Plugins, Treiber, Natives in einer VM in fire).
 
-Stand: **Phasen A0, A, B, B2 und C umgesetzt** (C ohne Windows) (docs/NATIVE_BACKEND.md "Klassen-Deskriptoren" und "Getrennte Übersetzung: `linkage`"): Klassen-Deskriptoren statt
+Stand: **Phasen A0, A, B, B2 und C umgesetzt** (C ohne Windows) ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Klassen-Deskriptoren" und "Getrennte Übersetzung: `linkage`"): Klassen-Deskriptoren statt
 `switch` in den Hooks der Runtime (A0); Module mit eigener Registrierung der Zahlen über Tabellen des Programms, in einer Datei hinter `FIRE_MODULES=1` (A);
 `"linkage": "static"` (Projekt, `fire.native.json`, `--linkage`) mit Schnittstellendatei (Formatversion + ABI-Hash), Cache des Benutzers nach Inhalts-Hash,
 `ember cache clean`, Varianten je Menge von Schaltern, öffentliche Schnittstelle einer Library als Wurzel (§11), Debug-Tabellen je Modul (ein Haltepunkt in einer
@@ -233,7 +237,7 @@ Reflect.New je Modul, Natives in C, die für sich stehen, und die JSON-Engine in
 `"linkage": "shared"` (C, Linux und macOS mit gcc/clang): die Libraries als Shared Libraries neben dem Programm, das den Zustand der Runtime exportiert; jede
 nennt ihre Schnittstelle, das Programm prüft sie beim Start (eine lesbare Meldung statt eines Absturzes). Windows (MinGW, unter Wine getestet): die Runtime eine DLL
 für sich, die thread-lokalen Variablen hinter `fire_tl()`, was eine DLL vom Programm braucht über Zeiger, die ihre `fire_link_*`-Funktion beim Start füllt.
-Plugins (Phase D b, docs/NATIVE_BACKEND.md "Plugins"): `--linkage plugin` baut die Klassen eines Programms als Modul für sich (`.so`/`.dll` und `.fireplugin` für die
+Plugins (Phase D b, [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Plugins"): `--linkage plugin` baut die Klassen eines Programms als Modul für sich (`.so`/`.dll` und `.fireplugin` für die
 VM), ein Programm mit `"shared"` lädt es mit `Library.Load` (Prüfung nur über Hashes: die Schnittstellen der Module, die Konfiguration der Runtime), die Runtime
 registriert seine Klassen (Deskriptoren, Typen von `catch` und Enums nach Namen, Reflection, statische Initialisierer) und seine Einheiten (nach Dimensionen, Faktor
 und Symbol, neue Dimensionen auf freien Plätzen); Natives in C++ des Plugins in seiner Bibliothek (eine eigene Kopie; für die VM eine Bibliothek mit der C-ABI neben
@@ -265,7 +269,7 @@ Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heut
 
 Dynamisches Laden:
 
-* **umgesetzt** (Phase D a; docs/language/18-native-code.md): `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
+* **umgesetzt** (Phase D a; [Native code](language/18-native-code.md)): `Library.Load(path)` / `library.Get(name, signature)` - `dlopen`/`LoadLibrary` zur Laufzeit, Funktionszeiger als aufrufbare Lambdas (ergänzt `extern`,
   das nur feste Namen kennt). `Get(..., release: "free")`: die Freigabefunktion der Bibliothek - ein zurückgegebener Zeiger wird ein `NativeHandle`, das dem Besitz folgt
   (`delete` oder das Ende des Besitzers gibt ihn einmal frei), ein zurückgegebener String wird kopiert und gleich freigegeben. `NativeHandle` ist `[NoCopy]` (SPEC 5.12,
   vererbt): `flat`/`copy` verdoppeln es nie (eine `ArgumentException`, auch als Feld oder Element einer tiefen Kopie). Ebenso die Kopien der Threads
@@ -285,23 +289,23 @@ Dynamisches Laden:
 * **umgesetzt** (Phase D b): fire-Module als Plugins (`--linkage plugin`, `Library.Load`): ein Programm mit `"shared"` (und die VM) lädt sie zur Laufzeit, registriert
   ihre Klassen; `Reflect.New("Kit.MyDriver")` findet sie; Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.
   spark lädt so die Treiber installierter Packages (der Treiber-Agent: das Prelude jedes Packages mit Treibern einmal als Plugin für die VM übersetzt und im Cache,
-  `Library.Load` + `Reflect.New`; passt ein Plugin nicht, der alte Weg über `#import`; docs/DEVICES.md, Test `FIRE_TESTS_ONLY=drivers`).
+  `Library.Load` + `Reflect.New`; passt ein Plugin nicht, der alte Weg über `#import`; [Devices](devices/README.md), Test `FIRE_TESTS_ONLY=drivers`).
 
 ## 10. Clipboard, Drag & Drop
 
-Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", docs/NATIVE_BACKEND.md "SDL3 oder SDL2"):
+Stand: **umgesetzt** ([fire.Terminal – Framebuffer, Zeichnen und Fenster](spec/GRAPHICS_LAYER.md) "Drag & Drop aus anderen Programmen, Zwischenablage", [User interfaces](ui/README.md) "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Die eigene Anzeige"):
 `Clipboard.GetText`/`SetText`/`HasText`, `GetImage`/`SetImage`/`HasImage` (PNG über `Framebuffer.ToPng`, unter Windows auch `CF_DIB`) und `GetFiles`/`SetFiles`/`HasFiles` (`text/uri-list`, unter
-Windows `CF_HDROP`, nativ und in der VM) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms, unter X11 auch mit dem, was vor dem Start kopiert wurde (SDL 3.2 sähe es nicht); die Ereignisse `DropFiles`/`DropText` mit Position
-und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
+Windows `CF_HDROP`, nativ und in der VM) - VM und nativ über fire's eigene Anzeige, ohne Desktop eine eigene Zwischenablage des Programms, unter X11 auch mit dem, was vor dem Start kopiert wurde; die Ereignisse `DropFiles`/`DropText` mit Position
+und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt; im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
 Dreifachklick alles bzw. die Zeile (`root.clickCount`), das mehrzeilige Textfeld `UI.TextArea`, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`,
 `OnDragDone`, `UI.DropEffect`) mit einem Bild am Zeiger (`DragData.ShowImage`: `DragData.Image`, ein durchscheinender Schnappschuss des Quellelements oder ein Schild mit dem Text), Drops aus
 anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`); Ziehen aus dem Fenster heraus in andere Programme (`Window.StartDrag`: Text und Dateien, die Antwort
-Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11 (XDND), in der VM und nativ mit SDL3 und SDL2, unter Wayland (`wl_data_device.start_drag`) nativ mit SDL3 - das `ui` übergibt ein Ziehen mit Text oder Dateien,
+Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11 (XDND), in der VM und nativ, unter Wayland (`wl_data_device.start_drag`) nativ - das `ui` übergibt ein Ziehen mit Text oder Dateien,
 sobald der Zeiger das Fenster verlässt (`UI.DragData.AllowExternal`); wo die Plattform das nicht kann (`Window.CanStartDrag()`), bleibt das Ziehen im Fenster. Rückgängig/Wiederholen in `TextBox`
 und `TextArea`, Ziehen der Markierung (verschieben, mit Ctrl kopieren, in andere Felder und Programme), Doppelklick in `ListBox`/`ListView`/`TreeView` über `root.clickCount` (`OnActivate`).
 
 **Offen:**
-- Ziehen aus dem Fenster heraus unter macOS (`NSDraggingSession`) und in der VM unter Wayland (die VM bräuchte dasselbe wie nativ in `SdlDragOut.cs`); dort bleibt ein Ziehen im `ui`
+- Ziehen aus dem Fenster heraus unter macOS (`NSDraggingSession`) und in der VM unter Wayland; dort bleibt ein Ziehen im `ui`
   im Fenster (`Window.CanStartDrag()` sagt `false`).
 - Wayland-Ziehen nur mit weston (X11-Backend unter Xvfb) getestet, nicht mit GNOME/KDE.
 - Das Bild am Zeiger gibt es nur im Fenster: draußen zeigt der Desktop sein eigenes Zeichen (ein Bild für OLE/XDND fehlt).
@@ -313,11 +317,11 @@ Ursprünglicher Plan:
 * `Clipboard.GetText`/`SetText`, `GetImage`/`SetImage` (`graphics.Image`), `GetFiles`; im `ui`: Kopieren/Einfügen in `TextBox` und eigenen Elementen.
 * Drag & Drop: Dateien aus dem Betriebssystem in ein Fenster (`windows`: Ereignis `Drop`), innerhalb des `ui` zwischen Elementen (`DragStart`,
   `DragOver`, `Drop` mit Daten und Effekt); Drag aus dem Programm heraus später (jetzt: Windows und X11).
-* Nativ über SDL (Clipboard, `SDL_EVENT_DROP_*`), in der VM über die C#-Natives von `windows`/`ui`.
+* Nativ über die Anzeige der Plattform (Clipboard, Drop-Ereignisse), in der VM über die C#-Natives von `windows`/`ui`.
 
 ## 11. Ungenutzten Code weglassen
 
-**Umgesetzt (Phasen A-C, Stand und Messung: docs/NATIVE_BACKEND.md "Größe des Programms").** Anlass war, dass ein minimales Programm mit `#import "ui"` (ein Fenster, ein `UI.Root`,
+**Umgesetzt (Phasen A-C, Stand und Messung: [Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md) "Größe des Programms").** Anlass war, dass ein minimales Programm mit `#import "ui"` (ein Fenster, ein `UI.Root`,
 ein `UI.Label`) 7,85 MB C ergab und `gcc -O2` dafür über zwei Minuten brauchte. Die Ursache: `ui` benutzt die Reflection (Stile, Trigger, Bindungen setzen Properties per Name), und ein
 einziger Aufruf eines `__refl_*` erzeugte **jede** Klasse des Programms mit allen Konstruktoren und Methoden. Jetzt:
 
@@ -415,7 +419,8 @@ abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört z
 
 ## 13. Kleine und alte Ziele
 
-Ziel: fire auf Mikrocontrollern ab 32 KB RAM / 128 KB Flash (Cortex-M, ESP32, RISC-V, PIC32), auf DOS (Real Mode und DPMI), Win 3.x, Win9x und NT 3.51 bis XP.
+Ziel: fire auf Mikrocontrollern ab 32 KB RAM / 128 KB Flash (Cortex-M, ESP32, RISC-V, PIC32), auf DOS (Real Mode und DPMI), Win 3.x, Win9x und NT 3.51 bis XP,
+und ohne Betriebssystem auf dem PC (BIOS, UEFI).
 Grundlage ist die Analyse auf `native-c` (Größen gemessen mit arm-none-eabi-gcc und avr-gcc): ab 32 Bit sinnvoll, 8-Bit-PIC nie (Hardware-Stack, kein
 Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 
@@ -425,17 +430,75 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 * Typisierte Arrays (SPEC 8.4.2): `int`, `int[N]`, `float`, `float[N]`, `bool`, `char`, `byte` als Elementtyp - strikt (falscher Typ: `ArgumentException`,
   andere Einheit: `UnitMismatchException`), `undefined` erlaubt; nativ gepackt (eine C-Zahl pro Element, `undefined` als Merker, Bitmaske erst bei Bedarf).
 * `int x[4]` legt das Array überall gleich an (Local, Global, Feld mit dem Objekt); `int x[]` bleibt `undefined`.
-* `#intwidth 32` (SPEC 8.2.2; `-i`, `intWidth` in Projekt und Ziel, `#if int32`); Standard bleibt 64 Bit, auch auf dem ESP32. Mit `#floatwidth 32` und 32-Bit-Zeigern
-  ist ein Wert 8 statt 16 Byte (`FIRE_COMPACT`).
+* `#intwidth 32` (SPEC 8.2.2; `-i`, `intWidth` in Projekt und Ziel, `#if int32`); Standard bleibt 64 Bit, auch auf dem ESP32. Ein Wert hat überall 16 Byte (auch `int[64]`, ohne Zeiger-Kästen);
+  mit `#intwidth 32`/`#floatwidth 32` teilen sich zwei Felder `int`/`float`/`bool` einen Wert (schmale Felder, NATIVE_BACKEND.md).
 
 **Reihenfolge des Rests** (nach dem Abschluss von Abschnitt 9 auf `native-c`):
 
-1. **Kompaktes Format ohne Grenze bei den Objekten.** Heute: 16 Bit Slot, 12 Bit Generation (65535 lebende Objekte/Arrays/Puffer). Neu: ein Objekt, Array oder
+1. ~~**Kompaktes Format ohne Grenze bei den Objekten.**~~ **Umgesetzt** (Branch `targets`; NATIVE_BACKEND "Breite von `int`"). Vorher: 16 Bit Slot, 12 Bit Generation (65535 lebende Objekte/Arrays/Puffer). Neu: ein Objekt, Array oder
    Puffer trägt Slot (32 Bit, Nutzlast) und Generation (28 Bit, Kopf); der Zeiger steht in der Slot-Tabelle (Zeiger und Generation nebeneinander: eine Ladung).
    Zeiger in Arrays und Puffer (`ref a[i]`, `p + n`) zeigen auf einen **Kasten** `{Adresse, Slot, Generation, Zähler}` (16 Byte pro lebendem Zeiger, nicht pro
    Array oder Element), gezählt wie Strings, wiederverwendet über eine Freiliste. Mit `#performance` (keine Tabelle) tragen alle direkt ihren Zeiger. Bleibt: 65535 Einheiten.
    Später, wenn eine Messung es zeigt: einen Kasten mit Zähler 1 bei `p + 1` weiterschieben statt einen neuen zu holen.
-2. **Inline-C** - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
+1b. **Köpfe der Werte getrennt und schmal speichern** (Vorschlag des Benutzers, nach Punkt 1). Ein Wert besteht aus Kopf (Art, Einheit bzw. Enum, Generation)
+   und Nutzlast. Auf 64 Bit sind das heute 8 + 8 Byte, obwohl der Kopf mit 32 Bit (oder weniger) auskäme - die andere Hälfte ist Füllung für die Ausrichtung.
+   * **Idee:** wo Werte im Speicher hintereinander stehen (Elemente eines Arrays ohne Elementtyp, Felder eines Objekts, Globals, `List`/`Dictionary`), stehen
+     erst X Köpfe und dann X Nutzlasten, X so gewählt, dass die Gruppe auf die Ausrichtung aufgeht: 64 Bit mit 4-Byte-Köpfen in Zweiergruppen (8 + 16 Byte)
+     = 12 statt 16 Byte pro Wert (-25 %), mit 2-Byte-Köpfen in Vierergruppen (8 + 32) = 10 Byte; das kompakte 32-Bit-Format mit 2-Byte-Köpfen = 6 statt 8 Byte.
+     Die Breite des Kopfes richtet sich nach der Wortbreite (16-Bit-Ziele heute nach der Breite von `int`). Keine echte Kompression - nur die Füllung fällt weg.
+   * **Voraussetzung:** die Generation wandert aus dem Kopf in die Nutzlast (Punkt 1: Slot und Generation der Objekte; auf x86-64/ARM64 hätten auch die
+     oberen 16 Bit eines Zeigers Platz), dann bleiben im Kopf nur Art (4 Bit), ein paar Merker und Einheit/Enum (16 Bit).
+   * **Gilt nur im Speicher:** ein Wert in einer C-Variablen, als Argument oder Rückgabe bleibt das `Value`-Struct (Register); Lesen/Schreiben eines Elements
+     oder Feldes sind zwei Zugriffe, in der Gruppe meist in derselben Cache-Zeile.
+   * **Zu klären:** Zeiger auf Elemente und Felder (`ref a[i]`, `K_PtrElem`) zeigen dann auf zwei Stellen (der Kasten aus Punkt 1 hilft); Natives, die heute
+     `Value*` eines Arrays sehen (`arrItems`), brauchen Zugriffsfunktionen; der Debugger und JSON lesen über dieselben Funktionen; Messung vorher (ein `ui`-Programm,
+     ein Programm mit vielen Objekten) - typisierte Arrays und Puffer sind schon ohne Köpfe gepackt, der Gewinn liegt bei Objekten und gemischten Arrays.
+   * **Gemessen** (Branch `targets`, 218 native Testprogramme, 64 Bit, alle Allokationen gezählt): Heap 50,9 MB, davon Strings 25,7 MB, Felder der Objekte 4,6 MB,
+     Elemente gemischter Arrays 8,0 MB (zusammen 25 %), **Köpfe der Objekte 9,6 MB** (108.759 Objekte zu je 88 Byte: `Owned` 32, `cls`/`nfields` 8, die eingebettete
+     `OwnList` 40, `targs` 8). Die getrennten Köpfe sparten 6 % (12/16) bis 9 % (10/16) des Heaps, bei Programmen über 100 KB im Median 37 % Wertanteil, also 9-14 %.
+     Ein schmalerer Objektkopf (die `OwnList` eines Objekts braucht nur `head`/`tail`; `mark`, `depth`, `parent` gehören den Scopes, `holder` ist das Objekt selbst;
+     `targs` nur bei generischen Klassen) spart 32-40 Byte pro Objekt = 7-8 % des Heaps - bei viel kleinerem Umbau. Vorschlag: erst den Objektkopf, dann neu messen.
+   * **Umgesetzt: schmaler Objektkopf** (Branch `targets`, Entscheidung des Benutzers: erst der Kopf, dann neu messen). Die Besitzliste eines Objekts entsteht erst,
+     wenn es etwas besitzt (`objOwned`; `objOwns`/`objOwnedHead` lesen): der Kopf hat 56 statt 88 Byte. `moveReachable` legt die Liste erst an, wenn wirklich etwas
+     umzieht. **Neu gemessen:** nur 3,6 % der Objekte bekommen eine Liste; die Köpfe der Objekte kosten 3,87 statt 5,93 MB - **7,9 % weniger Heap**. Die getrennten
+     Köpfe brächten auf demselben Stand weitere 8,6 % (12/16) bis 12,9 % (10/16). **Entscheidung des Benutzers:** die getrennten Köpfe höchstens später.
+1c. **Rohdaten ohne Einheit: `byte` und `word`** (Entscheidung des Benutzers). `byte` und `word` sind Datentypen für rohe Daten **ohne Einheit**; Einheiten
+   bleiben bei `int`, `int[N]`, `float` und `float[N]` (dort ändert sich nichts). Ab hier unterscheiden sich die beiden Formate.
+   * **Umgesetzt:** Byte-Argumente der Natives sicher - lesende Natives nehmen einen Puffer oder ein Array aus Zahlen 0..255 (auch ein typisiertes; kopiert, bis der
+     aufrufende Scope endet), füllende verlangen einen Puffer, alles andere ist eine `ArgumentException` statt eines Absturzes (VM und nativ: `bufOf` prüfte die Art
+     nicht) - `bytesArg`/`bufferArg` in fire_rt.h (docs/packages/natives.md), alle Bridges umgestellt. `byte x[] = [...]` und `byte x[n]` (auch Felder, statische
+     Felder, Globals; mehrdimensional: die inneren) deklarieren einen **Puffer** (SPEC 8.4.2): ein zugewiesenes Array wird ein neuer Puffer (int auf 8 Bit
+     gekürzt, `undefined` 0); ein Pufferelement ist nie `undefined`, ein Nicht-int dort ist eine `ArgumentException` (vorher ein Laufzeitfehler).
+     Ein Objekt als Argument einer Native ist in der VM wie nativ eine `ArgumentException` (die Grenze der Paket-Bibliothek, PackageNativeBinding; der Text
+     nennt die Native statt der Funktion des Preludes) - meist scheitert der Prelude-Code vorher (`data.length`).
+     (Behoben: die Bibliothek eines Pakets für die VM wird jetzt auch neu gebaut, wenn sich nur die Runtime ändert - `PackageLibrary.NewestSource` zählt den Stand von fire.Native mit.)
+   * **Umgesetzt: `byte` ohne Einheit** - eine Einheit an einem `byte` (ein Wert mit Einheit, `byte b : m`, Feld, Parameter, Array) ist `TC017` des Typprüfers (auch lax ein
+     Fehler, docs/tools/errors.md); ein gespeicherter Wert verliert seine Einheit (auch `x!byte`), VM und nativ. In Packages, Beispielen und Vorlagen gab es keinen `byte` mit Einheit.
+   * **Umgesetzt: `word`** = das Maschinenwort des **Ziels**, vorzeichenlos, ohne Einheit (SPEC 8.10a): eine eigene Art von Wert (`ValueKind.Word`/`K_Word`, die Bits
+     oberhalb der Breite 0) - die int-Schnellwege bleiben unberührt, ein Wort nimmt immer den langsamen Weg der allgemeinen Operationen (Value.WordOp, fire_rt.h `wordOp`).
+     `TargetProfile.WordWidth` (64 auf windows/linux/macos, 32 auf esp32/freertos/wasm), `wordWidth` (16/32/64) eines Ziels in fire.native.json, `#if word16|word32|word64`,
+     `Word.Bits`, `FIRE_WORD_BITS`; die VM folgt dem Ziel des Baus (`Value.WordBits`, `forge run`: 64). Mit 64 Bit **echt vorzeichenlos** (Ausgabe, Vergleich, Division,
+     Modulo, `>>`, nach float). Regel: ein Wort auf einer Seite macht eine Wort-Operation (das int als Wort, Ergebnis abgeschnitten), ein float eine float-Operation; `x!word`,
+     `w!int` (dieselben Bits), `w!float`; `word w = i` wandelt, `int i = w` will `w!int` (TC001). Dezimal-Literale bis 2^64-1. `$"{w:X}"`, JSON, `is of word`,
+     Dictionary-Schlüssel, die C-ABI der VM (`FIRE_WORD`).
+   * **Umgesetzt: `word a[] = [...]`, `word a[n]`, `new word[n]`** sind Puffer aus Maschinenwörtern (`ByteBuffer.ElementSize`/`Buf.elem`, Byte-Reihenfolge der Maschine; die
+     Größe in Bytes hängt vom Ziel ab, dokumentiert): Index, `length` in Wörtern, `foreach`, `copy`, `++`, JSON als Zahlen-Array; `bytesArg`/`bufferArg` lehnen einen
+     Wortpuffer ab, `wordsArg` nimmt Wörter (ein Wortpuffer ohne Kopie, ein Array kopiert; C-ABI `FIRE_WORDS`). Ein Test-Paket prüft es in VM und nativ.
+   * **Umgesetzt (zum Teil): schmal und schnell** - der Generator kennt Wörter und Puffer, die er selbst gemacht hat (`KindWord`, `KindBuf`): Wort-Arithmetik und
+     -Vergleiche, die Speicherung in `byte`/`word`, Elemente und `length` bekannter Puffer und `& | # << >>` zweier ints stehen als C da. Prüfsummen-Schleife über einen
+     Bytepuffer in einer Methode (2 x 200 x 1.000.000, gcc -O2): 4,45 s -> 0,41 s.
+     Die Puffer-Methoden für Bytes (`ToString()`, `ToUnicode()`, `ToUnicodeChar()`) sehen bei einem Wortpuffer alle seine Bytes; `ToLittleEndian()`/`ToBigEndian()`
+     geben einen Bytepuffer, jedes Wort in dieser Reihenfolge (VM und nativ gleich).
+     Ein Wortpuffer der VM mit 16/32-Bit-Wörtern (ein Bau der VM für ein fremdes Ziel) geht an eine Paket-Bibliothek als Kopie in 64-Bit-Wörtern und kommt
+     auf seine Breite gekürzt zurück.
+     Überladung nach `word` (`f(int)`/`f(word)`/`f(float)`): ein Wort passt genau, ein int besser in `word` als in `float`, ein float nie (Typprüfer, VM, nativ).
+     **Offen:** echte `uint8_t`/`uintN_t`-C-Variablen für `byte`/`word`-Locals und -Parameter (die Locals bleiben 16-Byte-Werte); ein Puffer als Parameter oder aus einem
+     Feld ist dem Generator nicht bekannt (allgemeiner Zugriff);
+     16 Bit über ein Ziel mit
+     `wordWidth` 16 getestet (VM und nativ auf dem Rechner, kein echtes 16-Bit-Ziel); ein Wort an einen `int`-Parameter (auch der Methoden eines Preludes) will `w!int` (TC001, so gewollt).
+     (Umgesetzt: ein Wort an `extern`-Funktionen und `Library.Get` geht als seine Bits, VM und nativ.)
+   * PCM und andere vorzeichenbehaftete Daten bleiben bei `int[16]`-Arrays (gepackt, mit Einheit); kein weiterer Typ.
+2. ~~**Inline-C**~~ **Umgesetzt** (Branch `targets`; SPEC 8.1.1a, docs/language/18-native-code.md) - eine Funktion mit C-Rumpf, der unverändert an den Compiler geht (auch Assembler im Dialekt des Compilers, `#if watcom` / `#if gcc`):
 
    ```fire
    inline c int Add(int a, int b) { return a + b; }
@@ -445,21 +508,201 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
 
    Parameter und Ergebnis sind C-Typen (`int` -> `FireInt`, `float` -> `Real`, `byte[]` -> die Bytes, `any` -> `Value`); der Generator baut den Wrapper wie bei
    den Natives der Packages. In der VM ist ein Aufruf ein Fehler (oder eine Alternative mit `#if native`); der Editor hebt den Rumpf als C hervor.
-3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Large Model (`far`), `__huge` für die Daten von Arrays und Puffern (`FIRE_HUGE`: keine 64-KB-Grenze),
+2b. **Eigener Scheduler für Ziele ohne Threads** (Entscheidung des Benutzers, direkt nach Inline-C): fire-Threads auch dort, wo das System keine hat (DOS,
+   BIOS, UEFI, Win16, kleine Boards ohne RTOS). Eine Plattformschicht `std/fire_sched.h` setzt die Schnittstelle der Threads (Mutex, Bedingungsvariable,
+   Thread starten/warten, ein Zeiger je Thread) mit eigenen "grünen" Threads um; der Wechsel des Kontexts ist je Architektur eine kleine Datei (`ucontext` auf
+   POSIX zum Testen am Rechner, 16- und 32-Bit-x86 für Watcom). Gewechselt wird nur an den Safepoints der Runtime (der GIL gibt ohnehin alle 4096 ab) und
+   beim Warten (Mutex, Bedingung, `Sleep`, `join`); ein Timer-IRQ (DOS/BIOS: `INT 08h`/`1Ch`) setzt nur ein Flag, das den nächsten Safepoint früher abgeben lässt -
+   im IRQ selbst wird nie gewechselt (DOS und die C-Bibliothek sind nicht reentrant). Läuft niemand, schläft die Plattform (`hlt`). Ein Mutex übergibt beim
+   Freigeben an den ersten Wartenden (fair). Test: `posix` mit `FIRE_GREEN_THREADS` lässt die Thread-Fälle der Suite auf dem eigenen Scheduler laufen.
+   **Umgesetzt** (Branch `targets`): `std/fire_sched.h`, `sched/fire_ctx_ucontext.h` (Test am Rechner: alle 52 Thread-Fälle der Suite mit `FIRE_GREEN_THREADS`
+   wie die VM) und `sched/fire_ctx_x86_16.h` (dos16: `setjmp`/`longjmp` zwischen laufenden Aufgaben, ein paar Befehle Assembler für den Start auf einem neuen
+   Stack, `INT 1Ch` setzt das Flag; übersetzt mit `-zu` und ohne Stackprüfung, 16 KB Stack je Thread). Alle 40 Thread-Fälle ohne Imports laufen in DOSBox-X wie
+   die VM. Die Haken der Runtime: `FIRE_PLAT_YIELD` (ein Safepoint gibt an bereite Aufgaben ab) und `FIRE_PLAT_PREEMPTED`.
+   **Offen:** der Wechsel für 32-Bit-x86 (dos32, bios32, win32-legacy ohne Threads), Win16 (kooperativ über die Nachrichtenschleife), Boards ohne RTOS (ARM).
+3. **`dos16`** - DOS im Real Mode ab 8086: OpenWatcom `wcc`, Huge Model (keine 64-KB-Grenze für die Daten von Arrays und Puffern),
    keine fire-Threads, Grafik über BIOS/VGA/VESA, Package **`dos`** (`int86`, Ports `In`/`Out`, `Peek`/`Poke` auf `far`-Adressen, Interruptvektoren;
    paralleler und serieller Port als Geräte), optional Package **`xms`** (Blöcke anlegen, zwischen Block und Puffer kopieren).
-   Dazu **`#intwidth 16`** (native Breite des 8086/286) und **`word`** (vorzeichenlos in Maschinenbreite, `word[8|16|32]`; die VM bekommt die Wortbreite des Ziels).
-4. **`dos32`** - DOS mit DPMI ab 386: `wcc386` mit DOS/4GW oder HX, flacher Speicher, keine fire-Threads, VESA-Framebuffer, Package **`dpmi`** (Interrupts mit
-   Registersatz, Aufrufe in den Real Mode, physischen Speicher abbilden, DOS-Speicher unter 1 MB, Selektoren).
-5. **`win16`** - Win 3.x: `wcc`, Large Model, GDI, kooperative Nachrichtenschleife (`Sleep` gibt ab), keine fire-Threads.
-6. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
+   Dazu **`#intwidth 16`** (native Breite des 8086/286); `word` ist dort 16 Bit (Punkt 1c).
+   **Begonnen** (Branch `targets`): Zielprofil `dos16` (TargetProfile.Pc.cs: `int`/`float` 32 Bit, `word` 16, keine Threads), Toolchain `watcom` (`owcc`,
+   Treiber in `src/fire.Native/Toolchains/`), Plattformpaket `native/platform/dos16` (Uhr, Sleep, Ende, Umgebung über `std/fire_platform_dos.h` und
+   `std/fire_env_dos.h`; alle anderen Teile `none`), der Dialekt des Compilers (`native/runtime/cc/fire_cc_watcom.h`). Der Generator schreibt C89-taugliche
+   lokale Arrays (keine Compound-Literals, keine nicht-konstanten Initialisierer). Programme ohne Imports laufen in DOSBox-X wie in der VM (Test in der Suite;
+   SKIP ohne Open Watcom/DOSBox-X; von 139 Testprogrammen ohne Imports alle außer Threads und `#performance`; die Arrays über 64 KB laufen inzwischen auch). Eigenheiten von Open Watcom
+   im Dialekt (`fire_cc_watcom.h`): Rundung zur geraden Zahl (`nearbyint`, `printf("%.*f")`), NaN-Vergleiche der 8087-Emulation.
+   **Dateien** (`io`, `filesystem`; `std/fire_fs_dos.h`, Entscheidung des Benutzers): Pfade wie gewohnt `X:\FOLDER\FILE.EXT` (auch `/`), 8.3 erwartet, lange Namen
+   soweit das DOS darunter sie hat, Groß/Klein gleich; was DOS zurückgibt (volle Pfade, aktuelles Verzeichnis, Listen) ist groß. `FIRE_FS_DRIVES` schaltet die
+   Pfadregeln mit Laufwerken für Windows und DOS. Die VM rechnet weiter mit den Pfaden des Rechners. Test in DOSBox-X mit fester erwarteter Ausgabe.
+   (Nebenbei: `__declspec(aborts)` erzeugte bei Open Watcom falschen Code - eine ungefangene Ausnahme hing; der Dialekt setzt kein `FIRE_NORETURN` mehr.)
+   **Große Daten** (Arrays und Puffer über 64 KB): das Huge Model (`-mcmodel=h`, jeder Zeiger rechnet über Segmentgrenzen), Blöcke über 64 KB von `halloc`
+   (`dataAlloc`/`dataFree` der Runtime, `FIRE_CC_BIG_ALLOC`), Löschen und Kopieren in Stücken bis zum Segmentende (`FIRE_CC_ZERO`/`FIRE_CC_COPY` - `memset`/`memcpy`
+   der C-Bibliothek rechnen nur mit dem Offset), ebenso `fread`/`fwrite` der io-Brücke (`FIRE_CC_IO_STEP`); Größen in 32 Bit statt `size_t`. Gebunden wird
+   gegen die C-Bibliothek des Large Model: deren Code liegt in einem Segment `_TEXT` (höchstens 64 KB), die des Huge Model ist rund 30 % größer und passt
+   nicht mehr; Aufrufkonvention und Daten sind gleich, die Runtime gibt ihr keinen Block über ein Segmentende. Ein `int` im gepackten Array ist mit
+   `#intwidth 32` 4 Byte (nicht 8). `ReadAll` einer Datei liest den Rest auf einmal in einen Puffer seiner Größe. Test in DOSBox-X (100000 Bytes, `int[30000]`,
+   `any[9000]`, Kopien, eine Datei mit 100000 Bytes). Grenze: der freie DOS-Speicher (rund 400 KB neben dem Programm).
+   **Konsole und Tastatur:** neues Standardpaket **`console`** ([The text console](stdlib/console.md)) für alle Ziele: `Console.Write`/`WriteAt` in den 16 Farben des
+   Textmodus (`ConsoleColor`), `Clear`, Cursor, `Width`/`Height`, einzelne Tasten (`ReadKey`, `KeyAvailable`, `ConsoleKey`: Zeichen, Pfeile, Pos1/Ende, Bild,
+   Einfg/Entf, F1-F12, mit Shift/Strg/Alt). Ein neuer Teil der Plattformschicht (`fire_console.h`, Schnittstelle `std/fire_console_c.h`): DOS über das BIOS
+   (INT 10h/16h, Codepage 437), POSIX-Terminals (ANSI, termios), Windows (Konsolen-API; übersetzt mit den NT-Headern von Open Watcom, noch nicht ausgeführt),
+   sonst `none`. Ohne Konsole (umgeleitet, die VM) einfacher Text und die Zeichen der Standardeingabe - das Programm verhält sich gleich. Tests: VM und nativ
+   umgeleitet, ein Pseudo-Terminal (`script`), DOS in DOSBox-X (Bildschirm aus dem Videospeicher gelesen, Tasten über den Tastaturpuffer des BIOS).
+   **`machine`** (Hardware-Paket, siehe unten; [The hardware of the PC](stdlib/machine.md)): Ports 8/16/32 Bit, physischer Speicher, CPU-Stufe und CPUID,
+   CLI/STI, IRQ 0..15 (gezählt, verkettet oder selbst quittiert; fire-Code läuft nie im Interrupt - `Irq.Wait` in einem fire-Thread), CMOS-Uhr, Lautsprecher, PCI;
+   ein neuer Teil der Plattformschicht (`fire_machine.h`: `std/fire_machine_x86_16.h`, sonst `none` - dort eine `MachineException`). Test in DOSBox-X.
+   **Grafik** (Entscheidung des Benutzers: die `graphics`-Bibliothek läuft auch unter DOS): die Bibliothek rechnet mit eigenen Typen - `fire_gfx_int` (mindestens
+   32 Bit: auf dos16 `int32_t`, sonst `int`), `fire_gfx_size` (Pixel und Bytes; auf dos16 `uint32_t`, sonst `size_t`) und `fire_gfx_malloc/calloc/realloc/free/
+   copy/set/move` (`fire_gfx_mem.h`: auf dos16 die Blöcke der Runtime, sonst die C-Bibliothek - auf den anderen Zielen ändert sich nichts). Dazu die Stellen, die
+   im 16-Bit-`int` überliefen (Clip-Grenzen `0x7FFFFFFF`, `byte << 8` in den Bildformaten, Konstantenprodukte, `(unsigned)`-Grenzprüfungen). Blöcke ab 16 KB kommen
+   unter Watcom/Huge direkt von DOS (`FIRE_CC_BIG_FROM`: ein Puffer von 64000 Bytes kostete im Heap der C-Bibliothek 118 KB), der PNG-Kodierer nimmt dort
+   kleinere Tabellen (32 statt 256 KB). Das Plattformpaket setzt `FIRE_GFX_NO_GPU`. Vergleich mit gcc bei denselben Breiten (Prüfsummen der Pixel): Linien,
+   Kreise, Ellipsen, Polygone, Füllen, Text, Blits (auch gespiegelt/skaliert), `Resize`, Schatten/Unschärfe, PNG hin und zurück, Masken - gleich.
+   Grenze: ein Programm mit der Grafikbibliothek hat rund 450 KB Code (je ~115 KB Grafik-C und übersetztes Prelude), daneben bleiben ~150 KB Daten
+   (ein Palettenpuffer 320x200 und kleinere; ein RGBA-Puffer 320x200 nicht). Mehr Platz erst mit Overlays oder dos32.
+   **Anzeige** (`windows` auf dos16, `std/fire_display_dos.h`): ein Fenster ist der ganze Bildschirm - Mode 13h (320x200, 256 Farben) bis 320x200, VESA 101h
+   (640x480, 256 Farben, Bänke) darüber, wenn das BIOS ihn hat; der Framebuffer wird gestreckt. Ein Paletten-Framebuffer geht direkt in den Videospeicher und seine
+   Palette in die DAC-Register (`FIRE_DISPLAY_PRESENT_FB`: die Brücke reicht den Framebuffer, keine Kopie als RGBA - 320x200 wären 256 KB), ein RGBA-Framebuffer
+   über den 6x6x6-Farbwürfel und 40 Graustufen. Tasten vom BIOS (Set-1-Scancodes wie unter Windows: `fire_key_fromWin32`; gedrückt und losgelassen im selben
+   Takt), die Maus über INT 33h (ihr Zeiger ist beim Schreiben eines Bildes aus); am Ende der Textmodus. Kein Fenster-Thread (`FIRE_WINDOW_NO_THREADS`). Keycodes
+   und Modifikatoren der Display-Schicht sind `int32_t` (ein Keycode ohne Zeichen hat Bit 30). Tests in DOSBox-X (Videospeicher, DAC, VESA-Modus, Tasten).
+   **Offen:** Mode 12h (640x480, 16 Farben, Bitebenen) und die CGA/EGA-Modi, ein `PackedFramebuffer` (1/2/4 Bit), nur geänderte Bereiche schreiben, die UI.
+   **`dos`** und **`xms`** ([DOS and XMS](stdlib/dos.md)): Interrupts mit den Registern des 8086 (`Dos.Interrupt`, `DosRegisters`), DOS-Speicher, Vektoren,
+   die Adresse eines Puffers als Segment:Offset; Blöcke im Speicher über 1 MB über den XMS-Treiber (`XmsBlock`, Kopien beliebiger Länge, am Ende freigegeben).
+   Ein Teil der Plattformschicht `fire_dos.h` (`std/fire_dos_real.h`; dos32 später über DPMI). Test in DOSBox-X.
+   **Geräte:** `devices` auf dos16 - `COM1`..`COM4` (UART direkt, 115200 8N1, FIFO; Empfang über den IRQ in einen Ringpuffer, Vektor und Maske am Ende zurück)
+   und `LPT1`..`LPT3` (nur Ausgabe, BUSY/STROBE) als serielle Geräte (`std/fire_dev_dos.h`). Test in DOSBox-X (Dateien für COM1/LPT1, Empfang über den
+   Loopback des UART).
+   **`#intwidth 16`** (SPEC 8.2.2): jedes int und jede int-Konstante auf 16 Bit geschnitten - die VM (`Value.Ints16`), nativ beim Erzeugen (`FIRE_INT16`,
+   gespeichert in 32 Bit, demselben Feld wie ein `char`), Direktive, `-i 16`, Projekteinstellung, `#if int16`, Editor. Tests: VM == gcc, und in DOSBox-X.
+   **Offen:** weitere Grafikmodi (s.o.).
+3b. **Die Natives eines Packages gehören in das Package** (Entscheidung des Benutzers, nach der Grafik auf DOS): der C-Code der Natives - auch die
+   plattformabhängigen Teile, die heute in `native/platform/<platform>/` und `native/platform/std/` liegen (`fire_console_*`, `fire_machine_*`, `fire_dos_*`,
+   `fire_dev_*`, `fire_fs_*`, ...) - liegt im Package und wird mit dem Package aktualisiert (ein neues Package bringt seine Umsetzungen je Plattform mit, ohne
+   neue Runtime). Die Auswahl je Plattform über die Quellen des Packages (`ReadNativeSources` mit den Schlüsseln der Plattform und des Ziels); in der Runtime
+   bleibt nur, was sie selbst braucht (Uhr, Threads, Speicher, der Kern der Plattform).
+   **Stufe 1 umgesetzt:** `console`, `machine`, `dos`, `xms` bringen ihre Plattformteile selbst (`packages/<name>/native/fire_<name>_<plattform>.h`, gewählt über
+   `platformSources`); zwei neue Schlüssel: `default` (eine Plattform ohne eigenen Eintrag) und `vm` (die Bibliothek der VM bekommt nur diese Schicht - dort
+   "none"). Die gemeinsame Codepage-437-Tabelle bleibt als Hilfe der Plattformschicht (`std/fire_cp437.h`, auch für die DOS-Anzeige). Ein `#include "x.h"` mit
+   Kommentar dahinter gilt jetzt auch als Include einer Quelle des Packages (er blieb sonst stehen). Test: die Regeln von `SourcesFor` (Projekt-Tests).
+   **Stufe 2 (Entscheidung: Referenzen):** ein Teil, den mehrere Packages brauchen, gehört dem Package, dessen Kern er ist; ein anderes nimmt ihn über
+   `"native": { "uses": [ "io" ] }` mit (dessen `platformSources` für das Ziel kommen vor die eigenen; das benutzte Package muss installiert sein).
+   Umgesetzt: `fs` -> io (`packages/io/native/fire_fs_{c,posix,win32,dos,board,none}.h`; die Boards: `fire_fs_board.h` mit posix oder - `FIRE_NO_FS` - none),
+   graphics benutzt io; `audio` -> audio (circuits benutzt es nur auf posix, windows und in der VM: ein Eintrag von `uses` kann seine Plattformen nennen,
+   `{ "import": "audio", "platforms": [ ... ] }`), `net`, `tls` (benutzt net), `dev` -> devices, `gpio`, `i2c`, `spi`, `usb`, `wifi`.
+   **Stufe 3:** `display` -> windows; `native.headers`: die Dateien, die eine Quelle einbindet, ohne selbst Quelle des Builds zu sein, liegen in jedem Build als
+   Dateien neben dem Programm (`pkg/<import>/`, NativeRuntimeFiles schreibt sie wie die Runtime), das `#include` nennt sie dort (auch in `#if`; zuerst eingesetzt -
+   das machte das C eines minimalen ui-Programms 5,1 statt 2,8 MB groß, alle Anzeigen standen darin). Damit bleiben alle Teile so geschrieben wie vorher in `native/platform/std` - je Plattform eine Datei (die
+   Auswahl, z. B. `fire_audio_desktop.h`, `fire_display_select.h`, oder gleich die Umsetzung), die übrigen sind Header; die Umbauten von Stufe 2
+   (`FIRE_<TEIL>_USE_<X>`, Wächter in jeder Datei) sind zurückgenommen. `FIRE_PLATFORM_<TEIL>_C_HEADER` gibt es nicht mehr; in `native/platform` bleibt nur, was
+   die Runtime selbst braucht (`fire_platform.h`, Scheduler, Umgebung) und `fire_cp437.h` (Konsole und DOS-Anzeige).
+3c. **Package `x86`** (umgesetzt, Wunsch des Benutzers): ein dos16-Programm wechselt in den 32-Bit-Protected-Mode oder den 64-Bit-Long-Mode, führt dort eine
+   Routine (Maschinencode als `byte[]`, Register hin und zurück) aus und kommt zurück; Speicher über 1 MB (`ReadLinear`/`WriteLinear`/`Move`), A20, Erkennung
+   von V86 (EMM386/Windows: ohne VCPI/DPMI kein Wechsel) und 386/Long Mode (docs/stdlib/x86.md). Zwei kleine Stubs (NASM, als Bytes in `fire_x86_stubs.h`).
+   Getestet: Protected Mode aus fire in DOSBox-X; beide Stubs unter QEMU ohne DOS (Bootsektor). Offen: Long Mode aus fire unter DOS auf einem 64-Bit-Rechner
+   (QEMU mit FreeDOS - der Download ist in dieser Umgebung gesperrt), und **fire-Code im Protected Mode** - eine Funktion, für das 32-Bit-Ziel übersetzt
+   (kommt mit `dos32`/`bios16`/`bios32`: dieselbe Runtime mit flachem Speicher), als Routine mitgegeben.
+4. **`dos32`** - DOS mit DOS-Extender ab 386 (**umgesetzt**): Open Watcom 386, der Extender DOS/32A steckt im Programm (`-bdos32a`: eine .exe, kein
+   DOS4GW.EXE daneben), flacher Speicher, `int`/`float` 64 Bit wie auf dem Desktop (dieselben Ergebnisse wie die VM), fire-Threads über den eigenen Scheduler
+   (`std/sched/fire_ctx_x86_32.h`, Takt über IRQ 0). Die Packages mit Real-Mode-Code dienen dos16 und dos32 mit denselben Dateien über
+   `platform/std/fire_dos_bios.h` (BIOS über `int386` - der Extender reicht Interrupts nur mit Registern hinunter -, das erste Megabyte an seiner linearen
+   Adresse, DPMI 0300h für einen Interrupt mit Puffer, z. B. die VESA-Information): Konsole, Anzeige von windows (Mode 13h, VESA 101h), serielle Ports;
+   machine hat `fire_machine_x86_32.h` (CPUID, 32-Bit-Ports, physischer Speicher über 1 MB per DPMI 0800h, IRQs gemeinsam mit dos16), dos hat
+   `fire_dos_dpmi.h` (Interrupts im Real Mode über DPMI; ein Puffer des Programms liegt über 1 MB: DosException). xms und x86 gibt es dort nicht (der Speicher
+   gehört dem Programm, es ist schon im Protected Mode). Getestet in DOSBox-X mit denselben Programmen wie dos16.
+   Offen: ein Package **`dpmi`** (Interrupts mit Registersatz, Real-Mode-Aufrufe, Selektoren, DOS-Speicher als Puffer des Programms).
+5. **`bios16` und `bios32`** - ohne Betriebssystem, vom BIOS gestartet (Entscheidung des Benutzers: `bios16`/`bios32` geteilt; zuerst die BIOS-Ziele, danach die Grafik):
+   * **`bios16`**: Real Mode ab 8086, die Breiten und das Huge Model von dos16 (Open Watcom `wcc`); BIOS-Dienste direkt (`int 10h`, `13h`, `16h`, `1Ah`).
+   * **`bios32`**: 32-Bit-Protected-Mode mit flachem Speicher ab 386 (Open Watcom `wcc386`), die Breiten von dos32; das Boot-Image schaltet selbst in den
+     Protected Mode, BIOS-Dienste über einen kurzen Rücksprung in den Real Mode.
+   * Start über ein eigenes Boot-Image (Bootsektor lädt das Programm von Diskette/Platte, in QEMU als `-drive`/`-fda`); Ende in QEMU über den Debug-Port.
+   * **Zwei Stufen, wählbar** (Entscheidung des Benutzers): **minimale libc** (Grundlage; eigener Startcode, Heap aus der Speicherkarte - `int 12h`/E820 -,
+     Strings, `snprintf` mit Gleitkomma, Mathe, `setjmp`; Ausgabe auf Bildschirm und seriellen Port, Tastatur, Zeit über das BIOS; keine Dateien) oder darauf
+     aufbauend ein **Mini-DOS** (ein `int 21h`-Dienst über dieser libc: Speicher, Ausgabe, Tastatur, Zeit, Vektoren, Ende, Dateien nur lesend aus dem Boot-Image),
+     mit dem die Packages laufen, die DOS aufrufen (`dos`, `xms`, ...). Auswahl über das Ziel bzw. eine Option des Ziels.
+   * Kein Audio, kein Netz; fire-Threads über den eigenen Scheduler (Takt über IRQ 0) wie dos16/dos32. Nur Grafik, grober IO (Bildschirm/Konsole, Tastatur,
+     serieller Port) und die Hardware-Packages.
+   * Tests in QEMU (`qemu-system-i386`) ohne Fenster: Ausgabe über den seriellen Port, Ende über den Debug-Port.
+   * **Stand `bios16`** (umgesetzt, beide Stufen): das Boot-Image `<programm>.img` ist eine FAT12-Diskette von 1,44 MB (`Fat12Image`): der Bootsektor mit BPB lädt
+     `FIRE.EXE` (die erste Datei, am Stück), dazu kommen die Dateien und Ordner des Ordners `disk` neben dem Programm (8.3-Namen); `fsck.fat` und mtools lesen sie.
+     Eigener Start (`fire_bios16_start.asm`), Heap bis zur Grenze aus `int 12h`, ein `int 21h` der Plattform für die C-Bibliothek von Watcom (Konsole auf
+     Bildschirm und COM1, Tastatur, Zeit), fire-Threads über den eigenen Scheduler (Takt über `INT 1Ch`).
+     **`bios16`** = die minimale libc; **`bios16-dos`** = dazu das Mini-DOS (`fire_bios16_dos.h`): Dateien nur lesend von der Diskette (öffnen, lesen, suchen,
+     Muster, Ordner, aktueller Ordner, Zeit und Attribute; Schreiben wird mit „Zugriff verweigert“ abgelehnt) und der Speicher von DOS (48h/49h/4Ah) - damit
+     laufen `io`, `filesystem` und `dos` wie auf dos16. Getestet in QEMU (`FIRE_TESTS_ONLY=bios16`).
+     Gebunden mit `option nofarcalls`: QEMU 8.2 rechnet einen Near-Call, der unter IP 0 umläuft, nicht in 16 Bit (die Umwandlung der Far-Calls durch wlink
+     erzeugt solche). Offen: `xms` (das Mini-DOS hat keinen XMS-Treiber), `bios32`, die Grafik.
+6. **`efi-x64`** - eine UEFI-Anwendung (PE32+; clang + lld-link oder mingw-w64 x86_64 ohne CRT), bleibt in den Boot Services: Konsole über ConIn/ConOut, Grafik über
+   den GOP-Framebuffer, Zeit und `Sleep` über Timer-Ereignisse, Speicher über `AllocatePool`. Keine fire-Threads; Audio, Dateien und Netz wie bei `bios16`/`bios32` nicht.
+   EFI mit 32 Bit nicht (solche Rechner haben praktisch immer ein CSM: dort laufen `bios16`/`bios32`).
+
+   Gemeinsam für `bios16`, `bios32` und `efi-x64`: eine kleine freistehende C-Bibliothek für die Runtime (Heap aus der Speicherkarte - E820 bzw. die der Firmware -,
+   `snprintf`, Strings, Mathe, `setjmp`).
+7. **`win16`** - Windows 3.x (**umgesetzt**, Grundstock): Open Watcom `wcc -bwindows`, das Huge Model wie dos16 (Arrays über 64 KB), die Breiten von dos16,
+   fire-Threads als Aufgaben des eigenen Schedulers (`std/sched/fire_ctx_win16.h`: ein Stack-Segment je Aufgabe über `GlobalAlloc` mit dem Stack-Kopf von
+   Windows, `-zu`, Fensterprozeduren mit `__loadds`, Zeitscheiben über `GetTickCount`; sie laufen, solange das Programm an der Reihe ist). `std/fire_platform_win16.h`: das Programm beginnt in `WinMain` (Argumente aus der Befehlszeile, dann der erzeugte Einstieg
+   `fire_win16_main`), Uhr über `GetTickCount`, Schlafen hält die Nachrichten am Laufen (kooperatives Multitasking), die Ausgabe geht in die Datei aus
+   `FIRE_STDOUT` oder wird am Ende in einem Fenster gezeigt. Das Paket `windows` hat `fire_display_win16.h`: ein eigenes Fenster über GDI (`StretchDIBits` in
+   Bändern unter 64 KB, Palette als 8-Bit-DIB, RGBA als 24-Bit), Tasten aus `WM_KEYDOWN` (Scancode wie unter Win32), Text aus `WM_CHAR`, Maus, Größe, Schließen.
+   Getestet unter Wine (sein 32-Bit-Teil führt 16-Bit-Programme aus) in Xvfb: dieselbe Ausgabe wie die VM, große Arrays, ein Fenster (Pixel mit `GetPixel`
+   zurückgelesen, Tasten). Offen: die Zwischenablage von Windows, Ausgabe live in einem Fenster statt am Ende, Dateidialoge.
+   **scene3d auf 16 Bit** (win16, dos16): die Engine zählt ihre Puffer mit `s3d_size` (32 Bit unter Watcom/16 Bit, sonst `size_t`) und holt sie über die Blöcke
+   der Runtime (`S3D_MALLOC`/`S3D_FREE`/`S3D_COPY`/`S3D_ZERO` -> `dataAlloc`/`dataFree`/`dataCopy`/`dataZero`; außerhalb von fire die C-Bibliothek); `realloc`
+   gibt es dafür nicht mehr (`s3d_grow` holt einen neuen Block und kopiert). Ein Tiefenpuffer, eine Schattenkarte oder eine Textur darf damit über 64 KB groß
+   sein. Auf win16 läuft das Beispiel `Scene3D` (640x480); getestet mit 160x120 unter Wine (dieselben Zahlen wie die VM; einzelne Farben weichen um 1 ab - der
+   x87 rundet anders als SSE). Auf dos16 reicht der konventionelle Speicher neben dem Programm (~500 KB mit scene3d) nur für kleine Bilder (getestet 64x48;
+   Framebuffer, Tiefenpuffer und die Pixel der Kamera nehmen je 4 Byte pro Pixel). dos16 übersetzt dafür wie win16 mit `-zt=16` (DGROUP war mit scene3d zu
+   voll). Dabei gefunden: `dataFree(NULL)` gab unter Watcom/Huge `hfree(0)` an DOS weiter (ein freier Platz der Tabelle großer Blöcke ist auch NULL).
+8. **`win32-legacy`** - Win9x, NT 3.51 bis XP (OpenWatcom `wcc386`): Synchronisation ohne Vista-APIs (Critical Section und Events statt `SRWLOCK`/
    `CONDITION_VARIABLE`), `GetTickCount` statt `GetTickCount64`, ANSI/Unicode-Schicht für 9x, `inet_addr` statt `inet_pton` (NT 3.51: Winsock 1.1), TLS über
    mbedTLS statt Schannel, kein USB, GDI aus dem laufenden Umbau.
-7. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
+9. **Ebene 2 im Generator**: typisierte Locals und Parameter als C-Typen (`int8_t`, ...) - in `#strict` überall, sonst wo der Generator den Typ beweist; Felder
    gepackt pro Klasse später.
+   **Begonnen:** Stufe 1 (typisierte Arrays im Generator, `KindArr`, auch Felder), Stufe 2a (Merkmal „schmal“, skalare Plätze und Variablen für Ints der
+   Programmbreite, floats, Zahlen mit Einheit, bools aus Vergleichen und `word`; docs/spec/NATIVE_BACKEND.md "Skalare"), Stufe 2b (Parameter und Rückgaben
+   als C-Typen: über `defined int`/`float`/`word`/`bool` und `trust` - SPEC 8.10b, der Typprüfer warnt mit TC022 -, ein C-Rumpf je Methode und die
+   Value-Funktion davor; NATIVE_BACKEND.md "Parameter und Rückgaben als C-Typen"). Felder als C-Typen (`defined`-Felder direkt als Zahl gelesen und geschrieben, NATIVE_BACKEND.md). Gepackte Objekte (`defined`-Felder als
+   C-Zahlen hinter den Slots). Der Objektkopf ist kleiner (Besitzliste und Typargumente in einem Block, der erst bei Bedarf entsteht). Gepackte Objekte auch mit JSON,
+   Reflection, Threads und im Debugger (über die Plätze der Felder, `FirePlace`). Auch über Module und Plugins hinweg (in Modulen entscheidet die Deklaration), mit Adressen
+   (`K_PtrField`: ein Zeiger auf ein `defined`-Feld, Schreiben wird wie eine Zuweisung geprüft - auch in der VM).
+   **Messung (Frage des Benutzers: woher die 350 KB eines Grafikprogramms auf dos16 kommen).** Grafik-C ~85 KB (~23 Byte je Zeile, normal), Runtime 75 KB,
+   C-Bibliothek 46 KB - und **109 KB aus fire übersetzter Code** für 725 Zeilen (Prelude der Grafik + Programm), ~150 Byte je Zeile: `DrawRoundRect` (4 Zeilen,
+   reicht an ein Native weiter) wird 298 Zeilen C und 4,7 KB. gcc `-m32 -Os` erzeugt aus demselben C ebenso viel (108 KB) - es ist der allgemeine Code, nicht
+   der 16-Bit-Modus. Wo er steckt (Versuch: jeweils eine Gruppe weggelassen, im DOS-Build): Tests auf eine laufende Ausnahme nach jedem Schritt ~11 KB,
+   Gültigkeitslisten (`leave`/`adopt`/`transferTree`) ~8 KB, Prüfungen der Parameter ~8 KB, `retain`/`release` ~4 KB; der Rest (~70 KB) sind die 8-Byte-`Value`s
+   selbst (Kopien, Aufrufe mit Values, Feldzugriffe) - das nimmt erst diese Ebene 2. Schon umgesetzt: kein `retain`/`release` für Parameter, die nach ihrer
+   Prüfung `int`/`float`/`bool` sind (DOS 109 -> 103 KB, gcc 108 -> 79 KB), der Zustand des Threads im Datensegment unter Watcom/Huge (`FIRE_CC_NEAR_DATA`).
+   Methoden mit erklärtem skalaren Rückgabetyp ohne `adopt`: mit `defined` (die VM erzwingt ihn, der Generator gibt die C-Zahl zurück).
 
-Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht pro Familie; Tests mit DOSBox-X / dosemu2 ohne Fenster (`dos16`, `dos32`, Win 3.11),
+Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
+Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),
 9x und NT über QEMU-Images.
+
+**Grafik auf alter Hardware** (Render-Targets der `graphics`-Bibliothek, für `dos16`, `dos32` und `bios16`/`bios32`; `efi-x64` hat nur GOP):
+
+* **MDA** (Text 80x25, monochrom mit Attributen): ein Render-Target für Zeichenzellen; Grafik auf der Monochromkarte über **Hercules** (720x348, 1 Bit).
+* **CGA** (Text 40/80x25 in 16 Farben, 320x200 mit 4 Farben aus den beiden Paletten, 640x200 mit 2), **EGA** (320x200 und 640x200/350 mit 16 aus 64 Farben, Bitebenen),
+  **VGA** (Mode 13h: 320x200 mit 256, Mode 12h: 640x480 mit 16, Bitebenen) und **VESA** (Framebuffer mit 8/15/16/24/32 Bit).
+* Das Render-Target wandelt beim Present in das Layout der Hardware (die verschränkten Bänke der CGA, die Bitebenen der EGA/VGA über Plane-Masken, die Palette in die
+  Register der Karte) - nur die geänderten Bereiche.
+* Ein eigener **`PackedFramebuffer`** für 1, 2 und 4 Bit pro Pixel (Palette mit 2, 4 und 16 Einträgen) - der `Framebuffer` (RGBA, 8-Bit-Palette) bleibt
+  unverändert:
+  * gruppiert 8, 4 oder 2 Pixel in ein Byte, das linke Pixel in den oberen Bits (wie CGA, die Ebenen der EGA und Hercules: das Present ist eine Kopie);
+  * Spans, Füllen und Blits arbeiten in ganzen Maschinenwörtern (16 bzw. 32 Bit: das Doppelte bzw. Vierfache an Pixeln pro Schritt, die Farbe als wiederholtes
+    Muster, Masken nur an den Rändern); Blits mit Versatz tauschen die Bytes (x86 ist Little Endian) oder gehen in Bytes;
+  * Zeilen auf die Wortbreite des Ziels gerundet;
+  * bei 4 Bit wahlweise *chunky* (2 Pixel pro Byte) oder *planar* (4 Ebenen mit je 1 Bit: das Layout der EGA/VGA-16, jede Ebene bleibt unter 64 KB);
+    *planar* ist der Standard auf `dos16` und `bios16`/`bios32` (auch im Bootblock, solange der Code dort noch im Real Mode läuft), sonst *chunky*;
+  * dieselbe Zeichen-API wie der `Framebuffer` über eine gemeinsame Schnittstelle; ein Blit zwischen beiden bildet die Farben über die Palette ab.
+  Wer auf eine CGA/EGA zeichnet, kann ebenso einen 8-Bit-`Framebuffer` nehmen - das Render-Target bildet dann auf die Farben der Karte ab.
+
+**Hardware-Packages** (für `dos16`, `dos32`, `bios16`/`bios32`, teils `efi-x64`):
+
+* **`machine`** - die Hardware des PCs, auf jedem dieser Ziele gleich: Ports (`In`/`Out` mit 8/16/32 Bit), physischer Speicher (`Peek`/`Poke`, Bereiche abbilden),
+  PCI-Konfiguration, CPUID, PIT, CMOS/RTC, Interrupts (Handler eintragen, PIC/EOI, sperren/freigeben). Darunter je Ziel: DOS über die Vektoren von `int 21h`,
+  DPMI über die DPMI-Funktionen, `bios16`/`bios32` über eine eigene IDT; EFI ohne Interrupts (Abfragen, Timer-Ereignisse) und PCI über die Protokolle der Firmware.
+  Paralleler und serieller Port als Geräte des Gerätemanagers (`devices`).
+* Darauf die Dienste der Umgebung: **`dos`** (`int 21h`, `int86`, Speicher und Vektoren von DOS), **`dpmi`** (siehe 4), **`bios`** (`int 10h`/`13h`/`16h`/`1Ah` über den
+  Rücksprung in den Real Mode), **`efi`** (Protokolle der Firmware: GOP, Konsole, Variablen, Zeit), **`xms`** (siehe 3).
 
 **Dazwischen, klein:**
 
@@ -482,3 +725,290 @@ Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht 
 * **Ziele:** ESP32-C3/C6 als Varianten von `esp32`; ein generisches Ziel Cortex-M/RISC-V mit FreeRTOS (Vorgaben für STM32F4/H7, RP2040, SAMD51, PIC32);
   AVR und PIC24 später mit einem eigenen kleinen Profil (Konstanten im Flash).
 * **Strikte Arrays für Strings und Klassen** (`string a[]`, `Dog a[]`): die Art beim Schreiben prüfen (ohne zu packen).
+
+## 14. UI-Markup: fehlende Eigenschaften
+
+Oberflächen werden in erster Linie mit `.fxml` gebaut ([UI markup (.fxml)](ui/markup.md)). Einige Eigenschaften, die jedes `UI.Element` hat, kennt das Schema des
+Markups (`src/fire.UI.Markup/MarkupSchema.cs`, `Common`) noch nicht - sie gehen heute nur im Code-Behind:
+
+* **`ToolTip`** (Text; `Element.ToolTip`).
+* **`Cursor`** (`UI.Cursor`: `Arrow`, `IBeam`, `Hand`, `SizeWE`, ...; `Element.Cursor`) - als Enum-Eigenschaft wie `HorizontalAlign`.
+* **Drag & Drop:** `AllowDrop` (bool) und die Ereignisse `OnDragStart(x, y)`, `OnDragOver(data, x, y)`, `OnDrop(data, x, y)`, `OnDragLeave()`,
+  `OnDragDone(data, effect)` als Handler (mit Rückgabewert: `UI.DragData` bzw. `UI.DropEffect` - die Handler-Methoden des generierten Codes
+  geben heute nichts zurück, das braucht eine Erweiterung von `EventDef`).
+
+Dazu jeweils: Properties-Fenster und Completion in spark, die Entwurfsansicht (ToolTip/Cursor zeigen dort nichts), Tests im Generator.
+
+Ebenfalls hier, weil es vor allem Markup-Fenster trifft: **der oberste Container füllt das Fenster nicht.** `Root.content` ist ein `Panel` mit
+Canvas-Anordnung - ein Kind bekommt nur seine Wunschgröße, `HorizontalAlign`/`VerticalAlign = Stretch` wirken dort nicht. Ein `<DockPanel>` oder
+`<Grid>` direkt im `<Window>` braucht deshalb `Width`/`Height` (gleich der Fenstergröße) und wächst beim Vergrößern des Fensters nicht mit; nur der
+`DockManager` von `ui.docking` rechnet selbst mit `root.width`/`root.height`. Vorschlag: `Root.content` ordnet Kinder ohne feste Größe (und ohne
+`Left`/`Top`) wie ein Grid mit einer Zelle an - gestreckt auf die Fenstergröße, mit `Margin` und Ausrichtung; Kinder mit Position bleiben wie heute.
+
+## 15. Arrays statt Byte-Puffer an Natives
+
+Gefunden beim Durchgehen der Doku (Branch `doc-2611-1`): ein Array an einem `byte[]`-Parameter eines Packages bringt die VM zum **Absturz**
+(Segmentation fault) statt zu einer Exception:
+
+```fire
+#import "filesystem"
+IO.File.WriteAllBytes("x.bin", [1, 2, 3])        // Segfault
+byte data[] = [0x9F]                              // ein typisiertes byte-Array - auch kein Puffer
+Spi.Sim.Reply(data)                               // Segfault (ebenso I2C bus.Write(0x10, [1, 2]))
+```
+
+`Net.UdpSocket.SendTo([1, 2, 3], ...)` meldet "Bad address". Ursache: Parameter typisieren nicht, was sie bekommen (SPEC 8.4.2), und die Natives
+lesen ein Argument mit `bufOf(value)` als Byte-Puffer, ohne die Art zu prüfen (`fire_bridge_spi.h` `fire_spib_checkRange`, i2c, io, ...).
+
+* Sofort: jede Stelle, die `bufOf` auf ein Argument anwendet, prüft die Art (`K_Buffer`) und meldet sonst eine `ArgumentException`
+  ("expects a byte buffer (new byte[n]), not an array") - am besten einmal in der Package-ABI für Parameter, die als Puffer deklariert sind.
+* Danach: Arrays aus Zahlen und typisierte `byte`-Arrays an einem `byte[]`-Parameter in einen Puffer wandeln (eine Kopie; Ergebnisse, die
+  zurückgeschrieben werden - `Read(buffer, ...)` - brauchen dann einen echten Puffer), oder `byte a[] = [...]` legt gleich einen Puffer an. Für
+  Nutzer sind beide heute nicht zu unterscheiden.
+* Test: jedes Package mit `byte[]`-Parametern bekommt einen Fall mit einem Array (VM und nativ).
+
+## 16. Scene3D für Spiele
+
+Wunsch des Benutzers: mit `scene3d` sollen Spiele möglich werden, bis hinunter auf DOS (Spiele wie Tomb Raider liefen dort). Arbeitsbranch `scene-revamp`,
+Basis ist immer `targets` (wird parallel weiterentwickelt; Größen können sich nach Merges ändern). Für alle Punkte gilt: die Größe bleibt unter Kontrolle,
+Teile dürfen in Unterpakete (`scene3d.terrain`, `scene3d.models`, `scene3d.effects`, `scene3d.physics`; ein Punkt im Namen geht, siehe `ui.docking`).
+
+**Stand (Analyse):** die Engine ist ein Desktop-Renderer in `float` - pro Pixel 10 interpolierte Werte, Division, Normalisieren, Blinn-Phong mit `sqrtf`/`powf`;
+Kamera-Pixel (RGBA), Tiefenpuffer (`float`) und Framebuffer nehmen je 4 Byte pro Pixel (12 Byte; 640x480 = 3,7 MB); Schatten sind standardmäßig an
+(1024² `float` = 4 MB je Richtungslicht, 24 MB je Punktlicht); alle Dreiecke eines Bildes werden vor dem Zeichnen gepuffert (`S3dTri` ~200 Byte,
+`S3dClipVertex` 48 Byte je Vertex und Objekt); Meshes 32 Byte je Vertex (`float` Position/UV/Normale, `uint32` Indizes). Auf dos16 bleiben neben dem
+Programm (~500 KB mit scene3d) nur Bilder um 64x48. Es fehlen: Frustum-Culling pro Objekt und eine Raumstruktur, Nebel/Sichtweite, Hierarchie
+(`Parent`), Raycast/Picking, Skybox, LOD, Mipmaps; `Object.Parameters()`/`LightParameters()` legen pro Bild und Objekt ein neues `float[]` an.
+
+**Messung dos16** (Open Watcom 2.0 beta portabel, die 64x48-Szene des Tests, `-Os`, Map von wlink): ~372 KB Code, ~42 KB Daten (Ladegröße 421 KB). Davon
+übersetzte fire-Methoden 159 KB - **das Prelude von scene3d allein 122 KB** (`Object.Parameters` 21 KB, `Camera.Render` 18 KB, `Scene.LightParameters` 9 KB,
+`Object.Init`/Konstruktoren je 5-8 KB), graphics-Prelude 22 KB; Runtime ~91 KB (Einheiten allein ~10 KB); die C-Engine 54 KB (`s3d_rasterTri` 5 KB,
+Schatten ~9 KB); graphics-C 11 KB. Der Speicher ging auf dos16 aus (Wunsch des Benutzers: Schatten auch unter DOS, gern grob aufgelöst; XMS/EMS für dos16 später,
+nach Arbeiten auf `targets`).
+
+1. **Größe** (zuerst):
+   * **Die Szene lebt in C** (der größte Gewinn): Objekte, Lichter, Kamera und Szene sind Handles auf C-Strukturen, Eigenschaften lesen und schreiben sie
+     direkt; `Render` ist ein Aufruf, der in C über die Objekte läuft - keine `float[]` pro Objekt und Bild, kein `Parameters()`, kein `LightParameters()`.
+     Die API bleibt gleich; was ein Programm nicht benutzt, fällt beim Weglassen (§11) heraus.
+     **Umgesetzt:** Einträge mit Referenzzählern in `fire_bridge_scene3d.h` (Objekt, Licht, Kamera, Szene, Material; Meshes und Texturen gezählt wie sie;
+     `__S3DGetF/SetF/SetF3/GetI/GetB/SetI` für die Eigenschaften, `__S3DRender` zeichnet), die Klassen halten nur ihr Handle. Die Bilder sind dieselben (alle
+     Prüfsummen von Scene3DTests unverändert, VM == nativ). dos16 (64x48-Szene): Ladegröße 421 KB -> 345 KB (-76 KB), das Prelude von scene3d 122 KB -> 50 KB.
+     Unterschied: ein zerstörtes Objekt in einer Szene wird übersprungen; `scene.Objects`/`Lights` sind nur noch zum Lesen.
+     **Gefunden** (auf `targets`, nicht scene3d): seit 8ab2aa2 ("Native values: 16 bytes everywhere") stürzen dos16-Programme mit Open Watcom 2.0 beta (portabel,
+     Stand 2026-04-23) in DOSBox-X 2024.03 je nach Code mit "Invalid Opcode" (INT 6) ab (`#import "dos"` + `print("free " + Dos.LargestFree() * 16)`; Scene + Object)
+     - mit 02e959e laufen dieselben Programme. Außerdem erzeugt der Generator für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit
+     ablehnt (E1078) - das dos16-Programm des Tests baut so nicht.
+   * Die Kamera zeichnet direkt in die Pixel des Framebuffers (heute ein eigenes `byte[w*h*4]` und eine Kopie: 4 Byte pro Pixel weniger).
+   * Ein zweiter, schlanker Rasterizer (`Scene.Quality`, eigene Quelle, nur gelinkt, wenn benutzt): 8 Bit mit Palette und Schattierungstabellen direkt in
+     einen Paletten-Framebuffer, Tiefe als `uint16`, Licht pro Vertex (Gouraud), Festkomma-Spans mit perspektivischer Korrektur alle 8-16 Pixel. Der
+     heutige Renderer bleibt für den Desktop (bytegleiche Tests).
+   * **Umgesetzt** (`native/s3d_lean.h`, `RenderMode.Fast`): Licht pro Ecke, Bänder mit `uint16`-Tiefe (24 KB je Band auf 16 Bit), Texturen nearest mit
+     perspektivischer Korrektur alle 16 Pixel, Paletten-Framebuffer in ihrer Palette (32 Stufen je Farbe, Tabelle der nächsten Farbe 16x16x16, Texel einmal je
+     Palette als Indizes), Transparenz als Dither, Schatten des ersten Richtungslichts (Schattenkarte mit 16-Bit-Tiefen, auf 16 Bit höchstens 128x128 = 32 KB, harte
+     Kante); im nativen Build gehen die Bänder direkt in den Framebuffer (keine Kamera-Pixel), in der VM über einen Puffer. VM == nativ, die Bandgröße ändert die
+     Pixel nicht. Auf dos16/bios16 ist er der einzige Renderer (`FIRE_S3D_LEAN_ONLY` im Plattformpaket: der volle Renderer wird nicht gebaut). Noch in Festkomma
+     nur pro Pixel (die Schritte zwischen den Ecken, Zeilen und 16-Pixel-Stücken sind float).
+     **Offen:** 640x480 auf dos16 - der Paletten-Framebuffer selbst hat 300 KB und passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher; dafür
+     der Framebuffer in XMS/EMS (nach den Arbeiten auf `targets`) oder eine Kamera, die direkt in den Videospeicher zeichnet (VESA mit Bänken).
+   * In Bändern zeichnen: die Dreiecke einmal nach Bändern sortiert, Tiefenpuffer nur für ein Band (640x32 x 2 Byte = 40 KB), das fertige Band geht gleich
+     in den Videospeicher (VESA mit Bänken) - so passt 640x480 auch neben ein dos16-Programm.
+   * Weniger Code: Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn benutzt (Stripping / Defines).
+   * Schatten auch unter DOS: Schattenkarten mit `uint16`-Tiefe und kleiner Auflösung (z. B. 128² = 32 KB je Richtungslicht), im schlanken Rasterizer
+     pro Vertex oder pro Span abgefragt.
+   * Kompakte Meshes: Positionen `int16` relativ zur Bounding-Box, Normale als Byte (Index in eine eigene Tabelle), Indizes `uint16`, UV `int16` (8-10 statt
+     32 Byte je Vertex); Texturen mit Palette (8 Bit) und Mipmaps.
+   * XMS (dos16): Ablage für Meshes und Texturen, pro Objekt eingeblendet. dos32 braucht es nicht (flacher Speicher).
+   * Culling pro Objekt, Nebel, Hierarchie; die fire-Seite ohne neue Arrays pro Bild.
+2. **Heightmaps** (`scene3d.terrain`): `Terrain` aus `byte[]`/`word[]`-Höhen, Zellgröße, Höhenfaktor; in Stücke (32x32) für das Culling. Zwei Modi:
+   **smooth** (gemeinsame Vertices, interpolierte Normalen) und **hard** (jede Zelle ein flacher Deckel, senkrechte Wände nur, wo die Nachbarn sich
+   unterscheiden, nur die sichtbare Seite). `HeightAt(x, z)` für Physik und Figuren.
+   **Umgesetzt** (Unterpaket `scene3d.terrain`, [Terrains](graphics/terrain.md)): `Terrain : Object` aus Bytes (Höhen oder RGBA-Helligkeit), Zahlen-Arrays oder
+   einem Bild (`FromImage`); Smooth (gemeinsame Ecken, Diagonale von (i+1, j) nach (i, j+1)) und Hard (Deckel gleicher Höhe gierig zu Rechtecken verschmolzen,
+   Wände nur zur niedrigeren Seite, in einer Reihe mit gleichen Höhen ein Quad, der Rand bis 0). Das Mesh macht das C von scene3d (`__S3DTerrain`), das Unterpaket
+   ist nur fire. `HeightAt` folgt Position, Skalierung und Drehung um die Hochachse; Texturkoordinaten in Metern. VM == nativ (Scene3DTests), dos16 baut.
+   **Offen:** Stücke (Culling, wenn es Culling gibt), LOD, Farben nach Höhe; Speicher der Meshes (32 Byte je Ecke) - kommt mit den kompakten Meshes.
+   (Zwischendurch gab ein nativer Build Enum-Werte als Zahl aus - cb6398d/de76901 auf `targets`; mit 2f8b4cc behoben.)
+3. **Modelle:** eigenes kompaktes Laufzeitformat (`.f3d`, quantisiert wie oben); Quellen in offenen Formaten (glTF 2.0, OBJ) und im Format des Editors,
+   zur Bauzeit von forge umgewandelt (oder in spark exportiert).
+   1. **Editor** in spark mit zwei Modi: **Blöcke** (Palette wählen, Modell aus Blöcken; beim Export nur die sichtbaren Flächen, gleiche Nachbarflächen
+      verschmolzen) zuerst, danach **CAD** (2D-Ansichten und 3D, Vertex/Kante/Fläche, Extrudieren, Spiegeln).
+      **Blöcke umgesetzt:** das Format `.fblocks` (JSON, ein Block je Zeile; Größe, Kante eines Blocks in Metern, Palette, Teile mit Eltern und Drehpunkt) und
+      `BlockModel` (fire.Compiler: Text, sichtbare Flächen - keine zwischen Blöcken eines Teils, zwischen Teilen bleiben sie -, gierige Rechtecke je Teil/Farbe/
+      Richtung/Schicht, Strahl-Auswahl, `ToF3d`: je Teil ein Teil am Drehpunkt, darunter je Farbe eins); forge macht eine Ressource `x.fblocks` zu .f3d, `forge model
+      x.fblocks`. Der Editor in spark (`BlockEditorControl`, *File > New > Block Model*): 3D-Ansicht (orthografisch, drehen/zoomen, Klick setzt einen Block auf die
+      Fläche oder den Boden, rechts entfernt, Shift nimmt die Farbe), Schichtansicht (malen/radieren mit Linie zwischen den Punkten, ein Strich ein Undo-Schritt,
+      Bild auf/ab), Spiegeln X, Palette (wählen, ändern, hinzu, weg), Teile (neu, Drehpunkt), Größe, Export .f3d, Undo/Redo. Getestet: `FIRE_TESTS_ONLY=blocks`
+      (Text, Flächen, Verschmelzen, Umlaufsinn, Strahlen, Datei), Scene3DTests zeichnet eine Blockfigur aus einer Ressource (VM == nativ), der Editor in spark unter
+      Xvfb von Hand (Klicks, Striche, Undo/Redo, Speichern).
+      **Animationen im Editor umgesetzt:** in `.fblocks` `"animations"` (Name, Länge, Schleife, Schlüssel je Teil: Zeit, Drehung in Grad Ry*Rx*Rz, Verschieben in
+      Zellen, Skalieren; dazwischen linear, eine Schleife geht vom letzten zum ersten), `BlockModel.PartPose/PoseMatrices` (um den Drehpunkt, Kinder gehen mit),
+      `ToF3d` schreibt je Animation einen Clip (30 fps, Schleifen-Flag je Clip im gemeinsamen Writer). Im Editor eine zweite Leiste: Animation wählen/neu/ändern/
+      löschen, Loop, Abspielen, Zeitleiste (Schlüssel des Teils als Rauten, Klick/Ziehen auf 1/30 s), Drehen/Verschieben/Skalieren des Teils zur Zeit - eine
+      Änderung setzt einen Schlüssel, Schlüssel löschen; die 3D-Ansicht zeigt die Pose (gebaut wird in der Ruhepose). Getestet: `FIRE_TESTS_ONLY=blocks`
+      (Text, Interpolation, Schleife, Drehpunkt, Kinder, Teil entfernt, Clips), Scene3DTests spielt "nod"/"hop" der Blockfigur (VM == nativ), der Editor unter
+      Xvfb (Wählen, Zeit, Schlüssel per Eingabe, Abspielen, Speichern).
+      **Nachgeholt:** Füllen in der Schicht (`BlockModel.FloodFillLayer`: Fläche gleicher Blöcke oder leerer Zellen über die Seiten), Auswahl einer Box (in der
+      Schicht oder durch alle Schichten; im 3D-Bild als Drahtbox) mit Kopieren/Ausschneiden/Einfügen am Zeiger (die Blöcke kommen in den gewählten Teil),
+      Löschen, Box füllen (`Copy/Delete/Paste/FillBox`, getestet); die Vorschau mit scene3d selbst (`BlockPreviewWindow`: das Modell als .f3d in der VM gezeichnet,
+      auf einem Boden, mit Schatten, mit der gewählten Animation - jedes 1/30 s ein Bild, im Kreis gezeigt; Renderer und Seite wählbar). Unter Xvfb geprüft.
+   2. **Animationen:** ein Modell trägt mehrere benannte Clips (Frames, fps, Schleife), zwischen den Frames interpoliert. Vorschlag: Modelle aus starren
+      Teilen mit Hierarchie, ein Frame speichert eine Transformation je Teil (klein, billig); Frames je Vertex optional.
+   **Umgesetzt (Format, Import, Animation):** das Format `.f3d` ([Models and animations](graphics/models.md), Byte für Byte in `s3d_model.h`): Teile im Baum
+   (Ruhepose T/R/S, Farbe, Mesh mit `int16`-Positionen in der Box des Teils, Normale oktaedrisch in 2 Byte, UV `int16`, Indizes `uint16`: 8/12 Byte je Ecke),
+   Clips mit Frames (26 Byte je Teil und Frame). forge macht es aus glTF 2.0 (`ModelConverter`: .gltf mit Data-URIs oder Dateien, .glb; Knoten -> Teile, Meshes,
+   Grundfarbe, Matrix zerlegt; Animationen bei 30 fps abgetastet - linear, step, cubic spline), als Ressource beim Bauen (`new Resource("x.glb")`) und mit
+   `forge model`. scene3d liest es (`Model.FromBytes/FromResource`), zeichnet die Teile mit der Pose des Clips (Objekt-Matrix mal Teil-Matrix, Normalen-Matrix
+   als inverse Transponierte; beide Renderer), `Play`/`Advance`/`AnimationTime`/`Stop`. Test: ein glTF-Roboter (Körper, Arm als Kind, "wave"/"jump"),
+   VM == nativ; dos16 baut. **Offen:** die Meshes auch im Speicher kompakt (heute zu `float` entpackt, siehe 16.1 A), Texturen in der Datei, Überblenden
+   zwischen Clips, Ereignisse am Ende eines Clips, Skins (Knochen) bewusst nicht.
+   (Zwischendurch stürzte der Generator bei Array-Literalen mit mehr als ~60 Elementen ab - 2f8b4cc/6a6c387 auf `targets`; mit 3f14d20 behoben.)
+4. **Partikel und Effekte** (`scene3d.effects`): Partikel aus einem festen Pool, als Sprites im Rasterizer (Tiefentest, additiv/Alpha), einfache Parameter
+   und Vorgaben (`Fire`, `Smoke`, `Sparks`, `Rain`, `Snow`, `Explosion`). Statt programmierbarer Pixel-Shader Materialeffekte zum Einschalten (laufende UVs,
+   Farbrotation über die Palette, Flackern, Wellen auf den Vertices, Toon) und Effekte auf das ganze Bild (Abblenden, Tönung, Nebel); später evtl. eine
+   fire-Funktion als Vertex-Shader.
+   **Umgesetzt** (Unterpaket `scene3d.effects`, [Partikel und Effekte](graphics/effects.md)): `s3d_effects.h` - je Emitter ein Pool fester Größe
+   (32 Byte je Partikel, bis 16000), eigener Zufall (xorshift, `Seed`: VM == nativ), Kegel um eine Richtung, Box als Startfläche, Schwerkraft, Luftwiderstand,
+   Farbe/Größe über das Leben; gezeichnet nach den Dreiecken als weiche Scheiben mit Tiefentest (voller Renderer: NDC-z, schlanker: `uint16` je Band,
+   über `S3dLean.post`), von fern nach nah, additiv oder überblendet, auch ins Palettenbild. `Emitter : Object` mit Eigenschaften und den Vorgaben
+   `Fire`/`Smoke`/`Sparks`/`Rain`/`Snow`/`Explosion` (eine Tabelle in C: das Paket kostet auf dos16 12,7 KB statt 31 KB als fire-Code). In `scene3d`
+   selbst: `Scene.Fog(color, start, end)` (der Hintergrund ganz Nebel; im schlanken Renderer 16 Stufen ohne Division je Pixel, für Paletten eine Tabelle
+   16 x 256), `Scene.Tint(color, amount)`, `Scene.Advance(dt)`/`Object.Advance(dt)` (Partikel, Animation, `SpinX/Y/Z`, `TextureScrollX/Y`). Test: VM == nativ
+   (Software, Fast, Palette, Nebel, Tönung); dos16 baut. **Offen:** Nebel im GPU-Renderer (heute: Partikel und Tönung über dem GPU-Bild, ohne Tiefe),
+   Partikel mit Textur (Funken als Striche, Rauch mit Flocken), Emitter-Richtung im Raum des Objekts, die übrigen Materialeffekte (Farbrotation der
+   Palette, Flackern, Wellen, Toon).
+5. **Physik** (`scene3d.physics`): einfach, schnell, leicht zu bedienen - Kugel, Box (achsenparallel), Kapsel, Heightfield, statische Meshes; Character
+   Controller (Laufen, Springen, Stufen), Raycasts, Trigger; fester Zeitschritt, Gitter als Vorauswahl; mit Einheiten (`Body.Dynamic(mass: 2kg)`,
+   `scene.Gravity = 9.81m/s²`) und Vorgaben (`Body.Bouncy`, `Body.Ice`). Starrkörper mit Rotation später.
+   **Umgesetzt** (Unterpaket `scene3d.physics`, [Physik](graphics/physics.md)): `s3d_physics.h` - Körper am Objekt-Item (statisch, dynamisch, kinematisch,
+   Figur), Formen Box (achsenparallel), Kugel, aufrechte Kapsel, Dreiecke des Objekts in der Welt (xz-Gitter; auch Modelle mit Teilen; neu gebaut, wenn das
+   Objekt bewegt/gedreht/skaliert wird) und Terrains über ihre Höhen (die Dreiecke der Zellen unter einem Körper entstehen bei Bedarf, glatt und als Blöcke
+   mit Wänden - kein Speicher). Kontakte: Box/Box, rund/Box, rund/rund (Strecken-Abstand), rund/Dreieck (Strecke gegen Dreieck), Box/Dreieck (13 Achsen);
+   einseitige Flächen. Schritt 1/60 s in `scene.Advance` (höchstens 8 je Aufruf), drei Durchgänge: Trennen nach Massen, Abprall (unter 0,5 m/s keiner),
+   Reibung (Coulomb). Figur: `Walk` setzt die waagerechte Geschwindigkeit, Springen nur am Boden, Stufen (anheben, frei? dann per Strahl auf die Stufe
+   setzen - auch bergab ohne Hüpfen), Hänge bis `MaxSlope` ohne Rutschen. Trigger (`Touches`), Raycasts (Kugel, Box, Kapsel, Dreiecke), `scene.Gravity`
+   (`class extends Scene`). Die Physik hängt über Funktionszeiger an der Szene: ein Programm ohne Körper ruft nichts davon auf. Test: VM == nativ (Ball,
+   Stapel, Figur auf Stufe, Mauer, Sprung, Trigger, Strahlen, Terrain, Aufzug); Beispielprojekt „Scene3D Physics“. **dos16:** die Physik ist ~42 KB C
+   (Map-Datei: Gitter 3,9 KB, Höhenfeld 3,8 KB, Box/Dreieck 3 KB, ...) plus ~16 KB fire-Code. Damit ein Programm ohne Physik sie nicht trägt, entfernt der
+   Watcom-Linker jetzt unerreichte Segmente (`option eliminate`): eine scene3d-Szene 477 -> 425 KB, mit Effekten 488 -> 436 KB, Hallo-Welt 88 -> 84 KB
+   (läuft in DOSBox-X; die bios16-Prüfungen grün).
+   **Nachgezogen:** Drehung - dynamische Boxen und Kugeln haben eine Orientierung (Quaternion) und eine Winkelgeschwindigkeit, Trägheit aus Form und
+   Masse, die Drehung geht als `RotationX/Y/Z` ins Objekt (Euler wie `s3d_rotationXYZ`). Kontakte mit Punkten: Box/Box über 15 Achsen und dann die
+   Gegenfläche an der Bezugsfläche zugeschnitten (bis 2 cm Abstand bleiben Punkte - spekulativ: sie dürfen sich bis zur Berührung nähern), Box/Dreieck
+   die Ecken hinter der Fläche, rund/Box im Raum der Box. Löser: Impulse je Punkt mit Hebelarm, innerhalb eines Schritts aufsummiert (Normale nie ziehend,
+   Reibung höchstens ihr Anteil), Baumgarte 0,2 über 5 mm Spielraum statt Lageverschiebung für drehende Körper (die Reibung hält dann auch das
+   Wegschieben - vorher wanderten Stapel), erst Geschwindigkeiten, dann Kontakte (6 Durchgänge), dann Bewegung. Drei versetzte Kisten stehen und
+   schlafen; eine gekippte Kiste legt sich flach (Fehler gefunden: die Tiefen der Dreieckspunkte wurden auf 0 begrenzt - angehobene Ecken stützten).
+   Schlafen nach 0,5 s unter 5 cm/s und 0,05 rad/s, Wecken bei Berührung, durch Gelenke, Kinematische, das Programm. Vorauswahl: die Boxen nach x
+   sortiert (Sweep), Paare nur mit einem wachen dynamischen Körper. Gelenke: Seil, Stange, Feder (zwei Körper oder Körper und Punkt; `Joint.Rope/Rod/
+   Spring`). Test VM == nativ; in DOSBox-X: Kiste fällt gedreht, liegt flach, schläft; Seil hält 2,000 m. **Offen:** Gelenke an anderen Punkten als der
+   Mitte, Scharniere, Drehung für Kapseln, die Größe auf dos16 (Physik-C ~55 KB; Vektoren als Zeiger statt Werte), Rollwiderstand. **Gefunden:** scene3d auf
+   dos16 hängt in DOSBox-X schon bei zwei `new Object(Template.Box, ...)` (ein Objekt, rohe Natives, graphics allein: alles gut) - auch vor M5
+   (23af112), auch ohne `eliminate`; vermutlich die Werte/Felder seit 8ab2aa2 (`targets`).
+
+### 16.1 Offen nach Meilenstein 1 und 2 (Stand `scene-revamp`)
+
+**A. Kompakte Meshes** (Wunsch des Benutzers: festhalten; vor oder mit Meilenstein 3, weil das Modellformat dieselbe Form bekommt):
+* **Umgesetzt** (nach Meilenstein 3): `s3d_meshFinish` packt jedes Mesh (`s3d_meshCompact`): Positionen `int16` in der Box, Normalen oktaedrisch in 2 Byte,
+  UV `int16` (1/1024; bei größeren Werten skaliert; keine, wenn alle 0), Indizes `uint16` unter 65536 Ecken; die `float`-Arrays gehen. Gelesen über
+  `s3d_meshPos/Nrm/Uv/Idx` (voller und schlanker Renderer, Schattenkarten, GPU-Upload entpackt in einen Puffer). Fehlt der Speicher fürs Packen, bleiben die
+  floats; `S3D_MESH_FLOAT` behält sie immer. **Gemessen:** Box 912 -> 360 Byte, Kugel (24) 16,7 -> 7,1 KB, Zylinder 4,4 -> 1,8 KB, Terrain 32x32 56 -> 24 KB,
+  64x64 226 -> 97 KB (je Ecke 12 Byte plus ~12 Byte Indizes statt 32 + 24). **Pixel:** gegen die float-Meshes in der Testszene (160x120) weichen im
+  Software-Renderer 70 von 19200 Pixeln um höchstens 2/255 ab, im schlanken 52 (höchstens 2), im Palettenbild 4 um eine Schattierungsstufe; die
+  Prüfsummen der Scene3DTests sind damit bewusst neu (VM == nativ), die Zählungen des dos16-Tests bleiben gleich.
+* Noch offen aus A: Texturen mit Palette (8 Bit) und Mipmaps.
+* **Heute:** `S3dMesh` hat je Ecke `float` Position (12 Byte), UV (8) und Normale (12) und je Dreieck drei `uint32_t` (12 Byte) - 32 Byte je Ecke plus
+  Indizes. Ein Terrain 64x64 (geglättet) braucht so ~220 KB, eine Kugel mit 24 Segmenten ~20 KB; auf dos16 passt davon wenig neben das Programm.
+* **Ziel - 8 bis 10 Byte je Ecke:**
+  * Position `int16` x 3, quantisiert auf die Bounding-Box des Meshes (`bmin` + q / 65535 * (bmax - bmin); Fehler unter 1/65535 der Ausdehnung);
+  * Normale als **ein Byte**: Index in eine feste Tabelle von 256 Richtungen (eigene, gleichmäßig über die Kugel verteilt; nicht übernommen), oder 2 Byte
+    (oktaedrisch) für glattere Flächen - zu messen;
+  * UV als `int16` x 2 in 1/256 einer Texturbreite (Wiederholung bis 128x), oder gar keine UV, wenn das Mesh keine Textur braucht (ein Flag);
+  * Indizes `uint16`, solange das Mesh unter 65536 Ecken hat (sonst `uint32`); Dreiecke mit flacher Normale teilen keine Ecken mehr als nötig.
+* **Wo umgerechnet wird:** einmal beim Laden/Erzeugen (`s3d_meshFinish`, Vorlagen, OBJ, Terrain, später `.f3d`); die Renderer lesen die kompakte Form direkt
+  (die Transformation nimmt `int16` und die Box, das Licht die Tabelle). Der volle Renderer darf weiter `float` intern haben (der Desktop hat Platz);
+  die Bilder des vollen Renderers sollen gleich bleiben - sonst die Prüfsummen bewusst neu festlegen.
+* **Messen:** Speicher je Mesh vorher/nachher (Kugel, Box, Terrain 32x32/64x64), Pixel-Abweichung im vollen Renderer, Geschwindigkeit des schlanken.
+* Dazu passend: **Texturen mit Palette** (8 Bit je Texel statt 32, heute nur als Kopie für Paletten-Bilder: `S3dTexture.lean`) und **Mipmaps**
+  (Ruhe in der Ferne, weniger Cache-Fehler); auf dos16 RGBA-Texturen nach dem Umrechnen verwerfen.
+
+**`defined` im scene3d-Prelude (gemessen, Stand nach M4):** die Hilfsfunktionen mit Zahlen (`S3D.Rgb`, `Rgba`, `Red/Green/Blue`, `Degrees`, `Meters`)
+und die drei Geschwindigkeiten (`TextureScrollX/Y`, `Emitter.Speed`) sind `defined` (`S3D.Speed` wieder nicht: sonst warnt der Typprüfer bei jedem
+Aufrufer mit einem gewöhnlichen `float : m/s`). Zuerst gemessen: dos16 431 314 -> 430 335 Byte (C-Rümpfe
+ohne Values). Dabei fiel ein Generatorfehler auf (Value-Hülle unter `fN` statt `fN_b` auf Zielen, die die Aufruftiefe zählen); `targets` hat ihn mit
+1c2af40 grundsätzlich gelöst: ein Programm, das die Aufruftiefe zählt, hat keine C-Rümpfe. scene3d-Programme zählen sie immer (`Scene.Add` nimmt mit
+`try TakeTo`) - `defined` ist hier darum heute neutral (dos16 431 752 -> 431 766 Byte; nativ und VM ohne messbaren Unterschied). **Nicht** übernommen:
+die Handles als `defined int h` (+2,6 KB auf dos16: sie gehen fast nur an Natives, die Values nehmen, und werden dafür neu eingepackt) und die übrigen
+Eigenschaften (keine Änderung: Accessoren bekommen keinen C-Rumpf). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
+C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`. `FIRE_TESTS_ONLY=scene3d` prüft das dos16-C weiter mit.
+
+**Größe nach M5 (gemessen mit `forge build --stats`, dos16, ein Programm mit Szene, Boden, Ball-Körper, Kamera im schlanken Renderer, 60 Bilder):**
+Laden 404 -> 366 KB. Die Schritte: (1) die Physik mit Vektoren als Zeiger statt als Werte (auf 16 Bit kopiert jeder Aufruf mit einem `S3dVec3` 12 Byte;
+gemessen an einer kleinen Rechnung 263 -> 114 Byte) und `a + b * s` in einem: Physik-C 60,6 -> 51,8 KB; (2) `Camera.Render` auf Zielen mit nur dem schlanken
+Renderer (`#if dos16 || bios16`) nur noch der direkte Aufruf: -13 KB (der fire-Code des vollen Wegs und die Lese-/Schreib-Funktionen des Framebuffers);
+(3) `Scene.Add/Get/Remove` mit einer Liste der Schlüssel und `listOf`, der Vorlagen-Konstruktor ein Native (`__S3DObjTemplate`): fire-Code von scene3d
+33,5 -> 21,4 KB; (4) die Effekte hängen wie die Physik an Funktionszeigern (gesetzt durch einen Emitter oder `Scene.Fog/Tint`): ohne Effekte -11,5 KB.
+Dasselbe Programm ohne Physik lädt 321 KB, mit Effekten 329 KB; alle laufen in DOSBox-X. Was bleibt: Laufzeit 76 KB, C-Bibliothek 54 KB, schlanker
+Renderer ~25 KB, Physik 52 KB (echte Arbeit: Box/Box, Box/Dreieck, Lösen, Gitter, Höhenfeld), Far Data 36 KB (Konstanten des Programms; die Texte der
+scene3d-Preludes daran höchstens 3,5 KB).
+
+**B. Größe und Speicher (Rest von Meilenstein 1):**
+* **640x480 auf dos16:** der Paletten-Framebuffer (300 KB) passt mit dem Programm (~347 KB) nicht in den konventionellen Speicher. Wege: (a) eine Kamera, die
+  ihre Bänder direkt in den Videospeicher schreibt (VESA 101h mit Bänken; der schlanke Renderer arbeitet schon bandweise), (b) der Framebuffer in XMS/EMS
+  (nach den Arbeiten auf `targets`).
+* **XMS/EMS auf dos16:** Ablage für Meshes und Texturen, pro Objekt eingeblendet.
+* **Festkomma** im schlanken Renderer auch zwischen den Ecken, Zeilen und 16-Pixel-Stücken (heute `float`; auf einem 8086 ohne FPU teuer).
+* **Weniger Code im vollen Renderer:** Schatten, Bumpmapping, Billboards, Threads, Vulkan nur, wenn ein Programm sie benutzt (heute nur auf dos16/bios16
+  ganz weggelassen, `FIRE_S3D_LEAN_ONLY`).
+* Weiter messen und kürzen: `Camera.Render` (~8 KB übersetzt), `Scene.Add` (~7 KB), die Konstruktoren; die Runtime (~91 KB, Einheiten ~10 KB) ist Sache
+  von `targets`.
+
+**C. Fehlende Bausteine für Spiele** (aus der Analyse, noch nicht angefangen):
+* **Culling pro Objekt** (Bounding-Box gegen das Sichtvolumen) und eine **Raumstruktur** (Räume mit Portalen für Level; ein Gitter für offene Gelände).
+* **Nebel / Sichtweite** (billig, versteckt die Far-Plane; im schlanken Renderer über die Schattierungsstufen).
+* **Hierarchie** (`obj.Parent`): Teile, die mitgehen (die Waffe in der Hand) - braucht auch die Animation aus Meilenstein 3.
+* **Raycast / Picking** (Maus, Schießen; dieselben Strahlen braucht die Physik).
+* **Skybox**, **LOD** (gröbere Meshes in der Ferne).
+* Schatten im schlanken Renderer: weiche Kante (2x2 gemittelt) und Punktlichter; heute nur das erste Richtungslicht, harte Kante.
+
+**D. Terrains (Rest von Meilenstein 2):**
+* große Terrains in **Stücke** teilen (z. B. 32x32), die ohne Sicht wegfallen - sobald es Culling gibt; **LOD** je Stück;
+* **Farben nach Höhe** (Gras, Fels, Schnee) ohne Textur; mehrere Texturen nach Höhe/Neigung;
+* `HeightAt` bei geneigtem Terrain (Drehung um x/z) und die Neigung des Bodens (`NormalAt`) für Figuren und Physik;
+* der Speicher folgt mit A (heute 32 Byte je Ecke und 4 Byte je Höhe für `HeightAt`).
+
+**E. Auf `targets` gefunden** (nicht scene3d; dort zu beheben):
+* **Behoben (scene-revamp):** dos16-Programme hatten nur **2 KB Stapel** - `-mstack-size=32768` kommt bei owcc für `-bdos` nicht im Kopf des Programms an
+  (die Map: `Stack size: 0800`), wie schon bei win16. Seit die Werte 16 Byte haben (8ab2aa2), läuft der Stapel über, ohne Prüfung (`-fno-stack-check`)
+  still: falsche Werte, Hänger, "Invalid Opcode" - je nach Code. Jetzt `option stack=32768` für den Linker (TargetProfile.Pc). Damit laufen in DOSBox-X:
+  zwei Objekte aus Vorlagen (vorher Hänger), Körper und Schritte der Physik, die Effekte (Nebel ins Palettenbild), 60 Bilder mit Physik im schlanken
+  Renderer.
+* dos16-Programme stürzen seit 8ab2aa2 in DOSBox-X mit "Invalid Opcode" (INT 6) ab, je nach Code; mit 02e959e laufen sie. Damit ist scene3d (auch der
+  schlanke Renderer und die Terrains) unter DOS bisher nicht ausgeführt, nur gebaut.
+* Der Generator erzeugt für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit ablehnt (E1078).
+
+Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD; A (kompakte Meshes) vor oder mit 3, B/C/D nach Bedarf dazwischen.
+
+## 17. Mess-Werkzeug für Größe, Speicher und Typisierung
+
+Die Messungen, die bisher von Hand liefen (Linker-Map auswerten, erzeugtes C durchzählen, Heap zur Laufzeit zählen), sollen ein eingebautes Werkzeug werden, z. B.
+`forge build ... --stats` (Bericht als Text und JSON neben dem Programm) und ein Laufzeit-Schalter `FIRE_STATS`. Grob:
+
+* **Code nach Herkunft** aus der Linker-Map (Watcom `option map`, GNU `-Wl,-Map`): erzeugter fire-Code (Programm, je Paket, Prelude), Laufzeit (`fire_rt.h` usw.),
+  Paket-C, C-Bibliothek, Daten (DGROUP, FAR_DATA, Stack); die größten Funktionen mit ihrer fire-Quelle (`#line`). Bei dos16: Lademodul plus Mindestspeicher
+  gegen 640 KB.
+* **Typisierung** aus dem Generator: Parameter, Rückgaben, Locals, Globals, Stack-Slots und Felder - als C-Typ, gepackt, schmal oder als Value; Funktionen mit
+  C-ABI und **warum nicht** (z. B. Aufruftiefe gezählt, Einheit `any`, Objekt-Parameter).
+* **Heap zur Laufzeit** (am Programmende oder auf Abruf): Objekte (Köpfe, Value-Slots nach Inhalt Zahl/undefined/Referenz, gepackte Bytes, ObjExt), Arrays
+  (Value-Elemente, gepackte), Puffer, Strings und der Heap der Natives (malloc insgesamt).
+* Später: Vergleich zweier Builds (vorher/nachher) und ein Test, der Grenzen hält (z. B. das Beispiel "Scene3D Physics" passt auf dos16 in den Speicher).
+
+**Umgesetzt (erste Stufe):** `forge build ... --engine native --stats` (Linkage `source`, Open Watcom, gcc, clang): Code nach Herkunft aus der Map (erzeugt je Modul,
+Hilfsfunktionen des Generators, Laufzeit, Plattform, C je Paket, C-Bibliothek), Daten, Typisierung je Modul (C-Schnittstelle, Parameter, Variablen, Stack-Slots
+mit C-Schatten), die Gründe ohne C-Schnittstelle, die größten Funktionen mit ihrem fire-Namen, bei DOS der Speicher zum Laden. Bericht im Log und in
+`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). Offen: der Heap zur Laufzeit, der Vergleich zweier Builds, die Linkage `static`.
+
+Ausgangswerte (von Hand gemessen, Beispiel "Scene3D Physics", dos16, Watcom `-Os`, `eliminate`): EXE 760 KB, Lademodul 696 KB + 33 KB Mindestspeicher -
+**passt nicht in 640 KB**. Code: erzeugt 239 KB (davon `fire_main` 44 KB für 139 Zeilen, `Camera.Render` 17 KB für 30), Paket-C ~190 KB, Laufzeit 84 KB,
+C-Bibliothek 65 KB, FAR_DATA 48 KB. Ein Value von 8 statt 16 Byte (nur übersetzt, nicht lauffähig) spart 24 KB (3 %); ohne gezählte Aufruftiefe 27 KB, der
+C-ABI greift dann bei 3 von 227 Funktionen. Heap nach 200 Bildern: 32 fire-Objekte mit 103 Value-Slots (1,6 KB), 0 gepackte Bytes - bei 2,4 MB Heap
+insgesamt (davon 1 MB Framebuffer, der Rest Engine und Laufzeit).

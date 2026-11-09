@@ -13,6 +13,7 @@
   "native": {
     "sources": [
       "native/fire_gfx_font.h",
+      "native/fire_gfx_mem.h",
       "native/fire_gfx.h",
       "native/fire_gfx_ttf.h",
       "native/fire_gfx_text.h",
@@ -25,6 +26,9 @@
       "native/fire_bridge_graphics.h"
     ],
     "discover": false,
-    "language": "c"
+    "language": "c",
+    "uses": [
+      "io"
+    ]
   }
 }

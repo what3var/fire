@@ -54,7 +54,7 @@ namespace fire.Ast
         bool AutoCapture = true) : Expr(Line);
 
     /// <summary>`sync X` / `try sync X` / `sync flat X` / `try sync flat X`
-    /// (docs/THREADING_DESIGN.md section 4) - an EXPRESSION (not a
+    /// (docs/spec/THREADING_DESIGN.md section 4) - an EXPRESSION (not a
     /// statement), yields `true`/`false`/`undefined` (see
     /// Bytecode.VM.OpCode.Sync). `IsTry`: `false` = blocking (only `true`
     /// or `undefined` possible), `true` = non-blocking (additionally
@@ -66,16 +66,16 @@ namespace fire.Ast
     /// Runtime.SyncEngine).</summary>
     public sealed record SyncExpr(int Line, bool IsTry, bool IsFlat, Expr Target) : Expr(Line);
 
-    /// <summary>`sync globals` (docs/THREADING_DESIGN.md section 7) - in the main program: processes what the fire threads have
+    /// <summary>`sync globals` (docs/spec/THREADING_DESIGN.md section 7) - in the main program: processes what the fire threads have
     /// registered as changes to the globals; returns the number of entries processed (int).</summary>
     public sealed record SyncGlobalsExpr(int Line) : Expr(Line);
 
-    /// <summary>`probe obj.member changed|changing handler` (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): registers a handler for write accesses to the
+    /// <summary>`probe obj.member changed|changing handler` (docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md): registers a handler for write accesses to the
     /// member `Member` of the object `Target` (`Member == null`: `probe obj.* ...`, all members). Evaluates to the probe handle (int).
     /// `Handler` is a lambda (from the block/`=>` short form or any lambda expression).</summary>
     public sealed record ProbeExpr(int Line, Expr Target, string? Member, bool IsChanging, Expr Handler) : Expr(Line);
 
-    /// <summary>`try process X` (docs/THREADING_DESIGN.md section 2) -
+    /// <summary>`try process X` (docs/spec/THREADING_DESIGN.md section 2) -
     /// non-blocking variant of Ast.ProcessStmt: returns `true` if
     /// a message was processed, otherwise `false` (never `undefined` -
     /// unlike `sync` there is no "target gone" scenario at this
@@ -118,7 +118,7 @@ namespace fire.Ast
     /// order). Deliberately ONE-dimensional only (no analogue to NewArrayExpr's
     /// several SizeExprs) - a "nested byte buffer" makes no
     /// sensible use case for raw binary data.</summary>
-    public sealed record NewBufferExpr(int Line, Expr SizeExpr) : Expr(Line);
+    public sealed record NewBufferExpr(int Line, Expr SizeExpr, bool Words = false) : Expr(Line);   // Words: `new word[n]`, a buffer of machine words (SPEC 8.10)
 
     /// <summary>`[e1, e2, ...]` - array literal. An element that is itself
     /// an array literal naturally yields a nested
@@ -146,11 +146,16 @@ namespace fire.Ast
     // FlatCopy (`flat x`) and DeepCopy (`copy x`) are copy prefixes (SPEC 2.4): `flat` copies the object itself
     // including its value-like members, references stay as in the original; `copy` is a deep copy (each
     // reachable instance copied exactly once). The compiler treats them like `new` when choosing the owner (SPEC 2.1).
-    public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy, Take }
+    public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy, Take, Trust, TryTake }
     public sealed record UnaryExpr(int Line, UnaryOp Op, Expr Operand) : Expr(Line);
 
     public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power }
-    public sealed record BinaryExpr(int Line, BinaryOp Op, Expr Left, Expr Right) : Expr(Line);
+    public sealed record BinaryExpr(int Line, BinaryOp Op, Expr Left, Expr Right) : Expr(Line)
+    {
+        /// <summary>`a ^ b` whose target is a float (set by the type checker, SPEC 1.1): the float power (OpCode.PowerFloat) even of two ints, which otherwise give
+        /// an int power.</summary>
+        public bool FloatPower { get; set; }
+    }
     /// <summary>`lambda on target`: a new lambda with the same body whose `this` is `target` (the old one stays as it is).</summary>
     public sealed record RebindExpr(int Line, Expr Lambda, Expr Target) : Expr(Line);
     /// <summary>`Condition ? Then : Else` - only one of the two branches is evaluated.</summary>

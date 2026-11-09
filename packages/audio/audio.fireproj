@@ -30,11 +30,13 @@
     "functions": [
       {
         "name": "__AudioLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_audio_LastError"
       },
       {
         "name": "__AudioLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -42,16 +44,19 @@
       },
       {
         "name": "__AudioOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_audio_OpenCount"
       },
       {
         "name": "__AudioSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_audio_Supported"
       },
       {
         "name": "__AudioDevices",
+        "returns": "any[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -59,56 +64,67 @@
       },
       {
         "name": "__AudioOpen",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_audio_Open"
       },
       {
         "name": "__AudioWrite",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_audio_Write"
       },
       {
         "name": "__AudioQueued",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_audio_Queued"
       },
       {
         "name": "__AudioStop",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_audio_Stop"
       },
       {
         "name": "__AudioSetVolume",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_audio_SetVolume"
       },
       {
         "name": "__AudioClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_audio_Close"
       },
       {
         "name": "__AudioWave",
+        "returns": "int",
         "arguments": 9,
         "c": "fire_audio_Wave"
       },
       {
         "name": "__AudioSimReset",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_audio_SimReset"
       },
       {
         "name": "__AudioSimHold",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_audio_SimHold"
       },
       {
         "name": "__AudioSimInfo",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_audio_SimInfo"
       },
       {
         "name": "__AudioSimData",
+        "returns": "byte[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -116,11 +132,13 @@
       },
       {
         "name": "__AudioInSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_audio_InSupported"
       },
       {
         "name": "__AudioInDevices",
+        "returns": "any[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -128,31 +146,69 @@
       },
       {
         "name": "__AudioInOpen",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_audio_InOpen"
       },
       {
         "name": "__AudioInRead",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_audio_InRead"
       },
       {
         "name": "__AudioInAvailable",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_audio_InAvailable"
       },
       {
         "name": "__AudioInClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_audio_InClose"
       },
       {
         "name": "__AudioSimFeed",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_audio_SimFeed"
       }
     ],
     "reset": "fire_audio_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "posix": [
+        "native/fire_audio_desktop.h"
+      ],
+      "windows": [
+        "native/fire_audio_desktop.h"
+      ],
+      "wasm": [
+        "native/fire_audio_desktop.h"
+      ],
+      "dos16": [
+        "native/fire_audio_none.h"
+      ],
+      "esp32": [
+        "native/fire_audio_esp32.h"
+      ],
+      "freertos": [
+        "native/fire_audio_none.h"
+      ],
+      "default": [
+        "native/fire_audio_none.h"
+      ]
+    },
+    "headers": [
+      "native/fire_audio_c.h",
+      "native/fire_audio_coreaudio.h",
+      "native/fire_audio_desktop.h",
+      "native/fire_audio_esp32.h",
+      "native/fire_audio_linux.h",
+      "native/fire_audio_none.h",
+      "native/fire_audio_web.h",
+      "native/fire_audio_win32.h"
+    ]
   }
 }

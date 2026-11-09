@@ -9,7 +9,7 @@ namespace UI {
         static int Transparent() { return 256 }
     }
 
-    // Layout: how an element sits in the slot its container gives it (docs/UI.md). Enums are plain ints.
+    // Layout: how an element sits in the slot its container gives it (docs/ui/README.md). Enums are plain ints.
     enum HAlign { Stretch = 0, Left = 1, Center = 2, Right = 3 }
     enum VAlign { Stretch = 0, Top = 1, Center = 2, Bottom = 3 }
     // Where a child of a DockPanel sits (the last child fills what is left, unless lastChildFill is off)
@@ -134,7 +134,7 @@ namespace UI {
         // The value behind a path "a.b.c" (each part a property); an empty path is the object itself, undefined if something is missing on the way.
         static any PathGet(any item, string path) {
             if (path == "") { return item }
-            var current = item
+            any current = item
             var start = 0
             for (var i = 0; i <= path.Length; i = i + 1) {
                 if (i == path.Length || path.CharAt(i).ToInt() == 46) {
@@ -149,12 +149,12 @@ namespace UI {
         // Does the path exist (all parts up to the last are objects, the last part a property)?
         static bool PathHas(any item, string path) {
             if (path == "") { return item != undefined }
-            var current = item
+            any current = item
             var start = 0
             for (var i = 0; i <= path.Length; i = i + 1) {
                 if (i == path.Length || path.CharAt(i).ToInt() == 46) {
                     if (current == undefined || UI.M.IsPlain(current)) { return false }
-                    var name = path.Substring(start, i - start)
+                    any name = path.Substring(start, i - start)
                     if (!Reflect.Has(current, name)) { return false }
                     if (i < path.Length) { current = Reflect.Get(current, name) }
                     start = i + 1
@@ -165,11 +165,11 @@ namespace UI {
 
         // Sets the value behind the path (the path must exist per PathHas and must not be empty).
         static undefined PathSet(any item, string path, any value) {
-            var current = item
+            any current = item
             var start = 0
             for (var i = 0; i <= path.Length; i = i + 1) {
                 if (i == path.Length || path.CharAt(i).ToInt() == 46) {
-                    var name = path.Substring(start, i - start)
+                    any name = path.Substring(start, i - start)
                     if (i == path.Length) { Reflect.Set(current, name, value) }
                     else { current = Reflect.Get(current, name) }
                     start = i + 1
@@ -187,7 +187,7 @@ namespace UI {
         static int CompareText(string a, string b) {
             var n = UI.M.Min(a.Length, b.Length)
             for (var i = 0; i < n; i = i + 1) {
-                var d = a.CharAt(i).ToInt() - b.CharAt(i).ToInt()
+                any d = a.CharAt(i).ToInt() - b.CharAt(i).ToInt()
                 if (d != 0) { return d }
             }
             return a.Length - b.Length
@@ -213,7 +213,7 @@ namespace UI {
         static int ToInt(string text) {
             var value = 0
             for (var i = 0; i < text.Length; i = i + 1) {
-                var d = text.CharAt(i).ToInt() - 48
+                any d = text.CharAt(i).ToInt() - 48
                 if (d < 0 || d > 9) { break }
                 value = value * 10 + d
             }
@@ -221,7 +221,7 @@ namespace UI {
         }
     }
 
-    // Key codes as KeyDown delivers them (SDL3 keycodes).
+    // Key codes as KeyDown delivers them (the codes of UI.Keys, the same on every display).
     class Keys {
         static int Backspace() { return 8 }
         static int Tab() { return 9 }
@@ -256,7 +256,7 @@ namespace UI {
     class Words {
         // 0 a line break, 1 a character of a word, 2 a space or tab, 3 anything else
         static int Kind(char c) {
-            var code = c.ToInt()
+            any code = c.ToInt()
             if (code == 10 || code == 13) { return 0 }
             if (code == 95 || c.IsLetterOrDigit()) { return 1 }
             if (code == 32 || code == 9 || c.IsWhiteSpace()) { return 2 }
@@ -339,7 +339,7 @@ namespace UI {
         bool External { get { return this.Source == undefined } }
     }
 
-    // Converters of the data bindings of the markup (docs/UI_MARKUP.md): Convert goes from the source to the property of the element, ConvertBack the other
+    // Converters of the data bindings of the markup (docs/ui/markup.md): Convert goes from the source to the property of the element, ConvertBack the other
     // way (TwoWay). Derive from Converter for your own and override what you need.
     class Converter {
         any Convert(any value) { return value }

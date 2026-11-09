@@ -33,12 +33,12 @@ namespace fire.Ast
     /// the top of the file).</summary>
     public sealed record NoShadowDirective(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>`#globaljobs safepoints|sleep|sync` and its old form `#nosync` (= `sync`), docs/THREADING_DESIGN.md section 7: when the main program processes the
+    /// <summary>`#globaljobs safepoints|sleep|sync` and its old form `#nosync` (= `sync`), docs/spec/THREADING_DESIGN.md section 7: when the main program processes the
     /// queue of its fire threads (`fire global` jobs, sections) and the incoming host callbacks by itself. Applies to the whole program (the compiler emits
     /// `SetAutoSync mode` at the very start; the command line and the project go before it); must be a top-level statement.</summary>
     public sealed record GlobalJobsDirective(int Source, int Line, fire.Runtime.GlobalJobsMode Mode) : Stmt(Source, Line);
 
-    /// <summary>`#lax` / `#strict` (docs/TYPES.md): the type checking mode of the file this stands in (`Strict` false = lax: a type conflict is a warning, true = strict: an error). Read by the
+    /// <summary>`#lax` / `#strict` (docs/spec/TYPES.md): the type checking mode of the file this stands in (`Strict` false = lax: a type conflict is a warning, true = strict: an error). Read by the
     /// type checker only; it takes the place of the project's setting for the statements of its file that follow.</summary>
     public sealed record TypeCheckDirective(int Source, int Line, bool Strict) : Stmt(Source, Line);
 
@@ -122,7 +122,7 @@ namespace fire.Ast
     public sealed record FireTakingCapture(string VarName, Expr Source, bool Handover = false);
 
     /// <summary>`fire { ... }` / `fire taking X { ... }` / `fire with actorA { ... }`
-    /// / `fire MethodA(args) with actorA taking X` (docs/THREADING_DESIGN.md
+    /// / `fire MethodA(args) with actorA taking X` (docs/spec/THREADING_DESIGN.md
     /// section 1/2/3). `TakingCaptures`: 0 to n `taking` captures
     /// (deep copy for objects, value passing for primitives - see
     /// Runtime.FireRuntime.FireVmTaking), in the order in which they end up in the
@@ -149,7 +149,7 @@ namespace fire.Ast
         Expr? WithSource,
         Stmt.BlockStmt Body) : Stmt(Source, Line);
 
-    /// <summary>Start of a `sync global { ... }` section (docs/THREADING_DESIGN.md section 7) - the parser desugars the block into
+    /// <summary>Start of a `sync global { ... }` section (docs/spec/THREADING_DESIGN.md section 7) - the parser desugars the block into
     /// `SectionEnterStmt; try { Body } finally { SectionExitStmt }`, so that the section also ends on `throw` in the block.</summary>
     public sealed record SectionEnterStmt(int Source, int Line) : Stmt(Source, Line);
 
@@ -160,13 +160,13 @@ namespace fire.Ast
     /// `Member` the member (null = all probes of the object); otherwise `Target` is an expression that evaluates to a probe handle or an object.</summary>
     public sealed record SilenceStmt(int Source, int Line, Expr Target, string? Member, bool MemberForm) : Stmt(Source, Line);
 
-    /// <summary>`fire global { ... } [taking X ...]` (docs/THREADING_DESIGN.md section 7): a job for the main program that runs at
+    /// <summary>`fire global { ... } [taking X ...]` (docs/spec/THREADING_DESIGN.md section 7): a job for the main program that runs at
     /// its next `sync globals` with the real globals, without the caller waiting. The parser turns the block into a
     /// lambda whose parameters are the `taking` captures (they are passed as value/copy when enqueued) - like any lambda, the lambda sees
     /// the globals, but no locals of the caller.</summary>
     public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args) : Stmt(Source, Line);
 
-    /// <summary>`process X` (docs/THREADING_DESIGN.md Abschnitt 2) -
+    /// <summary>`process X` (docs/spec/THREADING_DESIGN.md Abschnitt 2) -
     /// blocking: waits until a message arrives in the mailbox of the
     /// actor target `X`, and then executes EXACTLY ONE of them (see
     /// VM.ProcessOneMessage). A statement (not an expression, no meaningful
@@ -176,7 +176,7 @@ namespace fire.Ast
     /// `sync`/`try sync` pair.</summary>
     public sealed record ProcessStmt(int Source, int Line, Expr Target) : Stmt(Source, Line);
 
-    /// <summary>`leave` (docs/THREADING_DESIGN.md section 6.1) - leaves
+    /// <summary>`leave` (docs/spec/THREADING_DESIGN.md section 6.1) - leaves
     /// the current fire thread (or, when used outside a fire thread,
     /// the currently running VM instance in general - deliberately not
     /// restricted specifically to "only inside fire", see BYTECODE.md).
@@ -184,7 +184,7 @@ namespace fire.Ast
     /// children/operands of its own.</summary>
     public sealed record LeaveStmt(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>`terminate()` / `terminate(value)` (docs/THREADING_DESIGN.md
+    /// <summary>`terminate()` / `terminate(value)` (docs/spec/THREADING_DESIGN.md
     /// section 6.3) - global, final emergency stop for ALL threads.
     /// `Value` is the optional exit value (can later be read via `VM.ExitValue`);
     /// `null` means "no argument", not "undefined
@@ -194,7 +194,7 @@ namespace fire.Ast
     public sealed record TerminateStmt(int Source, int Line, Expr? Value) : Stmt(Source, Line);
 
     /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`
-    /// (docs/THREADING_DESIGN.md section 6.2) - GLOBAL, program-wide
+    /// (docs/spec/THREADING_DESIGN.md section 6.2) - GLOBAL, program-wide
     /// registration (not a normal try/catch handler!), valid only at
     /// top-level program position (see Parser.ParseProgram).
     /// Type-then-name order (`ExceptionType e`, like a method
@@ -204,7 +204,7 @@ namespace fire.Ast
     /// (catches everything, without binding the exception to a variable).</summary>
     public sealed record CatchThreadsDecl(int Source, int Line, TypeRef? TypeRef, string? VarName, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
-    /// <summary>`catch terminate(v) { ... }` (docs/THREADING_DESIGN.md
+    /// <summary>`catch terminate(v) { ... }` (docs/spec/THREADING_DESIGN.md
     /// section 6.3) - GLOBAL observation hook for `terminate`, runs in the
     /// main thread, can NOT prevent termination (see VM.
     /// RunTerminateHandlerIfAny). Makes sense at most once in the whole program
@@ -352,9 +352,11 @@ namespace fire.Ast
     /// by the parser, see Parser._currentExternLib) - null if no
     /// such directive preceded this declaration, in which case only
     /// manual host registration (Bytecode.ExternRegistry) remains as the way to
-    /// the implementation.</summary>
+    /// the implementation.
+    /// `inline c [ReturnType] Name(params) { C }` (ROADMAP 13.2) is an ExternDecl with a body: <paramref name="InlineC"/> is the C text between the braces (unchanged),
+    /// <paramref name="InlineLine"/> the line of its `{` - the native generator puts it into the program, the VM cannot run it.</summary>
     public sealed record ExternDecl(
-        int Source, int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName) : Stmt(Source, Line);
+        int Source, int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName, string? InlineC = null, int InlineLine = 0, string? DisplayName = null) : Stmt(Source, Line);
 
     /// <summary>`unsafe { ... }` - only inside such a block are
     /// dereference ('*expression') and address-of ('&expression') allowed.</summary>

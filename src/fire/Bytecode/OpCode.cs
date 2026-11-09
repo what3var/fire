@@ -141,7 +141,7 @@ namespace fire.Bytecode
                         //   copies these arguments itself as soon as the scope of the called function exists, and the copy belongs to this scope
                         //   (SPEC 2.4). At most 16 arguments.
 
-        // Global variables and fire threads (docs/THREADING_DESIGN.md section 7) - again appended AFTER all previous ones.
+        // Global variables and fire threads (docs/spec/THREADING_DESIGN.md section 7) - again appended AFTER all previous ones.
         SyncGlobals,    //                : `sync globals`: the main program works off the queue of its fire threads; push count (int)
         SectionEnter,   //                : `sync global { ` - a fire thread registers and waits until the main program grants the section
                         //                  (no effect in the main program); counterpart SectionExit sits in the `finally` of the block
@@ -201,7 +201,7 @@ namespace fire.Bytecode
         // `x!Type` with a class or interface: the same value, checked (`undefined` passes, anything that is not `is of Type` is an ArgumentException)
         CastTo,              // u16 typeNameIdx      : peek v; error unless v is undefined or `is of` Typname
         // `x!int[8]`, `x!byte`, `x!float[32]`: the number cut to a bit width (int: two's complement, `byte` unsigned 0..255; float: rounded to float32)
-        ConvertWidth,        // u8 bits, u8 flags    : pop v; push it converted (flags: 1 = float, 2 = unsigned)
+        ConvertWidth,        // u8 bits, u8 flags    : pop v; push it converted (flags: 1 = float, 2 = unsigned, 4 = implicit: only a number of the declared kind, 8 = a machine word `word`: bits 0, the width is the target's)
         RebindLambda,        //                      : pop target, pop lambda; push a new lambda with `target` as `this` (`a on obj`)
         // The end of the prologue of a method: a parameter declared `int`/`float`/`bool` holds a value of that kind or `undefined` (a whole number
         // becomes a float for a `float`), anything else is an ArgumentException (DeclaredKind). The unit has been checked before (CheckUnit):
@@ -242,11 +242,38 @@ namespace fire.Bytecode
         // elements are converted, one that does not fit is the exception). An array that has this type already stays as it is, one of another type is
         // an ArgumentException; every other value (undefined, a value of the wrong kind the type checker has warned about) is left alone. Peeks.
         TypeArray,           // u8 elemType, u8 rank, u16 unitConstIdx (0xFFFF: the elements have no unit)
+
+        // ---- The first slot owns an unclaimed value (SPEC 2.1). `new`, literals, copies and what a call hands back belong to the statement temporaries of
+        // the current scope (Scope.Temp) until a slot claims them; what is left there dies at the end of the statement.
+        // The end of a statement: the temporaries of the current scope are destroyed.
+        ReleaseTemps,        //                     :
+        // Peek: an assignment to a variable. bit 0 of flags: the value is unclaimed - if it belongs to the temporaries of the current scope it goes to the scope
+        // `depth` levels above the current one (0xFFFF: the global scope); bit 1: hoist - if it belongs to a scope between the current one and that scope
+        // (the current one included, within the call) it moves up to it.
+        ClaimToScope,        // u16 depth, u8 flags
+        ClaimToObject,       //                     : Stack [obj, value] -> [value]: an unclaimed value of the temporaries goes to the object (a field initializer)
+        ClaimToArray,        //                     : Stack [array, index, value]: an unclaimed value of the temporaries goes to the array (`a[i] = new X()`)
+        // `obj.name = value` that claims (SPEC 2.1): like SetField, and a claimable value - unclaimed (in the temporaries); with bit 1 of flags: a claim site of a
+        // setter, the value still belongs to the setter call - goes to the setter call when `name` is a property of `obj`, else to `obj` after the store.
+        SetFieldClaim,       // u16 fieldNameIdx, u8 flags
+        // `new T[n]` with T a type parameter (the inner array of `List<T>`): the array on top becomes typed when the type argument that runs is `int`,
+        // `float`, `bool` or `char` (without a unit) - `List<int>` keeps its numbers raw; anything else stays an array of values.
+        TypeArrayOfParam,    // u16 typeParamTextIdx (`$k@Class` of the class, `$k@` of the method)
+        // `trust x` (SPEC 8.10b): the developer vouches that the value on top of the stack is not undefined. Nothing in the VM (a `defined` declaration
+        // still checks it); a native release build takes it as a defined number of the kind it has (an undefined that was trusted counts as 0).
+        Trust,               //                     : peek
+        // `try take x` (SPEC 2.2): like TakeToScope/TakeToObject/TakeToArray, but only when the running call owns the value (a scope of the call, the argument
+        // list of the call, `this`); otherwise nothing changes (the store that follows is a plain one). A destroyed value is let through.
+        TryTakeToScope,      // u16 depth
+        TryTakeToObject,     //                     : Stack [obj, value]
+        TryTakeToArray,      //                     : Stack [array, index, value]
+        // `a ^ b` whose target is a float (BinaryExpr.FloatPower, SPEC 1.1): the float power also of two ints (Power gives them an int power)
+        PowerFloat,
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the
     /// base types the parser permits as the optional postfix '!' target
     /// (bool/int/float/char/string; 'class'/'undefined' are deliberately
     /// excluded there, see SPEC 3.1).</summary>
-    public enum TypeTag : byte { Bool, Int, Float, Char, String }
+    public enum TypeTag : byte { Bool, Int, Float, Char, String, Word }
 }

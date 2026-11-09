@@ -11,7 +11,7 @@ using Avalonia.Media.Imaging;
 namespace fire.Editor
 {
     /// <summary>
-    /// Shows a picture of a project (a resource, docs/RESOURCES.md): any size and colour depth the platform can decode (PNG, BMP, GIF, JPEG), zoomed with sharp pixels, on a chequerboard that
+    /// Shows a picture of a project (a resource, docs/stdlib/resources.md): any size and colour depth the platform can decode (PNG, BMP, GIF, JPEG), zoomed with sharp pixels, on a chequerboard that
     /// shows what is transparent, with an optional grid of pixels. Ctrl+wheel zooms. To look at only; the pixel editor changes pictures.
     /// </summary>
     public sealed class ImageViewerControl : UserControl, IDocumentView

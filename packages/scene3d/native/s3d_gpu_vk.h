@@ -1,4 +1,4 @@
-/* fire scene3d: the hardware backend - the queue of s3d_engine.h drawn by the GPU through Vulkan (docs/SCENE3D.md, "Hardware").
+/* fire scene3d: the hardware backend - the queue of s3d_engine.h drawn by the GPU through Vulkan (docs/graphics/3d.md, "Hardware").
  *
  * Optional at every level: Vulkan is not linked but loaded when the backend is first asked for (libvulkan.so.1, vulkan-1.dll, libvulkan.1.dylib or MoltenVK), the declarations it needs
  * come with the package (s3d_vk.h, made from the Khronos header: no SDK needed to build), and when anything is missing - no loader, no driver, no GPU, an error - `s3d_gpu_flush`
@@ -27,7 +27,7 @@
 #if defined(FIRE_S3D_NO_GPU) || defined(__EMSCRIPTEN__) || defined(ESP_PLATFORM) || !(defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__))
 
 /* ---- no hardware backend on this target ---- */
-static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     (void)rgba; (void)f; (void)cam; (void)lights; (void)lightCount; (void)st;
     return 0;
 }
@@ -987,24 +987,29 @@ static S3dGpuTex* s3d_gpu_texFor(S3dTexture* tex) {
 /* ---- meshes: a vertex is position, normal, texture coordinates (32 bytes) ---- */
 static S3dGpuMesh* s3d_gpu_meshFor(S3dMesh* mesh) {
     S3dGpuMesh* g = (S3dGpuMesh*)mesh->gpu;
-    size_t n = mesh->posN / 3, i;
+    size_t n = mesh->posN / 3, i, ni = mesh->idxN / 3 * 3;
     float* v;
+    uint32_t* ix;
     if (g) return g;
     g = (S3dGpuMesh*)calloc(1, sizeof(S3dGpuMesh));
     v = (float*)malloc(n * 8 * sizeof(float) + 4);
-    if (g == NULL || v == NULL) { free(g); free(v); return NULL; }
+    ix = (uint32_t*)malloc(ni * sizeof(uint32_t) + 4);
+    if (g == NULL || v == NULL || ix == NULL) { free(g); free(v); free(ix); return NULL; }
+    /* (the mesh is compact in memory: the GPU gets it as floats and 32-bit indices) */
     for (i = 0; i < n; i++) {
-        v[i * 8 + 0] = mesh->pos[i * 3]; v[i * 8 + 1] = mesh->pos[i * 3 + 1]; v[i * 8 + 2] = mesh->pos[i * 3 + 2];
-        v[i * 8 + 3] = mesh->nrm[i * 3]; v[i * 8 + 4] = mesh->nrm[i * 3 + 1]; v[i * 8 + 5] = mesh->nrm[i * 3 + 2];
-        v[i * 8 + 6] = mesh->uv[i * 2]; v[i * 8 + 7] = mesh->uv[i * 2 + 1];
+        S3dVec3 p = s3d_meshPos(mesh, i), nr = s3d_meshNrm(mesh, i);
+        v[i * 8 + 0] = p.x; v[i * 8 + 1] = p.y; v[i * 8 + 2] = p.z;
+        v[i * 8 + 3] = nr.x; v[i * 8 + 4] = nr.y; v[i * 8 + 5] = nr.z;
+        s3d_meshUv(mesh, i, &v[i * 8 + 6], &v[i * 8 + 7]);
     }
+    for (i = 0; i < ni; i++) ix[i] = s3d_meshIdx(mesh, i);
     if (!s3d_gpu_deviceBuffer(&g->vb, v, n * 8 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT)
-        || !s3d_gpu_deviceBuffer(&g->ib, mesh->idx, (mesh->idxN / 3 * 3) * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_ACCESS_INDEX_READ_BIT)) {
+        || !s3d_gpu_deviceBuffer(&g->ib, ix, ni * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_ACCESS_INDEX_READ_BIT)) {
         s3d_gpu_freeBuffer(&g->vb);
-        free(v); free(g);
+        free(v); free(ix); free(g);
         return NULL;
     }
-    free(v);
+    free(v); free(ix);
     g->indexCount = (uint32_t)(mesh->idxN / 3 * 3);
     mesh->gpu = g;
     return g;
@@ -1186,7 +1191,7 @@ static void s3d_gpu_copyMat(float* out, const S3dMat4* m) { memcpy(out, m->m, si
 static void s3d_gpu_bounds(const S3dBatch* b, S3dVec3* lo, S3dVec3* hi) {
     size_t i, n = b->mesh->posN / 3;
     for (i = 0; i < n; i++) {
-        S3dVec3 w = s3d_transformPoint(&b->model, s3d_v3(b->mesh->pos[i * 3], b->mesh->pos[i * 3 + 1], b->mesh->pos[i * 3 + 2]));
+        S3dVec3 w = s3d_transformPoint(&b->model, s3d_meshPos(b->mesh, i));
         *lo = s3d_v3(s3d_minf(lo->x, w.x), s3d_minf(lo->y, w.y), s3d_minf(lo->z, w.z));
         *hi = s3d_v3(s3d_maxf(hi->x, w.x), s3d_maxf(hi->y, w.y), s3d_maxf(hi->z, w.z));
     }
@@ -1358,7 +1363,7 @@ static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
 }
 
 /* Draws the queue: 1 when the picture is in `rgba`, 2 when it stays on the GPU for the windows of the camera (DirectDrawing), 0 when the GPU cannot draw it. */
-static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     S3dGpuFrame* target;
     S3dGpuTarget* direct = (S3dGpuTarget*)f->direct;
     int readBack = !(direct != NULL && direct->attached && direct->works == 1 && g_s3dVk.wsi);
@@ -1485,7 +1490,7 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     memcpy(rgba, target->readback.map, (size_t)f->w * (size_t)f->h * 4);
     return 1;
 }
-static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     int r;
     s3d_gpu_lock();
     r = s3d_gpu_flushLocked(rgba, f, cam, lights, lightCount, st);

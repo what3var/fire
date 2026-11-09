@@ -1,0 +1,68 @@
+#import "windows"
+#import "scene3d"
+#import "time"
+// Models with parts and animations (docs/graphics/models.md). robot.gltf (glTF 2.0) and figure.fblocks (the block editor of spark: File > New > Block Model)
+// are resources of the program: forge makes each into fire's model file (.f3d) when the program is built.
+//   1 / 2 / 3  the robot waves, jumps, stands still
+//   F          the renderer: Software or Fast
+
+var fb = new Framebuffer(640, 400)
+var win = new Window(fb, "Scene3D Models")
+win.EnableEvents()
+var hud = new Renderer(fb)
+var white = new SolidBrush(S3D.Rgb(255, 255, 255))
+var shade = new SolidBrush(S3D.Rgba(0, 0, 0, 160))
+
+var scene = new Scene()
+scene.Add(Light.Directional(-0.5, -1.0, -0.35))
+var floor = new Object(Template.Plane, 0m, 0m, 0m, 12m, 0m, 12m)
+floor.Texture = Texture.Checker(64, 12, S3D.Rgb(200, 200, 205), S3D.Rgb(150, 150, 160))
+scene.Add(floor)
+
+var robotModel = Model.FromResource(new Resource("robot.gltf"))
+var robot = new Object(robotModel)
+robot.AnchorY = 0.0
+robot.SetPosition(-1m, 0m, 0m)
+robot.Play("wave")
+scene.Add(robot)
+
+// the figure hops around the robot; its animation "hop" loops
+var figure = new Object(Model.FromResource(new Resource("figure.fblocks")))
+figure.AnchorY = 0.0
+figure.Play("hop", true)
+scene.Add(figure)
+print("robot: " + robotModel.Parts + " parts, animations: " + robotModel.Animations.Count + "; figure: " + figure.Triangles + " triangles")
+
+var cam = new Camera(fb)
+cam.SetPosition(0m, 2.5m, 5m)
+cam.LookAt(0m, 0.8m, 0m)
+scene.Add(cam)
+
+var last = DateTime.UtcNow.Ticks
+var t = 0.0
+while (win.Tick()) {
+    any e = win.NextEvent()
+    while (e != undefined) {
+        if (e[0] == EventType.KeyDown) {
+            if (e[1] == 49) { robot.Play("wave") }
+            else if (e[1] == 50) { robot.Play("jump", true) }
+            else if (e[1] == 51) { robot.Play("") }
+            else if (e[1] == 102) {
+                if (scene.Renderer == RenderMode.Fast) { scene.Renderer = RenderMode.Software } else { scene.Renderer = RenderMode.Fast }
+            }
+        }
+        e = win.NextEvent()
+    }
+    var now = DateTime.UtcNow.Ticks
+    var dt = (now - last) / 10000000.0
+    last = now
+    t = t + dt
+    scene.Advance(dt * 1s)                 // the animations go on
+
+    figure.SetPosition((Math.Sin(t * 0.8) * 2.0 + 1.0) * 1m, 0m, (Math.Cos(t * 0.8) * 2.0) * 1m)
+    figure.RotationY = S3D.Degrees(t * 0.8 + 1.5708)
+
+    cam.Render()
+    hud.FillRect(0, 0, 640, 18, shade)
+    hud.DrawText(6, 4, "1 wave  2 jump  3 rest   F renderer (" + scene.Renderer + ")   robot: '" + robot.Animation + "'", white, shade, Fonts.Console(), 8)
+}

@@ -10,7 +10,7 @@ using fire.Values;
 
 // The standard libraries (time, io, graphics, ...): packed from their projects (Source next to the program, copied from packages/ of the repository) and installed into a store of their
 // own for this run (the C++ libraries of their natives are built on first use).
-// every check line numbered against the count of the last run ("OK: [12/530] ..."), every line flushed at once (TestUtils.cs, docs/TESTING.md)
+// every check line numbered against the count of the last run ("OK: [12/530] ..."), every line flushed at once (TestUtils.cs, docs/tools/testing.md)
 TestProgress.Install();
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
@@ -38,7 +38,10 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
 // FIRE_TESTS_ONLY=linkage: linkage "static" of native builds (libraries in the cache, ROADMAP 9)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { LinkageTests.Run(); return; }
+// FIRE_TESTS_ONLY=bios16: the targets without an operating system (ROADMAP 13.5: the boot sector, a build booted in QEMU)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { BiosTests.RunAlone(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { BlockModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
@@ -528,6 +531,23 @@ try
 catch (ResolverException ex)
 {
     Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Typsystem-Test: 'try take' ausserhalb von Argument und Zuweisung (muss fehlschlagen) ===");
+try
+{
+    var program = Parser.Parse("class Box {\n    int v\n}\nvar b = new Box()\nvar c = try take b == undefined");
+    Resolver.Resolve(program);
+    Console.WriteLine("FEHLER: hätte ResolverException werfen müssen");
+}
+catch (ResolverException ex) when (ex.Message.Contains("'try take'"))
+{
+    Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: falsche Ausnahme: {ex.Message}");
 }
 
 Console.WriteLine();
@@ -2748,7 +2768,7 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 // =====================================================================
-// Multithreading-Architektur (docs/THREADING_DESIGN.md): Threads + Locking
+// Multithreading-Architektur (docs/spec/THREADING_DESIGN.md): Threads + Locking
 // + taking copy + sync - everything tested directly via the C# API, still without
 // parser/language syntax for fire/taking/sync/process/leave/terminate.
 // =====================================================================
@@ -3001,7 +3021,7 @@ try
         var obj = (ObjectInstance)args[0].AsObjectRef();
         var result = SyncEngine.Sync(obj, blocking: true);
         // The same mapping that the real language syntax will use later
-        // (see docs/THREADING_DESIGN.md 4.1): true/false/undefined.
+        // (see docs/spec/THREADING_DESIGN.md 4.1): true/false/undefined.
         return result switch
         {
             SyncResult.Success => Value.MakeBool(true),
@@ -4033,6 +4053,7 @@ print("2 * 3^2 = " + (2 * 3 ^ 2))
 print("-2^2 = " + (-2 ^ 2))
 print("2.0 ^ 0.5 = " + (2.0 ^ 0.5))
 print("2 ^ -1 = " + (2 ^ -1))
+print("2.0 ^ -1 = " + (2.0 ^ -1))
 
 print("12 & 10 = " + (12 & 10))
 print("12 | 10 = " + (12 | 10))
@@ -4051,7 +4072,7 @@ try
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
     Console.WriteLine(
-        "Ausgabe (erwartet: 1024 / 512 / 18 / -4 / 1.41... / 0.5 / 8 / 14 / 6 / 16 / 16 / 6):");
+        "Ausgabe (erwartet: 1024 / 512 / 18 / -4 / 1.41... / 0 / 0.5 / 8 / 14 / 6 / 16 / 16 / 6):");
     var vmGlobalScope = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
     vm.Run();
@@ -6925,7 +6946,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         var b2 = copy bytes
         b2[0] = 67
         print(bytes[0] + " " + b2[0])
-        """, "1 20 10", "True", "False", "1 2 100 200", "65 67", "~Barr", "~I1", "~I20", "~Barr", "~Barr", "~I2", "~I10");
+        """, "1 20 10", "True", "False", "1 2 100 200", "65 67", "~Barr", "~I1", "~I20", "~Barr", "~Barr", "~I10", "~I2");
 
     CheckClone("Werte: nichts zu kopieren", """
         print(copy 5)
@@ -7496,7 +7517,7 @@ packerTests:
     PackagePlan Plan(params string[] imports) => PackagePlan.Create(imports, baseDir);
     var planPrint = Plan(NativeImports.Print);
     PackCheck(planPrint.Assemblies.ContainsKey("fire") && planPrint.Assemblies.ContainsKey("MemoryPack.Core"), "Plan: Kern (fire, MemoryPack) ist immer dabei");
-    PackCheck(!planPrint.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n.StartsWith("fire.Device") || n.StartsWith("fire.IO") || n == "SDL3-CS" || n == "System.IO.Ports") && planPrint.Natives.Count == 0,
+    PackCheck(!planPrint.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n.StartsWith("fire.Device") || n.StartsWith("fire.IO") || n == "System.IO.Ports") && planPrint.Natives.Count == 0,
         "Plan: ohne Import keine Bridge, keine nativen Bibliotheken");
     var planIo = Plan(NativeImports.Print, "pkg:io");
     PackCheck(planIo.Assemblies.Keys.SequenceEqual(planPrint.Assemblies.Keys) && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Manager"),
@@ -7504,22 +7525,21 @@ packerTests:
     var planGfx = Plan(NativeImports.Print, NativeImports.Graphics);
     PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge")
         && !planGfx.Assemblies.Keys.Any(n => n is "fire.Terminal.Windows" or "fire.Windows.Bridge") && planGfx.Natives.Count == 0,
-        "Plan: graphics bindet Terminal-Bridge und Terminal ein - ohne Fenster, SDL und native Bibliotheken");
+        "Plan: graphics bindet Terminal-Bridge und Terminal ein - ohne Fenster und native Bibliotheken");
     var planWin = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows);
-    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Windows.Bridge", "fire.Terminal", "fire.Terminal.Windows" }.All(planWin.Assemblies.ContainsKey) && planWin.Unresolved.Count == 0
-        && !planWin.Assemblies.Keys.Any(n => n.Contains("Sdl", StringComparison.OrdinalIgnoreCase) || n.Contains("SDL")),
-        "Plan: windows (die C#-Umsetzung) bindet Fenster-Bridge samt Terminal/Windows ein (Abhaengigkeiten aus den Metadaten) - kein SDL mehr");
+    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Windows.Bridge", "fire.Terminal", "fire.Terminal.Windows" }.All(planWin.Assemblies.ContainsKey) && planWin.Unresolved.Count == 0,
+        "Plan: windows (die C#-Umsetzung) bindet Fenster-Bridge samt Terminal/Windows ein (Abhaengigkeiten aus den Metadaten)");
     var planWinC = PackagePlan.Create(new[] { NativeImports.Print, NativeImports.Graphics, NativeImports.Windows }, baseDir, graphicsInC: true);
     PackCheck(!planWinC.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n == "fire.Windows.Bridge") && planWinC.Unresolved.Count == 0,
         "Plan: graphics und windows in C - weder die C#-Bridges noch fire.Terminal kommen mit (ihre Bibliothek reist als native Datei)");
     var planDev = Plan(NativeImports.Print, "pkg:devices");
     var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows, NativeImports.Ui);
     PackCheck(planUi.Assemblies.Keys.SequenceEqual(planWin.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics und windows kommen ueber den Import)");
-    PackCheck(new[] { "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
+    PackCheck(new[] { "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey),
         "Plan: devices (ein Paket) bindet den Geraetemanager des Hosts und System.IO.Ports ein");
     PackCheck(planGfx.Unresolved.Count == 0 && planDev.Unresolved.Count == 0 && planIo.Unresolved.Count == 0 && planPrint.Unresolved.Count == 0,
         "Plan: alle Verweise aufloesbar (Datei neben dem Compiler oder Teil des Frameworks)");
-    PackCheck(planWin.Natives.Count == 0, "Plan: windows bringt keine native Bibliothek mit (kein SDL)");
+    PackCheck(planWin.Natives.Count == 0, "Plan: windows bringt keine native Bibliothek mit");
     // `windows` is separate from `graphics`: the window exists only with its own import, which brings `graphics` along; `graphics` alone does not know a Window
     {
         string LinkResult(string src)
@@ -7763,17 +7783,19 @@ packerTests:
         // the target wasm (WebAssembly in the browser, Emscripten)
         {
             bool known = TargetProfile.TryGet("wasm", out var wasm);
-            SfCheck(known && wasm!.Native.Platform == "wasm" && !wasm.Native.SupportsThreads && wasm.Native.Toolchain == "emscripten" && wasm.Symbols.Contains("browser") && wasm.Symbols.Contains("wasm"), "wasm: das Ziel gibt es (Plattform wasm, Toolchain emscripten, keine Threads, Symbole wasm und browser)");
+            SfCheck(known && wasm!.Native.Platform == "wasm" && wasm.Native.SupportsThreads && wasm.Native.Toolchain == "emscripten" && wasm.Symbols.Contains("browser") && wasm.Symbols.Contains("wasm"), "wasm: das Ziel gibt es (Plattform wasm, Toolchain emscripten, Threads ueber den eigenen Scheduler, Symbole wasm und browser)");
             var wasmCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm!, "p.cpp", sfDir, "p.html");
             SfCheck(wasmCmd.Executable.EndsWith("em++") && wasmCmd.Arguments.Contains("-fexceptions") && wasmCmd.Arguments.Contains("-sASYNCIFY") && wasmCmd.Arguments.Contains("-sSINGLE_FILE=1") && wasmCmd.Arguments.Contains("p.html"),
                 "wasm: der Aufruf von em++ (Ausnahmen, ASYNCIFY, eine Datei, Ausgabe .html)");
             SfCheck(fire.Compiler.NativeBuilder.DefaultOutput(wasm) == "out.html", "wasm: die Standardausgabe ist out.html");
+            SfCheck(fire.Compiler.NativeBuilder.DefaultOutput(TargetProfile.Dos16) == "out.exe" && fire.Compiler.NativeBuilder.DefaultOutput(TargetProfile.Win16) == "out.exe"
+                && fire.Compiler.NativeBuilder.DefaultOutput(TargetProfile.Dos32) == "out.exe"
+                && fire.Projects.ProjectOutput.ProgramPath("p", "Demo", "win16", "Release", TargetProfile.Win16.ProgramExtension).EndsWith("Demo.exe", StringComparison.Ordinal),
+                "dos16, dos32, win16: das Programm heisst .exe (Standardausgabe und Projektausgabe)");
             string wasmCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#if wasm\nprint(\"browser\")\n#else\nprint(\"desktop\")\n#endif" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
             SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.h\"") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
-            string threadError = "";
-            try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release, null, wasm), wasm); }
-            catch (fire.Native.NativeNotSupportedException ex) { threadError = ex.Message; }
-            SfCheck(threadError.Contains("threads are not supported by the platform 'wasm'"), "wasm: ein fire-Thread wird beim Uebersetzen abgelehnt");
+            string threadCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
+            SfCheck(threadCpp.Contains("FIRE_THREADS") && threadCpp.Contains("int main(void)"), "wasm: ein fire-Thread wird uebersetzt (eigener Scheduler), main ohne Argumente (Emscripten ruft main(argc, argv) nicht immer)");
             // with Emscripten and node on this machine: the program is built for the browser's WebAssembly and runs (here under node); it prints what the VM prints (exceptions, floats, Sleep)
             string? FindOnPath(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
             if (FindOnPath("em++") != null && FindOnPath("node") != null)
@@ -7806,8 +7828,30 @@ packerTests:
                     node.WaitForExit();
                     var vmLines = new List<string>();
                     RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
-                    Value.SingleFloats = false; Value.Ints32 = false;
+                    Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
+                    // fire threads: tasks of fire's own scheduler on the fibers of Emscripten (std/sched/fire_ctx_emscripten.h)
+                    const string wasmThreads = """
+                        #import "time"
+                        var done = 0
+                        fire { var t = 0
+                          for (var i = 0; i < 200000; i++) { t = t + i }
+                          Sleep(20ms)
+                          sync global { done = t } }
+                        var n = 0
+                        while (done == 0) { n++; Sleep(1ms) }
+                        print("thread " + done + " " + (n > 0))
+                        """;
+                    string thrJs = EmBuild(wasmThreads, "pthr", out string thrLog);
+                    string thrOut = "";
+                    if (thrJs != "")
+                    {
+                        using var tn = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{thrJs}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                        tn.StandardError.ReadToEndAsync();
+                        thrOut = tn.StandardOutput.ReadToEnd().Replace("\r\n", "\n");
+                        tn.WaitForExit();
+                    }
+                    SfCheck(thrOut == "thread 19999900000 True\n", "wasm: ein fire-Thread (eigener Scheduler auf den Fibers von Emscripten), Sleep in Thread und Hauptprogramm, sync global" + (thrJs == "" ? "\n" + thrLog : "\n  node: " + thrOut));
                     // linkage "static" (ROADMAP 9): the modules as static libraries of Emscripten (emar), in a cache of their own; the same output
                     string? cacheBefore = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
                     Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", Path.Combine(wasmDir, "cache"));
@@ -7828,11 +7872,11 @@ packerTests:
                     }
                     finally { Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", cacheBefore); }
                 }
-                // a window (fire's own display: native/platform/std/fire_display_web.h, the canvas of the page without SDL):
+                // a window (fire's own display: packages/windows/native/fire_display_web.h, the canvas of the page):
                 // it draws into the canvas of the page; with Playwright (the Chromium of this machine) the page runs headless and says what it printed and drew
                 const string winSource = "#import \"windows\"\n#import \"time\"\nvar fb = new Framebuffer(40, 30)\nvar win = new Window(fb, \"wasm\")\nvar r = new Renderer(fb)\nr.Clear()\nfor (var y = 0; y < 30; y++) { for (var x = 0; x < 40; x++) { r.SetPixel(x, y, 0xFFF08020) } }\nfor (var i = 0; i < 3; i++) { win.Tick(); Sleep(10ms) }\nvar px = fb.ReadBytes()\nprint(\"pixel \" + px[0] + \" \" + px[1] + \" \" + px[2])\nprint(\"done\")\nfor (var i = 0; i < 300; i++) { win.Tick(); Sleep(10ms) }\n";
                 string winHtml = EmBuild(winSource, "win", out string winLog);
-                SfCheck(winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut ohne SDL (die eigene Anzeige: das Canvas der Seite), ohne Warnung" + (winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:") ? "" : "\n" + winLog));
+                SfCheck(winHtml != "" && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut mit der eigenen Anzeige (das Canvas der Seite), ohne Warnung" + (winHtml != "" && !winLog.Contains("warning:") ? "" : "\n" + winLog));
                 bool playwright = false;
                 try
                 {
@@ -9393,7 +9437,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "graphics") return;
     Console.WriteLine(slFailures == 0 ? "Alle Slicer-Pruefungen bestanden." : $"FEHLER: {slFailures} Slicer-Pruefung(en) fehlgeschlagen.");
 }
 
-// the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
+// the drawing of the UI library without events: run by the VM (fake renderer) below, natively (fire's own display without a screen) in the native checks
 uiTests:
 uiDrawScript = """
     var fb = new Framebuffer(640, 300)
@@ -15043,7 +15087,7 @@ DebuggerTests.Run();
         T.Lost()
         print(T.Inner().n)
         print("end")
-        """, new[] { "~x", "dead: Access to a destroyed object.", "dead set", "~d", "~W sees d", "batch done", "3 i2", "ra", "~lost", "~outer", "inner", "end", "~i0", "~i1", "~i2", "~ra", "~rb", "~inner" });
+        """, new[] { "~x", "dead: Access to a destroyed object.", "dead set", "~d", "~W sees d", "batch done", "3 i2", "ra", "~lost", "~outer", "inner", "~inner", "end", "~i0", "~i1", "~i2", "~ra", "~rb" });   // (T.Inner() without a target dies at the end of the statement, SPEC 2.1)
 
     CheckScChecked("Takes: This, Children, Locals, All bei TakeUpwards/TakeTo/TakeGlobal und fuer Arrays", """
         class N {
@@ -15239,7 +15283,7 @@ DebuggerTests.Run();
         try { print(a.n) } catch (DestroyedException ex) { print("dead a") }
         try { T.Eat(take a) } catch (DestroyedException ex) { print("dead take") }
         print("end")
-        """, new[] { "eat a","~mine","~a","1","~x0","kept","2","False","True","3","~out","4","5","dead a","dead take","end","~box","~b","~c","~d","~inner","~e" });
+        """, new[] { "eat a","~mine","~a","1","kept","2","False","True","3","~out","4","5","dead a","dead take","end","~box","~b","~c","~d","~x0","~inner","~e" });   // (the literal's element belongs to the array, SPEC 2.1)
 
     CheckScChecked("Ein Array besitzt, was return und Takes mitnehmen", """
         class Item { string n
@@ -16136,7 +16180,7 @@ else
             any v = "dyn"
             print(Show.Of(v))
             """),
-        ("Ueberladung vorab gewaehlt: wechselnder Argumenttyp an derselben Stelle (lax) nimmt abwechselnd Hinweis und Bewertung", """
+        ("Ueberladung vorab gewaehlt: wechselnder Argumenttyp an derselben Stelle (any) waehlt jedes Mal richtig", """
             class Show {
                 static string Of(int x) { return "int" }
                 static string Of(string s) { return "string" }
@@ -16148,7 +16192,7 @@ else
             }
             var sh = new Show(1)
             for (int i = 0; i < 6; i++) {
-                int x = i
+                any x = i
                 if (i % 2 == 1) { x = "odd" }
                 print(Show.Of(x) + " / " + sh.Me(x) + " / " + new Show(x).made)
             }
@@ -18942,6 +18986,9 @@ else
             print(2.0 ^ 0.5)
             print(2 ^ -1)
             print(3m ^ 2m)
+            float pwf = 2 ^ -1
+            print(pwf)
+            print(3 ^ 4 + 1)
             var i = 7
             print(i!float / 2)
             print(i / 2)
@@ -20225,7 +20272,10 @@ else
             extern int toupper(int c)
             extern float atof(string s)
             extern int sscanf(string text, string format, int* out)
+            extern int labs(int n)
             print(abs(-5))
+            word w = 7
+            print(abs(w) + " " + labs(18446744073709551615!word))
             print(atoi("1234") + 1)
             print(strlen("hello"))
             print(strlen("äö"))
@@ -20239,6 +20289,158 @@ else
                 print(n)
             }
             """)).ToArray();
+
+    // the hardware of the PC (#import "machine"): where a program does not own the machine (the VM, Linux) every access is a MachineException - the same in
+    // the VM and natively; what is only arithmetic (the address of a PCI register) works everywhere (on DOS: the dos16 checks)
+    natCases = natCases.Append(("machine: ohne Zugang zur Hardware eine MachineException (Ports, Speicher, CPU, IRQ), Argumente zuerst geprueft", """
+            #import "machine"
+            try { Machine.Port.In8(96) } catch (Machine.MachineException e) { print("port: " + e.message) }
+            try { Machine.Memory.Peek8(0) } catch (Machine.MachineException e) { print("memory") }
+            try { Machine.Cpu.Level() } catch (Machine.MachineException e) { print("cpu") }
+            try { new Machine.Irq(1) } catch (Machine.MachineException e) { print("irq") }
+            try { Machine.Cmos.Clock() } catch (Machine.MachineException e) { print("cmos") }
+            print(Machine.Pci.Address(0, 1, 2, 7))
+            try { Machine.Pci.Address(0, 32, 0, 0) } catch (ArgumentException e) { print("pci: " + e.message) }
+            """)).ToArray();
+
+    // the services of DOS (#import "dos") and its extended memory (#import "xms"): without DOS a DosException / XmsException - the same in the VM and natively
+    natCases = natCases.Append(("dos/xms: ohne DOS eine DosException bzw. XmsException, Xms.Available() false, Register-Hilfen", """
+            #import "dos"
+            #import "xms"
+            try { Dos.Version() } catch (DosException e) { print("dos: " + e.message) }
+            try { Dos.Interrupt(33, new DosRegisters(12288)) } catch (DosException e) { print("int") }
+            print(Xms.Available())
+            try { new XmsBlock(16) } catch (XmsException e) { print("xms: " + e.message) }
+            var r = new DosRegisters(4660)
+            r.flags = 1
+            print(r.Ah + " " + r.Al + " " + r.Carry)
+            """)).ToArray();
+
+    // the modes of the processor (#import "x86"): not on this target - an X86Exception in the VM and natively, Mode() "none"
+    natCases = natCases.Append(("x86: ohne den Real Mode von DOS eine X86Exception, Mode() none, CanSwitch() false", """
+            #import "x86"
+            print(X86.Mode() + " " + X86.CanSwitch() + " " + X86.CanLongMode())
+            try { X86.EnableA20() } catch (X86Exception e) { print("a20: " + e.message) }
+            byte code[] = new byte[1]
+            code[0] = 195
+            try { X86.RunProtected(code, new X86Registers(1)) } catch (X86Exception e) { print("run") }
+            try { X86.RunLong(code, new X86Registers(1)) } catch (X86Exception e) { print("long") }
+            try { X86.ReadLinear(1048576, 4) } catch (X86Exception e) { print("read") }
+            var r = new X86Registers(7)
+            print(r.eax + " " + r.ebx)
+            """)).ToArray();
+
+    // a constructor that throws made no object (SPEC 5.3): no destruct() - neither of the class nor of a base class -, what it owns is freed; after resume() it is one
+    natCases = natCases.Append(("Konstruktor mit Ausnahme: kein destruct() (Klasse und Basis), Besitz wird freigegeben; nach resume() ein normales Objekt", """
+            class Part {
+                string name
+                construct(string name) { this.name = name }
+                destruct() { print("~Part " + this.name) }
+            }
+            class Base {
+                int n
+                construct(int n) {
+                    this.n = n
+                    if (n == 2) { throw new ArgumentException("base " + n) }
+                }
+                destruct() { print("~Base " + this.n) }
+            }
+            class Thing : Base {
+                Part part
+                construct(int n) : base(n) {
+                    this.part = new Part("p" + n)
+                    this.part.TakeTo(this)
+                    if (n == 3) { throw new ArgumentException("thing " + n) }
+                }
+                destruct() { print("~Thing " + this.n) }
+            }
+            print("a")
+            try { new Thing(2) } catch (ArgumentException e) { print("caught: " + e.message) }
+            print("b")
+            try { new Thing(3) } catch (ArgumentException e) { print("caught: " + e.message) }
+            print("c")
+            try { new Thing(3) } catch (ArgumentException e) { print("resume: " + e.message); e.resume() }
+            print("d")
+            var ok = new Thing(1)
+            print("e")
+            """)).ToArray();
+
+    // inline c as static methods of a class (C name fire_inl_<Class>_<Name>)
+    natCases = natCases.Append(("inline c: statische Methoden einer Klasse (public/private/static, byte[], undefined), Aufruf aus einer fire-Methode", """
+            class M {
+              inline c int Add(int a, int b) { return a + b; }
+              public static inline c float Half(float x) { return x / 2; }
+              private static inline c int Secret(int x) { return x * 7; }
+              static int UseSecret(int x) { return M.Secret(x) }
+              inline c undefined Nothing(byte data[]) { data[0] = (uint8_t)data_length; }
+              static string Hi() { return "hi" }
+            }
+            print(M.Hi())
+            #if native
+            var b = new byte[3]
+            M.Nothing(b)
+            print(M.Add(2, 3) + " " + M.Half(5.0) + " " + M.UseSecret(6) + " " + b[0])
+            #else
+            print("5 2.5 42 3")
+            #endif
+            """)).ToArray();
+    // inline c (ROADMAP 13.2): functions with a C body - natively the C, in the VM the fire branch of `#if native` gives the same lines
+    natCases = natCases.Append(("inline c: Zahlen, bool, char, string, byte[] (Bytes + Laenge), any, undefined, int[16], #if im C-Rumpf, Klammern in Strings und Kommentaren", """
+            inline c int Add(int a, int b) { return a + b; }
+            inline c float Half(float x) { return x / 2; }
+            inline c bool IsOdd(int n) { return (n & 1) != 0; }
+            inline c char Upper(char c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
+            inline c int Sum(byte data[]) { FireInt s = 0; uint32_t i; for (i = 0; i < data_length; i++) s += data[i]; return s; }
+            inline c Fill(byte data[], int v) { memset(data, (int)v, data_length); }
+            inline c string Greet(string who) { static char buf[64]; snprintf(buf, sizeof buf, "hi %s {'}", who); return buf; }
+            inline c any Twice(any a) { return a.kind == K_Int ? Int(a.i * 2) : a; }
+            inline c undefined Nothing() { /* } in a comment */ const char* s = "}"; (void)s; }
+            inline c int[16] Narrow(int[16] x) { return (int16_t)(x + 1); }
+            inline c int Compiler() {
+            #if defined(__GNUC__)
+                return 1;   // a C comment with a } brace
+            #else
+                return 2;
+            #endif
+            }
+            inline c int UsesAdd(int a) { return fire_inl_Add(a, 100); }
+            var inline = 5
+            print(inline)
+            #if native
+            var b = new byte[3]
+            b[0] = 1; b[1] = 2; b[2] = 3
+            print(Add(2, 3) + " " + Half(5.0) + " " + IsOdd(3) + " " + Upper('q') + " " + Sum(b))
+            Fill(b, 9)
+            print(b[0] + b[1] + b[2])
+            print(Greet("bob") + " " + Twice(21) + " " + Twice("x") + " " + Nothing() + " " + Narrow(32767) + " " + Compiler() + " " + UsesAdd(1))
+            #else
+            print("5 2.5 True Q 6")
+            print(27)
+            print("hi bob {'} 42 x undefined -32768 1 101")
+            #endif
+            """)).ToArray();
+    {
+        // in the VM a call is an error (a catchable one); the `#if` of a C body is C's (the preprocessor of fire leaves it); the types are checked
+        string vmInline = vmOutput("inline c int Add(int a, int b) {\n#if defined(X)\n  return 0;\n#endif\n  return a + b; }\nprint(1)\ntry { print(Add(1, 2)) } catch (e) { print(e.message) }\nvar inline = 3\nprint(inline)");
+        string vmInlineMethod = vmOutput("class M {\n  static inline c int Add(int a, int b) { return a + b; }\n}\ntry { print(M.Add(1, 2)) } catch (e) { print(e.message) }");
+        CheckNat("inline c als Methode in der VM: der Aufruf ist ein Fehler, der die Methode nennt (M.Add)", vmInlineMethod.StartsWith("'M.Add' is an inline C function"), vmInlineMethod);
+        CheckNat("inline c in der VM: der Aufruf ist ein Fehler, #if im C-Rumpf gehoert C, 'inline' bleibt ein Name",
+            vmInline.StartsWith("1\n'Add' is an inline C function: it runs only in a native build") && vmInline.EndsWith("\n3\n"), vmInline);
+        string InlineError(string source) { try { new Linker().CompileAndLink(new[] { source }); return ""; } catch (Exception ex) { return ex.Message; } }
+        CheckNat("inline c: Typen, die C nicht nehmen kann, sind ein Fehler beim Uebersetzen",
+            InlineError("inline c int F(int a[]) { return 0; }").Contains("has a type C cannot take")
+            && InlineError("class Dog { }\ninline c Dog G() { return 0; }").Contains("result type C cannot give")
+            && InlineError("inline c int H(a) { return 0; }").Contains("needs a type")
+            && InlineError("inline c int K(int a)").Contains("C body"), InlineError("inline c int K(int a)"));
+        var inlineSpans = fire.Editor.SyntaxHighlighter.Highlight("inline c int Add(int a) { return a + 1; /* c */ }\n");
+        string inlineText = "inline c int Add(int a) { return a + 1; /* c */ }\n";
+        string SpanAt(string word) { int at = inlineText.IndexOf(word, StringComparison.Ordinal); return inlineSpans.FirstOrDefault(sp => sp.Start == at).Category.ToString(); }
+        CheckNat("inline c im Editor: 'inline c' sind Schluesselwoerter, der Rumpf ist als C gefaerbt",
+            SpanAt("inline") == "Keyword" && SpanAt("return") == "Keyword" && SpanAt("/* c */") == "Comment" && SpanAt("1;") == "Number",
+            string.Join(", ", inlineSpans.Select(sp => $"{inlineText.Substring(sp.Start, sp.Length)}={sp.Category}")));
+        var inactiveInline = fire.Compiler.ConditionalSymbols.InactiveLines("inline c int A() {\n#if X\n  return 1;\n#endif\n  return 0; }\n", new HashSet<string>());
+        CheckNat("inline c im Editor: das #if des C-Rumpfs graut nichts aus", !inactiveInline.Contains(true));
+    }
 
     // Fire threads (THREADING_DESIGN): only programs whose output does not depend on how the threads interleave
     natCases = natCases.Concat(new (string Name, string Source)[]
@@ -21108,6 +21310,219 @@ else
     }).ToArray();
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Ziel-Regel (SPEC 2.1): Temporaere am Statement-Ende, var, Feld, Element (das Array besitzt), Builder, aeussere Variable, Hochziehen", """
+            class Item {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+                string Name() { return this.n }
+            }
+            class Factory { static Item Make(string n) { return new Item(n) } }
+            class Box { Item content }
+            class Builder {
+                int size = 0
+                Builder With(int n) { this.size = this.size + n; return this }
+                destruct() { print("destroy builder") }
+            }
+            print("1 temp:")
+            print(new Item("temp").Name())
+            print("2 var:")
+            var a = new Item("a")
+            print("3 field:")
+            var box = new Box()
+            box.content = Factory.Make("boxed")
+            print(box.content is from box)
+            print("4 array:")
+            {
+                Item items[2]
+                items[0] = new Item("e0")
+                items[0] = new Item("e1")
+                print("overwritten")
+            }
+            print("5 builder:")
+            var b = new Builder().With(2).With(3)
+            print(b.size)
+            print("6 outer var:")
+            Item keep = undefined
+            {
+                {
+                    keep = new Item("keep")
+                }
+                print("inner left: " + keep.n)
+            }
+            print("7 hoist:")
+            Item last = undefined
+            for (int i = 0; i < 2; i++) {
+                var it = new Item("loop " + i)
+                if (i == 1) { last = it }
+            }
+            print("kept " + last.n)
+            print("end")
+            """),
+        ("Ziel-Regel (SPEC 2.1): bis zum deklarierenden Block, Kette, Ternary, Argument, Rueckgabe in ein Element, copy", """
+            class Item {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+            }
+            class Holder {
+                Item held
+                undefined Keep(Item i) { this.held = i; try i.TakeTo(this) }
+                undefined Look(Item i) { print("look " + i.n) }
+            }
+            class T {
+                static Item Make(string n) { return new Item(n) }
+                static undefined Hoist() {
+                    print("hoist: start")
+                    {
+                        Item mid = undefined
+                        for (int i = 0; i < 2; i++) {
+                            var it = new Item("h" + i)
+                            if (i == 1) { mid = it }
+                        }
+                        print("hoist: loop done, mid=" + mid.n)
+                    }
+                    print("hoist: block of mid left")
+                }
+                static undefined Chain() {
+                    Item a = undefined
+                    Item b = undefined
+                    {
+                        a = b = new Item("chain")
+                    }
+                    print("chain: " + a.n + " " + b.n)
+                }
+                static undefined Ternary(bool c) {
+                    Item x = new Item("x")
+                    var t = c ? new Item("fresh") : x
+                    print("ternary: " + t.n)
+                }
+            }
+            T.Hoist()
+            print("--")
+            T.Chain()
+            print("--")
+            T.Ternary(true)
+            print("--")
+            var h = new Holder()
+            h.Keep(new Item("kept"))
+            h.Look(new Item("looked"))
+            print("after look")
+            print(h.held.n)
+            print("--")
+            var arr = [undefined, undefined]
+            arr[0] = T.Make("returned into array")
+            print("--")
+            var c = copy h.held
+            print("copy " + c.n)
+            print("end")
+            """),
+        ("Ziel-Regel (SPEC 2.1): Setter - Feld, Property-Kette, Aufruf, nicht genommener Zweig, mehrdeutig, kein neuer Wert", """
+            class Item {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+            }
+            class Store {
+                List items = new List()
+                undefined Keep(Item i) { this.items.Add(i); try i.TakeTo(this) }
+            }
+            class Shelf {
+                Item top
+                Item other
+                Store store = new Store()
+                Item Top { get { return this.top } set { this.top = value } }
+                Item Via { get { return this.other } set { this.Top2 = value } }
+                Item Top2 { get { return this.other } set { this.other = value } }
+                Item Peek { get { return this.top } set { print("peek " + value.n) } }
+                Item Stored { get { return this.top } set { this.store.Keep(value) } }
+                bool cond = false
+                Item Maybe { get { return this.top } set { if (this.cond) { this.top = value } } }
+                Item Amb { get { return this.top } set { this.store.Keep(value); if (this.cond) { this.other = value } } }
+            }
+            var s = new Shelf()
+            print("1"); s.Top = new Item("top")
+            print("2"); s.Via = new Item("via")
+            print("3"); s.Peek = new Item("peek")
+            print("4"); s.Stored = new Item("stored")
+            print("5"); s.Maybe = new Item("maybe")
+            print("6"); s.Amb = new Item("amb")
+            print("7")
+            var mine = new Item("mine")
+            s.Top = mine
+            print(s.top is from s)
+            print("end")
+            """),
+        ("Ziel-Regel (SPEC 2.1): fire M(new X()) uebergibt, Nachricht an einen Actor besitzt ihr frisches Argument", """
+            #import "time"
+            class Job {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("destroy " + this.n) }
+            }
+            actor Log {
+                int count = 0
+                undefined Put(Job j) { print("log " + j.n); this.count++ }
+            }
+            class Runner {
+                undefined Work(Job j) { print("work " + j.n) }
+                undefined Start() {
+                    fire Work(new Job("handed"))
+                    Sleep(200ms)
+                    var mine = new Job("mine")
+                    print("still mine: " + mine.n)
+                }
+            }
+            new Runner().Start()
+            var log = new Log()
+            log.Put(new Job("msg"))
+            var keep = new Job("ref")
+            log.Put(keep)
+            process log
+            process log
+            print("count " + log.count)
+            print("end")
+            """),
+        ("Ziel-Regel (SPEC 2.1): ein zurueckgegebenes Lambda nimmt seine Captures mit, Wert an einem Temporaeren, foreach-Quelle, Argument im Rueckgabewert", """
+            class X {
+                int v
+                construct(int v) { this.v = v }
+                destruct() { print("~X" + this.v) }
+            }
+            class W {
+                X x
+                lambda f
+                construct(X x) { this.x = x }
+                destruct() { print("~W") }
+            }
+            class Box {
+                List all
+                construct() { this.all = new List(); this.all.Add(new X(1)); this.all.Add(new X(2)) }
+                X First() { return this.all[0] }
+                destruct() { print("~Box") }
+            }
+            class T {
+                static lambda Counter(int start[]) { return () => start.length }
+                static W Wrap(X o) { return new W(o) }
+                static W WithLambda(int o[]) { var w = new W(undefined); w.f = () => o.length * 10; return w }
+                static List Fresh() { var l = new List(); l.Add(new X(7)); return l }
+            }
+            var c = T.Counter([1, 2, 3])
+            print("counter " + c())
+            var w = T.Wrap(new X(4))
+            print("wrapped " + w.x.v)
+            var wl = T.WithLambda([1, 2])
+            print("lambda in object " + wl.f())
+            var first = new Box().First()
+            print("first " + first.v)
+            var seen = 0
+            foreach (x in T.Fresh()) { seen = seen + x.v }
+            print("seen " + seen)
+            print("end")
+            """),
+    }).ToArray();
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
         ("Besitz: ein `new` als Argument gehoert dem aufgerufenen Scope (list.Add(new X()) behaelt es per try TakeTo)", """
             class Person {
                 string name
@@ -21685,6 +22100,46 @@ else
             T.Pass(new Item("p"), box)
             print("end")
             """),
+        ("Besitz: try take als Argument und in Zuweisungen - nur was der laufende Aufruf besitzt (Scope, Argument, this), sonst bleibt der Besitz", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Box { string n
+              any held
+              any items = [undefined, undefined]
+              construct(string n) { this.n = n }
+              destruct() { print("~box " + this.n) }
+              undefined Keep(Item i) { this.held = try take i }
+              undefined KeepAt(Item i, int k) { this.items[k] = try take i }
+              undefined Own() { var mine = new Item("own"); this.held = try take mine; print("own kept") }
+              undefined Swap(Item i) { var local = try take i; print("local " + local.n) }
+            }
+            class T {
+              static undefined Store(Item i) { print("store " + i.n) }
+              static undefined Forward(Item i, Box b) { b.Keep(try take i) }
+            }
+            var b = new Box("b")
+            b.Keep(new Item("fresh"))
+            var mine = new Item("mine")
+            b.Keep(mine)
+            print("mine stays " + mine.n)
+            b.KeepAt(new Item("at"), 0)
+            b.KeepAt(mine, 1)
+            b.Own()
+            b.Swap(new Item("swap"))
+            print("after swap")
+            T.Store(try take new Item("arg"))
+            var top = new Item("top")
+            T.Store(try take top)
+            print("after top")
+            var other = new Box("other")
+            T.Forward(new Item("fwd"), other)
+            var keepMe = new Item("keep")
+            T.Forward(keepMe, other)
+            print("keep stays " + keepMe.n)
+            delete other
+            print("end")
+            """),
         ("Besitz: Takes.Locals ueber den Methoden-Verteiler", """
             class Item { string n
               any child
@@ -21984,7 +22439,7 @@ else
             """),
     }).ToArray();
 
-    // Processes (#import "process", docs/PROCESS.md): POSIX shells and pipes - the same in the VM and natively
+    // Processes (#import "process", docs/stdlib/process.md): POSIX shells and pipes - the same in the VM and natively
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Prozesse: Run, Pipes in beide Richtungen, Zeilen-Ereignisse, Umgebung, Arbeitsordner, Fehler, Timeout, Kill, Argumente", """
@@ -22030,7 +22485,7 @@ else
             """),
     }).ToArray();
 
-    // Hash functions (#import "hash", docs/HASH.md): the same digests in the VM and natively, errors as ArgumentException
+    // Hash functions (#import "hash", docs/stdlib/hash.md): the same digests in the VM and natively, errors as ArgumentException
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Hash: SHA-256/1/384/512, MD5, CRC-32, Adler-32, HMAC, Hex, Streams, Fehler", """
@@ -22056,7 +22511,323 @@ else
             """),
     }).ToArray();
 
-    // Compression (#import "compression", docs/COMPRESSION.md): the same bytes in the VM and natively (the Deflate is the package's own C)
+    // Bytes as arguments of natives (fire_rt.h bytesArg/bufferArg, docs/packages/natives.md) and `byte` declarations as buffers (SPEC 8.4.2): the VM and natively the same
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Bytes: WriteAllBytes/ReadAllBytes mit Puffer, byte-Deklaration und Array; falsches Element, String, Fuell-Native mit Array", """
+            #import "io"
+            #import "filesystem"
+            var p = IO.Path.Combine(IO.Path.GetTempPath(), "fire_bytes_args_1.bin")
+            var b = new byte[2]
+            b[0] = 65
+            b[1] = 66
+            IO.File.WriteAllBytes(p, b)
+            print(IO.File.ReadAllText(p))
+            byte r[] = [67, 68, 69]
+            IO.File.WriteAllBytes(p, r)
+            print(IO.File.ReadAllText(p))
+            IO.File.WriteAllBytes(p, [70, 71, 0, 255])
+            var back = IO.File.ReadAllBytes(p)
+            print(back.length + " " + back[0] + " " + back[3])
+            IO.File.AppendAllBytes(p, [])
+            print(IO.File.Size(p))
+            try { IO.File.WriteAllBytes(p, [1, 256]) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { IO.File.WriteAllBytes(p, [1, -1]) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { IO.File.WriteAllBytes(p, [1, undefined]) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { IO.File.WriteAllBytes(p, [1, 2.5]) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { IO.File.WriteAllBytes(p, "abc") } catch (ArgumentException e) { print("A: " + e.message) }
+            var m = new IO.MemoryStream([1, 2, 3])
+            print(m.Length)
+            try { m.Read([0, 0], 0, 2) } catch (ArgumentException e) { print("A: " + e.message) }
+            var into = new byte[3]
+            print(m.Read(into, 0, 3) + " " + into[2])
+            print(IO.Utf8.GetString([72, 105]))
+            IO.File.Delete(p)
+            """),
+        ("Bytes: Hash, Compression und Spi.Sim.Reply mit Arrays", """
+            #import "hash"
+            #import "compression"
+            #import "spi"
+            print(Hash.Sha256.HexOf([97, 98, 99]) == Hash.Sha256.HexOf("abc"))
+            byte d[] = [97, 98, 99]
+            print(Hash.Crc32.HexOf(d) + " " + Hash.Hex.Encode([1, 171]) + " " + Hash.Bytes.Equal([97, 98, 99], d))
+            try { Hash.Md5.Of([1, 300]) } catch (ArgumentException e) { print("A: " + e.message) }
+            var z = Compression.GZip.Compress([1, 2, 3, 3, 3, 3, 3, 3])
+            print(Compression.GZip.Decompress(z).length)
+            try { Compression.GZip.Decompress([1, "x"]) } catch (ArgumentException e) { print("A: " + e.message) }
+            Spi.Sim.Reply([7, 8, 9])
+            var dev = new Spi.Device("sim")
+            var got = dev.Transfer([1, 2, 3])
+            print(got[0] + " " + got[1] + " " + got[2])
+            try { Spi.Sim.Reply([1, 999]) } catch (ArgumentException e) { print("A: " + e.message) }
+            dev.Close()
+            """),
+        ("Bytes: ein Objekt an eine Native ist in der VM und nativ eine ArgumentException (die Grenze der Paket-Bibliothek wie bytesArg)", """
+            #import "hash"
+            class Box { int v }
+            var b = new Box()
+            try { print(__HashToHex(b)) } catch (ArgumentException e) { print("ArgumentException") }
+            """),
+        ("Bytes: byte x[] = [..] und byte x[4] sind Puffer (print, length, Index, foreach, copy, Felder, mehrdimensional, Zuweisung, an Natives)", """
+            #import "hash"
+            byte a[] = [1, 2, 300]
+            print(a + " " + a.length + " " + a[2] + " " + (a is of IEnumerable))
+            byte z[4]
+            z[1] = 9
+            var sum = 0
+            foreach (x in z) { sum += x }
+            print(z + " " + sum + " " + z[0])
+            var c = copy a
+            c[0] = 5
+            print(a[0] + " " + c[0])
+            var plain = [10, 20]
+            a = plain
+            a[0] = 11
+            print(a + " " + plain[0] + " " + a[0])
+            try { a[0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = undefined } catch (ArgumentException e) { print("A: " + e.message) }
+            try { byte bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+            byte n[] = [undefined, 7]
+            print(n[0] + " " + n[1])
+            class Holder {
+                byte data[3]
+                byte more[]
+                static byte table[2]
+            }
+            var h = new Holder()
+            h.more = [4, 5]
+            h.data[2] = 255
+            print(h.data + " " + h.data[2] + " " + h.more[1] + " " + Holder.table.length)
+            byte m[2][3]
+            m[1][2] = 6
+            print(m[1] + " " + m[1][2] + " " + m.length)
+            print(Hash.Crc32.HexOf(h.more) == Hash.Crc32.HexOf([4, 5]))
+            byte t[] = "Hi".ToBytes()
+            print(t.ToString())
+            """),
+        ("Bytes: byte ist ohne Einheit - ein gespeicherter Wert verliert sie (Deklaration, Zuweisung, Parameter, Feld, !byte); int[8] behaelt sie", """
+            any x = 5m
+            byte c = x
+            byte d = 7
+            d = x
+            int[8] i8 = x
+            print(c + " " + d + " " + x!byte + " " + i8 + " " + (c + 1))
+            class R { byte v
+             static string Show(byte p) { return "" + p } }
+            var r = new R()
+            r.v = x
+            print(r.v + " " + R.Show(x))
+            """),
+    }).ToArray();
+
+    // `word` (SPEC 8.10): the machine word of the target, unsigned and without a unit - 64 bits here (the VM is the machine itself); the VM and natively the same
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Word: 64 Bit echt vorzeichenlos (Werte ueber 2^63: print, Vergleich, Division, Modulo, Schieben), Wrap, gemischt mit int und float, Umwandlungen", """
+            word m = -1
+            word h = 9223372036854775808
+            print(m + " " + h + " " + Word.Bits)
+            print((m + 1) + " " + (h + h) + " " + (h * 2 + 3) + " " + (h - 1) + " " + (0!word - 1))
+            print(m / 3 + " " + m % 10 + " " + h / 7 + " " + h % 1000 + " " + (m / h))
+            print((m >> 60) + " " + (m >> 64) + " " + (h >> 63) + " " + (h << 1) + " " + (m << 63) + " " + (1 << (63!word)))
+            print((m > h) + " " + (h > 5) + " " + (h < 1) + " " + (m == -1) + " " + (h != 0) + " " + (h >= h) + " " + (-1 < h) + " " + (h == 9223372036854775808))
+            print((h & 12345) + " " + (h | 1) + " " + (h # m) + " " + ~h + " " + -h + " " + -(1!word))
+            word p = 3
+            print((p ^ 40) + " " + (p ^ 41) + " " + (p ^ -1))
+            print(m!int + " " + h!int + " " + m!float + " " + h!float + " " + m!byte + " " + 300!word + " " + (-2)!word)
+            print(2.5!word + " " + 3.5!word + " " + (-1.0)!word + " " + 1e30!word + " " + 'A'!word + " " + undefined!word)
+            print((h + 0.5) + " " + (p * 1.5) + " " + (p < 3.5) + " " + (p == 3.0))
+            var x = h - 1
+            x++
+            x += 5
+            print(x + " " + (x is of word) + " " + (5 is of word))
+            var n = 0
+            for (word i = m - 2; i != 0; i++) { n++ }
+            print(n)
+            print($"{m:X} {h:x} {p:D4} {p:B4} {h:F1}")
+            try { print(m / 0) } catch (DivideByZeroException e) { print("D: " + e.message) }
+            try { print(m % (0!word)) } catch (DivideByZeroException e) { print("D: " + e.message) }
+            try { any u = 5m
+             print(m + u) } catch (UnitMismatchException e) { print("U") }
+            try { any s = true
+             print(m - s) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { any t = 2.5
+             print(m & t) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { any o = [1]
+             print(o!word) } catch (ArgumentException e) { print("A: " + e.message) }
+            float f = h
+            byte b = m
+            int[16] s16 = m!int
+            any dyn = m
+            print(f + " " + b + " " + s16 + " " + (dyn + 1) + " " + ("w" + m))
+            """),
+        ("Word: Puffer aus Maschinenwoertern (word a[] = [..], word a[n], new word[n], Felder, static, mehrdimensional, Index, length, foreach, copy, ++, Json, an Natives abgelehnt)", """
+            #import "hash"
+            #import "json"
+            #import "io"
+            word a[] = [1, 2, -1, 18446744073709551615]
+            print(a + " " + a.length + " " + a[2] + " " + a[0] + " " + (a[3] is of word))
+            word z[4]
+            z[1] = 9
+            z[2] = -1
+            z[3]++
+            ++z[3]
+            var sum = 0!word
+            foreach (x in z) { sum += x }
+            print(z + " " + sum + " " + z[0] + " " + z[3])
+            var c = copy a
+            c[0] = 5
+            print(a[0] + " " + c[0] + " " + c.length)
+            var n = new word[3]
+            n[0] = 7
+            print(n + " " + n[0] + " " + n.length)
+            var plain = [10, 20]
+            a = plain
+            a[0] = 11
+            print(a + " " + plain[0] + " " + a[0])
+            try { a[0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+            try { a[0] = 2.5 } catch (ArgumentException e) { print("A: " + e.message) }
+            try { word bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+            try { WRef.Set(a[0], 5) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { print(a[5]) } catch (IndexOutOfBoundsException e) { print("I: " + e.message) }
+            word u[] = [undefined, 7]
+            print(u[0] + " " + u[1])
+            class WRef { static undefined Set(ref int x, int v) { x = v } }
+            class Holder {
+                word data[3]
+                word more[]
+                static word table[2]
+            }
+            var h = new Holder()
+            h.more = [4, 5]
+            h.data[2] = 255
+            print(h.data + " " + h.data[2] + " " + h.more[1] + " " + Holder.table.length)
+            word m[2][3]
+            m[1][2] = 6
+            print(m[1] + " " + m[1][2] + " " + m.length)
+            try { Hash.Crc32.HexOf(h.more) } catch (ArgumentException e) { print("A: " + e.message) }
+            print(Json.Serialize(h))
+            var back = Json.Deserialize<Holder>("{\"data\":[1,18446744073709551615,3],\"more\":[9]}")
+            print(back.data + " " + back.data[1] + " " + back.more[0])
+            byte b[] = [1, 2]
+            b[0] = 513!word
+            print(b[0])
+            var tot = 0!word
+            for (word k = 0; k < 4; k++) { tot = tot + z[k] }
+            var arr = [5, 6]
+            arr[1!word] = 7
+            print(tot + " " + z[1!word] + " " + arr[1!word] + " " + "abc"[2!word])
+            var ms = new IO.MemoryStream([1, 2])
+            try { ms.Read(n, 0, 1) } catch (ArgumentException e) { print("A: " + e.message) }
+            """),
+        ("Word: schmales C - bekannte Puffer, word- und byte-Schleifen, Bit-Operationen auf int (auch Flag-Enums), zerstoerter Puffer und Index ausserhalb im schnellen Weg", """
+            flag enum Fl { a = 1, b = 2, c = 4 }
+            class Narrow {
+                static string Run(int n) {
+                    byte data[n]
+                    for (var i = 0; i < data.length; i++) { data[i] = i * 7 + (i >> 3) }
+                    word sum = 0
+                    byte x = 0
+                    word w[8]
+                    for (var i = 0; i < data.length; i++) {
+                        sum = sum + data[i]
+                        x = x # data[i]
+                        w[i % 8] = w[i % 8] * 31 + data[i]
+                    }
+                    word acc = 1
+                    for (word k = 0; k < 70; k++) { acc = (acc << 1) | (acc >> 63) }
+                    var bits = (n << 3) | (n >> 1) & 255
+                    var flags = Fl.a | Fl.c
+                    return sum + " " + x + " " + w[3] + " " + (w[7] > w[0]) + " " + acc + " " + bits + " " + flags + " " + (sum / 7) + " " + (sum % 7)
+                }
+                static string Errors() {
+                    byte data[4]
+                    word w[2]
+                    var out = ""
+                    try { data[9] = 1 } catch (IndexOutOfBoundsException e) { out = out + "I1 " }
+                    try { var v = w[5] } catch (IndexOutOfBoundsException e) { out = out + "I2 " }
+                    try { word z = 0
+                     var q = w[0] / z } catch (DivideByZeroException e) { out = out + "D " }
+                    delete data
+                    try { print(data.length) } catch (DestroyedException e) { out = out + "X1 " }
+                    try { print(data[0]) } catch (DestroyedException e) { out = out + "X2" }
+                    return out
+                }
+            }
+            print(Narrow.Run(1000))
+            print(Narrow.Run(37))
+            print(Narrow.Errors())
+            """),
+        ("Word: Puffer-Methoden ueber alle Bytes eines Wortpuffers (ToString, ToUnicode, ToUnicodeChar); ToLittleEndian/ToBigEndian geben die Bytes Wort fuer Wort", """
+            word w[] = [258, 65]
+            var le = w.ToLittleEndian()
+            var be = w.ToBigEndian()
+            print(w.length + " " + le.length + " " + le[0] + " " + le[1] + " " + le[8] + " " + be[7] + " " + be[6] + " " + be[15])
+            print(w.ToString().length + " " + w.ToUnicode(2).length + " " + w.ToUnicodeChar(2))
+            byte b[] = [1, 2, 3]
+            var r = b.ToBigEndian()
+            print(r[0] + " " + r[2])
+            """),
+        ("Word: ein float (oder ein Text) in einen word-Parameter oder eine word-Variable ist eine ArgumentException (lax, zur Laufzeit); int und undefined gehen", """
+            #lax
+            class G {
+              string K(word x) { return "word " + x }
+            }
+            var g = new G()
+            any f = 2.5
+            any s = "x"
+            try { print(g.K(f)) } catch (ArgumentException e) { print("A: " + e.message) }
+            try { print(g.K(s)) } catch (ArgumentException e) { print("A: " + e.message) }
+            print(g.K(3) + " " + g.K(undefined))
+            word w = 1
+            try { w = f } catch (ArgumentException e) { print("A2: " + e.message) }
+            print(w)
+            """),
+        ("Word: Ueberladung nach word (f(int)/f(word)/f(float); ein int geht lieber in word als in float, ein float nie in word) - statisch und zur Laufzeit", """
+            class F {
+              static string K(int x) { return "int " + x }
+              static string K(word x) { return "word " + x }
+              static string K(float x) { return "float " + x }
+              static string N(word x) { return "word " + x }
+              static string N(float x) { return "float " + x }
+              string P(word a, int b) { return "wi" }
+              string P(int a, word b) { return "iw" }
+            }
+            word w = 5
+            any f = 2.5
+            any i = 3
+            print(F.K(3) + ", " + F.K(w) + ", " + F.K(2.5) + ", " + F.K(3!word) + ", " + F.K(f) + ", " + F.K(i))
+            print(F.N(3) + ", " + F.N(i) + ", " + F.N(f))
+            var o = new F()
+            print(o.P(w, 1) + " " + o.P(1, w))
+            """),
+        ("Word: Felder, Parameter, Rueckgabe, static, Json, Dictionary-Schluessel; word w = 5m ist zur Laufzeit ohne Einheit", """
+            #import "json"
+            class C { word w
+             static word count
+             static word Twice(word x) { return x * 2 }
+             static float Half(float v) { return v / 2 } }
+            var c = new C()
+            c.w = -1
+            print(c.w + " " + C.Twice(9223372036854775809) + " " + C.Twice(3) + " " + C.Half(c.w))
+            c.w = 7
+            C.count = c.w + 1
+            print(c.w + 1 + " " + C.count)
+            any wm = 5m
+            word u = wm
+            c.w = wm
+            print(u + " " + c.w + " " + (u + 1))
+            print(Json.Serialize(c))
+            var back = Json.Deserialize<C>("{\"w\":18446744073709551615}")
+            print(back.w + " " + (back.w == -1) + " " + (back.w is of word))
+            var d = new Dictionary<any, string>()
+            d[5!word] = "five"
+            d[18446744073709551615!word] = "max"
+            print(d[5!word] + " " + d[-1!word] + " " + d.ContainsKey(6!word))
+            """),
+    }).ToArray();
+
+    // Compression (#import "compression", docs/stdlib/compression.md): the same bytes in the VM and natively (the Deflate is the package's own C)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Compression: Deflate/zlib/gzip in einem Rutsch und als Streams, Zip schreiben/lesen/entpacken, kaputte Daten, Zip-Slip", """
@@ -22226,6 +22997,33 @@ else
                 print(*r)
             }
             """),
+        ("Zeiger (unsafe): #performance mit ref a[i] - auch in ein typisiertes Array und einen Puffer (die Slot-Tabelle bleibt fuer die Zeiger)", """
+            #performance
+            class F {
+              static Zero(ref int first, int n) {
+                unsafe { int* p = &first
+                  for (var i = 0; i < n; i++) { *p = 0; p = p + 1 } }
+              }
+              static Put(ref float x) { unsafe { float* p = &x
+                *p = 3 } }
+              static Sum(ref byte first, int n) {
+                var t = 0
+                unsafe { byte* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+                return t
+              }
+            }
+            int a[] = new int[4]
+            a[0] = 1; a[1] = 2; a[2] = 3; a[3] = 4
+            F.Zero(a[1], 2)
+            print(a[0] + " " + a[1] + " " + a[2] + " " + a[3])
+            float f[] = new float[2]
+            F.Put(f[1])
+            print(f[1])
+            var b = new byte[3]
+            b[0] = 5; b[1] = 6; b[2] = 7
+            print(F.Sum(b[0], 3))
+            """),
         ("Zeiger (unsafe): Grenzen, Versatz bei Variablen und Feldern, Differenz", """
             class Box { int v = 1
               int w = 2 }
@@ -22285,6 +23083,785 @@ else
             }
             print("end")
             """),
+        ("Listen mit Typargument: List<int>/<float>/<bool> halten ihre Elemente roh (new T[n]), List<string> und List ohne Typ nicht, Wachstum, Entfernen, foreach", """
+            class Box<T> {
+                any items
+                construct() { this.items = new T[4] }
+            }
+            var xs = new List<int>()
+            for (int i = 0; i < 40; i++) { xs.Add(i * i) }
+            xs.RemoveAt(0)
+            xs.Insert(2, -7)
+            print(xs.Count + " " + xs[0] + " " + xs[2] + " " + xs[38])
+            var fs = new List<float>()
+            fs.Add(1)
+            fs.Add(2.5)
+            print(fs[0] + fs[1])
+            var bs = new List<bool>()
+            bs.Add(true)
+            bs.Add(false)
+            print(bs[0] + " " + bs[1] + " " + bs.IndexOf(false))
+            var ss = new List<string>()
+            ss.Add("a")
+            var raw = new List()
+            raw.Add("x")
+            raw.Add(3)
+            print(ss[0] + raw[0] + raw[1])
+            var sum = 0
+            foreach (x in xs) { sum = sum + x }
+            print(sum)
+            var b = new Box<int>()
+            try { b.items[0] = "x"; print("untyped") } catch (ArgumentException e) { print("typed") }
+            var bf = new Box<string>()
+            bf.items[0] = "ok"
+            print(bf.items[0])
+            """),
+        ("Tabellen mit Typargument: Dictionary<int, float>/HashSet<int> halten Schluessel und Werte roh (__HashTable<K, V>, new K[n]), Dictionary<string, Node> nicht; Owns, IEquatable, Einheiten, Probe ueber die Felder", """
+            class Node { string name
+                construct(string n) { this.name = n } }
+            class Key : IEquatable { int a
+                construct(int a) { this.a = a }
+                bool Equals(any o) { return o is of Key && o.a % 10 == this.a % 10 }
+                int GetHashCode() { return this.a % 10 + 4000000000 } }
+            class Probe<K, V> : Dictionary<K, V> {
+                construct() : base() { }
+                string KeysTyped() { any old = this.keys[0]
+                    try { this.keys[0] = "x"; this.keys[0] = old; return "untyped" } catch (ArgumentException e) { return "typed" } }
+                string ValsTyped() { any old = this.vals[0]
+                    try { this.vals[0] = "x"; this.vals[0] = old; return "untyped" } catch (ArgumentException e) { return "typed" } }
+            }
+            var d = new Dictionary<int, float>()
+            for (int i = 0; i < 100; i++) { d[i * 7] = i * 0.5 }
+            d.Remove(14)
+            d[21] = -1.0
+            print(d.Count + " " + d[7] + " " + d[21] + " " + d.ContainsKey(14) + " " + d.Get(14, 9.0) + " " + d[693])
+            var sum = 0.0
+            foreach (p in d) { sum = sum + p.Key + p.Value }
+            print(sum + " " + d.Keys[0] + " " + d.Values[98])
+            var s = new Dictionary<string, int>()
+            s["eins"] = 1
+            s["zwei"] = 2
+            s.Add("drei", 3)
+            try { s.Add("eins", 9) } catch (ArgumentException e) { print("dup") }
+            int got = 0
+            print(s.TryGet("zwei", got) + " " + got + " " + s.Take("drei") + " " + s.Count)
+            var owned = new Dictionary<string, Node>(Owns.Values)
+            owned["a"] = new Node("A")
+            owned["b"] = new Node("B")
+            var b = owned["b"]
+            owned.Remove("b")
+            var gone = "alive"
+            try { gone = b.name } catch (e) { gone = "gone" }
+            print(owned["a"].name + " " + gone)
+            var hs = new HashSet<int>()
+            for (int i = 0; i < 50; i++) { hs.Add(i % 20) }
+            hs.Remove(3)
+            var hsum = 0
+            foreach (x in hs) { hsum = hsum + x }
+            print(hs.Count + " " + hs.Contains(3) + " " + hs.Contains(19) + " " + hsum)
+            var ks = new HashSet<Key>()
+            ks.Add(new Key(3))
+            print(ks.Add(new Key(13)) + " " + ks.Contains(new Key(23)) + " " + ks.Count)
+            var lengths = new Dictionary<any, string>()
+            lengths[1km] = "km"
+            print(lengths[1000m] + " " + lengths.ContainsKey(1000))
+            var pi = new Probe<int, bool>()
+            pi[1] = true
+            var ps = new Probe<string, Node>()
+            ps["x"] = new Node("n")
+            print(pi.KeysTyped() + " " + pi.ValsTyped() + " " + ps.KeysTyped() + " " + pi[1])
+            var raw = new Dictionary()
+            raw[1] = "a"
+            raw["b"] = 2
+            print(raw[1] + raw["b"])
+            d.Clear()
+            print(d.Count + " " + d.ContainsKey(7))
+            """),
+        ("Skalare (Ebene 2): word-Hash, Bits zaehlen, Ints fester Breite, Schieben ueber die Breite, word ueber 0 - in C gerechnet wie in der VM", """
+            class W {
+                static word Hash(byte data[]) {
+                    word h = 5381
+                    for (int i = 0; i < data.length; i++) { h = h * 33 + data[i]; h = h # (h >> 7) }
+                    return h
+                }
+                static int Bits(int n) {
+                    int c = 0
+                    int x = n
+                    while (x != 0 && c < 70) { c = c + (x & 1); x = x >> 1 }
+                    return c
+                }
+                static int Small(int n) {
+                    int[8] b = 0
+                    int[16] s = 0
+                    for (int i = 0; i < n; i++) { b = b + 7; s = s * 3 + i }
+                    int[8] neg = 200
+                    return b + s + neg + (i8(300) << 2)
+                }
+                static int i8(int v) { int[8] r = v
+                    return r }
+                static word Mix(word a, word b) { word r = a
+                    r = (r << 13) | (r >> 51)
+                    r = r - b * 3
+                    if (r > a) { r = r / 2 }
+                    return r }
+            }
+            byte bytes[] = new byte[64]
+            for (int i = 0; i < 64; i++) { bytes[i] = i * 37 }
+            print(W.Hash(bytes))
+            print(W.Bits(1023) + " " + W.Bits(-1) + " " + W.Bits(12345))
+            print(W.Small(1000))
+            print(W.Mix(123456789, 987654321))
+            word wz = 0
+            wz = wz - 1
+            print(wz + " " + (wz > 5) + " " + (wz >> 60))
+            int sh = 1
+            print((sh << 31) + " " + (sh << 63) + " " + (-8 >> 1) + " " + (-8 >> 70))
+            """),
+        ("Skalare (Ebene 2), #intwidth 32: dieselben Rechnungen mit FireInt von 32 Bit", """
+            #intwidth 32
+            class W {
+                static word Hash(byte data[]) {
+                    word h = 5381
+                    for (int i = 0; i < data.length; i++) { h = h * 33 + data[i]; h = h # (h >> 7) }
+                    return h
+                }
+                static int Bits(int n) {
+                    int c = 0
+                    int x = n
+                    while (x != 0 && c < 70) { c = c + (x & 1); x = x >> 1 }
+                    return c
+                }
+                static int Small(int n) {
+                    int[8] b = 0
+                    int[16] s = 0
+                    for (int i = 0; i < n; i++) { b = b + 7; s = s * 3 + i }
+                    int[8] neg = 200
+                    return b + s + neg + (i8(300) << 2)
+                }
+                static int i8(int v) { int[8] r = v
+                    return r }
+                static word Mix(word a, word b) { word r = a
+                    r = (r << 13) | (r >> 51)
+                    r = r - b * 3
+                    if (r > a) { r = r / 2 }
+                    return r }
+            }
+            byte bytes[] = new byte[64]
+            for (int i = 0; i < 64; i++) { bytes[i] = i * 37 }
+            print(W.Hash(bytes))
+            print(W.Bits(1023) + " " + W.Bits(-1) + " " + W.Bits(12345))
+            print(W.Small(1000))
+            print(W.Mix(123456789, 987654321))
+            word wz = 0
+            wz = wz - 1
+            print(wz + " " + (wz > 5) + " " + (wz >> 60))
+            int sh = 1
+            print((sh << 31) + " " + (sh << 63) + " " + (-8 >> 1) + " " + (-8 >> 70))
+            """),
+        ("Skalare (Ebene 2): Floats - Rechenketten, gemischt mit Ints, Vergleiche mit NaN und Unendlich, %, Negation, float[32], x -= c", """
+            class F {
+                static float Area(int n) {
+                    float a = 0.0
+                    float x = 0.5
+                    for (int i = 0; i < n; i++) { a = a + x * x; x = x + 0.25 }
+                    return a
+                }
+                static float Mixed(int n) {
+                    float s = 1.0
+                    for (int i = 1; i <= n; i++) { s = s * 1.5 - i / 4.0 + i % 3 }
+                    return s
+                }
+                static string Cmp(float a, float b) {
+                    float x = a
+                    float y = b
+                    string r = ""
+                    if (x < y) { r = r + "<" }
+                    if (x > y) { r = r + ">" }
+                    if (x == y) { r = r + "=" }
+                    if (x != y) { r = r + "!" }
+                    if (x <= y) { r = r + "le" }
+                    return r
+                }
+                static float Neg(float v) { float t = v * 2.0
+                    float u = -t
+                    t -= 0.5
+                    return u + t }
+                static float Round32(float v) { float w = v * 3.0
+                    float[32] q = w / 7.0
+                    return q }
+            }
+            print(F.Area(1000))
+            print(F.Mixed(40))
+            float nan = 0.0 / 0.0
+            float inf = 1.0 / 0.0
+            print(F.Cmp(1.0, 2.0) + " " + F.Cmp(2.0, 2.0) + " " + F.Cmp(nan, 1.0) + " " + F.Cmp(1.0, nan) + " " + F.Cmp(nan, nan) + " " + F.Cmp(inf, 1.0))
+            print(F.Neg(3.25) + " " + F.Round32(1.1) + " " + inf + " " + (-inf))
+            float m = 7.5
+            print(m % 2.0 + " " + (-m % 2.0) + " " + (m % 0.0))
+            """),
+        ("Skalare (Ebene 2), #floatwidth 32: dieselben Float-Rechnungen mit Real von 32 Bit", """
+            #floatwidth 32
+            class F {
+                static float Area(int n) {
+                    float a = 0.0
+                    float x = 0.5
+                    for (int i = 0; i < n; i++) { a = a + x * x; x = x + 0.25 }
+                    return a
+                }
+                static float Mixed(int n) {
+                    float s = 1.0
+                    for (int i = 1; i <= n; i++) { s = s * 1.5 - i / 4.0 + i % 3 }
+                    return s
+                }
+                static string Cmp(float a, float b) {
+                    float x = a
+                    float y = b
+                    string r = ""
+                    if (x < y) { r = r + "<" }
+                    if (x > y) { r = r + ">" }
+                    if (x == y) { r = r + "=" }
+                    if (x != y) { r = r + "!" }
+                    if (x <= y) { r = r + "le" }
+                    return r
+                }
+                static float Neg(float v) { float t = v * 2.0
+                    float u = -t
+                    t -= 0.5
+                    return u + t }
+                static float Round32(float v) { float w = v * 3.0
+                    float[32] q = w / 7.0
+                    return q }
+            }
+            print(F.Area(1000))
+            print(F.Mixed(40))
+            float nan = 0.0 / 0.0
+            float inf = 1.0 / 0.0
+            print(F.Cmp(1.0, 2.0) + " " + F.Cmp(2.0, 2.0) + " " + F.Cmp(nan, 1.0) + " " + F.Cmp(1.0, nan) + " " + F.Cmp(nan, nan) + " " + F.Cmp(inf, 1.0))
+            print(F.Neg(3.25) + " " + F.Round32(1.1) + " " + inf + " " + (-inf))
+            float m = 7.5
+            print(m % 2.0 + " " + (-m % 2.0) + " " + (m % 0.0))
+            """),
+        ("Skalare (Ebene 2): Schleife mit Rest und Vergleich gegen einen int-Parameter", """
+            class H {
+                static int Sum(int n) {
+                    int s = 0
+                    for (int i = 0; i < n; i++) { s = (s * 31 + i) % 1000003 }
+                    return s
+                }
+                static float Area(int n) {
+                    float a = 0.0
+                    float x = 0.5
+                    for (int i = 0; i < n; i++) { a = a + x * x; x = x + 0.25 }
+                    return a
+                }
+            }
+            var t = 0
+            for (int r = 0; r < 20; r++) { t = t + H.Sum(50000) }
+            print(t)
+            print(H.Area(1000))
+            """),
+        ("Skalare (Ebene 2): Zahlen mit Einheit - mm-Summen, x++ und x += in der Einheit, m/s, cm + m, Vergleiche, * und / mit einer Zahl, int[16] mit Einheit", """
+            class U {
+                static int Path(int n) {
+                    int len : mm = 0mm
+                    for (int i = 0; i < n; i++) { len = len + 15mm; len += 5mm }
+                    len++
+                    return len / 1mm
+                }
+                static float Speed(int n) {
+                    float d : m = 0m
+                    float t : s = 0s
+                    for (int i = 0; i < n; i++) { d = d + 2.5m; t = t + 0.5s }
+                    float v = d / t
+                    return v * 1s / 1m
+                }
+                static string Mixed() {
+                    float a : cm = 120cm
+                    float b : m = 1.5m
+                    float c : cm = a + b
+                    float e : cm = -a
+                    int k : cm = 7cm
+                    int m2 : cm = k * 3
+                    int q : cm = k % 4cm
+                    bool lt = a < c
+                    bool eq = k == 7cm
+                    return c + " " + e + " " + m2 + " " + q + " " + lt + " " + eq + " " + (a * 2) + " " + (b / 3)
+                }
+                static int Narrow() {
+                    int[16] w : mm = 70000mm
+                    byte raw = 300
+                    return w / 1mm + raw
+                }
+            }
+            print(U.Path(100))
+            print(U.Speed(40))
+            print(U.Mixed())
+            print(U.Narrow())
+            """),
+        ("Skalare (Ebene 2), #intwidth 32 / #floatwidth 32: dieselben Rechnungen mit Einheit", """
+            #intwidth 32
+            #floatwidth 32
+            class U {
+                static int Path(int n) {
+                    int len : mm = 0mm
+                    for (int i = 0; i < n; i++) { len = len + 15mm; len += 5mm }
+                    len++
+                    return len / 1mm
+                }
+                static float Speed(int n) {
+                    float d : m = 0m
+                    float t : s = 0s
+                    for (int i = 0; i < n; i++) { d = d + 2.5m; t = t + 0.5s }
+                    float v = d / t
+                    return v * 1s / 1m
+                }
+                static string Mixed() {
+                    float a : cm = 120cm
+                    float b : m = 1.5m
+                    float c : cm = a + b
+                    float e : cm = -a
+                    int k : cm = 7cm
+                    int m2 : cm = k * 3
+                    int q : cm = k % 4cm
+                    bool lt = a < c
+                    bool eq = k == 7cm
+                    return c + " " + e + " " + m2 + " " + q + " " + lt + " " + eq + " " + (a * 2) + " " + (b / 3)
+                }
+                static int Narrow() {
+                    int[16] w : mm = 70000mm
+                    byte raw = 300
+                    return w / 1mm + raw
+                }
+            }
+            print(U.Path(100))
+            print(U.Speed(40))
+            print(U.Mixed())
+            print(U.Narrow())
+            """),
+        ("defined (SPEC 8.10b): C-Parameter und -Rueckgaben - statisch, Instanz, Rekursion, float/word/bool, ueber Interface und Lambda, Felder mit 0, lokale defined", """
+            interface IScale { defined float Scale(defined float x) }
+            class Vec : IScale {
+                defined float k = 2.5
+                defined int hits
+                defined float Scale(defined float x) { this.hits++; return x * this.k }
+                defined bool Big(defined int n) { return n > 10 }
+                defined word Mask(defined word w, defined int n) { return w & (n!word) }
+                static defined int Fib(defined int n) { if (n < 2) { return n } return Vec.Fib(n - 1) + Vec.Fib(n - 2) }
+                static defined int Mix(defined int a, defined int b, defined int c) { return a * 31 + b * 7 + c }
+                static defined float Half(defined float x) { return x / 2 }
+                static string Show(defined int n) { return "n=" + n }
+            }
+            class Base { defined int Get(defined int a) { return a + 1 } }
+            class Derived : Base { defined int Get(defined int a) { return a + 100 } }
+            enum Color { Red, Green, Blue }
+            var v = new Vec()
+            print(v.Scale(4.0) + " " + v.Scale(3) + " " + v.Big(11) + " " + v.Big(3) + " " + v.Mask(255!word, 15))
+            print(Vec.Fib(20) + " " + Vec.Half(5) + " " + Vec.Show(Color.Blue!int) + " " + v.hits)
+            IScale s = v
+            var f = x => s.Scale(x)
+            print(s.Scale(2.0) + " " + f(10.0))
+            Base b = new Derived()
+            print(b.Get(1) + " " + new Base().Get(1))
+            int acc = 0
+            for (int i = 0; i < 20000; i++) { acc = Vec.Mix(acc, i, 3) % 1000003; if (v.Big(i % 20)) { acc = acc + Vec.Fib(i % 12) } }
+            print(acc)
+            defined int d
+            defined float g
+            print(d + " " + g)
+            d = acc % 7
+            print(d)
+            """),
+        ("defined (SPEC 8.10b), #intwidth 32 / #floatwidth 32: dieselben C-Parameter", """
+            #intwidth 32
+            #floatwidth 32
+            class M {
+                static defined int Mix(defined int a, defined int b, defined int c) { return a * 31 + b * 7 + c }
+                static defined float Lerp(defined float a, defined float b, defined float t) { return a + (b - a) * t }
+                static defined int Wrap(defined int x) { return x * 65599 + 1 }
+            }
+            int acc = 0
+            for (int i = 0; i < 20000; i++) { acc = M.Mix(acc, i, 3) % 1000003 }
+            print(acc)
+            print(M.Lerp(1.0, 3.0, 0.25) + " " + M.Wrap(2000000000) + " " + M.Wrap(-7))
+            int[64] wide = 5000000000
+            print(M.Wrap(wide))
+            """),
+        ("defined (SPEC 8.10b): C-Parameter mit Einheit - gleiche Einheit direkt, cm in m und int in float umgerechnet, falsche Dimension, undefined, ueber ein Interface", """
+            interface IArea { defined float : m Side(defined float : m x) }
+            class G : IArea {
+                static defined float : m Twice(defined float : m x) { return x * 2 }
+                static defined int : mm Pad(defined int : mm x, defined int n) { return x + n * 1mm }
+                static defined float Ratio(defined float : m a, defined float : m b) { return a / b }
+                static defined float : s Time(defined float : m d, defined float : m/s v) { return d / v }
+                defined float : m Side(defined float : m x) { return x + 1m }
+            }
+            print(G.Twice(3m) + " " + G.Twice(250cm) + " " + G.Twice(2.5m))
+            print(G.Pad(5mm, 3) + " " + G.Pad(2cm, 1))
+            print(G.Ratio(1m, 50cm) + " " + G.Time(100m, 20m / 4s))
+            float : m acc = 0m
+            for (int i = 0; i < 1000; i++) { acc = G.Twice(acc / 2 + 1cm) }
+            print(acc)
+            IArea a = new G()
+            print(a.Side(30cm) + " " + new G().Side(2m))
+            any k = 3kg
+            try { print(G.Twice(k)) } catch (UnitMismatchException e) { print("mismatch " + e.message) }
+            float : m u
+            try { print(G.Twice(u)) } catch (ArgumentException e) { print(e.message) }
+            any s = "x"
+            try { print(G.Twice(s)) } catch (Exception e) { print(e.message) }
+            """),
+        ("Felder als C-Typen: defined-Felder (int, float mit Einheit) direkt gelesen und geschrieben, auch ueber einen Parameter der Klasse", """
+            class P {
+                defined int x
+                defined int y
+                defined float : m len
+                Step(defined int dx) { this.x = this.x + dx; this.y = this.y + this.x % 7; this.len = this.len + 1cm }
+                static defined int Sum(P p) { return p.x + p.y }
+            }
+            var p = new P()
+            for (int i = 0; i < 1000; i++) { p.Step(i) }
+            print(p.x + " " + p.y + " " + p.len + " " + P.Sum(p))
+            """),
+        ("Felder als C-Typen: JSON - auch ein [NonSerialized] defined-Feld haelt seine Null, danach direkt geschrieben", """
+            #import "json"
+            class Q {
+                defined int n
+                [NonSerialized] defined int hidden
+                [NonSerialized] defined float : m dist
+                int plain
+                Bump() { this.hidden = this.hidden + 2; this.dist = this.dist + 1m; this.n = this.n + 1 }
+            }
+            var q = Json.Deserialize<Q>("{\"n\": 4}")
+            q.Bump()
+            print(q.n + " " + q.hidden + " " + q.dist + " " + q.plain)
+            print(Json.Serialize(q))
+            """),
+        ("Felder als C-Typen, #intwidth 32 / #floatwidth 32: schmale Haelften direkt gelesen und geschrieben", """
+            #intwidth 32
+            #floatwidth 32
+            class P {
+                defined int x
+                defined int y
+                defined float : m len
+                Step(defined int dx) { this.x = this.x + dx; this.y = this.y + this.x % 7; this.len = this.len + 1cm }
+                static defined int Sum(P p) { return p.x + p.y }
+            }
+            var p = new P()
+            for (int i = 0; i < 1000; i++) { p.Step(i) }
+            print(p.x + " " + p.y + " " + p.len + " " + P.Sum(p))
+            """),
+        ("Gepackte Objekte: defined-Felder hinter den Slots - Vererbung, gemischte Felder, Zugriff ueber die Basisklasse, flat und copy, viele Objekte", """
+            class Base {
+                defined int id
+                string name = "b"
+                defined bool active
+                Touch() { this.id = this.id + 1; this.active = !this.active }
+            }
+            class Item : Base {
+                defined float : m len
+                defined word mask
+                Base parent
+                defined int count = 7
+                Grow(defined float : m by) { this.len = this.len + by; this.count++; this.mask = this.mask | (this.count!word) }
+            }
+            class Holder { Item item; defined int n }
+            var a = new Item()
+            a.name = "a"
+            a.Touch(); a.Touch(); a.Touch()
+            a.Grow(1.5m); a.Grow(20cm)
+            Base b = a
+            b.Touch()
+            print(a.id + " " + a.active + " " + a.len + " " + a.count + " " + a.mask + " " + a.name)
+            var c = flat a
+            c.id = 100
+            print(c.id + " " + a.id + " " + c.len + " " + c.count + " " + c.name)
+            var h = new Holder()
+            h.item = new Item()
+            h.item.Grow(3m)
+            h.n = 5
+            var d = copy h
+            d.item.Grow(1m)
+            d.n = 9
+            print(h.item.len + " " + d.item.len + " " + h.n + " " + d.n + " " + d.item.count)
+            int sum = 0
+            Item many[] = new Item[1000]
+            for (int i = 0; i < 1000; i++) { many[i] = new Item(); many[i].id = i; many[i].Grow(1m) }
+            for (int i = 0; i < 1000; i++) { sum = sum + many[i].id + many[i].count }
+            print(sum)
+            """),
+        ("Gepackte Objekte, #intwidth 32 / #floatwidth 32: dieselben Felder mit FireInt und Real von 32 Bit", """
+            #intwidth 32
+            #floatwidth 32
+            class Base {
+                defined int id
+                string name = "b"
+                defined bool active
+                Touch() { this.id = this.id + 1; this.active = !this.active }
+            }
+            class Item : Base {
+                defined float : m len
+                defined word mask
+                Base parent
+                defined int count = 7
+                Grow(defined float : m by) { this.len = this.len + by; this.count++; this.mask = this.mask | (this.count!word) }
+            }
+            class Holder { Item item; defined int n }
+            var a = new Item()
+            a.name = "a"
+            a.Touch(); a.Touch(); a.Touch()
+            a.Grow(1.5m); a.Grow(20cm)
+            Base b = a
+            b.Touch()
+            print(a.id + " " + a.active + " " + a.len + " " + a.count + " " + a.mask + " " + a.name)
+            var c = flat a
+            c.id = 100
+            print(c.id + " " + a.id + " " + c.len + " " + c.count + " " + c.name)
+            var h = new Holder()
+            h.item = new Item()
+            h.item.Grow(3m)
+            h.n = 5
+            var d = copy h
+            d.item.Grow(1m)
+            d.n = 9
+            print(h.item.len + " " + d.item.len + " " + h.n + " " + d.n + " " + d.item.count)
+            int sum = 0
+            Item many[] = new Item[1000]
+            for (int i = 0; i < 1000; i++) { many[i] = new Item(); many[i].id = i; many[i].Grow(1m) }
+            for (int i = 0; i < 1000; i++) { sum = sum + many[i].id + many[i].count }
+            print(sum)
+            """),
+        ("Gepackte Objekte mit JSON: Serialize/Deserialize ueber die Plaetze, [NonSerialized], null ist die ArgumentException", """
+            #import "json"
+            class Base { defined int id; string tag = "t" }
+            class P : Base {
+                defined float : m len
+                string name = "p"
+                defined bool ok
+                [NonSerialized] defined int hidden
+                Bump() { this.id++; this.len = this.len + 1m; this.ok = !this.ok; this.hidden = this.hidden + 3 }
+            }
+            var p = new P()
+            p.Bump(); p.Bump()
+            var text = Json.Serialize(p)
+            print(text)
+            var q = Json.Deserialize<P>(text)
+            q.Bump()
+            print(q.id + " " + q.len + " " + q.ok + " " + q.hidden + " " + q.name + " " + q.tag)
+            try { Json.Deserialize<P>("{\"id\": null}") } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Gepackte Objekte mit Reflection und Sonden: Reflect.Get/Set (mit Einheit), undefined abgelehnt, probe changed", """
+            #import "reflection"
+            class P { defined int x; string name = "n"; defined float : cm w; int plain }
+            var p = new P()
+            p.x = 4
+            Reflect.Set(p, "x", 9)
+            Reflect.Set(p, "w", 2m)
+            print(Reflect.Get(p, "x") + " " + Reflect.Get(p, "w") + " " + p.x + " " + p.w + " " + Reflect.Get(p, "name"))
+            try { Reflect.Set(p, "x", undefined) } catch (ArgumentException e) { print(e.message) }
+            var seen = 0
+            probe p.x changed (int old, int nv) => { seen = seen + 1 }
+            p.x = 11
+            p.x = p.x + 1
+            print(seen + " " + p.x)
+            """),
+        ("Gepackte Objekte mit Threads: taking kopiert die C-Zahlen, sync schreibt sie zurueck, flat", """
+            #import "time"
+            class C { defined int n; defined float : m d; string s = "c"; defined bool done }
+            var shared = new C()
+            shared.n = 5
+            fire taking shared {
+                shared.n = shared.n * 10
+                shared.d = shared.d + 2m
+                shared.s = "from thread"
+                shared.done = true
+                sync shared
+            }
+            while (!shared.done) { Sleep(1) }
+            print(shared.n + " " + shared.d + " " + shared.s + " " + shared.done)
+            var copy2 = flat shared
+            copy2.n = 1
+            print(copy2.n + " " + shared.n + " " + copy2.d)
+            """),
+        ("Adressen gepackter Felder: ref auf defined-Felder, &p.n und &p.len lesen und schreiben (Einheit umgerechnet), undefined ueber den Zeiger abgelehnt", """
+            class P { defined int n; defined float : m len; int plain = 0; string s = "x" }
+            class K {
+                static Add(ref int x, defined int by) { x = x + by }
+                static Scale(ref float y) { y = y * 2 }
+            }
+            var p = new P()
+            K.Add(p.n, 5)
+            K.Add(p.n, 2)
+            K.Scale(p.len)
+            p.len = p.len + 1m
+            K.Scale(p.len)
+            K.Add(p.plain, 3)
+            print(p.n + " " + p.len + " " + p.plain)
+            unsafe {
+                int* q = &p.n
+                *q = *q * 10
+                print(*q + " " + p.n)
+                float* r = &p.len
+                *r = 450cm
+                print(*r + " " + p.len)
+                try { *q = undefined } catch (ArgumentException e) { print(e.message) }
+                print(p.n)
+            }
+            """),
+        ("defined (SPEC 8.10b): ein Programm, das die Aufruftiefe zaehlt (try x.TakeTo), hat keine C-Ruempfe - jede Methode einmal, ihr _b dahinter", """
+            class M {
+                static defined int Mix(defined int a, defined int b) { return a * 31 + b }
+            }
+            class Item { int v = 1 }
+            class Holder {
+                Item kept
+                Keep(Item it) { if (try it.TakeTo(this)) { this.kept = it } }
+            }
+            int s = 0
+            for (int i = 0; i < 100; i++) { s = M.Mix(s, i) % 1000 }
+            print(s)
+            var h = new Holder()
+            h.Keep(new Item())
+            print(h.kept.v)
+            """),
+        ("defined (SPEC 8.10b): trust - ein int-/float-Parameter und ein Feld gehen ohne Pruefung in den C-Rumpf, ein any wird weiter geprueft", """
+            class K {
+                defined int n
+                int plain = 4
+                static defined int T(defined int x) { return x * 2 }
+                static defined float F(defined float x) { return x + 1 }
+                static defined int G(int y) { return K.T(trust y) }
+                static defined float H(float y) { return K.F(trust y) }
+                defined int P() { return K.T(trust this.plain) }
+            }
+            print(K.G(5) + " " + K.H(1.5) + " " + new K().P())
+            any a = "s"
+            try { print(K.T(trust a)) } catch (ArgumentException e) { print(e.message) }
+            int total = 0
+            for (int i = 0; i < 1000; i++) { total = total + K.G(i) }
+            print(total)
+            """),
+        ("defined (SPEC 8.10b): JSON - ein fehlendes defined-Feld ist 0, null ist die ArgumentException; Reflection prueft wie eine Zuweisung", """
+            #import "json"
+            #import "reflection"
+            class P {
+                defined int n
+                defined float : m len
+                int plain
+            }
+            var a = Json.Deserialize<P>("{\"plain\": 3}")
+            print(a.n + " " + a.len + " " + a.plain)
+            var b = Json.Deserialize<P>("{\"n\": 7, \"len\": 2}")
+            print(b.n + " " + b.len)
+            try { var c = Json.Deserialize<P>("{\"n\": null}"); print("c " + c.n) } catch (ArgumentException e) { print(e.message) }
+            try { Reflect.Set(b, "n", undefined) } catch (ArgumentException e) { print(e.message) }
+            print(Json.Serialize(b))
+            """),
+        ("defined (SPEC 8.10b): undefined, ein falscher Typ und Exceptions - an der Aufrufstelle, im Rumpf, bei Rueckgabe, Feld und Property wie in der VM", """
+            class M {
+                defined int count
+                int plain
+                defined int Count { get { return this.count } set { this.count = value } }
+                static defined int Twice(defined int x) { return x * 2 }
+                static defined int Fail(defined int n) { if (n > 3) { throw new ArgumentException("too big") } return n }
+                static defined int NoReturn(int x) { if (x > 0) { return x } }
+                static defined int Store(defined int a, int b) { a = b; return a }
+            }
+            var m = new M()
+            int u
+            any text = "x"
+            try { print(M.Twice(u)) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Twice(trust u)) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Twice(text)) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Fail(5)) } catch (ArgumentException e) { print("caught " + e.message) }
+            print(M.Fail(2) + " " + M.NoReturn(4))
+            try { print(M.NoReturn(-1)) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Store(1, u)) } catch (ArgumentException e) { print(e.message) }
+            try { m.count = u } catch (ArgumentException e) { print(e.message) }
+            try { m.Count = u } catch (ArgumentException e) { print(e.message) }
+            try { print(M.Twice(m.plain)) } catch (ArgumentException e) { print(e.message) }
+            m.Count = 21
+            print(M.Twice(m.Count) + " " + m.count)
+            """),
+        ("Felder mit typisiertem Array: jede Zuweisung typisiert (direkt, ueber any, Reflection, JSON, statisch), ein Nicht-Array ist die ArgumentException, Elemente direkt gelesen", """
+            #import "json"
+            #import "reflection"
+            class Grid { int cells[]
+                float w[]
+                static int counts[]
+                construct() { }
+                int Sum() { var s = 0
+                    for (int i = 0; i < this.cells.length; i++) { s = s + this.cells[i] }
+                    return s } }
+            var g = new Grid()
+            g.cells = [1, 2, 3]
+            print(g.Sum() + " " + g.cells.length)
+            try { g.cells[0] = "x"; print("untyped") } catch (ArgumentException e) { print("typed: " + e.message) }
+            any o = g
+            try { o.cells = "nope"; print("took a string") } catch (ArgumentException e) { print("any: " + e.message) }
+            o.cells = [4, 5]
+            print(g.Sum())
+            try { Reflect.Set(g, "cells", 7); print("reflect took 7") } catch (ArgumentException e) { print("reflect: " + e.message) }
+            any arr = [10, 20, 30]
+            Reflect.Set(g, "cells", arr)
+            try { g.cells[1] = 2.5; print("float in int") } catch (ArgumentException e) { print("reflect typed: " + e.message) }
+            print(g.Sum())
+            Grid back = Json.Deserialize("{\"$type\": \"Grid\", \"cells\": [7, 8, 9], \"w\": [0.5, 1]}", "Grid")
+            try { back.cells[0] = "s"; print("json untyped") } catch (ArgumentException e) { print("json typed: " + e.message) }
+            print(back.Sum() + " " + back.w[1])
+            Grid.counts = [1, 1]
+            try { Grid.counts = 3; print("static took 3") } catch (ArgumentException e) { print("static: " + e.message) }
+            try { Grid.counts[0] = true; print("static untyped") } catch (ArgumentException e) { print("static typed: " + e.message) }
+            g.cells = undefined
+            try { print(g.Sum()) } catch (e) { print("undefined: " + e.message) }
+            """),
+        ("Tabellen mit #intwidth 32: Hashes passen ins int-Array (30 Bit), auch der eines GetHashCode ueber 32 Bit", """
+            #intwidth 32
+            class Key : IEquatable { int a
+                construct(int a) { this.a = a }
+                bool Equals(any o) { return o is of Key && o.a % 10 == this.a % 10 }
+                int[64] GetHashCode() { return this.a % 10 + 4000000000 } }
+            var d = new Dictionary<int, int>()
+            for (int i = 0; i < 300; i++) { d[i * 1000003] = i }
+            var ks = new HashSet<Key>()
+            ks.Add(new Key(3))
+            print(d.Count + " " + d[299 * 1000003] + " " + d.ContainsKey(5) + " " + ks.Add(new Key(13)) + " " + ks.Contains(new Key(23)))
+            """),
+        ("Schmale Felder (#intwidth 32, #floatwidth 32): int/float/bool teilen sich einen Wert, Vererbung mit freier Haelfte, undefined, Einheiten, int[64] bleibt breit, Kopie, Schneiden", """
+            #intwidth 32
+            #floatwidth 32
+            class P { int x
+                float y
+                bool ok
+                int len : mm
+                string name
+                int[64] big
+                construct(int x) { this.x = x; this.y = x * 0.5; this.ok = x > 1; this.len = 5cm; this.name = "p" + x; this.big = 864000000000 }
+                int Sum() { return this.x + this.len / 1mm }
+            }
+            class Q : P { int z
+                float w
+                construct(int x) : base(x) { this.z = x * 3; this.w = 0.25 }
+            }
+            var p = new P(2)
+            print(p.x + " " + p.y + " " + p.ok + " " + p.len + " " + p.name + " " + p.big + " " + p.Sum())
+            var q = new Q(3)
+            print(q.x + " " + q.y + " " + q.ok + " " + q.z + " " + q.w + " " + q.big * 2)
+            P any1 = q
+            any1.x = 2147483647
+            any1.x = any1.x + 1
+            print(any1.x + " " + q.x)
+            var e = new P(1)
+            e.ok = undefined
+            e.y = undefined
+            print(e.ok == undefined)
+            print(e.y == undefined)
+            var c = copy q
+            c.z = 7
+            print(c.z + " " + q.z + " " + c.w)
+            any d = q
+            d.y = 4
+            print(d.y + " " + d.z)
+            """),
         ("#intwidth 32: Ueberlauf, Division, Schieben, Konstanten, typisierte Arrays, Felder, Schleifen, Einheiten", """
             #intwidth 32
             var a = 2147483647
@@ -22312,6 +23889,39 @@ else
             print(s)
             print(5cm + 3mm)
             print(0.5 + 1)
+            """),
+        ("#intwidth 16: Ueberlauf, Division, Schieben, Konstanten, typisierte Arrays, Felder, Schleifen, Laengen, Zeichen jenseits von 16 Bit", """
+            #intwidth 16
+            var a = 32767
+            a = a + 1
+            print(a)
+            print(256 * 256)
+            var m = -32767 - 1
+            print(m / -1)
+            print(m % -1)
+            print(1 << 15)
+            print(1 << 16)
+            print(70000)
+            var big = 1000
+            print(big * big)
+            int u[3]
+            u[0] = 32767
+            u[0]++
+            print(u[0])
+            class P { int x }
+            var p = new P()
+            p.x = 300 * 300
+            print(p.x)
+            var s = 0
+            for (var i = 0; i < 1000; i++) { s += i }
+            print(s)
+            var buf = new byte[30000]
+            print(buf.length)
+            var smile = 128512.ToChar()
+            print("x".Length + " " + smile + " " + (smile!int))
+            print(5cm + 3mm)
+            print(0.5 + 1)
+            print(2147483647 + 0)
             """),
         ("Typisierte Arrays: Breiten, undefined und der Merker (-128, NaN, 0xFF, 0xFFFF), strikte Typen, Einheiten, ++, Zuweisung liefert den gespeicherten Wert", """
             int[8] a[] = new int[4]
@@ -22518,7 +24128,7 @@ else
             """),
     }).ToArray();
 
-    // JSON (#import "json", docs/JSON.md): the VM (JsonMethods) and the native runtime (fire_json.h) write and read the same text
+    // JSON (#import "json", docs/stdlib/json.md): the VM (JsonMethods) and the native runtime (fire_json.h) write and read the same text
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Json: Zyklen ($id/$ref), Einheiten, NonSerialized/JsonName, List, any-Werte, eingerueckt, Lesen, Parse, Fehler", """
@@ -22806,7 +24416,7 @@ else
             """),
     }).ToArray();
 
-    // The device framework (docs/DEVICES.md): drivers of gpio, i2c and spi with their simulated devices
+    // The device framework (docs/devices/README.md): drivers of gpio, i2c and spi with their simulated devices
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Devices: DeviceManager.AddDriver/Get, GPIO-Port (ganzer Port, PinAt), I2C-Bus und Geraet an Adresse, SPI, NotSupportedException, eigener Treiber", """
@@ -26019,7 +27629,7 @@ else
         var vmResults = new string[natCases.Length];
         int vmAt = 0;
         using (TestProgress.Heartbeat("VM (Faelle nativ == VM)", () => Volatile.Read(ref vmAt), natCases.Length, () => natCases[Math.Min(Volatile.Read(ref vmAt), natCases.Length - 1)].Name))
-            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Value.Ints32 = false; Volatile.Write(ref vmAt, i + 1); }
+            for (int i = 0; i < natCases.Length; i++) { vmResults[i] = vmOutput(natCases[i].Source); Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false; Volatile.Write(ref vmAt, i + 1); }
         Value.SingleFloats = false;
         // what the native program of a case did: its output, stderr and exit code (Output null: it did not build - Stderr says why)
         var natRan = new (string? Output, string Stderr, int Exit)[natCases.Length];
@@ -26078,7 +27688,7 @@ else
         // (the trim cases and the TLS case under Wine at the same time)
         TestJobs.Concurrently(() =>
         {
-            // Leaving out what the program does not reach (docs/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): the stripping levels 0 (none, = the VM),
+            // Leaving out what the program does not reach (docs/spec/NATIVE_BACKEND.md "Größe des Programms", ROADMAP section 11): the stripping levels 0 (none, = the VM),
             // 1 (protected: every class and public member stays), 2 (methods: every class with constructors, fields and properties, a method only when used) and
             // 3 (all, the default: only what is reached); names given as literals to reflection always stay, a lookup of what was left out is an error that says so
             // (the VM has every class and member, so only a native build can hit it).
@@ -26281,8 +27891,42 @@ else
                 CheckNat("Weglassen (stripping): ein Debug-Build behaelt alles; \"stripping\" als Zahl und Name, \"trim\" und --keep-all als Aliase, --stripping, das Projekt",
                     trAliasChecks.All(c => c.Ok), string.Join(", ", trAliasChecks.Where(c => !c.Ok).Select(c => c.Name)));
 
+                // the direction (docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"): --optimize, the project, fire.native.json, the target; the flags of the toolchain and the define
+                {
+                    var optSpeed = fire.Runtime.OptimizeFor.Speed;
+                    var optSize = fire.Runtime.OptimizeFor.Size;
+                    var linux = TargetProfile.TryGet("linux", out var lx) ? lx : TargetProfile.Host;
+                    var optCli = fire.Native.NativeConfig.Parse("{\"optimize\": \"speed\"}");
+                    optCli.Optimize = "size"; optCli.OptimizeFromCommandLine = true;
+                    var optPlan = new fire.Projects.ProjectSettings { Optimize = "speed" };
+                    var gccTc = fire.Native.ToolchainDef.BuiltIn["gcc"];
+                    var watcomTc = fire.Native.ToolchainDef.BuiltIn["watcom"];
+                    var optLinked = new Linker { Optimize = optSize }.CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release);
+                    var optChecks = new (string Name, bool Ok)[]
+                    {
+                        ("--optimize", CommandLineParser.Parse(new[] { "build", "a.fire", "--optimize", "size" }).Optimize == optSize
+                            && CommandLineParser.Parse(new[] { "native", "a.fire", "--optimize", "SPEED" }).Optimize == optSpeed
+                            && CommandLineParser.Parse(new[] { "build", "a.fire", "--optimize", "fast" }).Error != null && CommandLineParser.Parse(new[] { "run", "a.fire", "--optimize", "size" }).Error != null),
+                        ("targets", linux.Optimize == optSpeed && TargetProfile.Dos16.Optimize == optSize && TargetProfile.Win16.Optimize == optSize && TargetProfile.Dos32.Optimize == optSize && TargetProfile.Bios16.Optimize == optSize),
+                        ("target of the file", fire.Native.NativeConfig.Parse("{\"targets\": {\"small\": {\"extends\": \"linux\", \"optimize\": \"size\"}}}").ResolveTarget("small").Optimize == optSize
+                            && trThrows(() => fire.Native.NativeConfig.Parse("{\"targets\": {\"small\": {\"extends\": \"linux\", \"optimize\": \"tiny\"}}}").ResolveTarget("small"))),
+                        ("order", fire.Compiler.NativeBuilder.OptimizeOf(optCli, optPlan, linux) == optSize
+                            && fire.Compiler.NativeBuilder.OptimizeOf(fire.Native.NativeConfig.Parse("{\"optimize\": \"size\"}"), optPlan, linux) == optSpeed
+                            && fire.Compiler.NativeBuilder.OptimizeOf(fire.Native.NativeConfig.Parse("{\"optimize\": \"size\"}"), (fire.Projects.ProjectSettings?)null, linux) == optSize
+                            && fire.Compiler.NativeBuilder.OptimizeOf(null, (fire.Projects.ProjectSettings?)null, TargetProfile.Dos16) == optSize && fire.Compiler.NativeBuilder.OptimizeOf(null, (fire.Projects.ProjectSettings?)null, linux) == optSpeed),
+                        ("wrong", trThrows(() => fire.Native.NativeConfig.Parse("{\"optimize\": \"tiny\"}")) && new fire.Projects.ProjectSettings { Optimize = "tiny" }.Validate().Count == 1),
+                        ("flags", fire.Compiler.NativeBuilder.WithDirection(gccTc, optSize).Optimization == "size" && fire.Compiler.NativeBuilder.WithDirection(gccTc, optSpeed).Optimization == "-O2"
+                            && fire.Compiler.NativeBuilder.WithDirection(new fire.Native.ToolchainDef { Kind = "gcc", Optimization = "-O3" }, optSpeed).Optimization == "-O3"
+                            && fire.Compiler.NativeBuilder.WithDirection(watcomTc, optSize).Optimization == "size" && fire.Compiler.NativeBuilder.WithDirection(watcomTc, optSpeed).Optimization == "-Ot"
+                            && gccTc.Optimization == "-O2"),
+                        ("define", fire.Native.CppGenerator.Generate(optLinked).Contains("#define FIRE_OPTIMIZE_SIZE 1") && !fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release)).Contains("#define FIRE_OPTIMIZE_SIZE")),
+                    };
+                    CheckNat("Optimierungsrichtung: --optimize, Projekt, fire.native.json, Ziel (Watcom-Ziele: size); Flags der Toolchain (-Os/-O2, Watcom -Os/-Ot) und FIRE_OPTIMIZE_SIZE",
+                        optChecks.All(c => c.Ok), string.Join(", ", optChecks.Where(c => !c.Ok).Select(c => c.Name)));
+                }
+
                 // the size: the minimal ui program (a window, a root, one label) at the four levels - 7.85 MB of C before section 11 (the style of part 3 - corners,
-                // shadows, the surfaces of popups, docs/UI_PLATFORM.md - added about 25 KB; up to 4 MB is fine)
+                // shadows, the surfaces of popups, docs/spec/UI_PLATFORM.md - added about 25 KB; up to 4 MB is fine)
                 const string trUiMinimal = "#import \"ui\"\nvar fb = new Framebuffer(480, 320)\nvar win = new Window(fb, \"x\")\nvar ui = new UI.Root(fb, win)\nvar label = new UI.Label(\"Hello\", 20, 20)\nui.Add(label)\nui.Run()";
                 var trUiLinked = new Linker().CompileAndLink(new[] { trUiMinimal }, null, null, VmExecutionMode.Release);
                 var trUiSizes = trLevels.Select(lv => fire.Native.CppGenerator.GenerateSources(trUiLinked, stripping: lv).Program.Length).ToArray();
@@ -26344,7 +27988,7 @@ else
 
         // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
         string out64 = vmOutput("print(0.1 + 0.2)\nprint(1.0 / 3)"), out32 = vmOutput("#floatwidth 32\nprint(0.1 + 0.2)\nprint(1.0 / 3)");
-        Value.SingleFloats = false; Value.Ints32 = false;
+        Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
         CheckNat("#floatwidth: 64 Bit ist der Standard", out64 == "0.30000000000000004\n0.3333333333333333\n", out64);
         CheckNat("#floatwidth 32: float rechnet und druckt mit 32 Bit", out32 == "0.3\n0.33333334\n", out32);
         var overridden = new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, floatWidthOverride: 32);
@@ -26360,20 +28004,91 @@ else
         // #intwidth (SPEC 8.2.1): int is 64 bits everywhere unless the program asks for 32
         {
             string int64 = vmOutput("print(2147483647 + 1)"), int32 = vmOutput("#intwidth 32\nprint(2147483647 + 1)\nprint(65536 * 65536)\nprint(3000000000)");
-            Value.SingleFloats = false; Value.Ints32 = false;
+            Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
             CheckNat("#intwidth: 64 Bit ist der Standard, auch auf dem esp32", int64 == "2147483648\n" && new Linker().CompileAndLink(new[] { "print(1)" }).IntWidth == 64
                 && new Linker().CompileAndLink(new[] { "print(1)" }, null, null, null, null, TargetProfile.Esp32).IntWidth == 64, int64);
             CheckNat("#intwidth 32: int rechnet mit 32 Bit (Ergebnis abgeschnitten, Konstanten auch)", int32 == "-2147483648\n0\n-1294967296\n", int32);
-            try { new Linker().CompileAndLink(new[] { "#intwidth 16\nprint(1)" }); CheckNat("#intwidth 16 wird abgelehnt", false); }
-            catch (Exception ex) { CheckNat("#intwidth 16 wird abgelehnt", ex.Message.Contains("32 or 64"), ex.Message); }
+            string int16 = vmOutput("#intwidth 16\nprint(32767 + 1)\nprint(256 * 256)\nprint(70000)");
+            CheckNat("#intwidth 16: int rechnet mit 16 Bit (Ergebnis abgeschnitten, Konstanten auch), das C bekommt FIRE_INT16",
+                int16 == "-32768\n0\n4464\n" && new Linker().CompileAndLink(new[] { "#intwidth 16\nprint(1)" }) is var l16 && l16.IntWidth == 16
+                && fire.Native.CppGenerator.Generate(l16).Contains("#define FIRE_INT16 1"), int16);
+            Value.Ints32 = false; Value.Ints16 = false;
+            try { new Linker().CompileAndLink(new[] { "#intwidth 8\nprint(1)" }); CheckNat("#intwidth 8 wird abgelehnt", false); }
+            catch (Exception ex) { CheckNat("#intwidth 8 wird abgelehnt", ex.Message.Contains("16, 32 or 64"), ex.Message); }
             var cliInt = CommandLineParser.Parse(new[] { "run", "a.script", "-i", "32" });
-            CheckNat("Befehlszeile: -i 32 / -i 16", cliInt.Error == null && cliInt.IntWidth == 32 && CommandLineParser.Parse(new[] { "run", "a.script", "-i", "16" }).Error != null
+            CheckNat("Befehlszeile: -i 32 / -i 16 / -i 8", cliInt.Error == null && cliInt.IntWidth == 32 && CommandLineParser.Parse(new[] { "run", "a.script", "-i", "16" }).IntWidth == 16
+                && CommandLineParser.Parse(new[] { "run", "a.script", "-i", "8" }).Error != null
                 && CommandLineParser.Parse(new[] { "run", "a.script" }).IntWidth == null);
             var intLinked = new Linker().CompileAndLink(new[] { "#intwidth 32\nvar x = 3000000000\nprint(x)" });
             CheckNat("#intwidth 32: Konstanten werden auf 32 Bit abgeschnitten, das C bekommt FIRE_INT32", intLinked.IntWidth == 32
                 && intLinked.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Int && c.AsInt() == -1294967296)
                 && fire.Native.CppGenerator.Generate(intLinked, TargetProfile.Host).Contains("#define FIRE_INT32 1"));
-            Value.SingleFloats = false; Value.Ints32 = false;
+            Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
+
+            // `word` (SPEC 8.10): the target's machine word - 64 bits on the desktop, 32 on the esp32 (the VM follows the target of the build), `wordWidth` in a target
+            {
+                var hostWord = new Linker().CompileAndLink(new[] { "print(Word.Bits)" });
+                var espWord = new Linker().CompileAndLink(new[] { "#if word32\nprint(Word.Bits)\n#endif" }, null, null, null, null, TargetProfile.Esp32);
+                CheckNat("word: 64 Bit auf dem Rechner, 32 auf esp32/freertos/wasm; #if word32/word64, FIRE_WORD_BITS im C", hostWord.WordWidth == 64 && espWord.WordWidth == 32
+                    && TargetProfile.FreeRtos.WordWidth == 32 && TargetProfile.Wasm.WordWidth == 32 && TargetProfile.Linux.WordWidth == 64
+                    && fire.Native.CppGenerator.Generate(espWord, TargetProfile.Esp32).Contains("#define FIRE_WORD_BITS 32")
+                    && fire.Native.CppGenerator.Generate(hostWord, TargetProfile.Host).Contains("#define FIRE_WORD_BITS 64")
+                    && fire.Compiler.ConditionalSymbols.For(TargetProfile.Esp32).Contains("word32") && fire.Compiler.ConditionalSymbols.For(TargetProfile.Linux).Contains("word64"));
+                var wordConfig = fire.Native.NativeConfig.Parse("""{ "targets": { "avr": { "extends": "freertos", "wordWidth": 16 } } }""");
+                bool badRejected = false;
+                try { fire.Native.NativeConfig.Parse("""{ "targets": { "x": { "extends": "linux", "wordWidth": 8 } } }""").ResolveTarget("x"); }
+                catch (fire.Native.NativeConfigException) { badRejected = true; }
+                CheckNat("word: wordWidth in fire.native.json (16), 8 wird abgelehnt", wordConfig.ResolveTarget("avr").WordWidth == 16 && badRejected);
+                const string word32Source = """
+                    word m = -1
+                    word a = 4000000000
+                    print(m + " " + Word.Bits + " " + (m + 1) + " " + (a + a) + " " + a * 3 + " " + (m >> 31) + " " + (m << 31) + " " + (m << 32))
+                    print((a * 2) / 7 + " " + (a > 5) + " " + (m == -1) + " " + m!int + " " + (-a) + " " + ~a + " " + 5000000000!word)
+                    word wb[] = [4294967301, -1]
+                    wb[1]++
+                    print(wb[0] + " " + wb[1] + " " + wb.length + " " + wb)
+                    #if word32
+                    print("word32")
+                    #endif
+                    """;
+                var vmLines = new List<string>();
+                var espSession = fire.Runtime.Session.Build(new Linker().CompileAndLink(new[] { word32Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Esp32), VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+                espSession.Run();
+                Value.WordBits = 64;
+                string vm32 = string.Concat(vmLines.Select(l => l + "\n"));
+                var target32 = TargetProfile.Host with { WordWidth = 32 };
+                var generated32 = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { word32Source }, null, null, VmExecutionMode.Release, null, target32), target32);
+                Value.WordBits = 64;
+                string exe32 = Path.Combine(workDir, "word32.bin");
+                string build32 = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated32, workDir, "word32", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe32, out int build32Exit);
+                string nat32 = build32Exit == 0 && !build32.Contains("warning:") ? RunProc(exe32, "", workDir, out _) : "C-Compiler: " + build32;
+                // 16 bits (no such target yet: a target with wordWidth 16 - the VM and natively)
+                const string word16Source = """
+                    word m = -1
+                    word a = 40000
+                    word wb[] = [65541, -1]
+                    print(m + " " + Word.Bits + " " + (a + a) + " " + a * 3 + " " + (m >> 15) + " " + (m << 15) + " " + (m << 16) + " " + (a / 7) + " " + (-a) + " " + 70000!word + " " + wb[0] + " " + wb[1] + " " + (a > 30000))
+                    #if word16
+                    print("word16")
+                    #endif
+                    """;
+                var target16 = TargetProfile.Host with { WordWidth = 16 };
+                var vm16Lines = new List<string>();
+                var session16 = fire.Runtime.Session.Build(new Linker().CompileAndLink(new[] { word16Source }, null, null, VmExecutionMode.Release, null, target16), VmExecutionMode.Release, a => { vm16Lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+                session16.Run();
+                Value.WordBits = 64;
+                string vm16 = string.Concat(vm16Lines.Select(l => l + "\n"));
+                var generated16 = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { word16Source }, null, null, VmExecutionMode.Release, null, target16), target16);
+                Value.WordBits = 64;
+                string exe16 = Path.Combine(workDir, "word16.bin");
+                string build16 = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated16, workDir, "word16", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe16, out int build16Exit);
+                string nat16 = build16Exit == 0 && !build16.Contains("warning:") ? RunProc(exe16, "", workDir, out _) : "C-Compiler: " + build16;
+                CheckNat("word: 16 Bit (ein Ziel mit wordWidth 16) - VM und nativ wie ein 16-Bit-Rechner",
+                    vm16 == "65535 16 14464 54464 1 32768 0 5714 25536 4464 5 65535 True\nword16\n" && nat16 == vm16, $"  VM:\n{vm16}\n  nativ:\n{nat16}");
+                CheckNat("word: 32 Bit (esp32 in der VM, ein Ziel mit wordWidth 32 nativ) rechnet mit 32 Bit: Wrap, Schieben, vorzeichenlos, wie die VM",
+                    vm32 == "4294967295 32 0 3705032704 3410065408 1 2147483648 0\n529290386 True True 4294967295 294967296 294967295 705032704\n5 0 2 <buffer 2 words>\nword32\n" && nat32 == vm32,
+                    $"  VM (esp32):\n{vm32}\n  nativ:\n{nat32}");
+            }
 
             // a value of 8 bytes (FIRE_COMPACT: int32, float32, 32-bit pointers): the same program as a 32-bit build, when the compiler can make one
             string probe = Path.Combine(workDir, "m32probe.c");
@@ -26383,6 +28098,8 @@ else
                 Console.WriteLine("SKIP: 8-Byte-Value - der C-Compiler baut keine 32-Bit-Programme (gcc-multilib)");
             else
             {
+                // (a target of 32-bit words: an 8-byte value needs a machine word of at most 32 bits)
+                var compactTarget = TargetProfile.Host with { WordWidth = 32 };
                 const string compactSource = """
                     #intwidth 32
                     #floatwidth 32
@@ -26412,15 +28129,90 @@ else
                     print(box)
                     """;
                 string expectedCompact = vmOutput(compactSource);
-                Value.SingleFloats = false; Value.Ints32 = false;
+                Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                 string compactC = Path.Combine(workDir, "compact.c");
-                File.WriteAllText(compactC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { compactSource }), TargetProfile.Host)
-                    + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 8, \"compact\");\n");
-                Value.SingleFloats = false; Value.Ints32 = false;
+                File.WriteAllText(compactC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { compactSource }, null, null, null, null, compactTarget), compactTarget)
+                    + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 16 && sizeof(NValue) == 8, \"a value has 16 bytes, a narrow field 8\");\n");
+                Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
                 string compactBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{compactC}\" -I\"{workDir}\" -o \"{compactC}.bin\" -lm", workDir, out int compactExit);
                 string compactOut = compactExit == 0 ? RunProc($"{compactC}.bin", "", workDir, out _) : compactBuild;
-                CheckNat("8-Byte-Value (#intwidth 32, #floatwidth 32, 32-Bit-Zeiger): dasselbe wie die VM", compactExit == 0 && !compactBuild.Contains("warning") && compactOut.Replace("\r", "") == expectedCompact,
+                CheckNat("32-Bit-Build (#intwidth 32, #floatwidth 32, 32-Bit-Zeiger): 16-Byte-Werte, schmale Felder - dasselbe wie die VM", compactExit == 0 && !compactBuild.Contains("warning") && compactOut.Replace("\r", "") == expectedCompact,
                     $"  erwartet (VM):\n{expectedCompact}\n  erhalten (32 Bit):\n{compactOut}");
+
+                // ROADMAP 13.1: no limit of 65535 live objects, arrays and buffers (the slot in the payload, 28 bits of generation in the head), pointers into
+                // arrays and buffers as counted boxes - checked and with #performance (no table: the address in the value; `ref a[i]` finds its typed array)
+                const string slotSource = """
+                    #intwidth 32
+                    #floatwidth 32
+                    class Node { int v
+                        construct(int v) { this.v = v } }
+                    class F {
+                      static Sum(ref int first, int n) {
+                        var t = 0
+                        unsafe { int* p = &first
+                          for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+                        return t
+                      }
+                      static Same(ref int a, ref int b) { unsafe { int* p = &a
+                        int* q = &b
+                        return (p + 1 == q) + " " + (q - p) } }
+                      static Put(ref float x) { unsafe { float* p = &x
+                        *p = 3 } }
+                      static Bytes(ref byte first, int n) {
+                        var t = 0
+                        unsafe { byte* p = &first
+                          for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+                        return t
+                      }
+                    }
+                    // more than 65535 live objects at once
+                    var all = new int[70000][1]
+                    for (var i = 0; i < 70000; i++) { all[i][0] = i }
+                    var total = 0
+                    for (var i = 0; i < 70000; i++) { total = total + all[i][0] % 7 }
+                    var nodes = new Node[70000]
+                    for (var i = 0; i < 70000; i++) { nodes[i] = take new Node(i) }
+                    var one = nodes[69999]
+                    print("live: " + all.length + " " + total + " " + all[69999][0] + " " + one.v + " " + nodes[12345].v)
+                    // generations past 4096: one slot made and destroyed again and again, a stale reference stays dead
+                    var keep = new Node(1)
+                    var stale = new Node(2)
+                    delete stale
+                    for (var i = 0; i < 5000; i++) { var t = new Node(i)
+                      delete t }
+                    try { print(stale.v) } catch (DestroyedException e) { print("stale: " + e.message) }
+                    print("keep: " + keep.v + " " + (keep == keep))
+                    // many pointers: every `p + 1` is a new box, the old ones come back
+                    var a = new int[100]
+                    for (var i = 0; i < 100; i++) { a[i] = i }
+                    var s = 0
+                    for (var k = 0; k < 2000; k++) { s = s + F.Sum(a[k % 50], 50) }
+                    print("sum: " + s)
+                    print("ptr: " + F.Same(a[3], a[4]))
+                    float fs[] = new float[3]
+                    F.Put(fs[1])
+                    print("typed: " + fs[1])
+                    var buf = new byte[4]
+                    buf[0] = 1; buf[1] = 2; buf[2] = 3; buf[3] = 4
+                    print("bytes: " + F.Bytes(buf[1], 3))
+                    delete a
+                    try { print(F.Sum(a[0], 1)) } catch (DestroyedException e) { print("gone: " + e.message) }
+                    """;
+                foreach (bool perf in new[] { false, true })
+                {
+                    string source = perf ? "#performance\n" + string.Join("\n", slotSource.Split('\n').Where(l => !l.Contains("stale") && !l.Contains("gone"))) : slotSource;
+                    string expected = vmOutput(source);
+                    Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
+                    string slotC = Path.Combine(workDir, perf ? "compactslotsperf.c" : "compactslots.c");
+                    File.WriteAllText(slotC, fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { source }, null, null, null, null, compactTarget), compactTarget)
+                        + "\nFIRE_STATIC_ASSERT(sizeof(Value) == 16 && sizeof(NValue) == 8, \"a value has 16 bytes, a narrow field 8\");\n");
+                    Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
+                    string slotBuild = RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-m32 -std=c11 -O1 -Wall -Wextra -pthread \"{slotC}\" -I\"{workDir}\" -o \"{slotC}.bin\" -lm", workDir, out int slotExit);
+                    string slotOut = slotExit == 0 ? RunProc($"{slotC}.bin", "", workDir, out _) : slotBuild;
+                    CheckNat($"32-Bit-Build{(perf ? " (#performance)" : "")}: mehr als 65535 lebende Objekte/Arrays, Generationen ueber 4096, Zeiger in Arrays und Puffer (ohne Kaesten)",
+                        slotExit == 0 && !slotBuild.Contains("warning") && slotOut.Replace("\r", "") == expected && expected.StartsWith("live: 70000"),
+                        $"  erwartet (VM):\n{expected}\n  erhalten (32 Bit):\n{slotOut}");
+                }
             }
         }
 
@@ -26436,6 +28228,908 @@ else
         catch (NotSupportedException ex) { CheckNat("Zielprofil: nicht verfuegbare Bibliothek wird abgelehnt", ex.Message.Contains("'graphics'") && ex.Message.Contains("'esp32'"), ex.Message); }
         CheckNat("Zielprofil: Windows erlaubt die Grafik, esp32 hat Devices/IO/Time", TargetProfile.Windows.HasImport("graphics") && esp.HasImport("devices") && esp.HasImport("io") && esp.HasImport("time") && !esp.HasImport("ui"));
         CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
+        // the text console (#import "console", docs/stdlib/console.md): without a console (redirected) plain text and the characters of standard input as keys -
+        // the VM and the native program alike; in a terminal (a pseudo-terminal through `script`) the escape sequences and the keys of their sequences
+        if (TestSelected("console"))
+        {
+            const string conSource = """
+                #import "console"
+                Console.WriteLine("console " + Console.IsConsole() + " " + Console.Width() + "x" + Console.Height())
+                Console.SetColor(ConsoleColor.Yellow, ConsoleColor.DarkBlue)
+                Console.Write("gelb ")
+                Console.ResetColor()
+                Console.WriteLine("normal äöü ╔═╗")
+                Console.WriteAt(5, 3, "da")
+                Console.WriteLine(" " + Console.Column() + "," + Console.Row())
+                Console.Clear()
+                Console.ShowCursor(false)
+                while (Console.KeyAvailable()) {
+                    var k = Console.ReadKey()
+                    Console.WriteLine(k.ToString() + " " + k.Key + " " + k.Control)
+                }
+                Console.WriteLine(Console.ReadKey())
+                """;
+            const string conInput = "a\u0001\tZä\r\nx";
+            const string conExpected = "console False 80x25\ngelb normal äöü ╔═╗\nda 0,0\na Character False\nCtrl+a Character True\nTab Tab False\nZ Character False\n"
+                + "ä Character False\nEnter Enter False\nx Character False\nundefined\n";
+            var conLines = new List<string>();
+            try
+            {
+                VM.ResetTerminateForTests();
+                RuntimeSession.Build(new[] { conSource }, VmExecutionMode.Release, a => { conLines.Add(a[0].ToString()!); return Value.MakeUndefined(); },
+                    ioStdio: fire.IO.Bridge.IoStdio.Custom(l => conLines.Add(l), null, new MemoryStream(System.Text.Encoding.UTF8.GetBytes(conInput)))).Run();
+            }
+            catch (Exception ex) { conLines.Add("AUSNAHME: " + ex.Message); }
+            string conVm = string.Concat(conLines.Select(l => l + "\n"));
+            CheckNat("console: in der VM ohne Konsole - Text wie geschrieben, Farben/Cursor/Clear ohne Wirkung, Tasten aus der Standardeingabe (Strg, Tab, UTF-8, \\r\\n)",
+                conVm == conExpected, $"  erwartet:\n{conExpected}\n  VM:\n{conVm}");
+            // (built like the cases "nativ == VM")
+            string? conExe = null, conBuild = "";
+            try
+            {
+                var conGen = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { conSource }, null, null, VmExecutionMode.Release));
+                string exe = Path.Combine(workDir, "console.bin");
+                conBuild = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, conGen, workDir, "console", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra", exe, out int conExit);
+                if (conExit == 0 && !conBuild.Contains("warning:")) conExe = exe;
+            }
+            catch (Exception ex) { conBuild = ex.ToString(); }
+            string conNat = conExe == null ? "C-Compiler: " + conBuild : TestProcess.Run(conExe, "", workDir, conInput).Stdout;
+            CheckNat("console: nativ umgeleitet - dieselbe Ausgabe und dieselben Tasten wie die VM", conExe != null && conNat == conExpected, $"  erwartet:\n{conExpected}\n  nativ:\n{conNat}");
+            // a terminal: `script` gives the program a pseudo-terminal (its input is what we write, its echo is in the output)
+            string? scriptTool = OperatingSystem.IsLinux() ? fire.Native.ToolchainSetup.FindProgram("script") : null;
+            if (conExe == null || scriptTool == null) Console.WriteLine("SKIP: console im Terminal - kein `script` (util-linux) oder das Programm baute nicht");
+            else
+            {
+                const string termSource = """
+                    #import "console"
+                    Console.WriteLine("console " + Console.IsConsole())
+                    Console.SetColor(ConsoleColor.Yellow, ConsoleColor.DarkBlue)
+                    Console.Write("gelb")
+                    Console.ResetColor()
+                    Console.SetCursor(5, 3)
+                    Console.WriteLine("da")
+                    for (var i = 0; i < 6; i++) {
+                        var k = Console.ReadKey()
+                        Console.WriteLine("key " + k.ToString() + " " + k.Key)
+                    }
+                    """;
+                string termOut = "";
+                try
+                {
+                    var termGen = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { termSource }, null, null, VmExecutionMode.Release));
+                    string exe = Path.Combine(workDir, "console-term.bin");
+                    string termLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, termGen, workDir, "console-term", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra", exe, out int termExit);
+                    termOut = termExit != 0 ? "C-Compiler: " + termLog
+                        : TestProcess.Run(scriptTool, $"-qec \"{exe}\" /dev/null", workDir, "x\u001b[A\u001b[15~\u001b[1;5C\u001bq\r", new Dictionary<string, string?> { ["TERM"] = "xterm" }, 30_000).Stdout;
+                }
+                catch (Exception ex) { termOut = ex.ToString(); }
+                string[] termWant = { "console True", "\u001b[93m\u001b[44mgelb\u001b[0m", "\u001b[4;6Hda", "key x Character", "key Up Up", "key F5 F5", "key Ctrl+Right Right", "key Alt+q Character", "key Enter Enter" };
+                CheckNat("console: im Terminal - ANSI-Farben und -Cursor, Tasten aus ihren Folgen (Pfeil, F5, Strg+Pfeil, Alt+Taste, Enter)",
+                    termWant.All(termOut.Contains), $"  erwartet (enthalten): {string.Join(" | ", termWant.Select(w => w.Replace("\u001b", "ESC")))}\n  Terminal:\n{termOut.Replace("\u001b", "ESC")}");
+            }
+        }
+        // dos16 (ROADMAP 13.3): DOS in real mode - the profile, the generated C, and with Open Watcom and DOSBox-X on the machine: built and run like the VM
+        {
+            CheckNat("dos16: Zielprofil (Plattform dos16, Toolchain watcom, int/float 32, word 16, Threads ueber den eigenen Scheduler)", TargetProfile.TryGet("dos16", out var dos16)
+                && dos16.Native.Platform == "dos16" && dos16.Native.Toolchain == "watcom" && dos16.IntWidth == 32 && dos16.FloatWidth == 32 && dos16.WordWidth == 16 && dos16.Native.SupportsThreads
+                && fire.Native.ToolchainDef.BuiltIn.ContainsKey("watcom") && !fire.Native.ToolchainDef.BuiltIn["watcom"].CompilesCpp);
+            const string dosSource = """
+                class Animal { string name
+                    construct(string n) { this.name = n }
+                    string Speak() { return this.name + " says hi" } }
+                var a = new Animal("Rex")
+                print(a.Speak())
+                int big = 100000
+                print(big * 3 + " " + (7.5 / 2) + " " + 5cm + 3mm)
+                var list = [3, 1, 2]
+                var sum = 0
+                foreach (x in list) { sum += x }
+                print(sum + " " + list.length)
+                try { throw new Exception("boom") } catch (e) { print("caught " + e.message) }
+                word w = 65535
+                print(w + 1)
+                var done = 0
+                fire { var t = 0
+                  for (var i = 0; i < 2000; i++) { t = t + i }
+                  sync global { done = t } }
+                while (done == 0) { sync globals }
+                print("thread " + done)
+                """;
+            var dosLinked = new Linker().CompileAndLink(new[] { dosSource }, null, null, VmExecutionMode.Release, null, dos16);
+            string dosC = fire.Native.CppGenerator.Generate(dosLinked, dos16);
+            CheckNat("dos16: das C nennt die Plattform dos16 und die Breiten", dosC.Contains("platform/dos16/fire_platform.h") && dosC.Contains("#define FIRE_INT32 1") && dosC.Contains("#define FIRE_WORD_BITS 16"));
+            var dosVmLines = new List<string>();
+            fire.Runtime.Session.Build(dosLinked, VmExecutionMode.Release, a => { dosVmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
+            Value.WordBits = 64; Value.Ints32 = false; Value.Ints16 = false; Value.SingleFloats = false;
+            string dosVm = string.Concat(dosVmLines.Select(l => l + "\n"));
+            var watcom = new fire.Native.WatcomToolchain();
+            string? dosbox = fire.Native.ToolchainSetup.FindProgram("dosbox-x");
+            if (watcom.Locate(fire.Native.ToolchainDef.BuiltIn["watcom"]) == null || dosbox == null)
+                Console.WriteLine("SKIP: dos16 bauen und laufen lassen - Open Watcom (owcc) oder DOSBox-X fehlt");
+            else
+            {
+                // builds the program as PROG.EXE in its own folder (drive C:) and runs it in DOSBox-X (at most 2 minutes): its output, or the log of the build
+                // (another `outputFile`: the program runs on the screen, not redirected, and writes what it found into that file)
+                (bool Ok, string Text) BuildAndRunDos(string source, string folder, string outputFile = "OUT.TXT", string dosboxSettings = "", TargetProfile? target = null)
+                {
+                    string dir = Path.Combine(workDir, folder);
+                    Directory.CreateDirectory(dir);
+                    var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), target ?? dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
+                    if (!built.Ok) return (false, built.Log);
+                    // (DOSBox-X's own video and audio drivers: no window, no sound)
+                    var env = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy", ["SDL_AUDIODRIVER"] = "dummy" };
+                    var run = TestProcess.Run(dosbox, $"-silent -nogui -nomenu -set \"cpu cycles=max\" {dosboxSettings.Replace("{dir}", dir)} -c \"mount c {dir}\" -c \"c:\" -c \"{(outputFile == "OUT.TXT" ? "PROG.EXE > OUT.TXT" : "PROG.EXE")}\" -c \"exit\"", dir, null, env, 120_000);
+                    string outFile = Directory.GetFiles(dir).FirstOrDefault(f => Path.GetFileName(f).Equals(outputFile, StringComparison.OrdinalIgnoreCase)) ?? "";
+                    string text = outFile.Length > 0 ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)";
+                    return (true, run.Exit == -1 ? text + "(DOSBox-X nach 2 Minuten beendet)" : text);
+                }
+                var dosRun = BuildAndRunDos(dosSource, "dos16");
+                CheckNat("dos16: mit Open Watcom gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM (Objekte, Strings, Einheiten, Ausnahmen, word 16 Bit, ein fire-Thread)",
+                    dosRun.Ok && dosRun.Text == dosVm && dosVm.Length > 0, $"  VM:\n{dosVm}\n  DOS:\n{dosRun.Text}");
+
+                // `--stats` (docs/ROADMAP.md section 16): the map of Open Watcom, the generated code by module, the typing (a `defined int` method has a C interface),
+                // the memory the program needs to load
+                {
+                    string statsDir = Path.Combine(workDir, "dos16stats");
+                    Directory.CreateDirectory(statsDir);
+                    string statsExe = Path.Combine(statsDir, "PROG.EXE");
+                    var statsBuilt = fire.Compiler.NativeBuilder.Build(new[] { "class Calc {\n    static defined int Twice(defined int x) { return x * 2 }\n}\nprint(Calc.Twice(21))" },
+                        new fire.Native.NativeConfig { Stats = true }, dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], statsExe, VmExecutionMode.Release);
+                    string statsText = File.Exists(statsExe + ".stats.txt") ? File.ReadAllText(statsExe + ".stats.txt") : "";
+                    string statsJson = File.Exists(statsExe + ".stats.json") ? File.ReadAllText(statsExe + ".stats.json") : "";
+                    CheckNat("--stats: dos16 - Code nach Herkunft aus der Watcom-Map, Typisierung (C-Schnittstelle einer defined-int-Methode), Speicher zum Laden",
+                        statsBuilt.Ok && statsText.Contains("fire: program") && statsText.Contains("runtime") && statsText.Contains("C library") && statsText.Contains(", loaded ")
+                        && statsText.Contains("C interface 1/") && statsJson.Contains("\"Calc.Twice\"") && statsBuilt.Log.Contains("Statistics (dos16)"),
+                        statsBuilt.Log.Length > 3000 ? statsBuilt.Log[^3000..] : statsBuilt.Log);
+                }
+
+                // files with the paths of DOS ("X:\FOLDER\FILE.EXT", "/" too, upper or lower case alike, what DOS gives back in upper case) - a fixed expectation:
+                // the VM works with the paths of this machine
+                const string dosFiles = """
+                    #import "io"
+                    #import "filesystem"
+                    print(IO.Path.DirectorySeparatorChar)
+                    IO.Directory.CreateDirectory("c:\\fire\\sub")
+                    IO.File.WriteAllText("C:\\Fire\\Sub\\hello.txt", "Hallo DOS")
+                    print(IO.File.ReadAllText("c:/fire/sub/HELLO.TXT"))
+                    print(IO.File.Exists("C:\\FIRE\\SUB\\HELLO.TXT") + " " + IO.Directory.Exists("c:\\fire"))
+                    print(IO.Path.GetFullPath("c:\\fire\\sub\\..\\x.txt"))
+                    print(IO.Path.Combine("C:\\FIRE", "A.TXT") + " " + IO.Path.GetDirectoryName("C:\\FIRE\\SUB\\HELLO.TXT") + " " + IO.Path.GetFileName("c:\\fire\\b.dat"))
+                    foreach (f in IO.Directory.GetFiles("c:\\fire\\sub")) { print(f) }
+                    IO.File.Copy("C:\\FIRE\\SUB\\HELLO.TXT", "C:\\FIRE\\COPY.TXT")
+                    print(IO.File.Size("c:\\fire\\copy.txt"))
+                    IO.Directory.SetCurrentDirectory("C:\\FIRE")
+                    print(IO.Directory.GetCurrentDirectory())
+                    try { IO.File.ReadAllText("C:\\NOPE\\X.TXT") } catch (e) { print("error: " + e.message) }
+                    IO.Directory.SetCurrentDirectory("C:\\")
+                    IO.Directory.Delete("C:\\FIRE", true)
+                    print(IO.Directory.Exists("C:\\FIRE"))
+                    """;
+                const string dosFilesExpected = "\\\nHallo DOS\nTrue True\nC:\\FIRE\\X.TXT\nC:\\FIRE\\A.TXT C:\\FIRE\\SUB b.dat\nC:\\FIRE\\SUB\\HELLO.TXT\n9\nC:\\FIRE\n"
+                    + "error: Could not find a part of the path 'C:\\NOPE\\X.TXT'.\nFalse\n";
+                var filesRun = BuildAndRunDos(dosFiles, "dos16files");
+                CheckNat("dos16: Dateien mit DOS-Pfaden (Laufwerk, \\ und /, Gross/Klein gleich, was DOS liefert gross; anlegen, lesen, kopieren, auflisten, Verzeichnis wechseln, loeschen)",
+                    filesRun.Ok && filesRun.Text == dosFilesExpected, $"  erwartet:\n{dosFilesExpected}\n  DOS:\n{filesRun.Text}");
+
+                // more than 64 KB in one array or buffer (the huge model: halloc, copies across segment ends)
+                const string dosBig = """
+                    #import "io"
+                    #import "filesystem"
+                    class Big {
+                        static Bytes() {
+                            var buf = new byte[100000]
+                            for (var i = 0; i < 100000; i++) { buf[i] = i % 251 }
+                            var c = copy buf
+                            var t = 0
+                            for (var i = 0; i < 100000; i += 997) { t = t + c[i] }
+                            print(c.length + " " + c[99999] + " " + c[65536] + " " + t)
+                            IO.File.WriteAllBytes("C:\\BIG.DAT", c)
+                            var back = IO.File.ReadAllBytes("C:\\BIG.DAT")
+                            print(back.length + " " + back[99999] + " " + back[65536] + " " + back[70001])
+                        }
+                        static Ints() {
+                            int big[] = new int[30000]
+                            big[29999] = 42
+                            var bc = copy big
+                            print(bc[29999] + " " + bc.length + " " + bc[17000])
+                        }
+                        static Values() {
+                            var plain = new any[9000]
+                            plain[8999] = "end"
+                            var pc = copy plain
+                            print(pc[8999])
+                        }
+                    }
+                    Big.Bytes()
+                    Big.Ints()
+                    Big.Values()
+                    """;
+                const string dosBigExpected = "100000 101 25 13344\n100000 101 25 223\n42 30000 undefined\nend\n";
+                var bigRun = BuildAndRunDos(dosBig, "dos16big");
+                CheckNat("dos16: Arrays und Puffer ueber 64 KB (100000 Bytes, int[30000], any[9000]; kopieren ueber Segmentgrenzen, eine Datei mit 100000 Bytes)",
+                    bigRun.Ok && bigRun.Text == dosBigExpected, $"  erwartet:\n{dosBigExpected}\n  DOS:\n{bigRun.Text}");
+
+                // scene3d in the huge model (its buffers over s3d_size and the allocator of the runtime): a small picture - the conventional memory holds the
+                // program (about 500 KB with scene3d), the framebuffer, the depth buffer and the camera's pixels only for small frames. Counted, not summed: the
+                // x87 rounds a colour here and there differently from the SSE of the VM (by 1), the coverage is the same
+                const string dosScene3d = """
+                    #import "graphics"
+                    #import "scene3d"
+                    // the pixels that are not the background, above and below the first 64 KB of the picture (row 102 of 640 bytes)
+                    class H {
+                        static string Count(Framebuffer f) {
+                            var b = f.ReadBytes()
+                            var top = 0
+                            var low = 0
+                            for (var i = 0; i < b.length; i += 4) {
+                                if (b[i] != 24 || b[i + 1] != 42 || b[i + 2] != 61) { if (i < 65536) { top++ } else { low++ } }
+                            }
+                            return top + " " + low
+                        }
+                    }
+                    var frame = new Framebuffer({SIZE})
+                    var scene = new Scene()
+                    var box = new Object(Template.Box, 0m, 0.5m, 0m, 1m, 1m, 1m)
+                    box.RotationY = 30deg
+                    scene.Add(box, "crate")
+                    var floor = new Object(Template.Plane, 0m, 0m, 0m, 6m, 0m, 6m)
+                    floor.Texture = Texture.Checker(32, 4)
+                    scene.Add(floor, "floor")
+                    scene.Add(Light.Directional(-0.4, -1.0, -0.6))
+                    var cam = new Camera(frame)
+                    cam.Y = 1.5m
+                    cam.Z = 3m
+                    cam.RotationX = -25deg
+                    scene.Add(cam)
+                    cam.Render()
+                    print("drawn " + H.Count(frame))
+                    var px = frame.ReadBytes()
+                    print("corner " + px[0] + "," + px[1] + "," + px[2] + "," + px[3])
+                    scene.Remove(box)
+                    cam.Render()
+                    print("floor " + H.Count(frame))
+                    """;
+                var s3dRun = BuildAndRunDos(dosScene3d.Replace("{SIZE}", "64, 48"), "dos16s3d");
+                const string dosScene3dExpected = "drawn 2059 0\ncorner 24,42,61,255\nfloor 1978 0\n";
+                CheckNat("dos16: scene3d - eine Szene mit Box, Boden und Licht gerendert (wie in der VM)",
+                    s3dRun.Ok && s3dRun.Text == dosScene3dExpected, $"  erwartet:\n{dosScene3dExpected}\n  DOS:\n{s3dRun.Text}");
+
+                // the hardware (#import "machine"): CPU and CPUID, the BIOS data area and the video memory (physical addresses), PCI over 32-bit ports, the CMOS
+                // clock, IRQ 0 (the clock, chained: DOS keeps its time), the speaker; the arguments and an address out of reach are exceptions
+                const string dosMachine = """
+                    #import "machine"
+                    print("cpu " + Machine.Cpu.Level() + " " + Machine.Cpu.Vendor())
+                    print("com1 " + Machine.Memory.Peek16(0x400))
+                    Machine.Memory.Poke16(0xB8000 + 158, 0x4E41)
+                    print("screen " + Machine.Memory.Peek16(0xB8000 + 158) + " " + Machine.Memory.Read(0xB8000 + 158, 2)[0])
+                    print("pci " + Machine.Pci.Present(0, 0, 0) + " " + ((Machine.Pci.Read32(0, 0, 0, 0) & 65535) != 65535))
+                    var c = Machine.Cmos.Clock()
+                    print("year ok " + (c[0] >= 2020) + " month ok " + (c[1] >= 1 && c[1] <= 12))
+                    var irq = new Machine.Irq(0, true)
+                    print("irq0 " + (irq.Wait(1000) > 0))
+                    irq.Close()
+                    try { new Machine.Irq(16) } catch (ArgumentException e) { print("arg: " + e.message) }
+                    try { Machine.Memory.Peek8(0x200000) } catch (Machine.MachineException e) { print("far: " + e.message) }
+                    Machine.Speaker.Tone(440)
+                    Machine.Speaker.Off()
+                    print("done")
+                    """;
+                const string dosMachineExpected = "cpu 586 GenuineIntel\ncom1 1016\nscreen 20033 65\npci True True\nyear ok True month ok True\nirq0 True\n"
+                    + "arg: An IRQ is 0 to 15, not 16.\nfar: The address 2097152 cannot be reached from here.\ndone\n";
+                var machRun = BuildAndRunDos(dosMachine, "dos16mach");
+                CheckNat("dos16: machine - CPU/CPUID, physischer Speicher (BIOS-Daten, Videospeicher), PCI ueber 32-Bit-Ports, CMOS-Uhr, IRQ 0 gezaehlt, Lautsprecher",
+                    machRun.Ok && machRun.Text == dosMachineExpected, $"  erwartet:\n{dosMachineExpected}\n  DOS:\n{machRun.Text}");
+
+                // DOS (#import "dos": interrupts with registers, memory, vectors, a buffer in DS:SI) and XMS (#import "xms": a block of 200 KB, 70001 bytes there and back -
+                // more than a segment, an odd length and offset)
+                const string dosXms = """
+                    #import "dos"
+                    #import "xms"
+                    var v = Dos.Version()
+                    print("dos " + (v[0] >= 5))
+                    var r = Dos.Interrupt(0x1A, new DosRegisters(0))
+                    print("ticks " + (r.cx * 65536 + r.dx > 0))
+                    var seg = Dos.Alloc(256)
+                    print("alloc " + (seg > 0) + " largest " + (Dos.LargestFree() > 1000))
+                    Dos.Free(seg)
+                    try { Dos.Free(1) } catch (DosException e) { print("free: " + (e.message.Length > 0)) }
+                    print("vector " + (Dos.GetVector(0x21) != 0))
+                    var name = new byte[64]
+                    var rr = new DosRegisters(0x4700)
+                    rr.ds = Dos.SegmentOf(name)
+                    rr.si = Dos.OffsetOf(name)
+                    Dos.Call(rr)
+                    print("cwd carry " + rr.Carry)
+                    print("xms " + Xms.Available() + " " + Xms.Version()[0] + " free " + (Xms.FreeKb() > 1000))
+                    var b = new XmsBlock(200)
+                    var data = new byte[70001]
+                    for (var i = 0; i < data.length; i++) { data[i] = i % 253 }
+                    b.Write(100001, data)
+                    var back = b.Read(100001, 70001)
+                    var same = true
+                    for (var i = 0; i < back.length; i += 7) { if (back[i] != data[i]) { same = false } }
+                    print("block " + b.Kb + " same " + same + " last " + back[70000] + " " + data[70000])
+                    try { b.Read(204000, 1000) } catch (ArgumentException e) { print("outside") }
+                    b.Close()
+                    try { new XmsBlock(9999999) } catch (ArgumentException e) { print("too big") }
+                    print("done")
+                    """;
+                const string dosXmsExpected = "dos True\nticks True\nalloc True largest True\nfree: True\nvector True\ncwd carry False\nxms True 3 free True\n"
+                    + "block 200 same True last 172 172\noutside\ntoo big\ndone\n";
+                var xmsRun = BuildAndRunDos(dosXms, "dos16xms");
+                CheckNat("dos16: dos (Interrupts mit Registern, Speicher, Vektoren, Puffer in DS:SI) und xms (Block von 200 KB, 70001 Bytes hin und zurueck, ungerade Laenge)",
+                    xmsRun.Ok && xmsRun.Text == dosXmsExpected, $"  erwartet:\n{dosXmsExpected}\n  DOS:\n{xmsRun.Text}");
+
+                // the protected mode (#import "x86"): a routine with 32 bits (registers in and out, memory above 1 MB, a buffer of the program by its linear address),
+                // ReadLinear/WriteLinear across the first megabyte, the screen of the text mode read through its linear address - and back in real mode the program goes on
+                const string dosX86 = """
+                    #import "x86"
+                    print(X86.Mode() + " " + X86.CanSwitch() + " a20 " + X86.EnableA20())
+                    // mov [eax], ebx / mov edx, [eax] / add edx, ecx / mov eax, edx / mov ecx, 12345678h / ret
+                    byte code[] = new byte[14]
+                    var bytes = [137, 24, 139, 16, 1, 202, 137, 208, 185, 120, 86, 52, 18, 195]
+                    for (var i = 0; i < 14; i++) { code[i] = bytes[i] }
+                    var r = new X86Registers(1179648)
+                    r.ebx = 1000000
+                    r.ecx = 23
+                    X86.RunProtected(code, r)
+                    print("eax " + r.eax + " ecx " + r.ecx)
+                    byte data[] = new byte[70000]
+                    for (var i = 0; i < data.length; i++) { data[i] = i % 251 }
+                    X86.WriteLinear(2097152 + 3, data)
+                    var back = X86.ReadLinear(2097152 + 3, 70000)
+                    var same = true
+                    for (var i = 0; i < back.length; i += 13) { if (back[i] != data[i]) { same = false } }
+                    print("above 1 MB " + same + " " + back[69999] + " " + data[69999])
+                    // the routine fills a buffer of the program: mov ecx, 8 / mov al, 'A' / rep stosb (edi = the buffer) / ret
+                    byte fill[] = new byte[8]
+                    byte code2[] = new byte[10]
+                    var bytes2 = [185, 8, 0, 0, 0, 176, 65, 243, 170, 195]
+                    for (var i = 0; i < 10; i++) { code2[i] = bytes2[i] }
+                    var r2 = new X86Registers()
+                    r2.edi = X86.LinearOf(fill)
+                    X86.RunProtected(code2, r2)
+                    print("filled " + fill[0] + " " + fill[7])
+                    try { X86.LinearOf(fill, 99) } catch (ArgumentException e) { print("outside") }
+                    print("long " + X86.CanLongMode())
+                    try { X86.RunLong(code2, r2) } catch (X86Exception e) { print("no long: " + e.message) }
+                    print("done")
+                    """;
+                const string dosX86Expected = "real True a20 True\neax 1000023 ecx 305419896\nabove 1 MB True 221 221\nfilled 65 65\noutside\nlong False\n"
+                    + "no long: This processor has no long mode (64 bit).\ndone\n";
+                var x86Run = BuildAndRunDos(dosX86, "dos16x86");
+                CheckNat("dos16: x86 - eine Routine im 32-Bit-Protected-Mode (Register hin und zurueck, Speicher ueber 1 MB, ein Puffer des Programms) und zurueck im Real Mode",
+                    x86Run.Ok && x86Run.Text == dosX86Expected, $"  erwartet:\n{dosX86Expected}\n  DOS:\n{x86Run.Text}");
+
+                // the long mode needs a 64-bit processor (DOSBox-X has none): the two stubs of the x86 package under QEMU, booted without DOS
+                // (packages/x86/native/tools/test_boot.asm) - the registers of a 32-bit routine and of a 64-bit one (EFER with LME and LMA, a 64-bit register)
+                string? qemu = fire.Native.ToolchainSetup.FindProgram("qemu-system-x86_64"), nasm = fire.Native.ToolchainSetup.FindProgram("nasm");
+                string? x86Tools = null;
+                for (var dirInfo = new DirectoryInfo(AppContext.BaseDirectory); dirInfo != null && x86Tools == null; dirInfo = dirInfo.Parent)
+                    if (File.Exists(Path.Combine(dirInfo.FullName, "packages", "x86", "native", "tools", "test_boot.asm"))) x86Tools = Path.Combine(dirInfo.FullName, "packages", "x86", "native", "tools");
+                if (qemu == null || nasm == null || x86Tools == null) Console.WriteLine("(x86 unter QEMU: uebersprungen - qemu-system-x86_64, nasm oder packages/x86/native/tools fehlen)");
+                else
+                {
+                    string qdir = Path.Combine(workDir, "x86qemu");
+                    Directory.CreateDirectory(qdir);
+                    var a1 = TestProcess.Run(nasm, $"-f bin \"{Path.Combine(x86Tools, "x86_protected.asm")}\" -o \"{Path.Combine(qdir, "protected.bin")}\"", qdir);
+                    var a2 = TestProcess.Run(nasm, $"-f bin \"{Path.Combine(x86Tools, "x86_long.asm")}\" -o \"{Path.Combine(qdir, "long.bin")}\"", qdir);
+                    var a3 = TestProcess.Run(nasm, $"-f bin -i \"{qdir}/\" \"{Path.Combine(x86Tools, "test_boot.asm")}\" -o \"{Path.Combine(qdir, "boot.img")}\"", qdir);
+                    string serial = Path.Combine(qdir, "serial.txt");
+                    if (File.Exists(serial)) File.Delete(serial);
+                    if (a1.Exit == 0 && a2.Exit == 0 && a3.Exit == 0)
+                    {
+                        using (var img = File.OpenWrite(Path.Combine(qdir, "boot.img"))) img.SetLength(Math.Max(img.Length, 65536));
+                        TestProcess.Run(qemu, $"-drive format=raw,file=\"{Path.Combine(qdir, "boot.img")}\" -serial file:\"{serial}\" -display none -device isa-debug-exit,iobase=0xf4,iosize=0x04 -no-reboot", qdir, timeoutMs: 60000);
+                    }
+                    string said = File.Exists(serial) ? File.ReadAllText(serial).Trim() : $"(nichts)\n{a1.Stderr}{a2.Stderr}{a3.Stderr}";
+                    CheckNat("x86 unter QEMU ohne DOS: der Stub des Protected Mode (eine 32-Bit-Routine, Speicher ueber 1 MB) und der des Long Mode (EFER: LME und LMA, ein 64-Bit-Register) und zurueck",
+                        said == "000F4257 12345678 00000005 00000500 00000001 OK", said);
+                }
+
+                // FreeDOS under QEMU (a 64-bit processor, which DOSBox-X does not have): the image of FreeDOS 1.4 (FD14-LiteUSB, FD14LITE.img) from FIRE_FREEDOS_IMAGE or
+                // ~/.cache/fire/freedos/FD14LITE.img, mtools to put the program in; CONFIG without EMM386 (the processor stays in real mode), AUTOEXEC runs PROG.EXE > OUT.TXT
+                // and QUIT.COM (out to the isa-debug-exit of QEMU: B0 00 E6 F4 C3)
+                string freedosImage = Environment.GetEnvironmentVariable("FIRE_FREEDOS_IMAGE") is { Length: > 0 } fdi ? fdi
+                    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "fire", "freedos", "FD14LITE.img");
+                string? mcopy = fire.Native.ToolchainSetup.FindProgram("mcopy"), mtype = fire.Native.ToolchainSetup.FindProgram("mtype");
+                (bool Ok, string Text)? BuildAndRunFreeDos(string source, string folder)
+                {
+                    if (qemu == null || mcopy == null || mtype == null || !File.Exists(freedosImage)) return null;
+                    string dir = Path.Combine(workDir, folder);
+                    Directory.CreateDirectory(dir);
+                    var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), dos16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
+                    if (!built.Ok) return (false, built.Log);
+                    string img = Path.Combine(dir, "disk.img");
+                    File.Copy(freedosImage, img, true);
+                    File.WriteAllText(Path.Combine(dir, "FDCONFIG.SYS"), "FILES=40\r\nBUFFERS=20\r\nDOS=HIGH\r\nDEVICE=\\FREEDOS\\BIN\\HIMEMX.EXE\r\nSHELL=\\COMMAND.COM \\ /E:1024 /P=\\FDAUTO.BAT\r\n");
+                    File.WriteAllText(Path.Combine(dir, "FDAUTO.BAT"), "@echo off\r\nC:\r\ncd \\\r\nPROG.EXE > OUT.TXT\r\nQUIT.COM\r\n");
+                    File.WriteAllBytes(Path.Combine(dir, "QUIT.COM"), new byte[] { 0xB0, 0x00, 0xE6, 0xF4, 0xC3 });
+                    string rc = Path.Combine(dir, "mtoolsrc");
+                    File.WriteAllText(rc, $"drive c: file=\"{img}\" offset=32256\nmtools_skip_check=1\n");
+                    var env = new Dictionary<string, string?> { ["MTOOLSRC"] = rc };
+                    var put = TestProcess.Run(mcopy, "-o FDCONFIG.SYS FDAUTO.BAT QUIT.COM PROG.EXE c:/", dir, environment: env);
+                    if (put.Exit != 0) return (false, "mcopy: " + put.Stderr);
+                    var run = TestProcess.Run(qemu, $"-drive format=raw,file=\"{img}\" -display none -device isa-debug-exit,iobase=0xf4,iosize=0x04 -no-reboot -m 64", dir, timeoutMs: 120000);
+                    var got = TestProcess.Run(mtype, "c:/OUT.TXT", dir, environment: env);
+                    string text = got.Exit == 0 ? got.Stdout.Replace("\r", "") : "(keine Ausgabe)";
+                    return (true, run.Exit == -1 ? text + "(QEMU nach 2 Minuten beendet)" : text);
+                }
+                // the long mode from a fire program under DOS: a 64-bit routine (EFER: LME and LMA, a 64-bit register), and back
+                const string dosLong = """
+                    #import "x86"
+                    print(X86.Mode() + " " + X86.CanSwitch() + " long " + X86.CanLongMode())
+                    // mov ecx, C0000080h / rdmsr / mov ebx, eax / mov r8, 100000005h / mov rax, r8 / shr rax, 32 / mov edx, eax / mov eax, r8d / ret
+                    var bytes = [185, 128, 0, 0, 192, 15, 50, 137, 195, 73, 184, 5, 0, 0, 0, 1, 0, 0, 0, 76, 137, 192, 72, 193, 232, 32, 137, 194, 68, 137, 192, 195]
+                    byte code[] = new byte[bytes.length]
+                    for (var i = 0; i < bytes.length; i++) { code[i] = bytes[i] }
+                    var r = X86.RunLong(code, new X86Registers(7))
+                    print("eax " + r.eax + " edx " + r.edx + " efer " + r.ebx)
+                    print("done")
+                    """;
+                var longRun = BuildAndRunFreeDos(dosLong, "freedoslong");
+                if (longRun == null) Console.WriteLine($"(FreeDOS unter QEMU: uebersprungen - qemu-system-x86_64, mtools oder {freedosImage} fehlen)");
+                else
+                {
+                    const string dosLongExpected = "real True long True\neax 5 edx 1 efer 1280\ndone\n";
+                    CheckNat("FreeDOS unter QEMU: x86 - eine 64-Bit-Routine im Long Mode aus einem fire-Programm (EFER: LME und LMA, ein 64-Bit-Register) und zurueck im Real Mode",
+                        longRun.Value.Ok && longRun.Value.Text == dosLongExpected, $"  erwartet:\n{dosLongExpected}\n  DOS:\n{longRun.Value.Text}");
+                    var pmRun = BuildAndRunFreeDos(dosX86.Replace("print(\"long \" + X86.CanLongMode())\n", "").Replace("try { X86.RunLong(code2, r2) } catch (X86Exception e) { print(\"no long: \" + e.message) }\n", ""), "freedospm");
+                    string pmExpected = dosX86Expected.Replace("long False\nno long: This processor has no long mode (64 bit).\n", "");
+                    CheckNat("FreeDOS unter QEMU: x86 - der Protected Mode wie in DOSBox-X (mit HIMEMX)", pmRun!.Value.Ok && pmRun.Value.Text == pmExpected, $"  erwartet:\n{pmExpected}\n  DOS:\n{pmRun.Value.Text}");
+                }
+
+                // the serial and the printer port as devices (#import "devices"): COM1 and LPT1 from the BIOS, written into the files of DOSBox-X; read through the
+                // interrupt of the UART (its loopback, one byte at a time - DOSBox repeats the first byte of a burst there)
+                const string dosSerial = """
+                    #import "devices"
+                    #import "machine"
+                    var list = DeviceManager.Devices()
+                    var names = ""
+                    for (var i = 0; i < list.Count; i++) { names = names + list[i].Identifier() + " " }
+                    print(names)
+                    var com = DeviceManager.Get("serial:COM1")
+                    print("connect " + com.Connect())
+                    print("write " + com.WriteString("Hallo COM1"))
+                    Machine.Port.Out8(0x3FC, 0x1B)
+                    var got = ""
+                    for (var k = 0; k < 3; k++) {
+                        var one = new byte[1]
+                        one[0] = 65 + k
+                        com.Write(one)
+                        var tries = 0
+                        while (!com.HasData() && tries < 500) { tries = tries + 1 }
+                        got = got + com.ReadString()
+                    }
+                    print("loopback " + got)
+                    Machine.Port.Out8(0x3FC, 0x0B)
+                    com.Disconnect()
+                    var lpt = DeviceManager.Get("serial:LPT1")
+                    print("lpt " + lpt.Connect() + " " + lpt.WriteString("Drucker"))
+                    lpt.Disconnect()
+                    """;
+                const string dosSerialExpected = "serial:COM1 serial:COM2 serial:LPT1 \nconnect True\nwrite True\nloopback ABC\nlpt True True\n";
+                var serRun = BuildAndRunDos(dosSerial, "dos16ser", "OUT.TXT", "-set \"serial1=file file:{dir}/SER.TXT\" -set \"parallel1=file file:{dir}/PAR.TXT\"");
+                string serFile = Path.Combine(workDir, "dos16ser", "SER.TXT"), parFile = Path.Combine(workDir, "dos16ser", "PAR.TXT");
+                string serOut = File.Exists(serFile) ? File.ReadAllText(serFile) : "(keine Datei)", parOut = File.Exists(parFile) ? File.ReadAllText(parFile) : "(keine Datei)";
+                CheckNat("dos16: serieller und paralleler Port als Geraete (COM1/LPT1 aus dem BIOS, gesendet, ueber den Interrupt des UART empfangen)",
+                    serRun.Ok && serRun.Text == dosSerialExpected && serOut == "Hallo COM1" && parOut == "Drucker",
+                    $"  erwartet:\n{dosSerialExpected}\n  DOS:\n{serRun.Text}\n  COM1: {serOut}\n  LPT1: {parOut}");
+
+                // the graphics library in 16 bits (#import "graphics"): the same pixels as natively with the same widths (checksums of the framebuffers - lines, circles,
+                // polygons, fills, text, blits, resize, shadow/blur, masks; PNG there and back). Two programs: with the library the code is about 450 KB, beside it
+                // there is room for one palette framebuffer of 320x200 and smaller ones
+                const string dosGfxDraw = """
+                    #import "graphics"
+                    class T {
+                        static int Sum(Framebuffer fb) {
+                            var data = fb.ReadBytes()
+                            var s = 0
+                            for (var i = 0; i < data.length; i++) { s = (s * 31 + data[i]) & 16777215 }
+                            return s
+                        }
+                        static undefined Show(string what, Framebuffer fb) { print(what + " " + T.Sum(fb)) }
+                    }
+                    var big = new Framebuffer(320, 200, 1)
+                    var r = new Renderer(big)
+                    r.ClearTo(1)
+                    T.Show("pal clear", big)
+                    r.DrawLine(0, 0, 319, 199, new Pen(4))
+                    r.DrawLine(319, 0, 0, 199, new Pen(5, 3))
+                    T.Show("pal lines", big)
+                    r.FillCircle(160, 100, 90, new SolidBrush(9))
+                    r.DrawCircle(160, 100, 95, new Pen(10, 2))
+                    r.FillEllipse(60, 150, 50, 30, new SolidBrush(11))
+                    r.DrawEllipse(260, 50, 55, 35, new Pen(12))
+                    T.Show("pal circles", big)
+                    r.FillTriangle(10, 10, 300, 20, 150, 190, new SolidBrush(13))
+                    r.FillPolygon([5.0, 5.0, 100.0, 30.0, 60.0, 120.0, 20.0, 80.0], new SolidBrush(14))
+                    r.DrawPolygon([200.0, 150.0, 310.0, 160.0, 250.0, 195.0], new Pen(15, 2))
+                    T.Show("pal polygons", big)
+                    r.FillRoundRect(20, 20, 280, 160, 25, new SolidBrush(2))
+                    r.DrawRoundRect(30, 30, 260, 140, 20, new Pen(3, 2))
+                    r.FloodFill(160, 100, new SolidBrush(7))
+                    T.Show("pal round flood", big)
+                    r.DrawText(40, 60, "Hallo DOS 16 Bit", new SolidBrush(15))
+                    r.Locate(2, 3)
+                    r.Print("Konsole")
+                    T.Show("pal text", big)
+                    var small = new Framebuffer(64, 48, 1)
+                    var rs = new Renderer(small)
+                    rs.ClearTo(6)
+                    rs.FillCircle(32, 24, 20, new SolidBrush(12))
+                    r.Blit(small, 10, 10)
+                    r.BlitScaled(small, 0, 0, 64, 48, 100, 20, 200, 150)
+                    r.BlitScaled(small, 0, 0, 64, 48, 300, 190, -150, -120)
+                    T.Show("pal blits", big)
+                    big.Resize(330, 190)
+                    T.Show("pal resize", big)
+                    var rgba = new Framebuffer(120, 80)
+                    var q = new Renderer(rgba)
+                    q.ClearTo(0xFF102030)
+                    q.FillRect(10, 10, 100, 60, new SolidBrush(0x80FF8040))
+                    q.FillCircle(60, 40, 30, new SolidBrush(0xC000FF00))
+                    q.DrawLine(0, 0, 119, 79, new Pen(0xFFFFFFFF, 4))
+                    T.Show("rgba draw", rgba)
+                    q.DrawShadow(20, 20, 60, 30, 10, 8, 0x80000000, 4)
+                    q.Blur(10, 10, 90, 50, 6, 5)
+                    T.Show("rgba fx", rgba)
+                    q.DrawText(5, 60, "RGBA Text", new SolidBrush(0xFFFFFF00))
+                    T.Show("rgba text", rgba)
+                    var mask = small.ToMask()
+                    T.Show("mask", mask)
+                    """;
+                const string dosGfxImages = """
+                    #import "graphics"
+                    class T {
+                        static int Sum(Framebuffer fb) {
+                            var data = fb.ReadBytes()
+                            var s = 0
+                            for (var i = 0; i < data.length; i++) { s = (s * 31 + data[i]) & 16777215 }
+                            return s
+                        }
+                        static undefined Show(string what, Framebuffer fb) { print(what + " " + T.Sum(fb)) }
+                    }
+                    var rgba = new Framebuffer(120, 80)
+                    var q = new Renderer(rgba)
+                    q.ClearTo(0xFF102030)
+                    q.FillCircle(60, 40, 30, new SolidBrush(0xC000FF00))
+                    q.DrawText(5, 60, "PNG", new SolidBrush(0xFFFFFF00))
+                    var png = rgba.ToPng()
+                    var back = Framebuffer.FromImage(png)
+                    print("png " + back.Width() + "x" + back.Height() + " " + (T.Sum(back) == T.Sum(rgba)))
+                    var small = new Framebuffer(64, 48, 1)
+                    var rs = new Renderer(small)
+                    rs.ClearTo(6)
+                    rs.FillCircle(32, 24, 20, new SolidBrush(12))
+                    var palPng = Framebuffer.FromImage(small.ToPng())
+                    print("pal png " + palPng.Width() + " " + T.Sum(palPng))
+                    """;
+                const string gfxDrawExpected = "pal clear 12820480\npal lines 14068416\npal circles 9446186\npal polygons 715367\npal round flood 11109143\npal text 4903732\npal blits 1318769\npal resize 2394223\nrgba draw 7557237\nrgba fx 12353285\nrgba text 11443732\nmask 8222753\n";
+                var gfxDraw = BuildAndRunDos(dosGfxDraw, "dos16gfx");
+                CheckNat("dos16: graphics - Zeichnen wie nativ (Palette 320x200 und RGBA: Linien, Kreise, Polygone, Fuellen, Text, Blits, Resize, Schatten/Unschaerfe, Maske)",
+                    gfxDraw.Ok && gfxDraw.Text == gfxDrawExpected, $"  erwartet:\npal clear 12820480\npal lines 14068416\npal circles 9446186\npal polygons 715367\npal round flood 11109143\npal text 4903732\npal blits 1318769\npal resize 2394223\nrgba draw 7557237\nrgba fx 12353285\nrgba text 11443732\nmask 8222753\n\n  DOS:\n{gfxDraw.Text}");
+                var gfxImages = BuildAndRunDos(dosGfxImages, "dos16gfximg");
+                CheckNat("dos16: graphics - PNG schreiben und lesen (RGBA, Palette)", gfxImages.Ok && gfxImages.Text == "png 120x80 True\npal png 64 4434326\n", $"  erwartet:\npng 120x80 True\npal png 64 4434326\n\n  DOS:\n{gfxImages.Text}");
+
+                // windows on DOS (#import "windows"): the screen in Mode 13h - a palette framebuffer straight into the video memory and its palette into the DAC (read
+                // back), keys from the BIOS as on Windows (the code of Up has bit 30); an RGBA framebuffer through the colour cube, stretched; a larger one in VESA 101h
+                const string dosWindow = """
+                    #import "graphics"
+                    #import "windows"
+                    inline c int Vga(int x, int y) { return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(y * 320 + x)); }
+                    inline c int Dac(int index) { outp(0x3C7, index); { int r = inp(0x3C9), g = inp(0x3C9), b = inp(0x3C9); return (FireInt)(((long)r << 16) | (g << 8) | b); } }
+                    inline c Push(int code) { union REGS r; r.h.ah = 5; r.FIRE_DOS_W.cx = (unsigned short)code; fire_dos_int(0x16, &r); }
+                    var fb = new Framebuffer(320, 200, 1)
+                    fb.SetPaletteRgb(200, 255, 128, 0)
+                    var r = new Renderer(fb)
+                    r.ClearTo(1)
+                    r.FillRect(10, 20, 30, 40, new SolidBrush(200))
+                    var keys = ""
+                    var w = new Window(fb, "DOS")
+                    w.RegisterKeyDown((code, scan, mods, repeated) => { keys = keys + scan + "/" + code + " " })
+                    Push(0x1E61)
+                    Push(0x48E0)
+                    Push(0x011B)
+                    for (var i = 0; i < 3; i++) { w.Tick() }
+                    var at = Vga(15, 30)
+                    var bg = Vga(100, 100)
+                    var dac = Dac(200)
+                    w.Close()
+                    w.Tick()
+                    print("vga " + at + " " + bg + " dac " + dac)
+                    print("keys " + keys)
+                    """;
+                const string dosWindow2 = """
+                    #import "graphics"
+                    #import "windows"
+                    inline c int Vga(int x, int y) { return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(y * 320 + x)); }
+                    inline c int VesaMode() { union REGS r; r.FIRE_DOS_W.ax = 0x4F03; fire_dos_int(0x10, &r); return r.FIRE_DOS_W.ax == 0x004F ? (FireInt)(r.FIRE_DOS_W.bx & 0x3FFF) : -1; }
+                    inline c int VesaPixel(int x, int y) { union REGS r; long at = (long)y * 640 + x; r.FIRE_DOS_W.ax = 0x4F05; r.FIRE_DOS_W.bx = 0; r.FIRE_DOS_W.dx = (unsigned)(at >> 16); fire_dos_int(0x10, &r); return *(unsigned char FIRE_DOS_FAR*)FIRE_DOS_LOW(0xA000, (unsigned)(at & 0xFFFF)); }
+                    var fb = new Framebuffer(160, 100)
+                    var r = new Renderer(fb)
+                    r.ClearTo(0xFF000000)
+                    r.FillRect(0, 0, 80, 50, new SolidBrush(0xFF0000FF))
+                    var w = new Window(fb, "RGBA")
+                    w.Tick()
+                    print("rgba " + Vga(10, 10) + " " + Vga(300, 150))
+                    w.Close()
+                    w.Tick()
+                    var big = new Framebuffer(400, 300, 1)
+                    var rb = new Renderer(big)
+                    rb.ClearTo(3)
+                    rb.FillRect(200, 150, 200, 150, new SolidBrush(9))
+                    var w2 = new Window(big, "VESA")
+                    w2.Tick()
+                    print("vesa " + VesaMode() + " " + VesaPixel(10, 10) + " " + VesaPixel(600, 400))
+                    w2.Close()
+                    w2.Tick()
+                    """;
+                var winRun = BuildAndRunDos(dosWindow, "dos16win");
+                CheckNat("dos16: windows - Mode 13h (Indizes in den Videospeicher, Palette in die DAC-Register), Tasten des BIOS als KeyDown (a, Pfeil hoch, Esc)",
+                    winRun.Ok && winRun.Text == "vga 200 1 dac 4136960\nkeys 4/97 82/1073741906 41/27 \n", $"  DOS:\n{winRun.Text}");
+                var winRun2 = BuildAndRunDos(dosWindow2, "dos16win2");
+                CheckNat("dos16: windows - RGBA ueber den Farbwuerfel (gestreckt), ein Framebuffer ueber 320x200 in VESA 101h (640x480)",
+                    winRun2.Ok && winRun2.Text == "rgba 180 0\nvesa 257 3 9\n", $"  DOS:\n{winRun2.Text}");
+
+                // #intwidth 16 on the 8086 (SPEC 8.2.2): the same as the VM and natively (overflow, constants, arrays, fields, loops)
+                const string dosInt16 = """
+                    #intwidth 16
+                    var a = 32767
+                    a = a + 1
+                    print(a)
+                    print(256 * 256)
+                    var m = -32767 - 1
+                    print(m / -1)
+                    print(m % -1)
+                    print(1 << 15)
+                    print(1 << 16)
+                    print(70000)
+                    var big = 1000
+                    print(big * big)
+                    int u[3]
+                    u[0] = 32767
+                    u[0]++
+                    print(u[0])
+                    class P { int x }
+                    var p = new P()
+                    p.x = 300 * 300
+                    print(p.x)
+                    var s = 0
+                    for (var i = 0; i < 1000; i++) { s += i }
+                    print(s)
+                    var buf = new byte[30000]
+                    print(buf.length)
+                    var smile = 128512.ToChar()
+                    print("x".Length + " " + smile + " " + (smile!int))
+                    print(5cm + 3mm)
+                    print(0.5 + 1)
+                    print(2147483647 + 0)
+                    """;
+                var int16Run = BuildAndRunDos(dosInt16, "dos16int16");
+                CheckNat("dos16: #intwidth 16 - dieselben Ergebnisse wie VM und gcc (Ueberlauf, Konstanten, Schieben, Arrays, Felder, Schleifen)",
+                    int16Run.Ok && int16Run.Text == "-32768\n0\n-32768\n0\n-32768\n0\n4464\n16960\n-32768\n24464\n-24788\n30000\n1   0\n53mm\n1.5\n-1\n", $"  DOS:\n{int16Run.Text}");
+
+                // the console of DOS (#import "console"): the screen through the BIOS (code page 437, attributes - read back from the video memory) and keys from the
+                // keyboard buffer of the BIOS (INT 16h AH=05h puts them there, as if typed)
+                const string dosCon = """
+                    #import "console"
+                    #import "io"
+                    #import "filesystem"
+                    inline c int Cell(int col, int row) { unsigned short __far* v = (unsigned short FIRE_DOS_FAR*)FIRE_DOS_LOW(0xB800, 0); return (FireInt)v[row * 80 + col]; }
+                    inline c Push(int code) { union REGS r; r.h.ah = 5; r.FIRE_DOS_W.cx = (unsigned short)code; fire_dos_int(0x16, &r); }
+                    var log = ""
+                    Console.Clear()
+                    log = log + "console " + Console.IsConsole() + " " + Console.Width() + "x" + Console.Height() + "\n"
+                    Console.SetColor(ConsoleColor.Yellow, ConsoleColor.DarkBlue)
+                    Console.WriteAt(2, 1, "Hi╔")
+                    Console.ResetColor()
+                    log = log + "at " + Console.Column() + "," + Console.Row() + "\n"
+                    var c = Cell(2, 1)
+                    log = log + "cell " + (c & 255) + " attr " + (c >> 8) + " box " + (Cell(4, 1) & 255) + "\n"
+                    Push(0x1E61)
+                    Push(0x48E0)
+                    Push(0x3F00)
+                    Push(0x7400)
+                    Push(0x011B)
+                    Push(0x1C0D)
+                    Push(0x1E01)
+                    Push(0x0E08)
+                    log = log + "avail " + Console.KeyAvailable() + "\n"
+                    for (var i = 0; i < 8; i++) {
+                        var k = Console.ReadKey()
+                        log = log + k.ToString() + " " + k.Key + "\n"
+                    }
+                    IO.File.WriteAllText("C:\\RES.TXT", log)
+                    """;
+                const string dosConExpected = "console True 80x25\nat 5,1\ncell 72 attr 30 box 201\navail True\na Character\nUp Up\nF5 F5\nCtrl+Right Right\nEscape Escape\n"
+                    + "Enter Enter\nCtrl+a Character\nBackspace Backspace\n";
+                var conRun = BuildAndRunDos(dosCon, "dos16con", "RES.TXT");
+                CheckNat("dos16: Konsole ueber das BIOS (Farben als Attribut, Codepage 437, Cursor) und Tasten aus dem Tastaturpuffer (Pfeil, F5, Strg+Pfeil, Esc, Enter, Strg+A, Backspace)",
+                    conRun.Ok && conRun.Text == dosConExpected, $"  erwartet:\n{dosConExpected}\n  DOS:\n{conRun.Text}");
+
+                // ---- dos32 (ROADMAP 13.4): the same programs with Open Watcom 386 and the extender DOS/32A in the program - flat memory, int and float of 64 bits
+                var dos32 = TargetProfile.Dos32;
+                (bool Ok, string Text) RunDos32(string source, string folder, string outputFile = "OUT.TXT", string settings = "") => BuildAndRunDos(source, folder, outputFile, settings, dos32);
+                // what the VM prints with the widths of a target (int, float and word as the target has them)
+                string VmOf(string source, TargetProfile target)
+                {
+                    var linked = new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target);
+                    var lines = new List<string>();
+                    try { fire.Runtime.Session.Build(linked, VmExecutionMode.Release, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run(); }
+                    finally { Value.WordBits = 64; Value.Ints32 = false; Value.Ints16 = false; Value.SingleFloats = false; }
+                    return string.Concat(lines.Select(l => l + "\n"));
+                }
+                CheckNat("dos32: Zielprofil (Plattform dos32, Toolchain watcom, int/float 64, word 32, Threads ueber den eigenen Scheduler)",
+                    dos32.Native.Platform == "dos32" && dos32.Native.Toolchain == "watcom" && dos32.IntWidth == 64 && dos32.FloatWidth == 64 && dos32.WordWidth == 32 && dos32.Native.SupportsThreads
+                    && dos32.Native.CompileArgs.Contains("-bdos32a"));
+                string dos32Vm = VmOf(dosSource, dos32);
+                var d32Run = RunDos32(dosSource, "dos32");
+                CheckNat("dos32: mit Open Watcom 386 und DOS/32A gebaut, in DOSBox-X gelaufen - dieselbe Ausgabe wie die VM mit den Breiten von dos32 (Objekte, Strings, Einheiten, Ausnahmen, word 32 Bit, ein fire-Thread)",
+                    d32Run.Ok && d32Run.Text == dos32Vm && dos32Vm.Length > 0, $"  VM:\n{dos32Vm}\n  DOS:\n{d32Run.Text}");
+                var d32Files = RunDos32(dosFiles, "dos32files");
+                CheckNat("dos32: Dateien mit DOS-Pfaden (wie dos16)", d32Files.Ok && d32Files.Text == dosFilesExpected, $"  erwartet:\n{dosFilesExpected}\n  DOS:\n{d32Files.Text}");
+                var d32Big = RunDos32(dosBig, "dos32big");
+                CheckNat("dos32: grosse Arrays und Puffer im flachen Speicher (wie dos16)", d32Big.Ok && d32Big.Text == dosBigExpected, $"  erwartet:\n{dosBigExpected}\n  DOS:\n{d32Big.Text}");
+                var d32Mach = RunDos32(dosMachine, "dos32mach");
+                string dos32MachineExpected = dosMachineExpected.Replace("far: The address 2097152 cannot be reached from here.\n", "");
+                CheckNat("dos32: machine - wie dos16; der Speicher ueber 1 MB ist ueber DPMI erreichbar (eine Seite abgebildet)", d32Mach.Ok && d32Mach.Text == dos32MachineExpected,
+                    $"  erwartet:\n{dos32MachineExpected}\n  DOS:\n{d32Mach.Text}");
+                const string dos32Dos = """
+                    #import "dos"
+                    #import "xms"
+                    #import "x86"
+                    var v = Dos.Version()
+                    print("dos " + (v[0] >= 5))
+                    var r = Dos.Interrupt(0x1A, new DosRegisters(0))
+                    print("ticks " + (r.cx * 65536 + r.dx > 0))
+                    var seg = Dos.Alloc(256)
+                    print("alloc " + (seg > 0))
+                    Dos.Free(seg)
+                    print("vector " + (Dos.GetVector(0x21) != 0))
+                    var name = new byte[64]
+                    try { Dos.SegmentOf(name) } catch (DosException e) { print("high: " + (e.message.IndexOf("first megabyte") > 0)) }
+                    print("xms " + Xms.Available())
+                    print("x86 " + X86.Mode() + " " + X86.CanSwitch())
+                    print("done")
+                    """;
+                var d32Dos = RunDos32(dos32Dos, "dos32dos");
+                CheckNat("dos32: dos ueber DPMI (Interrupts im Real Mode, DOS-Speicher, Vektoren; ein Puffer des Programms liegt ueber 1 MB), ohne xms und x86",
+                    d32Dos.Ok && d32Dos.Text == "dos True\nticks True\nalloc True\nvector True\nhigh: True\nxms False\nx86 none False\ndone\n", $"  DOS:\n{d32Dos.Text}");
+                var d32Ser = RunDos32(dosSerial, "dos32ser", "OUT.TXT", "-set \"serial1=file file:{dir}/SER.TXT\" -set \"parallel1=file file:{dir}/PAR.TXT\"");
+                string ser32 = Path.Combine(workDir, "dos32ser", "SER.TXT"), par32 = Path.Combine(workDir, "dos32ser", "PAR.TXT");
+                string ser32Out = File.Exists(ser32) ? File.ReadAllText(ser32) : "(keine Datei)", par32Out = File.Exists(par32) ? File.ReadAllText(par32) : "(keine Datei)";
+                CheckNat("dos32: serieller und paralleler Port (wie dos16; die IRQ des UART im Handler des Protected Mode)",
+                    d32Ser.Ok && d32Ser.Text == dosSerialExpected && ser32Out == "Hallo COM1" && par32Out == "Drucker", $"  DOS:\n{d32Ser.Text}\n  COM1: {ser32Out}\n  LPT1: {par32Out}");
+                var d32Gfx = RunDos32(dosGfxDraw, "dos32gfx");
+                CheckNat("dos32: graphics - dieselben Pixel wie dos16 und nativ", d32Gfx.Ok && d32Gfx.Text == gfxDrawExpected, $"  erwartet:\n{gfxDrawExpected}\n  DOS:\n{d32Gfx.Text}");
+                var d32Win = RunDos32(dosWindow, "dos32win");
+                CheckNat("dos32: windows - Mode 13h und die Tasten des BIOS (wie dos16)", d32Win.Ok && d32Win.Text == "vga 200 1 dac 4136960\nkeys 4/97 82/1073741906 41/27 \n", $"  DOS:\n{d32Win.Text}");
+                var d32Win2 = RunDos32(dosWindow2, "dos32win2");
+                CheckNat("dos32: windows - RGBA ueber den Farbwuerfel, VESA 101h (die Information des Modus ueber DPMI im Real Mode)", d32Win2.Ok && d32Win2.Text == "rgba 180 0\nvesa 257 3 9\n", $"  DOS:\n{d32Win2.Text}");
+                var d32Con = RunDos32(dosCon, "dos32con", "RES.TXT");
+                CheckNat("dos32: Konsole ueber das BIOS (wie dos16)", d32Con.Ok && d32Con.Text == dosConExpected, $"  erwartet:\n{dosConExpected}\n  DOS:\n{d32Con.Text}");
+
+                // ---- win16 (ROADMAP 13.7): Windows 3.x with Open Watcom, run under Wine (its 32-bit part runs programs of 16 bits) in Xvfb; the output through
+                // FIRE_STDOUT into a file (a Windows program has no console)
+                string? wine = fire.Native.ToolchainSetup.FindProgram("wine"), xvfbRunW = fire.Native.ToolchainSetup.FindProgram("xvfb-run");
+                var win16 = TargetProfile.Win16;
+                CheckNat("win16: Zielprofil (Plattform win16, Toolchain watcom, -bwindows, Einstieg ueber WinMain, int/float 32, word 16, Threads ueber den eigenen Scheduler mit -zu)",
+                    win16.Native.Platform == "win16" && win16.Native.Toolchain == "watcom" && win16.Native.CompileArgs.Contains("-bwindows") && win16.Native.Entry.Name == "fire_win16_main"
+                    && win16.IntWidth == 32 && win16.WordWidth == 16 && win16.Native.SupportsThreads && win16.Native.CompileArgs.Contains("-Wc,-zu"));
+                if (wine == null || xvfbRunW == null) Console.WriteLine("(win16: uebersprungen - wine (mit seinem 32-Bit-Teil) oder xvfb-run fehlen)");
+                else
+                {
+                    string winePrefix = Path.Combine(workDir, "wineprefix");
+                    (bool Ok, string Text) RunWin16(string source, string folder)
+                    {
+                        string dir = Path.Combine(workDir, folder);
+                        Directory.CreateDirectory(dir);
+                        var built = fire.Compiler.NativeBuilder.Build(new[] { source }, new fire.Native.NativeConfig(), win16, fire.Native.ToolchainDef.BuiltIn["watcom"], Path.Combine(dir, "PROG.EXE"), VmExecutionMode.Release);
+                        if (!built.Ok) return (false, built.Log);
+                        string outFile = Path.Combine(dir, "OUT.TXT");
+                        if (File.Exists(outFile)) File.Delete(outFile);
+                        var env = new Dictionary<string, string?> { ["WINEDEBUG"] = "-all", ["WINEPREFIX"] = winePrefix, ["FIRE_STDOUT"] = "OUT.TXT" };
+                        var run = TestProcess.Run(xvfbRunW, $"-a \"{wine}\" PROG.EXE", dir, environment: env, timeoutMs: 120000);
+                        string text = File.Exists(outFile) ? File.ReadAllText(outFile).Replace("\r", "") : "(keine Ausgabe)\n" + run.Stdout + run.Stderr;
+                        return (true, run.Exit == -1 ? text + "(Wine nach 2 Minuten beendet)" : text);
+                    }
+                    // (the whole program of dos16, its fire thread included: fire's own scheduler, a stack segment per task - std/sched/fire_ctx_win16.h)
+                    string win16Source = dosSource;
+                    string win16Vm = VmOf(win16Source, win16);
+                    var w16Run = RunWin16(win16Source, "win16");
+                    CheckNat("win16: mit Open Watcom fuer Windows 3.x gebaut, unter Wine gelaufen - dieselbe Ausgabe wie die VM mit den Breiten von win16 (mit einem fire-Thread)",
+                        w16Run.Ok && w16Run.Text == win16Vm && win16Vm.Length > 0, $"  VM:\n{win16Vm}\n  Wine:\n{w16Run.Text}");
+                    const string win16Big = """
+                        var big = new byte[3000000]
+                        big[2999999] = 7
+                        int many[] = new int[40000]
+                        many[39999] = 42
+                        var c = copy big
+                        print("big " + big.length + " " + c[2999999] + " " + many[39999])
+                        print("args " + Environment.Args.length)
+                        """;
+                    var w16Big = RunWin16(win16Big, "win16big");
+                    CheckNat("win16: grosse Arrays (3 MB, int[40000]) im Huge Model von Windows, die Argumente (WinMain)",
+                        w16Big.Ok && w16Big.Text == "big 3000000 7 42\nargs 0\n", $"  Wine:\n{w16Big.Text}");
+                    // scene3d with a picture of 160 x 120: the framebuffer, the depth buffer and the camera's pixels pass 64 KB each
+                    var w16S3d = RunWin16(dosScene3d.Replace("{SIZE}", "160, 120"), "win16s3d");
+                    const string w16S3dExpected = "drawn 10047 2816\ncorner 24,42,61,255\nfloor 9538 2816\n";
+                    CheckNat("win16: scene3d - 160 x 120 Pixel, die Puffer der Engine ueber 64 KB (wie in der VM)",
+                        w16S3d.Ok && w16S3d.Text == w16S3dExpected, $"  erwartet:\n{w16S3dExpected}\n  Wine:\n{w16S3d.Text}");
+                    // the window through GDI (#import "windows"): a palette framebuffer stretched into the client area (read back with GetPixel), a key posted to the
+                    // window arrives as KeyDown with its scan code
+                    const string win16Window = """
+                        #import "graphics"
+                        #import "windows"
+                        inline c int Pixel(int x, int y) { HWND h = FindWindow((LPCSTR)"FireWindow16", (LPCSTR)"Win16"); HDC dc; COLORREF c; if (h == 0) return -1; dc = GetDC(h); c = GetPixel(dc, (int)x, (int)y); ReleaseDC(h, dc); return (FireInt)(c & 0xFFFFFFL); }
+                        inline c Key(int vk, int scan) { HWND h = FindWindow((LPCSTR)"FireWindow16", (LPCSTR)"Win16"); if (h != 0) { PostMessage(h, WM_KEYDOWN, (WPARAM)vk, ((LPARAM)scan << 16) | 1); PostMessage(h, WM_KEYUP, (WPARAM)vk, ((LPARAM)scan << 16) | 0xC0000001L); } }
+                        var fb = new Framebuffer(80, 60, 1)
+                        fb.SetPaletteRgb(7, 255, 0, 0)
+                        fb.SetPaletteRgb(9, 0, 0, 255)
+                        var r = new Renderer(fb)
+                        r.ClearTo(9)
+                        r.FillRect(0, 0, 40, 60, new SolidBrush(7))
+                        var keys = ""
+                        var w = new Window(fb, "Win16")
+                        w.RegisterKeyDown((code, scan, mods, repeated) => { keys = keys + scan + "/" + code + " " })
+                        w.Tick()
+                        print("left " + Pixel(10, 30) + " right " + Pixel(70, 30))
+                        Key(65, 30)
+                        Key(27, 1)
+                        w.Tick()
+                        w.Tick()
+                        print("keys " + keys)
+                        w.Close()
+                        print("done")
+                        """;
+                    var w16Win = RunWin16(win16Window, "win16win");
+                    CheckNat("win16: windows - ein Fenster ueber GDI (Palette-Framebuffer gestreckt, mit GetPixel zurueckgelesen), Tasten aus WM_KEYDOWN (Scancode wie unter Win32)",
+                        w16Win.Ok && w16Win.Text == "left 255 right 16711680\nkeys 4/97 41/27 \ndone\n", $"  Wine:\n{w16Win.Text}");
+                    // the clipboard of Windows: text (Latin-1, the line break as CR LF and back) and a picture (CF_DIB)
+                    const string win16Clip = """
+                        #import "graphics"
+                        #import "windows"
+                        var fb = new Framebuffer(10, 6)
+                        var w = new Window(fb, "Clip")
+                        print("set " + Clipboard.SetText("Grüße\nzwei"))
+                        print("has " + Clipboard.HasText + " [" + Clipboard.GetText() + "]")
+                        var pic = new Framebuffer(10, 6)
+                        new Renderer(pic).ClearTo(255)
+                        print("image " + Clipboard.SetImage(pic) + " " + Clipboard.HasImage)
+                        var back = Clipboard.GetImage()
+                        print("back " + back.Width() + "x" + back.Height())
+                        w.Close()
+                        """;
+                    var w16Clip = RunWin16(win16Clip, "win16clip");
+                    CheckNat("win16: die Zwischenablage von Windows - Text (Latin-1, Zeilenumbruch) und ein Bild (CF_DIB) hin und zurueck",
+                        w16Clip.Ok && w16Clip.Text == "set True\nhas True [Grüße\nzwei]\nimage True True\nback 10x6\n", $"  Wine:\n{w16Clip.Text}");
+                    // the user interface library (#import "ui", "dialogs") in 16 bits: a panel with a label and a button, drawn into the GDI window
+                    const string win16Ui = """
+                        #import "graphics"
+                        #import "windows"
+                        #import "ui"
+                        #import "dialogs"
+                        var fb = new Framebuffer(240, 120)
+                        var win = new Window(fb, "UI16")
+                        var ui = new UI.Root(fb, win)
+                        var panel = new UI.Panel(8, 8, 220, 100)
+                        ui.Add(panel)
+                        panel.Add(new UI.Label("Hello Windows 3.x", 6, 6))
+                        panel.Add(new UI.Button("OK", 6, 30, 80, 26))
+                        ui.Tick()
+                        var rd = new Renderer(fb)
+                        print("ui " + (rd.GetPixel(20, 50) != rd.GetPixel(200, 90)) + " " + (Dialogs.DialogResult.OK != Dialogs.DialogResult.Cancel))
+                        win.Close()
+                        """;
+                    var w16Ui = RunWin16(win16Ui, "win16ui");
+                    CheckNat("win16: die UI-Bibliothek (ui, dialogs) im Huge Model - ein Panel mit Label und Knopf, ueber GDI gezeigt",
+                        w16Ui.Ok && w16Ui.Text == "ui True True\n", $"  Wine:\n{w16Ui.Text}");
+                }
+            }
+            // bios16 (ROADMAP 13.5): BiosTests (also alone: FIRE_TESTS_ONLY=bios16)
+            BiosTests.Run(CheckNat, workDir, dosSource);
+        }
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
         CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",
             espCpp.Contains("\nvoid app_main(void)") && !espCpp.Contains("int main(") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
@@ -26463,10 +29157,10 @@ else
         // The debugger, the devices, the windows (with the UI) and FreeRTOS at the same time (TestJobs.Concurrently: the output stays in this order). They share no
         // files, the VM runs only in the debugger part, Wine is taken in turn (TestJobs.Wine), every X server is its own (TestJobs.XvfbServer); the programs
         // get their variables per process. (What the window cases left behind before they did so - the sections after them expect it:)
-        Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+        Environment.SetEnvironmentVariable("FIRE_DISPLAY", "headless");
         TestJobs.Concurrently(() =>
         {
-            // ---- The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): the program driven over the protocol, against the VM (NativeDebugTests.cs)
+            // ---- The debugger of native debug builds (docs/spec/NATIVE_DEBUG_PROTOCOL.md): the program driven over the protocol, against the VM (NativeDebugTests.cs)
             NativeDebugTests.Run(CheckNat, cxx, workDir, sanitize);
         }, () =>
         {
@@ -26496,12 +29190,9 @@ else
             }
         }, () =>
         {
-            // ---- Window (packages/windows/native/fire_bridge_windows.h): SDL2 and SDL3 with the dummy driver - the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3,
-            // there is no comparison here) -, the clipboard of X11 under Xvfb, and Windows (MinGW, SDL3) under Wine
+            // ---- Window (packages/windows/native/fire_bridge_windows.h): fire's own display without a screen (FIRE_DISPLAY=headless) - the events are provided by
+            // FIRE_DISPLAY_SELFTEST -, on Wayland (weston), the clipboard of X11 under Xvfb, and Windows (MinGW, fire_display_win32.h) under Wine
             {
-                string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
-                File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
-                RunProc(cxx, $"-std=c++17 \"{sdlProbe}\" -lSDL2 -o \"{sdlProbe}.bin\"", workDir, out int sdlExit);
                 var windowCases = new (string Title, string Script, string[] Expected, string Define)[]
                 {
                     ("Fenster: Framebuffer anzeigen, VSync, Tick, Ereignisse anmelden", """
@@ -26662,39 +29353,26 @@ else
                 print("goes on, started " + win.Manager.IsStarted + ", default " + (win.Manager == WindowManager.Default))
                 """, new[] { "goes on, started True, default True", "key 97 in cycle True", "down 1 32 24" }, "-DFIRE_DISPLAY_SELFTEST "),
                 };
-                // every case with SDL2 and - when this machine has it - with SDL3 (FIRE_SDL3, fire_display_sdl3.h): the same output
-                string sdl3Probe = Path.Combine(workDir, "sdl3probe.c");
-                File.WriteAllText(sdl3Probe, "#include <SDL3/SDL.h>\nint main(void) { return SDL_Init(0) ? 0 : 1; }\n");
-                RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{sdl3Probe}\" -lSDL3 -o \"{sdl3Probe}.bin\"", workDir, out int sdl3Exit);
-                if (sdl3Exit != 0) Console.WriteLine("(SDL3 nicht verfuegbar: die Fenster laufen nur mit SDL2)");
                 string? FindProgram(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
                 string? xvfbRun = FindProgram("xvfb-run");
-                // (under X11 libdbus, which SDL3 uses, keeps a buffer until the end: not a leak of the program)
-                string lsanFile = Path.Combine(workDir, "lsan.supp");
-                File.WriteAllText(lsanFile, "leak:libdbus-1.so\n");
                 // (what runs: the native window cases and the cases under Wine at the same time - see the end of this block)
                 var windowRuns = new List<Action>();
-                // Builds a case for SDL `version` and runs it: `display` "dummy" (the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
+                // Builds a case with fire's own display (packages/windows/native/fire_display_desktop.h) and runs it: `display` "dummy" (headless: the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
                 // (`script` is the reader, `second` the writer that starts 0.3 s after it on the same X server; the output is the reader's) or "x11-late" (the writer
                 // first, the reader 1 s later: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
                 // `firstCommand` instead of the reader built from `script` (the VM: forge run).
                 // PrepareWindowCase generates, builds and runs a case (in parallel with other cases: TestJobs.Ordered - each run has an X server of its own,
                 // TestJobs.XvfbServer) and returns the step that reports what happened, in the order of the cases.
-                Action PrepareWindowCase(string title, string script, string[] expected, string define, int version, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null)
+                Action PrepareWindowCase(string title, string script, string[] expected, string define, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null)
                 {
                     var said = new List<Action>();
                     Action Replay() => () => { foreach (var say in said) say(); };
-                    // (version 0: fire's own display - native/platform/std/fire_display_desktop.h; headless for "dummy", X11 under Xvfb)
-                    string label = version == 3 ? $"{title} [SDL3]" : version == 0 ? $"{title} [fire]" : title;
-                    var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version == 0 ? null : version } };
+                    string label = title;
+                    var target = TargetProfile.Host;
                     fire.Native.NativeSources Generate(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target), target);
                     var generated = Generate(script);
                     string cpp = generated.Program;
-                    bool asks = version == 3 ? cpp.Contains("// fire-link: SDL3") && cpp.Contains("#define FIRE_SDL3 1") && !cpp.Contains("// fire-link: SDL2")
-                              : version == 2 ? cpp.Contains("// fire-link: SDL2") && !cpp.Contains("FIRE_SDL3")
-                              : !cpp.Contains("// fire-link: SDL") && !cpp.Contains("FIRE_DISPLAY_SDL") && cpp.Contains("// fire-link: dl");
-                    said.Add(() => CheckNat(version == 0 ? $"Fenster: {label}: das Programm braucht kein SDL" : $"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, ""));
-                    if (version != 0 && (version == 2 ? sdlExit : sdl3Exit) != 0) { said.Add(() => Console.WriteLine($"(SDL{version} nicht verfuegbar: {label} wird nicht ausgefuehrt)")); return Replay(); }
+                    said.Add(() => CheckNat($"Fenster: {label}: das Programm bittet nur um das, was das System hat (dl)", cpp.Contains("// fire-link: dl") && cpp.Contains("fire_display_c.h") && generated.Natives == null, ""));
                     if (display == "wayland" && FindProgram("weston") == null) { said.Add(() => Console.WriteLine($"(weston nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
                     if (display != "dummy" && display != "wayland" && xvfbRun == null) { said.Add(() => Console.WriteLine($"(xvfb-run nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
                     string Build(fire.Native.NativeSources sources, string name, out string exe)
@@ -26702,12 +29380,11 @@ else
                         exe = Path.Combine(workDir, name + ".bin");
                         File.WriteAllText(Path.Combine(workDir, name + ".c"), sources.Program);
                         var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], target, Path.Combine(workDir, name + ".c"), workDir, exe);
-                        if (version == 0) said.Add(() => CheckNat($"Fenster: {label}: der Build linkt kein SDL", !command.Arguments.Contains("-lSDL") && command.Arguments.Contains("-ldl"), command.Arguments));
-                        else said.Add(() => CheckNat($"Fenster: {label}: der Build haengt -lSDL{version} an", command.Arguments.Contains($"-lSDL{version}") && !command.Arguments.Contains($"-lSDL{5 - version}"), command.Arguments));
-                        string log = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}{define}", exe, out int buildExit, version == 0 ? " -ldl -lpthread" : $" -lSDL{version}");
+                        said.Add(() => CheckNat($"Fenster: {label}: der Build haengt -ldl an", command.Arguments.Contains("-ldl"), command.Arguments));
+                        string log = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}{define}", exe, out int buildExit, " -ldl -lpthread");
                         return buildExit != 0 || log.Contains("warning:") ? "C/C++-Compiler: " + log : "";
                     }
-                    string name = $"window{version}_" + Math.Abs(title.GetHashCode());
+                    string name = "window_" + Math.Abs(title.GetHashCode());
                     string exe = "";
                     string failed = firstCommand == null ? Build(generated, name, out exe) : "";
                     string exe2 = "";
@@ -26717,7 +29394,7 @@ else
                     {
                         string actual;
                         int runExit;
-                        if (display == "dummy") actual = RunProc(exe, "", workDir, out runExit, null, new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy" });
+                        if (display == "dummy") actual = RunProc(exe, "", workDir, out runExit, null, new Dictionary<string, string?> { ["FIRE_DISPLAY"] = "headless" });
                         else if (display == "wayland")
                         {
                             // (fire's own display on Wayland: a weston of its own without a screen - headless backend -, the program on its socket)
@@ -26732,7 +29409,7 @@ else
                         }
                         else
                         {
-                            var x11 = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "x11", ["LSAN_OPTIONS"] = $"suppressions={lsanFile}:print_suppressions=0" };
+                            var x11 = new Dictionary<string, string?> { ["FIRE_DISPLAY"] = "x11" };
                             if (second == null) actual = RunProc(xvfbRun!, $"{TestJobs.XvfbServer()} \"{exe}\"", workDir, out runExit, null, x11);
                             else
                             {
@@ -26755,20 +29432,18 @@ else
                     }
                     return Replay();
                 }
-                void RunWindowCase(string title, string script, string[] expected, string define, int version, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null) =>
-                    PrepareWindowCase(title, script, expected, define, version, display, second, secondCommand, firstCommand)();
-                // (the cases of windowCases and sdlCases below: built and run in parallel, reported in their order)
+                void RunWindowCase(string title, string script, string[] expected, string define, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null) =>
+                    PrepareWindowCase(title, script, expected, define, display, second, secondCommand, firstCommand)();
+                // (the cases of windowCases and clipboardCases below: built and run in parallel, reported in their order)
                 var windowSteps = new List<Func<Action>>();
                 foreach (var wc in windowCases)
                 {
                     if (!TestSelected(wc.Title)) continue;
-                    windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 2));
-                    windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 3));
-                    windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 0));
-                    windowSteps.Add(() => PrepareWindowCase(wc.Title + " (Wayland)", wc.Script, wc.Expected, wc.Define, 0, "wayland"));
+                    windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define));
+                    windowSteps.Add(() => PrepareWindowCase(wc.Title + " (Wayland)", wc.Script, wc.Expected, wc.Define, "wayland"));
                 }
 
-                // ---- what only SDL3 has (and what SDL2 says instead): hover, pictures and files on the clipboard; the real clipboard of X11 (Xvfb), also between two programs
+                // ---- hover, pictures and files on the clipboard; the real clipboard of X11 (Xvfb), also between two programs
                 const string clipScript = """
                 #import "windows"
                 print(Clipboard.SetText("Grüße aus fire 😀"))
@@ -26804,8 +29479,7 @@ else
                 Clipboard.SetText("Text")
                 print(Clipboard.HasFiles + " " + Clipboard.GetFiles().length + " " + Clipboard.HasText + " " + (Clipboard.GetImage() == undefined))
                 """;
-                string[] clip3 = { "True", "True Grüße aus fire 😀 17", "png True", "True True False False", "3x2 True", "True True False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "False 0 True True" };
-                string[] clip2 = { "True", "True Grüße aus fire 😀 17", "png True", "False False True False", "no image", "False False False", "files 0", "False 0 True True" };
+                string[] clipExpected = { "True", "True Grüße aus fire 😀 17", "png True", "True True False False", "3x2 True", "True True False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "False 0 True True" };
                 const string writerScript = """
                 #import "windows"
                 #import "time"
@@ -26873,7 +29547,7 @@ else
                 Clipboard.SetText("fertig")
                 """;
                 string[] lateExpected = { "has True", "text [Text von vorher ä]" };
-                var sdlCases = new (string Title, string Script, string[]? Expected2, string[]? Expected3, string Define, string Display, string? Second)[]
+                var clipboardCases = new (string Title, string Script, string[] Expected, string Define, string Display, string? Second)[]
                 {
                     ("Fenster: DragHover und DragLeave, solange etwas aus einem anderen Programm ueber dem Fenster ist (Callbacks, Warteschlange)", """
                 #import "windows"
@@ -26891,61 +29565,23 @@ else
                     print("queued " + line)
                     e = win.NextEvent()
                 }
-                """, null, new[] { "hover 10 20", "hover 30 22", "leave", "hover 40 30", "files [/tmp/hier.txt] at 40 30", "True", "queued 42 10 20 ", "queued 42 30 22 ", "queued 43 ", "queued 42 40 30 ", "queued 40 40 30 " },
+                """, new[] { "hover 10 20", "hover 30 22", "leave", "hover 40 30", "files [/tmp/hier.txt] at 40 30", "True", "queued 42 10 20 ", "queued 42 30 22 ", "queued 43 ", "queued 42 40 30 ", "queued 40 40 30 " },
                         "-DFIRE_DISPLAY_SELFTEST_HOVER ", "dummy", null),
-                    ("Fenster: Zwischenablage mit Bildern (PNG) und Dateien in einem Programm (SDL2: nur Text)", clipScript, clip2, clip3, "", "dummy", null),
-                    ("Fenster: die Zwischenablage von X11 (Xvfb): Text, Bild und Dateien in einem Programm", clipScript, clip2, clip3, "", "x11", null),
+                    ("Fenster: Zwischenablage mit Bildern (PNG) und Dateien in einem Programm", clipScript, clipExpected, "", "dummy", null),
+                    ("Fenster: die Zwischenablage von X11 (Xvfb): Text, Bild und Dateien in einem Programm", clipScript, clipExpected, "", "x11", null),
                     ("Fenster: die Zwischenablage von X11 (Xvfb) zwischen zwei Programmen: Text, Bild, Dateien", readerScript,
-                        new[] { "text [Text aus dem anderen Programm ä]", "image none", "files 0" },
                         new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" }, "", "x11-two", writerScript),
                     ("Fenster: die Zwischenablage von X11 (Xvfb): was ein anderes Programm vor dem Start kopiert hat, ist gleich bei der ersten Frage da", lateReaderScript,
-                        lateExpected, lateExpected, "", "x11-late", lateWriterScript),
+                        lateExpected, "", "x11-late", lateWriterScript),
                 };
-                foreach (var sc in sdlCases)
+                foreach (var cc in clipboardCases)
                 {
-                    if (!TestSelected(sc.Title)) continue;
-                    if (sc.Expected2 != null) windowSteps.Add(() => PrepareWindowCase(sc.Title, sc.Script, sc.Expected2, sc.Define, 2, sc.Display, sc.Second));
-                    if (sc.Expected3 != null) windowSteps.Add(() => PrepareWindowCase(sc.Title, sc.Script, sc.Expected3, sc.Define, 3, sc.Display, sc.Second));
-                    if (sc.Expected3 != null) windowSteps.Add(() => PrepareWindowCase(sc.Title, sc.Script, sc.Expected3, sc.Define, 0, sc.Display, sc.Second));
+                    if (!TestSelected(cc.Title)) continue;
+                    windowSteps.Add(() => PrepareWindowCase(cc.Title, cc.Script, cc.Expected, cc.Define, cc.Display, cc.Second));
                 }
                 windowRuns.Add(() => TestJobs.Ordered(windowSteps.Count, i => windowSteps[i](), (_, run) => run(), what: "Fenster: gebaut"));
 
-                // which SDL: the generator asks the build only for a program with a window; the target, the toolchain and FIRE_SDL decide first
-                windowRuns.Add(() =>
-                {
-                    int asked = 0;
-                    int Choose() { asked++; return 3; }
-                    const string withWindow = "#import \"windows\"\nvar fb = new Framebuffer(8, 8)\nvar w = new Window(fb, \"t\")\n";
-                    var windowLinked = new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Host);
-                    // without "sdl" (and FIRE_SDL): fire's own display (nothing asked, nothing of SDL); "sdl": 0 (FIRE_SDL=auto): the build is asked (once, only with a window)
-                    var auto = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 0 } };
-                    string own = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host, Choose).Program;
-                    string fixed2 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 2 } }, Choose).Program;
-                    string chosen3 = fire.Native.CppGenerator.GenerateSources(windowLinked, auto, Choose).Program;
-                    int askedForWindows = asked;
-                    fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, auto), auto, Choose);
-                    string wasm = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Wasm), TargetProfile.Wasm, Choose).Program;
-                    CheckNat("Fenster: ohne \"sdl\" die eigene Anzeige (kein SDL, keine Frage); \"sdl\": 0 fragt den Build nur bei einem Fenster (3 -> `// fire-link: SDL3` und FIRE_SDL3), das Ziel (sdl 2) geht vor, wasm zeichnet ohne SDL ins Canvas",
-                        !own.Contains("// fire-link: SDL") && !own.Contains("FIRE_DISPLAY_SDL") && own.Contains("// fire-link: dl")
-                        && chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("FIRE_SDL3")
-                        && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3") && !wasm.Contains("// fire-link: SDL"), $"asked {asked}");
-                    var config3 = fire.Native.NativeConfig.Parse("{ \"targets\": { \"pc\": { \"extends\": \"linux\", \"sdl\": 3 } }, \"toolchains\": { \"old\": { \"extends\": \"gcc\", \"sdl\": 2 } } }");
-                    var pc = config3.ResolveTarget("pc");
-                    var old = config3.ResolveToolchain(pc, "old");
-                    string? savedFireSdl = Environment.GetEnvironmentVariable("FIRE_SDL");
-                    try
-                    {
-                        Environment.SetEnvironmentVariable("FIRE_SDL", null);
-                        bool fromConfig = fire.Compiler.NativeBuilder.RequestedSdl(pc, old) == 3 && fire.Compiler.NativeBuilder.RequestedSdl(TargetProfile.Host, old) == 2
-                            && fire.Compiler.NativeBuilder.RequestedSdl(TargetProfile.Host, fire.Native.ToolchainDef.BuiltIn["gcc"]) == null;
-                        Environment.SetEnvironmentVariable("FIRE_SDL", "2");
-                        bool fromEnv = fire.Compiler.NativeBuilder.RequestedSdl(pc, old) == 2 && fire.Compiler.NativeBuilder.WithRequestedSdl(pc, old).Native.Sdl == 2;
-                        CheckNat("SDL3 oder SDL2: \"sdl\" des Ziels und der Toolchain, FIRE_SDL geht vor", pc.Native.Sdl == 3 && old.Sdl == 2 && fromConfig && fromEnv);
-                    }
-                    finally { Environment.SetEnvironmentVariable("FIRE_SDL", savedFireSdl); }
-                });
-
-                // ---- the VM (the C library: fire's own display) on X11: it puts text, a picture and files on the clipboard (forge run under Xvfb), a native program with SDL3 reads them
+                // ---- the VM (the C library: fire's own display) on X11: it puts text, a picture and files on the clipboard (forge run under Xvfb), a native program reads them
                 windowRuns.Add(() =>
                 {
                     string title = "Fenster: die VM (die C-Bibliothek) auf X11 (Xvfb) gibt einem nativen Programm Text, Bild und Dateien ueber die Zwischenablage";
@@ -26957,7 +29593,7 @@ else
                         string writer = Path.Combine(workDir, "vmwriter.fire");
                         File.WriteAllText(writer, writerScript);
                         RunWindowCase(title, readerScript, new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" },
-                            "", 3, "x11-two", writerScript, $"\"{forge}\" run \"{writer}\"");
+                            "", "x11-two", writerScript, $"\"{forge}\" run \"{writer}\"");
                     }
                 });
                 // ---- the VM as the reader that starts after a native program copied (the VM's windows are the C library's: the same display as the native program)
@@ -26971,7 +29607,7 @@ else
                     {
                         string reader = Path.Combine(workDir, "vmlatereader.fire");
                         File.WriteAllText(reader, lateReaderScript);
-                        RunWindowCase(title, lateReaderScript, lateExpected, "", 3, "x11-late", lateWriterScript, null, $"\"{forge}\" run \"{reader}\"");
+                        RunWindowCase(title, lateReaderScript, lateExpected, "", "x11-late", lateWriterScript, null, $"\"{forge}\" run \"{reader}\"");
                     }
                 });
 
@@ -27174,8 +29810,8 @@ else
                 });
 
                 // ---- drag-out (Window.StartDrag): a fire window drags a text and then two files into another program. X11 under Xvfb (XDND): the target is a native fire
-                // program with SDL3 that prints what is dropped on it; the source a fire window built with SDL2 and with SDL3 (and once on the thread of its manager:
-                // Window.Show), and the VM's window (forge run). The hand is a small X program that presses, moves and lets go with XTest (libXtst, loaded at run time).
+                // program that prints what is dropped on it; the source a native fire window (and once on the thread of its manager: Window.Show), and the VM's
+                // window (forge run) - all with fire's own display (its XDND part, fire_dragout.h). The hand is a small X program that presses, moves and lets go with XTest (libXtst, loaded at run time).
                 // Both windows open in the middle of the screen: the hand drags from the middle of the source to a point near the left edge of the bigger target.
                 const string dragDriverSource = """
                     #include <X11/Xlib.h>
@@ -27302,21 +29938,19 @@ else
                 windowRuns.Add(() =>
                 {
                     string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
-                    var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (die C-Bibliothek)", 3, false, true), ("fire", 0, false, false), ("fire, Window.Show: der Thread des Managers zieht", 0, true, false) };
+                    var dragCases = new (string Label, bool Show, bool Vm)[] { ("die VM (die C-Bibliothek)", false, true), ("fire", false, false), ("fire, Window.Show: der Thread des Managers zieht", true, false) };
                     string[] dragExpected = { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" };
-                    string DragBuild(string script, int version, string name)
+                    string DragBuild(string script, string name)
                     {
-                        // (version 0: fire's own display)
-                        var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version == 0 ? null : version } };
+                        var target = TargetProfile.Host;
                         var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
                         string exe = Path.Combine(workDir, name + ".bin");
-                        string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, version == 0 ? " -ldl -lpthread" : $" -lSDL{version}");
+                        string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, " -ldl -lpthread");
                         if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
                         return exe;
                     }
                     // (the target once for all cases; the cases built in parallel, run one after the other - one X server at a time)
-                    // (the target takes the drop with SDL3 when it is there, else with fire's own display - its XDND part)
-                    var dragTarget = new Lazy<string>(() => DragBuild(dragTargetScript, sdl3Exit == 0 ? 3 : 0, "dragtarget"));
+                    var dragTarget = new Lazy<string>(() => DragBuild(dragTargetScript, "dragtarget"));
                     var dragSteps = new List<Func<Action>>();
                     foreach (var dc in dragCases)
                     {
@@ -27324,7 +29958,7 @@ else
                         if (!TestSelected(title)) continue;
                         dragSteps.Add(() =>
                         {
-                            if (xvfbRun == null || (dc.Sdl == 3 && sdl3Exit != 0) || (dc.Sdl == 2 && sdlExit != 0)) return () => Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder SDL2 fehlen: {title})");
+                            if (xvfbRun == null) return () => Console.WriteLine($"(uebersprungen - xvfb-run fehlt: {title})");
                             if (dc.Vm && !File.Exists(forge)) return () => Console.WriteLine($"(uebersprungen - forge fehlt: {title})");
                             string? driver = DragDriver();
                             if (driver == null) return () => Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
@@ -27339,7 +29973,7 @@ else
                                     File.WriteAllText(file, sourceScript);
                                     sourceCommand = $"\"{forge}\" run \"{file}\"";
                                 }
-                                else sourceCommand = "\"" + DragBuild(sourceScript, dc.Sdl, $"dragsource{dc.Sdl}{(dc.Show ? "s" : "")}") + "\"";
+                                else sourceCommand = "\"" + DragBuild(sourceScript, $"dragsource{(dc.Show ? "s" : "")}") + "\"";
                             }
                             catch (InvalidOperationException ex) { return () => CheckNat(title, false, ex.Message); }
                             return () =>
@@ -27350,7 +29984,7 @@ else
                                 // (the hand presses and moves on a clock: no compiler of this run at the same time - TestJobs.Alone)
                                 int runExit = 0;
                                 string runLog = TestJobs.Alone(() => RunProc(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", workDir, out runExit, null,
-                                    new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "x11", ["LSAN_OPTIONS"] = $"suppressions={lsanFile}:print_suppressions=0" }));
+                                    new Dictionary<string, string?> { ["FIRE_DISPLAY"] = "x11" }));
                                 string actual = DragLines(outSource) + DragLines(outTarget);
                                 string want = string.Concat(dragExpected.Select(l => l + "\n"));
                                 CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}");
@@ -27361,11 +29995,9 @@ else
                 });
 
                 // ---- drag-out on Wayland (wl_data_device.start_drag, fire_dragout_wayland): weston with its X11 backend draws into Xvfb; source and target are native fire
-                // programs with SDL3 on Wayland (an SDL3 with the Wayland driver: the one of the system or the folder FIRE_TEST_SDL3_WAYLAND, put first on
-                // LD_LIBRARY_PATH). Wayland clients cannot know where their windows are: the source is magenta, the target green, and the hand finds them on the X
-                // screen (XGetImage) - it presses in the source and lets go on the point of the target farthest from it, twice (text, then files); a third program
-                // drags onto the black background (no target: 0). SDL_MOUSE_FOCUS_CLICKTHROUGH: the press that gives the source the focus back after a drop counts.
-                // (SDL 3.2 draws on Wayland always through EGL - Mesa, llvmpipe here - which keeps memory that LeakSanitizer would report: suppressed for this case)
+                // programs with fire's own display on Wayland (fire_display_wayland.h). Wayland clients cannot know where their windows are: the source is magenta,
+                // the target green, and the hand finds them on the X screen (XGetImage) - it presses in the source and lets go on the point of the target farthest
+                // from it, twice (text, then files); a third program drags onto the black background (no target: 0).
                 windowRuns.Add(() =>
                 {
                     const string handSource = """
@@ -27445,34 +30077,25 @@ else
                             return 0;
                         }
                         """;
-                    string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Wayland: weston unter Xvfb, wl_data_device): Text und Dateien, die Antwort Kopie; ins Leere 0 [SDL3]";
+                    string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Wayland: weston unter Xvfb, wl_data_device): Text und Dateien, die Antwort Kopie; ins Leere 0";
                     string? weston = FindProgram("weston");
-                    string? wlLibs = Environment.GetEnvironmentVariable("FIRE_TEST_SDL3_WAYLAND") is { Length: > 0 } wlEnv ? wlEnv : null;
                     if (!TestSelected(title)) { }
-                    else if (xvfbRun == null || sdl3Exit != 0 || weston == null) Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder weston fehlen: {title})");
+                    else if (xvfbRun == null || weston == null) Console.WriteLine($"(uebersprungen - xvfb-run oder weston fehlen: {title})");
                     else
                     {
-                        // (has this SDL3 the Wayland driver? - SDL lists the drivers it was built with, no display needed)
-                        string probe = Path.Combine(workDir, "wlprobe.c");
-                        File.WriteAllText(probe, "#include <SDL3/SDL.h>\n#include <string.h>\nint main(void) { int i; for (i = 0; i < SDL_GetNumVideoDrivers(); i++) if (strcmp(SDL_GetVideoDriver(i), \"wayland\") == 0) return 0; return 1; }\n");
-                        RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{probe}\" -lSDL3 -o \"{probe}.bin\"", workDir, out _);
                         string handC = Path.Combine(workDir, "wlhand.c"), hand = Path.Combine(workDir, "wlhand.bin");
                         File.WriteAllText(handC, handSource);
                         RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{handC}\" -o \"{hand}\" -lX11 -ldl", workDir, out int handExit);
-                        string ldPath = wlLibs != null ? $"LD_LIBRARY_PATH=\"{wlLibs}\" " : "";
-                        File.WriteAllText(probe + ".sh", $"{ldPath}\"{probe}.bin\"\n");
-                        RunProc("sh", $"\"{probe}.sh\"", workDir, out int probeExit);
-                        if (probeExit != 0) Console.WriteLine($"(uebersprungen - das SDL3 hier hat keinen Wayland-Treiber (FIRE_TEST_SDL3_WAYLAND: ein Ordner mit einem libSDL3.so mit Wayland): {title})");
-                        else if (handExit != 0) Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
+                        if (handExit != 0) Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
                         else
                         {
                             string Colored(string script, int w, int h, string color) => script.Replace("var win = new Window(", $"var paint = new Renderer(fb)\nfor (var py = 0; py < {h}; py++) {{ for (var px = 0; px < {w}; px++) {{ paint.SetPixel(px, py, {color}) }} }}\nvar win = new Window(");
                             string Build(string script, string name)
                             {
-                                var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 3 } };
+                                var target = TargetProfile.Host;
                                 var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
                                 string exe = Path.Combine(workDir, name + ".bin");
-                                string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL3");
+                                string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, " -ldl -lpthread");
                                 if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
                                 return exe;
                             }
@@ -27494,7 +30117,7 @@ else
                                     "{weston}" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={socket} --config="{runtime}/weston.ini" > "{runtime}/weston.log" 2>&1 &
                                     wp=$!
                                     for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/{socket}" ] && break; sleep 0.1; done
-                                    export WAYLAND_DISPLAY={socket} SDL_VIDEODRIVER=wayland SDL_MOUSE_FOCUS_CLICKTHROUGH=1 {ldPath}
+                                    export WAYLAND_DISPLAY={socket} FIRE_DISPLAY=wayland
                                     "{target}" > "{outTarget}" 2>&1 &
                                     t=$!
                                     sleep 0.5
@@ -27513,10 +30136,7 @@ else
                                     kill $wp; wait $wp
                                     exit $(( d + se + te + d2 + se2 ))
                                     """.Replace("\r", ""));
-                                string wlLsan = Path.Combine(workDir, "lsan_wayland.supp");
-                                File.WriteAllText(wlLsan, "leak:libdbus-1.so\nleak:SDL_EGL_LoadLibrary\nleak:GL_RunCommandQueue\nleak:libLLVM\nleak:libEGL_mesa\nleak:libgallium\n");
-                                string runLog = RunProc(xvfbRun, $"{TestJobs.XvfbServer()} -s \"-screen 0 1024x768x24\" sh \"{run}\"", workDir, out int runExit, null,
-                                    new Dictionary<string, string?> { ["LSAN_OPTIONS"] = $"suppressions={wlLsan}:print_suppressions=0" });
+                                string runLog = RunProc(xvfbRun, $"{TestJobs.XvfbServer()} -s \"-screen 0 1024x768x24\" sh \"{run}\"", workDir, out int runExit);
                                 string actual = DragLines(outSource) + DragLines(outTarget) + DragLines(outEmpty);
                                 string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "text 0", "files 0" }.Select(l => l + "\n"));
                                 CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}"
@@ -27532,64 +30152,6 @@ else
                 {
                     lock (TestJobs.Wine)
                     {
-                        // ---- Windows: the window and the clipboard built with MinGW against the MinGW package of SDL3 (SDL3_DIR, else /opt/sdl-mingw/SDL3-*), SDL3.dll next to it, run under Wine
-                        {
-                            string title = "Fenster: Windows (MinGW, SDL3, unter Wine): Drop-Ereignisse, Zwischenablage mit Text, Bild (CF_DIB) und Dateien (CF_HDROP)";
-                            string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
-                            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
-                            string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
-                                : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
-                            var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
-                            if (!TestSelected(title)) { }
-                            else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null)
-                                Console.WriteLine("(Fenster unter Wine: uebersprungen - MinGW, Wine, xvfb-run oder das MinGW-Paket von SDL3 (SDL3_DIR, /opt/sdl-mingw) fehlen)");
-                            else
-                            {
-                                var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
-                                string winDir = Path.Combine(workDir, "wine_sdl3");
-                                Directory.CreateDirectory(winDir);
-                                fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
-                                File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
-                                string RunWine(string tool, string arguments, out int exit)
-                                {
-                                    var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
-                                    info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
-                                    info.Environment["WINEDEBUG"] = "-all";
-                                    info.Environment["LANG"] = "C.UTF-8";
-                                    using var p = System.Diagnostics.Process.Start(info)!;
-                                    var errTask = p.StandardError.ReadToEndAsync();
-                                    string output = p.StandardOutput.ReadToEnd();
-                                    if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
-                                    exit = p.ExitCode;
-                                    return output + errTask.Result;
-                                }
-                                // (a new prefix is set up first: the program that runs while Wine makes it prints nothing)
-                                RunWine(wine, "wineboot --init", out _);
-                                var winCases = new (string Name, string Script, string Define, string Driver, string[] Expected)[]
-                                {
-                                    ("drop", windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Script, "-DFIRE_DISPLAY_SELFTEST_DROP ", "dummy",
-                                        windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Expected),
-                                    ("clip", clipScript.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\\\fire\\\\ein Ordner\\\\datei ä.txt").Replace("/tmp/zwei", "C:\\\\zwei"), "", "windows",
-                                        clip3.Select(l => l.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\fire\\ein Ordner\\datei ä.txt").Replace("/tmp/zwei", "C:\\zwei")).ToArray()),
-                                };
-                                foreach (var wcase in winCases)
-                                {
-                                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wcase.Script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
-                                    string exeFile = Path.Combine(winDir, wcase.Name + ".exe");
-                                    string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-                                    string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, wcase.Name,
-                                        $"{NativeTestBuild.Opt} -Wall -Wextra {wcase.Define}-I\"{Path.Combine(sdl3Mingw, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
-                                    if (buildExit != 0 || build.Contains("warning:") || !links.Contains("-lSDL3")) { CheckNat($"{title}: {wcase.Name}", false, "MinGW: " + links + "\n" + build); continue; }
-                                    // (the driver of Windows needs a desktop: Wine's comes from the X server of Xvfb)
-                                    string actual = RunWine(xvfbRun, $"{TestJobs.XvfbServer()} env SDL_VIDEODRIVER={wcase.Driver} \"{wine}\" \"{exeFile}\"", out int runExit);
-                                    // (what Wine and the X server say besides the program: about the prefix, the end of the connection)
-                                    actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
-                                    string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
-                                    CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
-                                }
-                            }
-                        }
-
                         // ---- Windows with fire's own display (fire_display_win32.h): MinGW, only user32/gdi32 linked, run under Wine - a real window (keys, mouse, text and the close
                         // of the tests' events, the frame shown), the clipboard (text, picture as PNG/CF_DIB, files as CF_HDROP) and the drops of the tests without a screen
                         {
@@ -27636,7 +30198,7 @@ else
                                     ("drop", windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Script, "-DFIRE_DISPLAY_SELFTEST_DROP ", "headless",
                                         windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Expected),
                                     ("clip", clipScript.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\\\fire\\\\ein Ordner\\\\datei ä.txt").Replace("/tmp/zwei", "C:\\\\zwei"), "", "win32",
-                                        clip3.Select(l => l.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\fire\\ein Ordner\\datei ä.txt").Replace("/tmp/zwei", "C:\\zwei")).ToArray()),
+                                        clipExpected.Select(l => l.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\fire\\ein Ordner\\datei ä.txt").Replace("/tmp/zwei", "C:\\zwei")).ToArray()),
                                     // DirectComposition (part 4.4) where it is there; Wine's is not: the window is made anew without it and shows its pixels (GDI)
                                     ("path", """
                                         #import "windows"
@@ -27656,20 +30218,20 @@ else
                                     string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()));
                                     string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, wcase.Name,
                                         $"{NativeTestBuild.Opt} -Wall -Wextra {wcase.Define}", exeFile, out int buildExit, links);
-                                    if (buildExit != 0 || build.Contains("warning:") || links.Contains("SDL") || !links.Contains("-luser32")) { CheckNat($"{title}: {wcase.Name}", false, "MinGW: " + links + "\n" + build); continue; }
+                                    if (buildExit != 0 || build.Contains("warning:") || !links.Contains("-luser32")) { CheckNat($"{title}: {wcase.Name}", false, "MinGW: " + links + "\n" + build); continue; }
                                     string actual = RunWine(xvfbRun, $"{TestJobs.XvfbServer()} env FIRE_DISPLAY={wcase.Display} \"{wine}\" \"{exeFile}\"", out int runExit);
                                     // (Wine's own goodbye when xvfb-run takes the X server away is not the program's)
                                     actual = string.Concat(actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("X connection to ", StringComparison.Ordinal)).Select(l => l + "\n"));
                                     string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
                                     CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
                                 }
-                                // DirectComposition in C (native/platform/std/fire_display_dcomp.h): the places of the COM methods, the GUIDs and the structures as in the SDK of MinGW
+                                // DirectComposition in C (packages/windows/native/fire_display_dcomp.h): the places of the COM methods, the GUIDs and the structures as in the SDK of MinGW
                                 {
                                     string check = Path.Combine(winDir, "check_dcomp.exe");
                                     // (the source is in the repository: the first folder above the program that has it)
                                     string? cpp = null;
                                     for (var dirInfo = new DirectoryInfo(AppContext.BaseDirectory); dirInfo != null && cpp == null; dirInfo = dirInfo.Parent)
-                                        if (File.Exists(Path.Combine(dirInfo.FullName, "native", "platform", "std", "tools", "check_dcomp.cpp"))) cpp = Path.Combine(dirInfo.FullName, "native", "platform", "std", "tools", "check_dcomp.cpp");
+                                        if (File.Exists(Path.Combine(dirInfo.FullName, "packages", "windows", "native", "tools", "check_dcomp.cpp"))) cpp = Path.Combine(dirInfo.FullName, "packages", "windows", "native", "tools", "check_dcomp.cpp");
                                     if (cpp == null) Console.WriteLine("(DirectComposition gegen das SDK: uebersprungen - tools/check_dcomp.cpp fehlt)");
                                     else
                                     {
@@ -27725,39 +30287,28 @@ else
                             }
                         }
 
-                        // ---- drag-out under Wine (OLE: DoDragDrop with our IDataObject and IDropSource): the same as on X11 - the source built with MinGW against SDL3 and SDL2, the
-                        // target with SDL3 (its OLE drop target), the hand the X program above on the X server that Wine draws on
+                        // ---- drag-out under Wine (OLE: DoDragDrop with our IDataObject and IDropSource): the same as on X11 - source and target built with MinGW, fire's own
+                        // display (fire_display_win32.h: the target is its OLE drop target), the hand the X program above on the X server that Wine draws on
                         {
                             string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
                             string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
-                            string? MingwSdl(int version)
+                            string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Windows unter Wine, OLE): Text (CF_UNICODETEXT) und Dateien (CF_HDROP)";
+                            string? driver = null;
+                            if (!TestSelected(title)) { }
+                            else if (mingw == null || wine == null || xvfbRun == null) Console.WriteLine($"(uebersprungen - MinGW, Wine oder xvfb-run fehlen: {title})");
+                            else if ((driver = DragDriver()) == null) Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
+                            else
                             {
-                                string? dir = Environment.GetEnvironmentVariable($"SDL{version}_DIR") is { Length: > 0 } fromEnv ? fromEnv
-                                    : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", $"SDL{version}-*").OrderBy(d => d).LastOrDefault() : null;
-                                string header = version == 3 ? Path.Combine("include", "SDL3", "SDL.h") : Path.Combine("include", "SDL2", "SDL.h");
-                                return dir == null ? null : new[] { dir, Path.Combine(dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, header)) && File.Exists(Path.Combine(d, "bin", $"SDL{version}.dll")));
-                            }
-                            string? sdl3Mingw = MingwSdl(3), sdl2Mingw = MingwSdl(2);
-                            foreach (int version in new[] { 3, 2 })
-                            {
-                                string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (Windows unter Wine, OLE): Text (CF_UNICODETEXT) und Dateien (CF_HDROP) [SDL{version}]";
-                                string? sdlMingw = version == 3 ? sdl3Mingw : sdl2Mingw;
-                                if (!TestSelected(title)) continue;
-                                if (mingw == null || wine == null || sdl3Mingw == null || sdlMingw == null || xvfbRun == null) { Console.WriteLine($"(uebersprungen - MinGW, Wine, xvfb-run oder die MinGW-Pakete von SDL fehlen: {title})"); continue; }
-                                string? driver = DragDriver();
-                                if (driver == null) { Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})"); continue; }
                                 string winDir = Path.Combine(workDir, "wine_drag");
                                 Directory.CreateDirectory(winDir);
                                 fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
-                                File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
-                                File.Copy(Path.Combine(sdlMingw, "bin", $"SDL{version}.dll"), Path.Combine(winDir, $"SDL{version}.dll"), true);
                                 string RunWine(string tool, string arguments, out int exit)
                                 {
                                     var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
                                     info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
                                     info.Environment["WINEDEBUG"] = "-all";
                                     info.Environment["LANG"] = "C.UTF-8";
-                                    info.Environment["SDL_VIDEODRIVER"] = "windows";
+                                    info.Environment["FIRE_DISPLAY"] = "win32";
                                     using var p = System.Diagnostics.Process.Start(info)!;
                                     var errTask = p.StandardError.ReadToEndAsync();
                                     string output = p.StandardOutput.ReadToEnd();
@@ -27765,39 +30316,42 @@ else
                                     exit = p.ExitCode;
                                     return output + errTask.Result;
                                 }
-                                string BuildWin(string script, int sdl, string sdlDir, string name, out string error)
+                                string BuildWin(string script, string name, out string error)
                                 {
-                                    var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = sdl } };
+                                    var winTarget = TargetProfile.Windows;
                                     var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
                                     string exeFile = Path.Combine(winDir, name + ".exe");
                                     string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
                                     string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, name,
-                                        $"{NativeTestBuild.Opt} -Wall -Wextra -I\"{Path.Combine(sdlDir, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdlDir, "lib")}\"{links}");
-                                    error = buildExit != 0 || build.Contains("warning:") || !links.Contains($"-lSDL{sdl}") ? "MinGW: " + links + "\n" + build : "";
+                                        $"{NativeTestBuild.Opt} -Wall -Wextra", exeFile, out int buildExit, links);
+                                    error = buildExit != 0 || build.Contains("warning:") || !links.Contains("-luser32") ? "MinGW: " + links + "\n" + build : "";
                                     return exeFile;
                                 }
                                 RunWine(wine, "wineboot --init", out _);
-                                string targetExe = BuildWin(dragTargetScript, 3, sdl3Mingw, "dragtarget", out string targetError);
-                                string sourceExe = BuildWin(DragSourceScript("C:\\\\fire\\\\ein Ordner\\\\datei ä.txt", "C:\\\\zwei", false), version, sdlMingw, $"dragsource{version}", out string sourceError);
-                                if (targetError != "" || sourceError != "") { CheckNat(title, false, targetError + sourceError); continue; }
-                                string outSource = Path.Combine(winDir, "dragsource.out"), outTarget = Path.Combine(winDir, "dragtarget.out");
-                                string script = Path.Combine(winDir, "drag.sh");
-                                // (Wine's windows need a moment more: the source starts 2 s after the target)
-                                File.WriteAllText(script, DragScript($"\"{wine}\" \"{targetExe}\"", $"\"{wine}\" \"{sourceExe}\"", driver, outSource, outTarget, "2"));
-                                // (the hand presses and moves on a clock: no compiler of this run at the same time - TestJobs.Alone)
-                                int runExit = 0;
-                                string runLog = TestJobs.Alone(() => RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out runExit));
-                                string actual = DragLines(outSource) + DragLines(outTarget);
-                                string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]" }.Select(l => l + "\n"));
-                                CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}{runLog}");
+                                string targetExe = BuildWin(dragTargetScript, "dragtarget", out string targetError);
+                                string sourceExe = BuildWin(DragSourceScript("C:\\\\fire\\\\ein Ordner\\\\datei ä.txt", "C:\\\\zwei", false), "dragsource", out string sourceError);
+                                if (targetError != "" || sourceError != "") CheckNat(title, false, targetError + sourceError);
+                                else
+                                {
+                                    string outSource = Path.Combine(winDir, "dragsource.out"), outTarget = Path.Combine(winDir, "dragtarget.out");
+                                    string script = Path.Combine(winDir, "drag.sh");
+                                    // (Wine's windows need a moment more: the source starts 2 s after the target)
+                                    File.WriteAllText(script, DragScript($"\"{wine}\" \"{targetExe}\"", $"\"{wine}\" \"{sourceExe}\"", driver, outSource, outTarget, "2"));
+                                    // (the hand presses and moves on a clock: no compiler of this run at the same time - TestJobs.Alone)
+                                    int runExit = 0;
+                                    string runLog = TestJobs.Alone(() => RunWine(xvfbRun, $"{TestJobs.XvfbServer()} sh \"{script}\"", out runExit));
+                                    string actual = DragLines(outSource) + DragLines(outTarget);
+                                    string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]" }.Select(l => l + "\n"));
+                                    CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}{runLog}");
+                                }
                             }
                         }
                     }
                 };
-                // (at the same time: the window cases; the checks of FIRE_SDL, the VM on X11, PresentArea and the drag cases one after the other - the VM (forge run) installs the
+                // (at the same time: the window cases; the VM on X11, PresentArea and the drag cases one after the other - the VM (forge run) installs the
                 // standard packages on its first start, the drag cases share their files -; Wayland; the cases under Wine)
-                if (windowRuns.Count != 7) throw new InvalidOperationException("the window runs changed: " + windowRuns.Count);
-                TestJobs.Concurrently(windowRuns[0], () => { for (int i = 1; i < 6; i++) windowRuns[i](); }, windowRuns[6], wineRuns);
+                if (windowRuns.Count != 6) throw new InvalidOperationException("the window runs changed: " + windowRuns.Count);
+                TestJobs.Concurrently(windowRuns[0], () => { for (int i = 1; i < 5; i++) windowRuns[i](); }, windowRuns[5], wineRuns);
             }
 
             // ---- UI library: the same elements natively (fire's own display without a screen: FIRE_DISPLAY=headless) against the VM with the dummy
@@ -27842,6 +30396,24 @@ else
                     CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}");
                 }
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
+            }
+            // the scheduler of fire itself (ROADMAP 13.2b, std/fire_sched.h: green threads for targets without threads) - tried on this machine: every thread case
+            // built with FIRE_GREEN_THREADS (ucontext instead of pthreads) gives what the VM gives
+            if (!OperatingSystem.IsWindows())
+            {
+                var greenIndexes = Enumerable.Range(0, natCases.Length).Where(i => natCases[i].Name.StartsWith("Threads:") && TestSelected("Gruene Threads " + natCases[i].Name)).ToArray();
+                var greenTasks = TestJobs.Map(greenIndexes, (index, _) =>
+                {
+                    string expected = vmResults[index];
+                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release));
+                    string exe = Path.Combine(workDir, $"green{index}.bin");
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"green{index}", $"-pthread -DFIRE_GREEN_THREADS {NativeTestBuild.Opt} -Wall -Wextra", exe, out int buildExit);
+                    if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C-Compiler: " + build);
+                    return (natCases[index].Name, expected, RunProc(exe, "", workDir, out _));
+                });
+                foreach (var (name, expected, actual) in greenTasks)
+                    CheckNat($"Gruene Threads (eigener Scheduler) == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (eigener Scheduler):\n{actual}");
+                if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("Gruene Threads: es gibt Faelle", greenIndexes.Length >= 30, greenIndexes.Length.ToString());
             }
         });
 
@@ -28230,6 +30802,44 @@ else
                 CheckNat("Paket: ein Byte-Puffer geht ohne Kopie an die Native (in place beschrieben, auch ein grosser wie ein Framebuffer)", fillVm == "1000000\n7 7 7\n9\n", fillVm);
                 CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) wird eine abfangbare Ausnahme seiner Klasse mit seinem Text", abiFail.StartsWith("caught: ") && abiFail.Contains("Array index 7 out of range"), abiFail);
 
+                // machine words as arguments (fire_rt.h wordsArg, SPEC 8.10): a word buffer without a copy (written in place), an array copied, a byte buffer refused
+                string wordsCpp = "#include <cstdint>\nnamespace fire {\n"
+                    + "inline Value pw_sum(Value v) { FireWords w; if (!wordsArg(v, \"PkWords.Sum\", &w)) return Undef(); FireWord t = 0; for (uint32_t i = 0; i < w.length; i++) t = (FireWord)(t + w.data[i]); return WordV(t); }\n"
+                    + "inline Value pw_inc(Value v) { FireWords w; if (!wordsArg(v, \"PkWords.Inc\", &w)) return Undef(); for (uint32_t i = 0; i < w.length; i++) ((FireWord*)w.data)[i]++; return Int(w.length); }\n}\n";
+                string wordsFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwords", "1.0.0", "pkwords", "class PkWords { static Sum(w) { return __pw_sum(w) }\n static Inc(w) { return __pw_inc(w) } }", wordsCpp, m =>
+                {
+                    m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pw_sum", Arguments = 1, Cpp = "pw_sum" });
+                    m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pw_inc", Arguments = 1, Cpp = "pw_inc" });
+                }), Path.Combine(pkgDir, "out")).PackagePath;
+                fire.Package.Manager.PackageStore.Default.Install(wordsFpk);
+                string wordsScript = "#import \"pkwords\"\nword w[] = [1, 2, 18446744073709551615]\nprint(PkWords.Sum(w) + \" \" + PkWords.Sum([5, 6]) + \" \" + (PkWords.Sum(w) is of word))\n"
+                    + "print(PkWords.Inc(w) + \" \" + w[0] + \" \" + w[2])\ntry { PkWords.Sum(new byte[2]) } catch (ArgumentException e) { print(e.message) }\ntry { PkWords.Sum([1, \"x\"]) } catch (ArgumentException e) { print(e.message) }\n";
+                string wordsVm;
+                try { wordsVm = vmOutput(wordsScript); } catch (Exception ex) { wordsVm = ex.Message; }
+                var wordsSources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wordsScript }, null, null, VmExecutionMode.Release));
+                string wordsBuild = NativeTestBuild.Build(NativeTestBuild.In(run), pkgCxx, wordsSources, run, "pkwords", "-pthread -O1 -Wall -Wextra", Path.Combine(run, "pkwords.bin"), out int wordsExit);
+                string wordsNat = wordsExit == 0 ? RunTool(Path.Combine(run, "pkwords.bin"), "") : "C/C++-Compiler: " + wordsBuild;
+                CheckNat("Paket: wordsArg - ein Wortpuffer ohne Kopie (in place beschrieben), ein Array kopiert, ein Bytepuffer abgelehnt; VM (C-ABI) und nativ gleich",
+                    wordsVm == "2 11 True\n3 2 0\nPkWords.Sum expects words (a word buffer or an array of ints), not a byte buffer.\nPkWords.Sum: element 1 of the array is a String, not an int or a word.\n" && wordsNat == wordsVm,
+                    $"  VM:\n{wordsVm}\n  nativ:\n{wordsNat}");
+                {
+                    // a VM built for a target of 16-bit words: its word buffer goes to the library (64-bit words) as a copy and comes back cut to 16 bits
+                    var words16Lines = new List<string>();
+                    string words16Script = "#import \"pkwords\"\nword w[] = [1, 2, 65535]\nprint(PkWords.Sum(w) + \" \" + PkWords.Inc(w) + \" \" + w[0] + \" \" + w[2] + \" \" + Word.Bits)\n";
+                    string words16;
+                    try
+                    {
+                        var session16w = fire.Runtime.Session.Build(new Linker().CompileAndLink(new[] { words16Script }, null, null, VmExecutionMode.Release, null, TargetProfile.Host with { WordWidth = 16 }),
+                            VmExecutionMode.Release, a => { words16Lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+                        session16w.Run();
+                        words16 = string.Concat(words16Lines.Select(l => l + "\n"));
+                    }
+                    catch (Exception ex) { words16 = ex.Message; }
+                    finally { Value.WordBits = 64; }
+                    CheckNat("Paket: ein Wortpuffer mit 16-Bit-Woertern (VM fuer ein 16-Bit-Ziel) geht an die Bibliothek als Kopie in 64 Bit und kommt auf 16 Bit gekuerzt zurueck",
+                        words16 == "2 3 2 0 16\n", words16);
+                }
+
                 // per platform: sources of the target are added; the VM uses those of this machine
                 string whichFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwhich", "1.0.0", "pkwhich", "class PkWhich { static Which() { return __pk_which() } }", "namespace fire { }\n", m =>
                 {
@@ -28352,180 +30962,6 @@ else
                 {
                     var test = fire.Compiler.NativeBuilder.TestToolchain(detected.Toolchain);
                     CheckNat("Toolchain: der Test uebersetzt und startet ein kleines Programm", test.Ok, test.Log);
-                }
-            }
-
-            // SDL2 for a window: unpacking the MinGW package, finding it (SDL2_DIR), the compiler arguments, SDL2.dll next to the program
-            {
-                string sdlDir = Path.Combine(Path.GetTempPath(), "fire-sdl-test-" + Guid.NewGuid().ToString("N"));
-                string? savedSdl = Environment.GetEnvironmentVariable("SDL2_DIR");
-                try
-                {
-                    Directory.CreateDirectory(sdlDir);
-                    string archive = Path.Combine(sdlDir, "sdl.tar.gz");
-                    using (var gz = new System.IO.Compression.GZipStream(File.Create(archive), System.IO.Compression.CompressionLevel.Fastest))
-                    using (var tar = new System.Formats.Tar.TarWriter(gz))
-                    {
-                        void Add(string name, string text) => tar.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(text)) });
-                        Add("SDL2-9.9.9/x86_64-w64-mingw32/include/SDL2/SDL.h", "// header");
-                        Add("SDL2-9.9.9/x86_64-w64-mingw32/bin/SDL2.dll", "dll");
-                        Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/libSDL2.dll.a", "implib");
-                        Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/cmake/SDL2/x.cmake", "skipped");
-                        Add("SDL2-9.9.9/i686-w64-mingw32/include/SDL2/SDL.h", "32 bit");
-                        Add("SDL2-9.9.9/test/testsprite.c", "skipped");
-                    }
-                    string unpacked = Path.Combine(sdlDir, "SDL2");
-                    fire.Native.SdlSetup.Unpack(archive, unpacked);
-                    CheckNat("SDL2: das MinGW-Paket wird ausgepackt (include, SDL2.dll, Import-Bibliothek des 64-Bit-Teils; nichts sonst)",
-                        File.Exists(Path.Combine(unpacked, "include", "SDL2", "SDL.h")) && File.Exists(Path.Combine(unpacked, "bin", "SDL2.dll")) && File.Exists(Path.Combine(unpacked, "lib", "libSDL2.dll.a"))
-                        && !Directory.Exists(Path.Combine(unpacked, "lib", "cmake")) && !Directory.Exists(Path.Combine(unpacked, "test")) && File.ReadAllText(Path.Combine(unpacked, "include", "SDL2", "SDL.h")) == "// header");
-
-                    // a download that was cut off: noticed before anything is unpacked (the tar reader alone would fail in the middle of a header: "Unable to read beyond the end of the stream")
-                    string cutArchive = Path.Combine(sdlDir, "cut.tar.gz");
-                    byte[] whole = File.ReadAllBytes(archive);
-                    File.WriteAllBytes(cutArchive, whole.Take(whole.Length - 40).ToArray());
-                    string cutTarget = Path.Combine(sdlDir, "SDL2cut");
-                    string? cutError = null;
-                    try { fire.Native.SdlSetup.Unpack(cutArchive, cutTarget); } catch (InvalidDataException ex) { cutError = ex.Message; }
-                    string headOnly = Path.Combine(sdlDir, "head.tar.gz");
-                    File.WriteAllBytes(headOnly, whole.Take(10).ToArray());
-                    string? shortError = null;
-                    try { fire.Native.SdlSetup.VerifyGzip(headOnly); } catch (InvalidDataException ex) { shortError = ex.Message; }
-                    CheckNat("SDL2: ein abgeschnittener Download wird erkannt, bevor etwas ausgepackt wird (klare Meldung, nichts angelegt)",
-                        cutError != null && cutError.Contains("incomplete") && !Directory.Exists(cutTarget) && !Directory.Exists(cutTarget + ".new") && shortError != null, cutError ?? "no error");
-                    fire.Native.SdlSetup.VerifyGzip(archive);
-
-                    // the packages from SDL 2.30.11 on end without the empty blocks that close a tar file, and the last file is not padded: the tar reader of .NET reports the end of the stream in the middle of a header
-                    string noEnd = Path.Combine(sdlDir, "noend.tar.gz");
-                    using (var tarBytes = new MemoryStream())
-                    {
-                        using (var writer = new System.Formats.Tar.TarWriter(tarBytes, leaveOpen: true))
-                        {
-                            void Add(string name, string text) => writer.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(text)) });
-                            Add("SDL2-9.9.9/x86_64-w64-mingw32/include/SDL2/SDL.h", "// header");
-                            Add("SDL2-9.9.9/x86_64-w64-mingw32/bin/SDL2.dll", "dll");
-                            Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/libSDL2.dll.a", "implib");
-                            Add("SDL2-9.9.9/.git-hash", "0123456789012345678901234567890123456789");
-                        }
-                        // (what the writer ends with: the rest of the block of the last file, and two empty blocks)
-                        long keep = tarBytes.Length - 1024 - (512 - 40);
-                        using var gz = new System.IO.Compression.GZipStream(File.Create(noEnd), System.IO.Compression.CompressionLevel.Fastest);
-                        gz.Write(tarBytes.GetBuffer(), 0, (int)keep);
-                    }
-                    string noEndTarget = Path.Combine(sdlDir, "SDL2noend");
-                    string? noEndError = null;
-                    try { fire.Native.SdlSetup.Unpack(noEnd, noEndTarget); } catch (Exception ex) { noEndError = ex.GetType().Name + ": " + ex.Message; }
-                    CheckNat("SDL2: ein Paket ohne die abschliessenden Bloecke (SDL 2.30.11 und neuer) wird ausgepackt",
-                        noEndError == null && File.Exists(Path.Combine(noEndTarget, "include", "SDL2", "SDL.h")) && File.Exists(Path.Combine(noEndTarget, "bin", "SDL2.dll")) && File.Exists(Path.Combine(noEndTarget, "lib", "libSDL2.dll.a")), noEndError ?? "");
-
-                    Environment.SetEnvironmentVariable("SDL2_DIR", unpacked);
-                    var location = fire.Native.SdlSetup.Locate();
-                    CheckNat("SDL2: SDL2_DIR wird zuerst gefunden (Include- und Lib-Ordner, SDL2.dll)",
-                        location != null && location.IncludeDirs.Contains(Path.Combine(unpacked, "include")) && location.IncludeDirs.Contains(Path.Combine(unpacked, "include", "SDL2"))
-                        && location.LibDirs.Contains(Path.Combine(unpacked, "lib")) && location.RuntimeDll == Path.Combine(unpacked, "bin", "SDL2.dll"));
-
-                    string cpp = Path.Combine(sdlDir, "p.cpp");
-                    File.WriteAllText(cpp, "// fire-link: SDL2\nint main() { return 0; }\n");
-                    CheckNat("SDL2: das Programm bittet mit `// fire-link: SDL2` darum", fire.Native.SdlSetup.IsRequiredBy(cpp) && !fire.Native.SdlSetup.IsRequiredBy(Path.Combine(sdlDir, "none.cpp")));
-                    var (exeName, arguments) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
-                    CheckNat("SDL2: der Compiler bekommt -I, -L und -lSDL2",
-                        arguments.Contains($"-I\"{Path.Combine(unpacked, "include")}\"") && arguments.Contains($"-L\"{Path.Combine(unpacked, "lib")}\"") && arguments.Contains("-lSDL2"), arguments);
-
-                    string program = Path.Combine(sdlDir, "out", "p.exe");
-                    Directory.CreateDirectory(Path.GetDirectoryName(program)!);
-                    bool copied = fire.Native.SdlSetup.CopyRuntimeNextTo(program, location);
-                    CheckNat("SDL2: SDL2.dll wird neben ein Windows-Programm gelegt (nicht neben ein anderes)",
-                        copied && File.Exists(Path.Combine(sdlDir, "out", "SDL2.dll")) && !fire.Native.SdlSetup.CopyRuntimeNextTo(Path.Combine(sdlDir, "out", "p"), location));
-
-                    string missing = fire.Native.SdlSetup.HelpText;
-                    CheckNat("SDL2: die Hilfe sagt, was zu tun ist (Linux, macOS, Windows, SDL2_DIR)", missing.Contains("libsdl2-dev") && missing.Contains("brew install sdl2") && missing.Contains("SDL2_DIR"));
-
-                    // SDL2 of the system (/usr/include/SDL2): the folder of SDL.h is named as well - TinyCC has no __has_include and includes <SDL.h> (fire_display_sdl.h)
-                    if (!OperatingSystem.IsWindows() && File.Exists("/usr/include/SDL2/SDL.h"))
-                    {
-                        Environment.SetEnvironmentVariable("SDL2_DIR", null);
-                        var system = fire.Native.SdlSetup.Locate();
-                        var (_, tccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["tcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
-                        CheckNat("SDL2: das SDL2 des Systems - der Ordner von SDL.h kommt mit (-I/usr/include/SDL2: TinyCC hat kein __has_include)",
-                            system != null && system.IncludeDirs.Contains("/usr/include/SDL2") && tccArgs.Contains("-I\"/usr/include/SDL2\""), tccArgs);
-                        // (TinyCC does not follow the RUNPATH of libpulse.so.0: the folder of libpulsecommon is named for it, and only for it)
-                        var (_, gccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
-                        CheckNat("SDL2: TinyCC bekommt den Ordner von libpulsecommon (-L .../pulseaudio), gcc nicht",
-                            fire.Native.SdlSetup.TccRunpathDirs().All(d => tccArgs.Contains($"-L\"{d}\"")) && !gccArgs.Contains("pulseaudio"), tccArgs);
-                    }
-
-                    // SDL3: the same for its MinGW package (SDL3_DIR, SDL3.dll), and `// fire-link: SDL3`
-                    string archive3 = Path.Combine(sdlDir, "sdl3.tar.gz");
-                    using (var gz = new System.IO.Compression.GZipStream(File.Create(archive3), System.IO.Compression.CompressionLevel.Fastest))
-                    using (var tar = new System.Formats.Tar.TarWriter(gz))
-                    {
-                        void Add(string name, string text) => tar.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(text)) });
-                        Add("SDL3-9.9.9/x86_64-w64-mingw32/include/SDL3/SDL.h", "// header 3");
-                        Add("SDL3-9.9.9/x86_64-w64-mingw32/bin/SDL3.dll", "dll3");
-                        Add("SDL3-9.9.9/x86_64-w64-mingw32/lib/libSDL3.dll.a", "implib3");
-                        Add("SDL3-9.9.9/x86_64-w64-mingw32/lib/libSDL3_test.a", "skipped");
-                    }
-                    string unpacked3 = Path.Combine(sdlDir, "SDL3");
-                    fire.Native.SdlSetup.Unpack(archive3, unpacked3, 3);
-                    CheckNat("SDL3: das MinGW-Paket wird ausgepackt (include, SDL3.dll, Import-Bibliothek)",
-                        File.Exists(Path.Combine(unpacked3, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(unpacked3, "bin", "SDL3.dll")) && File.Exists(Path.Combine(unpacked3, "lib", "libSDL3.dll.a"))
-                        && !File.Exists(Path.Combine(unpacked3, "lib", "libSDL3_test.a")));
-                    string? savedSdl3 = Environment.GetEnvironmentVariable("SDL3_DIR");
-                    try
-                    {
-                        Environment.SetEnvironmentVariable("SDL3_DIR", unpacked3);
-                        var location3 = fire.Native.SdlSetup.Locate(null, 3);
-                        CheckNat("SDL3: SDL3_DIR wird zuerst gefunden (Include- und Lib-Ordner, SDL3.dll; kein SDL2-Unterordner)",
-                            location3 != null && location3.IncludeDirs.SequenceEqual(new[] { Path.Combine(unpacked3, "include") }) && location3.LibDirs.Contains(Path.Combine(unpacked3, "lib"))
-                            && location3.RuntimeDll == Path.Combine(unpacked3, "bin", "SDL3.dll"));
-                        string cpp3 = Path.Combine(sdlDir, "p3.c");
-                        File.WriteAllText(cpp3, "// fire-link: SDL3\n#define FIRE_SDL3 1\nint main(void) { return 0; }\n");
-                        CheckNat("SDL3: das Programm bittet mit `// fire-link: SDL3` darum", fire.Native.SdlSetup.RequiredVersion(cpp3) == 3 && fire.Native.SdlSetup.RequiredVersion(cpp) == 2
-                            && !fire.Native.SdlSetup.IsRequiredBy(cpp3) && fire.Native.SdlSetup.RequiredVersion(Path.Combine(sdlDir, "none.c")) == 0);
-                        var (_, arguments3) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp3, sdlDir, Path.Combine(sdlDir, "p3.exe"), language: "c");
-                        CheckNat("SDL3: der Compiler bekommt -I, -L und -lSDL3 (nicht -lSDL2)",
-                            arguments3.Contains($"-I\"{Path.Combine(unpacked3, "include")}\"") && arguments3.Contains($"-L\"{Path.Combine(unpacked3, "lib")}\"") && arguments3.Contains("-lSDL3") && !arguments3.Contains("-lSDL2"), arguments3);
-                        string program3 = Path.Combine(sdlDir, "out3", "p.exe");
-                        Directory.CreateDirectory(Path.GetDirectoryName(program3)!);
-                        CheckNat("SDL3: SDL3.dll wird neben ein Windows-Programm gelegt", fire.Native.SdlSetup.CopyRuntimeNextTo(program3, location3) && File.Exists(Path.Combine(sdlDir, "out3", "SDL3.dll")));
-                        CheckNat("SDL3: die Hilfe sagt, was zu tun ist (SDL3_DIR, brew install sdl3)", fire.Native.SdlSetup.HelpTextFor(3).Contains("SDL3_DIR") && fire.Native.SdlSetup.HelpTextFor(3).Contains("brew install sdl3"));
-                    }
-                    finally { Environment.SetEnvironmentVariable("SDL3_DIR", savedSdl3); }
-
-                    // the probe: can the toolchain build SDL3? Built once, then remembered (in the file of the cache)
-                    {
-                        string? savedCache = fire.Native.NativeProbeCache.FilePath;
-                        try
-                        {
-                            fire.Native.NativeProbeCache.FilePath = Path.Combine(sdlDir, "probes.json");
-                            fire.Native.NativeProbeCache.Reset();
-                            var gcc = fire.Native.ToolchainDef.BuiltIn["gcc"];
-                            bool expectSdl3 = fire.Native.ToolchainDetector.FindC(gcc) != null && fire.Native.SdlSetup.Locate(gcc, 3) != null;   // (where the header is, the library is too)
-                            var watch = System.Diagnostics.Stopwatch.StartNew();
-                            bool first = fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.Host);
-                            long firstMs = watch.ElapsedMilliseconds;
-                            fire.Native.NativeProbeCache.Reset();   // (from the file again)
-                            watch.Restart();
-                            bool second = fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.Host);
-                            long secondMs = watch.ElapsedMilliseconds;
-                            bool remembered = File.Exists(fire.Native.NativeProbeCache.FilePath) && File.ReadAllText(fire.Native.NativeProbeCache.FilePath).Contains("sdl3|gcc");
-                            // (a probe is only built where SDL3's header is: without it the answer is "no" at once - and not remembered, so that SDL3 installed later counts)
-                            CheckNat("SDL3 oder SDL2: die Probe (kann die Toolchain SDL3 uebersetzen und binden?) wird gemerkt",
-                                first == expectSdl3 && second == first && remembered == expectSdl3 && fire.Compiler.NativeBuilder.ChooseSdl(gcc, TargetProfile.Host) == (expectSdl3 ? 3 : 2)
-                                && !fire.Compiler.NativeBuilder.CanBuildSdl3(fire.Native.ToolchainDef.BuiltIn["files"], TargetProfile.Host)
-                                && !fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.FreeRtos), $"first {first} ({firstMs} ms), second {second} ({secondMs} ms), expected {expectSdl3}, remembered {remembered}");
-                        }
-                        finally
-                        {
-                            fire.Native.NativeProbeCache.FilePath = savedCache;
-                            fire.Native.NativeProbeCache.Reset();
-                        }
-                    }
-                }
-                finally
-                {
-                    Environment.SetEnvironmentVariable("SDL2_DIR", savedSdl);
-                    try { Directory.Delete(sdlDir, true); } catch (IOException) { }
                 }
             }
         }

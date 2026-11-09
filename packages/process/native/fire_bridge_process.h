@@ -1,4 +1,4 @@
-/* fire native bridge "process" (C): the natives behind `#import "process"` (docs/PROCESS.md) - starting programs, their standard input, output and error as pipes,
+/* fire native bridge "process" (C): the natives behind `#import "process"` (docs/stdlib/process.md) - starting programs, their standard input, output and error as pipes,
  * waiting for them, their exit code, ending them. The fire side (Process, ProcessOptions, ProcessResult, ProcessStream - fire source) is the same in the VM and in a
  * native build; this file is what its `__Proc...` functions do.
  *
@@ -519,8 +519,8 @@ static Value fire_proc_Read(Value handle, Value which, Value buffer, Value offse
     FireProc* p = fire_proc_find(handle);
     Buf* b;
     if (p == NULL) return Int(-1);
-    if (buffer.kind != K_Buffer || offset.kind != K_Int || count.kind != K_Int) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "Read needs a buffer, an offset and a count."));
-    b = bufOf(buffer);
+    if ((b = bufferArg(buffer, "Process.Read")) == NULL) return Undef();
+    if (offset.kind != K_Int || count.kind != K_Int) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "Read needs a buffer, an offset and a count."));
     if (offset.i < 0 || count.i < 0 || offset.i + count.i > (int64_t)b->length) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "Offset and count lie outside the buffer."));
     if (count.i == 0) return Int(0);
 #if defined(FIRE_PROC_POSIX)
@@ -556,17 +556,17 @@ static Value fire_proc_Read(Value handle, Value which, Value buffer, Value offse
 /* Write(handle, buffer, offset, count) -> bytes written (what fits into the pipe now; 0 when it is full), -1 on an error. */
 static Value fire_proc_Write(Value handle, Value buffer, Value offset, Value count) {
     FireProc* p = fire_proc_find(handle);
-    Buf* b;
+    FireBytes b;
     if (p == NULL) return Int(-1);
-    if (buffer.kind != K_Buffer || offset.kind != K_Int || count.kind != K_Int) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "Write needs a buffer, an offset and a count."));
-    b = bufOf(buffer);
-    if (offset.i < 0 || count.i < 0 || offset.i + count.i > (int64_t)b->length) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "Offset and count lie outside the buffer."));
+    if (!bytesArg(buffer, "Process.Write", &b)) return Undef();
+    if (offset.kind != K_Int || count.kind != K_Int) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "Write needs a buffer, an offset and a count."));
+    if (offset.i < 0 || count.i < 0 || offset.i + count.i > (int64_t)b.length) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "Offset and count lie outside the buffer."));
 #if defined(FIRE_PROC_POSIX)
     {
         ssize_t n;
         if (p->in < 0) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "The input of the process is not redirected (or already closed)."));
         if (count.i == 0) return Int(0);
-        n = write(p->in, b->data + offset.i, (size_t)count.i);
+        n = write(p->in, b.data + offset.i, (size_t)count.i);
         if (n >= 0) return Int((int64_t)n);
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return Int(0);
         if (errno == EPIPE) return Int(fire_proc_fail(FIRE_PROC_OTHER, "The process does not read its input any more."));
@@ -578,7 +578,7 @@ static Value fire_proc_Write(Value handle, Value buffer, Value offset, Value cou
         char why[160];
         if (p->in == NULL) return Int(fire_proc_fail(FIRE_PROC_INVALID_ARGUMENT, "The input of the process is not redirected (or already closed)."));
         if (count.i == 0) return Int(0);
-        if (WriteFile(p->in, b->data + offset.i, (DWORD)count.i, &put, NULL)) return Int((int64_t)put);
+        if (WriteFile(p->in, b.data + offset.i, (DWORD)count.i, &put, NULL)) return Int((int64_t)put);
         e = GetLastError();
         if (e == ERROR_NO_DATA || e == ERROR_BROKEN_PIPE) return Int(fire_proc_fail(FIRE_PROC_OTHER, "The process does not read its input any more."));
         fire_proc_errorText(why, sizeof why);

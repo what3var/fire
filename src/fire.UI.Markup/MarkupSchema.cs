@@ -21,7 +21,7 @@ namespace fire.UI.Markup
         Thickness,
         /// <summary>One of the names of an enum of the library (`Left`, `Center`, ...), see <see cref="PropertyDef.Choices"/>.</summary>
         Enum,
-        /// <summary>The path of an image file: the script embeds the file as a resource (docs/RESOURCES.md) and loads it.</summary>
+        /// <summary>The path of an image file: the script embeds the file as a resource (docs/stdlib/resources.md) and loads it.</summary>
         Image,
         /// <summary>A vector symbol: the name of one of `UI.Icons` (`Up`, `Home`, ...) or path data (`M 8 1 L 15 8 L 1 8 Z`, see UI.Geometry.Parse).</summary>
         Geometry,
@@ -96,7 +96,7 @@ namespace fire.UI.Markup
         public string AddCallIn(string parentTag) => AddCalls != null && AddCalls.TryGetValue(parentTag, out var call) ? call : AddCall;
     }
 
-    /// <summary>What the markup knows: the elements of the library `ui` (docs/UI.md) with their properties and events, and the converters that come with the library.</summary>
+    /// <summary>What the markup knows: the elements of the library `ui` (docs/ui/README.md) with their properties and events, and the converters that come with the library.</summary>
     public static class MarkupSchema
     {
         private static PropertyDef Enum(string name, string type, params string[] choices) => new(name, PropertyKind.Enum) { EnumType = type, Choices = choices };

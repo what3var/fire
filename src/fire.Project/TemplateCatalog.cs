@@ -3,7 +3,7 @@ using fire.Package.Manager;
 namespace fire.Projects
 {
     /// <summary>
-    /// The templates that the editor offers for new files and projects (docs/TEMPLATES.md), flat in one list. They are folders in
+    /// The templates that the editor offers for new files and projects (docs/tools/templates.md), flat in one list. They are folders in
     /// <list type="bullet">
     /// <item>`Templates/` in the program folder (what ships with fire), and `~/spark/templates/` (the user's own), each with `Code/`, `Project/` and `Package/Name_1.2.3/{Code,Project}/`;</item>
     /// <item>`templates/` in the folder of an installed package (`ember` unpacks it there; a package brings it with its forge file or as a library project).</item>

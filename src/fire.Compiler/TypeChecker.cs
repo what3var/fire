@@ -8,7 +8,7 @@ using fire.Values;
 
 namespace fire.Compiler
 {
-    /// <summary>How a type conflict is reported (docs/TYPES.md): `Lax` a warning, `Strict` an error.</summary>
+    /// <summary>How a type conflict is reported (docs/spec/TYPES.md): `Lax` a warning, `Strict` an error.</summary>
     public enum TypeCheckMode { Lax, Strict }
 
     /// <summary>The errors of the type checker in strict mode (the conflicts of lax mode are warnings and do not stop the build).</summary>
@@ -21,12 +21,26 @@ namespace fire.Compiler
     /// <summary>
     /// The static types the checker knows. `Dynamic` is "not known": it is compatible with everything, so code that does not state its types is never reported.
     /// </summary>
-    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum }
+    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum, Word }
+    /// <summary>What the checker knows about undefined in a value (StaticType.Null, SPEC 8.10b).</summary>
+    /// <summary>Inferred: a local that was only given defined values so far (in the order of the code - a loop may give it something else later): no warning,
+    /// but a `defined` variable still checks what it takes from it.</summary>
+    internal enum Nullness { Unknown, Defined, Inferred, MayBeUndefined }
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
-        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null)
+        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false, bool DeclaredAny = false, byte Wide = 0,
+        Nullness Null = Nullness.Unknown)
     {
+        // (Null: whether a value of a value type certainly is not undefined - a literal, what an operator computes, `defined int` - or may be undefined
+        // as far as the code declares it: a parameter, field or uninitialized variable declared `int`, the literal `undefined` (SPEC 8.10b); not part of the type)
+        /// <summary>Is this a value type that `defined` can mark (int, float, bool, word, char)?</summary>
+        public bool IsValueKind => Kind is StaticKind.Int or StaticKind.Float or StaticKind.Bool or StaticKind.Word or StaticKind.Char;
+        public StaticType WithNull(Nullness n) => n == Null ? this : this with { Null = n };
+        // (Wide: an int of an explicit width beyond the program's - `int[64]`, `int[32]` - and what is computed from one: Value.Wide; a plain `int` is 0)
+        // (DeclaredAny: a `Dynamic` the code declared - `any x`, an `any` field, parameter or return value - not one the checker does not know: a `var`
+        // initialized with it is `any` on purpose of someone (TC020), one of unknown type is TC019)
+        // (Raw: a declaration `byte` or `word` - raw data without a unit, SPEC 8.10: a value with a unit does not go in, TC017)
         // (TypeParam: an `any` that is a type parameter of the running code - `$k@` of the method, `$k@Class` of the class - passed on as a type argument)
         /// <summary>The same type with the unit `unit` (null: not known); `dimensionOnly`: a declaration `: any m` that takes every unit of that dimension.</summary>
         public StaticType WithUnit(Unit? unit, bool dimensionOnly = false) => this with { Unit = unit, UnitIsDimension = dimensionOnly };
@@ -39,8 +53,12 @@ namespace fire.Compiler
         public override int GetHashCode() => HashCode.Combine(Kind, Class, Element, ParamCount, Return);
 
         public static readonly StaticType Dynamic = new(StaticKind.Dynamic);
+        /// <summary>`any` as the code declares it (a field, a parameter, a return value, a variable).</summary>
+        public static readonly StaticType Any = new(StaticKind.Dynamic, DeclaredAny: true);
         public static readonly StaticType Bool = new(StaticKind.Bool);
         public static readonly StaticType Int = new(StaticKind.Int);
+        /// <summary>`word`: the machine word of the target (SPEC 8.10) - unsigned, raw data without a unit.</summary>
+        public static readonly StaticType Word = new(StaticKind.Word, Unit: Unit.Unitless, Raw: true);
         public static readonly StaticType Float = new(StaticKind.Float);
         public static readonly StaticType Char = new(StaticKind.Char);
         public static readonly StaticType String = new(StaticKind.String);
@@ -63,13 +81,14 @@ namespace fire.Compiler
             StaticKind.Enum => Class!,
             StaticKind.Dynamic => "any",
             StaticKind.Array => Element + "[]",
+            StaticKind.Int when Raw => "byte",
             StaticKind.Lambda => (Return != null ? Return + " " : "") + "lambda" + (ParamCount > 0 ? "<" + string.Join(", ", Params ?? Enumerable.Repeat(Dynamic, ParamCount)) + ">" : ""),
             _ => Kind.ToString().ToLowerInvariant() + (Unit != null && !Unit.IsUnitless ? (UnitIsDimension ? " : any " : " : ") + Unit : ""),
         };
     }
 
     /// <summary>
-    /// The type checker (docs/TYPES.md, step 1): runs after the resolver and computes a static type for every expression it can (literals, declared variables, parameters, return types and fields,
+    /// The type checker (docs/spec/TYPES.md, step 1): runs after the resolver and computes a static type for every expression it can (literals, declared variables, parameters, return types and fields,
     /// `new`, `var x = typed expression`), `Dynamic` for everything else. A conflict between two KNOWN types (assigning a string to an `int`, an argument that does not fit a typed parameter, a
     /// wrong return value) is reported - as a warning in lax mode, as an error in strict mode. It looks only at the code of the user (not at the preludes) and never changes the program.
     /// Rules: `int` goes to `float` implicitly, everything goes to `string`, `undefined` goes to everything, an object goes to the class it derives from; the type of a target never changes
@@ -102,6 +121,27 @@ namespace fire.Compiler
         /// <summary>Through a value of an interface type: writing a property the interface declares without `set` (or reading one without `get`) - the interface
         /// does not promise it (an error in lax mode too).</summary>
         public const string InterfaceAccessorCode = "TC016";
+        /// <summary>A unit at `byte` or `word` (raw data without a unit, SPEC 8.10): `byte b = 5m`, `word w : s`, `byte data[] = [1m]` - an error in lax mode too.</summary>
+        public const string RawUnitCode = "TC017";
+        /// <summary>A setter's call with `value` that is the claim site of some paths but not of all (SPEC 2.1 "Setters"): on those paths the value does not pass on
+        /// and dies with the setter - always a warning.</summary>
+        public const string SetterClaimCode = "TC018";
+        /// <summary>A `var` whose type cannot be derived: an initializer of unknown type (`var x = someAny`), `var x = undefined` that no assignment gives a
+        /// type - an error in strict mode; in lax mode the variable becomes `any` (a warning: it loses every check and the narrow values of the backend).</summary>
+        public const string UntypedVarCode = "TC019";
+        /// <summary>A `var` whose type was found late or not really: taken from its first assignment (`var x = undefined; x = 5`) or `any` because its values
+        /// are unrelated (`var x = c ? 1 : "one"`) - always a warning.</summary>
+        public const string LateVarTypeCode = "TC020";
+        /// <summary>An int of a wider width (`int[64]`, and what is computed from one) into a plain `int` of a program whose int is narrower (`#intwidth 32`):
+        /// the value is cut (at run time too) - declare `int[64]`, or cut it on purpose (`x!int`).</summary>
+        public const string WideIntCode = "TC021";
+        /// <summary>A value that may be undefined (a parameter, field or variable declared `int`, the literal `undefined`) goes where `defined int` is declared
+        /// (SPEC 8.10b): it is checked at run time - `trust x` says it certainly is defined.</summary>
+        public const string UndefinedCode = "TC022";
+        /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
+        [ThreadStatic] public static int ProgramIntWidth;
+        /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
+        [ThreadStatic] public static Dictionary<string, string>? NativeReturns;
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -167,6 +207,7 @@ namespace fire.Compiler
                 checker._source = stmt.Source;
                 checker.Check(stmt);
             }
+            checker.ReportPendingVars(checker._scopes[0]);
             return checker._diagnostics;
         }
 
@@ -195,7 +236,7 @@ namespace fire.Compiler
         private bool Strict => _strictBySource.TryGetValue(_source, out bool strict) ? strict : _defaultMode == TypeCheckMode.Strict;
 
         private void Report(string code, string message, int line) =>
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
         private void CheckCondition(Expr condition)
@@ -217,7 +258,15 @@ namespace fire.Compiler
 
         private void CheckAssignable(StaticType value, StaticType target, int line, string what, string code = AssignCode, Expr? valueExpr = null)
         {
+            // `defined int` (SPEC 8.10b): a value the code says may be undefined - it is checked at run time
+            if (target.Null == Nullness.Defined && value.Null == Nullness.MayBeUndefined)
+                Report(UndefinedCode, value.Kind == StaticKind.Undefined
+                    ? $"undefined goes into {what}, which is 'defined {target}': that is an ArgumentException at run time"
+                    : $"{(valueExpr is IdentifierExpr id ? $"'{id.Name}'" : "The value")} may be undefined, but {what} is 'defined {target}': it is checked at run time - give it a value that is defined, or write 'trust {(valueExpr is IdentifierExpr id2 ? id2.Name : "x")}' if it certainly is", line);
+            if (value.Kind == StaticKind.Undefined && target.Null == Nullness.Defined) return;
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
+            if (CutsWide(value, target))
+                Report(WideIntCode, $"An int[{value.Wide}] goes into {what}, a plain int of {ProgramIntWidth} bits in this program: it is cut - declare int[{value.Wide}], or cut it on purpose (!int)", line);
             CheckUnitAssignable(value, target, line, what, valueExpr);
         }
 
@@ -232,8 +281,15 @@ namespace fire.Compiler
                 CheckUnitAssignable(valueElement, targetElement, line, what == "an element" ? what : $"an element of {what}");
                 return;
             }
+            // `byte`/`word`: raw data without a unit (SPEC 8.10) - a value with a unit is TC017 (also lax); at runtime a stored value loses its unit
+            if (target.Raw)
+            {
+                if (value.IsNumber && value.Unit is { IsUnitless: false } rawFrom)
+                    ReportError(RawUnitCode, $"A value in '{UnitText(rawFrom)}' cannot be stored in {what} of type '{target}': 'byte' and 'word' are raw data without a unit (take the number with '::unitless')", line);
+                return;
+            }
             // a float holds a float: a whole number (or a value not known here) is converted at runtime (`float f = 3` holds 3.0)
-            if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind == StaticKind.Int))
+            if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind is StaticKind.Int or StaticKind.Word))
                 _unitChecks[valueExpr] = "#any";
             // a number declared without a unit takes unitless numbers only: a value whose unit is not known here (or is another one) is checked at runtime
             if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: true } && !target.UnitIsDimension
@@ -265,6 +321,10 @@ namespace fire.Compiler
             catch (Exception) { return null; }
         }
 
+        /// <summary>A value of a wider width into a plain int of a narrower program (TC021: cut, at run time too).</summary>
+        private static bool CutsWide(StaticType value, StaticType target) =>
+            value.Kind == StaticKind.Int && target.Kind == StaticKind.Int && !target.Raw && value.Wide > target.Wide && ProgramIntWidth is > 0 and < 64 && value.Wide > ProgramIntWidth;
+
         private bool Assignable(StaticType value, StaticType target)
         {
             if (value.IsDynamic || target.IsDynamic || value.Kind == StaticKind.Undefined) return true;
@@ -283,6 +343,9 @@ namespace fire.Compiler
                 return value.Return == null || target.Return == null || target.Return.Kind == StaticKind.Undefined || Assignable(value.Return, target.Return);
             }
             if (value.Kind == StaticKind.Int && target.Kind == StaticKind.Float) return true;
+            // `word` (SPEC 8.10): an int goes into a word (cut to its width), a word into a float and into a `byte` (cut); a word into an `int` wants `w!int`
+            if (target.Kind == StaticKind.Word) return value.Kind is StaticKind.Int or StaticKind.Word;
+            if (value.Kind == StaticKind.Word) return target.Kind == StaticKind.Float || target.Kind == StaticKind.Int && target.Raw;
             if (target.Kind == StaticKind.Object) return value.Kind is StaticKind.Class or StaticKind.Object;   // `class` holds objects only
             if (value.Kind == StaticKind.Object) return target.Kind is StaticKind.Class;                          // (an object may be the class the code expects)
             if (value.Kind == StaticKind.Class && target.Kind == StaticKind.Class)
@@ -413,9 +476,13 @@ namespace fire.Compiler
             if (type == null || type.IsInferred) return null;
             if (type.PointerDepth > 0) return StaticType.Dynamic;
             var result = type.BaseName == "lambda" ? DeclaredLambda(type.LambdaSignature, map) : FromName(type.BaseName, map);
+            // a class of the namespace the code is in, or of a `#using` (`Root root` in `namespace UI`: `UI.Root`)
+            if (result is { Kind: StaticKind.Dynamic, DeclaredAny: false, TypeParam: null } && type.Namespaces is { Count: > 0 } && NameOf(type) is var resolved && resolved != type.BaseName
+                && (_classes.ContainsKey(resolved) || _interfaces.ContainsKey(resolved)))
+                result = StaticType.ClassOf(resolved);
             // `List<int>`: the generic class (named `List`1` next to a non-generic `List`) with its type arguments
             if (type.TypeArgs is { Count: > 0 } typeArgs && result.Kind == StaticKind.Class)
-                result = StaticType.ClassOf(GenericName(PlainName(type.BaseName), typeArgs.Count), typeArgs.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList());
+                result = StaticType.ClassOf(NameOf(type), typeArgs.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList());
             // a number declared without a unit is unitless; `: any` takes every unit, `: any m` every unit of that dimension (a type parameter replaced by
             // its type argument keeps the argument's unit: `T v` of a `Box<int : cm>` is in cm)
             bool substituted = map != null && map.ContainsKey(type.BaseName);
@@ -428,8 +495,30 @@ namespace fire.Compiler
                     { } u when u.StartsWith("any ", StringComparison.Ordinal) => result.WithUnit(Unit.Parse(u.Substring(4)), dimensionOnly: true),
                     { } u => result.WithUnit(Unit.Parse(u)),
                 };
+            // `byte` and `word` are raw data: never a unit (a unit written at them is TC017, see CheckRawUnit)
+            if (IsRawType(type)) result = result with { Unit = Unit.Unitless, UnitIsDimension = false, Raw = true };
+            // `int[64]`, `int[32]`: keeps that width beyond the program's int (Value.Wide)
+            if (result.Kind == StaticKind.Int && type is { BaseName: "int", BitWidth: 32 or 64, Unsigned: false }) result = result with { Wide = (byte)type.BitWidth! };
+            // `defined int` (SPEC 8.10b): never undefined
+            if (type.NonNull && arrayRanks + type.ArrayRank == 0) result = result.WithNull(Nullness.Defined);
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
             return result;
+        }
+
+        /// <summary>A declaration of the code being checked: a value type declared without `defined` may hold undefined (a parameter that is not passed, a field
+        /// or a variable that was never given a value).</summary>
+        private static StaticType MayBeUndefined(StaticType type) =>
+            type.IsValueKind && type.Null == Nullness.Unknown ? type.WithNull(Nullness.MayBeUndefined) : type;
+
+        /// <summary>`byte` (an unsigned `int[8]`) and `word`: the raw-data types without a unit (SPEC 8.10).</summary>
+        internal static bool IsRawType(TypeRef? type) => type != null && type.PointerDepth == 0 && type.LambdaSignature == null
+            && (type.BaseName == "int" && type.BitWidth == 8 && type.Unsigned || type.BaseName == "word");
+
+        /// <summary>A unit written at a `byte` or `word` declaration (`byte b : m`, `word w : s`): TC017, an error in lax mode too.</summary>
+        private void CheckRawUnit(TypeRef? type, string name, int line)
+        {
+            if (IsRawType(type) && type!.Unit != null)
+                ReportError(RawUnitCode, $"'{name}' is a '{(type.BaseName == "word" ? "word" : "byte")}': raw data without a unit - it cannot be declared in '{type.Unit}' (use an int or a float for a quantity)", line);
         }
 
         /// <summary>`[Return] lambda<P1, ..., Pn>`: the number of parameters and the return type (a selector `lambda member<T>` takes one parameter).</summary>
@@ -530,6 +619,7 @@ namespace fire.Compiler
             switch (name)
             {
                 case "int": case "byte": return StaticType.Int;
+                case "word": return StaticType.Word;
                 case "float": return StaticType.Float;
                 case "bool": return StaticType.Bool;
                 case "char": return StaticType.Char;
@@ -537,7 +627,7 @@ namespace fire.Compiler
                 case "lambda": return StaticType.LambdaOf(0, null);
                 case "class": return StaticType.Object;
                 case "undefined": return StaticType.Undefined;
-                case "any": return StaticType.Dynamic;
+                case "any": return StaticType.Any;
             }
             string plain = PlainName(name);
             if (_classes.ContainsKey(plain) || _interfaces.ContainsKey(plain)) return StaticType.ClassOf(plain);
@@ -563,7 +653,7 @@ namespace fire.Compiler
         /// <summary>A number declared without a unit takes the unit of its initializer for good (SPEC 3.5: `int a = 5mm` is in mm from then on); an initializer
         /// whose unit is not known leaves the unit free. Without an initializer (or with a unitless one) the declaration stays unitless.</summary>
         private static StaticType WithInitializerUnit(StaticType declared, TypeRef? type, int arrayRanks, StaticType init) =>
-            declared.IsNumber && arrayRanks == 0 && type is { Unit: null } && !declared.UnitIsDimension
+            declared.IsNumber && !declared.Raw && arrayRanks == 0 && type is { Unit: null } && !declared.UnitIsDimension
                 ? init.IsNumber && init.Unit is { } unit ? declared.WithUnit(unit) : init.IsDynamic || init.IsNumber ? declared.WithUnit(null) : declared
                 : declared;
 
@@ -594,14 +684,57 @@ namespace fire.Compiler
                 : StaticType.ClassOf(_class.Name);
 
         private void Push() => _scopes.Add(new Dictionary<string, StaticType>());
-        private void Pop() { _scopes.RemoveAt(_scopes.Count - 1); if (_localTypes.Count > _scopes.Count) _localTypes.RemoveRange(_scopes.Count, _localTypes.Count - _scopes.Count); }
+        private void Pop()
+        {
+            ReportPendingVars(_scopes[^1]);
+            _scopes.RemoveAt(_scopes.Count - 1);
+            if (_localTypes.Count > _scopes.Count) _localTypes.RemoveRange(_scopes.Count, _localTypes.Count - _scopes.Count);
+        }
+
+        /// <summary>The `var x = undefined` of a scope that is left without an assignment that gave them a type: `any` (TC019).</summary>
+        private void ReportPendingVars(Dictionary<string, StaticType> scope)
+        {
+            foreach (var key in _pendingVars.Keys.Where(k => ReferenceEquals(k.Scope, scope)).ToList())
+            {
+                var (line, source) = _pendingVars[key];
+                _pendingVars.Remove(key);
+                int previous = _source;
+                _source = source;
+                ReportUntypedVar(key.Name, line, $"'var {key.Name} = undefined' says nothing about its type, and no assignment gives it one");
+                LogVar(line, key.Name, UntypedVarCode, "any");
+                _source = previous;
+            }
+        }
+
+        /// <summary>TC019: the type of a `var` cannot be derived - an error in strict mode, in lax mode the variable is `any` (a loud warning).</summary>
+        private void ReportUntypedVar(string name, int line, string why) =>
+            Report(UntypedVarCode, Strict
+                ? $"The type of '{name}' cannot be derived: {why} - give it a type ('int {name} = ...'), or 'any {name} = ...' if every kind of value is meant"
+                : $"'{name}' has no type: {why}. It becomes 'any' - nothing about it is checked, every use is looked up at run time and it takes the wide values of the native backend. Give it a type ('int {name} = ...'), or write 'any {name} = ...' if that is really meant", line);
+
+        /// <summary>The `var x = undefined` whose type is not known yet (by the scope that has them): the first assignment gives it (TC020), the end of the
+        /// scope without one makes it `any` (TC019).</summary>
+        private readonly Dictionary<(Dictionary<string, StaticType> Scope, string Name), (int Line, int Source)> _pendingVars = new();
 
         /// <summary>A local variable declared with int/float/bool, a class, an interface or a type parameter.</summary>
-        private void DeclareLocalType(string name, TypeRef type)
+        private void DeclareLocalType(string name, TypeRef type, int scope = -1)
         {
-            while (_localTypes.Count < _scopes.Count) _localTypes.Add(new Dictionary<string, TypeRef>());
-            _localTypes[_scopes.Count - 1][name] = type;
+            if (scope < 0) scope = _scopes.Count - 1;
+            while (_localTypes.Count <= scope) _localTypes.Add(new Dictionary<string, TypeRef>());
+            _localTypes[scope][name] = type;
         }
+
+        /// <summary>The declaration a `var` of type `type` is checked against at run time (like a declared local: a value whose type is not proven is
+        /// guarded, LocalGuards): int, float, bool and a class or interface without type parameters; null for the rest (they need no guard, or have none yet).</summary>
+        private TypeRef? GuardTypeOf(StaticType type) => type.Kind switch
+        {
+            StaticKind.Int when !type.Raw => new TypeRef("int", type.Wide == 0 ? null : type.Wide, 0),
+            StaticKind.Float => new TypeRef("float", null, 0),
+            StaticKind.Bool => new TypeRef("bool", null, 0),
+            StaticKind.Class when type.Args == null && type.Class is { } name && (_classes.TryGetValue(name, out var decl) ? decl.TypeParams is not { Count: > 0 } : _interfaces.TryGetValue(name, out var iface) && iface.TypeParams is not { Count: > 0 })
+                => new TypeRef(name, null, 0),
+            _ => null,
+        };
 
         /// <summary>The declaration of a local variable, if it was declared with a type that is checked (null otherwise, or when an inner scope shadows it).</summary>
         private TypeRef? LocalType(string name)
@@ -615,11 +748,14 @@ namespace fire.Compiler
         /// at runtime (ResolveResult.LocalGuards).</summary>
         private void GuardLocalValue(Expr valueExpr, StaticType value, StaticType target, TypeRef type, string name)
         {
-            // (a conflict the type checker reports - a warning in lax mode - is left as it is: the program runs on, as lax promises)
-            if (value.Kind == StaticKind.Undefined || !Assignable(value, target)) return;
-            bool needed = target.Kind switch
+            // (a conflict the type checker reports - a warning in lax mode - is checked too: the type of a variable never changes, a float does not go
+            // into an int without a cast)
+            // (`defined int x`: what is not certainly defined is checked - SPEC 8.10b)
+            bool undefinedChecked = type.NonNull && value.Null != Nullness.Defined;
+            if (value.Kind == StaticKind.Undefined && !undefinedChecked) return;
+            bool needed = undefinedChecked || target.Kind switch
             {
-                StaticKind.Int => value.Kind != StaticKind.Int,
+                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word) || CutsWide(value, target),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
@@ -632,10 +768,10 @@ namespace fire.Compiler
         /// <summary>Like GuardLocalValue, for another declared target (a return value): `what` names it in the message.</summary>
         private void GuardValue(Expr valueExpr, StaticType value, StaticType target, TypeRef type, string what)
         {
-            if (value.Kind == StaticKind.Undefined || !Assignable(value, target)) return;
+            if (value.Kind == StaticKind.Undefined) return;   // (a reported conflict too: the declared type of a call holds for its result)
             bool needed = target.Kind switch
             {
-                StaticKind.Int => value.Kind != StaticKind.Int,
+                StaticKind.Int => value.Kind != StaticKind.Int && !(target.Raw && value.Kind == StaticKind.Word) || CutsWide(value, target),
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
@@ -672,8 +808,8 @@ namespace fire.Compiler
             foreach (var (decl, map) in Chain(receiver))
                 foreach (var member in decl.Members)
                 {
-                    if (member is FieldDecl f && f.Name == name) return FieldType(f, map);
-                    if (member is PropertyDecl p && p.Name == name) return DeclaredOrDynamic(p.Type, 0, map);
+                    if (member is FieldDecl f && f.Name == name) return f.Source >= _firstUserSource ? MayBeUndefined(FieldType(f, map)) : FieldType(f, map);
+                    if (member is PropertyDecl p && p.Name == name) return p.Source >= _firstUserSource ? MayBeUndefined(DeclaredOrDynamic(p.Type, 0, map)) : DeclaredOrDynamic(p.Type, 0, map);
                 }
             return null;
         }
@@ -770,6 +906,8 @@ namespace fire.Compiler
                     return arg.Kind == declared.Kind ? Bytecode.Overloads.ExactKind : NoMatch;
                 case StaticKind.Float:
                     return arg.Kind == StaticKind.Float ? Bytecode.Overloads.ExactKind : arg.Kind == StaticKind.Int ? Bytecode.Overloads.IntToFloat : NoMatch;
+                case StaticKind.Word:
+                    return arg.Kind == StaticKind.Word ? Bytecode.Overloads.ExactKind : arg.Kind == StaticKind.Int ? Bytecode.Overloads.IntToWord : NoMatch;
                 case StaticKind.Object:
                     return arg.Kind is StaticKind.Class or StaticKind.Object ? Bytecode.Overloads.ObjectScore : NoMatch;
                 case StaticKind.Class:
@@ -895,6 +1033,7 @@ namespace fire.Compiler
                     StaticKind.Lambda => "k:lambda",
                     StaticKind.Array => "k:array",
                     StaticKind.Object => "k:class",
+                    StaticKind.Word => "k:word",
                     StaticKind.Class when a.Class != null => (_interfaces.ContainsKey(a.Class) ? "i:" : "c:") + a.Class,
                     _ => allLoose ? "" : null!,
                 };
@@ -1086,12 +1225,16 @@ namespace fire.Compiler
             if (init.Kind == StaticKind.Enum && Parser.Switches.TryGetValue(v, out var caseValues)) CheckSwitchOverEnum(init.Class!, caseValues, v.Line);
             if (declared is { } target)
             {
+                CheckRawUnit(v.Type, v.Name, v.Line);
                 if (v.Initializer != null)
                 {
                     target = WithInitializerUnit(target, v.Type, v.ArrayRanks.Count, init);
                     CheckAssignable(init, target, v.Line, $"'{v.Name}'", valueExpr: v.Initializer);
                     if (v.ArrayRanks.Count == 0 && v.Type != null) GuardLocalValue(v.Initializer, init, target, v.Type, v.Name);
                 }
+                // (a local is as defined as what it was given - SPEC 8.10b: `int s = 0` holds a number until something that may be undefined goes in)
+                if (target.IsValueKind && target.Null != Nullness.Defined && v.ArrayRanks.Count == 0)
+                    target = target.WithNull(v.Initializer == null ? Nullness.MayBeUndefined : init.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : init.Null);
                 Declare(v.Name, target);
                 if (v.ArrayRanks.Count == 0 && v.Type is { ArrayRank: 0, PointerDepth: 0 } localType) DeclareLocalType(v.Name, localType);
             }
@@ -1100,6 +1243,29 @@ namespace fire.Compiler
                 // `var x = ...` has the type of its initializer for good; `undefined` alone says nothing (`undefined!Type` does). Its unit may change
                 // (a `var` without a unit takes every unit), `var x : mm` demands mm.
                 var type = init.Kind == StaticKind.Undefined ? StaticType.Dynamic : init;
+                if (type.IsValueKind && type.Null == Nullness.Defined) type = type.WithNull(Nullness.Inferred);   // (only so far: SPEC 8.10b)
+                bool pending = false;
+                if (init.Kind == StaticKind.Undefined) pending = true;   // (the first assignment gives the type: TC020, none at all TC019)
+                else if (init.IsDynamic && v.Initializer != null)
+                {
+                    if (_mixedJoins.TryGetValue(v.Initializer, out var mixed))
+                        Report(LateVarTypeCode, $"The values of '{v.Name}' have unrelated types ({mixed}): it becomes 'any' - nothing about it is checked and it takes the wide values of the native backend; give it one type, or write 'any {v.Name} = ...' if that is meant", v.Line);
+                    else if (init.DeclaredAny)
+                        Report(LateVarTypeCode, $"'{v.Name}' becomes 'any' (its initializer is declared 'any'): nothing about it is checked and it takes the wide values of the native backend - write 'any {v.Name} = ...' if that is meant, or give it its type", v.Line);
+                    else if (init.TypeParam == null) ReportUntypedVar(v.Name, v.Line, "the type of its initializer is not known here");
+                    if (init.TypeParam == null) LogVar(v.Line, v.Name, init.DeclaredAny || _mixedJoins.ContainsKey(v.Initializer) ? LateVarTypeCode : UntypedVarCode, "any");
+                }
+                else if (init.Kind == StaticKind.Array && init.Element is { IsDynamic: true } && v.Initializer is ArrayLiteralExpr { Elements.Count: 0 })
+                {
+                    // `var a = []`: nothing says what the elements are
+                    Report(LateVarTypeCode, $"'{v.Name}' is an empty array literal: its elements have no type, it becomes an 'any[]' - every element is wide and checked at run time; declare the element type ('int {v.Name}[] = []'), or write 'any {v.Name}[] = []' if that is meant", v.Line);
+                    LogVar(v.Line, v.Name, LateVarTypeCode, "any[]");
+                }
+                else if (init.Kind == StaticKind.Array && init.Element is { IsDynamic: true } && v.Initializer != null && _mixedJoins.TryGetValue(v.Initializer, out var mixedElements))
+                {
+                    Report(LateVarTypeCode, $"The elements of '{v.Name}' have unrelated types ({mixedElements}): it becomes an 'any[]' - every element is wide and checked at run time; give them one type, or write 'any {v.Name}[] = ...' if that is meant", v.Line);
+                    LogVar(v.Line, v.Name, LateVarTypeCode, "any[]");
+                }
                 if (type.IsNumber)
                 {
                     if (v.Type is { Unit: { } unitName } && unitName != "any")
@@ -1111,6 +1277,40 @@ namespace fire.Compiler
                     else type = type.WithUnit(null);
                 }
                 Declare(v.Name, type);
+                // (`var x = c ? 1 : 2.5` is a float: the whole number becomes one at run time)
+                if (type.Kind == StaticKind.Float && v.Initializer is ConditionalExpr) _unitChecks[v.Initializer] = "#any";
+                if (pending) _pendingVars[(_scopes[^1], v.Name)] = (v.Line, _source);
+                else if (v.ArrayRanks.Count == 0 && GuardTypeOf(type) is { } guardType) DeclareLocalType(v.Name, guardType);
+            }
+        }
+
+        /// <summary>The first assignment of a `var x = undefined`: it gives the variable its type for good (TC020, a warning: the declaration should say it);
+        /// a value of unknown type makes it `any` (TC019).</summary>
+        private void TypePendingVar(IdentifierExpr id, StaticType value)
+        {
+            for (int i = _scopes.Count - 1; i >= 0; i--)
+            {
+                if (!_scopes[i].ContainsKey(id.Name)) continue;
+                if (!_pendingVars.TryGetValue((_scopes[i], id.Name), out var declared)) return;
+                _pendingVars.Remove((_scopes[i], id.Name));
+                if (value.IsDynamic && value.DeclaredAny)
+                {
+                    Report(LateVarTypeCode, $"'{id.Name}' becomes 'any' by its first assignment (a value declared 'any'), not by its declaration (line {declared.Line}): declare it 'any {id.Name}' if that is meant, or give it its type", id.Line);
+                    LogVar(declared.Line, id.Name, LateVarTypeCode, "any");
+                    return;
+                }
+                if (value.IsDynamic && value.TypeParam == null || value.Kind == StaticKind.Undefined)
+                {
+                    ReportUntypedVar(id.Name, id.Line, $"'var {id.Name} = undefined' (line {declared.Line}) says nothing about its type, and its first assignment is of a type not known here");
+                    LogVar(declared.Line, id.Name, UntypedVarCode, "any");
+                    return;
+                }
+                var type = value.IsNumber ? value.WithUnit(null) : value;
+                _scopes[i][id.Name] = type;
+                if (GuardTypeOf(type) is { } guardType) DeclareLocalType(id.Name, guardType, i);
+                Report(LateVarTypeCode, $"The type of '{id.Name}' ({type}) comes from its first assignment, not from its declaration (line {declared.Line}): declare it with the type ('{type} {id.Name}')", id.Line);
+                LogVar(declared.Line, id.Name, LateVarTypeCode, type.ToString());
+                return;
             }
         }
 
@@ -1172,6 +1372,7 @@ namespace fire.Compiler
                 case "char": return "k:char";
                 case "string": return "k:string";
                 case "class": return "k:class";
+                case "word": return "k:word";   // (a word, or an int that the store converts)
                 case "any": return "";
             }
             if (_enumNames.ContainsKey(t.BaseName)) return "k:int";
@@ -1248,8 +1449,12 @@ namespace fire.Compiler
             {
                 switch (member)
                 {
+                    case FieldDecl rawField when rawField.Initializer == null:
+                        CheckRawUnit(rawField.Type, rawField.Name, rawField.Line);
+                        break;
                     case FieldDecl f when f.Initializer != null:
                         {
+                            CheckRawUnit(f.Type, f.Name, f.Line);
                             var declaredField = Declared(f.Type, f.ArrayRanks.Count);
                             var init = Infer(f.Initializer, declaredField);
                             if (declaredField != null) declaredField = WithInitializerUnit(declaredField, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
@@ -1282,7 +1487,13 @@ namespace fire.Compiler
                         break;
                     case PropertyDecl p:
                         if (p.Getter != null) CheckBody(Array.Empty<LambdaParam>(), p.Getter, Declared(p.Type), p.Type, $"Property '{p.Name}'");
-                        if (p.Setter != null) CheckBody(new[] { new LambdaParam("value", p.Type, Array.Empty<Expr?>()) }, p.Setter, null);
+                        if (p.Setter != null)
+                        {
+                            CheckBody(new[] { new LambdaParam("value", p.Type, Array.Empty<Expr?>()) }, p.Setter, null);
+                            if (!p.IsStatic)
+                                foreach (int line in SetterClaims.Analyze(p.Setter).Ambiguous)
+                                    Report(SetterClaimCode, $"The setter of '{p.Name}' passes a new value to this call only on some paths: where another path assigns 'value' to a field or property, the call does not take it - on the paths without that assignment a new value dies with the setter", line);
+                        }
                         break;
                 }
             }
@@ -1291,6 +1502,7 @@ namespace fire.Compiler
         /// <summary>A parameter without a type is taken as `any`: said so (a warning in lax mode, an error in strict mode), because a declared type tells the user of the class what it expects.</summary>
         private void CheckParametersTyped(IReadOnlyList<LambdaParam> parameters, string owner, int line)
         {
+            foreach (var p in parameters) CheckRawUnit(p.Type, p.Name, line);
             foreach (var p in parameters)
                 if (p.Type == null || p.Type.IsInferred)
                     Report(UntypedCode, $"Parameter '{p.Name}' of '{owner}' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", line);
@@ -1323,7 +1535,12 @@ namespace fire.Compiler
             _returnType = returnType;
             (_returnTypeRef, _returnWhat) = (returnTypeRef, what);
             Push();
-            foreach (var p in parameters) Declare(p.Name, DeclaredOrDynamic(p.Type, p.ArrayRanks.Count));
+            foreach (var p in parameters)
+            {
+                Declare(p.Name, MayBeUndefined(DeclaredOrDynamic(p.Type, p.ArrayRanks.Count)));
+                // (a `defined int` parameter checks what the body stores into it, like a variable: SPEC 8.10b)
+                if (p.Type is { NonNull: true, ArrayRank: 0, PointerDepth: 0 } && p.ArrayRanks.Count == 0 && !p.ByRef) DeclareLocalType(p.Name, p.Type);
+            }
             foreach (var s in body.Statements) Check(s);
             Pop();
             _returnType = previousReturn;
@@ -1334,10 +1551,39 @@ namespace fire.Compiler
         // Expressions
         // -------------------------------------------------------------------------------------------------------------
         /// <summary>The type of an expression that goes to a target of the type <paramref name="expected"/>: a lambda takes the types of its parameters and of its result from there.</summary>
-        private StaticType Infer(Expr expr, StaticType? expected) =>
-            expr is LambdaExpr lam ? InferLambda(lam, expected) : Infer(expr);
+        private StaticType Infer(Expr expr, StaticType? expected)
+        {
+            if (expected is { Kind: StaticKind.Float }) MarkFloatTarget(expr);
+            return expr is LambdaExpr lam ? InferLambda(lam, expected) : Infer(expr);
+        }
+
+        /// <summary>The powers of an expression whose target is a float (SPEC 1.1): `float f = 2 ^ -1` and `x = 2 ^ n * 3` with a float `x` take the float power
+        /// also of two ints - through `+ - * / %`, a sign and the branches of `?:`, not into the arguments of a call.</summary>
+        private static void MarkFloatTarget(Expr e)
+        {
+            switch (e)
+            {
+                case BinaryExpr { Op: BinaryOp.Power } p: p.FloatPower = true; break;
+                case BinaryExpr { Op: BinaryOp.Add or BinaryOp.Sub or BinaryOp.Mul or BinaryOp.Div or BinaryOp.Mod } b: MarkFloatTarget(b.Left); MarkFloatTarget(b.Right); break;
+                case UnaryExpr { Op: UnaryOp.Negate } u: MarkFloatTarget(u.Operand); break;
+                case ConditionalExpr c: MarkFloatTarget(c.Then); MarkFloatTarget(c.Else); break;
+            }
+        }
 
         private StaticType Infer(Expr expr)
+        {
+            var type = InferCore(expr);
+            // what certainly is not undefined (SPEC 8.10b): a literal, what an operator computes (an undefined operand throws), `trust x`
+            return expr switch
+            {
+                LiteralExpr { Value.Kind: ValueKind.Undefined } => type.WithNull(Nullness.MayBeUndefined),
+                LiteralExpr or BinaryExpr or IncDecExpr or IsOfExpr or IsInExpr or IsFromExpr
+                    or UnaryExpr { Op: UnaryOp.Negate or UnaryOp.LogicalNot or UnaryOp.BitNot or UnaryOp.Trust } when type.IsValueKind => type.WithNull(Nullness.Defined),
+                _ => type,
+            };
+        }
+
+        private StaticType InferCore(Expr expr)
         {
             switch (expr)
             {
@@ -1362,7 +1608,16 @@ namespace fire.Compiler
                 case UnaryExpr u: return InferUnary(u);
                 case BinaryExpr b: return InferBinary(b);
                 case RebindExpr rb: Infer(rb.Target); return Infer(rb.Lambda);
-                case ConditionalExpr ce: CheckCondition(ce.Condition); return Join([Infer(ce.Then), Infer(ce.Else)]);
+                case ConditionalExpr ce:
+                {
+                    CheckCondition(ce.Condition);
+                    StaticType thenType = Infer(ce.Then), elseType = Infer(ce.Else);
+                    var joined = Join([thenType, elseType], ce);
+                    // (defined when both branches are)
+                    var nulls = new[] { thenType.Null, elseType.Null };
+                    return joined.WithNull(nulls.Contains(Nullness.MayBeUndefined) ? Nullness.MayBeUndefined : nulls.Contains(Nullness.Unknown) ? Nullness.Unknown
+                        : nulls.Contains(Nullness.Inferred) ? Nullness.Inferred : Nullness.Defined);
+                }
                 case AssignExpr a: return InferAssign(a);
                 case MemberExpr m: return InferMember(m);
                 case IndexExpr ix: return InferIndex(ix);
@@ -1406,6 +1661,8 @@ namespace fire.Compiler
                         }
                         return tc.TargetTypeKeyword switch
                         {
+                            TokenType.KwWord => StaticType.Word,
+                            TokenType.KwInt when tc.Unsigned => StaticType.Int.WithUnit(Unit.Unitless),   // (`!byte`: raw data, the unit is dropped)
                             TokenType.KwInt => StaticType.Int.WithUnit(operandUnit),
                             TokenType.KwFloat => StaticType.Float.WithUnit(operandUnit),
                             TokenType.KwBool => StaticType.Bool,
@@ -1414,7 +1671,7 @@ namespace fire.Compiler
                             _ => StaticType.Dynamic,
                         };
                     }
-                case ArrayLiteralExpr arr: return StaticType.ArrayOf(Join(arr.Elements.Select(Infer).ToList()));
+                case ArrayLiteralExpr arr: return StaticType.ArrayOf(Join(arr.Elements.Select(Infer).ToList(), arr));
                 case NewArrayExpr na:
                     {
                         foreach (var size in na.SizeExprs) if (size != null) Infer(size);
@@ -1424,9 +1681,10 @@ namespace fire.Compiler
                         for (int i = 0; i < na.SizeExprs.Count; i++) element = StaticType.ArrayOf(element);
                         return element;
                     }
-                case NewBufferExpr nb: Infer(nb.SizeExpr); return StaticType.Dynamic;
+                case NewBufferExpr nb: Infer(nb.SizeExpr); return StaticType.ArrayOf(nb.Words ? StaticType.Word : StaticType.Int with { Unit = Unit.Unitless, Raw = true });   // (`new byte[n]`: a byte[], like a declared one)
                 case ThrowExpr th: Infer(th.Value); return StaticType.Dynamic;
-                case SyncExpr sy: Infer(sy.Target); return StaticType.Dynamic;
+                case SyncExpr sy: Infer(sy.Target); return StaticType.Bool;   // (`sync x`: True, or undefined when the original is gone)
+                case SyncGlobalsExpr: return StaticType.Int;   // (the number of entries processed)
                 case ProbeExpr pr:
                     // the handler of a probe gets the object and the value
                     Infer(pr.Target);
@@ -1444,10 +1702,10 @@ namespace fire.Compiler
             if (u.Op == UnaryOp.LogicalNot) CheckLogicalOperand(operand, "!", u.Line);
             return u.Op switch
             {
-                UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : StaticType.Dynamic,
+                UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Dynamic,
                 UnaryOp.LogicalNot => StaticType.Bool,
-                UnaryOp.BitNot => StaticType.Int,
-                UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take => operand,
+                UnaryOp.BitNot => operand.Kind == StaticKind.Word ? StaticType.Word : StaticType.Int,
+                UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take or UnaryOp.TryTake or UnaryOp.Trust => operand,
                 _ => StaticType.Dynamic,
             };
         }
@@ -1463,6 +1721,7 @@ namespace fire.Compiler
                 CheckLogicalOperand(right, op, b.Line);
             }
             var type = InferBinaryType(b, left, right);
+            if (type.Kind == StaticKind.Int && (left.Wide | right.Wide) != 0) type = type with { Wide = Math.Max(left.Wide, right.Wide) };
             var unit = BinaryUnit(b, left, right);
             return type.IsNumber ? type.WithUnit(unit) : type;
         }
@@ -1504,6 +1763,15 @@ namespace fire.Compiler
             if (b.Op is BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq && (left.Kind == StaticKind.Enum || right.Kind == StaticKind.Enum)) return StaticType.Bool;
             if (left.Kind == StaticKind.Enum) left = StaticType.Int;
             if (right.Kind == StaticKind.Enum) right = StaticType.Int;
+            // a word on one side (SPEC 8.10): an operation on words - with an int (or a word) a word, with a float a float (not `+` of a string)
+            if ((left.Kind == StaticKind.Word || right.Kind == StaticKind.Word) && b.Op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt
+                or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq) && left.Kind != StaticKind.String && right.Kind != StaticKind.String)
+            {
+                var other = left.Kind == StaticKind.Word ? right : left;
+                if (other.Kind is StaticKind.Int or StaticKind.Word) return StaticType.Word;
+                if (other.Kind == StaticKind.Float && b.Op is not (BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight)) return StaticType.Float;
+                return StaticType.Dynamic;
+            }
             switch (b.Op)
             {
                 case BinaryOp.And or BinaryOp.Or: return StaticType.Bool;
@@ -1513,13 +1781,20 @@ namespace fire.Compiler
                 case BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight:
                     return left.Kind == StaticKind.Int && right.Kind == StaticKind.Int ? StaticType.Int : StaticType.Dynamic;
                 case BinaryOp.Add when left.Kind == StaticKind.String || right.Kind == StaticKind.String:
-                    return left.IsDynamic || right.IsDynamic || left.Kind == StaticKind.Class || right.Kind == StaticKind.Class ? StaticType.Dynamic : StaticType.String;
+                    // a string on the left joins whatever comes (its ToString); on the right only a value that cannot overload `+` is sure to
+                    if (left.Kind == StaticKind.String) return StaticType.String;
+                    return left.IsDynamic || left.Kind == StaticKind.Class ? StaticType.Dynamic : StaticType.String;
                 case BinaryOp.Add or BinaryOp.Sub or BinaryOp.Mul or BinaryOp.Mod:
                     if (left.Kind == StaticKind.Int && right.Kind == StaticKind.Int) return StaticType.Int;
                     if (left.Kind is StaticKind.Int or StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float) return StaticType.Float;
                     return StaticType.Dynamic;
-                case BinaryOp.Div or BinaryOp.Power:
-                    // (the type of `7 / 2` and of `2 ^ -1` is a matter of the arithmetic of the language: not claimed here)
+                case BinaryOp.Power:
+                    // two ints give an int (`2 ^ 10` is 1024, SPEC 1.1) - unless the target is a float (FloatPower: `float f = 2 ^ -1` is 0.5); a float gives a float
+                    if (left.Kind == StaticKind.Int && right.Kind == StaticKind.Int && !b.FloatPower) return StaticType.Int;
+                    return left.Kind is StaticKind.Int or StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float ? StaticType.Float : StaticType.Dynamic;
+                case BinaryOp.Div:
+                    // two ints divide into an int (`7 / 2` is 3)
+                    if (left.Kind == StaticKind.Int && right.Kind == StaticKind.Int) return StaticType.Int;
                     return left.Kind == StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float
                         || right.Kind == StaticKind.Float && left.Kind is StaticKind.Int or StaticKind.Float ? StaticType.Float : StaticType.Dynamic;
                 default: return StaticType.Dynamic;
@@ -1536,9 +1811,14 @@ namespace fire.Compiler
                 _ => StaticType.Dynamic,
             };
             var value = Infer(a.Value, target);
+            if (a.Target is IdentifierExpr pendingId && _pendingVars.Count > 0) TypePendingVar(pendingId, value);
             string what = a.Target switch { IdentifierExpr id => $"'{id.Name}'", MemberExpr m => $"'{m.Name}'", IndexExpr => "an element", _ => "the target" };
             CheckAssignable(value, target, a.Line, what, valueExpr: a.Value);
             if (a.Target is IdentifierExpr local && LocalType(local.Name) is { } localType) GuardLocalValue(a.Value, value, target, localType, local.Name);
+            // (a local that is not `defined` is as defined as its last value: SPEC 8.10b)
+            if (a.Target is IdentifierExpr assigned && target.IsValueKind && target.Null != Nullness.Defined)
+                for (int i = _scopes.Count - 1; i >= 0; i--)
+                    if (_scopes[i].TryGetValue(assigned.Name, out var current)) { _scopes[i][assigned.Name] = current.WithNull(value.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : Nullness.MayBeUndefined); break; }
             return target.IsDynamic ? value : target;
         }
 
@@ -1571,6 +1851,9 @@ namespace fire.Compiler
         /// <summary>`a.Name`: a field or property of a class (also a static one, `Class.Name`), the length of an array or a string.</summary>
         /// <summary>A tool for refactorings (FIRE_MEMBER_LOG): every member access whose receiver class is known (source, line, class, name, bare).</summary>
         public static List<(int Source, int Line, string Class, string Name, bool Bare)>? MemberLog;
+        /// <summary>A tool for the migration to typed `var`s (FIRE_VAR_LOG): every `var` that TC019/TC020 reports, with the type its declaration should say.</summary>
+        public static List<(int Source, int Line, string Name, string Code, string Type)>? VarLog;
+        private void LogVar(int line, string name, string code, string type) => VarLog?.Add((_source, line, name, code, type));
 
         /// <summary>A `switch` over a value of an enum without `case default`: the members no `case` names (TC010, a warning also in strict mode - it may be meant).</summary>
         private void CheckSwitchOverEnum(string enumName, List<Expr> caseValues, int line)
@@ -1846,7 +2129,8 @@ namespace fire.Compiler
         }
 
         /// <summary>The one type of several values (the elements of an array literal, the returns of a lambda): the same type, `float` for a mix of numbers, otherwise not known.</summary>
-        private static StaticType Join(IReadOnlyList<StaticType> types)
+        /// <param name="site">the expression of the values (a `?:`, an array literal): when they are unrelated it is noted in _mixedJoins (TC020 at a `var`)</param>
+        private StaticType Join(IReadOnlyList<StaticType> types, Expr? site = null)
         {
             var known = types.Where(t => t.Kind != StaticKind.Undefined).ToList();
             if (known.Count == 0 || known.Any(t => t.IsDynamic)) return StaticType.Dynamic;
@@ -1854,7 +2138,42 @@ namespace fire.Compiler
             // numbers of the same kind with other units: the kind (the unit is not known)
             if (known.All(t => t.IsNumber && t.Kind == known[0].Kind)) return known[0].WithUnit(null);
             if (known.All(t => t.Kind is StaticKind.Int or StaticKind.Float)) return StaticType.Float;
+            // objects: the nearest class or interface they all are (`c ? new Dog() : new Cat()` is an Animal)
+            if (known.All(t => t.Kind is StaticKind.Class or StaticKind.Object))
+            {
+                if (known.All(t => t.Kind == StaticKind.Class) && CommonBase(known) is { } common) return common;
+                return StaticType.Object;
+            }
+            if (site != null) _mixedJoins[site] = string.Join(", ", known.Select(t => t.ToString()).Distinct());
             return StaticType.Dynamic;
+        }
+
+        /// <summary>The expressions whose values have unrelated types (`c ? 1 : "one"`, `[1, "one"]`) and those types: TC020 at a `var`.</summary>
+        private readonly Dictionary<Expr, string> _mixedJoins = new();
+
+        /// <summary>The nearest class (then interface) every one of `types` is: the classes of the first one from itself down to its root, then its
+        /// interfaces; with type arguments only where they all agree. Null when there is none.</summary>
+        private StaticType? CommonBase(IReadOnlyList<StaticType> types)
+        {
+            var first = types[0];
+            var candidates = new List<string> { first.Class! };
+            if (_classes.TryGetValue(first.Class!, out var decl))
+            {
+                candidates.AddRange(BaseClassesOf(decl).Select(b => b.Name));
+                foreach (var c in new[] { decl }.Concat(BaseClassesOf(decl)))
+                    foreach (var b in c.BaseRefs ?? Array.Empty<TypeRef>())
+                        if (IsInterface(NameOf(b))) candidates.AddRange(InterfaceClosure(NameOf(b)));
+            }
+            else if (IsInterface(first.Class!)) candidates.AddRange(InterfaceClosure(first.Class!));
+            foreach (var name in candidates.Distinct())
+            {
+                if (!types.All(t => DerivesFrom(t.Class!, name))) continue;
+                var views = types.Select(t => t.Class == name ? t : AsBase(t, name)).ToList();
+                var args = views[0]?.Args;
+                bool sameArgs = views.All(v => v != null && (v.Args == null ? args == null : args != null && v.Args.SequenceEqual(args)));
+                return StaticType.ClassOf(name, sameArgs ? args : null);
+            }
+            return null;
         }
 
         private StaticType InferCall(CallExpr c)
@@ -1885,6 +2204,15 @@ namespace fire.Compiler
                     candidates = FindMethods(target, m.Name, c.Args.Count);
                     if (candidates.Count == 0 && FindMember(target, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
                 }
+            }
+            else if (c.Callee is IdentifierExpr nativeId && _refs.TryGetValue(nativeId, out var nativeRef) && nativeRef is ResolvedRef.Native
+                     && NativeReturns != null && NativeReturns.TryGetValue(nativeId.Name, out var returnsText) && NativeTypeRef(returnsText) is var (returnsRef, ranks))
+            {
+                // a native of a package: what its manifest says it returns (`"returns"`); an int, a float or a bool is checked at run time
+                foreach (var a in c.Args) Infer(a);
+                var returned = Declared(returnsRef, ranks) ?? StaticType.Dynamic;
+                if (ranks == 0 && returnsRef.BaseName is "int" or "float" or "bool") _localGuards[c] = (returnsRef, $"The result of '{nativeId.Name}'");
+                return returned.IsNumber && returned.Unit == null ? returned.WithUnit(Unit.Unitless) : returned;
             }
             else if (c.Callee is IdentifierExpr id)
             {
@@ -2071,6 +2399,11 @@ namespace fire.Compiler
             while (root is MemberExpr inner) root = inner.Target;
             if (root is not IdentifierExpr first || IsLocal(first.Name) || _class != null && FindMember(ThisClass(), first.Name) != null) return null;
             string name = target is MemberExpr member ? member.Name : ((IdentifierExpr)target).Name;
+            // `UI.M.Max(...)`: the class by its full name (`UI.M`), or a name in the namespace of the class being checked (`M` in `UI`)
+            string? dotted = DottedName(target);
+            if (dotted != null && dotted != name && _classes.ContainsKey(dotted)) return dotted;
+            if (_class?.Name is { } cls && cls.LastIndexOf('.') is var dot and > 0 && _classes.ContainsKey(cls.Substring(0, dot) + "." + (dotted ?? name)))
+                return cls.Substring(0, dot) + "." + (dotted ?? name);
             return _classes.ContainsKey(name) ? name : null;
         }
 
@@ -2081,6 +2414,28 @@ namespace fire.Compiler
                 Report(ArgumentCode, $"'{name}' ({lambda}) takes {lambda.ParamCount} argument(s), not {args.Count}", c.Line);
             return lambda.Return is { Kind: not StaticKind.Undefined } returns ? returns : StaticType.Dynamic;
         }
+
+        /// <summary>The type of a native's `returns` (`int`, `int[64]`, `byte[]`, `string[]`, `Http.Response`): the declaration and its array ranks; null for
+        /// `any` and what cannot be read.</summary>
+        private static (TypeRef, int)? NativeTypeRef(string text)
+        {
+            int ranks = 0;
+            while (text.EndsWith("[]", StringComparison.Ordinal)) { ranks++; text = text[..^2].TrimEnd(); }
+            int? bits = null;
+            var width = System.Text.RegularExpressions.Regex.Match(text, @"^(int|float)\[(8|16|32|64)\]$");
+            if (width.Success) { bits = int.Parse(width.Groups[2].Value); text = width.Groups[1].Value; }
+            if (text == "any" && ranks == 0 || text.Length == 0) return null;
+            if (text == "byte") return (new TypeRef("int", 8, 0) { Unsigned = true }, ranks);
+            return (new TypeRef(text, bits, 0), ranks);
+        }
+
+        /// <summary>`A.B.C` as the text "A.B.C"; null for an expression that is not a chain of names.</summary>
+        private static string? DottedName(Expr e) => e switch
+        {
+            IdentifierExpr id => id.Name,
+            MemberExpr m when DottedName(m.Target) is { } prefix => prefix + "." + m.Name,
+            _ => null,
+        };
 
         private bool IsLocal(string name)
         {
@@ -2094,6 +2449,8 @@ namespace fire.Compiler
             // `new List<int>()`: the generic class (named `Box`1` next to a non-generic `Box`) with its type arguments; `new List()` is its raw form
             var typeArgs = n.ClassRef.TypeArgs is { Count: > 0 } refs ? refs.Select(a => DeclaredOrDynamic(a)).ToList() : null;
             string plain = typeArgs != null ? GenericName(PlainName(n.ClassRef.BaseName), typeArgs.Count) : PlainName(n.ClassRef.BaseName);
+            // (a class of the namespace the code is in, or of a `#using`: `new MemoryStream()` in `namespace IO`)
+            if (!_classes.ContainsKey(plain) && n.ClassRef.Namespaces is { Count: > 0 } && NameOf(n.ClassRef) is var resolved && _classes.ContainsKey(resolved)) plain = resolved;
             if (!_classes.TryGetValue(plain, out var decl)) { foreach (var a in n.Args) Infer(a); return StaticType.Dynamic; }
             CheckConstructorAccess(plain, n.Args.Count, n.Line);
             var map = MapFor(decl.TypeParams, typeArgs);

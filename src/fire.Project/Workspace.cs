@@ -13,7 +13,7 @@ namespace fire.Projects
         /// <summary>The files in compile order (see ProjectFiles); <see cref="Refresh"/> reads the folder again.</summary>
         public IReadOnlyList<string> Files { get; private set; } = Array.Empty<string>();
         public IReadOnlyList<string> Problems { get; private set; } = Array.Empty<string>();
-        /// <summary>The files in the folder `testing/` (docs/TESTING.md): compiled only by `forge test`, with the other files.</summary>
+        /// <summary>The files in the folder `testing/` (docs/tools/testing.md): compiled only by `forge test`, with the other files.</summary>
         public IReadOnlyList<string> TestFiles { get; private set; } = Array.Empty<string>();
         /// <summary>The other files in the project folder: resources, C++ sources, notes (not compiled).</summary>
         public IReadOnlyList<string> ContentFiles { get; private set; } = Array.Empty<string>();

@@ -5,7 +5,7 @@ using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>The standard library `dialogs` (docs/DIALOGS.md) in the virtual machine: open, save and folder dialogs and message boxes on a folder with files. The windows are
+/// <summary>The standard library `dialogs` (docs/ui/dialogs.md) in the virtual machine: open, save and folder dialogs and message boxes on a folder with files. The windows are
 /// fakes that play a script of input (text, keys) one step per cycle - the dialogs run their own loop on the program's thread, like on a real screen.</summary>
 static class DialogTests
 {

@@ -8,11 +8,15 @@
 #include <stdlib.h>
 #include <time.h>
 #include "fire_platform_c.h"
-#if defined(FIRE_THREADS) || defined(FIRE_LIBRARY)   /* (a library for the VM: a package with a thread of its own) */
+/* FIRE_GREEN_THREADS: the scheduler of fire itself instead of pthreads (std/fire_sched.h; the targets without threads use it - here it is tried on a PC) */
+#if defined(FIRE_GREEN_THREADS) && !defined(FIRE_THREADS)
+#undef FIRE_GREEN_THREADS
+#endif
+#if (defined(FIRE_THREADS) || defined(FIRE_LIBRARY)) && !defined(FIRE_GREEN_THREADS)   /* (a library for the VM: a package with a thread of its own) */
 #include <pthread.h>
 #endif
 
-#if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT)
+#if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_GREEN_THREADS)
 /* TinyCC has no thread-local storage: the state of a thread hangs on a key of pthreads instead (fire_rt.h: FIRE_TLS_STRUCT, fire_tl()) */
 #define FIRE_TLS_STRUCT 1
 static pthread_key_t fire_tlsKey;
@@ -34,7 +38,7 @@ static inline int64_t fire_plat_unixMicros(void) {
     return (int64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000;
 }
 
-#ifndef FIRE_PLAT_SLEEP_CUSTOM   /* (a platform with its own sleep, e.g. the browser, defines it after this header) */
+#if !defined(FIRE_PLAT_SLEEP_CUSTOM) && !defined(FIRE_GREEN_THREADS)   /* (a platform with its own sleep, e.g. the browser, defines it after this header) */
 static inline void fire_plat_sleepMs(int64_t ms) {
     struct timespec t;
     if (ms < 0) ms = 0;
@@ -53,7 +57,26 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 #endif
 }
 
-#if defined(FIRE_THREADS) || defined(FIRE_LIBRARY)
+#ifdef FIRE_GREEN_THREADS
+/* the waiting of the scheduler when nobody can run: the real sleep (a platform may wait its own way: the browser, FIRE_SCHED_IDLE before this header) */
+#ifndef FIRE_SCHED_IDLE
+static inline void fire_posix_idleMs(int64_t ms) {
+    struct timespec t;
+    t.tv_sec = (time_t)(ms / 1000);
+    t.tv_nsec = (long)(ms % 1000) * 1000000L;
+    while (nanosleep(&t, &t) != 0) {}
+}
+#define FIRE_SCHED_IDLE(ms) fire_posix_idleMs(ms)
+#endif
+/* the switch of the context: ucontext, or the platform's (the browser: the fibers of Emscripten) */
+#ifdef FIRE_SCHED_CTX_HEADER
+#include FIRE_SCHED_CTX_HEADER
+#else
+#include "sched/fire_ctx_ucontext.h"
+#endif
+#include "fire_sched.h"
+static inline void fire_plat_sleepMs(int64_t ms) { fire_sched_sleepMs(ms); }
+#elif defined(FIRE_THREADS) || defined(FIRE_LIBRARY)
 typedef struct { pthread_mutex_t m; } fire_mutex;
 typedef struct { pthread_cond_t c; } fire_cond;
 typedef struct fire_thread { pthread_t t; } fire_thread;

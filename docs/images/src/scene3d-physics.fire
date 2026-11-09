@@ -1,0 +1,55 @@
+// Picture of docs/graphics/physics.md (left Software, right Fast; the two PNGs are put side by side): FIRE_TESTS_ONLY=scene3d FIRE_SCENE_FILE=scene3d-physics.fire fire.Testing
+#import "graphics"
+#import "scene3d"
+#import "scene3d.physics"
+#import "filesystem"
+var frame = new Framebuffer(400, 250)
+var scene = new Scene()
+scene.Add(Light.Directional(-0.5, -1.0, -0.3))
+scene.AmbientIntensity = 0.35
+var ground = new Object(Template.Plane, 0m, 0m, 0m, 30m, 0m, 30m)
+ground.Texture = Texture.Checker(64, 2, S3D.Rgb(120, 170, 110), S3D.Rgb(105, 150, 95))
+ground.TextureWidth = 2m
+ground.TextureHeight = 2m
+scene.Add(ground)
+Body.Static(ground)
+for (var i = 0; i < 5; i++) {
+    var stair = new Object(Template.Box, 1.5m + i * 0.6m, (i + 1) * 0.1m, -1.5m, 0.6m, (i + 1) * 0.2m, 1.6m)
+    stair.Color = S3D.Rgb(200, 190, 170)
+    Body.Static(stair)
+    scene.Add(take stair)
+}
+var ramp = new Object(Template.Box, -2.5m, 0.6m, -1.5m, 3m, 0.2m, 1.6m)
+ramp.RotationZ = 25deg
+ramp.Color = S3D.Rgb(170, 150, 200)
+scene.Add(ramp)
+Body.Static(ramp)
+for (var i = 0; i < 4; i++) {
+    var crate = new Object(Template.Box, -0.6m + (i % 2) * 0.15m, 0.5m + i * 1.2m, 0.6m, 0.8m, 0.8m, 0.8m)
+    crate.Color = S3D.Rgb(190, 140, 80)
+    Body.Dynamic(crate, 20kg)
+    scene.Add(take crate)
+}
+for (var i = 0; i < 6; i++) {
+    var ball = new Object(Template.Sphere, -3.4m + i * 0.25m, 3m + i * 0.7m, -1.5m + (i % 3 - 1) * 0.4m, 0.4m, 0.4m, 0.4m)
+    ball.Color = S3D.Rgb(60 + i * 30, 120, 220)
+    Body.Ball(ball).Bouncy()
+    scene.Add(take ball)
+}
+var hero = new Object(Template.Cylinder, 0.4m, 0m, -1.5m, 0.5m, 1.6m, 0.5m)
+hero.AnchorY = 0.0
+hero.Color = S3D.Rgb(220, 60, 60)
+scene.Add(hero)
+var player = new Character(hero, 25cm, 1.6m)
+player.Walk(1m / 1s, 0m / 1s)
+var cam = new Camera(frame)
+cam.SetPosition(1m, 3.2m, 6m)
+cam.LookAt(0m, 0.6m, -0.8m)
+scene.Add(cam)
+for (var i = 0; i < 75; i++) { scene.Advance(1s / 30.0) }
+cam.Render()
+IO.File.WriteAllBytes("doc-sw.png", frame.ToPng())
+scene.Renderer = RenderMode.Fast
+cam.Render()
+IO.File.WriteAllBytes("doc-fast.png", frame.ToPng())
+print("ok " + hero.Y + " " + player.OnGround)

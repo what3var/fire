@@ -421,7 +421,7 @@ namespace fire.Editor
             bool surface = layout == Layouts.Surface || (IsCanvas && layout == Layouts.Split) || (IsCanvas && layout == Layouts.View);
             if (surface)
             {
-                // the surface (docs/NOTES.md): the text at the top left, containers at their places; it scrolls both ways and keeps its zoom. It edits in Surface and Split.
+                // the surface (docs/tools/notes.md): the text at the top left, containers at their places; it scrolls both ways and keeps its zoom. It edits in Surface and Split.
                 bool hadFocus = false;
                 if (Preview.Content is OverviewView old) { _overviewZoom = old.Zoom; hadFocus = old.IsKeyboardFocusWithin; }
                 var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

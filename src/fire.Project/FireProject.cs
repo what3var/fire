@@ -27,9 +27,9 @@ namespace fire.Projects
     }
 
     /// <summary>
-    /// The C++ natives of a project (docs/PROJECTS.md): the sources live in the folder `native/` of the project. The project's functions are found in the source - every
+    /// The C++ natives of a project (docs/tools/projects.md): the sources live in the folder `native/` of the project. The project's functions are found in the source - every
     /// `inline Value name(Value a, ...)` becomes the native `__name` (a last parameter `OwnList* list` says that the function allocates its result); `functions` describes the ones that
-    /// need more (and replaces the finding for the same C++ name). The rest is as in a package (docs/PACKAGE_NATIVES.md).
+    /// need more (and replaces the finding for the same C++ name). The rest is as in a package (docs/packages/natives.md).
     /// </summary>
     public sealed class ProjectNative
     {
@@ -47,12 +47,16 @@ namespace fire.Projects
         public List<fire.Package.Manager.PackageNativeFunction>? Functions { get; set; }
         public List<string>? Exceptions { get; set; }
         public string? Reset { get; set; }
+        /// <summary>Imports whose platform layer the natives build on (ROADMAP 13.3b; see PackageNative.Uses).</summary>
+        public List<fire.Package.Manager.NativeUse>? Uses { get; set; }
+        /// <summary>Files (patterns) the sources include that are not sources of every build (see PackageNative.Headers).</summary>
+        public fire.Package.Manager.NativeSourceList? Headers { get; set; }
         /// <summary>false: only the `functions` named here are natives - the `inline Value` functions of the sources are not looked for (the standard libraries name all of theirs).</summary>
         public bool? Discover { get; set; }
     }
 
     /// <summary>
-    /// A project (`name.fireproj`, JSON): the files that make up a program or a library, what it references and the build settings that apply to it (docs/PROJECTS.md).
+    /// A project (`name.fireproj`, JSON): the files that make up a program or a library, what it references and the build settings that apply to it (docs/tools/projects.md).
     ///
     /// The files are `files` - paths and patterns (`*`, `**`, `?`) relative to the project file, in this order; none given: every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) below the project folder
     /// (`bin`, `obj` and the folders of other projects are left out), by name. `exclude` takes files out again. A program runs its files one after the other, so declarations in the files before
@@ -88,14 +92,14 @@ namespace fire.Projects
         public ProjectSettings Settings { get; set; } = new();
         /// <summary>The C++ natives of the project (folder `native/`); null: none.</summary>
         public ProjectNative? Native { get; set; }
-        /// <summary>A standard library of fire (the projects of `Source/Packages.firesln`, docs/PACKAGES.md): its import may have a name of the compiler (`time`, `io`, ...).</summary>
+        /// <summary>A standard library of fire (the projects of `Source/Packages.firesln`, docs/packages/README.md): its import may have a name of the compiler (`time`, `io`, ...).</summary>
         public bool Standard { get; set; }
-        /// <summary>A library with device drivers (docs/DEVICES.md): the classes of the device framework it offers (`UsbDriver`, `Gpio.MyDriver`), each made with
+        /// <summary>A library with device drivers (docs/devices/README.md): the classes of the device framework it offers (`UsbDriver`, `Gpio.MyDriver`), each made with
         /// `new Class()`. The IDE loads the drivers of the installed packages and lists their devices in its device manager. null: none.</summary>
         public List<string>? Drivers { get; set; }
-        /// <summary>The folder of the notes (docs/NOTES.md), relative to the project file; null: `notes/`.</summary>
+        /// <summary>The folder of the notes (docs/tools/notes.md), relative to the project file; null: `notes/`.</summary>
         public string? Notes { get; set; }
-        /// <summary>A library whose classes cannot be written to or read from JSON (`"serializable": false`, docs/JSON.md), e.g. the elements of `ui`; null: they can.</summary>
+        /// <summary>A library whose classes cannot be written to or read from JSON (`"serializable": false`, docs/stdlib/json.md), e.g. the elements of `ui`; null: they can.</summary>
         public bool? Serializable { get; set; }
 
         /// <summary>Where the project was read from (null: not saved yet); not part of the file.</summary>

@@ -68,10 +68,10 @@ namespace fire.Compiler
         }
 
         /// <remarks>Every prelude comes from an installed package - also those of the imports the compiler knows itself (`graphics`, `windows`, `ui`, `linq`, `reflection`: their
-        /// natives are part of the virtual machine, their fire code is the standard package `fire-name`, docs/PACKAGES.md).</remarks>
+        /// natives are part of the virtual machine, their fire code is the standard package `fire-name`, docs/packages/README.md).</remarks>
         public static string? TrySourceFor(string importName) => TryPreludeFor(importName)?.Source;
 
-        /// <summary>The prelude of an import and the folder it lies in (its `new Resource("...")` paths are relative to it, docs/RESOURCES.md).</summary>
+        /// <summary>The prelude of an import and the folder it lies in (its `new Resource("...")` paths are relative to it, docs/stdlib/resources.md).</summary>
         public static (string Source, string Folder)? TryPreludeFor(string importName)
         {
             var import = FindPreludeImport(importName);

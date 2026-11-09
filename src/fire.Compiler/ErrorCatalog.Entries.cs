@@ -1,4 +1,4 @@
-// The catalogue of the messages of the compiler that have a code of their own (see ErrorCatalog and docs/ERRORS.md). `{*}` stands for a part of the message that varies (a name, a number).
+// The catalogue of the messages of the compiler that have a code of their own (see ErrorCatalog and docs/tools/errors.md). `{*}` stands for a part of the message that varies (a name, a number).
 // The codes are fixed once given: a message that changes its text keeps its code, a new message gets the next free number of its area (the area decides the thousands: 1 lexer,
 // 2 preprocessor, 3 parser, 4 resolver, 5 bytecode compiler, 6 linker). A message that has no entry here has the general code of its area (E1000, E2000, ...).
 namespace fire.Compiler
@@ -18,6 +18,7 @@ namespace fire.Compiler
         ("E1009", ErrorArea.Lexer, "Unterminated char literal"),
         ("E1010", ErrorArea.Lexer, "A char literal must contain exactly one character"),
         ("E1011", ErrorArea.Lexer, "Unexpected character '{*}'"),
+        ("E1012", ErrorArea.Lexer, "The C body of an 'inline c' function is not closed ('}' missing)"),
         ("E2001", ErrorArea.Preprocessor, "'#include' expects a string as the path, not {*} (line {*})."),
         ("E2002", ErrorArea.Preprocessor, "'#include \"{*}\"' - file not found: '{*}' (line {*})."),
         ("E2003", ErrorArea.Preprocessor, "Circular include of '{*}' (chain: {*} -> {*})."),
@@ -204,6 +205,8 @@ namespace fire.Compiler
         ("E3160", ErrorArea.Parser, "'#globaljobs' expects safepoints, sleep or sync"),
         ("E3161", ErrorArea.Parser, "A property of an interface has no body: write '{*};' (the class that implements it has the code)"),
         ("E3162", ErrorArea.Parser, "Property '{*}' of an interface needs a type (use 'any' if every type is allowed)"),
+        ("E3163", ErrorArea.Parser, "Expected a function name after 'inline c'"),
+        ("E3164", ErrorArea.Parser, "Expected the C body '{ ... }' of the 'inline c' function"),
         ("E4001", ErrorArea.Resolver, "'{*}' is already declared as extern"),
         ("E4002", ErrorArea.Resolver, "'{*}' is already declared as an enum"),
         ("E4003", ErrorArea.Resolver, "'{*}' is already declared as a class"),
@@ -272,6 +275,10 @@ namespace fire.Compiler
         ("E4067", ErrorArea.Resolver, "'{*}' of interface '{*}' is not a known interface (an interface can only extend interfaces)"),
         ("E4068", ErrorArea.Resolver, "Interface '{*}' extends itself ({*})"),
         ("E4058", ErrorArea.Resolver, "'var {*}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {*}')"),
+        ("E4069", ErrorArea.Resolver, "The parameter '{*}' of the inline C function '{*}' cannot be 'ref' (take a pointer)"),
+        ("E4070", ErrorArea.Resolver, "The parameter '{*}' of the inline C function '{*}' needs a type (int, float, bool, char, string, byte[], any or a pointer)"),
+        ("E4071", ErrorArea.Resolver, "The parameter '{*}' of the inline C function '{*}' has a type C cannot take (int, float, bool, char, string, byte[], any or a pointer)"),
+        ("E4072", ErrorArea.Resolver, "The inline C function '{*}' has a result type C cannot give (int, float, bool, char, string, any, a pointer or undefined)"),
         ("E5001", ErrorArea.Compiler, "Only the first 16 parameters of a method can be 'ref'."),
         ("E5002", ErrorArea.Compiler, "Internal error: 'class extends {*}' was not merged (the program must be produced by Parser.Parse()/ParseMultiple())."),
         ("E5003", ErrorArea.Compiler, "Statement {*} is not supported."),

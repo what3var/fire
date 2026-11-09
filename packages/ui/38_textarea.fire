@@ -183,7 +183,7 @@ namespace UI {
         undefined EditText(int start, int count, string value, int kind) {
             this.EnsureIndex()
             this.history.Check(this.Text)
-            var removed = this.Text.Substring(start, count)
+            any removed = this.Text.Substring(start, count)
             var caretBefore = this.caret
             var anchorBefore = this.anchor
             if (anchorBefore == caretBefore) { anchorBefore = -1 }
@@ -213,7 +213,7 @@ namespace UI {
         undefined Reindex() {
             var text = this.Text
             var n = 1
-            var p = text.IndexOf("\n")
+            any p = text.IndexOf("\n")
             while (p >= 0) {
                 n = n + 1
                 p = text.IndexOf("\n", p + 1)
@@ -337,10 +337,10 @@ namespace UI {
         // The column of `offset` in the row that starts at `rs`.
         int ColumnOf(int rs, int offset) {
             if (!this.hasTabs || offset <= rs) { return offset - rs }
-            var piece = this.Text.Substring(rs, offset - rs)
+            any piece = this.Text.Substring(rs, offset - rs)
             var column = 0
             var p = 0
-            var t = piece.IndexOf("\t")
+            any t = piece.IndexOf("\t")
             while (t >= 0) {
                 column = column + t - p
                 column = column + this.TabSize - column % this.TabSize
@@ -353,12 +353,12 @@ namespace UI {
         // The characters [begin, finish) of the row that starts at `rs` as they are shown (tabs as spaces).
         string Shown(int rs, int begin, int finish) {
             if (finish <= begin) { return "" }
-            var piece = this.Text.Substring(begin, finish - begin)
+            any piece = this.Text.Substring(begin, finish - begin)
             if (!this.hasTabs || piece.IndexOf("\t") < 0) { return piece }
             var column = this.ColumnOf(rs, begin)
             var result = ""
             var p = 0
-            var t = piece.IndexOf("\t")
+            any t = piece.IndexOf("\t")
             while (t >= 0) {
                 result = result + piece.Substring(p, t - p)
                 column = column + t - p
@@ -456,7 +456,7 @@ namespace UI {
                     // the row is full at a space: the spaces stay at its end
                     while (end < le && this.Text.CharAt(end).ToInt() == 32) { end = end + 1 }
                 } else {
-                    var space = this.Text.Substring(pos, end - pos).LastIndexOf(" ")
+                    any space = this.Text.Substring(pos, end - pos).LastIndexOf(" ")
                     if (space > 0) { end = pos + space + 1 }
                 }
                 if (end >= le) { return }
@@ -490,7 +490,7 @@ namespace UI {
             var oldCount = this.lineCount
             var delta = value.Length - count
             var breaks = 0
-            var p = value.IndexOf("\n")
+            any p = value.IndexOf("\n")
             while (p >= 0) {
                 breaks = breaks + 1
                 p = value.IndexOf("\n", p + 1)
@@ -512,7 +512,7 @@ namespace UI {
                 if (widths[i] >= this.widest) { lostWidest = true }
             }
 
-            var updated = text.Substring(0, start) + value + text.Substring(start + count)
+            any updated = text.Substring(0, start) + value + text.Substring(start + count)
             this.Text = updated
             this.indexed = updated
             if (value.IndexOf("\t") >= 0) { this.hasTabs = true }

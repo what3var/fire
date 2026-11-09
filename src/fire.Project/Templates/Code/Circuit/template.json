@@ -1,6 +1,6 @@
 {
   "title": "Circuit",
-  "description": "The schematic of an electric circuit (.biscuit), edited and simulated live in the circuit editor; the program gets a class of the same name (new MyCircuit()) with a field for every named part (docs/CIRCUITS.md).",
+  "description": "The schematic of an electric circuit (.biscuit), edited and simulated live in the circuit editor; the program gets a class of the same name (new MyCircuit()) with a field for every named part (docs/circuits/README.md).",
   "icon": "circuit",
   "defaultName": "MyCircuit",
   "order": 50,

@@ -1,4 +1,4 @@
-/* fire native bridge "tracker" (C): the natives behind `#import "tracker"` (docs/TRACKER.md): a player for ProTracker modules (.mod, 4 to 32 channels) - the music of
+/* fire native bridge "tracker" (C): the natives behind `#import "tracker"` (docs/audio/tracker.md): a player for ProTracker modules (.mod, 4 to 32 channels) - the music of
  * the Amiga demos and games, made of short recorded samples instead of the synthesizer voices that MIDI leaves to the sound card (which is why a module sounds the same
  * everywhere). The fire side (Tracker.Song, Tracker.Player - fire source) is the same in the VM and in a native build; this file is what its `__Tracker...` functions do.
  *
@@ -680,11 +680,12 @@ static Value fire_tracker_Load(Value buffer, Value offset, Value count, Value ra
     FireTrkSong* song;
     const char* error = "";
     int code = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    length = bufOf(buffer)->length;
+    FireBytes in;
+    if (!bytesArg(buffer, "Tracker.Song.Load", &in)) return Undef();
+    length = in.length;
     if (offset.i < 0 || count.i < 0 || offset.i > length || count.i > length - offset.i) return Int(fire_trkb_fail(FIRE_TRK_E_INVALID_ARGUMENT, "offset/count are outside of the buffer."));
     if (rate.i < 8000 || rate.i > 192000) return Int(fire_trkb_fail(FIRE_TRK_E_INVALID_ARGUMENT, "The rate must be between 8000 and 192000 Hz."));
-    module = fire_trk_parseModule(bufOf(buffer)->data + offset.i, (size_t)count.i, &error, &code);
+    module = fire_trk_parseModule(in.data + offset.i, (size_t)count.i, &error, &code);
     if (module == NULL) return Int(fire_trkb_fail(code, error));
     if (g_trackerSongCount >= g_trackerSongCap) {
         size_t cap = g_trackerSongCap ? g_trackerSongCap * 2 : 16;
@@ -717,18 +718,19 @@ static Value fire_tracker_Render(Value h, Value buffer, Value offset, Value fram
     int64_t frameBytes, length;
     int16_t* out;
     int n;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Buf* b = bufferArg(buffer, "Tracker.Song.Render");
+    if (b == NULL) return Undef();
     s = fire_trkb_find(h);
     if (s == NULL) return Int(-1);
     if (channels.i < 1 || channels.i > 2) return Int(fire_trkb_fail(FIRE_TRK_E_INVALID_ARGUMENT, "Mono (1) or stereo (2) channels."));
     frameBytes = 2 * channels.i;
-    length = bufOf(buffer)->length;
+    length = b->length;
     if (offset.i < 0 || frames.i < 0 || offset.i > length || frames.i * frameBytes > length - offset.i) {
         char text[176];
         snprintf(text, sizeof text, "offset/frames are outside of the buffer (length %lld).", (long long)length);
         return Int(fire_trkb_fail(FIRE_TRK_E_INVALID_ARGUMENT, text));
     }
-    out = (int16_t*)(void*)(bufOf(buffer)->data + offset.i);
+    out = (int16_t*)(void*)(b->data + offset.i);
     /* (the samples are little endian in the buffer: a big endian host would swap them here; there is none we build for) */
     n = fire_trk_render(s, out, (int)frames.i, (int)channels.i);
     fire_trkb_ok();

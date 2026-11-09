@@ -1,0 +1,10 @@
+// Made from docs/ui/controls.md by extract.py - edit the page, not this file.
+#include "ui-controls/Controls.fxml"
+#include "shot.fire"
+
+class ControlsWindow : ControlsBase { }
+
+var window = new ControlsWindow()
+window.ui.Tick()
+window.size.OpenDropDown()
+Shot.Save(window.ui, "ui-controls.png")

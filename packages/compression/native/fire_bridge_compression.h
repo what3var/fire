@@ -1,4 +1,4 @@
-/* fire native bridge "compression" (C): the natives behind `#import "compression"` (docs/COMPRESSION.md) - Deflate, zlib and gzip as streams and in one go,
+/* fire native bridge "compression" (C): the natives behind `#import "compression"` (docs/stdlib/compression.md) - Deflate, zlib and gzip as streams and in one go,
  * and the byte work the Zip code of the prelude needs (little-endian fields, copies, CRC-32, finding the end record). The engine is fire_cmp_deflate.h (our own
  * Deflate, no library: the same bytes on every target).
  *
@@ -61,18 +61,32 @@ static void* fire_cmpb_find(Value h, int inflate) {
     fire_cmpb_fail(FIRE_CMPB_HANDLE, "Invalid or already closed compression stream.");
     return NULL;
 }
-/* The bytes `offset`..`offset + count` of a buffer: NULL with the error set when they are not inside it. */
-static uint8_t* fire_cmpb_range(Value buffer, int64_t offset, int64_t count) {
-    int64_t length;
-    if (buffer.kind != K_Buffer) { fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "A byte buffer is expected."); return NULL; }
-    length = bufOf(buffer)->length;
+/* Is `offset`..`offset + count` inside `length` bytes? Otherwise the error is set. */
+static int fire_cmpb_inside(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         char text[160];
         snprintf(text, sizeof text, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
         fire_cmpb_fail(FIRE_CMPB_ARGUMENT, text);
-        return NULL;
+        return 0;
     }
-    return bufOf(buffer)->data + offset;
+    return 1;
+}
+/* The bytes `offset`..`offset + count` that a native reads: of everything that is bytes (bytesArg: a buffer, an array of bytes); `count` -1: all of them
+ * (`*length` is their number). NULL: not bytes (the exception is thrown) or not inside (the error is set) - the caller returns its failure value either way. */
+static const uint8_t* fire_cmpb_in(Value data, const char* what, int64_t offset, int64_t count, int64_t* length) {
+    static const uint8_t none[1] = {0};
+    FireBytes b;
+    if (!bytesArg(data, what, &b)) return NULL;
+    if (count == -1) count = (int64_t)b.length - offset;
+    if (!fire_cmpb_inside(b.length, offset, count)) return NULL;
+    if (length) *length = count;
+    return b.data ? b.data + offset : none;
+}
+/* The bytes `offset`..`offset + count` of the byte buffer that a native fills (bufferArg: an array is an ArgumentException). NULL as for fire_cmpb_in. */
+static uint8_t* fire_cmpb_out(Value buffer, const char* what, int64_t offset, int64_t count) {
+    Buf* b = bufferArg(buffer, what);
+    if (b == NULL || !fire_cmpb_inside(b->length, offset, count)) return NULL;
+    return b->data + offset;
 }
 static int fire_cmpb_format(Value format) { return format.kind == K_Int && format.i >= 0 && format.i <= 2 ? (int)format.i : -1; }
 
@@ -100,10 +114,9 @@ static Value fire_compression_InflateNew(Value format) {
 /* Gives the decompressor `count` bytes of compressed data. */
 static Value fire_compression_InflateFeed(Value h, Value buffer, Value offset, Value count) {
     FireInflate* z = (FireInflate*)fire_cmpb_find(h, 1);
-    uint8_t* p;
+    const uint8_t* p;
     if (z == NULL) return Bool(false);
-    if (buffer.kind == K_Buffer && !leafAlive(buffer)) return destroyedError(buffer);
-    p = fire_cmpb_range(buffer, offset.i, count.i);
+    p = fire_cmpb_in(buffer, "Compression.DeflateStream", offset.i, count.i, NULL);
     if (p == NULL) return Bool(false);
     if (!fire_inf_feed(z, p, (size_t)count.i)) { fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Bool(false); }
     fire_cmpb_ok();
@@ -123,8 +136,7 @@ static Value fire_compression_InflateRead(Value h, Value buffer, Value offset, V
     uint8_t* p;
     long n;
     if (z == NULL) return Int(-1);
-    if (buffer.kind == K_Buffer && !leafAlive(buffer)) return destroyedError(buffer);
-    p = fire_cmpb_range(buffer, offset.i, count.i);
+    p = fire_cmpb_out(buffer, "Compression.DeflateStream.Read", offset.i, count.i);
     if (p == NULL) return Int(-1);
     if (z->state == FIRE_INF_ERROR) return Int(fire_cmpb_fail(FIRE_CMPB_BROKEN, z->error));
     n = fire_inf_run(z, p, (size_t)count.i);
@@ -150,11 +162,10 @@ static Value fire_compression_DeflateNew(Value format, Value level) {
 /* Takes `count` bytes to compress (all of them). */
 static Value fire_compression_DeflateWrite(Value h, Value buffer, Value offset, Value count) {
     FireDeflate* z = (FireDeflate*)fire_cmpb_find(h, 0);
-    uint8_t* p;
+    const uint8_t* p;
     if (z == NULL) return Bool(false);
     if (z->finished) { fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "The compressed stream is already finished."); return Bool(false); }
-    if (buffer.kind == K_Buffer && !leafAlive(buffer)) return destroyedError(buffer);
-    p = fire_cmpb_range(buffer, offset.i, count.i);
+    p = fire_cmpb_in(buffer, "Compression.DeflateStream.Write", offset.i, count.i, NULL);
     if (p == NULL) return Bool(false);
     fire_def_write(z, p, (size_t)count.i);
     if (z->outOfMemory) { fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Bool(false); }
@@ -175,8 +186,7 @@ static Value fire_compression_DeflateRead(Value h, Value buffer, Value offset, V
     FireDeflate* z = (FireDeflate*)fire_cmpb_find(h, 0);
     uint8_t* p;
     if (z == NULL) return Int(-1);
-    if (buffer.kind == K_Buffer && !leafAlive(buffer)) return destroyedError(buffer);
-    p = fire_cmpb_range(buffer, offset.i, count.i);
+    p = fire_cmpb_out(buffer, "Compression.DeflateStream", offset.i, count.i);
     if (p == NULL) return Int(-1);
     fire_cmpb_ok();
     return Int((int64_t)fire_def_read(z, p, (size_t)count.i));
@@ -194,17 +204,17 @@ static Value fire_compression_Close(Value h) {
 static Value fire_compression_Compress(Value data, Value format, Value level, OwnList* list) {
     int f = fire_cmpb_format(format);
     FireDeflate* z;
-    uint8_t* p;
+    const uint8_t* p;
+    int64_t length = 0;
     Buf* out;
     size_t n;
     if (f < 0) { fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "Unknown compression format."); return Undef(); }
     if (level.kind != K_Int || level.i < 0 || level.i > 9) { fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "The compression level must be 0 (none) .. 9 (smallest)."); return Undef(); }
-    if (data.kind == K_Buffer && !leafAlive(data)) return destroyedError(data);
-    p = fire_cmpb_range(data, 0, data.kind == K_Buffer ? bufOf(data)->length : 0);
+    p = fire_cmpb_in(data, "Compression.Compress", 0, -1, &length);
     if (p == NULL) return Undef();
     z = fire_def_new(f, (int)level.i);
     if (z == NULL) { fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Undef(); }
-    fire_def_write(z, p, bufOf(data)->length);
+    fire_def_write(z, p, (size_t)length);
     fire_def_flush(z, 1);
     if (z->outOfMemory) { fire_def_free(z); fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Undef(); }
     n = z->outLen - z->outPos;
@@ -220,22 +230,22 @@ static Value fire_compression_Compress(Value data, Value format, Value level, Ow
 static Value fire_compression_Decompress(Value data, Value format, OwnList* list) {
     int f = fire_cmpb_format(format);
     FireInflate* z;
-    uint8_t* p;
+    const uint8_t* p;
+    int64_t length = 0;
     uint8_t* all = NULL;
     size_t len = 0, cap = 0;
     Buf* out;
     if (f < 0) { fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "Unknown compression format."); return Undef(); }
-    if (data.kind == K_Buffer && !leafAlive(data)) return destroyedError(data);
-    p = fire_cmpb_range(data, 0, data.kind == K_Buffer ? bufOf(data)->length : 0);
+    p = fire_cmpb_in(data, "Compression.Decompress", 0, -1, &length);
     if (p == NULL) return Undef();
     z = fire_inf_new(f);
-    if (z == NULL || !fire_inf_feed(z, p, bufOf(data)->length)) { fire_inf_free(z); fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Undef(); }
+    if (z == NULL || !fire_inf_feed(z, p, (size_t)length)) { fire_inf_free(z); fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Undef(); }
     z->ended = 1;
     for (;;) {
         long n;
         /* (the room grows with the result - small steps first, so that a board with little memory is not asked for much more than it needs) */
         if (cap - len < 4096) {
-            size_t grow = cap ? cap + cap / 2 + 4096 : 4096 + (size_t)bufOf(data)->length * 3;
+            size_t grow = cap ? cap + cap / 2 + 4096 : 4096 + (size_t)length * 3;
             uint8_t* bigger;
             if (grow > 0xFFFFFFF0u) { free(all); fire_inf_free(z); fire_cmpb_fail(FIRE_CMPB_MEMORY, "The result is too large for a buffer."); return Undef(); }
             bigger = (uint8_t*)realloc(all, grow);
@@ -260,20 +270,17 @@ static Value fire_compression_Decompress(Value data, Value format, OwnList* list
 /* ---- bytes for the Zip code ---- */
 /* CRC-32 of `count` bytes from `offset`, continued from `crc` (0 to start); -1 on an error. */
 static Value fire_compression_Crc32(Value crc, Value buffer, Value offset, Value count) {
-    uint8_t* p;
-    if (buffer.kind == K_Buffer && !leafAlive(buffer)) return destroyedError(buffer);
-    p = fire_cmpb_range(buffer, offset.i, count.i);
+    const uint8_t* p = fire_cmpb_in(buffer, "Compression.Crc32", offset.i, count.i, NULL);
     if (p == NULL) return Int(-1);
     return Int((int64_t)fire_cmp_crc((uint32_t)crc.i, p, (size_t)count.i));
 }
 /* An unsigned little-endian number of `size` (1..8) bytes at `offset` (8 bytes: as a signed 64-bit number); -1 outside of the buffer. */
 static Value fire_compression_GetLE(Value buffer, Value offset, Value size) {
-    uint8_t* p;
+    const uint8_t* p;
     uint64_t v = 0;
     int i;
     if (size.i < 1 || size.i > 8) return Int(fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "A field has 1 to 8 bytes."));
-    if (buffer.kind == K_Buffer && !leafAlive(buffer)) return destroyedError(buffer);
-    p = fire_cmpb_range(buffer, offset.i, size.i);
+    p = fire_cmpb_in(buffer, "Compression.Bytes", offset.i, size.i, NULL);
     if (p == NULL) return Int(-1);
     for (i = (int)size.i - 1; i >= 0; i--) v = (v << 8) | p[i];
     return Int((int64_t)v);
@@ -284,35 +291,30 @@ static Value fire_compression_PutLE(Value buffer, Value offset, Value size, Valu
     uint64_t v = (uint64_t)value.i;
     int i;
     if (size.i < 1 || size.i > 8) { fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "A field has 1 to 8 bytes."); return Bool(false); }
-    if (buffer.kind == K_Buffer && !leafAlive(buffer)) return destroyedError(buffer);
-    p = fire_cmpb_range(buffer, offset.i, size.i);
+    p = fire_cmpb_out(buffer, "Compression.Bytes.Put", offset.i, size.i);
     if (p == NULL) return Bool(false);
     for (i = 0; i < (int)size.i; i++) { p[i] = (uint8_t)v; v >>= 8; }
     return Bool(true);
 }
 /* Copies `count` bytes (the ranges may overlap). */
 static Value fire_compression_Copy(Value source, Value sourceOffset, Value target, Value targetOffset, Value count) {
-    uint8_t* from;
+    const uint8_t* from;
     uint8_t* to;
-    if (source.kind == K_Buffer && !leafAlive(source)) return destroyedError(source);
-    if (target.kind == K_Buffer && !leafAlive(target)) return destroyedError(target);
-    from = fire_cmpb_range(source, sourceOffset.i, count.i);
+    from = fire_cmpb_in(source, "Compression.Bytes.Copy", sourceOffset.i, count.i, NULL);
     if (from == NULL) return Bool(false);
-    to = fire_cmpb_range(target, targetOffset.i, count.i);
+    to = fire_cmpb_out(target, "Compression.Bytes.Copy", targetOffset.i, count.i);
     if (to == NULL) return Bool(false);
     if (count.i > 0) memmove(to, from, (size_t)count.i);
     return Bool(true);
 }
 /* The last offset at which the 4-byte little-endian `signature` starts, -1 if there is none. */
 static Value fire_compression_FindLast(Value buffer, Value signature) {
-    Buf* b;
+    FireBytes b;
     int64_t i;
     uint32_t sig = (uint32_t)signature.i;
-    if (buffer.kind != K_Buffer) return Int(fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "A byte buffer is expected."));
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    b = bufOf(buffer);
-    for (i = (int64_t)b->length - 4; i >= 0; i--) {
-        const uint8_t* p = b->data + i;
+    if (!bytesArg(buffer, "Compression.Zip", &b)) return Int(-1);
+    for (i = (int64_t)b.length - 4; i >= 0; i--) {
+        const uint8_t* p = b.data + i;
         if (((uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24)) == sig) return Int(i);
     }
     return Int(-1);

@@ -1,9 +1,9 @@
-/* fire native bridge "audio" (C): the natives behind `#import "audio"` (docs/AUDIO.md): sound output - 16 bit signed samples, mono or stereo, any rate the device
+/* fire native bridge "audio" (C): the natives behind `#import "audio"` (docs/audio/README.md): sound output - 16 bit signed samples, mono or stereo, any rate the device
  * takes. The fire side (Audio.Output, Audio.Sound, Audio.Sim - fire source) is the same in the VM and in a native build; this file is what its `__Audio...` functions do.
  *
  * This file is the one implementation of the audio natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
- * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come from the platform layer (FIRE_PLATFORM_AUDIO_C_HEADER: fire_audio_*, see
- * platform/std/fire_audio_c.h): PulseAudio or ALSA on Linux, winmm on Windows, PWM on a GPIO pin of an ESP32. Where there is no sound hardware the list of devices is
+ * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come with the package (fire_audio_*; one file per platform, platformSources of audio.fireproj, see
+ * fire_audio_c.h): PulseAudio or ALSA on Linux, winmm on Windows, PWM on a GPIO pin of an ESP32. Where there is no sound hardware the list of devices is
  * empty - but one device is always there:
  *
  *   "sim"   a simulated device that records what is played to it (the bytes, the rate and the channels of the last opened output): for tests, and to try a program on
@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_AUDIO_C_HEADER
+#include "fire_audio_c.h"
 
 enum { FIRE_AUDIOB_NONE = 0, FIRE_AUDIOB_INVALID_ARGUMENT = 1, FIRE_AUDIOB_INVALID_HANDLE = 2, FIRE_AUDIOB_NOT_FOUND = 3, FIRE_AUDIOB_BUSY = 4,
        FIRE_AUDIOB_PERMISSION = 5, FIRE_AUDIOB_UNSUPPORTED = 6, FIRE_AUDIOB_OTHER = 7 };
@@ -201,8 +201,7 @@ static FireAudiobOutput* fire_audiob_find(Value h) {
     fire_audiob_fail(FIRE_AUDIOB_INVALID_HANDLE, "Invalid or already closed output handle.");
     return NULL;
 }
-static int fire_audiob_checkRange(Value bufferValue, int64_t offset, int64_t count) {
-    int64_t length = bufOf(bufferValue)->length;
+static int fire_audiob_checkRange(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         char text[176];
         snprintf(text, sizeof text, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
@@ -291,17 +290,18 @@ static Value fire_audio_Write(Value h, Value buffer, Value offset, Value count) 
     FireAudiobOutput* o;
     const uint8_t* bytes;
     int64_t taken = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    FireBytes in;
+    if (!bytesArg(buffer, "Audio.Output.Write", &in)) return Undef();
     o = fire_audiob_find(h);
     if (o == NULL) return Int(-1);
-    if (!fire_audiob_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    if (!fire_audiob_checkRange(in.length, offset.i, count.i)) return Int(-1);
     if (count.i % o->frameBytes != 0) {
         char text[176];
         snprintf(text, sizeof text, "The sound is made of frames of %d bytes (%d channel(s) of 16 bits); %lld bytes are not a whole number of them.", o->frameBytes, o->channels, (long long)count.i);
         return Int(fire_audiob_fail(FIRE_AUDIOB_INVALID_ARGUMENT, text));
     }
     if (count.i == 0) { fire_audiob_ok(); return Int(0); }
-    bytes = bufOf(buffer)->data + offset.i;
+    bytes = in.data + offset.i;   /* (what is not played at once is copied: held bytes, the device's queue) */
     if (o->volume != 100) {
         int64_t i;
         if ((size_t)count.i > o->scaled.cap) {
@@ -448,12 +448,13 @@ static Value fire_audio_InRead(Value h, Value buffer, Value offset, Value count)
     int64_t want;
     uint8_t* bytes;
     int got = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Buf* b = bufferArg(buffer, "Audio.Input.Read");
+    if (b == NULL) return Undef();
     i = fire_audiob_findInput(h);
     if (i == NULL) return Int(-1);
-    if (!fire_audiob_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    if (!fire_audiob_checkRange(b->length, offset.i, count.i)) return Int(-1);
     want = count.i - count.i % i->frameBytes;
-    bytes = bufOf(buffer)->data + offset.i;
+    bytes = b->data + offset.i;
     if (i->isSim) {
         FireAudiobSim* s = &g_audioSim;
         size_t left = s->input.size - s->inputAt;
@@ -502,7 +503,8 @@ static Value fire_audio_Wave(Value buffer, Value offset, Value frames, Value kin
     uint8_t* bytes;
     uint32_t p, increment;
     int64_t f;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Buf* b = bufferArg(buffer, "Audio.Wave");
+    if (b == NULL) return Undef();
     if (kind.i < 0 || kind.i > 4) return Int(fire_audiob_fail(FIRE_AUDIOB_INVALID_ARGUMENT, "Unknown wave (0 sine, 1 square, 2 triangle, 3 saw, 4 noise)."));
     hz = freq.kind == K_Float ? (double)freq.f : (double)freq.i;
     if (rate.i < 1000 || rate.i > 192000 || channels.i < 1 || channels.i > 2 || volume.i < 0 || volume.i > 100 || frames.i < 0)
@@ -513,8 +515,8 @@ static Value fire_audio_Wave(Value buffer, Value offset, Value frames, Value kin
         return Int(fire_audiob_fail(FIRE_AUDIOB_INVALID_ARGUMENT, text));
     }
     frameBytes = (int)(2 * channels.i);
-    if (!fire_audiob_checkRange(buffer, offset.i, frames.i * frameBytes)) return Int(-1);
-    bytes = bufOf(buffer)->data + offset.i;
+    if (!fire_audiob_checkRange(b->length, offset.i, frames.i * frameBytes)) return Int(-1);
+    bytes = b->data + offset.i;
     p = (uint32_t)phase.i;
     increment = (uint32_t)(hz / (double)rate.i * 4294967296.0);
     amplitude = 32767.0 * (double)volume.i / 100.0;
@@ -562,9 +564,10 @@ static Value fire_audio_SimHold(Value hold) {
 /* Gives the simulated input sound to record: `count` bytes (16 bit samples in the channels of the input that reads them) from `offset` of the buffer. */
 static Value fire_audio_SimFeed(Value buffer, Value offset, Value count) {
     const uint8_t* bytes;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_audiob_checkRange(buffer, offset.i, count.i)) return Int(-1);
-    bytes = bufOf(buffer)->data + offset.i;
+    FireBytes in;
+    if (!bytesArg(buffer, "Audio.Sim.Feed", &in)) return Undef();
+    if (!fire_audiob_checkRange(in.length, offset.i, count.i)) return Int(-1);
+    bytes = in.data + offset.i;   /* (appended as a copy) */
     if (!fire_audiob_append(&g_audioSim.input, bytes, (size_t)count.i)) return Int(fire_audiob_fail(FIRE_AUDIOB_OTHER, "Out of memory."));
     fire_audiob_ok();
     return Int(count.i);

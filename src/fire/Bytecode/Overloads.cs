@@ -16,7 +16,8 @@ namespace fire.Bytecode
     /// Every parameter of a method has a descriptor (FunctionProto.ParamTypes), made by the compiler:
     /// <list type="bullet">
     /// <item>"" - untyped, `var`, `any`, `ref`: takes everything</item>
-    /// <item>"k:int", "k:float", "k:bool", "k:char", "k:string", "k:lambda", "k:array", "k:class": a basic type (`class`: any object)</item>
+    /// <item>"k:int", "k:float", "k:bool", "k:char", "k:string", "k:lambda", "k:array", "k:class", "k:word": a basic type (`class`: any object; `word`: a word, or an int
+    /// that the store converts - closer than into a `float`)</item>
     /// <item>"c:Name": a class (or a class derived from it), "i:Name": an interface</item>
     /// <item>"g:" + DeclaredType text: a type parameter (of the class or of the method; its `where` conditions and a known type argument apply)</item>
     /// </list>
@@ -34,6 +35,7 @@ namespace fire.Bytecode
         public const int ClassExact = 1000;
         public const int ExactKind = 1000;
         public const int IntToFloat = 900;
+        public const int IntToWord = 950;
         public const int UndefinedScore = 1;
 
         /// <summary>How closely the value fits a parameter with this descriptor (NoMatch: not at all).</summary>
@@ -54,6 +56,7 @@ namespace fire.Bytecode
                         case "k:lambda": return value.Kind == ValueKind.Lambda ? ExactKind : NoMatch;
                         case "k:array": return value.Kind is ValueKind.Array or ValueKind.Buffer ? ExactKind : NoMatch;
                         case "k:class": return value.Kind == ValueKind.Class ? ObjectScore : NoMatch;
+                        case "k:word": return value.Kind == ValueKind.Word ? ExactKind : value.Kind == ValueKind.Int ? IntToWord : NoMatch;
                     }
                     return AnyScore;
                 case 'c':
@@ -160,7 +163,7 @@ namespace fire.Bytecode
         public const string ConstructorName = "#new";
         private const char Separator = '\u001f';
 
-        private enum Need : byte { Any, Undefined, Int, Float, Bool, Char, String, Lambda, Array, Object, Class, Interface }
+        private enum Need : byte { Any, Undefined, Int, Float, Bool, Char, String, Lambda, Array, Object, Class, Interface, Word }
 
         public string DeclaringClass { get; }
         public string Method { get; }
@@ -184,7 +187,7 @@ namespace fire.Bytecode
                 _needs[i] = Assumptions[i] switch
                 {
                     "" => Need.Any, "u" => Need.Undefined, "k:int" => Need.Int, "k:float" => Need.Float, "k:bool" => Need.Bool, "k:char" => Need.Char,
-                    "k:string" => Need.String, "k:lambda" => Need.Lambda, "k:array" => Need.Array, "k:class" => Need.Object,
+                    "k:string" => Need.String, "k:lambda" => Need.Lambda, "k:array" => Need.Array, "k:class" => Need.Object, "k:word" => Need.Word,
                     var a when a.StartsWith("i:", StringComparison.Ordinal) => Need.Interface,
                     _ => Need.Class,
                 };
@@ -220,6 +223,7 @@ namespace fire.Bytecode
                     Need.Lambda => v.Kind == ValueKind.Lambda,
                     Need.Array => v.Kind is ValueKind.Array or ValueKind.Buffer,
                     Need.Object => v.Kind == ValueKind.Class,
+                    Need.Word => v.Kind == ValueKind.Word,
                     _ => v.Kind != ValueKind.Undefined && Overloads.Score(v, Assumptions[i]) != Overloads.NoMatch,
                 };
                 if (!ok) return false;

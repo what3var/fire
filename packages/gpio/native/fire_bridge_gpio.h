@@ -1,9 +1,9 @@
-/* fire native bridge "gpio" (C): the natives behind `#import "gpio"` (docs/NETWORK.md, "Hardware"): digital pins - read, write, pull resistors, edge events. The
+/* fire native bridge "gpio" (C): the natives behind `#import "gpio"` (docs/networking/README.md, "Hardware"): digital pins - read, write, pull resistors, edge events. The
  * fire side (Gpio.Pin, Gpio.Board, Gpio.Sim - fire source) is the same in the VM and in a native build; this file is what its `__Gpio...` functions do.
  *
  * This file is the one implementation of the gpio natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual
- * machine runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The pins come from the platform layer (FIRE_PLATFORM_GPIO_C_HEADER: fire_gpio_*,
- * see platform/std/fire_gpio_c.h): the GPIO character device on a Linux board (Raspberry Pi, ...), ESP-IDF on an ESP32. Where there is no hardware the list of
+ * machine runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The pins come with the package (fire_gpio_*; one file per platform, platformSources of gpio.fireproj,
+ * see fire_gpio_c.h): the GPIO character device on a Linux board (Raspberry Pi, ...), ESP-IDF on an ESP32. Where there is no hardware the list of
  * chips is empty - but one chip is always there:
  *
  *   "sim"   32 simulated lines (0..31) that need no hardware: write an output, read it back, connect two lines with a wire (`SimWire`), drive an input from
@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_GPIO_C_HEADER
+#include "fire_gpio_c.h"
 
 /* (the codes are those of the platform layer: FIRE_GPIO_E_*, the same numbers as Gpio.GpioException.code) */
 

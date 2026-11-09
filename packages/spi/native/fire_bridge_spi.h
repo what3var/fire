@@ -1,10 +1,10 @@
-/* fire native bridge "spi" (C): the natives behind `#import "spi"` (docs/NETWORK.md, "SPI"): the SPI bus as a controller - a device is a bus with one chip
+/* fire native bridge "spi" (C): the natives behind `#import "spi"` (docs/networking/README.md, "SPI"): the SPI bus as a controller - a device is a bus with one chip
  * select; a transfer sends and receives bytes at the same time. The fire side (Spi.Device, Spi.Board, Spi.Sim - fire source) is the same in the VM and in a
  * native build; this file is what its `__Spi...` functions do.
  *
  * This file is the one implementation of the spi natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
- * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come from the platform layer (FIRE_PLATFORM_SPI_C_HEADER: fire_spi_*, see
- * platform/std/fire_spi_c.h): /dev/spidevB.C on a Linux board, the SPI master driver of ESP-IDF on an ESP32. Where there is no hardware the list of devices is
+ * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The devices come with the package (fire_spi_*; one file per platform, platformSources of spi.fireproj, see
+ * fire_spi_c.h): /dev/spidevB.C on a Linux board, the SPI master driver of ESP-IDF on an ESP32. Where there is no hardware the list of devices is
  * empty - but one device is always there:
  *
  *   "sim"   a simulated device. By default it is a loopback (MISO is tied to MOSI: what is sent comes back), which is what the usual wiring test does. `Reply`
@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_SPI_C_HEADER
+#include "fire_spi_c.h"
 
 /* (the codes are those of the platform layer: FIRE_SPI_E_*, the same numbers as Spi.SpiException.code) */
 
@@ -202,8 +202,7 @@ static int fire_spib_checkSetup(int64_t mode, int64_t speed) {
     if (speed < 1 || speed > 80000000) { fire_spib_fail(FIRE_SPI_E_INVALID_ARGUMENT, "The speed must be between 1 Hz and 80 MHz."); return 0; }
     return 1;
 }
-static int fire_spib_checkRange(Value bufferValue, int64_t offset, int64_t count) {
-    int64_t length = bufOf(bufferValue)->length;
+static int fire_spib_checkRange(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         fire_spib_failf(FIRE_SPI_E_INVALID_ARGUMENT, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
         return 0;
@@ -309,33 +308,37 @@ static int64_t fire_spib_run(FireSpiEntry* d, const uint8_t* out, uint8_t* in, i
 /* Sends `count` bytes and receives `count` bytes at the same time; the number of bytes, -1 on an error. */
 static Value fire_spi_Transfer(Value h, Value outBuffer, Value outOffset, Value inBuffer, Value inOffset, Value count) {
     FireSpiEntry* d;
-    if (!leafAlive(outBuffer)) return destroyedError(outBuffer);
-    if (!leafAlive(inBuffer)) return destroyedError(inBuffer);
-    if (!fire_spib_checkRange(outBuffer, outOffset.i, count.i) || !fire_spib_checkRange(inBuffer, inOffset.i, count.i)) return Int(-1);
+    FireBytes out;
+    Buf* in;
+    if (!bytesArg(outBuffer, "Spi.Transfer", &out)) return Undef();
+    if ((in = bufferArg(inBuffer, "Spi.Transfer")) == NULL) return Undef();
+    if (!fire_spib_checkRange(out.length, outOffset.i, count.i) || !fire_spib_checkRange(in->length, inOffset.i, count.i)) return Int(-1);
     d = fire_spib_find(h);
     if (d == NULL) return Int(-1);
     /* (the buffers may be the same: what comes in replaces what was sent, byte by byte) */
-    return Int(fire_spib_run(d, bufOf(outBuffer)->data + outOffset.i, bufOf(inBuffer)->data + inOffset.i, count.i));
+    return Int(fire_spib_run(d, out.data + outOffset.i, in->data + inOffset.i, count.i));
 }
 
 /* Sends `count` bytes and drops what comes in. */
 static Value fire_spi_Write(Value h, Value buffer, Value offset, Value count) {
     FireSpiEntry* d;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_spib_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    FireBytes b;
+    if (!bytesArg(buffer, "Spi.Write", &b)) return Undef();
+    if (!fire_spib_checkRange(b.length, offset.i, count.i)) return Int(-1);
     d = fire_spib_find(h);
     if (d == NULL) return Int(-1);
-    return Int(fire_spib_run(d, bufOf(buffer)->data + offset.i, NULL, count.i));
+    return Int(fire_spib_run(d, b.data + offset.i, NULL, count.i));
 }
 
 /* Receives `count` bytes (the device is sent zeros meanwhile). */
 static Value fire_spi_Read(Value h, Value buffer, Value offset, Value count) {
     FireSpiEntry* d;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_spib_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    Buf* b = bufferArg(buffer, "Spi.Read");
+    if (b == NULL) return Undef();
+    if (!fire_spib_checkRange(b->length, offset.i, count.i)) return Int(-1);
     d = fire_spib_find(h);
     if (d == NULL) return Int(-1);
-    return Int(fire_spib_run(d, NULL, bufOf(buffer)->data + offset.i, count.i));
+    return Int(fire_spib_run(d, NULL, b->data + offset.i, count.i));
 }
 
 static Value fire_spi_Close(Value h) {
@@ -352,9 +355,10 @@ static Value fire_spi_Close(Value h) {
 static Value fire_spi_SimReply(Value buffer, Value offset, Value count) {
     const uint8_t* bytes;
     int64_t i;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_spib_checkRange(buffer, offset.i, count.i)) return Bool(false);
-    bytes = bufOf(buffer)->data + offset.i;
+    FireBytes b;
+    if (!bytesArg(buffer, "Spi.Sim.Reply", &b)) return Undef();
+    if (!fire_spib_checkRange(b.length, offset.i, count.i)) return Bool(false);
+    bytes = b.data + offset.i;   /* (queued as copies: the bytes need not live on) */
     g_spiSim.loopback = 0;
     for (i = 0; i < count.i; i++) fire_spib_simQueue(&g_spiSim, bytes[i]);
     fire_spib_ok();
@@ -362,8 +366,9 @@ static Value fire_spi_SimReply(Value buffer, Value offset, Value count) {
 }
 /* Like SimReply, but drops the answers that are still queued first (a device whose answer changes all the time, like a shift register with inputs). */
 static Value fire_spi_SimSetReply(Value buffer, Value offset, Value count) {
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_spib_checkRange(buffer, offset.i, count.i)) return Bool(false);
+    FireBytes b;
+    if (!bytesArg(buffer, "Spi.Sim.SetReply", &b)) return Undef();
+    if (!fire_spib_checkRange(b.length, offset.i, count.i)) return Bool(false);
     fire_spib_simClearReplies(&g_spiSim);
     return fire_spi_SimReply(buffer, offset, count);
 }

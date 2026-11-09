@@ -23,7 +23,7 @@ namespace fire.Standard
     }
 
     /// <summary>
-    /// JSON (docs/JSON.md, `#import "json"`): `Json.Serialize(value)`, `Json.Deserialize&lt;T&gt;(text)`, `Json.Parse(text)`. One native function
+    /// JSON (docs/stdlib/json.md, `#import "json"`): `Json.Serialize(value)`, `Json.Deserialize&lt;T&gt;(text)`, `Json.Parse(text)`. One native function
     /// `__JsonCall(id, ...)` like Math/String; the native backend implements the same (fire_json.h).
     ///
     /// The format is plain JSON. An object is a JSON object with its fields (in declaration order, base class first; `[NonSerialized]` leaves a field
@@ -292,11 +292,21 @@ namespace fire.Standard
                     case ValueKind.Float:
                         WriteNumber(v, unit);
                         return;
+                    case ValueKind.Word: _sb.Append(v.AsWord().ToString(CultureInfo.InvariantCulture)); return;   // (a number, unsigned)
                     case ValueKind.String: WriteString(v.AsString()); return;
                     case ValueKind.Char:
                         if (type == "char") WriteString(v.AsChar().ToString());
                         else { _sb.Append("{\"$char\":"); WriteString(v.AsChar().ToString()); _sb.Append('}'); }
                         return;
+                    case ValueKind.Buffer when v.AsBuffer().IsWords:
+                    {
+                        // a buffer of machine words (SPEC 8.10): an array of numbers (unsigned)
+                        var words = v.AsBuffer();
+                        _sb.Append('[');
+                        for (int k = 0; k < words.Count; k++) { if (k > 0) _sb.Append(','); _sb.Append(words.GetWord(k).ToString(CultureInfo.InvariantCulture)); }
+                        _sb.Append(']');
+                        return;
+                    }
                     case ValueKind.Buffer:
                     {
                         var buffer = v.AsBuffer();
@@ -684,6 +694,11 @@ namespace fire.Standard
                         throw new JsonError($"{path}: expected a whole number, found {text}.");
                     case "float": case "double": case "float32": case "float64":
                         return Value.MakeFloat(double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture), unit);
+                    case "word":
+                        // a machine word (SPEC 8.10): a whole number up to 2^64-1 (a negative one in two's complement), cut to the width
+                        if (isInt && ulong.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out ulong u)) return Value.MakeWord(u);
+                        if (isInt && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long sw)) return Value.MakeWord(unchecked((ulong)sw));
+                        throw new JsonError($"{path}: expected a whole number, found {text}.");
                     case "": case "any":
                         if (isInt && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long l)) return Value.MakeInt(l, unit);
                         return Value.MakeFloat(double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture), unit);
@@ -716,6 +731,16 @@ namespace fire.Standard
                 throw Mismatch(path, type, "a string");
             }
 
+            /// <summary>The array `value` (at depth `rank` its inner arrays) becomes typed (VM.TypeArrayValue without a unit).</summary>
+            private static void TypeArrayDeep(Value value, byte elem, int rank, int depth, string path)
+            {
+                if (value.Kind != ValueKind.Array || depth > 64) return;
+                var array = value.AsArray();
+                if (depth < rank) { foreach (var inner in array.Items) TypeArrayDeep(inner, elem, rank, depth + 1, path); return; }
+                if (array.ElemType != ArrayElem.None) return;
+                if (!array.MakeTyped(elem, null, out _, out var message, out _)) throw new JsonError($"{path}: {message}");
+            }
+
             private Value BuildArray(ArrayNode a, string type, IOwner owner, string path, long? id)
             {
                 if (type.EndsWith("[]", StringComparison.Ordinal) || type is "" or "any" or "class")
@@ -733,6 +758,17 @@ namespace fire.Standard
                         var bv = Value.MakeBuffer(buffer);
                         if (id is { } bid) _byId[bid] = bv;
                         return bv;
+                    }
+                    if (element == "word" && !_plain)
+                    {
+                        // a word array (`word data[]`): a buffer of machine words (SPEC 8.10)
+                        var words = ByteBuffer.Words(a.Items.Count, Value.WordBits / 8);
+                        for (int i = 0; i < a.Items.Count; i++)
+                            words.SetWord(i, a.Items[i] is NumberNode wn ? Number(wn.Text, true, "word", null, $"{path}[{i}]").AsWord() : throw new JsonError($"{path}[{i}]: expected a whole number."));
+                        LeafOwnership.Adopt(words, owner);
+                        var wv = Value.MakeBuffer(words);
+                        if (id is { } wid) _byId[wid] = wv;
+                        return wv;
                     }
                     var array = new ScriptArray(a.Items.Count);
                     LeafOwnership.Adopt(array, owner);
@@ -834,12 +870,23 @@ namespace fire.Standard
                 var value = Value.MakeClassRef(obj);
                 if (id is { } oid) _byId[oid] = value;
                 var fields = FieldsOf(rc);
+                // `defined int n` (SPEC 8.10b): a field that is not in the text holds zero, `null` does not go in
+                // (every one of the class - also one that does not go to JSON)
+                foreach (var fieldName in rc.FlattenedFieldNames)
+                    if (rc.FindFieldRequiredKind(fieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
+                        obj.Fields[fieldName] = DeclaredKind.ZeroOf(kind, rc.FindFieldRequiredUnit(fieldName)?.TrimStart('#') is { } zeroUnit && !zeroUnit.StartsWith("any", StringComparison.Ordinal) ? Unit.Parse(zeroUnit) : null);
                 foreach (var (key, child) in o.Members)
                 {
                     if (key.StartsWith("$", StringComparison.Ordinal)) continue;
                     var field = fields.FirstOrDefault(f => f.JsonName == key) ?? fields.FirstOrDefault(f => string.Equals(f.JsonName, key, StringComparison.OrdinalIgnoreCase));
                     if (field == null) continue;   // (a member the class does not have: left out)
-                    obj.Fields[field.Name] = Build(child, Substitute(field.Type, obj), obj, path + "." + key, field.Unit, (obj, field.Name));
+                    var built = Build(child, Substitute(field.Type, obj), obj, path + "." + key, field.Unit, (obj, field.Name));
+                    // a field declared as a typed array without a unit (FieldInfo.RequiredArray) holds a typed array, like after any other assignment
+                    if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null)
+                        TypeArrayDeep(built, (byte)(requiredArray & 0xFF), requiredArray >> 8, 1, path + "." + key);
+                    if (built.Kind == ValueKind.Undefined && rc.FindFieldRequiredKind(field.Name) is var declared and not 0 && DeclaredKind.IsNonNull(declared))
+                        throw _host.Error("ArgumentException", $"{path}.{key} is {(DeclaredKind.ValueKindOf(declared) switch { ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool" })} and never undefined.");
+                    obj.Fields[field.Name] = built;
                 }
                 if (HasOnDeserialized(rc)) Hooks.Add(obj);
                 return value;

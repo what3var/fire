@@ -142,6 +142,14 @@ static Value fire_pkgToRt(const fire_val* in, OwnList* list) {
             Buf* b = allocBufExternal((uint8_t*)in->v.p, (uint32_t)in->length, list);
             return BufV(b);
         }
+        case FIRE_WORDS: {
+            /* a buffer of machine words, by reference like a byte buffer (the library is built for the machine the VM runs on: 64-bit words) */
+            Buf* b = allocBufExternal((uint8_t*)in->v.p, (uint32_t)in->length, list);
+            if (sizeof(FireWord) != 8) fatal("A word buffer of the virtual machine needs a package library with 64-bit words.");
+            b->elem = (uint8_t)sizeof(FireWord);
+            return BufV(b);
+        }
+        case FIRE_WORD: return WordV((uint64_t)in->v.i);
         case FIRE_LAMBDA: {
             /* a lambda of the VM: a lambda here whose body asks the host to call it (its handle is its one capture) */
             Lam* l = allocLam((uint32_t)(in->length < 0 ? 0 : in->length), 1, fire_pkgHostLambda, list);
@@ -184,11 +192,12 @@ static void fire_pkgFromRt(FirePkgArena* arena, Value v, fire_val* out) {
             uint8_t* copy;
             if (!ownedOf(v)) fatal("A package function returned a buffer that is destroyed.");
             b = bufOf(v);
-            copy = (uint8_t*)fire_pkgAlloc(arena, b->length);
-            if (b->length > 0) memcpy(copy, b->data, b->length);
-            out->kind = FIRE_BUFFER; out->length = (int32_t)b->length; out->v.p = copy;
+            copy = (uint8_t*)fire_pkgAlloc(arena, bufSize(b));
+            if (b->length > 0) memcpy(copy, b->data, bufSize(b));
+            out->kind = b->elem != 1 ? FIRE_WORDS : FIRE_BUFFER; out->length = (int32_t)b->length; out->v.p = copy;
             return;
         }
+        case K_Word: out->kind = FIRE_WORD; out->v.i = (int64_t)(uint64_t)v.w; return;
         default: break;
     }
     fatal("A package function returned a value that cannot go to the virtual machine (an object, lambda or pointer): numbers, text, buffers and arrays can.");

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace fire.Bytecode
 {
-    /// <summary>The operand sizes in bytes of each opcode (1 = u8, 2 = u16 little endian; docs/BYTECODE.md) - the native backend decodes chunks with them, the VM
+    /// <summary>The operand sizes in bytes of each opcode (1 = u8, 2 = u16 little endian; docs/spec/BYTECODE.md) - the native backend decodes chunks with them, the VM
     /// rewrites the native indices of a plugin's code (VM.Plugins.cs).</summary>
     public static class OperandSizes
     {
@@ -23,7 +23,7 @@ namespace fire.Bytecode
             [OpCode.Add] = Array.Empty<int>(), [OpCode.Sub] = Array.Empty<int>(), [OpCode.Mul] = Array.Empty<int>(),
             [OpCode.RelabelUnit] = new[] { 2 }, [OpCode.RelabelUnitDynamic] = Array.Empty<int>(), [OpCode.StepAdd] = Array.Empty<int>(), [OpCode.StepSub] = Array.Empty<int>(), [OpCode.Div] = Array.Empty<int>(), [OpCode.Mod] = Array.Empty<int>(),
             [OpCode.BitAnd] = Array.Empty<int>(), [OpCode.BitOr] = Array.Empty<int>(), [OpCode.BitXor] = Array.Empty<int>(),
-            [OpCode.ShiftLeft] = Array.Empty<int>(), [OpCode.ShiftRight] = Array.Empty<int>(), [OpCode.Power] = Array.Empty<int>(),
+            [OpCode.ShiftLeft] = Array.Empty<int>(), [OpCode.ShiftRight] = Array.Empty<int>(), [OpCode.Power] = Array.Empty<int>(), [OpCode.PowerFloat] = Array.Empty<int>(),
             [OpCode.FormatValue] = new[] { 2 },
             [OpCode.Neg] = Array.Empty<int>(), [OpCode.LogicalNot] = Array.Empty<int>(), [OpCode.BitNot] = Array.Empty<int>(),
             [OpCode.Eq] = Array.Empty<int>(), [OpCode.NotEq] = Array.Empty<int>(), [OpCode.Lt] = Array.Empty<int>(),
@@ -54,7 +54,7 @@ namespace fire.Bytecode
             [OpCode.NewArray] = Array.Empty<int>(), [OpCode.MakeArrayLiteral] = new[] { 2 }, [OpCode.MakeBuffer] = Array.Empty<int>(),
             [OpCode.ArrayGet] = Array.Empty<int>(), [OpCode.ArraySet] = Array.Empty<int>(),
             [OpCode.RegisterHandler] = new[] { 2 }, [OpCode.UnregisterHandler] = Array.Empty<int>(), [OpCode.Throw] = Array.Empty<int>(),
-            [OpCode.IsInUnit] = new[] { 2 }, [OpCode.IsOfType] = new[] { 2 }, [OpCode.CastTo] = new[] { 2 }, [OpCode.ToEnum] = new[] { 2 }, [OpCode.ArgNames] = new[] { 2 }, [OpCode.TypeArray] = new[] { 1, 1, 2 }, [OpCode.ConvertWidth] = new[] { 1, 1 }, [OpCode.RebindLambda] = Array.Empty<int>(), [OpCode.IsFrom] = new[] { 1 },
+            [OpCode.IsInUnit] = new[] { 2 }, [OpCode.IsOfType] = new[] { 2 }, [OpCode.CastTo] = new[] { 2 }, [OpCode.ToEnum] = new[] { 2 }, [OpCode.ArgNames] = new[] { 2 }, [OpCode.TypeArray] = new[] { 1, 1, 2 }, [OpCode.Trust] = Array.Empty<int>(), [OpCode.TryTakeToScope] = new[] { 2 }, [OpCode.TryTakeToObject] = Array.Empty<int>(), [OpCode.TryTakeToArray] = Array.Empty<int>(), [OpCode.TypeArrayOfParam] = new[] { 2 }, [OpCode.ConvertWidth] = new[] { 1, 1 }, [OpCode.RebindLambda] = Array.Empty<int>(), [OpCode.IsFrom] = new[] { 1 },
             [OpCode.ResumeException] = Array.Empty<int>(), [OpCode.ClearPendingResume] = Array.Empty<int>(),
             [OpCode.CheckLambdaSignature] = new[] { 1 }, [OpCode.CheckUnit] = new[] { 2 },
             [OpCode.Fire] = new[] { 2, 2, 1, 1, 1 }, [OpCode.Sync] = new[] { 1 },
@@ -74,7 +74,7 @@ namespace fire.Bytecode
             [OpCode.GuardLocal] = new[] { 2, 1, 2, 2 }, [OpCode.GuardLocalType] = new[] { 2, 2, 2 }, [OpCode.SetTypeArgs] = new[] { 2, 1 }, [OpCode.TakeCallTypeArgs] = Array.Empty<int>(), [OpCode.GuardTop] = new[] { 1, 2 }, [OpCode.GuardTopType] = new[] { 2, 2 }, [OpCode.OverloadHint] = new[] { 2 },
             [OpCode.ArithLocalConstPop] = new[] { 2, 2, 2, 1 }, [OpCode.ArithGlobalConstPop] = new[] { 2, 2, 1 },
             [OpCode.SetTimeout] = Array.Empty<int>(),
-            [OpCode.AddressOfIndex] = Array.Empty<int>(), [OpCode.NewJagged] = new[] { 1 }, [OpCode.OwnValue] = Array.Empty<int>(), [OpCode.MakeArrayLiteralParts] = new[] { 2, 2, 2 }, [OpCode.Delete] = Array.Empty<int>(), [OpCode.HoistValue] = Array.Empty<int>(), [OpCode.TakeToScope] = new[] { 2 }, [OpCode.TakeToObject] = Array.Empty<int>(), [OpCode.TakeToArray] = Array.Empty<int>(), [OpCode.TakeCheck] = Array.Empty<int>(), [OpCode.RequireRefParam] = new[] { 2, 2 },
+            [OpCode.AddressOfIndex] = Array.Empty<int>(), [OpCode.NewJagged] = new[] { 1 }, [OpCode.OwnValue] = Array.Empty<int>(), [OpCode.MakeArrayLiteralParts] = new[] { 2, 2, 2 }, [OpCode.Delete] = Array.Empty<int>(), [OpCode.HoistValue] = Array.Empty<int>(), [OpCode.TakeToScope] = new[] { 2 }, [OpCode.TakeToObject] = Array.Empty<int>(), [OpCode.TakeToArray] = Array.Empty<int>(), [OpCode.ReleaseTemps] = Array.Empty<int>(), [OpCode.ClaimToScope] = new[] { 2, 1 }, [OpCode.ClaimToObject] = Array.Empty<int>(), [OpCode.ClaimToArray] = Array.Empty<int>(), [OpCode.SetFieldClaim] = new[] { 2, 1 }, [OpCode.TakeCheck] = Array.Empty<int>(), [OpCode.RequireRefParam] = new[] { 2, 2 },
         };
 
         /// <summary>Calls <paramref name="visit"/> with the address and the operands of each instruction of the code.</summary>

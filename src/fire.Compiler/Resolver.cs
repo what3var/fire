@@ -23,7 +23,7 @@ namespace fire.Compiler
         /// <summary>The message without the line.</summary>
         public string RawMessage { get; }
 
-        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        /// <summary>The code of the message (docs/tools/errors.md).</summary>
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Resolver, RawMessage);
 
         public IReadOnlyList<ResolverException> Errors { get; }
@@ -138,7 +138,7 @@ namespace fire.Compiler
         /// effort.</summary>
         private static readonly HashSet<string> PrimitiveTypeNames = new()
         {
-            "bool", "int", "float", "char", "string", "class", "undefined", "lambda", "any",
+            "bool", "int", "float", "char", "string", "class", "undefined", "lambda", "any", "word",
         };
 
         private readonly Dictionary<Expr, ResolvedRef> _refs = new(ReferenceEqualityComparer.Instance);
@@ -341,7 +341,27 @@ namespace fire.Compiler
                     continue;
                 }
                 _externs[ed.Name] = ed;
+                if (ed.InlineC != null) CheckInlineCTypes(ed);
             }
+        }
+
+        /// <summary>The types an `inline c` function can take and give (ROADMAP 13.2): `int` (FireInt; `int[8|16|32|64]` the C type of that width), `float` (Real),
+        /// `bool`, `char` (uint32_t), `string` (UTF-8, `const char*`), `byte name[]` (the bytes: `uint8_t* name` and `uint32_t name_length`), `any` (the Value),
+        /// pointers (`void*`); a result also `undefined` (none).</summary>
+        private void CheckInlineCTypes(ExternDecl ed)
+        {
+            foreach (var p in ed.Params)
+            {
+                if (p.ByRef) { AddError(new ResolverException($"The parameter '{p.Name}' of the inline C function '{ed.Name}' cannot be 'ref' (take a pointer)", ed.Line)); continue; }
+                if (p.Type == null) { AddError(new ResolverException($"The parameter '{p.Name}' of the inline C function '{ed.Name}' needs a type (int, float, bool, char, string, byte[], any or a pointer)", ed.Line)); continue; }
+                int rank = p.ArrayRanks.Count + p.Type.ArrayRank;
+                bool bytes = p.Type is { BaseName: "int", BitWidth: 8, PointerDepth: 0 } && rank == 1;   // (`byte` is `int[8]`)
+                bool scalar = rank == 0 && (p.Type.PointerDepth > 0 || p.Type.BaseName is "int" or "float" or "bool" or "char" or "string" or "any");
+                if (!bytes && !scalar)
+                    AddError(new ResolverException($"The parameter '{p.Name}' of the inline C function '{ed.Name}' has a type C cannot take (int, float, bool, char, string, byte[], any or a pointer)", ed.Line));
+            }
+            if (ed.ReturnType is { } r && !(r.ArrayRank == 0 && (r.PointerDepth > 0 || r.BaseName is "int" or "float" or "bool" or "char" or "string" or "any" or "undefined")))
+                AddError(new ResolverException($"The inline C function '{ed.Name}' has a result type C cannot give (int, float, bool, char, string, any, a pointer or undefined)", ed.Line));
         }
 
         /// <summary>Collects all `enum` declarations beforehand (allows forward
@@ -741,7 +761,7 @@ namespace fire.Compiler
             return false;
         }
 
-        private static readonly HashSet<string> ValueTypeNames = new() { "int", "float", "string", "bool", "char", "byte" };
+        private static readonly HashSet<string> ValueTypeNames = new() { "int", "float", "string", "bool", "char", "byte", "word" };
 
         /// <summary>The type of an implementing property against the one of the interface: only what is surely different is a conflict - two different value
         /// types (`string` for an `int`), or two units of a different text (`int : s` for `int : ms`; a unit against none). Class types, `any`, type
@@ -1073,7 +1093,19 @@ namespace fire.Compiler
                 throw new ResolverException($"'{plain}' is not generic, so it does not accept type arguments in angle brackets", line);
             if (parameters != typeArgs.Count)
                 throw new ResolverException($"'{plain}' is generic with {parameters} type parameter(s), not {typeArgs.Count}", line);
-            foreach (var arg in typeArgs) ValidateTypeRef(arg, line);
+            foreach (var arg in typeArgs)
+            {
+                if (arg.NonNull) throw new ResolverException($"'defined {arg.BaseName}' cannot be a type argument - 'defined' belongs to variables, parameters, fields, properties and return types", line);
+                ValidateTypeRef(arg, line);
+            }
+        }
+
+        /// <summary>`defined int` (SPEC 8.10b) is a single value - not an array.</summary>
+        private static void ValidateNonNull(TypeRef? type, int arrayRanks, int line)
+        {
+            if (type is not { NonNull: true }) return;
+            if (arrayRanks > 0 || type.ArrayRank > 0)
+                throw new ResolverException($"'defined {type.BaseName}' is a single value that is never undefined - not an array", line);
         }
 
         /// <summary>Validates a complete TypeRef: base name like
@@ -1343,6 +1375,7 @@ namespace fire.Compiler
                 case VarDeclStmt vd:
                     if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
+                    ValidateNonNull(vd.Type, vd.ArrayRanks.Count, vd.Line);
                     ResolveArrayRanks(vd.ArrayRanks);
                     if (vd.Initializer == null && vd.ArrayRanks.Count == 0 && (vd.Type == null || vd.Type.IsInferred))
                         throw new ResolverException($"'var {vd.Name}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {vd.Name}')", vd.Line);
@@ -1663,6 +1696,7 @@ namespace fire.Compiler
                             else if (fd.Type == null || fd.Type.IsInferred)
                                 AddError(new ResolverException($"Field '{fd.Name}' of class '{cd.Name}' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed)", fd.Line));
                             else Guard(() => ValidateTypeRef(fd.Type, fd.Line));
+                            Guard(() => ValidateNonNull(fd.Type, fd.ArrayRanks.Count, fd.Line));
                             ResolveArrayRanks(fd.ArrayRanks);
                             ResolveFieldInitializer(fd);
                             break;
@@ -1687,7 +1721,10 @@ namespace fire.Compiler
                             try
                             {
                                 if (md.ReturnType != null)
+                                {
                                     Guard(() => ValidateTypeRef(md.ReturnType, md.Line));
+                                    Guard(() => ValidateNonNull(md.ReturnType, 0, md.Line));
+                                }
                                 var methodTypes = SignatureKeys(md.Params, classTypeParamNames.Concat(methodTypeParamNames).ToList());
                                 if (seenMethodSignatures.Any(m => m.Name == md.Name && SameSignature(m.Types, methodTypes)))
                                     AddError(new ResolverException(
@@ -1705,7 +1742,11 @@ namespace fire.Compiler
                         case PropertyDecl pd:
                             if (pd.Type == null || pd.Type.IsInferred)
                                 AddError(new ResolverException($"Property '{pd.Name}' of class '{cd.Name}' needs a type (use the type it holds, or 'any' if every type is allowed)", pd.Line));
-                            else Guard(() => ValidateTypeRef(pd.Type, pd.Line));
+                            else
+                            {
+                                Guard(() => ValidateTypeRef(pd.Type, pd.Line));
+                                Guard(() => ValidateNonNull(pd.Type, 0, pd.Line));
+                            }
                             // Getter: like a parameterless method. Setter: like
                             // a method with exactly one parameter 'value' of the
                             // property type (implicit, like C#'s setter parameter) -
@@ -1793,6 +1834,7 @@ namespace fire.Compiler
             foreach (var p in parms)
             {
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
+                Guard(() => ValidateNonNull(p.Type, p.ArrayRanks.Count, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
                 Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.UnitDemand, isRef: p.ByRef, width: p.ArrayRanks.Count == 0 ? p.Type?.WidthCode ?? 0 : 0));
                 if (KnownClassOf(p.Type, null, p.ArrayRanks.Count > 0) is { } parameterClass) _current.KnownClasses[p.Name] = parameterClass;
@@ -1847,7 +1889,7 @@ namespace fire.Compiler
         private readonly HashSet<Expr> _takeAllowed = new();
         private void ResolveExprAllowTake(Expr expr)
         {
-            if (expr is UnaryExpr { Op: UnaryOp.Take }) _takeAllowed.Add(expr);
+            if (expr is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake }) _takeAllowed.Add(expr);
             ResolveExpr(expr);
         }
 
@@ -1893,9 +1935,9 @@ namespace fire.Compiler
                     break;
 
                 case UnaryExpr u:
-                    if (u.Op == UnaryOp.Take && !_takeAllowed.Remove(u))
+                    if (u.Op is UnaryOp.Take or UnaryOp.TryTake && !_takeAllowed.Remove(u))
                         throw new ResolverException(
-                            "'take' is only valid as an argument of a call or on the right of '=' / 'var x =' (SPEC 2.2)", u.Line);
+                            $"'{(u.Op == UnaryOp.TryTake ? "try take" : "take")}' is only valid as an argument of a call or on the right of '=' / 'var x =' (SPEC 2.2)", u.Line);
                     if ((u.Op == UnaryOp.Dereference || u.Op == UnaryOp.AddressOf) && _unsafeDepth == 0)
                         throw new ResolverException(
                             $"'{(u.Op == UnaryOp.Dereference ? "*" : "&")}' is only valid inside an 'unsafe' block", u.Line);
@@ -2036,7 +2078,7 @@ namespace fire.Compiler
 
                 case AssignExpr asg:
                     ResolveExprAllowTake(asg.Value);
-                    if (asg.Value is UnaryExpr { Op: UnaryOp.Take } && asg.Target is UnaryExpr { Op: UnaryOp.Dereference })
+                    if (asg.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } && asg.Target is UnaryExpr { Op: UnaryOp.Dereference })
                         throw new ResolverException("'take' needs a holder: a variable, a field or an array element (not a pointer)", asg.Line);
                     ResolveAssignTarget(asg.Target);
                     break;
@@ -2293,7 +2335,7 @@ namespace fire.Compiler
         /// READONLY shadows, at THE SAME slots as in the main program - see
         /// below), THEN all TakingCaptures (in list order), then
         /// with. This enables the read-only snapshot provided for in
-        /// docs/THREADING_DESIGN.md section 8: the fire thread gets at
+        /// docs/spec/THREADING_DESIGN.md section 8: the fire thread gets at
         /// its start an OWN, isolated copy of ALL main-program
         /// globals (see VM.OpCode.Fire) - visible for reading under the same
         /// name as in the main program, but NOT writable (an
@@ -2328,7 +2370,7 @@ namespace fire.Compiler
             if (!_noShadowGlobals)
                 foreach (var (name, slot) in _globalScope.Slots)
                 {
-                    // A fire thread may change globals (docs/THREADING_DESIGN.md section 7): single assignments run as a section that
+                    // A fire thread may change globals (docs/spec/THREADING_DESIGN.md section 7): single assignments run as a section that
                     // the main program grants at `sync globals` - therefore no write protection any more here.
                     _current.Slots[name] = slot;
                 }
@@ -2534,6 +2576,7 @@ namespace fire.Compiler
             foreach (var p in lambda.Params)
             {
                 if (p.Type != null) ValidateTypeRef(p.Type, lambda.Line);
+                ValidateNonNull(p.Type, p.ArrayRanks.Count, lambda.Line);
                 ResolveArrayRanks(p.ArrayRanks);
                 Define(p.Name, lambda.Line, requiredUnit: p.Type?.UnitDemand);
             }

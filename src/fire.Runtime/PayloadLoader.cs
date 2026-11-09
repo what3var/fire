@@ -16,7 +16,7 @@ namespace fire.Runtime
     /// - Managed DLLs (fire.dll, MemoryPack, the required bridges): <see cref="AssemblyLoadContext.Resolving"/>
     ///   is only raised when the default context does not find an assembly - that is, exactly when code
     ///   really needs it for the first time. A bridge that is not included is thus never touched.
-    /// - Native libraries (SDL3): Windows cannot load a DLL from memory, so on first
+    /// - Native libraries (e.g. libSystem.IO.Ports.Native): Windows cannot load a DLL from memory, so on first
     ///   access it is written once into a cache folder in the temp directory (subfolder = checksum, i.e. exactly once per version,
     ///   also across several program starts) and loaded from there.
     ///
@@ -91,7 +91,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>"SDL3" trifft "SDL3.dll", "libSystem.IO.Ports.Native" trifft "libSystem.IO.Ports.Native.so" - DllImport-Namen
+        /// <summary>"foo" trifft "foo.dll", "libSystem.IO.Ports.Native" trifft "libSystem.IO.Ports.Native.so" - DllImport-Namen
         /// come with or without an extension.</summary>
         private static bool NameMatches(string fileName, string requested)
         {

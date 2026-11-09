@@ -1,6 +1,6 @@
 using fire.Projects;
 
-/// <summary>Notes of projects and solutions (docs/NOTES.md): the folder `notes/`, todo lists - reading them and writing back only what changed.</summary>
+/// <summary>Notes of projects and solutions (docs/tools/notes.md): the folder `notes/`, todo lists - reading them and writing back only what changed.</summary>
 static class NotesTests
 {
     private static int _failures;

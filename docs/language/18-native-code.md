@@ -18,6 +18,7 @@ print(strlen("hello"))  // 5
 
 - On Windows the library is e.g. `"kernel32.dll"` or `"user32.dll"`, on Linux `"libc.so.6"`, on macOS `"libSystem.dylib"`.
 - Parameter and return types: `bool`, `int` (with widths: `int[32]`), `float`, `char`, `string` and pointers. A function without a return type returns `undefined`.
+  A `word` can be passed to an `int` parameter: its bits (as C sees an unsigned number).
 - The library is loaded at the first call; a function that cannot be found is an error at the call, not when compiling.
 - A host program that embeds fire can also provide `extern` functions itself (see the help page "Embedding").
 
@@ -46,7 +47,7 @@ print(add(40, 2))                                   // 42
 #### Freeing what a library returns: `release:`
 
 Many C functions return memory or a resource that the caller must give back with another function of the same library (`fopen`/`fclose`, `strdup`/`free`,
-`sqlite3_mprintf`/`sqlite3_free`, `SDL_GetClipboardText`/`SDL_free`). `Get(name, signature, release: "freeFunction")` names it - the library's own
+`sqlite3_mprintf`/`sqlite3_free`, `curl_easy_escape`/`curl_free`). `Get(name, signature, release: "freeFunction")` names it - the library's own
 function, looked up in the same library (a `void(void*)`; each Windows DLL may have its own C runtime, so it is never the program's `free`):
 
 ```fire
@@ -134,7 +135,7 @@ print(d.Name())                            // my driver
   for every object of the class once the plugin is loaded, also for the program (`any d = dev; d.Tag()`, `Reflect.Call`). Two plugins that add the same method
   to a class do not load together (a `LibraryException`).
 - Not yet: named arguments in calls of a native program on objects of a plugin;
-  in a native program `Reflect.Get`/`Set` of a plugin's own fields unless the plugin imports `reflection` itself; debugging a plugin.
+  in a native program `Reflect.Get`/`Set` of a plugin's own fields unless the plugin imports `reflection` itself.
 
 ### Functions that can fail: `try Name(...)`
 
@@ -145,6 +146,39 @@ throwing when they fail or time out:
 var value = try ReadSensor(500ms)
 if (value == undefined) { print("timeout") }
 ```
+
+## C in the program: `inline c`
+
+A function can have a body in C. The body goes to the C compiler unchanged - also `#if`/`#define` of C and assembler in the dialect of the compiler:
+
+```fire
+inline c int Add(int a, int b) { return a + b; }
+inline c int Sum(byte data[]) { FireInt s = 0; for (uint32_t i = 0; i < data_length; i++) s += data[i]; return s; }
+#if watcom
+inline c undefined Beep(int hz) { _asm { mov al, 0B6h
+                                        out 43h, al } }
+#endif
+
+#if native
+print(Add(40, 2))       // 42
+#else
+print(40 + 2)           // the virtual machine cannot run C
+#endif
+```
+
+- Only a **native build** runs the function. In the virtual machine a call is an error (a catchable exception); give it an alternative with
+  `#if native ... #else ... #endif`.
+- The C types of parameters and result: `int` is a `FireInt` (`int[8|16|32|64]` the C type of that width), `float` a `Real` (`float[32|64]`: `float`/`double`),
+  `bool` a `bool`, `char` a `uint32_t`, `string` UTF-8 (`const char*`; a returned text is copied), `any` the `Value` itself (`fire_rt.h`), a pointer a `void*`.
+  `byte name[]` gives the bytes of the buffer, `uint8_t* name`, and their number as a second parameter `uint32_t name_length`. A result `undefined` (or none)
+  is `void`. Other types are an error when compiling; `ref` parameters are not possible (take a pointer).
+- In a class, `inline c` declares a **static method** (`[public|private] [static] inline c int Add(...) { ... }`; C has no `this`). It is called like
+  any static method (`M.Add(1, 2)`); the virtual machine gets its alternative as a normal method in `#if native ... #else ... #endif`.
+- In C a function is called `fire_inl_<Name>`, a method `fire_inl_<Class>_<Name>` (one inline function can call another: `fire_inl_Add(a, 1)`). The runtime (`fire_rt.h`) and the C library
+  are included.
+- `#if gcc`, `#if clang`, `#if msvc`, `#if tcc`, `#if watcom`, ...: a native build knows the kind of its toolchain as a symbol, so a program can choose the
+  C (or the assembler) for its compiler. A message of the C compiler names the line in the fire source.
+- `inline` is no keyword: only `inline c` at the start of a declaration starts such a function.
 
 ## Pointers: `unsafe`
 

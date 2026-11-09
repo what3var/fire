@@ -8,7 +8,7 @@ namespace fire.Package.Manager
     {
         public const string ManifestEntry = "package.json";
         public const string Extension = ".fpk";
-        /// <summary>The folder of a package with its templates (docs/TEMPLATES.md).</summary>
+        /// <summary>The folder of a package with its templates (docs/tools/templates.md).</summary>
         public const string TemplatesEntry = "templates";
 
         /// <summary>The result of <see cref="Forge"/>.</summary>
@@ -43,6 +43,7 @@ namespace fire.Package.Manager
                     import.Native.Sources = import.Native.Sources.Map(Absolute);
                     import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Map(Absolute));
                     import.Native.Libraries = import.Native.Libraries.ToDictionary(kv => kv.Key, kv => Absolute(kv.Value));
+                    import.Native.Headers = import.Native.Headers.Select(Absolute).ToList();
                 }
             }
 
@@ -93,6 +94,7 @@ namespace fire.Package.Manager
                     import.Native.Sources = import.Native.Sources.Map(s => Place(import.Name, s));
                     import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Map(s => Place(import.Name, s)));
                     import.Native.Libraries = import.Native.Libraries.ToDictionary(kv => kv.Key, kv => Place(import.Name, kv.Value));
+                    import.Native.Headers = import.Native.Headers.Select(h => Place(import.Name, h)).ToList();
                 }
             }
 

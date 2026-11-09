@@ -5,7 +5,7 @@
 //   [[noreturn]] void exitProcess(int) ends the program (the streams are flushed already)
 //   int64_t unixMicros()               the wall clock: microseconds since 1970-01-01 UTC (the time bridge)
 //   void sleepMs(int64_t)              the calling thread sleeps (only without fire threads; with them the runtime waits on a CondVar)
-// and with FIRE_THREADS (fire threads, see docs/NATIVE_BACKEND.md):
+// and with FIRE_THREADS (fire threads, see docs/spec/NATIVE_BACKEND.md):
 //   class Mutex      lock(), unlock()                      (not recursive)
 //   class CondVar    wait(Mutex&), bool waitFor(Mutex&, ms) (false: timed out), notifyAll()   - always called with the mutex held
 //   Thread*          threadStart(fn, arg, stackBytes) / threadJoin(Thread*)   (stackBytes 0: the default)

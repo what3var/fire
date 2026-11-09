@@ -1,0 +1,6 @@
+{
+  "title": "Scene3D Terrain",
+  "description": "A landscape from a grid of heights (scene3d.terrain): smooth hills or the same heights as blocks (M), a ball that rolls over the ground (HeightAt), fog at the horizon.",
+  "open": [ "main.fire" ],
+  "order": 63
+}

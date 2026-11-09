@@ -112,12 +112,12 @@ namespace fire.Standard
                 /// A fire plugin (`forge build --linkage plugin`, its `.fireplugin` file or the library next to it): its classes become part of the program
                 /// (Reflect.New, Type.Named, `is of`, catch) - a LibraryException when it does not fit the program.
                 static Library Load(string path) {
-                    var handle = {{NativeName}}({{(int)LibraryMethod.Load}}, path)
+                    any handle = {{NativeName}}({{(int)LibraryMethod.Load}}, path)
                     if (handle is of string) { throw new LibraryException(handle) }
                     if (handle == 0) { throw new LibraryException("The library '" + path + "' could not be loaded.") }
                     if (handle == -1) { throw new LibraryException("The library '" + path + "' is a fire plugin: this program cannot load fire plugins - build it with linkage \"shared\".") }
                     var lib = new Library(handle, path)
-                    var plugin = {{NativeName}}({{(int)LibraryMethod.Plugin}}, handle, path)
+                    any plugin = {{NativeName}}({{(int)LibraryMethod.Plugin}}, handle, path)
                     if (plugin is of string) { throw new LibraryException(plugin) }
                     if (plugin is of int) { throw new LibraryException("The library '" + path + "' is a fire plugin: this program cannot load fire plugins - build it with linkage \"shared\".") }
                     lib.classes = plugin
@@ -141,13 +141,13 @@ namespace fire.Standard
                 /// `release: "free"`: the library's own function (`void(void*)`) that frees what this one returns - a returned pointer becomes a NativeHandle
                 /// (`delete` or the end of its owner frees it, once; NULL is undefined), a returned string is copied and freed at once.
                 any Get(string name, string signature, string release = "") {
-                    var n = {{NativeName}}({{(int)LibraryMethod.Arity}}, signature)
+                    any n = {{NativeName}}({{(int)LibraryMethod.Arity}}, signature)
                     if (n == -1) { throw new LibraryException("The signature '" + signature + "' is not valid: write the result type and the parameter types in C order, like \"int[32](string, float)\" (bool, int, int[8|16|32|64], float, float[32], char, string, pointers with *, void).") }
                     if (n == -2) { throw new LibraryException("The signature '" + signature + "' is not known to this native build: pass it to Get as a text constant.") }
                     if (n > {{MaxParams}}) { throw new LibraryException("The signature '" + signature + "' has more than {{MaxParams}} parameters.") }
-                    var fn = {{NativeName}}({{(int)LibraryMethod.Symbol}}, this.handle, name)
+                    any fn = {{NativeName}}({{(int)LibraryMethod.Symbol}}, this.handle, name)
                     if (fn == 0) { throw new LibraryException("The library '" + this.path + "' has no function '" + name + "'.") }
-                    var shape = {{NativeName}}({{(int)LibraryMethod.Shape}}, signature)
+                    any shape = {{NativeName}}({{(int)LibraryMethod.Shape}}, signature)
                     var rel = 0
                     if (release != "" && release != undefined) {
                         if ((shape & 3) == 0) { throw new LibraryException("release: frees what a function returns - the signature '" + signature + "' returns no pointer and no string.") }

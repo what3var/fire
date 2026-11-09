@@ -352,7 +352,7 @@ class I2cDriver : Driver {
 
     /// <summary>A bus by its name, or a device `bus/0x48` (also `bus/72`).</summary>
     override Device Find(string name) {
-        var slash = name.IndexOf("/")
+        any slash = name.IndexOf("/")
         if (slash < 0) {
             foreach (d in this.devices) {
                 if (d.Name == name) { return d }
@@ -361,7 +361,7 @@ class I2cDriver : Driver {
         }
         var bus = this.Find(name.Substring(0, slash))
         if (bus == undefined || !(bus is of I2c.BusDevice)) { return undefined }
-        var text = name.Substring(slash + 1)
+        any text = name.Substring(slash + 1)
         var address = 0
         var start = 0
         var radix = 10
@@ -371,7 +371,7 @@ class I2cDriver : Driver {
         }
         if (start >= text.Length) { return undefined }
         for (int i = start; i < text.Length; i++) {
-            var digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
+            any digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
             if (digit < 0 || digit >= radix) { return undefined }
             address = address * radix + digit
         }

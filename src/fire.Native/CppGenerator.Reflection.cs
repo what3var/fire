@@ -9,7 +9,7 @@ namespace fire.Native
 {
     /// <summary>
     /// Reflection (`#import "reflection"`, SPEC 8.13) and `probe`/`silence` (SPEC 8.14) in the native backend. What a program can reach by name depends on the
-    /// `__refl_*` functions it calls and on the stripping level (docs/NATIVE_BACKEND.md "Größe des Programms"): the members of an object by name (Get/Set/Has, probes)
+    /// `__refl_*` functions it calls and on the stripping level (docs/spec/NATIVE_BACKEND.md "Größe des Programms"): the members of an object by name (Get/Set/Has, probes)
     /// need the fields and property accessors of the classes whose objects exist, Reflect.Call their methods that are there (at level 0 and, the public ones, at 1:
     /// all), Reflect.New the constructors of the classes in the tables. The tables describe every class at the levels 0-2, at level 3 the classes the program reaches
     /// (made, used, their bases, `[Keep]`, named as a literal to reflection); a method that is left out is not in them, but its name is: a lookup of it (or of a class
@@ -35,7 +35,7 @@ namespace fire.Native
         private readonly HashSet<Chunk> _literalChunks = new(ReferenceEqualityComparer.Instance);
 
         /// <summary>A function calls reflection (a static method of Reflect/Type/..., a method of a Type/Member/...): the texts it has as literals that name a class or a
-        /// member are kept (docs/NATIVE_BACKEND.md, stripping) - `Reflect.New("Dog")`, `Reflect.Call(o, "Bark")`, also `var n = "Bark"` before the call. Any text of
+        /// member are kept (docs/spec/NATIVE_BACKEND.md, stripping) - `Reflect.New("Dog")`, `Reflect.Call(o, "Bark")`, also `var n = "Bark"` before the call. Any text of
         /// the function counts, not only the arguments of the call: what it keeps more is little, and a name that reflection looks up is not missing because of it.</summary>
         private void NoteReflectionLiterals(Func f)
         {
@@ -409,7 +409,7 @@ namespace fire.Native
                     string guard = CheckAccess && access != AccessModifier.Public
                         ? $"if (!{AllowedExpr(rc, access)}) return {(LibraryRole ? "rfFail" : "accessDeniedNew")}({CStr($"The constructor of '{rc.Name}' is {DescribeAccess(access)} and cannot be called from here.")}); "
                         : "";
-                    byArgc.Add($"            case {argc}: {{ {guard}Value o = newObject({ClassIdExpr(info)}, {info.Fields.Count}, list); {pre}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); return o; }}");
+                    byArgc.Add($"            case {argc}: {{ {guard}Value o = {NewObjectCall(info, "list")}; {pre}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); ctorEnd(o); return o; }}");
                 }
             }
             return byArgc;
@@ -484,7 +484,7 @@ namespace fire.Native
     for (uint32_t i = 0; i < kRfStrippedCount; i++) if (strIs(name, kRfStrippedClasses[i])) return true;
     return false;
 }
-/* a class that stripping left out (docs/NATIVE_BACKEND.md): the error says so and what keeps it */
+/* a class that stripping left out (docs/spec/NATIVE_BACKEND.md): the error says so and what keeps it */
 FIRE_MAYBE_UNUSED static Value rf_strippedClass(Value name) {
     char n[200], t[700]; strToUtf8(name, n, sizeof n);
     snprintf(t, sizeof t, ""Class '%s' was left out of the build (stripping %d). Add [Keep] to '%s' or use stripping <= 2."", n, kRfStripping, n);
@@ -591,7 +591,8 @@ FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
         if (!rf_visible(c, l, i)) continue;
         const RfMember m = l->members[i];
         Arr* d = allocArr(13, list);
-        const char* texts[] = {m.name, m.kind, m.type, m.access};
+        const char* texts[4];
+        texts[0] = m.name; texts[1] = m.kind; texts[2] = m.type; texts[3] = m.access;
         for (int k = 0; k < 4; k++) { Value s = strFromUtf8(texts[k], list); arrItems(d)[k] = s; retain(s); }
         arrItems(d)[4] = Bool((m.flags & 1) != 0); arrItems(d)[5] = Bool((m.flags & 2) != 0);
         arrItems(d)[6] = Bool((m.flags & 4) != 0); arrItems(d)[7] = Bool((m.flags & 8) != 0);
@@ -784,7 +785,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             var arms = new List<(int, string)>();
             foreach (var cls in _classList)
             {
-                if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) arms.Add((cls.Id, $"return objFields(o)[{index}];"));
+                if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) arms.Add((cls.Id, $"return {FieldRead(cls.Rc, index, "o")};"));
                 else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) arms.Add((cls.Id, $"{{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}"));
             }
             sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{MergedCases(arms)}        default: return Undef();\n    }}\n}}");
@@ -862,7 +863,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
         const char* const* deps = rf_computed(asObj(target)->cls, member, &getter);
         if (deps) {
             if (changing) { snprintf(err, cap, ""'%s' of '%s' is a computed property (a getter without a setter): it can only be probed with 'changed'."", member, cname); return -1; }
-            OwnList current = {NULL, NULL, poolMark(), 0, NULL, NULL};
+            OwnList current = scopeList(poolMark());
             Value now = getter(target, &current);
             if (FIRE_UNLIKELY(g_unwind.active)) { leave(&current); return -2; }   // the getter threw: its exception is already unwinding, no probe
             int64_t id = probeAddEntryFull(asObj(target), member, changing, handler, deps, getter, now);

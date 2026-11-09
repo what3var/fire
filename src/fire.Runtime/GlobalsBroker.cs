@@ -7,7 +7,7 @@ namespace fire.Runtime
 {
     /// <summary>
     /// The mediation between the main program (which owns the global variables) and its `fire` threads
-    /// (docs/THREADING_DESIGN.md section 7):
+    /// (docs/spec/THREADING_DESIGN.md section 7):
     ///
     /// - Fire threads READ globals directly (no snapshot), protected by a shared lock (<see cref="Lock"/>, the same for
     ///   the values of the globals and for all objects that belong to the global scope).

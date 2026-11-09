@@ -6,7 +6,7 @@ namespace fire.Terminal
     /// A raw, directly accessible pixel buffer (R,G,B,A per pixel, see
     /// PixelColor - row by row) - the central object of this library: the renderer (terminal
     /// emulation AND raw graphics operations) ALWAYS writes here, never
-    /// directly into a window; an IFramebufferRenderer (e.g. SDL) only reads the
+    /// directly into a window; an IFramebufferRenderer (e.g. the host's) only reads the
     /// finished content out in order to display it. This keeps the
     /// buffer itself completely independent of the rendering backend AND
     /// directly addressable from code (Pixels array), e.g. to

@@ -1,7 +1,7 @@
 #import "ui"
 #import "filesystem"
 
-// Dialogs (docs/DIALOGS.md): open, save and folder dialogs and message boxes, like the common dialogs of Windows - built with the user interface library, so they look
+// Dialogs (docs/ui/dialogs.md): open, save and folder dialogs and message boxes, like the common dialogs of Windows - built with the user interface library, so they look
 // and work the same on every system that has windows (also in a native program). A dialog is modal for the code that opens it: ShowDialog() returns when the user is
 // done. The quick way:
 //
@@ -74,7 +74,7 @@ namespace Dialogs {
     // A message with buttons: MessageBox.Show("Text", "Caption", Dialogs.MessageBoxButtons.YesNo) gives the DialogResult of the button (Escape: Cancel, No or OK).
     class MessageBox {
         static Dialogs.DialogResult Show(string text, string caption = "", Dialogs.MessageBoxButtons buttons = Dialogs.MessageBoxButtons.OK) {
-            var lines = text.Replace("\r", "").Split("\n")
+            any lines = text.Replace("\r", "").Split("\n")
             var longest = 0
             for (var i = 0; i < lines.length; i++) { if (lines[i].length > longest) { longest = lines[i].length } }
             var width = UI.M.Clamp(longest * 8 + 64, 340, 960)
@@ -98,7 +98,7 @@ namespace Dialogs {
                 row.Add(new Dialogs.DialogButton("No", dialog, Dialogs.DialogResult.No))
                 row.Add(new Dialogs.DialogButton("Cancel", dialog, Dialogs.DialogResult.Cancel))
             }
-            var first = row.children[0]
+            any first = row.children[0]
             dialog.body.AddDocked(row, UI.Dock.Bottom)
 
             var message = new UI.StackPanel(0, 0, -1, -1, false, 2, 16)
@@ -129,8 +129,8 @@ namespace Dialogs {
     // Patterns like "*.txt" (`*` any text, `?` one character), without case.
     class Glob {
         static bool Match(string pattern, string name) {
-            var p = pattern.Trim().ToLower()
-            var n = name.ToLower()
+            any p = pattern.Trim().ToLower()
+            any n = name.ToLower()
             if (p == "" || p == "*" || p == "*.*") { return true }
             var pi = 0
             var ni = 0
@@ -307,7 +307,7 @@ namespace Dialogs {
             this.filterNames = new List()
             this.filterPatterns = new List()
             if (this.Filter != "") {
-                var parts = this.Filter.Split("|")
+                any parts = this.Filter.Split("|")
                 for (var i = 0; i + 1 < parts.length; i = i + 2) {
                     this.filterNames.Add(parts[i])
                     this.filterPatterns.Add(parts[i + 1])
@@ -368,7 +368,7 @@ namespace Dialogs {
                     }
                 }
                 if (!this.foldersOnly) {
-                    var patterns = this.filterPatterns[this.filterAt]
+                    any patterns = this.filterPatterns[this.filterAt]
                     foreach (file in IO.Directory.GetFiles(full)) {
                         var name = IO.Path.GetFileName(file)
                         if ((this.ShowHiddenFiles || !name.StartsWith(".")) && Dialogs.Glob.MatchAny(patterns, name)) {
@@ -405,14 +405,14 @@ namespace Dialogs {
 
         // A row was selected: a file's name goes into the name box (a folder's too in the folder dialog).
         undefined Selected() {
-            var entry = this.list.selectedItem
+            any entry = this.list.selectedItem
             if (entry == undefined) { return }
             if (!entry.folder || this.foldersOnly) { this.nameBox.SetText(IO.Path.GetFileName(entry.path)) }
         }
 
         // Double click or Enter on a row: a folder opens, a file is chosen.
         undefined Activated() {
-            var entry = this.list.selectedItem
+            any entry = this.list.selectedItem
             if (entry == undefined) { return }
             if (entry.folder) {
                 this.Navigate(entry.path)
@@ -424,12 +424,12 @@ namespace Dialogs {
 
         // The name box: a folder opens, a pattern ("*.log") filters, anything else is the file.
         undefined AcceptName() {
-            var text = this.nameBox.Text.Trim()
+            any text = this.nameBox.Text.Trim()
             if (text == "") {
                 if (this.foldersOnly) { this.Choose(this.current) }
                 return
             }
-            var path = IO.Path.IsPathRooted(text) ? text : IO.Path.Combine(this.current, text)
+            any path = IO.Path.IsPathRooted(text) ? text : IO.Path.Combine(this.current, text)
             if (text.Contains("*") || text.Contains("?")) {
                 this.filterNames.Add(text)
                 this.filterPatterns.Add(text)
@@ -455,7 +455,7 @@ namespace Dialogs {
             if (this.foldersOnly || IO.Path.HasExtension(path)) { return path }
             var ext = this.DefaultExt
             if (ext == "") {
-                var patterns = this.filterPatterns[this.filterAt]
+                any patterns = this.filterPatterns[this.filterAt]
                 if (!patterns.Contains(";") && patterns.StartsWith("*.") && patterns.IndexOf("*", 2) < 0 && patterns != "*.*") { ext = patterns.Substring(1) }
             }
             if (ext == "") { return path }
@@ -581,7 +581,7 @@ namespace Dialogs {
         override Dialogs.DialogResult ShowDialog() {
             if (this.Title == "" && this.Description != "") { this.Title = this.Description }
             if (this.InitialDirectory == "" && this.SelectedPath != "") { this.InitialDirectory = this.SelectedPath }
-            var result = base.ShowDialog()
+            any result = base.ShowDialog()
             if (result == Dialogs.DialogResult.OK) { this.SelectedPath = this.FileName }
             return result
         }

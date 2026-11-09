@@ -1,10 +1,10 @@
-/* fire native bridge "wifi" (C): the natives behind `#import "wifi"` (docs/NETWORK.md, "WiFi"): scan for networks, join one as a station, be an access point. The
+/* fire native bridge "wifi" (C): the natives behind `#import "wifi"` (docs/networking/README.md, "WiFi"): scan for networks, join one as a station, be an access point. The
  * fire side (WiFi.Station, WiFi.AccessPoint, WiFi.Board, WiFi.Sim - fire source) is the same in the VM and in a native build; this file is what its `__WiFi...`
  * functions do.
  *
  * This file is the one implementation of the wifi natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual
- * machine runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The radio comes from the platform layer (FIRE_PLATFORM_WIFI_C_HEADER:
- * fire_wifi_*, see platform/std/fire_wifi_c.h): the WiFi driver of ESP-IDF on an ESP32. Everywhere else the operating system owns the network and the list of
+ * machine runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The radio comes with the package (
+ * fire_wifi_*; one file per platform, platformSources of wifi.fireproj, see fire_wifi_c.h): the WiFi driver of ESP-IDF on an ESP32. Everywhere else the operating system owns the network and the list of
  * interfaces is empty - but one interface is always there:
  *
  *   "sim"   a simulated radio with the networks that the program (or a test) puts in the air: `SimAddNetwork`. A scan finds them, a join succeeds with the right
@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_WIFI_C_HEADER
+#include "fire_wifi_c.h"
 
 enum { FIRE_WIFIB_IDLE = 0, FIRE_WIFIB_CONNECTING = 1, FIRE_WIFIB_CONNECTED = 2, FIRE_WIFIB_FAILED = 3 };
 

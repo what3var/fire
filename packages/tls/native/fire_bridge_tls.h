@@ -1,11 +1,11 @@
-/* fire native bridge "tls" (C): the natives behind `#import "tls"` (docs/NETWORK.md) - TLS on top of a TCP socket of the net package: a client handshake
+/* fire native bridge "tls" (C): the natives behind `#import "tls"` (docs/networking/README.md) - TLS on top of a TCP socket of the net package: a client handshake
  * (certificate and host name verified), a server with a certificate, reading and writing the encrypted stream. The fire side (Net.TlsStream, Net.TlsServer, ...
  * - fire source) is the same in the VM and in a native build.
  *
  * This file is the one implementation of the tls natives, in C99 ("language": "c"). A TLS session is an integer handle in a table of this bridge; the socket is
  * the operating system's (the number that `__NetNativeHandle` of the net package gives): the session only reads and writes it, the net package keeps owning it
  * (and closes it). The library for the VM is a different library from the one of the net package, so the two share nothing but that number. The TLS
- * implementation comes from the platform layer (FIRE_PLATFORM_TLS_C_HEADER: fire_tls_*, OpenSSL, SChannel or mbedTLS, see platform/std/fire_tls_c.h).
+ * implementation comes with the package (fire_tls_*; one file per platform, platformSources of tls.fireproj, OpenSSL, SChannel or mbedTLS, see fire_tls_c.h).
  * Errors are reported like those of the net bridge: -1/false/undefined and the code and message of this thread (`__TlsLastError`, `__TlsLastErrorMessage`, the
  * slot of the io bridge, read right after the call); the codes are those of net, plus 14 (a TLS error: handshake failed, protocol error) and 15 (the
  * certificate was not accepted). */
@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_TLS_C_HEADER
+#include "fire_tls_c.h"
 
 static int64_t fire_tlsb_fail(int code, const char* message) {
     g_ioError.code = code;
@@ -88,8 +88,7 @@ static FireTlsSession* fire_tlsb_session(Value h) {
     if (s == NULL) fire_tlsb_fail(FIRE_NET_E_INVALID_HANDLE, "Invalid or already closed TLS session.");
     return s;
 }
-static int fire_tlsb_checkRange(Value bufferValue, int64_t offset, int64_t count) {
-    int64_t length = bufOf(bufferValue)->length;
+static int fire_tlsb_checkRange(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         char text[176];
         snprintf(text, sizeof text, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
@@ -203,11 +202,12 @@ static Value fire_tls_Read(Value h, Value buffer, Value offset, Value count, Val
     FireTlsSession* s;
     FireNetStatus st;
     int got = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_tlsb_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    Buf* b = bufferArg(buffer, "Net.Stream.Read");
+    if (b == NULL) return Undef();
+    if (!fire_tlsb_checkRange(b->length, offset.i, count.i)) return Int(-1);
     s = fire_tlsb_session(h);
     if (s == NULL) return Int(-1);
-    if (!fire_tls_readSome(s, bufOf(buffer)->data + offset.i, (int)count.i, timeoutMs.i, &got, &st)) return Int(fire_tlsb_failStatus(&st));
+    if (!fire_tls_readSome(s, b->data + offset.i, (int)count.i, timeoutMs.i, &got, &st)) return Int(fire_tlsb_failStatus(&st));
     fire_tlsb_ok();
     return Int(got);
 }
@@ -217,11 +217,12 @@ static Value fire_tls_Write(Value h, Value buffer, Value offset, Value count, Va
     FireTlsSession* s;
     FireNetStatus st;
     int sent = 0;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_tlsb_checkRange(buffer, offset.i, count.i)) return Int(-1);
+    FireBytes b;
+    if (!bytesArg(buffer, "Net.Stream.Write", &b)) return Undef();
+    if (!fire_tlsb_checkRange(b.length, offset.i, count.i)) return Int(-1);
     s = fire_tlsb_session(h);
     if (s == NULL) return Int(-1);
-    if (!fire_tls_writeSome(s, bufOf(buffer)->data + offset.i, (int)count.i, timeoutMs.i, &sent, &st)) return Int(fire_tlsb_failStatus(&st));
+    if (!fire_tls_writeSome(s, b.data + offset.i, (int)count.i, timeoutMs.i, &sent, &st)) return Int(fire_tlsb_failStatus(&st));
     fire_tlsb_ok();
     return Int(sent);
 }

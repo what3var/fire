@@ -7,6 +7,8 @@ namespace fire.Values
     public static class ArrayElem
     {
         public const byte None = 0, I8 = 1, I16 = 2, I32 = 3, I64 = 4, F8 = 5, F16 = 6, F32 = 7, F64 = 8, Bool = 9, Char = 10, U8 = 11;
+        /// <summary>`word a[]` (SPEC 8.10): like `byte a[]` a declaration of a buffer - of machine words (the native runtime: E_WORD).</summary>
+        public const byte Word = 12;
 
         public enum Error : byte { None, Type, Unit, Overflow }
 
@@ -21,6 +23,7 @@ namespace fire.Values
                 "int" => type.BitWidth switch { null or 64 => I64, 32 => I32, 16 => I16, 8 => I8, _ => None },
                 "float" => type.BitWidth switch { null or 64 => F64, 32 => F32, 16 => F16, 8 => F8, _ => None },
                 "byte" => U8,
+                "word" => Word,
                 "bool" => Bool,
                 "char" => Char,
                 _ => None,
@@ -29,14 +32,14 @@ namespace fire.Values
 
         public static bool IsFloat(byte type) => type is F8 or F16 or F32 or F64;
 
-        public static int Bits(byte type) => type switch { I8 or F8 or U8 => 8, I16 or F16 => 16, I32 or F32 => 32, _ => 64 };
+        public static int Bits(byte type) => type switch { I8 or F8 or U8 => 8, I16 or F16 => 16, I32 or F32 => 32, Word => Value.WordBits, _ => 64 };
 
         /// <summary>The type as it is written (`int[8]`, `float`, `bool`) - for messages.</summary>
         public static string Name(byte type) => type switch
         {
             I8 => "int[8]", I16 => "int[16]", I32 => "int[32]", I64 => "int",
             F8 => "float[8]", F16 => "float[16]", F32 => "float[32]", F64 => "float",
-            Bool => "bool", Char => "char", U8 => "byte", _ => "any",
+            Bool => "bool", Char => "char", U8 => "byte", Word => "word", _ => "any",
         };
 
         /// <summary>The value as an element of an array of this type: cut to the width (an int), rounded (a float), an int becomes a float in a float array,
@@ -48,6 +51,8 @@ namespace fire.Values
             error = Error.None;
             message = null;
             if (type == None) return true;
+            // (the common case - an int of the program without a unit into `int a[]`: stored as it is)
+            if (type == I64 && unit == null && value.Kind == ValueKind.Int && value.Wide == 0 && value.Unit is null or { IsUnitless: true }) return true;
             switch (type)
             {
                 case Bool:
@@ -79,7 +84,8 @@ namespace fire.Values
                 return false;
             }
             if (value.Kind == ValueKind.Undefined) { stored = value; return true; }
-            stored = value.ConvertWidth(Bits(type), isFloat, type == U8);
+            // (an element of `int a[]` is an int of the program: no kept width - Value.Wide - for it)
+            stored = type == I64 ? (value.Wide != 0 ? Value.MakeInt(value.AsInt(), value.Unit) : value) : value.ConvertWidth(Bits(type), isFloat, type == U8);
             return true;
         }
 

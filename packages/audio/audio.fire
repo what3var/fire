@@ -217,7 +217,7 @@ namespace Audio {
             if (text != "" && text.Length > 0) {
                 var digits = true
                 for (var i = 0; i < text.Length; i++) {
-                    var c = text.CharAt(i).ToInt()
+                    any c = text.CharAt(i).ToInt()
                     if (c < 48 || c > 57) { digits = false }
                 }
                 if (digits) { text = "pwm:" + text }
@@ -325,7 +325,7 @@ namespace Audio {
                 if (q < 0) { Audio.Errors.Throw() }
                 if (q == 0) { return true }
                 if (timeoutMs >= 0 && waited >= timeoutMs) { return false }
-                var ms = q * 1000 / (this.rate * this.channels * 2) / 4
+                any ms = q * 1000 / (this.rate * this.channels * 2) / 4
                 if (ms < 2) { ms = 2 }
                 if (ms > 50) { ms = 50 }
                 Sleep(ms)

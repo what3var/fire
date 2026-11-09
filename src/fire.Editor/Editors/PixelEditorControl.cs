@@ -22,7 +22,7 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// A small pixel editor for the pictures of a project (docs/PROJECTS.md): a palette of 256 colours with the transparent colour at its start (the palette of fire; entry 0), or true colour;
+    /// A small pixel editor for the pictures of a project (docs/tools/projects.md): a palette of 256 colours with the transparent colour at its start (the palette of fire; entry 0), or true colour;
     /// pencil, eraser, line, rectangle, fill and colour picker; zoom and a grid of pixels. Left button draws with the first colour, right button with the second (transparent at the start).
     /// PNG and BMP are saved (an indexed picture stays indexed; BMP cannot say which colour is transparent). The logic is <see cref="PixelCanvas"/>.
     /// </summary>

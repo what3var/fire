@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The package manager of fire (docs/PACKAGES.md); its command line is the program ember (fire.Ember). A package (.fpk, a zip with a package.json in its root) brings one or more imports
+    The package manager of fire (docs/packages/README.md); its command line is the program ember (fire.Ember). A package (.fpk, a zip with a package.json in its root) brings one or more imports
     (`#import "name"`): a prelude in fire and/or natives as C++ source. Installed globally below <compiler folder>\Packages\.
     The compiler, the native build and the editor use this library to find the installed imports.
   -->

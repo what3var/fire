@@ -138,6 +138,7 @@ namespace fire.Runtime
         private static long LibraryInt(Value v) => v.Kind switch
         {
             ValueKind.Int => v.AsInt(),
+            ValueKind.Word => unchecked((long)v.AsWord()),
             ValueKind.Bool => v.AsBool() ? 1 : 0,
             ValueKind.Char => v.AsChar(),
             ValueKind.Float => (long)v.AsFloat(),
@@ -148,6 +149,7 @@ namespace fire.Runtime
         {
             ValueKind.Float => v.AsFloat(),
             ValueKind.Int => v.AsInt(),
+            ValueKind.Word => v.AsWord(),
             _ => throw new ScriptErrorException("ArgumentException", "A native function was called with an argument that is not a number."),
         };
     }

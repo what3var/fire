@@ -45,7 +45,7 @@ namespace UI {
         lambda<int, int> onResize
         // Sees every key first (key, modifier): when it returns true, the key is used up and no element gets it (a dialog takes Escape this way)
         lambda<int, int> onKeyPreview
-        // Drag & drop between the elements (docs/UI.md): the press a drag may start from, what is dragged, its source, the element under the pointer that
+        // Drag & drop between the elements (docs/ui/README.md): the press a drag may start from, what is dragged, its source, the element under the pointer that
         // takes it and what it would do
         Element dragFrom
         int dragX0 = 0
@@ -258,7 +258,7 @@ namespace UI {
             // If the user drags the window to another size, the framebuffer gets it (as long as it is valid) and the interface arranges itself anew - instead of its image being stretched.
             // `window.AutoResize = false` leaves it at stretching.
             window.AutoResize = true
-            // The finger guides the interface itself (tapping, dragging, swiping, see TouchDown): SDL should not additionally make mouse events out of it.
+            // The finger guides the interface itself (tapping, dragging, swiping, see TouchDown): the display should not additionally make mouse events out of it.
             window.TouchMouse = false
 
             // Every change of a field of an element (and of the theme) is reported by a probe (see SPEC 8.14): the elements call Touched as soon as they are arranged for the first time (Watch)
@@ -415,7 +415,7 @@ namespace UI {
         // Arranges the floating elements (a new or moved one is repainted).
         undefined LayoutPopups() {
             for (var i = 0; i < this.popups.Count; i = i + 1) {
-                var popup = this.popups[i]
+                any popup = this.popups[i]
                 popup.Measure(this, -1, -1)
                 // not beyond the edge
                 if (popup.Left + popup.dw > this.width) { popup.Left = UI.M.Max(0, this.width - popup.dw) }
@@ -447,7 +447,7 @@ namespace UI {
             } else { return }
             this.content.Draw(this, 0, 0)
             for (var i = 0; i < this.popups.Count; i = i + 1) {
-                var popup = this.popups[i]
+                any popup = this.popups[i]
                 this.PopupShadow(popup, popup.rx, popup.ry)
                 popup.Draw(this, popup.rx, popup.ry)
             }
@@ -604,7 +604,7 @@ namespace UI {
             this.clips.RemoveAt(last)
             if (last == 0) { this.renderer.ResetClip() }
             else {
-                var r = this.clips[last - 1]
+                any r = this.clips[last - 1]
                 this.renderer.SetClip(r.x, r.y, r.w, r.h)
             }
         }
@@ -660,7 +660,7 @@ namespace UI {
         UI.Element Hit(int px, int py) {
             var i = this.popups.Count - 1
             while (i >= 0) {
-                var hit = this.popups[i].HitTest(px, py)
+                any hit = this.popups[i].HitTest(px, py)
                 if (hit != undefined) { return hit }
                 i = i - 1
             }
@@ -673,7 +673,7 @@ namespace UI {
             var open = this.TickOne()
             var i = 0
             while (i < this.attached.Count) {
-                var other = this.attached[i]
+                any other = this.attached[i]
                 if (!other.TickOne()) {
                     this.attached.RemoveAt(i)
                     continue
@@ -792,7 +792,7 @@ namespace UI {
             int mx = 0
             int my = 0
             while (true) {
-                var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
+                any e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
                 if (e == undefined) { break }
                 if (e[0] == 9) {
                     moved = true
@@ -811,7 +811,7 @@ namespace UI {
 
         // Distributes an event of the window (structure see Window.NextEvent) to the element below it or the one with focus.
         undefined Dispatch(any e) {
-            var type = e[0]
+            any type = e[0]
             if (type == 8) { this.MouseDown(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
             else if (type == 11) { this.MouseUp(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
             else if (type == 9) { this.MouseMove(this.ToLogical(e[1]), this.ToLogical(e[2])) }
@@ -863,9 +863,10 @@ namespace UI {
                 var p = e.parent
                 if (p == undefined) { return }
                 if (p is of ScrollViewer) {
-                    p.ScrollIntoView(x, y, element.actualWidth, element.actualHeight)
-                    x = x - p.hbar.offset
-                    y = y - p.vbar.offset
+                    ScrollViewer sv = p!ScrollViewer
+                    sv.ScrollIntoView(x, y, element.actualWidth, element.actualHeight)
+                    x = x - sv.hbar.offset
+                    y = y - sv.vbar.offset
                 } else {
                     x = x + e.rx
                     y = y + e.ry
@@ -899,13 +900,13 @@ namespace UI {
             }
             var cx = current.ax + current.actualWidth / 2
             var cy = current.ay + current.actualHeight / 2
-            var best = undefined
+            any best = undefined
             var bestScore = -1
             for (var k = 0; k < list.Count; k = k + 1) {
-                var c = list[k]
+                any c = list[k]
                 if (c == current) { continue }
-                var dx = c.ax + c.actualWidth / 2 - cx
-                var dy = c.ay + c.actualHeight / 2 - cy
+                any dx = c.ax + c.actualWidth / 2 - cx
+                any dy = c.ay + c.actualHeight / 2 - cy
                 var gap = 0
                 var side = 0
                 if (key == UI.Keys.Right()) {
@@ -1192,7 +1193,7 @@ namespace UI {
                 var consumed = false
                 var i = this.popups.Count - 1
                 while (i >= 0 && i < this.popups.Count) {
-                    var popup = this.popups[i]
+                    any popup = this.popups[i]
                     if (popup.PopupOutside(this, px, py)) { consumed = true }
                     i = i - 1
                 }
@@ -1335,7 +1336,7 @@ namespace UI {
             else { this.dragEffect = target.DragOver(this, this.dragData, px, py) }
         }
 
-        // The pointer left the window during a drag (SDL keeps reporting the mouse while the button is held): when the data is something other programs can
+        // The pointer left the window during a drag (the display keeps reporting the mouse while the button is held): when the data is something other programs can
         // take (Text or Files) and may leave (AllowExternal), the drag goes on in the desktop (Window.StartDrag) - the target it was over is left, the program
         // waits until the user lets go, and the source hears in OnDragDone what the other program did (None, Copy or Move). False: the drag stays inside.
         // Where the desktop cannot take a drag (Window.CanStartDrag: Wayland, macOS, no desktop) it stays inside as well: the user can come back into the window.
@@ -1425,7 +1426,7 @@ namespace UI {
         string DragImageText(UI.DragData data) {
             if (data == undefined || !data.ShowImage) { return "" }
             if (data.HasText) {
-                var text = data.Text.Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
+                any text = data.Text.Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
                 if (text.Length > 30) { text = text.Substring(0, 29) + "..." }
                 return text
             }
@@ -1629,7 +1630,7 @@ namespace UI {
             }
             // a menu or a list that wants keys gets them first
             if (this.popups.Count > 0) {
-                var top = this.popups[this.popups.Count - 1]
+                any top = this.popups[this.popups.Count - 1]
                 if (top.grabsKeys) {
                     top.KeyDown(this, key, mod)
                     return

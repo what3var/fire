@@ -5,7 +5,7 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Binds the natives of packages (docs/PACKAGE_NATIVES.md) to the virtual machine: they are C++ built into a shared library with the C ABI of native/abi/fire_pkg_abi.h.
+    /// Binds the natives of packages (docs/packages/natives.md) to the virtual machine: they are C++ built into a shared library with the C ABI of native/abi/fire_pkg_abi.h.
     /// A native is registered as a function that loads its library on first use (by path, or - in a packed program - by name from the payload), copies the arguments into
     /// the plain data of the ABI, calls the entry point and copies the result back. Numbers, text, byte buffers and arrays of these cross; a lambda crosses as a handle the
     /// library calls back (PackageHost: call_lambda); objects and pointers do not.
@@ -18,7 +18,7 @@ namespace fire.Runtime
         [StructLayout(LayoutKind.Sequential)]
         private struct FireVal { public int Kind; public int Length; public long Bits; }
 
-        private const int KindUndefined = 0, KindBool = 1, KindInt = 2, KindFloat = 3, KindChar = 4, KindString = 5, KindArray = 6, KindBuffer = 7, KindLambda = 8;
+        private const int KindUndefined = 0, KindBool = 1, KindInt = 2, KindFloat = 3, KindChar = 4, KindString = 5, KindArray = 6, KindBuffer = 7, KindLambda = 8, KindWords = 9, KindWord = 10;
         internal static readonly int ValSize = Marshal.SizeOf<FireVal>();
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CallFn(int index, IntPtr args, int argc, IntPtr result, IntPtr error, int errorSize);
@@ -44,7 +44,7 @@ namespace fire.Runtime
         private static readonly object Lock = new();
         private static readonly Dictionary<string, (string File, Func<string, string?>? Locate)> Locations = new(StringComparer.Ordinal);
 
-        // For measuring natives outside the VM (docs/PACKAGE_NATIVES.md, "Tracing calls"): FIRE_PKG_TRACE names a file that gets a line per call of a native whose name
+        // For measuring natives outside the VM (docs/packages/natives.md, "Tracing calls"): FIRE_PKG_TRACE names a file that gets a line per call of a native whose name
         // starts with FIRE_PKG_TRACE_PREFIX (default: every native) - the name and the arguments - so that a small C++ program can replay them against the library.
         private static readonly string? TracePath = Environment.GetEnvironmentVariable("FIRE_PKG_TRACE");
         private static readonly string TracePrefix = Environment.GetEnvironmentVariable("FIRE_PKG_TRACE_PREFIX") ?? "";
@@ -171,11 +171,12 @@ namespace fire.Runtime
             var blocks = CallBlocks.For(args.Length);
             List<IntPtr>? allocs = null;
             List<GCHandle>? pins = null;
+            List<Action>? after = null;   // (what goes back into the program after the call: the words of a buffer of narrower words)
             IntPtr argBlock = blocks.Args, result = blocks.Result, error = blocks.Error;
             try
             {
                 Marshal.WriteByte(error, 0);
-                for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, ref allocs, ref pins, name);
+                for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, ref allocs, ref pins, ref after, name);
                 int rc = lib.Call(fn.Index, argBlock, args.Length, result, error, 512);
                 if (rc == 2)
                 {
@@ -191,6 +192,7 @@ namespace fire.Runtime
             }
             finally
             {
+                if (after != null) foreach (var back in after) back();
                 if (allocs != null) foreach (var p in allocs) Marshal.FreeHGlobal(p);
                 if (pins != null) foreach (var pin in pins) pin.Free();
                 CallBlocks.Release();
@@ -260,7 +262,7 @@ namespace fire.Runtime
             }
         }
 
-        private static void ToNative(Value v, IntPtr dest, ref List<IntPtr>? allocs, ref List<GCHandle>? pins, string function)
+        private static void ToNative(Value v, IntPtr dest, ref List<IntPtr>? allocs, ref List<GCHandle>? pins, ref List<Action>? after, string function)
         {
             var fv = new FireVal();
             switch (v.Kind)
@@ -270,6 +272,7 @@ namespace fire.Runtime
                 case ValueKind.Int: fv.Kind = KindInt; fv.Bits = v.AsInt(); break;
                 case ValueKind.Float: fv.Kind = KindFloat; fv.Bits = BitConverter.DoubleToInt64Bits(v.AsFloat()); break;
                 case ValueKind.Char: fv.Kind = KindChar; fv.Bits = v.AsChar(); break;
+                case ValueKind.Word: fv.Kind = KindWord; fv.Bits = unchecked((long)v.AsWord()); break;
                 case ValueKind.String:
                 {
                     string s = v.AsString();
@@ -283,7 +286,7 @@ namespace fire.Runtime
                     var arr = v.AsArray();
                     IntPtr items = Marshal.AllocHGlobal(Math.Max(1, arr.Length) * ValSize);
                     (allocs ??= new List<IntPtr>()).Add(items);
-                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, ref allocs, ref pins, function);
+                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, ref allocs, ref pins, ref after, function);
                     fv.Kind = KindArray; fv.Length = arr.Length; fv.Bits = items.ToInt64();
                     break;
                 }
@@ -291,9 +294,21 @@ namespace fire.Runtime
                 {
                     // by reference: pinned for the call, the native reads and writes the bytes in place
                     var buf = v.AsBuffer();
+                    // (a buffer of machine words: its words - the library is built for this machine, 64-bit words; narrower words of a VM built for another
+                    // target go as a copy in 64-bit words and come back cut to their width when the call returns - ROADMAP 13.1c)
+                    if (buf.IsWords && buf.ElementSize != 8)
+                    {
+                        int count = buf.Count;
+                        IntPtr wide = Marshal.AllocHGlobal(Math.Max(1, count) * 8);
+                        (allocs ??= new List<IntPtr>()).Add(wide);
+                        for (int i = 0; i < count; i++) Marshal.WriteInt64(wide, i * 8, unchecked((long)buf.GetWord(i)));
+                        (after ??= new List<Action>()).Add(() => { for (int i = 0; i < count; i++) buf.SetWord(i, unchecked((ulong)Marshal.ReadInt64(wide, i * 8))); });
+                        fv.Kind = KindWords; fv.Length = count; fv.Bits = wide.ToInt64();
+                        break;
+                    }
                     var pin = GCHandle.Alloc(buf.Bytes, GCHandleType.Pinned);
                     (pins ??= new List<GCHandle>()).Add(pin);
-                    fv.Kind = KindBuffer; fv.Length = buf.Length; fv.Bits = pin.AddrOfPinnedObject().ToInt64();
+                    fv.Kind = buf.IsWords ? KindWords : KindBuffer; fv.Length = buf.Count; fv.Bits = pin.AddrOfPinnedObject().ToInt64();
                     break;
                 }
                 case ValueKind.Lambda when v.AsLambda() is LambdaValue lambda:
@@ -301,7 +316,8 @@ namespace fire.Runtime
                     fv.Kind = KindLambda; fv.Length = lambda.Proto.ParamCount; fv.Bits = PackageHost.RegisterLambda(lambda);
                     break;
                 default:
-                    throw new InvalidOperationException($"An argument of the native function '{function}' is {v.Kind}: only numbers, bool, char, text, byte buffers, lambdas and arrays of these can be passed to a package's native.");
+                    // (an object at the border of the library: the ArgumentException a native compiled into the program gives as well - bytesArg, ROADMAP 13.1c)
+                    throw new ScriptErrorException("ArgumentException", $"An argument of the native function '{function}' is a {v.Kind}: only numbers, bool, char, text, byte buffers, lambdas and arrays of these can be passed to a package's native.");
             }
             Marshal.WriteInt32(dest, fv.Kind);
             Marshal.WriteInt32(dest, 4, fv.Length);
@@ -315,7 +331,7 @@ namespace fire.Runtime
             {
                 case KindUndefined: return Value.MakeUndefined();
                 case KindBool: return Value.MakeBool(fv.Bits != 0);
-                case KindInt: return Value.MakeInt(fv.Bits);
+                case KindInt: return Value.MakeNativeInt(fv.Bits);
                 case KindFloat: return Value.MakeFloat(BitConverter.Int64BitsToDouble(fv.Bits));
                 case KindChar: return Value.MakeChar((char)fv.Bits);
                 case KindString: return Value.MakeString(fv.Length == 0 ? "" : Marshal.PtrToStringUni(new IntPtr(fv.Bits), fv.Length));
@@ -331,6 +347,13 @@ namespace fire.Runtime
                     if (fv.Length > 0) Marshal.Copy(new IntPtr(fv.Bits), bytes, 0, fv.Length);
                     return Value.MakeBuffer(new ByteBuffer(bytes, BitConverter.IsLittleEndian ? ByteOrder.Little : ByteOrder.Big));
                 }
+                case KindWords:
+                {
+                    var words = ByteBuffer.Words(fv.Length, 8);
+                    if (fv.Length > 0) Marshal.Copy(new IntPtr(fv.Bits), words.Bytes, 0, fv.Length * 8);
+                    return Value.MakeBuffer(words);
+                }
+                case KindWord: return Value.MakeWord(unchecked((ulong)fv.Bits));
                 default: throw new InvalidOperationException("A native function of a package returned a value of an unknown kind.");
             }
         }

@@ -5,7 +5,7 @@ using Avalonia.Media;
 namespace fire.Editor
 {
     /// <summary>
-    /// The mark of a task (docs/NOTES.md), drawn as a box with rounded corners: empty (open), filled from the lower right corner to the diagonal (in progress), filled (done),
+    /// The mark of a task (docs/tools/notes.md), drawn as a box with rounded corners: empty (open), filled from the lower right corner to the diagonal (in progress), filled (done),
     /// filled red (blocked). The filling is a little darker than the outline, so that the outline stays visible. Used by the Todo window and the Markdown preview.
     /// </summary>
     internal sealed class TaskMark : Control

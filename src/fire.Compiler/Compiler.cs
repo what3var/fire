@@ -29,7 +29,7 @@ namespace fire.Compiler
         /// <summary>The message without the line.</summary>
         public string RawMessage { get; }
 
-        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        /// <summary>The code of the message (docs/tools/errors.md).</summary>
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Compiler, RawMessage);
 
         public IReadOnlyList<CompilerException> Errors { get; }
@@ -542,7 +542,7 @@ namespace fire.Compiler
             var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
             var classes = compiler.CompileClasses(program);
 
-            // When the main program processes its queue by itself (docs/THREADING_DESIGN.md section 7): the command line and the project (`globalJobsForced`) go before
+            // When the main program processes its queue by itself (docs/spec/THREADING_DESIGN.md section 7): the command line and the project (`globalJobsForced`) go before
             // `#globaljobs`/`#nosync` (the last one in the top-level code, no matter where it stands), that before fire.native.json (`globalJobsDefault`); right at the
             // start, before any code runs. The default (safepoints) needs no instruction.
             var globalJobs = globalJobsForced ?? program.OfType<GlobalJobsDirective>().LastOrDefault()?.Mode ?? globalJobsDefault ?? GlobalJobsMode.Safepoints;
@@ -613,8 +613,14 @@ namespace fire.Compiler
                 externSignatures[name] = new ExternSignature
                 {
                     LibName = ed.LibName,
-                    ParamTypes = ed.Params.Select(p => p.Type).ToList(),
+                    // (an `inline c` parameter `byte data[]`: the array brackets stand after the name - the type gets its rank)
+                    ParamTypes = ed.Params.Select(p => ed.InlineC != null && p.Type != null && p.ArrayRanks.Count > 0 ? p.Type with { ArrayRank = p.ArrayRanks.Count } : p.Type).ToList(),
                     ReturnType = ed.ReturnType,
+                    InlineC = ed.InlineC,
+                    ParamNames = ed.InlineC != null ? ed.Params.Select(p => p.Name).ToList() : null,
+                    InlineSource = ed.Source,
+                    InlineLine = ed.InlineLine,
+                    DisplayName = ed.DisplayName,
                 };
             }
 
@@ -674,7 +680,7 @@ namespace fire.Compiler
             if (type.TypeArgs == null && owner?.TypeParams is { } typeParams && typeParams.ToList().FindIndex(tp => tp.Name == b) is var k and >= 0) return "$" + k + arrays;
             switch (b)
             {
-                case "int": case "float": case "bool": case "char": case "string": case "byte": case "class":
+                case "int": case "float": case "bool": case "char": case "string": case "byte": case "word": case "class":
                 case "int8": case "int16": case "int32": case "int64": case "uint8": case "uint16": case "uint32": case "uint64": case "float32": case "float64":
                     return b + arrays;
                 case "any": return arrays.Length > 0 ? "any" + arrays : "";
@@ -806,7 +812,7 @@ namespace fire.Compiler
             return meta;
         }
 
-        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/NATIVE_BACKEND.md) , `[NotSerializable]` before the class (docs/JSON.md) and `[NoCopy]` (SPEC 5.12).</summary>
+        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/spec/NATIVE_BACKEND.md) , `[NotSerializable]` before the class (docs/stdlib/json.md) and `[NoCopy]` (SPEC 5.12).</summary>
         private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
         {
             static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;
@@ -996,6 +1002,8 @@ namespace fire.Compiler
                                 RequiredUnit = fd.Type?.UnitDemand,
                                 RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
+                                RequiredArray = fd.Type?.ArrayWidthCode(fd.ArrayRanks.Count) is var arrayCode and not 0 && (arrayCode & 0xFF) is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word)
+                                    ? (ushort)(arrayCode & 0xFFFF) : (ushort)0,
                                 IsStatic = fd.IsStatic,
                                 TypeText = JsonTypeText(fd.Type, fd.ArrayRanks.Count, rc.Decl),
                                 Attributes = AttributeMetas(fd.Attributes),
@@ -1023,7 +1031,7 @@ namespace fire.Compiler
                         }
 
                         case MethodDecl md:
-                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams));
+                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams, returnType: md.ReturnType, name: md.Name));
                             break;
 
                         case ConstructorDecl ctor:
@@ -1045,7 +1053,7 @@ namespace fire.Compiler
                             // no mixed static/non-static accessors).
                             if (pd.Getter != null)
                             {
-                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand, accessor: 1);
+                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand, accessor: 1, returnType: pd.Type, name: pd.Name);
                                 // `int Count { get { return this.count } }`: the VM reads the field directly (FunctionProto.FieldGetterOf)
                                 if (!pd.IsStatic && pd.Type?.UnitDemand == null && pd.Getter.Statements is [ReturnStmt { Value: MemberExpr { Target: ThisExpr, Name: var backing } }])
                                     getterProto.FieldGetterOf = backing;
@@ -1139,14 +1147,16 @@ namespace fire.Compiler
                 // An instance field with `new X()`/`flat x`/`copy x` as initialiser: the new object belongs to the instance
                 // (`this` is bound during evaluation, see CallProtoWithThis), not the initialiser scope - otherwise
                 // it would be destroyed after the constructor while the field points to it (SPEC 2.1).
-                if (!isStatic && IsOwnedCreation(initializer))
+                if (!isStatic && MayBeUnclaimed(initializer))
                 {
                     inner._chunk.EmitOp(OpCode.LoadThis);
-                    inner.TryCompileOwnedCreation(initializer);
+                    inner.CompileExpr(initializer);
+                    inner._chunk.EmitOp(OpCode.ClaimToObject);   // [this, value] -> [value]: the object owns it
                 }
                 else
                 {
-                    inner.CompileExpr(initializer);
+                    inner.CompileExprFor(initializer, arrayRanks is { Count: > 0 } ? 0 : type?.WidthCode ?? 0);
+                    if (isStatic) inner.EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(initializer), hoist: false);   // a static field: the program
                 }
                 inner.EmitCheckLambdaSignatureIfNeeded(type);
             }
@@ -1156,13 +1166,23 @@ namespace fire.Compiler
                 if (line > 0) inner._chunk.MarkLine(inner.CurrentSourceIndex, line);
                 // (it belongs to the object - [this] -> [this, array] -> [array], as for `int data[] = new int[16]`; a static field's to the program)
                 if (!isStatic) inner._chunk.EmitOp(OpCode.LoadThis);
-                inner.CompileArrayAlloc(arrayRanks, 0);
-                if (!isStatic) inner._chunk.EmitOp(OpCode.OwnValue);
+                inner.CompileArrayAlloc(arrayRanks, 0, IsByteBuffer(type, arrayRanks.Count));
+                // (`word data[4]`: the array becomes a buffer of words - TypeArray, as for a variable)
+                if (IsWordBuffer(type, arrayRanks.Count)) EmitWidthIfNeeded(inner, type!.ArrayWidthCode(arrayRanks.Count));
+                if (!isStatic) inner._chunk.EmitOp(OpCode.ClaimToObject);
+                else inner.EmitClaimToScope(0xFFFF, unclaimed: true, hoist: false);
             }
+            // `defined int count` (SPEC 8.10b): a field that never holds undefined starts at zero (in the unit it demands)
+            else if (arrayRanks is not { Count: > 0 } && type is { NonNull: true } && DeclaredKind.Of(type) is var nonNullKind and not 0)
+                inner.EmitLoadConst(DeclaredKind.ZeroOf(nonNullKind, ZeroUnitOf(type)));
             else inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
             return new FunctionProto(inner._chunk, 0, AccessModifier.Private);
         }
+
+        /// <summary>The unit the zero of a `defined` declaration without an initializer has (SPEC 8.10b): the one it demands, none for an open one.</summary>
+        private static fire.Values.Unit? ZeroUnitOf(TypeRef type) =>
+            type.RequiredUnit is { } unit && !unit.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(unit) : null;
 
         /// <summary>Emits for every parameter with a lambda-signature
         /// type annotation (`lambda&lt;P1,...,Pn&gt;`, see Ast.TypeRef.
@@ -1226,6 +1246,7 @@ namespace fire.Compiler
                     inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("Reflect")));
                     inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("SelectorOf")));
                     inner._chunk.EmitByte(2);
+                    inner.EmitClaimToScope(0, unclaimed: true, hoist: false);   // (the reflection object belongs to the call)
                     inner._chunk.EmitOp(OpCode.StoreLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
@@ -1295,6 +1316,12 @@ namespace fire.Compiler
         /// still needs the value afterwards or pops it.</summary>
         /// <summary>A variable, parameter or field declared with a bit width (`int[8]`, `byte`, `float[32]`, see TypeRef.WidthCode): the value on top of
         /// the stack is cut to it (SPEC 8.2). Implicit (flag 4): only a number of the declared kind is cut, every other value stays as it is.</summary>
+        /// <summary>A declaration with the element type `byte` and array brackets (`byte data[]`, `byte data[16]`): it holds a byte buffer, not a typed array
+        /// (SPEC 8.4.2) - the array stored in it becomes a buffer (OpCode.TypeArray with ArrayElem.U8, VM.BufferFromArrayValue / fire_rt.h bufFromArray).</summary>
+        private static bool IsByteBuffer(TypeRef? type, int rank) => ((type?.ArrayWidthCode(rank) ?? 0) & 0x100FF) == (0x10000 | fire.Values.ArrayElem.U8);
+        /// <summary>`word data[]`, `word data[16]`: a buffer of machine words (SPEC 8.10) - OpCode.TypeArray with ArrayElem.Word makes it from the array.</summary>
+        private static bool IsWordBuffer(TypeRef? type, int rank) => ((type?.ArrayWidthCode(rank) ?? 0) & 0x100FF) == (0x10000 | fire.Values.ArrayElem.Word);
+
         private static void EmitWidthIfNeeded(Compiler target, int widthCode, string? unit = null)
         {
             if (widthCode == 0) return;
@@ -1308,6 +1335,13 @@ namespace fire.Compiler
                 return;
             }
             target._chunk.EmitOp(OpCode.ConvertWidth);
+            if (widthCode == TypeRef.WordWidthCode)
+            {
+                // `word`: into a machine word (flag 8; the width is the target's, the VM's Value.WordBits / FIRE_WORD_BITS)
+                target._chunk.EmitByte(0);
+                target._chunk.EmitByte(8 | 4);
+                return;
+            }
             target._chunk.EmitByte((byte)(widthCode & 0xFF));
             target._chunk.EmitByte((byte)(((widthCode & 0x100) != 0 ? 1 : 0) | ((widthCode & 0x200) != 0 ? 2 : 0) | 4));
         }
@@ -1437,13 +1471,17 @@ namespace fire.Compiler
         }
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false, string? returnUnit = null,
-            IReadOnlyList<TypeParam>? typeParams = null, int accessor = 0)
+            IReadOnlyList<TypeParam>? typeParams = null, int accessor = 0, TypeRef? returnType = null, string? name = null)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes; inner._topLevelSourceIndex = _topLevelSourceIndex;
             inner._accessor = isStatic ? 0 : accessor;
+            // a setter passes its `value` on at its claim sites (SPEC 2.1 "Setters")
+            if (accessor == 2 && !isStatic) inner._setterClaims = SetterClaims.Analyze(body).Sites;
             inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
+            // `defined int Count()` (SPEC 8.10b): every value it returns is checked - undefined (also the end of the body) is an ArgumentException
+            if (returnType is { NonNull: true } && DeclaredKind.Of(returnType) is var returnKind and not 0) { inner._returnKind = returnKind; inner._returnWhat = $"The return value of '{name}'"; }
             // SPEC "Static members": a static method has no
             // bound 'this' - the inner compiler remembers that in order to
             // reject 'this'/'super' in the body (see resolver instead of
@@ -1456,6 +1494,7 @@ namespace fire.Compiler
             EmitLambdaParamChecks(inner, parms);
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
+            inner.EmitReturnGuard();
             inner._chunk.EmitOp(OpCode.Return);
             return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic)
             {
@@ -1484,6 +1523,7 @@ namespace fire.Compiler
                 case "char": return "k:char";
                 case "string": return "k:string";
                 case "class": return "k:class";
+                case "word": return "k:word";   // (a word, or an int that the store converts)
                 case "any": return "";
             }
             if (_refParams.EnumNames.Contains(t.BaseName)) return "k:int";
@@ -1614,6 +1654,7 @@ namespace fire.Compiler
 
                 case ExprStmt es:
                     CompileDiscardedExpr(es.Expression);
+                    EmitReleaseTemps(es.Expression);   // a value no slot took dies at the end of the statement (SPEC 2.1)
                     break;
 
                 case NoOpStmt:
@@ -1645,7 +1686,7 @@ namespace fire.Compiler
 
                     if (vd.Initializer != null)
                     {
-                        CompileExpr(vd.Initializer);
+                        CompileExprFor(vd.Initializer, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
                         EmitCheckLambdaSignatureIfNeeded(vd.Type);
                     }
                     else if (autoArrayAlloc)
@@ -1657,7 +1698,9 @@ namespace fire.Compiler
                         // size (e.g. `int arr[3][]`) ends the recursion -
                         // from there on the slots stay 'undefined', as before with
                         // a completely undetermined-size declarator.
-                        CompileArrayAlloc(vd.ArrayRanks, 0);
+                        CompileArrayAlloc(vd.ArrayRanks, 0, IsByteBuffer(vd.Type, vd.ArrayRanks.Count));
+                    else if (vd.Type is { NonNull: true } && DeclaredKind.Of(vd.Type) is var zeroKind and not 0)
+                        EmitLoadConst(DeclaredKind.ZeroOf(zeroKind, ZeroUnitOf(vd.Type)));   // (`defined int n` starts at 0: SPEC 8.10b)
                     else
                         EmitLoadConst(Value.MakeUndefined());
 
@@ -1672,8 +1715,11 @@ namespace fire.Compiler
                     EmitCheckUnitIfNeeded(this, vd.Type?.UnitDemand);
                     EmitWidthIfNeeded(this, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0, vd.Type?.UnitDemand);
 
+                    // `var v = E`: an unclaimed value belongs to the scope that declares v (SPEC 2.1); `int a[10]` is made for it
+                    if (vd.Initializer != null ? MayBeUnclaimed(vd.Initializer) : autoArrayAlloc) EmitClaimToScope(0, unclaimed: true, hoist: false);
                     _chunk.MarkDeclaredName(_chunk.Here, vd.Name);
                     _chunk.EmitOp(OpCode.DeclareLocal);
+                    if (vd.Initializer != null) EmitReleaseTemps(vd.Initializer);
                     break;
                 }
 
@@ -1704,6 +1750,7 @@ namespace fire.Compiler
                         if (_returnUnit != null) EmitCheckUnitIfNeeded(this, _returnUnit);
                     }
                     else EmitLoadConst(Value.MakeUndefined());
+                    EmitReturnGuard();
                     // A `return` in the `catch`: the throw site frozen on throwing (see ClearPendingResume) is discarded, as at the normal end
                     // of the catch block - otherwise it would stay lying around together with its scopes. The exception variable lies in the catch scope (slot 0).
                     for (int k = _tryStack.Count - 1; k >= 0; k--)
@@ -1734,6 +1781,7 @@ namespace fire.Compiler
                 case DeleteStmt del:
                     CompileExpr(del.Target);
                     _chunk.EmitOp(OpCode.Delete);
+                    EmitReleaseTemps(del.Target);
                     break;
 
                 case ThrowStmt th:
@@ -1957,6 +2005,7 @@ namespace fire.Compiler
 
                 case AssignExpr { Target: IdentifierExpr assignTarget, Value: BinaryExpr { Op: BinaryOp.Add or BinaryOp.Sub, Left: IdentifierExpr left, Right: LiteralExpr literal } binary }
                     when left.Name == assignTarget.Name && literal.Value.Kind is ValueKind.Int or ValueKind.Float
+                         && s_localGuards?.ContainsKey(binary) != true && s_unitChecks?.ContainsKey(binary) != true   // (`x += 0.5` on an int: the guard throws)
                          && _refs.TryGetValue(left, out var leftRef) && _refs.TryGetValue(assignTarget, out var targetRef) && leftRef.Equals(targetRef):
                     target = assignTarget;
                     constant = literal.Value;
@@ -1991,6 +2040,7 @@ namespace fire.Compiler
         private void CompileIf(IfStmt s)
         {
             CompileExpr(s.Condition);
+            EmitReleaseTemps(s.Condition);   // (the condition's temporaries die before the branch runs, SPEC 2.1)
             int elseJumpAt = EmitJumpIfFalse(); // placeholder, patched below
 
             CompileScopedBody(s.Then);
@@ -2018,6 +2068,7 @@ namespace fire.Compiler
 
             int loopStart = _chunk.Here;
             CompileExpr(s.Condition);
+            EmitReleaseTemps(s.Condition);   // (the condition's temporaries die before the branch runs, SPEC 2.1)
             int endJumpAt = EmitJumpIfFalse();
 
             CompileScopedBody(s.Body);
@@ -2058,6 +2109,7 @@ namespace fire.Compiler
             int continueTarget = _chunk.Here;
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
             CompileExpr(s.Condition);
+            EmitReleaseTemps(s.Condition);   // (the condition's temporaries die before the branch runs, SPEC 2.1)
             int endJumpAt = EmitJumpIfFalse();
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
@@ -2084,6 +2136,7 @@ namespace fire.Compiler
             if (s.Condition != null)
             {
                 CompileExpr(s.Condition);
+            EmitReleaseTemps(s.Condition);   // (the condition's temporaries die before the branch runs, SPEC 2.1)
                 endJumpAt = EmitJumpIfFalse();
             }
 
@@ -2102,7 +2155,10 @@ namespace fire.Compiler
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
 
             if (s.Increment != null)
+            {
                 CompileDiscardedExpr(s.Increment);
+                EmitReleaseTemps(s.Increment);
+            }
 
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
@@ -2150,11 +2206,11 @@ namespace fire.Compiler
             _chunk.EmitU16(0);
             // Stack (on true): [enumerator]
 
+            EmitEnterScope(); // corresponds to Resolver.PushScope() for the loop variable
             _chunk.EmitOp(OpCode.Dup);
             EmitCallMethodByName("GetCurrent", 0);
-            // Stack: [enumerator, current]
-
-            EmitEnterScope(); // corresponds to Resolver.PushScope() for the loop variable
+            // Stack: [enumerator, current] - an element GetCurrent made belongs to the loop variable's scope (SPEC 2.1)
+            EmitClaimToScope(0, unclaimed: true, hoist: false);
             _chunk.MarkDeclaredName(_chunk.Here, fs.VarName);
             _chunk.EmitOp(OpCode.DeclareLocal); // pop 'current', slot 0 of this new scope
             // Stack: [enumerator]
@@ -2173,6 +2229,7 @@ namespace fire.Compiler
             _chunk.PatchU16(endJumpAt, loopEnd);
             foreach (var addr in ctx.BreakJumpPatchAddrs) _chunk.PatchU16(addr, loopEnd);
             _chunk.EmitOp(OpCode.Pop); // Enumerator-Referenz verwerfen
+            EmitReleaseTemps(fs.Iterable);   // the collection and its enumerator lived as temporaries of the `foreach` until here (SPEC 2.1)
 
             _residents.RemoveAt(_residents.Count - 1);
             _loopStack.Pop();
@@ -2218,8 +2275,15 @@ namespace fire.Compiler
         /// (unlike class instances) on the ownership system, `Release()`
         /// at `ExitScope` therefore only concerns the temporary slots themselves,
         /// not the array VALUE that they had just pointed to.</summary>
-        private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex)
+        private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex, bool byteBuffer = false)
         {
+            // `byte data[16]` is `new byte[16]`: a `byte` declaration holds a byte buffer (SPEC 8.4.2; several dimensions: TypeArray converts the inner arrays)
+            if (byteBuffer && ranks.Count == 1 && rankIndex == 0 && ranks[0] != null)
+            {
+                CompileExpr(ranks[0]!);
+                _chunk.EmitOp(OpCode.MakeBuffer);
+                return;
+            }
             // All ranks with a size (up to the first one without): every size is evaluated ONCE, NewJagged creates the whole structure.
             // The inner arrays belong to the outer one (SPEC 2.5) - they live and die with it.
             int sized = 0;
@@ -2383,12 +2447,63 @@ namespace fire.Compiler
         /// <summary>The unit a method with a unit at its return type (`float:m Len()`) or the getter of a property with a unit (`float X : m { get ... }`)
         /// converts its return values into, otherwise null.</summary>
         private string? _returnUnit;
+        /// <summary>`defined int Count()`: the DeclaredKind its return values are checked against (GuardTop), 0: none; and how the error names the value.</summary>
+        private byte _returnKind;
+        private string _returnWhat = "";
+
+        /// <summary>The value on top of the stack goes back from a method declared `defined int` (`defined float`, ...): it is checked like a parameter (GuardTop).</summary>
+        private void EmitReturnGuard()
+        {
+            if (_returnKind == 0) return;
+            _chunk.EmitOp(OpCode.GuardTop);
+            _chunk.EmitByte((byte)((_returnKind & 0x7F) - 1));
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_returnWhat)));
+        }
         /// <summary>The body of a property accessor of an object (SPEC 2.2 "Ownership in property accessors"): 1 a getter, 2 a setter, 0 anything else - its
         /// assignments to members take SetFieldAccessor.</summary>
         private int _accessor;
 
+        /// <summary>A literal compiled now keeps this width (64 or 32; 0: the program's) - SPEC 8.2.1: an int literal in an expression with an operand of an
+        /// explicit wider width (`this.ticks + 864000000000` with `int[64] ticks`), or stored into one (`int[64] t = 864000000000`), is not cut to `#intwidth`.
+        /// Only arithmetic, comparisons, signs and width casts pass it on to their operands; any other expression (a call, an index, ...) starts without.</summary>
+        private int _wideLiteral;
+
+        /// <summary>The explicit width beyond `int` an expression is known to have (64 or 32), 0 when it has none or is not known: a variable, parameter or
+        /// field declared `int[64]`/`int[32]`, a cast `!int[64]`, arithmetic with such an operand.</summary>
+        private int StaticWide(Expr e)
+        {
+            static int OfCode(int code) => code is 64 or 32 ? code : 0;
+            switch (e)
+            {
+                case IdentifierExpr id when _refs.TryGetValue(id, out var r):
+                    return r switch
+                    {
+                        ResolvedRef.Local l => OfCode(l.Width),
+                        ResolvedRef.Global g => OfCode(g.Width),
+                        ResolvedRef.ImplicitThisMember => OfCode(_refParams.FieldWidth(id.Name)),
+                        _ => 0,
+                    };
+                case MemberExpr me: return OfCode(_refParams.FieldWidth(me.Name));
+                case TypeCoerceExpr { Width: 64 or 32, Unsigned: false } c when c.TargetTypeKeyword != TokenType.KwFloat: return c.Width;
+                case BinaryExpr { Op: not (BinaryOp.And or BinaryOp.Or) } b: return Math.Max(StaticWide(b.Left), StaticWide(b.Right));
+                case UnaryExpr { Op: UnaryOp.Negate or UnaryOp.BitNot } u: return StaticWide(u.Operand);
+                case AssignExpr a: return StaticWide(a.Target);
+                default: return 0;
+            }
+        }
+
         private void CompileExpr(Expr expr)
         {
+            int outerWide = _wideLiteral;
+            switch (expr)
+            {
+                case LiteralExpr: break;
+                case BinaryExpr { Op: not (BinaryOp.And or BinaryOp.Or) }: _wideLiteral = Math.Max(outerWide, StaticWide(expr)); break;
+                case UnaryExpr { Op: UnaryOp.Negate or UnaryOp.BitNot }: break;
+                case TypeCoerceExpr { Width: > 0 }: _wideLiteral = Math.Max(outerWide, StaticWide(expr)); break;
+                case AssignExpr: _wideLiteral = StaticWide(expr); break;   // (`t = 864000000000` for an `int[64] t`)
+                default: _wideLiteral = 0; break;
+            }
             try
             {
                 CompileExprCore(expr);
@@ -2399,6 +2514,17 @@ namespace fire.Compiler
             {
                 throw new CompilerException(ex.Message, expr.Line);
             }
+            finally { _wideLiteral = outerWide; }
+        }
+
+        /// <summary>Compiles the value stored into a declaration of the width code <paramref name="widthCode"/> (TypeRef.WidthCode): a literal in it keeps an
+        /// explicit wider width (<see cref="_wideLiteral"/>).</summary>
+        private void CompileExprFor(Expr value, int widthCode)
+        {
+            int outer = _wideLiteral;
+            _wideLiteral = widthCode is 64 or 32 ? widthCode : 0;
+            try { CompileExpr(value); }
+            finally { _wideLiteral = outer; }
         }
 
         private void CompileExprCore(Expr expr)
@@ -2406,7 +2532,7 @@ namespace fire.Compiler
             switch (expr)
             {
                 case LiteralExpr lit:
-                    EmitLoadConst(lit.Value);
+                    EmitLoadConst(_wideLiteral != 0 && lit.Value.Kind == ValueKind.Int && !lit.Value.IsEnum ? lit.Value.WithWide((byte)_wideLiteral) : lit.Value);
                     break;
 
                 case IdentifierExpr id:
@@ -2458,6 +2584,14 @@ namespace fire.Compiler
                     CompileExpr(cast.Operand);
                     _chunk.EmitOp(OpCode.CastTo);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(cast.TargetClass))));
+                    break;
+
+                case TypeCoerceExpr { TargetTypeKeyword: TokenType.KwWord } wordCast:
+                    // `x!word`: the value as a machine word (SPEC 8.10)
+                    CompileExpr(wordCast.Operand);
+                    _chunk.EmitOp(OpCode.ConvertWidth);
+                    _chunk.EmitByte(0);
+                    _chunk.EmitByte(8);
                     break;
 
                 case TypeCoerceExpr { Width: > 0 } widthCast:
@@ -2531,6 +2665,20 @@ namespace fire.Compiler
 
                 case NewArrayExpr na:
                     CompileArrayAlloc(na.SizeExprs, 0);
+                    // `new T[n]` of a type parameter: typed by the type argument at run time (`List<int>`: raw ints)
+                    if (na.SizeExprs.Count == 1 && na.ElementType is { ArrayRank: 0, PointerDepth: 0, TypeArgs: null } elementType
+                        && TypeArgText(elementType, _enclosingClass, null, 0) is ['$', ..] paramText)
+                    {
+                        _chunk.EmitOp(OpCode.TypeArrayOfParam);
+                        _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(paramText)));
+                    }
+                    break;
+
+                case NewBufferExpr { Words: true } nw:
+                    // `new word[n]` (SPEC 8.10): n zero words - an array of n that TypeArray turns into a buffer of words (natively at once: newWordBuffer)
+                    CompileExpr(nw.SizeExpr);
+                    _chunk.EmitOp(OpCode.NewArray);
+                    EmitWidthIfNeeded(this, 0x10000 | (1 << 8) | fire.Values.ArrayElem.Word);
                     break;
 
                 case NewBufferExpr nb:
@@ -2813,6 +2961,13 @@ namespace fire.Compiler
                     CompileRefArgument(args[i], i);
                     mask |= 3UL << (4 * i);
                 }
+                else if (args[i] is UnaryExpr { Op: UnaryOp.TryTake } tryTakeArg)
+                {
+                    // `f(try take x)` (SPEC 2.2): like `take x`, but only when the running call owns x (code 8 of the mask); a native or built-in: the current scope
+                    CompileExpr(tryTakeArg.Operand);
+                    if (scopeCreating && i < 16) mask |= 8UL << (4 * i);
+                    else { _chunk.EmitOp(OpCode.TryTakeToScope); _chunk.EmitU16(0); }
+                }
                 else if (args[i] is UnaryExpr { Op: UnaryOp.Take } takeArg)
                 {
                     // `f(take x)` (SPEC 2.2): x belongs to the call of f from now on; natives and built-ins have no call scope - there it goes to the current scope
@@ -2830,9 +2985,15 @@ namespace fire.Compiler
                 else
                 {
                     CompileExpr(args[i]);
-                    // `f(g())`, `f(new X())`: the returned / freshly made value goes into the parameter (the caller holds no reference to it), so it belongs
-                    // to the called function (SPEC 2.1), not to the caller
-                    if (scopeCreating && i < 16 && args[i] is CallExpr or NewExpr or NewArrayExpr) mask |= 4UL << (4 * i);
+                    // `f(g())`, `f(new X())`: an unclaimed value goes into the parameter (the caller holds no reference to it), so it belongs to the called
+                    // function (SPEC 2.1), not to the caller; a direct `new` is marked as such (a message or `fire M(...)` hands it over). A claim site of a
+                    // setter (`Store(value)`) gives the setter's value to the call if the setter call still owns it.
+                    if (scopeCreating && i < 16)
+                    {
+                        if (IsSetterClaim(args[i])) mask |= 6UL << (4 * i);
+                        else if (args[i] is NewExpr) mask |= 7UL << (4 * i);
+                        else if (MayBeUnclaimed(args[i])) mask |= 4UL << (4 * i);
+                    }
                 }
             }
             return mask;
@@ -2884,11 +3045,67 @@ namespace fire.Compiler
             }
         }
 
-        private void EmitTakeToScope(int depth)
+        private void EmitTakeToScope(int depth, bool tryTake = false)
         {
-            _chunk.EmitOp(OpCode.TakeToScope);
+            _chunk.EmitOp(tryTake ? OpCode.TryTakeToScope : OpCode.TakeToScope);
             _chunk.EmitU16(depth);
         }
+
+        // ---- The first slot owns an unclaimed value (SPEC 2.1) ----
+
+        /// <summary>Can the value of this expression be unclaimed - belong to the statement temporaries (`new`, a literal, a copy, what a call hands back)?
+        /// Names, literals, `this`, an assignment (its inner slot claimed already) and `take` cannot; the VM checks the rest at run time (the value must
+        /// still belong to the temporaries).</summary>
+        private static bool MayBeUnclaimed(Expr e) => e switch
+        {
+            LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or AssignExpr or IncDecExpr or LambdaExpr or InterpolatedStringExpr
+                or IsOfExpr or IsInExpr or IsFromExpr or TryProcessExpr => false,   // (`a..b` is a call of __Range.Of: a new array, claimed like one)
+            UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } => false,
+            UnaryExpr { Op: UnaryOp.Trust } t => MayBeUnclaimed(t.Operand),
+            ConditionalExpr c => MayBeUnclaimed(c.Then) || MayBeUnclaimed(c.Else),
+            _ => true,
+        };
+
+        /// <summary>Can evaluating the expression leave something in the statement temporaries (a `new`, a call, an operator, a getter)? Without it a
+        /// statement needs no ReleaseTemps.</summary>
+        private static bool MayLeaveTemps(Expr? e) => e switch
+        {
+            null or LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or LambdaExpr => false,
+            AssignExpr a => (a.Target is not IdentifierExpr && MayLeaveTemps(a.Target)) || MayLeaveTemps(a.Value),
+            IncDecExpr i => i.Target is not IdentifierExpr,
+            UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake or UnaryOp.Trust } u => MayLeaveTemps(u.Operand),
+            _ => true,
+        };
+
+        /// <summary>The end of a statement (SPEC 2.1): what is still in the temporaries of the current scope is destroyed.</summary>
+        private void EmitReleaseTemps(Expr? e)
+        {
+            if (MayLeaveTemps(e)) _chunk.EmitOp(OpCode.ReleaseTemps);
+        }
+
+        /// <summary>An assignment to a variable `depth` scopes up (0xFFFF: a global): an unclaimed value goes to the scope of the variable; with
+        /// `hoist` a value of an inner block moves up to it (SPEC 2.1).</summary>
+        private void EmitClaimToScope(int depth, bool unclaimed, bool hoist)
+        {
+            int flags = (unclaimed ? 1 : 0) | (hoist ? 2 : 0);
+            if (flags == 0) return;
+            _chunk.EmitOp(OpCode.ClaimToScope);
+            _chunk.EmitU16(depth);
+            _chunk.EmitByte((byte)flags);
+        }
+
+        /// <summary>`obj.name = value` with a value that may be unclaimed (or a claim site of a setter, `setterValue`): SetFieldClaim instead of SetField.</summary>
+        private void EmitSetFieldClaim(string name, bool setterValue)
+        {
+            _chunk.EmitOp(OpCode.SetFieldClaim);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(name)));
+            _chunk.EmitByte((byte)(setterValue ? 2 : 0));
+        }
+
+        /// <summary>The claim sites of the running setter's `value` (SPEC 2.1 "Setters"): assignments and call arguments; null outside a setter.</summary>
+        private HashSet<object>? _setterClaims;
+
+        private bool IsSetterClaim(object node) => _setterClaims != null && _setterClaims.Contains(node);
 
         /// <summary>Emits the prefix `CopyArgs` (only if a mask is present) - directly BEFORE the call opcode.</summary>
         private void EmitCopyArgsPrefix(ulong mask)
@@ -2896,42 +3113,6 @@ namespace fire.Compiler
             if (mask == 0) return;
             _chunk.EmitOp(OpCode.CopyArgs);
             for (int part = 0; part < 4; part++) _chunk.EmitU16((int)((mask >> (16 * part)) & 0xFFFF));
-        }
-
-        /// <summary>Compiles `new X(...)` or `flat x`/`copy x` for the case that the future OWNER (an object) already
-        /// lies on the stack (SPEC 2.1/2.4: assigned directly to a field). Returns false if `value` is neither of the two
-        /// (then nothing was emitted).</summary>
-        private static bool IsOwnedCreation(Expr value) =>
-            value is NewExpr or NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
-
-        private bool TryCompileOwnedCreation(Expr value)
-        {
-            if (value is NewExpr ne)
-            {
-                ulong mask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
-                EmitTypeArgs(ne);
-                EmitCopyArgsPrefix(mask);
-                EmitArgNames(ne.ArgNames);
-                _chunk.EmitOp(OpCode.NewObjectOwned);
-                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
-                _chunk.EmitByte((byte)ne.Args.Count);
-                return true;
-            }
-            if (value is NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr)
-            {
-                // [owner] -> [owner, array] -> [array]: an array/a buffer assigned directly to a field belongs to the object (SPEC 2.1)
-                CompileExpr(value);
-                _chunk.EmitOp(OpCode.OwnValue);
-                return true;
-            }
-            if (value is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyExpr)
-            {
-                CompileExpr(copyExpr.Operand);
-                _chunk.EmitOp(OpCode.CopyValueOwned);
-                _chunk.EmitByte(copyExpr.Op == UnaryOp.DeepCopy ? (byte)1 : (byte)0);
-                return true;
-            }
-            return false;
         }
 
         /// <summary>`f(1, size: 2)`: the names of the named arguments for the call that follows (OpCode.ArgNames; nothing without).</summary>
@@ -3238,6 +3419,7 @@ namespace fire.Compiler
                 if (_refs.TryGetValue(me, out var staticTargetRef) && staticTargetRef is ResolvedRef.StaticMember sm)
                 {
                     CompileExpr(a.Value);
+                    EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: false);   // a static field belongs to the program (SPEC 2.1)
                     EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
@@ -3247,24 +3429,23 @@ namespace fire.Compiler
 
                 CompileExpr(me.Target);
 
-                // Direct field assignment of a freshly created object: the owner becomes
-                // the target object itself, not the current scope (SPEC 2.1). For that
-                // the target object must already lie on the stack at the NewObjectOwned call
-                // (below the constructor arguments) - hence Dup before the
-                // arguments are pushed, and SetField at the end uses the second copy.
-                if (IsOwnedCreation(a.Value))
-                {
-                    _chunk.EmitOp(OpCode.Dup);
-                    TryCompileOwnedCreation(a.Value);
-                }
-                else if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeValue)
+                if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeValue)
                 {
                     CompileExpr(takeValue.Operand);          // [obj, value]
-                    _chunk.EmitOp(OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
+                    _chunk.EmitOp(takeValue.Op == UnaryOp.TryTake ? OpCode.TryTakeToObject : OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
                 }
                 else
                 {
                     CompileExpr(a.Value);
+                    // `obj.f = E`: an unclaimed value belongs to the object - or to the setter call when f is a property (SPEC 2.1); a claim site of a
+                    // setter passes the setter's value on the same way
+                    bool setterValue = IsSetterClaim(a);
+                    if (setterValue || MayBeUnclaimed(a.Value))
+                    {
+                        EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
+                        EmitSetFieldClaim(me.Name, setterValue);
+                        return;
+                    }
                     if (_accessor != 0)
                     {
                         EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
@@ -3291,12 +3472,16 @@ namespace fire.Compiler
             {
                 CompileExpr(ix.Target);
                 CompileExpr(ix.Index);
-                if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeElement)
+                if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeElement)
                 {
                     CompileExpr(takeElement.Operand);
-                    _chunk.EmitOp(OpCode.TakeToArray);       // the array owns the value from now on (SPEC 2.2)
+                    _chunk.EmitOp(takeElement.Op == UnaryOp.TryTake ? OpCode.TryTakeToArray : OpCode.TakeToArray);       // the array owns the value from now on (SPEC 2.2)
                 }
-                else CompileExpr(a.Value);
+                else
+                {
+                    CompileExpr(a.Value);
+                    if (MayBeUnclaimed(a.Value)) _chunk.EmitOp(OpCode.ClaimToArray);   // `arr[i] = new X()`: the array owns it (SPEC 2.1)
+                }
                 _chunk.EmitOp(OpCode.ArraySet);
                 return;
             }
@@ -3308,21 +3493,19 @@ namespace fire.Compiler
             // Bare field name in a class (`field = new X()` / `field = copy x`): like `this.field = ...` the new
             // object belongs to the object, not the scope (SPEC 2.1/2.4) - otherwise it would be destroyed on leaving the method,
             // while the field still points to it.
-            if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeVar)
+            if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeVar)
             {
                 CompileTakeAssign(id, takeVar);
                 return;
             }
 
-            if (_refs[id] is ResolvedRef.ImplicitThisMember && IsOwnedCreation(a.Value))
+            if (_refs[id] is ResolvedRef.ImplicitThisMember && (MayBeUnclaimed(a.Value) || IsSetterClaim(a)))
             {
+                // `field = E` in a class: like `this.field = E` (SPEC 2.1)
                 _chunk.EmitOp(OpCode.LoadThis);
-                TryCompileOwnedCreation(a.Value);       // [new object]
-                _chunk.EmitOp(OpCode.LoadThis);         // [value, obj]
-                _chunk.EmitOp(OpCode.Swap);             // [obj, value]
+                CompileExpr(a.Value);                   // [this, value]
                 EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
-                _chunk.EmitOp(OpCode.SetField);
-                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                EmitSetFieldClaim(id.Name, IsSetterClaim(a));
                 return;
             }
 
@@ -3338,14 +3521,15 @@ namespace fire.Compiler
                     // assignment.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
                     EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
-                    // an assignment from an inner block to a variable of an outer one: the value must not die with the block (SPEC 2.1)
-                    if (local.Depth > 0 && !local.ByRef) _chunk.EmitOp(OpCode.HoistValue);
+                    // `v = E`: an unclaimed value belongs to the scope that declares v; a value of an inner block moves up to it (SPEC 2.1)
+                    if (!local.ByRef) EmitClaimToScope(local.Depth, unclaimed: MayBeUnclaimed(a.Value), hoist: local.Depth > 0);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
                     EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
-                    if (_currentScopeDepth > 0 && IsTopLevelCode) _chunk.EmitOp(OpCode.HoistValue);   // top-level block assigning to a global
+                    // a global variable: an unclaimed value belongs to the global scope; a value of a block of the top-level code moves up to it (SPEC 2.1)
+                    EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: _currentScopeDepth > 0 && IsTopLevelCode);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
                     break;
@@ -3400,26 +3584,26 @@ namespace fire.Compiler
                 case ResolvedRef.Local local:
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
                     EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
-                    EmitTakeToScope(local.ByRef ? 0 : local.Depth);
+                    EmitTakeToScope(local.ByRef ? 0 : local.Depth, take.Op == UnaryOp.TryTake);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
                     EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
-                    EmitTakeToScope(0xFFFF);
+                    EmitTakeToScope(0xFFFF, take.Op == UnaryOp.TryTake);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
                     break;
                 case ResolvedRef.ImplicitThisMember:
                     _chunk.EmitOp(OpCode.LoadThis);         // [value, this]
                     _chunk.EmitOp(OpCode.Swap);             // [this, value]
-                    _chunk.EmitOp(OpCode.TakeToObject);
+                    _chunk.EmitOp(take.Op == UnaryOp.TryTake ? OpCode.TryTakeToObject : OpCode.TakeToObject);
                     EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name), _refParams.FieldUnit(id.Name));
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
                 default:
-                    throw new NotSupportedException($"'take' needs a holder: '{id.Name}' is not a variable or a field.");
+                    throw new NotSupportedException($"'{(take.Op == UnaryOp.TryTake ? "try take" : "take")}' needs a holder: '{id.Name}' is not a variable or a field.");
             }
         }
 
@@ -3613,11 +3797,20 @@ namespace fire.Compiler
                 return;
             }
 
-            if (u.Op == UnaryOp.Take)
+            if (u.Op == UnaryOp.Trust)
             {
-                // `var a = take x` (SPEC 2.2): x belongs to the current scope (other places - arguments, assignments - are handled where they occur)
+                // `trust x` (SPEC 8.10b): the value itself - the developer vouches that it is not undefined (the VM still checks where `defined` is declared;
+                // a native release build takes it as a defined number)
                 CompileExpr(u.Operand);
-                EmitTakeToScope(0);
+                _chunk.EmitOp(OpCode.Trust);
+                return;
+            }
+            if (u.Op is UnaryOp.Take or UnaryOp.TryTake)
+            {
+                // `var a = take x` (SPEC 2.2): x belongs to the current scope (other places - arguments, assignments - are handled where they occur); `try take`
+                // only when the running call owns it
+                CompileExpr(u.Operand);
+                EmitTakeToScope(0, u.Op == UnaryOp.TryTake);
                 return;
             }
             if (u.Op is UnaryOp.FlatCopy or UnaryOp.DeepCopy)
@@ -3688,7 +3881,7 @@ namespace fire.Compiler
                 BinaryOp.Mul => OpCode.Mul,
                 BinaryOp.Div => OpCode.Div,
                 BinaryOp.Mod => OpCode.Mod,
-                BinaryOp.Power => OpCode.Power,
+                BinaryOp.Power => b.FloatPower ? OpCode.PowerFloat : OpCode.Power,   // (a float target: the float power, SPEC 1.1)
                 BinaryOp.BitAnd => OpCode.BitAnd,
                 BinaryOp.BitOr => OpCode.BitOr,
                 BinaryOp.BitXor => OpCode.BitXor,
@@ -3817,7 +4010,7 @@ namespace fire.Compiler
                     if (uc.Relabel) relabelAuto = true;
                     current = uc.Operand;
                 }
-                else if (current is TypeCoerceExpr { TargetClass: null, Width: 0 } tc)
+                else if (current is TypeCoerceExpr { TargetClass: null, Width: 0, TargetTypeKeyword: not TokenType.KwWord } tc)
                 {
                     wantsType = true;
                     explicitType = tc.TargetTypeKeyword;

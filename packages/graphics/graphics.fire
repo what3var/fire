@@ -107,7 +107,7 @@ class Framebuffer {
     // Raw data: RGBA 4 bytes per pixel (R, G, B, A), palette 1 byte per pixel (the index); ByteCount() is the size.
     int ByteCount() { return __GRPHFbByteCount(this.id) }
 
-    // On the GPU (docs/UI_PLATFORM.md, part 4): the drawing the GPU does goes there; the pixels come back only when something reads them (GetPixel, a window, a
+    // On the GPU (docs/spec/UI_PLATFORM.md, part 4): the drawing the GPU does goes there; the pixels come back only when something reads them (GetPixel, a window, a
     // drawing the GPU does not do) - and only when the GPU drew since. false where there is no GPU (Framebuffer.GpuError() says why), for a palette framebuffer,
     // on a board. FIRE_GFX_GPU=1 in the environment puts every RGBA framebuffer there.
     bool Accelerated {
@@ -132,7 +132,7 @@ class Framebuffer {
     // The 256-colour palette (for a palette framebuffer it is the colour table of the image, for an RGBA framebuffer it resolves palette indices
     // that are given as a colour). Colours are r + g*256 + b*65536 + a*16777216 (alpha 255 = opaque).
     int GetPaletteColor(int index) {
-        var color = __GRPHFbGetPaletteColor(this.id, index)
+        any color = __GRPHFbGetPaletteColor(this.id, index)
         if (color < 0) {
             throw new GraphicsException(__GRPHFbLastError())
         }
@@ -230,13 +230,13 @@ class Slicer {
         if (this.overlap < 0 || this.overlap > 0.95) {
             throw new GraphicsException("The overlap must be between 0 and 0.95.")
         }
-        var raw = __GRPHSlcSlice(mask.id, this.lineWidth, this.pixelSize, this.overlap, this.strategy, this.simplifyTolerance, this.flipY)
+        any raw = __GRPHSlcSlice(mask.id, this.lineWidth, this.pixelSize, this.overlap, this.strategy, this.simplifyTolerance, this.flipY)
         if (raw is of int) {
             throw new GraphicsException(__GRPHFbLastError())
         }
         var paths = new List()
         for (var i = 0; i < raw.length; i = i + 1) {
-            var entry = raw[i]
+            any entry = raw[i]
             var path = new ToolPath(entry[0], entry[1], entry[2])
             path.TakeTo(paths)   // (the paths belong to the list, not to the loop body)
             paths.Add(path)
@@ -359,7 +359,7 @@ class Fonts {
     static Font Add(any resource, string alias = "") {
         var name = alias
         if (name == "") { name = resource.Name() }
-        var id = __GRPHFntAdd(resource.Bytes(), name)
+        any id = __GRPHFntAdd(resource.Bytes(), name)
         if (id < 0) {
             throw new GraphicsException("The file '" + resource.Name() + "' is not a TrueType font.")
         }
@@ -368,7 +368,7 @@ class Fonts {
 
     // Reads a TrueType font from the bytes of a file; it has no name to look it up by.
     static Font FromBytes(byte data[]) {
-        var id = __GRPHFntLoad(data)
+        any id = __GRPHFntLoad(data)
         if (id < 0) {
             throw new GraphicsException("The data is not a TrueType font.")
         }
@@ -377,7 +377,7 @@ class Fonts {
 
     // The font with this name; the console font if there is none (so that text never fails because of a missing font).
     static Font Get(string name) {
-        var id = __GRPHFntOpen(name)
+        any id = __GRPHFntOpen(name)
         if (id < 0) { id = 0 }
         return new Font(id)
     }
@@ -604,7 +604,7 @@ class Renderer {
         pen.Width = w
     }
 
-    // ---- rounded rectangles and effects (docs/UI_PLATFORM.md): antialiased at their edges; the radius is clamped to half the shorter side (0: a plain rectangle) ----
+    // ---- rounded rectangles and effects (docs/spec/UI_PLATFORM.md): antialiased at their edges; the radius is clamped to half the shorter side (0: a plain rectangle) ----
     undefined FillRoundRect(int x, int y, int w, int h, int radius, Brush brush) {
         if (this.scale == 1.0) { __GRPHRndFillRoundRect(this.id, x, y, w, h, radius, brush.id); return }
         __GRPHRndFillRoundRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), brush.id)

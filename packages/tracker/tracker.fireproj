@@ -18,11 +18,13 @@
     "functions": [
       {
         "name": "__TrackerLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_tracker_LastError"
       },
       {
         "name": "__TrackerLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -30,36 +32,43 @@
       },
       {
         "name": "__TrackerOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_tracker_OpenCount"
       },
       {
         "name": "__TrackerLoad",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_tracker_Load"
       },
       {
         "name": "__TrackerClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_tracker_Close"
       },
       {
         "name": "__TrackerRender",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_tracker_Render"
       },
       {
         "name": "__TrackerGet",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_tracker_Get"
       },
       {
         "name": "__TrackerSet",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_tracker_Set"
       },
       {
         "name": "__TrackerText",
+        "returns": "string",
         "arguments": 3,
         "needsList": true,
         "returnsReference": true,
@@ -67,21 +76,25 @@
       },
       {
         "name": "__TrackerSampleInfo",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_tracker_SampleInfo"
       },
       {
         "name": "__TrackerRestart",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_tracker_Restart"
       },
       {
         "name": "__TrackerSeek",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_tracker_Seek"
       },
       {
         "name": "__TrackerPatternCell",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_tracker_PatternCell"
       }

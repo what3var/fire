@@ -53,6 +53,8 @@ namespace fire.Runtime
         private List<(object Holder, string? Field)>? _referrers;
 
         public bool IsDestroyed => _destroyed;
+        /// <summary>Its constructor ended with an exception (SPEC 5.x "Destruktoren"): when it is destroyed, its destruct() does not run - the fields and what it owns are freed.</summary>
+        public bool ConstructorFailed { get; set; }
 
         internal void AddReferrer(object holder, string? field)
         {
@@ -119,7 +121,7 @@ namespace fire.Runtime
             return Probes;
         }
 
-        /// <summary>Does this object belong to the shared area of the GLOBAL variables (see GlobalsBroker/docs/THREADING_DESIGN.md
+        /// <summary>Does this object belong to the shared area of the GLOBAL variables (see GlobalsBroker/docs/spec/THREADING_DESIGN.md
         /// section 7)? These are all objects owned (directly or via other objects) by the main program's global scope
         /// as soon as a `fire` thread is running. Fire threads read them directly (under the tree lock), but change them only inside a
         /// section that the main program grants at `sync globals`.</summary>
@@ -143,7 +145,7 @@ namespace fire.Runtime
 
         /// <summary>Hidden back-link to the original, if THIS
         /// object itself is a `taking` copy (see
-        /// docs/THREADING_DESIGN.md section 3) - basis for `sync`/
+        /// docs/spec/THREADING_DESIGN.md section 3) - basis for `sync`/
         /// `sync flat`, which of course need to know where to write back to.
         /// Null for an object that is not a copy (the normal case).</summary>
         public ObjectInstance? SyncOrigin { get; set; }
@@ -169,7 +171,7 @@ namespace fire.Runtime
         public string[]? TypeArgs { get; set; }
 
         // -----------------------------------------------------------
-        // `fire handover` (docs/THREADING_DESIGN.md section 1, Runtime.ObjectHandover): the moved object gets a new identity - a new instance takes its
+        // `fire handover` (docs/spec/THREADING_DESIGN.md section 1, Runtime.ObjectHandover): the moved object gets a new identity - a new instance takes its
         // place (the same fields, owner, owned objects), and this one is retired: every reference that still points to it (the sender's, from before
         // the handover) is a reference to a dead object - its use is the DestroyedException "... was handed over to another thread". Natively the
         // same happens with the generation of the object's slot. Costs nothing outside the handover: the fast paths already miss a dead object.
@@ -251,7 +253,7 @@ namespace fire.Runtime
         }
 
         // -----------------------------------------------------------
-        // Multithreading: Baum-weites Locking (docs/THREADING_DESIGN.md 4.5)
+        // Multithreading: Baum-weites Locking (docs/spec/THREADING_DESIGN.md 4.5)
         // -----------------------------------------------------------
 
         /// <summary>Activates thread sharing for THIS entire ownership
@@ -477,7 +479,7 @@ namespace fire.Runtime
             if (Probes != null) ProbeRegistry.Forget(Probes.RemoveAll());
 
             // Without a destructor in the class chain there is nothing to execute (an object without a RuntimeClass does not know the chain: the runner decides)
-            if (RtClass == null || RtClass.HasDestructorInChain())
+            if (!ConstructorFailed && (RtClass == null || RtClass.HasDestructorInChain()))
                 runner.RunDestructor(this);
 
             _owned.DestroyAll(runner);

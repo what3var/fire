@@ -1,10 +1,10 @@
-/* fire native bridge "i2c" (C): the natives behind `#import "i2c"` (docs/NETWORK.md, "I2C"): the I2C bus as a controller - write to a device, read from it, write
+/* fire native bridge "i2c" (C): the natives behind `#import "i2c"` (docs/networking/README.md, "I2C"): the I2C bus as a controller - write to a device, read from it, write
  * then read with a repeated start, look which addresses answer. The fire side (I2c.Bus, I2c.Board, I2c.Sim - fire source) is the same in the VM and in a native
  * build; this file is what its `__I2c...` functions do.
  *
  * This file is the one implementation of the i2c natives, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine
- * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The buses come from the platform layer (FIRE_PLATFORM_I2C_C_HEADER: fire_i2c_*, see
- * platform/std/fire_i2c_c.h): /dev/i2c-N on a Linux board, the master driver of ESP-IDF on an ESP32. Where there is no hardware the list of buses is empty - but
+ * runs it in a shared library built from it (native/abi/fire_pkg_abi.h). The buses come with the package (fire_i2c_*; one file per platform, platformSources of i2c.fireproj, see
+ * fire_i2c_c.h): /dev/i2c-N on a Linux board, the master driver of ESP-IDF on an ESP32. Where there is no hardware the list of buses is empty - but
  * one bus is always there:
  *
  *   "sim"   a simulated bus with devices that the program (or a test) puts on it: each device has a register file of 256 bytes that behaves like a typical sensor
@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include FIRE_PLATFORM_I2C_C_HEADER
+#include "fire_i2c_c.h"
 
 /* (the codes are those of the platform layer: FIRE_I2C_E_*, the same numbers as I2c.I2cException.code) */
 
@@ -161,8 +161,7 @@ static int fire_i2cb_checkAddress(int64_t address) {
     if (address < 0 || address > 127) { fire_i2cb_failf(FIRE_I2C_E_INVALID_ARGUMENT, "Invalid address %lld (7 bits: 0..127).", (long long)address); return 0; }
     return 1;
 }
-static int fire_i2cb_checkRange(Value bufferValue, int64_t offset, int64_t count) {
-    int64_t length = bufOf(bufferValue)->length;
+static int fire_i2cb_checkRange(int64_t length, int64_t offset, int64_t count) {
     if (offset < 0 || count < 0 || offset > length || count > length - offset) {
         fire_i2cb_failf(FIRE_I2C_E_INVALID_ARGUMENT, "offset/count (%lld/%lld) are outside of the buffer (length %lld).", (long long)offset, (long long)count, (long long)length);
         return 0;
@@ -252,11 +251,12 @@ static Value fire_i2c_SetSpeed(Value h, Value speed) {
 static Value fire_i2c_Write(Value h, Value address, Value buffer, Value offset, Value count) {
     FireI2cBusEntry* b;
     const uint8_t* bytes;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_i2cb_checkAddress(address.i) || !fire_i2cb_checkRange(buffer, offset.i, count.i) || !fire_i2cb_checkCount(count.i)) return Int(-1);
+    FireBytes in;
+    if (!bytesArg(buffer, "I2c.Device.Write", &in)) return Undef();
+    if (!fire_i2cb_checkAddress(address.i) || !fire_i2cb_checkRange(in.length, offset.i, count.i) || !fire_i2cb_checkCount(count.i)) return Int(-1);
     b = fire_i2cb_find(h);
     if (b == NULL) return Int(-1);
-    bytes = bufOf(buffer)->data + offset.i;
+    bytes = in.data + offset.i;
     if (b->isSim) {
         FireI2cSimDevice* d = &g_i2cSim.device[address.i];
         if (!d->present) return Int(fire_i2cb_noAck(address.i));
@@ -273,11 +273,12 @@ static Value fire_i2c_Write(Value h, Value address, Value buffer, Value offset, 
 static Value fire_i2c_Read(Value h, Value address, Value buffer, Value offset, Value count) {
     FireI2cBusEntry* b;
     uint8_t* bytes;
-    if (!leafAlive(buffer)) return destroyedError(buffer);
-    if (!fire_i2cb_checkAddress(address.i) || !fire_i2cb_checkRange(buffer, offset.i, count.i) || !fire_i2cb_checkCount(count.i)) return Int(-1);
+    Buf* target = bufferArg(buffer, "I2c.Device.Read");
+    if (target == NULL) return Undef();
+    if (!fire_i2cb_checkAddress(address.i) || !fire_i2cb_checkRange(target->length, offset.i, count.i) || !fire_i2cb_checkCount(count.i)) return Int(-1);
     b = fire_i2cb_find(h);
     if (b == NULL) return Int(-1);
-    bytes = bufOf(buffer)->data + offset.i;
+    bytes = target->data + offset.i;
     if (b->isSim) {
         FireI2cSimDevice* d = &g_i2cSim.device[address.i];
         if (!d->present) return Int(fire_i2cb_noAck(address.i));
@@ -295,14 +296,16 @@ static Value fire_i2c_WriteRead(Value h, Value address, Value outBuffer, Value o
     FireI2cBusEntry* b;
     const uint8_t* out;
     uint8_t* in;
-    if (!leafAlive(outBuffer)) return destroyedError(outBuffer);
-    if (!leafAlive(inBuffer)) return destroyedError(inBuffer);
-    if (!fire_i2cb_checkAddress(address.i) || !fire_i2cb_checkRange(outBuffer, outOffset.i, outCount.i) || !fire_i2cb_checkRange(inBuffer, inOffset.i, inCount.i)
+    FireBytes sent;
+    Buf* target;
+    if (!bytesArg(outBuffer, "I2c.Device.WriteRead", &sent)) return Undef();
+    if ((target = bufferArg(inBuffer, "I2c.Device.WriteRead")) == NULL) return Undef();
+    if (!fire_i2cb_checkAddress(address.i) || !fire_i2cb_checkRange(sent.length, outOffset.i, outCount.i) || !fire_i2cb_checkRange(target->length, inOffset.i, inCount.i)
         || !fire_i2cb_checkCount(outCount.i) || !fire_i2cb_checkCount(inCount.i)) return Int(-1);
     b = fire_i2cb_find(h);
     if (b == NULL) return Int(-1);
-    out = bufOf(outBuffer)->data + outOffset.i;
-    in = bufOf(inBuffer)->data + inOffset.i;
+    out = sent.data + outOffset.i;
+    in = target->data + inOffset.i;
     if (b->isSim) {
         FireI2cSimDevice* d = &g_i2cSim.device[address.i];
         if (!d->present) return Int(fire_i2cb_noAck(address.i));

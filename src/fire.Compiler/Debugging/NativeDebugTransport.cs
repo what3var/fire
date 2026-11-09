@@ -10,7 +10,7 @@ using System.Threading;
 namespace fire.Debugging
 {
     /// <summary>
-    /// The wire of the native debug protocol (docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): messages (one JSON object each) in both directions. TCP carries
+    /// The wire of the native debug protocol (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport"): messages (one JSON object each) in both directions. TCP carries
     /// only messages, one per line (<see cref="TcpDebugTransport"/>); a framed transport (<see cref="FramedDebugTransport"/>: stdio of a process, the
     /// console UART of a board) carries the program's console as well, the messages are frames in it.
     /// </summary>

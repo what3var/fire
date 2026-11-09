@@ -19,7 +19,7 @@ namespace fire.Native
         public string? Target { get; set; }
         /// <summary>The default toolchain (a built-in name or a key of <see cref="Toolchains"/>) for targets that name none themselves; null: the first one found on this machine.</summary>
         public string? Toolchain { get; set; }
-        /// <summary>How much a native build leaves out (`"stripping"`, docs/NATIVE_BACKEND.md "Größe des Programms"): 0 `none` .. 3 `all` (null: the default, 3), as a
+        /// <summary>How much a native build leaves out (`"stripping"`, docs/spec/NATIVE_BACKEND.md "Größe des Programms"): 0 `none` .. 3 `all` (null: the default, 3), as a
         /// number or a name; a debug build always keeps everything (0).</summary>
         [JsonConverter(typeof(StrippingJsonConverter))]
         public StrippingLevel? Stripping { get; set; }
@@ -38,9 +38,26 @@ namespace fire.Native
         private bool _strippingFromTrim;
         /// <summary><see cref="Stripping"/> was given on the command line (`--stripping`, `--keep-all`): it goes before the project's setting. Not saved.</summary>
         [JsonIgnore] public bool StrippingFromCommandLine { get; set; }
+        /// <summary>`--stats`: the build writes a report of its code, data and typing next to the program (NativeStats).</summary>
+        [JsonIgnore] public bool Stats { get; set; }
+        /// <summary>The direction of the build (`"optimize"`: `speed` or `size`, OptimizeFor; docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"); null: the target's. The project and
+        /// `--optimize` go before it (`--optimize` before the project: <see cref="OptimizeFromCommandLine"/>).</summary>
+        public string? Optimize
+        {
+            get => _optimize;
+            set
+            {
+                if (value != null && OptimizeFors.Parse(value) == null)
+                    throw new NativeConfigException($"{FileName}: \"optimize\": '{value}' is not one of: {string.Join(", ", OptimizeFors.Names)}.");
+                _optimize = value;
+            }
+        }
+        private string? _optimize;
+        [JsonIgnore] public OptimizeFor? OptimizeValue => OptimizeFors.Parse(_optimize);
+        [JsonIgnore] public bool OptimizeFromCommandLine { get; set; }
         /// <summary>(`"stripping"` was given: it goes before `"trim"`, whatever comes first in the file)</summary>
         private bool StrippingExplicit => Stripping != null && !_strippingFromTrim;
-        /// <summary>When the main program runs the `fire global` jobs by itself (`"globalJobs"`: `safepoints`, `sleep` or `sync`; docs/THREADING_DESIGN.md section 7): the default of a
+        /// <summary>When the main program runs the `fire global` jobs by itself (`"globalJobs"`: `safepoints`, `sleep` or `sync`; docs/spec/THREADING_DESIGN.md section 7): the default of a
         /// native build whose program says nothing (`#globaljobs`, `#nosync`); the project and `--global-jobs` go before it. Null: safepoints.</summary>
         public string? GlobalJobs
         {
@@ -56,7 +73,7 @@ namespace fire.Native
         /// <summary><see cref="GlobalJobs"/> as a mode.</summary>
         [JsonIgnore] public GlobalJobsMode? GlobalJobsValue => GlobalJobsModes.Parse(_globalJobs);
         /// <summary>How the libraries and packages are linked (ROADMAP 9): `source` (null, the default: everything is one C file) or `static` (each library a static library of
-        /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
+        /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
         public string? Linkage { get; set; }
         /// <summary>`--linkage plugin`: the program the plugin is built for (its path, or its `.firehost` file) - its switches and the interfaces of its libraries.</summary>
         public string? Host { get; set; }
@@ -147,6 +164,30 @@ namespace fire.Native
         /// <summary>The toolchain to build <paramref name="target"/> with: the one asked for, the configured default, the target's, else the first compiler found on this machine.</summary>
         public ToolchainDef ResolveToolchain(TargetProfile target, string? name = null)
         {
+            var chosen = ResolveToolchainNamed(target, name);
+            // a toolchain that cannot build for the target (gcc for DOS) is not used: the target's own, else the first it allows
+            if (target.AllowsToolchain(chosen.EffectiveKind)) return chosen;
+            string own = target.Native.Toolchain is { } t && target.AllowsToolchain(ResolveToolchainNamed(target, t).EffectiveKind) ? t : target.Toolchains![0];
+            return ResolveToolchainNamed(target, own);
+        }
+
+        /// <summary>The targets in the order of their choice: the built-in ones and the configured ones, resolved (a broken one is left out).</summary>
+        [JsonIgnore]
+        public IEnumerable<TargetProfile> TargetProfiles
+        {
+            get
+            {
+                foreach (string n in TargetNames)
+                {
+                    TargetProfile? t = null;
+                    try { t = ResolveTarget(n); } catch (NativeConfigException) { }
+                    if (t != null) yield return t;
+                }
+            }
+        }
+
+        private ToolchainDef ResolveToolchainNamed(TargetProfile target, string? name)
+        {
             name ??= target.Native.Toolchain ?? Toolchain;
             if (name != null)
             {
@@ -162,7 +203,7 @@ namespace fire.Native
     }
 
     /// <summary>How much a native build leaves out (`"stripping"` in fire.native.json, in the settings of a project, `--stripping` on the command line;
-    /// docs/NATIVE_BACKEND.md "Größe des Programms"). Each level leaves out what the one before keeps, and more.</summary>
+    /// docs/spec/NATIVE_BACKEND.md "Größe des Programms"). Each level leaves out what the one before keeps, and more.</summary>
     public enum StrippingLevel
     {
         /// <summary>0 `none`: everything stays (as in the VM): every class with all its members (`--keep-all`, debug builds).</summary>
@@ -242,11 +283,21 @@ namespace fire.Native
         public int? FloatWidth { get; set; }
         /// <summary>Width of `int` (32 or 64; default 64).</summary>
         public int? IntWidth { get; set; }
+        /// <summary>Width of `word`, the machine word (16, 32 or 64; default: the base target's - 64 on the desktop, 32 on esp32/freertos/wasm).</summary>
+        public int? WordWidth { get; set; }
+        /// <summary>The direction a build for the target is optimised in by default: `speed` or `size` (OptimizeFor).</summary>
+        public string? Optimize { get; set; }
         /// <summary>Stack of a fire thread in bytes.</summary>
         public int? StackBytes { get; set; }
         /// <summary>The `#import` libraries that exist on the target; null: as the base.</summary>
         public List<string>? Imports { get; set; }
         public bool? Embedded { get; set; }
+        /// <summary>The name shown in the choice of targets.</summary>
+        public string? DisplayName { get; set; }
+        /// <summary>The group in the choice of targets: "os", "native" or "embedded".</summary>
+        public string? Category { get; set; }
+        /// <summary>The kinds of toolchain that can build for the target ("watcom"); the others are not used for it.</summary>
+        public List<string>? Toolchains { get; set; }
         /// <summary>The platform package of the runtime (`posix`, `windows`, `freertos`, `esp32`, or your own: see <see cref="PlatformPath"/>).</summary>
         public string? Platform { get; set; }
         /// <summary>A folder with your own platform package (it holds `fire_platform.hpp`); it is copied to `platform/&lt;platform&gt;/` next to the generated file.</summary>
@@ -258,8 +309,6 @@ namespace fire.Native
         public List<string>? LinkLibs { get; set; }
         public bool? SupportsThreads { get; set; }
         public string? Toolchain { get; set; }
-        /// <summary>The SDL of a window on the desktop: 2 or 3 (null: the build decides, SDL3 when the toolchain has it).</summary>
-        public int? Sdl { get; set; }
         /// <summary>`#line` directives in the generated C (null: on, see NativeTarget.LineDirectives).</summary>
         public bool? LineDirectives { get; set; }
         /// <summary>A board: its serial port (ESP32: Run and Debug in spark).</summary>
@@ -279,7 +328,6 @@ namespace fire.Native
                 LinkLibs = LinkLibs ?? b.Native.LinkLibs,
                 SupportsThreads = SupportsThreads ?? b.Native.SupportsThreads,
                 Toolchain = Toolchain ?? b.Native.Toolchain,
-                Sdl = Sdl ?? b.Native.Sdl,
                 LineDirectives = LineDirectives ?? b.Native.LineDirectives,
                 Port = Port ?? b.Native.Port,
                 Baud = Baud ?? b.Native.Baud,
@@ -296,9 +344,17 @@ namespace fire.Native
                 Symbols = Symbols ?? b.Symbols,
                 FloatWidth = FloatWidth ?? b.FloatWidth,
                 IntWidth = IntWidth ?? b.IntWidth,
+                WordWidth = WordWidth is null or 16 or 32 or 64 ? WordWidth ?? b.WordWidth : throw new NativeConfigException($"Target '{name}': \"wordWidth\" must be 16, 32 or 64, not {WordWidth}."),
                 DefaultStackBytes = StackBytes ?? b.DefaultStackBytes,
+                Optimize = Optimize == null ? b.Optimize : OptimizeFors.Parse(Optimize)
+                    ?? throw new NativeConfigException($"Target '{name}': \"optimize\" must be \"speed\" or \"size\", not \"{Optimize}\"."),
                 Imports = Imports ?? b.Imports,
                 IsEmbedded = Embedded ?? b.IsEmbedded,
+                DisplayName = DisplayName ?? (string.Equals(name, b.Name, StringComparison.OrdinalIgnoreCase) ? b.DisplayName : null),
+                Category = Category == null ? (Embedded == true ? TargetCategory.Embedded : b.Category)
+                    : Enum.TryParse<TargetCategory>(Category, ignoreCase: true, out var category) ? category
+                    : throw new NativeConfigException($"Target '{name}': \"category\" must be \"os\", \"native\" or \"embedded\", not \"{Category}\"."),
+                Toolchains = Toolchains ?? b.Toolchains,
                 HalPackage = Platform ?? b.HalPackage,
                 Native = native,
             };

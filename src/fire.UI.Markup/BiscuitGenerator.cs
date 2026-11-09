@@ -4,8 +4,8 @@ using System.Text.Json;
 
 namespace fire.UI.Markup
 {
-    /// <summary>The files that are compiled as the script generated from them: the markup of a user interface (`.fxml`, docs/UI_MARKUP.md) and the schematic of a circuit
-    /// (`.biscuit`, docs/CIRCUITS.md).</summary>
+    /// <summary>The files that are compiled as the script generated from them: the markup of a user interface (`.fxml`, docs/ui/markup.md) and the schematic of a circuit
+    /// (`.biscuit`, docs/circuits/README.md).</summary>
     public static class MarkupFiles
     {
         public static bool IsUiMarkup(string path) => string.Equals(Path.GetExtension(path), ".fxml", StringComparison.OrdinalIgnoreCase);
@@ -34,7 +34,7 @@ namespace fire.UI.Markup
         public string Compact { get; init; } = "";
     }
 
-    /// <summary>Translates the schematic of a circuit (`.biscuit`: JSON with the elements on a grid, docs/CIRCUITS.md) into a fire script: ONE class that derives from
+    /// <summary>Translates the schematic of a circuit (`.biscuit`: JSON with the elements on a grid, docs/circuits/README.md) into a fire script: ONE class that derives from
     /// `Circuits.Circuit`, loads the schematic in its constructor (the package `circuits` makes the parts and connects them) and has a field for every element with a name,
     /// typed with the class of its part (`Circuits.Resistor r1`). `new Amp()` is the circuit; a class of the program may derive from it.</summary>
     public static class BiscuitGenerator
@@ -79,7 +79,7 @@ namespace fire.UI.Markup
         {
             "class", "var", "int", "float", "bool", "string", "char", "any", "undefined", "true", "false", "if", "else", "while", "for", "foreach", "in", "of", "from", "is",
             "return", "new", "delete", "namespace", "using", "func", "on", "off", "copy", "take", "try", "catch", "finally", "throw", "break", "continue", "switch", "case",
-            "default", "static", "construct", "destruct", "fire", "sync", "unit", "enum", "interface", "extern", "native", "byte", "do", "readonly", "flat", "override",
+            "default", "static", "construct", "destruct", "fire", "sync", "unit", "enum", "interface", "extern", "native", "byte", "word", "do", "readonly", "flat", "override",
         };
 
         /// <summary>Reads a `.biscuit` text (checks it; throws <see cref="MarkupException"/> with the lines of the mistakes).</summary>
@@ -165,7 +165,7 @@ namespace fire.UI.Markup
             var d = Read(text, sourceName);
             var sb = new StringBuilder();
             string file = Path.GetFileName(sourceName);
-            sb.Append("// Generated from ").Append(file == "" ? "a schematic" : file).Append(" (docs/CIRCUITS.md) - edit the schematic, not this script.\n");
+            sb.Append("// Generated from ").Append(file == "" ? "a schematic" : file).Append(" (docs/circuits/README.md) - edit the schematic, not this script.\n");
             sb.Append("#import \"circuits\"\n");
             string indent = "";
             if (d.Namespace != "")

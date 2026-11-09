@@ -18,7 +18,7 @@ namespace fire.Compiler
         public string RawMessage { get; }
         /// <summary>The file the error is in (set for a program of several files, see ProcessedSource.Name).</summary>
         public string? FileName { get; }
-        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        /// <summary>The code of the message (docs/tools/errors.md).</summary>
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Parser, RawMessage);
 
         public ParseException(string message, int line, int column, string? fileName = null)
@@ -44,7 +44,7 @@ namespace fire.Compiler
         private static readonly HashSet<TokenType> TypeKeywords = new()
         {
             TokenType.KwBool, TokenType.KwInt, TokenType.KwFloat,
-            TokenType.KwChar, TokenType.KwString, TokenType.KwByte, TokenType.Class, TokenType.Undefined,
+            TokenType.KwChar, TokenType.KwString, TokenType.KwByte, TokenType.KwWord, TokenType.Class, TokenType.Undefined,
         };
 
         private readonly List<Token> _tokens;
@@ -696,8 +696,12 @@ namespace fire.Compiler
                     statements.Add(ParseStatement());
             }
             foreach (var ed in _enumDecls) statements.AddRange(EnumHelperClass(ed));
+            statements.AddRange(_hoistedInlineC);
             return statements;
         }
+
+        /// <summary>The C functions of `inline c` methods of classes (ParseInlineCMethod): declared at the top level, where `extern` functions are.</summary>
+        private readonly List<Stmt> _hoistedInlineC = new();
 
         /// <summary>The enums of this source: each gets a hidden class with `Name(value)`, `Parse(text)` and `IsDefined(value)` (see EnumHelperClass).</summary>
         private readonly List<EnumDecl> _enumDecls = new();
@@ -865,6 +869,8 @@ namespace fire.Compiler
             if (Check(TokenType.Namespace)) return ParseNamespaceDecl();
             if (Check(TokenType.Actor)) return ParseActorDecl();
             if (Check(TokenType.Interface)) return ParseInterfaceDecl();
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "inline" && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "c" && !PeekAt(1).NewlineBefore && PeekAt(2).Type != TokenType.Assign)
+                return ParseInlineCDecl();
             if (NextLooksLikeTypeThenName()) return ParseBareTypedDecl();
             if (Check(TokenType.If)) return ParseIf();
             if (Check(TokenType.While)) return ParseWhile();
@@ -1241,6 +1247,21 @@ namespace fire.Compiler
         /// parameter types.</summary>
         private TypeRef ParseTypeRef(bool allowArray = false)
         {
+            // `defined int n` (SPEC 8.10b): a value type that never holds undefined - the word stands in front of the type
+            if (!DefinedAhead(0)) return ParseTypeRefCore(allowArray);
+            var definedTok = Advance();
+            var type = ParseTypeRefCore(allowArray);
+            if (type.PointerDepth > 0) throw Error($"'defined' marks a value that never holds undefined - a pointer is written '{type.BaseName}*' without it", definedTok);
+            return type with { NonNull = true };
+        }
+
+        /// <summary>`defined` (a word of its own only here) followed by a value type: int, float, bool, word, char, byte.</summary>
+        private bool DefinedAhead(int offset) =>
+            PeekAt(offset).Type == TokenType.Identifier && PeekAt(offset).Lexeme == "defined"
+            && PeekAt(offset + 1).Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwWord or TokenType.KwChar or TokenType.KwByte;
+
+        private TypeRef ParseTypeRefCore(bool allowArray)
+        {
             string baseName = ParseTypeAnnotationName();
             var namespaces = CurrentNamespaces();
 
@@ -1269,6 +1290,15 @@ namespace fire.Compiler
             // explicit bit width AFTER it would be contradictory/redundant and
             // is therefore rejected, instead of silently ignoring
             // or overriding it.
+            // 'word' (SPEC 8.10): the machine word of the target - its width is the target's, so no '[...]' may follow, and it carries no unit
+            if (baseName == "word")
+            {
+                if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
+                    throw Error("'word' has the width of the target's machine word - no '[...]' may follow (use int[16], int[32] or int for a fixed width)", Peek());
+                int wordPointerDepth = 0;
+                while (Match(TokenType.Star)) wordPointerDepth++;
+                return new TypeRef("word", null, wordPointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+            }
             if (baseName == "byte")
             {
                 if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
@@ -1293,6 +1323,10 @@ namespace fire.Compiler
             if (width == null && !TypeKeywords.Contains(Previous().Type) && Check(TokenType.Lt) && TypeArgListEnd(0) > 0)
                 typeArgs = ParseTypeArgRefs();
 
+            // (`int! n`: a value without undefined is written `defined int n`, SPEC 8.10b)
+            if (Check(TokenType.Bang) && PeekAt(1).Type == TokenType.Identifier && TypeRef.CanBeNonNull(baseName))
+                throw Error($"A value that is never undefined is declared 'defined {baseName}', not '{baseName}!'", Peek());
+
             // `float:m Len()`, `int : mm count`: the unit at the type (a number type only; a name has to follow the unit)
             string? unit = baseName is "int" or "float" ? ParseUnitAtType() : null;
 
@@ -1303,6 +1337,7 @@ namespace fire.Compiler
                 TypeArgCount: typeArgs?.Count ?? 0, TypeArgs: typeArgs);
         }
 
+
         /// <summary>`&lt;T1, ..., Tn&gt;` with full type references (nested ones included).</summary>
         private List<TypeRef> ParseTypeArgRefs()
         {
@@ -1310,6 +1345,7 @@ namespace fire.Compiler
             var args = new List<TypeRef>();
             do
             {
+                if (DefinedAhead(0)) throw Error($"'defined {PeekAt(1).Lexeme}' cannot be a type argument - 'defined' belongs to variables, parameters, fields, properties and return types", Peek());
                 var arg = ParseTypeRef(allowArray: true);
                 // `Box<int : cm>`, `List<float : any>`, `Box<int : any m>`: a number type argument with its unit (without one it is unitless)
                 if (arg is { BaseName: "int" or "float", Unit: null, ArrayRank: 0 } && Check(TokenType.Colon) && (PeekAt(1).Type == TokenType.Identifier || IsCustomUnitWordAt(1)))
@@ -1473,7 +1509,7 @@ namespace fire.Compiler
         /// declaration).</summary>
         private bool NextLooksLikeTypeThenName()
         {
-            if (TypeKeywords.Contains(Peek().Type)) return true;
+            if (TypeKeywords.Contains(Peek().Type) || DefinedAhead(0)) return true;
             // 'lambda' as a type name (see ParseTypeRef) can - unlike a
             // class name - also be followed by '<' instead of a further
             // identifier ('lambda<int> x'), which the chain check
@@ -1502,6 +1538,7 @@ namespace fire.Compiler
         private bool TypeThenOperatorAhead()
         {
             int offset;
+            if (DefinedAhead(0) && PeekAt(2).Type == TokenType.Operator) return true;
             if (TypeKeywords.Contains(Peek().Type)) offset = 1;
             else if (Check(TokenType.Identifier))
             {
@@ -1661,6 +1698,42 @@ namespace fire.Compiler
             var parms = ParseParamList();
             ExpectStatementTerminator();
             return new ExternDecl(_sourceIndex, line, returnType, name, parms, _currentExternLib);
+        }
+
+        /// <summary>`inline c [ReturnType] Name(params) { C }` (ROADMAP 13.2): a function whose body is C, handed to the C compiler unchanged (the lexer reads it as one
+        /// token, TokenType.InlineCode). An ExternDecl with a body: called like an `extern` function, the arguments converted by their declared types.</summary>
+        private Stmt ParseInlineCDecl()
+        {
+            int line = Peek().Line;
+            Advance();   // inline
+            Advance();   // c
+            TypeRef? returnType = null;
+            if (NextLooksLikeTypeThenName())
+                returnType = ParseTypeRef();
+            string name = Expect(TokenType.Identifier, "Expected a function name after 'inline c'").Lexeme;
+            var parms = ParseParamList();
+            var body = Expect(TokenType.InlineCode, "Expected the C body '{ ... }' of the 'inline c' function");
+            return new ExternDecl(_sourceIndex, line, returnType, name, parms, null, (string)body.LiteralValue!, body.Line);
+        }
+
+        /// <summary>`[access] [static] inline c [ReturnType] Name(params) { C }` in a class (ROADMAP 13.2): a static method (C has no `this`) whose body calls
+        /// the C function `<Class>_<Name>` - declared at the top level like an `inline c` function there (C name `fire_inl_<Class>_<Name>`). The method takes part in
+        /// everything a static method does (access, overloading by type is not possible: one name, one C function); in the VM its call is the error of an `inline c`
+        /// function, the alternative goes in `#if native ... #else`.</summary>
+        private Stmt ParseInlineCMethod(AccessModifier access)
+        {
+            int line = Peek().Line;
+            if (_currentClassName == null) throw Error("An 'inline c' method belongs to a class", Peek());
+            var decl = (ExternDecl)ParseInlineCDecl();
+            string cName = _currentClassName.Replace('.', '_') + "_" + decl.Name;
+            _hoistedInlineC.Add(decl with { Name = cName, DisplayName = _currentClassName + "." + decl.Name });
+            var args = decl.Params.Select(p => (Expr)new IdentifierExpr(line, p.Name)).ToList();
+            var call = new CallExpr(line, new IdentifierExpr(line, cName), args);
+            bool none = decl.ReturnType == null || decl.ReturnType is { BaseName: "undefined", PointerDepth: 0 };
+            Stmt bodyStmt = none ? new ExprStmt(_sourceIndex, line, call) : new ReturnStmt(_sourceIndex, line, call);
+            var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { bodyStmt });
+            // (an array parameter `byte data[]`: the method declares it as written)
+            return new MethodDecl(_sourceIndex, line, decl.ReturnType, decl.Name, decl.Params, body, null, access, IsStatic: true);
         }
 
         /// <summary>Preprocessor directives, currently `#extern "libName"` and
@@ -1930,7 +2003,7 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Multithreading (docs/THREADING_DESIGN.md) - first development stage:
+        // Multithreading (docs/spec/THREADING_DESIGN.md) - first development stage:
         // only `fire { ... }` / `fire taking X { ... }`.
         // -----------------------------------------------------------
 
@@ -1950,7 +2023,7 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LParen)
                 return ParseFireCallForm(line);
 
-            // `fire global { ... }`: job for the main program instead of a new thread (docs/THREADING_DESIGN.md section 7)
+            // `fire global { ... }`: job for the main program instead of a new thread (docs/spec/THREADING_DESIGN.md section 7)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking || PeekAt(1).Type == TokenType.Handover))
                 return ParseFireGlobal(line);
 
@@ -1963,14 +2036,15 @@ namespace fire.Compiler
         /// `{ fire ...; x = undefined }`, so that the resolver, the type checker and both back ends treat the reset like any assignment.</summary>
         private Stmt WithHandoverReset(FireStmt fire)
         {
-            if (!fire.TakingCaptures.Any(c => c.Handover)) return fire;
+            // (a variable that was handed over is undefined afterwards; a direct `new` argument of `fire M(new X())` has none)
+            if (!fire.TakingCaptures.Any(c => c.Handover && c.Source is IdentifierExpr)) return fire;
             var statements = new List<Stmt> { fire };
-            foreach (var c in fire.TakingCaptures.Where(c => c.Handover))
+            foreach (var c in fire.TakingCaptures.Where(c => c.Handover && c.Source is IdentifierExpr))
                 statements.Add(new ExprStmt(_sourceIndex, fire.Line, new AssignExpr(fire.Line, new IdentifierExpr(fire.Line, c.VarName), new LiteralExpr(fire.Line, Value.MakeUndefined()))));
             return new Stmt.BlockStmt(_sourceIndex, fire.Line, statements);
         }
 
-        /// <summary>`sync global { ... }` (docs/THREADING_DESIGN.md section 7): a block that runs with exclusive access to the globals.
+        /// <summary>`sync global { ... }` (docs/spec/THREADING_DESIGN.md section 7): a block that runs with exclusive access to the globals.
         /// Desugared to `SectionEnter; try { Body } finally { SectionExit }` - the section thus also ends on a `throw` in the block.</summary>
         private Stmt ParseSyncGlobalBlock()
         {
@@ -2073,13 +2147,19 @@ namespace fire.Compiler
             const string thisCaptureName = "__fire_this__";
             var allCaptures = new List<FireTakingCapture> { new(thisCaptureName, new ThisExpr(line)) };
             var argRefs = new List<Expr>();
+            var handedOver = new List<FireTakingCapture>();
             for (int i = 0; i < callArgs.Count; i++)
             {
                 string argCaptureName = $"__fire_arg{i}__";
-                allCaptures.Add(new FireTakingCapture(argCaptureName, callArgs[i]));
+                // a direct `new` goes to the thread without a copy (handover, SPEC 2.1 / THREADING_DESIGN.md section 1); every other argument is copied like `taking`
+                if (callArgs[i] is NewExpr) handedOver.Add(new FireTakingCapture(argCaptureName, callArgs[i], Handover: true));
+                else allCaptures.Add(new FireTakingCapture(argCaptureName, callArgs[i]));
                 argRefs.Add(new IdentifierExpr(line, argCaptureName));
             }
-            allCaptures.AddRange(explicitTaking);
+            // (the handover captures stand last: the explicit ones are last in explicitTaking already)
+            allCaptures.AddRange(explicitTaking.Where(c => !c.Handover));
+            allCaptures.AddRange(handedOver);
+            allCaptures.AddRange(explicitTaking.Where(c => c.Handover));
 
             var callExpr = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, thisCaptureName), methodName), argRefs);
             var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
@@ -2968,6 +3048,12 @@ namespace fire.Compiler
             // notation ('public static readonly'), no other
             // orders specially supported (simplicity).
             bool isStatic = Match(TokenType.Static);
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "inline" && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "c" && !PeekAt(1).NewlineBefore
+                && PeekAt(2).Type != TokenType.Assign)
+            {
+                if (isOverride) throw Error("An 'inline c' method is static - it cannot be 'override'", overrideToken!.Value);
+                return new List<Stmt> { ParseInlineCMethod(access) };
+            }
             if (isOverride && isStatic) throw Error("A static member belongs to its class and is not inherited - it cannot be 'override'", overrideToken!.Value);
             if (!isOverride && Check(TokenType.Override))
                 throw Error("'static' and 'override' do not go together: a static member belongs to its class and is not inherited", Peek());
@@ -3630,6 +3716,23 @@ namespace fire.Compiler
                 return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
             }
 
+            // `trust x` (SPEC 8.10b): the developer vouches that x is not undefined - no warning where a `defined` value is expected, and a native
+            // release build passes it on without the check. (`trust` is a word of its own only in front of an operand on the same line.)
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "trust" && !PeekAt(1).NewlineBefore
+                && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.True or TokenType.False or TokenType.CharLiteral)
+            {
+                var trustTok = Advance();
+                return new UnaryExpr(trustTok.Line, UnaryOp.Trust, ParseUnary());
+            }
+
+            // `try take x` (SPEC 2.2): like `take x`, but only what the running call owns moves
+            if (Check(TokenType.Try) && PeekAt(1).Type == TokenType.Take)
+            {
+                var tryTok = Advance();
+                Advance();   // take
+                return new UnaryExpr(tryTok.Line, UnaryOp.TryTake, ParseUnary());
+            }
+
             // `take x` (SPEC 2.2): as an argument or right of `=`/`var x =` - the ownership goes to the call or to the owner of the target
             if (Check(TokenType.Take))
             {
@@ -3737,6 +3840,7 @@ namespace fire.Compiler
                     TokenType? typeKw = LineContinues() && TypeKeywords.Contains(Peek().Type)
                         ? Advance().Type : null;
                     if (typeKw == TokenType.KwByte) { expr = new TypeCoerceExpr(line, expr, TokenType.KwInt, Width: 8, Unsigned: true); continue; }
+                    if (typeKw == TokenType.KwWord) { expr = new TypeCoerceExpr(line, expr, TokenType.KwWord); continue; }
                     // `x!int[8]`, `x!float[32]`: a bit width directly after the type
                     if (typeKw is TokenType.KwInt or TokenType.KwFloat && Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.IntLiteral && PeekAt(2).Type == TokenType.RBracket)
                     {
@@ -3934,15 +4038,15 @@ namespace fire.Compiler
                         // NewBufferExpr documentation), deliberately only one-dimensional -
                         // 'new byte[n][m]' (several ranks) is therefore an
                         // error instead of an "array of buffers".
-                        if (Check(TokenType.KwByte))
+                        if (Check(TokenType.KwByte) || Check(TokenType.KwWord))
                         {
-                            Advance(); // 'byte'
+                            bool words = Advance().Type == TokenType.KwWord; // 'byte' or 'word'
                             var bufSizeExprs = ParseArrayRanks();
                             if (bufSizeExprs.Count == 0)
                                 throw Error("Expected '[' after 'byte' in 'new'", Peek());
                             if (bufSizeExprs.Count > 1 || bufSizeExprs[0] == null)
                                 throw Error("'new byte[...]' expects exactly ONE size (no multidimensional byte buffer, no unspecified size)", Peek());
-                            return new NewBufferExpr(tok.Line, bufSizeExprs[0]!);
+                            return new NewBufferExpr(tok.Line, bufSizeExprs[0]!, words);
                         }
 
                         string elementTypeName = ParseTypeAnnotationName();

@@ -38,6 +38,10 @@ namespace fire.Bytecode
         /// (DeclaredType, its encoded form); null: none.</summary>
         public string? RequiredType { get; set; }
 
+        /// <summary>A field declared as a typed array (`int data[]`, `float[32] m[][]`): the element (ArrayElem) | the rank << 8 - every assignment types the array
+        /// (OpCode.TypeArray: an array of that element or `undefined`, RequiredUnit is the unit of its elements); 0: none. Not for `byte`/`word` (buffers).</summary>
+        public ushort RequiredArray { get; set; }
+
         public AccessModifier AccessModifier { get; set; }
 
         /// <summary>SPEC "Static members" - `true` for a `static`
@@ -124,7 +128,7 @@ namespace fire.Bytecode
         /// <summary>The members of THIS class that are marked `[Keep]` (fields, properties, methods by name); null: none.</summary>
         public List<string>? KeptMembers { get; set; }
 
-        /// <summary>The class itself is excluded from JSON (`[NotSerializable]` before it, or `"serializable": false` in the package that declares it, docs/JSON.md);
+        /// <summary>The class itself is excluded from JSON (`[NotSerializable]` before it, or `"serializable": false` in the package that declares it, docs/stdlib/json.md);
         /// a derived class is excluded as well (see <see cref="IsNotSerializable"/>).</summary>
         public bool NotSerializable { get; set; }
 
@@ -233,6 +237,15 @@ namespace fire.Bytecode
             return null;
         }
 
+        /// <summary>Like FindFieldRequiredUnit, for a typed array (FieldInfo.RequiredArray, 0: none).</summary>
+        public ushort FindFieldRequiredArray(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.RequiredArray;
+            return 0;
+        }
+
         /// <summary>Like FindFieldRequiredUnit, for the kind (FieldInfo.RequiredKind, 0: none).</summary>
         public byte FindFieldRequiredKind(string name)
         {
@@ -265,7 +278,7 @@ namespace fire.Bytecode
         /// (see Compiler.CompileConstructorProto).
         /// Basis for FieldIndex/Runtime.FieldStore (SPEC optimisation:
         /// field access via a fixed array slot instead of a dictionary
-        /// lookup per access, see docs/BYTECODE.md). Computed once
+        /// lookup per access, see docs/spec/BYTECODE.md). Computed once
         /// and cached - as with FindMethod (see there) the same holds: Fields/Base
         /// are filled ONLY during the one-time compilation, never
         /// changed afterwards at runtime, so the cache is permanently

@@ -21,7 +21,7 @@ namespace fire.Package.Manager
         public List<string> Dependencies { get; set; } = new();
         /// <summary>The imports (`#import "name"`) the package provides.</summary>
         public List<PackageImport> Imports { get; set; } = new();
-        /// <summary>A folder with the templates the package brings (`Code/` and `Project/` below it, see docs/TEMPLATES.md): in the forge file a path (relative to the file; none given: `templates/` next to
+        /// <summary>A folder with the templates the package brings (`Code/` and `Project/` below it, see docs/tools/templates.md): in the forge file a path (relative to the file; none given: `templates/` next to
         /// it, if there is one), in the package `templates`.</summary>
         public string? Templates { get; set; }
 
@@ -63,7 +63,7 @@ namespace fire.Package.Manager
         /// <summary>The imports of the compiler itself: a package must not take one of these names.</summary>
         public static readonly IReadOnlySet<string> ReservedImportNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "print", "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "process", "hash", "compression", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "ui.docking", "json", "circuits", "circuits.ui",
+            "print", "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "process", "hash", "compression", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics", "ui.docking", "json", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86",
         };
 
         /// <summary>All problems of the description (empty: it is fine). <paramref name="fileExists"/> decides whether a referenced file exists (relative to the root of the
@@ -93,7 +93,7 @@ namespace fire.Package.Manager
                 if (import.Native is { } native)
                 {
                     if (native.Sources.Count == 0 && native.PlatformSources.Count == 0 && native.Libraries.Count == 0) problems.Add(where + "'native' needs at least one file in 'sources' (or in 'platformSources' or 'libraries').");
-                    foreach (var src in native.Sources.Concat(native.PlatformSources.Values.SelectMany(l => l)).Concat(native.Libraries.Values))
+                    foreach (var src in native.Sources.Concat(native.PlatformSources.Values.SelectMany(l => l)).Concat(native.Libraries.Values).Concat(native.Headers))
                         if (fileExists != null && !fileExists(src)) problems.Add(where + $"the file '{src}' does not exist.");
                     if (native.Language is not (null or "c" or "c++")) problems.Add(where + $"'native.language' is '{native.Language}' (c or c++).");
                     var functions = new HashSet<string>();
@@ -122,12 +122,12 @@ namespace fire.Package.Manager
         public List<string> Requires { get; set; } = new();
         /// <summary>The natives as C++ source (only for the native backend). Optional.</summary>
         public PackageNative? Native { get; set; }
-        /// <summary>The files the prelude embeds with `new Resource("path")` (docs/RESOURCES.md): the key is the path as the prelude writes it (relative to the prelude's folder,
+        /// <summary>The files the prelude embeds with `new Resource("path")` (docs/stdlib/resources.md): the key is the path as the prelude writes it (relative to the prelude's folder,
         /// with `/`), the value the file - in a forge file where it is now, in a package where it lies in the package (the prelude's folder + the key).</summary>
         public Dictionary<string, string>? Resources { get; set; }
         /// <summary>The device drivers of the import (classes of the device framework, made with `new Class()`): the IDE loads them and lists their devices. null: none.</summary>
         public List<string>? Drivers { get; set; }
-        /// <summary>`false`: the classes of the prelude cannot be written to or read from JSON (docs/JSON.md; like `[NotSerializable]` on each, derived classes included) - a
+        /// <summary>`false`: the classes of the prelude cannot be written to or read from JSON (docs/stdlib/json.md; like `[NotSerializable]` on each, derived classes included) - a
         /// native build never keeps them for JSON. null: serializable.</summary>
         public bool? Serializable { get; set; }
     }
@@ -144,8 +144,9 @@ namespace fire.Package.Manager
         public bool IsC => Language == "c";
         /// <summary>The source files; an entry can have a build order (see <see cref="NativeSourceList"/>).</summary>
         public NativeSourceList Sources { get; set; } = new();
-        /// <summary>More source files for one platform or target: the key is the platform package (`posix`, `windows`, `freertos`, `esp32`, ...) or the name of the target
-        /// (`linux`, `macos`, `esp32`, ...); they come before <see cref="Sources"/> in builds for it, so that the common code can use what they declare. The same code can use `FIRE_TARGET_&lt;NAME&gt;` and `FIRE_HAL_&lt;PLATFORM&gt;`.</summary>
+        /// <summary>More source files for one platform or target: the key is the platform package (`posix`, `windows`, `freertos`, `esp32`, `dos16`, ...) or the name of the target
+        /// (`linux`, `macos`, `esp32`, ...), `vm` for the library of the virtual machine (then only it), `default` for a platform without a key of its own; they come before
+        /// <see cref="Sources"/> in builds for it, so that the common code can use what they declare. The same code can use `FIRE_TARGET_&lt;NAME&gt;` and `FIRE_HAL_&lt;PLATFORM&gt;`.</summary>
         public Dictionary<string, NativeSourceList> PlatformSources { get; set; } = new();
         /// <summary>The platforms of the target (`posix`, `windows`, `freertos`, ...) the source is written for; empty: all (and the keys of <see cref="PlatformSources"/>).</summary>
         public List<string> Platforms { get; set; } = new();
@@ -161,22 +162,54 @@ namespace fire.Package.Manager
         /// <summary>A C++ function without arguments that the VM calls when a program ends (`fire_pkg_reset`): the natives forget what the program left behind (open streams, ...), because the
         /// library stays loaded for the next program of the same host. Optional.</summary>
         public string? Reset { get; set; }
+        /// <summary>Other imports whose platform layer this one builds on (ROADMAP 13.3b): their `platformSources` for the target - the code of the platform a package owns,
+        /// such as the file system of `io` - come before this import's own sources, once (`"uses": [ "io" ]` in graphics: its fonts are read through the file system of io).
+        /// The other import has to be installed; its `sources` (its bridge, its natives) are not taken. An entry can name the platforms it is for
+        /// (`{ "import": "audio", "platforms": [ "posix", "windows", "vm" ] }`, keys as in `platformSources`): elsewhere the layer is not taken.</summary>
+        public List<NativeUse> Uses { get; set; } = new();
+        /// <summary>Files the sources include (`#include "x.h"`) that are not sources of every build: a selector of a platform includes the implementation it picks, which
+        /// includes the common parts. The headers of an installed package are files of every build (`pkg/<import>/`, next to the generated program): the include stays as it
+        /// is written (also within `#if`), it only names that file; a header that is a source of the build is taken out as before. (The headers of a project are put in where
+        /// they are included.)</summary>
+        public List<string> Headers { get; set; } = new();
     }
 
     public static class PackageNativeExtensions
     {
+        /// <summary>The key of <see cref="PackageNative.PlatformSources"/> for the library of the virtual machine.</summary>
+        public const string VmKey = "vm";
+        /// <summary>The key of <see cref="PackageNative.PlatformSources"/> for a platform that has no key of its own.</summary>
+        public const string DefaultKey = "default";
+
         /// <summary>The source files for a build for a target, in build order: first those of every key that names the target (not case sensitive) - the layer under the common code - then
         /// <see cref="PackageNative.Sources"/>, which can use what the platform files declare; all of them then sorted by their build order (`order`, stable: without one 0).</summary>
+        /// The key <see cref="VmKey"/> (the library for the virtual machine, <c>PackageLibrary.HostPlatformKeys</c> names it first) is the only one when the package has it - the
+        /// VM then gets that layer, not the one of the machine it runs on (a package whose platform layer reaches hardware or a console the VM does not have says "none" there);
+        /// when no key names the target, <see cref="DefaultKey"/> does (the layer of a platform the package knows nothing special about).
         public static IReadOnlyList<string> SourcesFor(this PackageNative native, IEnumerable<string> platformKeys)
         {
             var result = new List<(string File, int Order)>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var key in platformKeys)
+            var keys = platformKeys.ToList();
+            bool Has(string key) => native.PlatformSources.Keys.Any(k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase));
+            if (keys.Any(k => string.Equals(k, VmKey, StringComparison.OrdinalIgnoreCase)) && Has(VmKey)) keys = new List<string> { VmKey };
+            else keys.RemoveAll(k => string.Equals(k, VmKey, StringComparison.OrdinalIgnoreCase));
+            if (!keys.Any(Has)) keys = new List<string> { DefaultKey };
+            foreach (var key in keys)
                 foreach (var (k, files) in native.PlatformSources)
                     if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var f in files) if (seen.Add(f)) result.Add((f, files.OrderOf(f) ?? 0));
             foreach (var f in native.Sources) if (seen.Add(f)) result.Add((f, native.Sources.OrderOf(f) ?? 0));
             return NativeSourceOrder.Sort(result);
         }
+
+        /// <summary>The platform layer of an import for a build: only its <see cref="PackageNative.PlatformSources"/> for the keys (with the rules of <see cref="SourcesFor"/>) -
+        /// what an import that <see cref="PackageNative.Uses"/> it gets.</summary>
+        public static IReadOnlyList<string> PlatformLayerFor(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            var layerOnly = new PackageNative { PlatformSources = native.PlatformSources };
+            return layerOnly.SourcesFor(platformKeys);
+        }
+
 
         /// <summary>The system libraries to link in a build for a target (see <see cref="PackageNative.LinkLibraries"/>).</summary>
         public static IReadOnlyList<string> LinkLibrariesFor(this PackageNative native, IEnumerable<string> platformKeys)
@@ -197,7 +230,7 @@ namespace fire.Package.Manager
                 if (native.Platforms.Contains(key, StringComparer.OrdinalIgnoreCase)) return true;
                 if (native.PlatformSources.Keys.Contains(key, StringComparer.OrdinalIgnoreCase)) return true;
             }
-            return false;
+            return native.PlatformSources.Keys.Contains(DefaultKey, StringComparer.OrdinalIgnoreCase);
         }
     }
 
@@ -220,6 +253,13 @@ namespace fire.Package.Manager
         /// <summary>In the virtual machine the host runs this function itself (a function that has to wait or be aborted, like `Sleep`: it is registered by the VM, not taken from the library).
         /// A native build uses <see cref="Cpp"/> as always.</summary>
         public bool Host { get; set; }
+        /// <summary>What the function returns, as a type of fire (`int`, `int[64]`, `float`, `bool`, `string`, `byte[]`, `any[]`, `undefined`, a class; null or
+        /// `any`: not said) - the type checker gives a call this type, a result of `int`/`float`/`bool` is checked at run time (docs/packages/README.md).</summary>
+        public string? Returns { get; set; }
+        /// <summary>The C types of the parameters of a function in C (`"parameters": ["int", "float", "any"]`, one per argument): with them the C function is typed -
+        /// `int` is an `int64_t`, `int[32]`/`int[16]` an `int32_t`/`int16_t`, `float` a `Real`, `bool` a `bool`, everything else a `Value` - and so is its
+        /// result when <see cref="Returns"/> is one of those (docs/packages/README.md "Typed functions"). Null: every parameter and the result are Values.</summary>
+        public List<string>? Parameters { get; set; }
     }
 
     public sealed class PackageException : Exception

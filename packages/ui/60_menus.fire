@@ -70,7 +70,7 @@ namespace UI {
             var w = 0
             var h = 4
             for (var i = 0; i < this.entries.Count; i = i + 1) {
-                var item = this.entries[i]
+                any item = this.entries[i]
                 h = h + this.HeightOf(root, item)
                 if (item.separator) { continue }
                 var line = 28 + this.TextWidth(root, item.Header) + 12
@@ -109,7 +109,7 @@ namespace UI {
             else { root.PopupSurface(this, ax, ay, this.actualWidth, this.actualHeight, back) }
             var y = ay + 2
             for (var i = 0; i < this.entries.Count; i = i + 1) {
-                var item = this.entries[i]
+                any item = this.entries[i]
                 var h = this.HeightOf(root, item)
                 if (item.separator) {
                     r.DrawLine(ax + 4, y + 3, ax + this.actualWidth - 5, y + 3, theme.border)
@@ -127,7 +127,7 @@ namespace UI {
                     // a check mark
                     var cx = ax + 8
                     var cy = y + h / 2
-                    var tick = new Pen(text.Color, 2)
+                    var tick = new Pen(UI.Theme.ColorOf(text, 0), 2)
                     r.DrawLine(cx, cy, cx + 3, cy + 4, tick)
                     r.DrawLine(cx + 3, cy + 4, cx + 10, cy - 4, tick)
                 }
@@ -158,7 +158,7 @@ namespace UI {
         }
 
         undefined OpenSub(Root root, int index) {
-            var item = this.entries[index]
+            any item = this.entries[index]
             if (this.subIndex == index && this.sub != undefined) { return }
             this.CloseSub(root)
             if (!item.HasSubmenu() || !item.Enabled) { return }
@@ -171,7 +171,7 @@ namespace UI {
 
         // Selects the row: a submenu opens, otherwise the action runs and everything closes.
         undefined Choose(Root root, int index) {
-            var item = this.entries[index]
+            any item = this.entries[index]
             if (item.separator || !item.Enabled) { return }
             if (item.HasSubmenu()) {
                 this.OpenSub(root, index)
@@ -241,7 +241,7 @@ namespace UI {
                 i = i + direction
                 if (i >= n) { i = 0 }
                 if (i < 0) { i = n - 1 }
-                var item = this.entries[i]
+                any item = this.entries[i]
                 if (!item.separator && item.Enabled) {
                     this.hot = i
                     return
@@ -314,7 +314,7 @@ namespace UI {
             root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             var x = ax
             for (var i = 0; i < this.menus.Count; i = i + 1) {
-                var item = this.menus[i]
+                any item = this.menus[i]
                 var w = this.HeaderWidth(root, item)
                 var text = theme.text
                 if (this.Foreground != undefined) { text = this.Foreground }
@@ -336,7 +336,7 @@ namespace UI {
                 this.open = undefined
             }
             this.openIndex = index
-            var item = this.menus[index]
+            any item = this.menus[index]
             if (!item.Enabled || !item.HasSubmenu()) {
                 this.openIndex = -1
                 item.Activate()

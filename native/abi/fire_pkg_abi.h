@@ -1,6 +1,6 @@
 /* fire package ABI (version 1): the C interface between the fire virtual machine (C#) and the natives of a package.
  *
- * A package that brings natives as C++ source (the way they are written for the native backend, see docs/PACKAGE_NATIVES.md) is built by the compiler into a shared
+ * A package that brings natives as C++ source (the way they are written for the native backend, see docs/packages/natives.md) is built by the compiler into a shared
  * library (.dll, .so, .dylib) with a generated wrapper around the functions. The wrapper exports the functions below; the virtual machine loads the library and calls
  * them. A package may also bring a prebuilt library (any language) for a platform: it only has to export these functions.
  *
@@ -29,7 +29,9 @@ enum {
     FIRE_STRING = 5,    /* v.p: UTF-16 (length UTF-16 code units, not zero terminated) */
     FIRE_ARRAY = 6,     /* v.p: `length` fire_val */
     FIRE_BUFFER = 7,    /* v.p: `length` bytes; an argument: the caller's memory (writable); a result: copied */
-    FIRE_LAMBDA = 8     /* v.i: a handle of the host; `length`: its number of parameters (an argument only) */
+    FIRE_LAMBDA = 8,    /* v.i: a handle of the host; `length`: its number of parameters (an argument only) */
+    FIRE_WORDS = 9,     /* v.p: `length` machine words of 64 bits (`word a[]` of the VM, SPEC 8.10); an argument: the caller's memory (writable); a result: copied */
+    FIRE_WORD = 10      /* v.i: the 64 bits of a `word` */
 };
 
 typedef struct fire_val {
@@ -40,7 +42,7 @@ typedef struct fire_val {
 
 #define FIRE_PKG_ABI_VERSION 1
 
-/* A window that a package draws into itself (the scene3d package: a camera's pictures straight from the GPU, docs/SCENE3D.md "DirectDrawing"). The host (or, in a native build, the
+/* A window that a package draws into itself (the scene3d package: a camera's pictures straight from the GPU, docs/graphics/3d.md "DirectDrawing"). The host (or, in a native build, the
  * windows bridge) gives the package the native handles of the window: what Vulkan (or another API) needs to make a surface for it. */
 #ifndef FIRE_NATIVE_WINDOW_DEFINED
 #define FIRE_NATIVE_WINDOW_DEFINED 1
@@ -57,7 +59,7 @@ typedef struct fire_native_window {
  * pixels (width x height, R,G,B,A) laid over it where their alpha is not 0; op 0: let go of the window (it closes, or shows the framebuffer again). 1: shown; 0: it cannot -
  * the host shows the framebuffer itself, and does not ask again until the presenter is attached anew. */
 typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
-/* FIRE_NATIVE_DCOMP (Windows, DirectComposition: docs/UI_PLATFORM.md, part 4.4): the window shows a swap chain of DirectComposition - a package does not draw into the
+/* FIRE_NATIVE_DCOMP (Windows, DirectComposition: docs/spec/UI_PLATFORM.md, part 4.4): the window shows a swap chain of DirectComposition - a package does not draw into the
  * HWND (b) but into the window's picture, a texture of D3D11 shared with it (a: a fire_dcomp_bridge): `texture` gives the handle of that picture at width x height
  * (R8G8B8A8; a shared handle of the kind D3D11_TEXTURE_KMT - made anew for another size, NULL: it cannot), the package draws into it and waits until it is done,
  * then `present` shows it (1: shown). `luid` is the adapter of D3D11 (the package's GPU must be the same); `premultiplied`: the window shows what lies behind it -

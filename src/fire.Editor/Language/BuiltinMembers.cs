@@ -63,8 +63,8 @@ namespace fire.Editor
                         _ => System.Array.Empty<BuiltinMember>(),
                     };
                 case TypeKind.Array:
-                    // A `byte` array is a byte buffer (`new byte[n]`, SPEC 8.10).
-                    return type.Name == "byte" ? BufferMembers : ArrayMembers;
+                    // A `byte` array is a byte buffer (`new byte[n]`, SPEC 8.10), a `word` array a buffer of machine words.
+                    return type.Name is "byte" or "word" ? BufferMembers : ArrayMembers;
                 default:
                     return System.Array.Empty<BuiltinMember>();
             }

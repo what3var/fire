@@ -1,5 +1,5 @@
 #import "ui.docking"
-// ui.docking (docs/DOCKING.md): drag the tool windows by their caption or tab - guides show where they can go - and the toolstrips by their grip.
+// ui.docking (docs/ui/docking.md): drag the tool windows by their caption or tab - guides show where they can go - and the toolstrips by their grip.
 // Make the window narrow: what does not fit into a toolstrip goes into its » menu.
 var fb = new Framebuffer(900, 600)
 var win = new Window(fb, "Docking sample")

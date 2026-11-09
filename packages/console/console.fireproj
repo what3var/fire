@@ -1,0 +1,124 @@
+{
+  "format": 1,
+  "name": "fire-console",
+  "type": "library",
+  "import": "console",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'console' of fire: the text console - colours, cursor, Clear, single keys (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      {
+        "file": "native/fire_console_c.h",
+        "order": -1
+      },
+      "native/fire_bridge_console.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__ConIsConsole",
+        "returns": "bool",
+        "arguments": 0,
+        "c": "fire_console_IsConsole"
+      },
+      {
+        "name": "__ConWrite",
+        "returns": "undefined",
+        "arguments": 1,
+        "c": "fire_console_Write"
+      },
+      {
+        "name": "__ConFlush",
+        "returns": "undefined",
+        "arguments": 0,
+        "c": "fire_console_Flush"
+      },
+      {
+        "name": "__ConWidth",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_console_Width"
+      },
+      {
+        "name": "__ConHeight",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_console_Height"
+      },
+      {
+        "name": "__ConColumn",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_console_Column"
+      },
+      {
+        "name": "__ConRow",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_console_Row"
+      },
+      {
+        "name": "__ConSetCursor",
+        "returns": "undefined",
+        "arguments": 2,
+        "c": "fire_console_SetCursor"
+      },
+      {
+        "name": "__ConSetColor",
+        "returns": "undefined",
+        "arguments": 2,
+        "c": "fire_console_SetColor"
+      },
+      {
+        "name": "__ConClear",
+        "returns": "undefined",
+        "arguments": 0,
+        "c": "fire_console_Clear"
+      },
+      {
+        "name": "__ConShowCursor",
+        "returns": "undefined",
+        "arguments": 1,
+        "c": "fire_console_ShowCursor"
+      },
+      {
+        "name": "__ConKeyAvailable",
+        "returns": "bool",
+        "arguments": 0,
+        "c": "fire_console_KeyAvailable"
+      },
+      {
+        "name": "__ConReadKey",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_console_ReadKey"
+      }
+    ],
+    "language": "c",
+    "platformSources": {
+      "dos16": [
+        "native/fire_console_dos.h"
+      ],
+      "posix": [
+        "native/fire_console_posix.h"
+      ],
+      "windows": [
+        "native/fire_console_win32.h"
+      ],
+      "vm": [
+        "native/fire_console_none.h"
+      ],
+      "default": [
+        "native/fire_console_none.h"
+      ],
+      "dos32": [
+        "native/fire_console_dos.h"
+      ]
+    }
+  }
+}

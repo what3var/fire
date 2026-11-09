@@ -23,11 +23,13 @@
     <!-- JSON (`#import "json"`): the engine in C, written next to the program (it includes it when it uses JSON). -->
     <EmbeddedResource Include="..\..\native\runtime\fire_json.h" LogicalName="fire_json.h" />
     <EmbeddedResource Include="..\..\native\runtime\fire_debug.h" LogicalName="fire_debug.h" />
+    <EmbeddedResource Include="..\..\native\runtime\cc\*.h" LogicalName="cc/%(Filename)%(Extension)" />
     <!-- The C ABI between the virtual machine and the natives of packages, and its C++ wrapper (native/abi/). -->
     <EmbeddedResource Include="..\..\native\abi\*" LogicalName="abi/%(Filename)%(Extension)" />
     <!-- The platform packages (native/platform/<name>/): everything that depends on the operating system or the board. -->
     <EmbeddedResource Include="..\..\native\platform\**\*.hpp" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\..\native\platform\**\*.h" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\native\platform\**\*.asm" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
     <!-- A FreeRTOS simulator on top of pthreads (to try a FreeRTOS build on a PC, and for the tests). -->
     <EmbeddedResource Include="..\..\native\sim\**\*.h" LogicalName="sim/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

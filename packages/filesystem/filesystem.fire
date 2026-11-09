@@ -1,7 +1,7 @@
 #import "io"
 #import "time"
 
-// The file system (docs/FILESYSTEM.md): files, directories and paths, like System.IO in .NET. The classes live in the namespace IO next to the streams of
+// The file system (docs/stdlib/filesystem.md): files, directories and paths, like System.IO in .NET. The classes live in the namespace IO next to the streams of
 // `io` (IO.Stream, IO.TextReader, ...): `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileStream`. Every access goes through the host's policy; errors are
 // IO.IOException and its derivatives (IO.FileNotFoundException, IO.DirectoryNotFoundException, IO.PermissionException, IO.FileExistsException).
 namespace IO {
@@ -58,7 +58,7 @@ namespace IO {
         // "dir/name.txt", ".md" -> "dir/name.md"; "md" works too; "" or undefined removes the extension.
         static string ChangeExtension(string path, any extension) {
             var old = IO.Path.GetExtension(path)
-            var stem = path.Substring(0, path.length - old.length)
+            any stem = path.Substring(0, path.length - old.length)
             if (stem.EndsWith(".")) { stem = stem.Substring(0, stem.length - 1) }
             if (extension == undefined || extension == "") { return stem }
             if (extension.StartsWith(".")) { return stem + extension }
@@ -133,7 +133,7 @@ namespace IO {
             var parts = new List()
             var root = IO.Path.GetPathRoot(full)
             parts.Add(root.Replace("\\", "").Replace("/", "") == "" ? "/" : root.Replace("\\", "").Replace("/", ""))
-            var rest = full.Substring(root.length).Replace("\\", "/")
+            any rest = full.Substring(root.length).Replace("\\", "/")
             foreach (part in rest.Split("/")) {
                 if (part != "") { parts.Add(part) }
             }
@@ -301,7 +301,7 @@ namespace IO {
         }
 
         static List Entries(string path, string pattern, any searchOption, int kind) {
-            var recursive = searchOption is of bool ? searchOption : searchOption == IO.SearchOption.AllDirectories
+            any recursive = searchOption is of bool ? searchOption : searchOption == IO.SearchOption.AllDirectories
             var list = __IODirList(path, pattern, recursive, kind)
             if (list == undefined) { IO.IOErrors.Throw() }
             return new List(list)

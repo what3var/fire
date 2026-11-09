@@ -183,6 +183,7 @@ namespace fire.Native
                     "k:lambda" => $"{v}.kind == K_Lambda",
                     "k:array" => $"({v}.kind == K_Array || {v}.kind == K_Buffer)",
                     "k:class" => $"{v}.kind == K_Class",
+                    "k:word" => $"{v}.kind == K_Word",
                     _ => ClassHolds(v, a.Substring(2), a[0] == 'i'),
                 };
                 if (test != null) tests.Add(test);
@@ -213,6 +214,7 @@ namespace fire.Native
                 case "k:lambda": return Exact($"{v}.kind == K_Lambda");
                 case "k:array": return Exact($"({v}.kind == K_Array || {v}.kind == K_Buffer)");
                 case "k:class": return $"({v}.kind == K_Class ? {Overloads.ObjectScore} : {orUndefined})";
+                case "k:word": return $"({v}.kind == K_Word ? {Overloads.ExactKind} : {v}.kind == K_Int ? {Overloads.IntToWord} : {orUndefined})";
             }
             string name = descriptor.Substring(2);
             switch (descriptor[0])

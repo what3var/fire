@@ -1,0 +1,84 @@
+// The text console (docs/stdlib/console.md): write with colours, place the cursor, clear the screen, read single keys - on DOS through the BIOS, in terminals
+// with ANSI and termios, on Windows through its console. When the program has no console (its output or input is redirected, or it runs in the VM's output
+// panel), the text goes to standard output as it is and keys are the characters of standard input: colours, the cursor and Clear do nothing there.
+
+// The 16 colours of the text console (the order of the PC's text mode).
+enum ConsoleColor { Black, DarkBlue, DarkGreen, DarkCyan, DarkRed, DarkMagenta, DarkYellow, Gray, DarkGray, Blue, Green, Cyan, Red, Magenta, Yellow, White }
+
+// What a key is: a character (ConsoleKeyInfo.Char says which), or one of the keys without one.
+enum ConsoleKey { None, Character, Enter, Escape, Backspace, Tab, Up, Down, Left, Right, Home, End, PageUp, PageDown, Insert, Delete,
+                  F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12 }
+
+// A key that was pressed.
+class ConsoleKeyInfo {
+    ConsoleKey key
+    char ch
+    int mods
+
+    construct(int code) {
+        this.key = (code & 31)!ConsoleKey
+        this.mods = (code >> 5) & 7
+        this.ch = (code >> 8).ToChar()
+    }
+
+    // Which key.
+    ConsoleKey Key { get { return this.key } }
+    // The character it gives: the letter, digit or sign; '\n' for Enter, '\t' for Tab, '\b' for Backspace, '\x1b' for Escape; '\0' for the others.
+    char Char { get { return this.ch } }
+    bool Shift { get { return (this.mods & 1) != 0 } }
+    bool Control { get { return (this.mods & 2) != 0 } }
+    bool Alt { get { return (this.mods & 4) != 0 } }
+
+    string ToString() {
+        var text = this.key == ConsoleKey.Character ? "" + this.ch : "" + this.key
+        if (this.Alt) { text = "Alt+" + text }
+        if (this.Shift && this.key != ConsoleKey.Character) { text = "Shift+" + text }
+        if (this.Control) { text = "Ctrl+" + text }
+        return text
+    }
+}
+
+class Console {
+    // Is there a console (a screen and a keyboard)? false: output and input are redirected, or the program runs in the VM.
+    static bool IsConsole() { return __ConIsConsole() }
+
+    // Text at the cursor in the current colours.
+    static undefined Write(any value) { __ConWrite("" + value) }
+    static undefined WriteLine(any value = "") { __ConWrite("" + value + "\n") }
+    // Text at a place: column `column`, row `row` (0-based); the cursor stays after it.
+    static undefined WriteAt(int column, int row, any value) {
+        __ConSetCursor(column, row)
+        __ConWrite("" + value)
+    }
+    static undefined Flush() { __ConFlush() }
+
+    // The size of the visible console (80 x 25 without one).
+    static int Width() { return __ConWidth() }
+    static int Height() { return __ConHeight() }
+
+    // The cursor (0-based; 0 without a console).
+    static int Column() { return __ConColumn() }
+    static int Row() { return __ConRow() }
+    static undefined SetCursor(int column, int row) { __ConSetCursor(column, row) }
+    static undefined ShowCursor(bool show = true) { __ConShowCursor(show) }
+
+    // The colours of what is written from now on; `background` left out: the one the console had at the start.
+    static undefined SetColor(ConsoleColor foreground, ConsoleColor background = (-1)!ConsoleColor) {
+        any bg = background! < 0 ? undefined : background!
+        __ConSetColor(foreground!, bg)
+    }
+    // The colours the console had at the start.
+    static undefined ResetColor() { __ConSetColor(undefined, undefined) }
+
+    // The visible console empty in the current colours, the cursor at the top left.
+    static undefined Clear() { __ConClear() }
+
+    // Is a key waiting? (Never waits; without a console: is there more input?)
+    static bool KeyAvailable() { return __ConKeyAvailable() }
+    // The next key, without showing it (waits for it); undefined when no more keys can come (the end of a redirected input).
+    static ConsoleKeyInfo ReadKey() {
+        var code = __ConReadKey()
+        if (code < 0) { return undefined }
+        return new ConsoleKeyInfo(code)
+    }
+}

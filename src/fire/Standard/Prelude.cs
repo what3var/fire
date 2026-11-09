@@ -255,7 +255,7 @@ namespace fire.Standard
                 int Count { get { return this.count } }
 
                 construct() {
-                    this.items = new class[8]
+                    this.items = new T[8]
                     this.count = 0
                 }
 
@@ -272,7 +272,7 @@ namespace fire.Standard
                 // `new List<Node>(Owns.Values)`: a list that owns every element that comes in and destroys it when it falls out (RemoveAt, Remove,
                 // overwriting, Clear) - unless it is taken out with TakeAt (see Owns).
                 construct(any initial) {
-                    this.items = new class[8]
+                    this.items = new T[8]
                     this.count = 0
                     if (initial is of Owns) {
                         this.owns = initial
@@ -304,7 +304,7 @@ namespace fire.Standard
                 }
 
                 undefined operator[](int index, T value) {
-                    var old = this.items[index]
+                    any old = this.items[index]
                     if (value is of class) {
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
@@ -314,7 +314,7 @@ namespace fire.Standard
 
                 // removes the element at `index` (the ones behind it move up); the element itself is destroyed only if the list owns it (Owns.Values)
                 undefined RemoveAt(int index) {
-                    var old = this.items[index]
+                    any old = this.items[index]
                     var i = index
                     while (i < this.count - 1) {
                         this.items[i] = this.items[i + 1]
@@ -327,7 +327,7 @@ namespace fire.Standard
 
                 // removes the element at `index` and gives it to the caller (who owns it then, if the list owned it)
                 T TakeAt(int index) {
-                    var value = this.items[index]
+                    any value = this.items[index]
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
                     if (value is of class && value is from this) { taken = take value }
                     this.RemoveAt(index)
@@ -378,7 +378,7 @@ namespace fire.Standard
                 undefined Clear() {
                     var i = 0
                     while (i < this.count) {
-                        var old = this.items[i]
+                        any old = this.items[i]
                         this.items[i] = undefined
                         this.DropElement(old)
                         i = i + 1
@@ -387,14 +387,14 @@ namespace fire.Standard
                 }
 
                 undefined Grow() {
-                    var newItems = new class[this.items.length * 2]
+                    var newItems = new T[this.items.length * 2]
                     var i = 0
                     while (i < this.count) {
                         newItems[i] = this.items[i]
                         i = i + 1
                     }
                     // the new array belongs to the list (a local array dies with this method), the old one is released
-                    var old = this.items
+                    any old = this.items
                     this.items = newItems
                     newItems.TakeTo(this)
                     delete old
@@ -407,14 +407,15 @@ namespace fire.Standard
 
             // The table of Dictionary and HashSet: the entries in the order they came in (`keys`, `vals`, their hashes; `live` false for a removed one) and
             // per bucket the first entry of its chain (`buckets`, `next`: index + 1, 0 for none). The keys are compared with `==` (strings by text, numbers by
-            // value - `1km` is `1000m`), an IEquatable key with Equals/GetHashCode.
-            class __HashTable {
+            // value - `1km` is `1000m`), an IEquatable key with Equals/GetHashCode. The arrays are typed: `keys` and `vals` by the type arguments (`new K[n]`:
+            // `Dictionary<int, float>` holds its keys and values raw, `Dictionary<string, Node>` as values), the others hold ints and bools.
+            class __HashTable<K, V> {
                 protected any keys
                 protected any vals
-                private any hashes
-                private any next
-                protected any live
-                private any buckets
+                private int hashes[]
+                private int next[]
+                protected bool live[]
+                private int buckets[]
                 private int count
                 protected int used
                 protected Owns owns
@@ -424,8 +425,8 @@ namespace fire.Standard
 
                 construct(Owns owns) {
                     this.owns = owns
-                    this.keys = new class[8]
-                    this.vals = new class[8]
+                    this.keys = new K[8]
+                    this.vals = new V[8]
                     this.hashes = new int[8]
                     this.next = new int[8]
                     this.live = new bool[8]
@@ -435,9 +436,10 @@ namespace fire.Standard
                     this.used = 0
                 }
 
+                // (30 bits: the hash fits the int array `hashes` also where an int has 32 bits; the buckets take its low bits)
                 int HashOf(any key) {
-                    if (key is of IEquatable) { return key.GetHashCode() }
-                    return __MathCall(15, key)
+                    if (key is of IEquatable) { return key.GetHashCode() & 1073741823 }
+                    return __MathCall(15, key) & 1073741823
                 }
 
                 bool SameKey(any a, any b) {
@@ -445,9 +447,9 @@ namespace fire.Standard
                     return a == b
                 }
 
-                // the entry of `key` (hash `h`), -1 if there is none
+                // the entry of `key` (hash `h`), -1 if there is none (a native build reads the elements of the typed arrays in place)
                 int Find(any key, int h) {
-                    var i = this.buckets[h & (this.buckets.length - 1)] - 1
+                    int i = this.buckets[h & (this.buckets.length - 1)] - 1
                     while (i >= 0) {
                         if (this.hashes[i] == h && this.SameKey(this.keys[i], key)) { return i }
                         i = this.next[i] - 1
@@ -464,7 +466,7 @@ namespace fire.Standard
                     this.vals[i] = value
                     this.hashes[i] = h
                     this.live[i] = true
-                    var b = h & (this.buckets.length - 1)
+                    int b = h & (this.buckets.length - 1)
                     this.next[i] = this.buckets[b]
                     this.buckets[b] = i + 1
                     this.count = this.count + 1
@@ -472,8 +474,8 @@ namespace fire.Standard
 
                 // takes the entry out of its chain; key and value stay with the caller (Drop or TakeLocal)
                 undefined Unlink(int at) {
-                    var b = this.hashes[at] & (this.buckets.length - 1)
-                    var i = this.buckets[b] - 1
+                    int b = this.hashes[at] & (this.buckets.length - 1)
+                    int i = this.buckets[b] - 1
                     var prev = -1
                     while (i >= 0 && i != at) {
                         prev = i
@@ -495,12 +497,12 @@ namespace fire.Standard
                 undefined Resize() {
                     var cap = 8
                     while (cap < this.count * 2) { cap = cap * 2 }
-                    var nk = new class[cap]
-                    var nv = new class[cap]
-                    var nh = new int[cap]
-                    var nn = new int[cap]
-                    var nl = new bool[cap]
-                    var nb = new int[cap]
+                    var nk = new K[cap]
+                    var nv = new V[cap]
+                    int nh[] = new int[cap]
+                    int nn[] = new int[cap]
+                    bool nl[] = new bool[cap]
+                    int nb[] = new int[cap]
                     for (var b0 = 0; b0 < cap; b0 = b0 + 1) { nb[b0] = 0 }
                     var j = 0
                     for (var i = 0; i < this.used; i = i + 1) {
@@ -515,12 +517,12 @@ namespace fire.Standard
                             j = j + 1
                         }
                     }
-                    var oldKeys = this.keys
-                    var oldVals = this.vals
-                    var oldHashes = this.hashes
-                    var oldNext = this.next
-                    var oldLive = this.live
-                    var oldBuckets = this.buckets
+                    any oldKeys = this.keys
+                    any oldVals = this.vals
+                    any oldHashes = this.hashes
+                    any oldNext = this.next
+                    any oldLive = this.live
+                    any oldBuckets = this.buckets
                     this.keys = nk
                     this.vals = nv
                     this.hashes = nh
@@ -546,8 +548,8 @@ namespace fire.Standard
                 undefined ClearEntries(Owns keyPart, Owns valuePart) {
                     for (var i = 0; i < this.used; i = i + 1) {
                         if (this.live[i]) {
-                            var k = this.keys[i]
-                            var v = this.vals[i]
+                            any k = this.keys[i]
+                            any v = this.vals[i]
                             this.keys[i] = undefined
                             this.vals[i] = undefined
                             this.live[i] = false
@@ -589,7 +591,7 @@ namespace fire.Standard
                     this.index = -1
                 }
                 bool MoveNext() {
-                    var at = this.table.__NextEntry(this.index)
+                    any at = this.table.__NextEntry(this.index)
                     if (at < 0) { return false }
                     this.index = at
                     return true
@@ -607,7 +609,7 @@ namespace fire.Standard
                     this.index = -1
                 }
                 bool MoveNext() {
-                    var at = this.table.__NextEntry(this.index)
+                    any at = this.table.__NextEntry(this.index)
                     if (at < 0) { return false }
                     this.index = at
                     return true
@@ -619,7 +621,7 @@ namespace fire.Standard
 
             /// Values by key (`Dictionary<string, int>`): `dict[key] = value`, `dict[key]`, Add, Get, TryGet, ContainsKey, Remove, Take, Keys, Values,
             /// `Count`; `foreach` gives KeyValuePairs in the order the keys came in. `new Dictionary<string, Node>(Owns.Values)` owns its values (see Owns).
-            class Dictionary<K, V> : __HashTable, IEnumerable<KeyValuePair<K, V>> {
+            class Dictionary<K, V> : __HashTable<K, V>, IEnumerable<KeyValuePair<K, V>> {
                 construct(Owns owns = Owns.Explicit) : base(owns) { }
 
                 /// Adds a key that is not there yet (an ArgumentException if it is).
@@ -650,7 +652,7 @@ namespace fire.Standard
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
                     if (at >= 0) {
-                        var old = this.vals[at]
+                        any old = this.vals[at]
                         this.vals[at] = value
                         if (old != value) { this.Drop(old, Owns.Values) }
                         return
@@ -689,8 +691,8 @@ namespace fire.Standard
                 bool Remove(K key) {
                     var at = this.Find(key, this.HashOf(key))
                     if (at < 0) { return false }
-                    var k = this.keys[at]
-                    var v = this.vals[at]
+                    any k = this.keys[at]
+                    any v = this.vals[at]
                     this.Unlink(at)
                     this.Drop(k, Owns.Keys)
                     this.Drop(v, Owns.Values)
@@ -701,8 +703,8 @@ namespace fire.Standard
                 V Take(K key) {
                     var at = this.Find(key, this.HashOf(key))
                     if (at < 0) { throw new ArgumentException("The key '" + key + "' is not in the dictionary.") }
-                    var k = this.keys[at]
-                    var v = this.vals[at]
+                    any k = this.keys[at]
+                    any v = this.vals[at]
                     this.Unlink(at)
                     this.Drop(k, Owns.Keys)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
@@ -741,7 +743,7 @@ namespace fire.Standard
 
             /// A set of values, each once (`HashSet<string>`): Add, Contains, Remove, Take, Clear, `Count`; `foreach` in the order they came in.
             /// `new HashSet<Node>(Owns.Values)` owns its elements (see Owns).
-            class HashSet<T> : __HashTable, IEnumerable<T> {
+            class HashSet<T> : __HashTable<T, any>, IEnumerable<T> {
                 construct(Owns owns = Owns.Explicit) : base(owns) { }
 
                 /// Adds `item`; false if an equal one is already there.
@@ -761,7 +763,7 @@ namespace fire.Standard
                 bool Remove(T item) {
                     var at = this.Find(item, this.HashOf(item))
                     if (at < 0) { return false }
-                    var k = this.keys[at]
+                    any k = this.keys[at]
                     this.Unlink(at)
                     this.Drop(k, Owns.Values)
                     return true
@@ -771,7 +773,7 @@ namespace fire.Standard
                 T Take(T item) {
                     var at = this.Find(item, this.HashOf(item))
                     if (at < 0) { throw new ArgumentException("The item '" + item + "' is not in the set.") }
-                    var k = this.keys[at]
+                    any k = this.keys[at]
                     this.Unlink(at)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
                     if (k is of class && k is from this) {

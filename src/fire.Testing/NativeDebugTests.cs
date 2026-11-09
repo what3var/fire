@@ -11,7 +11,7 @@ using fire.Runtime;
 using fire.Values;
 
 /// <summary>
-/// The debugger of native debug builds (docs/NATIVE_DEBUG_PROTOCOL.md): a client that launches a native program and drives it over the protocol, the same
+/// The debugger of native debug builds (docs/spec/NATIVE_DEBUG_PROTOCOL.md): a client that launches a native program and drives it over the protocol, the same
 /// way spark drives the VM. The wire is one of spark's transports (fire.Debugging): TCP (FIRE_DEBUG=tcp:..., <see cref="Launch"/>), framed over the
 /// program's stdio (FIRE_DEBUG=stdio, the FreeRTOS simulator: <see cref="LaunchStdio"/>), or framed over any stream (QEMU's serial port: <see cref="Attach"/>).
 /// </summary>
@@ -874,6 +874,42 @@ static class NativeDebugTests
             return (ok, detail + c.Output + c.Errors);
         });
 
+        // packed objects (docs/spec/NATIVE_BACKEND.md "Gepackte Objekte"): `defined` fields are C numbers behind the slots - the debugger shows and sets them by their places
+        Check("expand und set: gepackte Felder (defined) zwischen Value-Feldern - in der Reihenfolge der Felder, set ueber den Setter", () =>
+        {
+            const string script = "class P {\n    defined int n = 1\n    string name = \"p\"\n    defined float : m len\n    int x = 3\n}\nvar p = new P()\nprint(p.n)\nprint(p.n + \" \" + p.len + \" \" + p.name + \" \" + p.x)\n";
+            string? exe = Build(script, cxx, workDir, "dbgpacked", flags, out string error);
+            if (exe == null) return (false, error);
+            using var c = NativeDebugClient.Launch(exe, workDir);
+            int first = c.Hello.GetProperty("firstUserSource").GetInt32(), main = c.Hello.GetProperty("mainThread").GetInt32();
+            c.NextEvent("stopped");
+            c.Request("breakpoints", new() { ["breakpoints"] = new[] { new[] { first, 9 } } });
+            c.Request("continue", new() { ["thread"] = main });
+            var stop = c.NextEvent("stopped");
+            var p = Find(c.Request("globals").GetProperty("variables"), "p");
+            var children = c.Request("expand", new() { ["ref"] = p.GetProperty("ref").GetString() }).GetProperty("children");
+            var detail = new StringBuilder($"{stop}\n{children}\n");
+            bool ok = stop.GetProperty("line").GetInt32() == 9
+                && string.Join(",", children.EnumerateArray().Select(v => v.GetProperty("name").GetString() + "=" + v.GetProperty("display").GetString())) == "n=1,name=p,len=0m,x=3";
+            string Set(string reference, string literal)
+            {
+                var reply = c.Request("set", new() { ["thread"] = main, ["ref"] = reference, ["value"] = literal });
+                detail.Append(reply).Append('\n');
+                return NativeDebugClient.Ok(reply) ? reply.GetProperty("value").GetProperty("display").GetString()! : "error";
+            }
+            ok &= Set(children[0].GetProperty("ref").GetString()!, "7") == "7";
+            ok &= Set(children[2].GetProperty("ref").GetString()!, "2.5") == "2.5m";
+            ok &= Set(children[0].GetProperty("ref").GetString()!, "undefined") == "error";   // (defined: undefined does not go in)
+            var again = c.Request("expand", new() { ["ref"] = p.GetProperty("ref").GetString() }).GetProperty("children");
+            ok &= string.Join(",", again.EnumerateArray().Select(v => v.GetProperty("name").GetString() + "=" + v.GetProperty("display").GetString())) == "n=7,name=p,len=2.5m,x=3";
+            c.Request("continue", new() { ["thread"] = main });
+            c.NextEvent("exited");
+            c.WaitExit(NativeDebugClient.Timeout);
+            Thread.Sleep(50);
+            ok &= c.Output == "1\n7 2.5m p 3\n";
+            return (ok, detail + c.Output + c.Errors);
+        });
+
         Check("hello: Quellen mit Datei und SHA-256, Ziel, Modus; ohne FIRE_DEBUG laeuft der Debug-Build einfach; detach laesst das Programm zu Ende laufen", () =>
         {
             string firePath = Path.Combine(workDir, "dbghello.fire");
@@ -1052,7 +1088,7 @@ static class NativeDebugTests
         });
     }
 
-    /// <summary>The framed transports (docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): stdio on the desktop (FIRE_DEBUG=stdio) and on the FreeRTOS simulator
+    /// <summary>The framed transports (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport"): stdio on the desktop (FIRE_DEBUG=stdio) and on the FreeRTOS simulator
     /// (native/sim: a FreeRTOS build, whose transport is stdio), the same plans as over TCP against the VM; the console between the frames, garbled frames,
     /// the program's standard input through the agent, the wait of 3 s for a debugger; and an ESP32 on QEMU (the console UART on a socket).</summary>
     static void RunTransports(Action<string, bool, string?> check, string cxx, string workDir, string sanitize)

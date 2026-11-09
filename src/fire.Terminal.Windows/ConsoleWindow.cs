@@ -5,7 +5,7 @@ using fire.Terminal;
 namespace fire.Terminal.Windows
 {
     /// <summary>
-    /// Standalone console window (see docs/CONSOLE.md) - a THIN
+    /// Standalone console window (see docs/spec/GRAPHICS_LAYER.md) - a THIN
     /// shell that ONLY takes care of rendering an EXTERNALLY supplied framebuffer
     /// (see FramebufferManager) - deliberately owns NO
     /// framebuffer of its own and NO renderer of its own any more (unlike
@@ -74,8 +74,8 @@ namespace fire.Terminal.Windows
         private string _title = "fire Console";
 
         /// <summary>Gives the window its handle and title. The OS window itself opens on the thread that first pumps it (<see cref="Realize"/>): a window
-        /// that a window manager's thread shows (see WindowManager.StartManager) must be created there, because SDL serves a window only on the thread
-        /// that created it.</summary>
+        /// that a window manager's thread shows (see WindowManager.StartManager) must be created there, because a window system serves a window only on the
+        /// thread that created it.</summary>
         public void Open(int handle, string title = "fire Console")
         {
             if (_opened) return;
@@ -92,7 +92,7 @@ namespace fire.Terminal.Windows
             if (_realized && !_failed) _renderer.SetSize(width, height);
         }
 
-        /// <summary>Window.Cursor: the system cursor over the window (SDL numbering, see IFramebufferRenderer.SetCursor).</summary>
+        /// <summary>Window.Cursor: the system cursor over the window (the numbering of UI.Cursor, see IFramebufferRenderer.SetCursor).</summary>
         public void SetCursor(int cursor)
         {
             if (_realized && !_failed) _renderer.SetCursor(cursor);
@@ -117,7 +117,7 @@ namespace fire.Terminal.Windows
             }
             catch (Exception ex) when (ex is DllNotFoundException or InvalidOperationException or TypeInitializationException or EntryPointNotFoundException or BadImageFormatException)
             {
-                // no display (no SDL, no video driver): the window counts as closed
+                // no display (no renderer library, no video driver): the window counts as closed
                 _failed = true;
                 FailureMessage = ex.Message;
             }
@@ -184,7 +184,7 @@ namespace fire.Terminal.Windows
             if (_realized && !_failed) _renderer.Dispose();   // a window that never opened has nothing of the display to release
         }
         /// <summary>Why a window without a renderer cannot open.</summary>
-        public const string NoDisplayMessage = "No display: the windows of the desktop are shown by the C library of graphics and windows, which needs a C compiler to be built (see docs/UI_PLATFORM.md).";
+        public const string NoDisplayMessage = "No display: the windows of the desktop are shown by the C library of graphics and windows, which needs a C compiler to be built (see docs/spec/UI_PLATFORM.md).";
 
         /// <summary>No display: opening the window fails (it counts as closed, <see cref="FailureMessage"/> says why).</summary>
         private sealed class NoDisplay : IFramebufferRenderer

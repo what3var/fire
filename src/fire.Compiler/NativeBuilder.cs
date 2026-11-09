@@ -33,18 +33,34 @@ namespace fire.Compiler
         }
 
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
-        /// <param name="chooseSdl">Which SDL a window is built with when the target does not say (<see cref="ChooseSdl"/>; null: SDL2).</param>
         public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null,
-            Func<int>? chooseSdl = null, StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null)
+            StrippingLevel? stripping = null, fire.Runtime.GlobalJobsMode? globalJobs = null, string? toolchainKind = null, fire.Runtime.OptimizeFor? optimize = null, bool stats = false)
         {
-            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = globalJobs }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchainKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = globalJobs,
+                Optimize = optimize ?? OptimizeOf(null, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program");
-            var generated = CppGenerator.GenerateSources(linked, target, chooseSdl, stripping);
-            return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
+            var generated = CppGenerator.GenerateSources(linked, target, stripping, stats);
+            return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath) { Funcs = generated.Funcs };
+        }
+
+        /// <summary>`--stats`: the report of the build (NativeStats) into the log and next to the program (.stats.txt, .stats.json).</summary>
+        private static void WriteStats(TargetProfile target, string exe, string workDir, string cFile, string? mapFile, NativeProgram program, StringBuilder log)
+        {
+            if (mapFile == null || !File.Exists(mapFile)) { log.AppendLine("--stats: this toolchain writes no map of the program (Open Watcom, gcc and clang do)."); return; }
+            var report = NativeStats.Analyze(target.Name, exe, workDir, cFile, mapFile, program.Funcs ?? Array.Empty<FuncStat>());
+            string text = NativeStats.Text(report);
+            File.WriteAllText(exe + ".stats.txt", text);
+            File.WriteAllText(exe + ".stats.json", NativeStats.Json(report));
+            log.Append(text);
+            log.AppendLine($"(the report: {exe}.stats.txt and .stats.json, the map: {mapFile})");
         }
 
         /// <summary>The generated C (and the natives in C++, null: none) and what the executable needs besides: the subsystem, the version info and the icon.</summary>
-        public sealed record NativeProgram(string C, string? Natives, bool Gui, fire.Utilities.PeVersionInfo? VersionInfo, string? IconPath);
+        public sealed record NativeProgram(string C, string? Natives, bool Gui, fire.Utilities.PeVersionInfo? VersionInfo, string? IconPath)
+        {
+            /// <summary>`--stats`: what the generator made of each fire function.</summary>
+            public IReadOnlyList<FuncStat>? Funcs { get; init; }
+        }
 
         /// <summary>Writes version info and icon into a Windows executable the toolchain has made (the Win32 resource API; any other platform leaves the file alone).
         /// A missing icon file is reported in the log instead of failing the build.</summary>
@@ -87,10 +103,35 @@ namespace fire.Compiler
             return path;
         }
 
-        /// <summary>The stripping level of a build (docs/NATIVE_BACKEND.md "Größe des Programms"): the command line (`--stripping`, `--keep-all`), then the project's
+        /// <summary>The stripping level of a build (docs/spec/NATIVE_BACKEND.md "Größe des Programms"): the command line (`--stripping`, `--keep-all`), then the project's
         /// setting, then fire.native.json; null: the default (3; a debug build keeps everything).</summary>
         public static StrippingLevel? StrippingOf(NativeConfig config, fire.Projects.BuildPlan? plan) =>
             !config.StrippingFromCommandLine && Strippings.Parse(plan?.Settings.Stripping) is { } fromProject ? fromProject : config.Stripping;
+
+        /// <summary>The direction of a build (OptimizeFor, docs/spec/NATIVE_BACKEND.md "Optimierungsrichtung"): `--optimize`, then the project's setting, then fire.native.json,
+        /// then the target's (the PC targets of Open Watcom: size).</summary>
+        public static fire.Runtime.OptimizeFor OptimizeOf(NativeConfig? config, fire.Projects.BuildPlan? plan, TargetProfile target) => OptimizeOf(config, plan?.Settings, target);
+
+        /// <summary><see cref="OptimizeOf(NativeConfig?, fire.Projects.BuildPlan?, TargetProfile)"/> with the settings of the project.</summary>
+        public static fire.Runtime.OptimizeFor OptimizeOf(NativeConfig? config, fire.Projects.ProjectSettings? settings, TargetProfile target)
+        {
+            if (config is { OptimizeFromCommandLine: true, OptimizeValue: { } forced }) return forced;
+            return fire.Runtime.OptimizeFors.Parse(settings?.Optimize) ?? config?.OptimizeValue ?? target.Optimize;
+        }
+
+        /// <summary>The toolchain with the flags of the direction: size is the small-program profile ("size"); speed keeps a flag of its own (`-O3`) and otherwise is the
+        /// default of the kind (Open Watcom: -Ot).</summary>
+        public static ToolchainDef WithDirection(ToolchainDef toolchain, fire.Runtime.OptimizeFor direction)
+        {
+            if (toolchain.EffectiveKind is "files" or "custom") return toolchain;
+            string? flags = direction == fire.Runtime.OptimizeFor.Size ? "size"
+                : !IsSizeProfile(toolchain.Optimization) && toolchain.Optimization != null ? toolchain.Optimization
+                : toolchain.EffectiveKind == "watcom" ? "-Ot" : null;
+            if (flags == toolchain.Optimization) return toolchain;
+            var copy = new ToolchainDef { Extends = toolchain.Extends }.WithBase(toolchain);   // (a copy: the definition of the machine stays as it is)
+            copy.Optimization = flags;
+            return copy;
+        }
 
         /// <summary>Translates and builds. <paramref name="output"/> is the program, or the folder for a toolchain that only writes files. <paramref name="monitor"/> (else the
         /// <see cref="BuildMonitor.Current"/> one) gets the progress and the commands as they run; when it is cancelled the build throws <see cref="OperationCanceledException"/>
@@ -100,16 +141,14 @@ namespace fire.Compiler
             IReadOnlyList<string?>? sourcePaths = null, BuildMonitor? monitor = null)
         {
             using var watching = BuildMonitor.Use(monitor);
-            // the SDL of a window: what the environment, the target or the toolchain asks for, else SDL3 when the toolchain can build it (asked only for a program with a window)
-            target = WithRequestedSdl(target, toolchain);
-            Func<int>? chooseSdl = toolchain.EffectiveKind is "files" or "custom" or "emscripten" ? null : () => ChooseSdl(toolchain, target);
+            toolchain = WithDirection(toolchain, OptimizeOf(config, plan, target));
             // linkage "shared" (ROADMAP 9, phase C): Linux and macOS with gcc or clang, Windows with MinGW (gcc, clang; DLLs - also built on Linux); elsewhere (msvc, the
             // boards, wasm, TinyCC) it is "static" and the log says so
             if (string.Equals(config.Linkage, "shared", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
             {
                 bool can = toolchain.EffectiveKind is "gcc" or "clang" && (target.Native.Platform == "posix" && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) && target.Name == TargetProfile.Host.Name
                     || target.Native.Platform == "windows");
-                if (can) return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl, shared: true);
+                if (can) return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, shared: true);
                 config.Linkage = "static";
                 NativeBuildResult r;
                 try { r = Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths); }
@@ -117,12 +156,17 @@ namespace fire.Compiler
                 return r with { Log = $"Linkage \"shared\" is only available on Linux and macOS with gcc or clang and on Windows with MinGW (not for the target '{target.Name}' with '{toolchain.EffectiveKind}'): built with linkage \"static\".\n" + r.Log };
             }
             if (string.Equals(config.Linkage, "plugin", StringComparison.OrdinalIgnoreCase))
-                return BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
+                return BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+            if (config.Stats && string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
+            {
+                var r = BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+                return r with { Log = r.Log + "--stats: only with linkage \"source\" (--linkage source) - the libraries of linkage \"static\" come from the cache.\n" };
+            }
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
-                return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
+                return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
                 return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
-            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl, StrippingOf(config, plan), config.GlobalJobsValue);
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, StrippingOf(config, plan), config.GlobalJobsValue, toolchain.EffectiveKind, OptimizeOf(config, plan, target), config.Stats);
             string cpp = program.C;
             bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
@@ -164,11 +208,15 @@ namespace fire.Compiler
                     }
                     toolchain = provided;
                 }
-                // a window needs the development files of SDL (2 or 3): look for them, offer to download them (Windows)
-                if (ToolchainProvider.RequireLibraries(toolchain, cppFile) is { } missingLibrary)
-                    return new NativeBuildResult(false, exe, missingLibrary, new[] { new Diagnostic(0, missingLibrary, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
                 bool ok = true;
-                var sourceCommands = BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui);
+                var sourceCommands = BuildCommands(toolchain, target, cppFile, nativesFile, workDir, exe, gui).ToList();
+                string? mapFile = null;
+                if (config.Stats && sourceCommands.Count > 0 && NativeStats.MapOptions(toolchain.EffectiveKind, NativeStats.MapFileOf(exe)) is { } mapOptions)
+                {
+                    mapFile = NativeStats.MapFileOf(exe);
+                    var (lastExe, lastArgs) = sourceCommands[^1];
+                    sourceCommands[^1] = (lastExe, lastArgs + " " + mapOptions);
+                }
                 for (int c = 0; c < sourceCommands.Count; c++)
                 {
                     var (exeName, arguments) = sourceCommands[c];
@@ -182,9 +230,8 @@ namespace fire.Compiler
                 }
                 bool built = ok && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
-                // a Windows program with a window needs SDL2.dll (SDL3.dll) next to it
-                int sdlVersion = SdlSetup.RequiredVersion(cppFile);
-                if (built && toolchain.EffectiveKind != "emscripten" && sdlVersion > 0 && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain, sdlVersion))) log.AppendLine($"SDL{sdlVersion}.dll copied next to the program.");
+                if (built && config.Stats) WriteStats(target, exe, workDir, cppFile, mapFile, program, log);
+                if (built && ToolchainDrivers.AfterLink(toolchain, target, exe) is { } after) log.AppendLine(after);   // (a target without an operating system: its disk image)
                 return new NativeBuildResult(built, exe, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C++ compiler of the native build reported errors (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
             }
             finally
@@ -193,11 +240,11 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Linkage "static" (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): every library module (the prelude, each import, each library of the project) is a
+        /// <summary>Linkage "static" (ROADMAP 9, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): every library module (the prelude, each import, each library of the project) is a
         /// static library in the user-wide cache, built once for its content and the switches of the program; the program's own C is compiled and linked with them. A module
         /// that cannot be built on its own yet: the build falls back to linkage "source" and says so.</summary>
         private static NativeBuildResult BuildStatic(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
-            VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths, Func<int>? chooseSdl,
+            VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths,
             bool shared = false)
         {
             var log = new StringBuilder();
@@ -213,11 +260,11 @@ namespace fire.Compiler
                 finally { config.Linkage = linkage; }
             }
             if (ToolchainDetector.Find(toolchain) == null) return AsSource(null);   // (no compiler: the normal build offers one)
-            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchain.EffectiveKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue, Optimize = OptimizeOf(config, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             var watch = Stopwatch.StartNew();
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
-            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), chooseSdl, StrippingOf(config, plan), shared: shared); }
+            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), StrippingOf(config, plan), shared: shared); }
             catch (NativeNotSupportedException ex) { return AsSource($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\"."); }
             log.Append(staticPlan.Log);
             log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
@@ -229,8 +276,6 @@ namespace fire.Compiler
                 string cFile = WriteFiles(workDir, program.C, target, SourceName, configDirectory, program.Natives);
                 string? nativesFile = program.Natives != null ? Path.Combine(workDir, NativesName) : null;
                 string exe = Path.GetFullPath(output);
-                if (ToolchainProvider.RequireLibraries(toolchain, cFile) is { } missingLibrary)
-                    return new NativeBuildResult(false, exe, missingLibrary, new[] { new Diagnostic(0, missingLibrary, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
                 // (Windows: DLLs - the runtime one of them, see CppGenerator "linkage shared on Windows")
                 bool dll = shared && target.Native.Platform == "windows";
                 string ext = dll ? ".dll" : shared ? (OperatingSystem.IsMacOS() ? ".dylib" : ".so") : toolchain.EffectiveKind == "msvc" ? ".lib" : ".a";
@@ -335,6 +380,7 @@ namespace fire.Compiler
                 log.AppendLine($"program built in {watch.ElapsedMilliseconds} ms");
                 bool built = linkedOk && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
+                if (built && ToolchainDrivers.AfterLink(toolchain, target, exe) is { } after) log.AppendLine(after);
                 // (shared: the libraries next to the program - it finds them there, wherever the cache is)
                 if (built && shared)
                 {
@@ -352,8 +398,6 @@ namespace fire.Compiler
                         File.WriteAllText(HostFileOf(exe), host.ToJson());
                     }
                 }
-                int sdlVersion = SdlSetup.RequiredVersion(cFile);
-                if (built && toolchain.EffectiveKind != "emscripten" && sdlVersion > 0 && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain, sdlVersion))) log.AppendLine($"SDL{sdlVersion}.dll copied next to the program.");
                 return new NativeBuildResult(built, exe, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C++ compiler of the native build reported errors (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
             }
             finally
@@ -401,15 +445,15 @@ namespace fire.Compiler
             return null;
         }
 
-        /// <summary>Linkage "static" with a toolchain that only writes files (an ESP-IDF component, docs/NATIVE_BACKEND.md): the program's C and the C of every library module
+        /// <summary>Linkage "static" with a toolchain that only writes files (an ESP-IDF component, docs/spec/NATIVE_BACKEND.md): the program's C and the C of every library module
         /// (from the cache, generated once) as translation units of their own; the build system of the board (idf.py) compiles them into the component's library.</summary>
         private static NativeBuildResult WriteStaticFiles(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode, int? floatWidth, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths)
         {
-            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", ToolchainKind = toolchain.EffectiveKind, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths, GlobalJobsDefault = config.GlobalJobsValue, Optimize = OptimizeOf(config, plan, target) }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             StaticBuildPlan staticPlan;
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
-            try { staticPlan = CppGenerator.GenerateStatic(linked, target, $"files|{toolchain.Layout}", null, StrippingOf(config, plan)); }
+            try { staticPlan = CppGenerator.GenerateStatic(linked, target, $"files|{toolchain.Layout}", StrippingOf(config, plan)); }
             catch (NativeNotSupportedException ex)
             {
                 string? linkage = config.Linkage;
@@ -535,7 +579,8 @@ namespace fire.Compiler
             IReadOnlyList<string>? libraries = null)
         {
             if (nativesFile == null || toolchain.EffectiveKind == "custom")
-                return new[] { CompilerCommand(toolchain, target, cFile, workDir, exe, gui: gui, language: "c", natives: nativesFile, extraInputs: libraries) };
+                return ToolchainDrivers.PreCommands(toolchain, target, workDir)   // (Open Watcom: the startup code of a target without an operating system)
+                    .Append(CompilerCommand(toolchain, target, cFile, workDir, exe, gui: gui, language: "c", natives: nativesFile, extraInputs: libraries)).ToList();
             if (!toolchain.CompilesCpp)
                 throw new NativeConfigException($"The program uses natives in C++ ({NativesInCpp(nativesFile)}): the toolchain '{toolchain.EffectiveKind}' compiles only C. Build it with gcc, clang or msvc (--toolchain).");
             string obj = Path.Combine(workDir, toolchain.EffectiveKind == "msvc" ? "fire_program.obj" : "fire_program.o");
@@ -568,10 +613,9 @@ namespace fire.Compiler
             bool isC = language == "c";
             string std = isC ? toolchain.CStd ?? "c11" : toolchain.Std ?? "c++17";
             var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
-            // the generated program asks for libraries it needs (`// fire-link: SDL3` or `SDL2` for a window): -lSDL3, SDL3.lib with msvc
+            // the generated program asks for libraries it needs (`// fire-link: dl`, those of the packages): -ldl, dl.lib with msvc
             string linkSource = programFile ?? cppFile;
-            // (Emscripten needs -sUSE_SDL=2 also when it only compiles: it picks the headers of its SDL2 port)
-            if ((!compileOnly || kind == "emscripten") && File.Exists(linkSource))
+            if (!compileOnly && File.Exists(linkSource))
                 foreach (string line in File.ReadLines(linkSource))
                     if (line.StartsWith("// fire-link: ", StringComparison.Ordinal))
                     {
@@ -581,21 +625,13 @@ namespace fire.Compiler
                         if (!libs.Contains(flag)) libs.Add(flag);
                     }
             // a debug build (mode debug, `#define FIRE_DEBUG 1` at the top of the program): no optimization, debug information, not stripped - for the debugger of spark
-            // and for gdb/lldb (docs/NATIVE_BACKEND.md "Debug-Builds") (a debug plugin too: its lines are debugged in the program)
+            // and for gdb/lldb (docs/spec/NATIVE_BACKEND.md "Debug-Builds") (a debug plugin too: its lines are debugged in the program)
             bool debugBuild = (!sharedLibrary || Path.GetFileName(linkSource) == "fire_plugin.c") && File.Exists(linkSource) && File.ReadLines(linkSource).Take(60).Any(l => l.StartsWith("#define FIRE_DEBUG 1", StringComparison.Ordinal));
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
+            // a toolchain with a driver of its own (Toolchains/: Open Watcom, ...) builds its command line itself
+            if (ToolchainDrivers.For(kind) is { } driver)
+                return driver.Command(new CompileRequest(toolchain, target, cppFile, includeDir, exe, includes, libs, compileOnly, (extraInputs ?? Array.Empty<string>()).ToList(), debugBuild));
             var libDirs = new List<string>();
-            // SDL: where its headers and import library are (Toolchain\SDL3, SDL3_DIR, the prefix of the compiler, the system; the same for SDL2), see SdlSetup
-            if (kind == "emscripten") libs = libs.Select(l => l == "-lSDL2" ? "-sUSE_SDL=2" : l).ToList();   // Emscripten brings SDL2 itself
-            else if (kind != "custom")
-                foreach (int version in new[] { 3, 2 })
-                    if (libs.Any(l => l == $"-lSDL{version}" || l == $"SDL{version}.lib") && SdlSetup.Locate(toolchain, version) is { } sdl)
-                    {
-                        includes.AddRange(sdl.IncludeDirs.Where(d => !includes.Contains(d)));
-                        libDirs.AddRange(sdl.LibDirs.Where(d => !libDirs.Contains(d)));
-                        // TinyCC resolves the libraries that libSDL*.so needs itself and does not follow their RUNPATH (libpulse.so.0 -> pulseaudio/libpulsecommon-*.so): it is told the folder
-                        if (kind == "tcc" && OperatingSystem.IsLinux()) libDirs.AddRange(SdlSetup.TccRunpathDirs().Where(d => !libDirs.Contains(d)));
-                    }
             if (kind == "custom")
             {
                 string template = toolchain.Command ?? throw new NativeConfigException("a custom toolchain needs a command");
@@ -683,6 +719,7 @@ namespace fire.Compiler
                 // a portable toolchain (w64devkit) finds its other programs through the PATH: its folder comes first
                 if (Path.IsPathRooted(exe) && Path.GetDirectoryName(exe) is { Length: > 0 } toolDir)
                     psi.Environment["PATH"] = toolDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+                ToolchainDrivers.PrepareEnvironment(exe, psi.Environment);   // (Open Watcom: WATCOM, INCLUDE)
                 if (BuildMonitor.Current is { } monitor)
                 {
                     monitor.Line($"{exe} {arguments}");
@@ -737,55 +774,7 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>The SDL that is asked for, before the toolchain is probed: the environment variable FIRE_SDL (2 or 3), else the target's <c>sdl</c>, else the toolchain's; null:
-        /// the build decides (<see cref="ChooseSdl"/>).</summary>
-        public static int? RequestedSdl(TargetProfile target, ToolchainDef? toolchain)
-        {
-            string? env = Environment.GetEnvironmentVariable("FIRE_SDL")?.Trim();
-            if (env == "2" || env == "3") return env[0] - '0';
-            return target.Native.Sdl ?? toolchain?.Sdl;
-        }
-
-        /// <summary>The target with the SDL that is asked for (<see cref="RequestedSdl"/>) written into it.</summary>
-        public static TargetProfile WithRequestedSdl(TargetProfile target, ToolchainDef? toolchain) =>
-            RequestedSdl(target, toolchain) is int sdl && sdl != target.Native.Sdl ? target with { Native = target.Native with { Sdl = sdl } } : target;
-
-        /// <summary>The SDL a window is built with: 3 when the toolchain can compile and link SDL3 for the target (<see cref="CanBuildSdl3"/>), else 2.</summary>
-        public static int ChooseSdl(ToolchainDef toolchain, TargetProfile target) => CanBuildSdl3(toolchain, target) ? 3 : 2;
-
-        /// <summary>Can the toolchain compile and link a program against SDL3 for this target? A tiny program (`#include &lt;SDL3/SDL.h&gt;`, SDL_Init) is built - once: the
-        /// answer is remembered (<see cref="NativeProbeCache"/>) under the compiler, the target and where SDL3 was found. Not where SDL3 is not found at all.</summary>
-        public static bool CanBuildSdl3(ToolchainDef toolchain, TargetProfile target)
-        {
-            string kind = toolchain.EffectiveKind;
-            if (kind is "files" or "custom" or "emscripten" || target.Native.Platform is not ("posix" or "windows")) return false;
-            string? compiler = kind == "msvc" ? ToolchainDetector.Find(toolchain) : ToolchainDetector.FindC(toolchain);
-            if (compiler == null || SdlSetup.Locate(toolchain, 3) is not { } location) return false;
-            string? header = location.IncludeDirs.Concat(new[] { "/usr/include", "/usr/local/include" }).Select(d => Path.Combine(d, "SDL3", "SDL.h")).FirstOrDefault(File.Exists);
-            string key = string.Join("|", "sdl3", kind, NativeProbeCache.Stamp(compiler), target.Name, target.Native.Platform, string.Join(" ", toolchain.Args ?? new()),
-                string.Join(" ", target.Native.CompileArgs), string.Join(";", location.IncludeDirs), string.Join(";", location.LibDirs), NativeProbeCache.Stamp(header), location.Source);
-            if (NativeProbeCache.Get(key) is bool known) return known;
-            string work = Path.Combine(Path.GetTempPath(), "fire-sdl3-probe-" + Guid.NewGuid().ToString("N"));
-            bool ok = false;
-            try
-            {
-                Directory.CreateDirectory(work);
-                string c = Path.Combine(work, "probe.c");
-                File.WriteAllText(c, "// fire-link: SDL3\n#include <SDL3/SDL.h>\nint main(void) { return SDL_Init(0) ? 0 : 1; }\n");
-                string exe = Path.Combine(work, target.Name == "windows" ? "probe.exe" : "probe");
-                var (exeName, arguments) = CompilerCommand(toolchain, target, c, work, exe, language: "c");
-                ok = Run(exeName, arguments, work).Ok && File.Exists(exe);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NativeConfigException) { ok = false; }
-            finally
-            {
-                try { Directory.Delete(work, true); } catch (IOException) { }
-            }
-            NativeProbeCache.Set(key, ok);
-            return ok;
-        }
-
         /// <summary>The name of the program that a native build produces by default (<c>out</c>, <c>out.exe</c> on Windows).</summary>
-        public static string DefaultOutput(TargetProfile target) => target.Name == "windows" ? "out.exe" : target.Name == "wasm" ? "out.html" : target.IsEmbedded ? "out" : "out";
+        public static string DefaultOutput(TargetProfile target) => "out" + target.ProgramExtension;
     }
 }

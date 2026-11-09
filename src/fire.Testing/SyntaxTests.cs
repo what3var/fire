@@ -2,7 +2,7 @@ using fire.Compiler;
 using fire.Runtime;
 using fire.Values;
 
-/// <summary>Typed declarations in `for`, `foreach (var x in ...)` and the compound assignments (`+=`, `-=`, `*=`, `/=`, `%=`, `^=`, `&=`, `|=`, `#=`, `<<=`, `>>=`): docs/SPEC.md.</summary>
+/// <summary>Typed declarations in `for`, `foreach (var x in ...)` and the compound assignments (`+=`, `-=`, `*=`, `/=`, `%=`, `^=`, `&=`, `|=`, `#=`, `<<=`, `>>=`): docs/spec/SPEC.md.</summary>
 static class SyntaxTests
 {
     private static int _failures;
@@ -20,7 +20,7 @@ static class SyntaxTests
         {
             var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
             session.Run();
-            Value.SingleFloats = false; Value.Ints32 = false;
+            Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false;
         }
         catch (Exception ex)
         {
@@ -394,7 +394,7 @@ static class SyntaxTests
         string handoverWord = Output("var handover = 1");
         Check("fire handover: 'handover' ist ein Schluesselwort", handoverWord.StartsWith("ERROR"), handoverWord);
 
-        // ---- `#globaljobs safepoints|sleep|sync` (docs/THREADING_DESIGN.md section 7): when the main program runs its `fire global` jobs ----
+        // ---- `#globaljobs safepoints|sleep|sync` (docs/spec/THREADING_DESIGN.md section 7): when the main program runs its `fire global` jobs ----
         const string jobsBody = "#import \"time\"\nfire global { print(\"job1\") }\nfor (var i = 0; i < 2; i++) { print(\"loop \" + i) }\nfire global { print(\"job2\") }\nH.f()\nSleep(1ms)\nprint(\"n \" + (sync globals))\nclass H { static undefined f() { print(\"call\") } }\n";
         const string atSafepoints = "loop 0\njob1\nloop 1\ncall\njob2\nn 0", atSleep = "loop 0\nloop 1\ncall\njob1\njob2\nn 0", atSync = "loop 0\nloop 1\ncall\njob1\njob2\nn 2";
         string jobsDefault = Output(jobsBody);

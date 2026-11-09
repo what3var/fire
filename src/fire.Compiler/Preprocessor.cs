@@ -27,7 +27,7 @@ namespace fire.Compiler
     /// came from the root file or an inserted file.</summary>
     public sealed record ProcessedSource(string Source, IReadOnlyList<string> Usings, string? Name = null)
     {
-        /// <summary>The prelude of a package that says `"serializable": false` (docs/JSON.md): its classes are excluded from JSON.</summary>
+        /// <summary>The prelude of a package that says `"serializable": false` (docs/stdlib/json.md): its classes are excluded from JSON.</summary>
         public bool NotSerializable { get; init; }
 
         /// <summary>The module (ROADMAP 9: a library that can be built on its own) the source belongs to: the import key of the prelude of an import, the import name of a
@@ -47,7 +47,18 @@ namespace fire.Compiler
         {
             if (_byFullPath.TryGetValue(fullPath, out int id)) return id;
             id = Entries.Count;
-            Entries.Add(new fire.Runtime.ResourceEntry { Name = name, Data = File.ReadAllBytes(fullPath) });
+            // a model in glTF becomes fire's model file (.f3d, docs/graphics/models.md): the program carries what scene3d reads
+            byte[] data;
+            if (ModelConverter.IsModelSource(fullPath))
+            {
+                try { data = ModelConverter.ConvertFile(fullPath); }
+                catch (Exception e) when (e is InvalidDataException or IOException or FormatException or KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException)
+                {
+                    throw new PreprocessorException($"The model '{name}' cannot be converted: {e.Message}");
+                }
+            }
+            else data = File.ReadAllBytes(fullPath);
+            Entries.Add(new fire.Runtime.ResourceEntry { Name = name, Data = data });
             _byFullPath[fullPath] = id;
             return id;
         }
@@ -161,7 +172,7 @@ namespace fire.Compiler
         /// `#define` of one file is seen by the next. Empty at first; the linker and the runtime session fill it from the target.</summary>
         public HashSet<string> Symbols { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>The files of `new Resource("path")` (docs/RESOURCES.md): where the preprocessor puts them. Without a table (live diagnostics) the text stays as it is.</summary>
+        /// <summary>The files of `new Resource("path")` (docs/stdlib/resources.md): where the preprocessor puts them. Without a table (live diagnostics) the text stays as it is.</summary>
         public ResourceTable? Resources { get; set; }
 
         public DirectiveRegistry()
@@ -312,7 +323,7 @@ namespace fire.Compiler
                 throw new PreprocessorException($"'{fullPath}' could not be read: {ex.Message}", ex);
             }
 
-            // a markup file of a user interface (docs/UI_MARKUP.md) or a schematic (`.biscuit`, docs/CIRCUITS.md) is included as the script generated from it
+            // a markup file of a user interface (docs/ui/markup.md) or a schematic (`.biscuit`, docs/circuits/README.md) is included as the script generated from it
             if (fire.UI.Markup.MarkupFiles.IsGenerated(fullPath))
             {
                 try { includedSource = fire.UI.Markup.MarkupFiles.GenerateScript(fullPath, includedSource); }
@@ -331,11 +342,19 @@ namespace fire.Compiler
             var sb = new StringBuilder();
             var lines = source.Split('\n');
             var conditional = new ConditionalState(); // `#if` nesting of this file; the symbols are those of the registry (shared by all files)
+            var inlineC = new InlineCScan();          // the C body of an `inline c` function goes through unchanged - its `#if` is C's
 
             for (int lineNo = 0; lineNo < lines.Length; lineNo++)
             {
                 var line = lines[lineNo].TrimEnd('\r');
+                if (inlineC.InBody)
+                {
+                    inlineC.Feed(line);
+                    sb.Append(line).Append('\n');
+                    continue;
+                }
                 var match = DirectiveLine.Match(line);
+                if (!match.Success && conditional.Active) inlineC.Feed(line);
                 if (!match.Success)
                 {
                     // a branch that is not taken: an empty line, the numbering stays
@@ -567,7 +586,7 @@ namespace fire.Compiler
 
     public sealed class PreprocessorException : Exception
     {
-        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        /// <summary>The code of the message (docs/tools/errors.md).</summary>
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Preprocessor, Message);
 
         public PreprocessorException(string message) : base(message) { }

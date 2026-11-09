@@ -16,7 +16,7 @@ using static fire.Editor.SettingsLayout;
 namespace fire.Editor
 {
     /// <summary>
-    /// The properties of a project (docs/PROJECTS.md), on pages chosen at the left: General (what most projects need), Version &amp; Info, Build, Native &amp; Toolchain, Run &amp; Debug,
+    /// The properties of a project (docs/tools/projects.md), on pages chosen at the left: General (what most projects need), Version &amp; Info, Build, Native &amp; Toolchain, Run &amp; Debug,
     /// References, Notes - and, when a solution is open, the solution. A field that is empty is not set at this level: it shows in grey what the solution or the default says.
     /// The dialog works on copies; Save checks them and puts them into the project (and the solution) - the caller writes the files. `ShowDialog` returns true on Save.
     /// </summary>
@@ -364,7 +364,7 @@ namespace fire.Editor
                 Group("Compiling",
                     Row("Configuration", Choice(new[] { ("Debug", "debug"), ("Release", "release"), ("Performance", "performance") }, () => s.Mode, v => s.Mode = v, modeInh, modeFrom)),
                     Row("Float precision", Choice(new[] { ("32 bit", "32"), ("64 bit", "64") }, () => s.FloatWidth?.ToString(), v => s.FloatWidth = v == null ? null : int.Parse(v), floatInh, floatFrom)),
-                    Row("Int width", Choice(new[] { ("32 bit", "32"), ("64 bit", "64") }, () => s.IntWidth?.ToString(), v => s.IntWidth = v == null ? null : int.Parse(v), intInh, intFrom)),
+                    Row("Int width", Choice(new[] { ("16 bit", "16"), ("32 bit", "32"), ("64 bit", "64") }, () => s.IntWidth?.ToString(), v => s.IntWidth = v == null ? null : int.Parse(v), intInh, intFrom)),
                     Row("Symbols for #if", definesBox)),
                 Group("Output",
                     Row("Output folder", Text(() => s.Output, v => s.Output = v, InheritedOf(x => x.Output, null, out string oFrom), oFrom, "bin/<target>-<mode>/")),
@@ -389,13 +389,18 @@ namespace fire.Editor
                 Refill(toolchain, _native.ToolchainNames, s.Toolchain);
             };
             var natives = _project.Project.Native != null
-                ? Hint("This project has C++ natives in native/ (docs/PACKAGE_NATIVES.md); they are built with the toolchain, too.")
+                ? Hint("This project has C++ natives in native/ (docs/packages/natives.md); they are built with the toolchain, too.")
                 : Hint("This project has no C++ natives of its own.");
             // (the stripping level as its number - the file may name it: "methods" is 2)
             static string? Level(string? v) => v != null && ProjectSettings.Strippings.ToList().IndexOf(v.ToLowerInvariant()) is int i and >= 0 ? i.ToString(System.Globalization.CultureInfo.InvariantCulture) : v;
             string? strippingInh = Level(InheritedOf(x => x.Stripping, null, out string strippingFrom));
             var stripping = Choice(new[] { ("0 none", "0"), ("1 protected", "1"), ("2 methods", "2"), ("3 all", "3") }, () => Level(s.Stripping), v => s.Stripping = v,
                 strippingInh, strippingFrom, "default: 3");
+            string defaultDirection;
+            try { defaultDirection = fire.Runtime.OptimizeFors.Name(_native.OptimizeValue ?? _native.ResolveTarget(s.Target ?? _inherited?.Target).Optimize); }
+            catch (fire.Native.NativeConfigException) { defaultDirection = "?"; }
+            var optimize = Choice(new[] { ("speed", "speed"), ("size", "size") }, () => s.Optimize?.ToLowerInvariant(), v => s.Optimize = v,
+                InheritedOf(x => x.Optimize, null, out string optimizeFrom), optimizeFrom, $"default: {defaultDirection}");
             return Page("Native & Toolchain", "The target a native build runs on and the C++ toolchain that compiles it. Used when General > Runs as is Native.",
                 Group("Target", Row("Target", target), Hint("The built-in targets and those of fire.native.json.")),
                 Group("Toolchain", Row("Toolchain", toolchain), Row("", edit)),
@@ -407,7 +412,10 @@ namespace fire.Editor
                     BoardFields.IdfStatus(fire.Projects.EditorSettings.Load().IdfPath)),
                 Group("Size", Row("Stripping", stripping),
                     Hint("What a native build leaves out of what the program does not reach: 0 nothing (like the VM), 1 private and protected members nothing uses, 2 also methods "
-                        + "nothing uses, 3 also classes the program never makes (the default). Names given as literals to reflection and [Keep] always stay; a debug build keeps everything.")),
+                        + "nothing uses, 3 also classes the program never makes (the default). Names given as literals to reflection and [Keep] always stay; a debug build keeps everything."),
+                    Row("Optimize for", optimize),
+                    Hint("The direction of a native build: speed (the C compiler's -O2, code embedded where it pays) or size (-Os, unused code dropped by the linker, nothing "
+                        + "embedded beyond what the compiler chooses). By default the target's: the PC targets of Open Watcom are built for size, the others for speed.")),
                 Group("Natives", natives));
         }
 
@@ -444,7 +452,7 @@ namespace fire.Editor
         private Control NotesPage()
         {
             string current = ProjectNotes.Folder(_project.FilePath, null);
-            return Page("Notes", "The todo list and the overview of the project live in a folder of their own (docs/NOTES.md).",
+            return Page("Notes", "The todo list and the overview of the project live in a folder of their own (docs/tools/notes.md).",
                 Group("Folder",
                     Row("Notes folder", Text(() => _notes, v => _notes = v, null, null, $"{ProjectNotes.DefaultFolder}   (default)")),
                     Hint($"Relative to the project file. Without a value: {Path.GetRelativePath(_project.Directory, current)}/ next to it.")));

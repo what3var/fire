@@ -1,4 +1,4 @@
-/* The natives of $name$: C functions on Value (C99, docs/PACKAGE_NATIVES.md).
+/* The natives of $name$: C functions on Value (C99, docs/packages/natives.md).
  * Every `static inline Value name(Value a, ...)` below becomes the fire function `__name` that the prelude wraps. A last parameter `OwnList* list` lets a
  * function return what it allocates (a string, an array). All packages of a program share one C file: give every function and global a prefix of your own. */
 #ifndef NATIVES_$identlower$_H

@@ -26,6 +26,7 @@ New to fire? Start with **Help > First Steps** in the editor, then come back her
 17. [Directives, warnings and documentation comments](17-preprocessor.md) - `#import`, `#if`, `warn`, `///`
 18. [Native code](18-native-code.md) - `extern`, `unsafe` pointers, native builds
 19. [The standard library](19-standard-library.md) - what is always there and what `#import` adds
+20. [Time](20-time.md) - `Sleep`, `TimeSpan`, `DateTime`, measuring time
 
 [Roadmap](roadmap.md) - what is planned for the language and its tools.
 

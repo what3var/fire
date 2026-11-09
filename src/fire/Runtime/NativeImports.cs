@@ -10,7 +10,7 @@ namespace fire.Runtime
 
         public static string Graphics => "graphics";
 
-        /// <summary>The window (`Window`, SDL) for a framebuffer - requires `graphics`. Separate from `graphics` so that a platform without a window can include a display instead.</summary>
+        /// <summary>The window (`Window`) for a framebuffer - requires `graphics`. Separate from `graphics` so that a platform without a window can include a display instead.</summary>
         public static string Windows => "windows";
 
         public static string Devices => "devices";   // (a package; the name is kept for the packer, which knows its host parts)

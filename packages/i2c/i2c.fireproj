@@ -21,11 +21,13 @@
     "functions": [
       {
         "name": "__I2cLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_i2c_LastError"
       },
       {
         "name": "__I2cLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -33,16 +35,19 @@
       },
       {
         "name": "__I2cOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_i2c_OpenCount"
       },
       {
         "name": "__I2cSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_i2c_Supported"
       },
       {
         "name": "__I2cBuses",
+        "returns": "any[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -50,66 +55,108 @@
       },
       {
         "name": "__I2cOpen",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_i2c_Open"
       },
       {
         "name": "__I2cSetSpeed",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_i2c_SetSpeed"
       },
       {
         "name": "__I2cWrite",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_i2c_Write"
       },
       {
         "name": "__I2cRead",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_i2c_Read"
       },
       {
         "name": "__I2cWriteRead",
+        "returns": "int",
         "arguments": 8,
         "c": "fire_i2c_WriteRead"
       },
       {
         "name": "__I2cProbe",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_i2c_Probe"
       },
       {
         "name": "__I2cClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_i2c_Close"
       },
       {
         "name": "__I2cSimAdd",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_i2c_SimAdd"
       },
       {
         "name": "__I2cSimRemove",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_i2c_SimRemove"
       },
       {
         "name": "__I2cSimSetRegister",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_i2c_SimSetRegister"
       },
       {
         "name": "__I2cSimGetRegister",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_i2c_SimGetRegister"
       },
       {
         "name": "__I2cSimReset",
+        "returns": "bool",
         "arguments": 0,
         "c": "fire_i2c_SimReset"
       }
     ],
     "reset": "fire_i2c_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "posix": [
+        "native/fire_i2c_desktop.h"
+      ],
+      "windows": [
+        "native/fire_i2c_desktop.h"
+      ],
+      "wasm": [
+        "native/fire_i2c_none.h"
+      ],
+      "dos16": [
+        "native/fire_i2c_none.h"
+      ],
+      "esp32": [
+        "native/fire_i2c_esp32.h"
+      ],
+      "freertos": [
+        "native/fire_i2c_none.h"
+      ],
+      "default": [
+        "native/fire_i2c_none.h"
+      ]
+    },
+    "headers": [
+      "native/fire_i2c_c.h",
+      "native/fire_i2c_desktop.h",
+      "native/fire_i2c_esp32.h",
+      "native/fire_i2c_linux.h",
+      "native/fire_i2c_none.h"
+    ]
   }
 }

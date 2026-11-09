@@ -5,7 +5,7 @@ using fire.Values;
 
 namespace fire.Compiler
 {
-    /// <summary>The imports of installed packages (docs/PACKAGES.md) as far as the compiler and the virtual machine are concerned: their natives are C++ source for the native backend, so the
+    /// <summary>The imports of installed packages (docs/packages/README.md) as far as the compiler and the virtual machine are concerned: their natives are C++ source for the native backend, so the
     /// virtual machine only knows their names (a call is an error that says so); a prelude without natives works in both.</summary>
     public static class PackageImports
     {
@@ -21,6 +21,17 @@ namespace fire.Compiler
                     foreach (var function in import.Import.Native.Functions)
                         if (!names.Contains(function.Name)) { names.Add(function.Name); libraries.Add(function.Host ? PackageNativeBinding.HostLibrary : PackageLibrary.FileNameFor(import)); }
             return (names, libraries);
+        }
+
+        /// <summary>What the natives of the packages among <paramref name="nativeImports"/> return (their `returns`): name -> type text.</summary>
+        public static Dictionary<string, string> NativeReturnTypes(IEnumerable<string> nativeImports)
+        {
+            var types = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var key in nativeImports.Where(IsPackageKey))
+                if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native != null)
+                    foreach (var function in import.Import.Native.Functions)
+                        if (!string.IsNullOrWhiteSpace(function.Returns)) types.TryAdd(function.Name, function.Returns!.Trim());
+            return types;
         }
 
         /// <summary>Builds (if needed) the libraries of the natives of the imports of packages that a program uses and returns their paths. A failure to build is a <see cref="PackageException"/>.</summary>

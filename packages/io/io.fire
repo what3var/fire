@@ -375,7 +375,7 @@ namespace IO {
                 if (nl >= 0) {
                     if (this.pending.Length == 0) {
                         // Whole line in the buffer - decode directly.
-                        var count = nl - this.pos
+                        any count = nl - this.pos
                         if (count > 0 && this.chunk[nl - 1] == 13) { count = count - 1 }
                         var text = IO.Utf8.GetString(this.chunk, this.pos, count)
                         this.pos = nl + 1

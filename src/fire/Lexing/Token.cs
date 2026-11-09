@@ -16,6 +16,7 @@ namespace fire.Lexing
         Try, Catch, Finally, Throw,
         Is, Of, From, Under,
         Extern, Unsafe,
+        InlineCode, // the body of an `inline c` function: the C text between its braces, unchanged (Lexeme: with the braces, LiteralValue: without)
         Interface,
         Readonly, Enum,
         Static, // 'static' on fields/methods/properties (see Parser.ParseClassMember)
@@ -62,6 +63,7 @@ namespace fire.Lexing
         Hash,        // '#'  -> preprocessor directives (statement start, see Parser.ParseDirective) OR bitwise XOR (mid-expression, see Parser.ParseBitwiseXor) - distinguished purely by position, no conflict: a directive always sits at the STATEMENT start, XOR always AFTER an already parsed left operand.
 
         Eof,
+        KwWord, // 'word' - the machine word of the target, unsigned, without a unit (SPEC 8.10); `word a[]` is a buffer of words (at the end: the numbers of the others stay)
     }
 
     public readonly struct Token

@@ -20,7 +20,7 @@ print(b[2])                 // undefined
 - The size never changes; for a collection that grows, use `List<T>` (below).
 - **The brackets stand after the name**: `int values[]`, `string names[10]`. Brackets after the type are a bit width (`int[8] small`, see
   [Types](02-types.md#bit-widths)).
-- An array literal may hold different types (`[1, "two", 3.0]`); a typed declaration (`int values[]`) lets the type checker check the elements.
+- An array literal may hold different types (`[1, "two", 3.0]`); a typed declaration (`int values[]`) makes a **typed array** (below).
 - A unit at the declaration (`float:km/h speeds[]`, `int sizes[3] : mm`) converts every element stored into the array (see
   [Units in declarations](05-units.md#units-in-declarations)).
 
@@ -46,6 +46,47 @@ print(grid[0].length)       // 3
 var rows = [[1, 2], [3]]
 print(rows[1][0])           // 3
 ```
+
+## Typed arrays
+
+An array stored in a variable or a field declared with the element type `int`, `int[8|16|32|64]`, `float`, `float[8|16|32|64]`, `bool`, `char` or
+`byte` becomes a **typed array**: the array itself knows its element type, so every write keeps it - through any reference, also `ref a[i]` and `a[i]++`:
+
+```fire
+int[8] small[4]                 // four 8-bit ints, made right here
+small[0] = 300
+print(small[0])                 // 44 - cut to 8 bits like an int[8] variable
+var alias = small               // the same array
+alias[1] = 129
+print(small[1])                 // -127
+byte raw[2]
+raw[0] = 263
+print(raw[0])                   // 7 (0 .. 255)
+float[32] f[] = [1, 2.5]
+print(f[0])                     // 1 - the int became a float
+float:cm sizes[] = [1cm, 2m]
+print(sizes[1])                 // 200cm - every element is converted to the unit
+try {
+    any v = "x"
+    small[3] = v
+} catch (ArgumentException e) {
+    print(e.message)            // An element of an array of int[8] must be an int (or undefined), not String.
+}
+```
+
+- `undefined` fits every element type (it is what a new array holds). Any other value is an `ArgumentException`, a number with another unit a
+  `UnitMismatchException`; the type checker reports both already where it can see them (`TC001`, `TC006`).
+- An assignment yields the stored value: `print(a[0] = 300)` prints `44` for an `int[8]` array.
+- The array becomes typed where it is stored: the declaration's initializer, a declaration with a size (`int a[10]`), a later assignment to the
+  variable or field. Its elements are converted then. An array typed already for another element type is an `ArgumentException`, and so is a value
+  that is no array at all (`int a[] = 5`): a typed array declaration holds an array or `undefined`, like `int x` holds an int. This holds for every way
+  a field is set - an assignment, `Reflect.Set`, `Json.Deserialize` (which reads the array typed).
+- Parameters do not type what they receive. Copies (`copy`, `flat`, [`taking`](15-threads-and-actors.md)) of a typed array are typed.
+- `int m[3][4]` types the inner arrays. `var`, `any`, strings, classes and pointers declare no element type: such an array takes any value.
+- **A declaration with a size makes the array** - a local or global where it is declared, a field together with its object
+  (`class Box { int data[3] }`: `new Box().data.length` is 3). Without a size (`int arr[]`) the variable or field stays `undefined` until an array is assigned.
+- Natively a typed array is **packed**: one C number per element (`int8_t` for `int[8]`, `float` for `float[32]`, one byte for `bool`) instead of a
+  16-byte value - `int[8] a[100000]` needs 100 KB instead of 1.6 MB.
 
 ## Arrays as parameters and return values
 
@@ -120,11 +161,15 @@ print(names[2])
 
 A list owns the objects that are handed over to `Add`: one made in the argument (`list.Add(new Item())`) or given with `take` (`list.Add(take item)`).
 An object that `Add` only gets a reference to (`list.Add(item)`) keeps its owner and dies with it (see [Ownership](13-ownership.md)). `List<int>` and `List<string>` are
-checked by the type checker: `list.Add("x")` on a `List<int>` is reported. `new List()` without a type argument takes everything.
+checked by the type checker: `list.Add("x")` on a `List<int>` is reported. `new List()` without a type argument takes everything. A `List<int>`,
+`List<float>`, `List<bool>` or `List<char>` keeps its elements in a typed array (like `int a[]`: raw numbers, natively 8 bytes or less each) - inside a
+generic class `new T[n]` makes such an array for the type argument it runs with.
 
 ## Dictionaries and sets: `Dictionary<K, V>`, `HashSet<T>`
 
 `Dictionary<K, V>` maps keys to values, `HashSet<T>` holds each value once. Both keep the order in which the keys came in (`foreach`, `Keys`, `Values`).
+Like a list, they keep keys and values of `int`, `float`, `bool` or `char` in typed arrays (`Dictionary<int, float>`: raw numbers); their table itself
+(hashes, chains) is typed too.
 
 | `Dictionary<K, V>` | Meaning |
 |---|---|
@@ -258,6 +303,68 @@ print(text.ToString())      // Hi
 | `ToUnicodeChar()`, `ToUnicodeChar(n)` | the first character |
 | `littleEndian` | the byte order of the buffer |
 | `ToLittleEndian()`, `ToBigEndian()` | a copy in that byte order (the whole buffer is reversed if needed) |
+
+### `byte` declarations are buffers
+
+A variable, a field or a global declared with the element type `byte` holds a byte buffer, not an array:
+
+```fire
+byte header[4]              // the same as new byte[4]: four zeros
+byte magic[] = [0x89, 80, 78, 71]
+print(magic)                // <buffer 4 bytes>
+print(magic.length)         // 4
+print(magic[1])             // 80
+foreach (b in header) { print(b) }
+var numbers = [1, 2, 300]
+magic = numbers             // a new buffer with the elements: 1, 2, 44 (numbers stays an array)
+class Packet {
+    byte data[16]           // made with the object
+    byte extra[]            // undefined until something is assigned
+}
+```
+
+- An array stored in a `byte` declaration (the initializer, a later assignment) becomes a **new buffer** with its elements: an `int` is cut to
+  8 bits (`300` becomes 44), `undefined` becomes 0, anything else is an `ArgumentException`. `byte grid[3][4]` is an array of three buffers.
+- An element of a buffer is always an `int` from 0 to 255: it is never `undefined`, and assigning something else (`magic[0] = "a"`,
+  `magic[0] = undefined`) is an `ArgumentException`.
+- `length`, `[i]`, `foreach`, `copy`/`flat` and `is of IEnumerable` work as for arrays; `print` shows `<buffer n bytes>`, JSON writes a buffer as
+  base64 text.
+- A parameter `byte data[]` takes what it is given (an array stays an array).
+
+### `word` declarations are buffers of machine words
+
+`word` is the machine word of the target (see [Types](02-types.md#the-machine-word-word)). Declared with array brackets it holds a buffer of
+words, just like `byte` holds a buffer of bytes:
+
+```fire
+word regs[4]                // the same as new word[4]: four zero words
+word table[] = [1, 2, -1]   // -1 becomes the largest word
+print(table)                // <buffer 3 words>
+print(table.length)         // 3 (words, not bytes)
+print(table[2])             // 18446744073709551615 on the desktop, 4294967295 on the ESP32
+regs[0] = regs[0] + 5       // an element is a word
+```
+
+- An array stored in a `word` declaration becomes a new buffer: an `int` is cut to the width of a word, a `word` stays, `undefined` becomes
+  0, anything else is an `ArgumentException`. Writing an element takes an `int` or a `word`.
+- `length` counts words; `[i]`, `foreach`, `copy`/`flat` and `++` work as for bytes. `ref table[i]` is not possible.
+- The words lie in memory in the byte order of the machine, each `Word.Bits / 8` bytes wide: **the size in bytes depends on the target**.
+  That is why the functions that read or write bytes do not take a word buffer (an `ArgumentException`: "... not a word buffer"); JSON writes
+  it as an array of numbers.
+
+### Bytes for functions of the packages
+
+The functions of the packages that **read** bytes - writing a file (`IO.File.WriteAllBytes`), a stream or a socket, hashing, compressing,
+sending to a device - take a buffer and also a plain array of ints from 0 to 255:
+
+```fire
+#import "filesystem"
+IO.File.WriteAllBytes("out.bin", [0x46, 0x49, 0x52, 0x45])
+```
+
+A function that **fills** the buffer you give it (`stream.Read(buffer, 0, n)`, receiving) needs a real buffer (`new byte[n]` or a `byte`
+declaration): an array there is an `ArgumentException` ("... expects a byte buffer (new byte[n]), not an array."), so is an element outside
+0 .. 255 or a value that is no bytes at all (a string, an object).
 
 ## Exercises
 

@@ -1,4 +1,4 @@
-/* fire native runtime: the debugger of a debug build (docs/NATIVE_DEBUG_PROTOCOL.md, docs/NATIVE_BACKEND.md "Debug-Builds"). Included by fire_rt.h when the
+/* fire native runtime: the debugger of a debug build (docs/spec/NATIVE_DEBUG_PROTOCOL.md, docs/spec/NATIVE_BACKEND.md "Debug-Builds"). Included by fire_rt.h when the
  * program is generated in the mode `debug` (FIRE_DEBUG).
  *
  * The generated code keeps a shadow stack: every fire function has a frame (DbgFrame) on it with its function, the addresses of its variables, `this`, and
@@ -22,7 +22,7 @@ typedef struct DbgLevel { int32_t parent; uint8_t functionTop; uint16_t count; c
 typedef struct DbgFunc { const char* name; const DbgLevel* levels; } DbgFunc;
 typedef struct DbgGlobal { const char* name; Value* slot; } DbgGlobal;          /* by global slot (slot null: no variable) */
 typedef struct DbgSource { const char* file; const char* hash; } DbgSource;     /* by source index (null: the prelude, no file) */
-typedef struct DbgClass { const char* name; uint32_t nfields; const char* const* fields; } DbgClass;
+typedef struct DbgClass { const char* name; uint32_t nfields; const char* const* fields; const FirePlace* places; } DbgClass;   /* (places: where each field lives - NULL when field i is slot i) */
 typedef struct DbgProgram {
     const DbgSource* sources; int32_t nsources; int32_t firstUser;
     const DbgGlobal* globals; int32_t nglobals;
@@ -43,7 +43,7 @@ struct DbgFrame {
 
 extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached: the hooks look at the position */
 extern FIRE_RT_DATA int32_t g_dbgGlobalCount;    /* the global variables declared so far (VM.DebugGlobals) */
-/* The program's standard input comes from the agent (a framed transport owns the input, docs/NATIVE_DEBUG_PROTOCOL.md "Transport"): IO reads it with
+/* The program's standard input comes from the agent (a framed transport owns the input, docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport"): IO reads it with
  * fire_dbgStdinRead (waits for input or its end, without the GIL; 0 at the end) and gives a byte back with fire_dbgStdinUnget. */
 extern FIRE_RT_DATA volatile int g_dbgStdin;
 FIRE_RT_FN int64_t fire_dbgStdinRead(uint8_t* out, int64_t count);
@@ -106,7 +106,7 @@ int64_t fire_dbgStdinRead(uint8_t* out, int64_t count) { (void)out; (void)count;
 void fire_dbgStdinUnget(int c) { (void)c; }
 #else
 
-/* ---- the system: threads, a lock with a condition (also with a timeout), and the transport (docs/NATIVE_DEBUG_PROTOCOL.md "Transport") ----
+/* ---- the system: threads, a lock with a condition (also with a timeout), and the transport (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport") ----
  * Three transports behind one small interface (open, send a message, receive bytes, close):
  *   tcp    FIRE_DEBUG=tcp:HOST:PORT;token=T - the desktop: the program connects to spark; one JSON message per line.
  *   stdio  FIRE_DEBUG=stdio[;token=T][;wait=MS] on the desktop, or FIRE_DEBUG_TRANSPORT_STDIO (a FreeRTOS board, the simulator native/sim): framed
@@ -766,12 +766,13 @@ static const char* dbgKindName(Value v) {
     switch (v.kind) {
         case K_Bool: return "bool";
         case K_Int: return "int";
+        case K_Word: return "word";
         case K_Float: return "float";
         case K_Char: return "char";
         case K_String: return "string";
         case K_Class: return "object";
         case K_Lambda: return "lambda";
-        case K_PtrVar: case K_PtrByte: case K_PtrElem: return "pointer";
+        case K_PtrVar: case K_PtrByte: case K_PtrElem: case K_PtrField: return "pointer";
         case K_Array: return "array";
         case K_Buffer: return "buffer";
         default: return "undefined";
@@ -842,8 +843,9 @@ static const DbgLevel* dbgThreadGlobals(DbgThread* t, DbgFrame** bottom) {
     return f->fn->levels[lv].functionTop == 2 ? &f->fn->levels[lv] : NULL;
 }
 
-/* Resolves a ref (docs/NATIVE_DEBUG_PROTOCOL.md "Werte"): the slot of the value, or null with a reason. `thread` is the thread a `l:`/`t:` ref names. */
+/* Resolves a ref (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Werte"): the slot of the value, or null with a reason. `thread` is the thread a `l:`/`t:` ref names. */
 static Value* dbgResolveField(const char* ref, const char** error, DbgThread** thread, Value* object, long* field);
+static Value g_dbgScratch;   /* a packed field, read for the debugger (dbgResolveField) */
 static Value* dbgResolve(const char* ref, const char** error, DbgThread** thread) {
     Value object;
     long field;
@@ -903,7 +905,15 @@ static Value* dbgResolveField(const char* ref, const char** error, DbgThread** t
         Value v = *slot;
         if (!dbgAlive(v)) { *error = "the value is gone"; return NULL; }
         *field = -1;
-        if (v.kind == K_Class && k >= 0 && (uint32_t)k < objAt(v)->nfields) { slot = &objFields(objAt(v))[k]; *object = v; *field = k; }
+        const DbgClass* kc = v.kind == K_Class ? dbgClassOf(objAt(v)->cls) : NULL;
+        if (kc && kc->places && k >= 0 && (uint32_t)k < kc->nfields) {
+            /* (a field by its place: a packed one is read into a copy - `set` writes it through the setter) */
+            const FirePlace* pl = &kc->places[k];
+            if (pl->raw || pl->half >= 0) { g_dbgScratch = placeGet(objAt(v), pl); slot = &g_dbgScratch; }
+            else slot = &objFields(objAt(v))[pl->slot];
+            *object = v; *field = k;
+        }
+        else if (v.kind == K_Class && k >= 0 && (uint32_t)k < objAt(v)->nfields) { slot = &objFields(objAt(v))[k]; *object = v; *field = k; }
         else if (v.kind == K_Array && k >= 0 && (uint32_t)k < arrOf(v)->length) slot = &arrItems(arrOf(v))[k];
         else { *error = "the value is gone"; return NULL; }
     }
@@ -989,6 +999,11 @@ static void dbgRunTask(DbgThread* t) {
             return;
         }
         nv = *slot;
+        if (slot == &g_dbgScratch) {
+            /* (a packed field: its new value from its place) */
+            const DbgClass* sc = dbgClassOf(asObj(object)->cls);
+            nv = placeGet(asObj(object), &sc->places[field]);
+        }
     }
     else {
         retain(nv);
@@ -1101,12 +1116,13 @@ static void dbgWriteChildren(DbgBuf* b, Value v, const char* ref) {
     if (v.kind == K_Class) {
         Obj* o = objAt(v);
         const DbgClass* cls = dbgClassOf(o->cls);
-        for (i = 0; i < o->nfields; i++) {
+        uint32_t n = cls && cls->places ? cls->nfields : o->nfields;   /* (packed fields: by their places) */
+        for (i = 0; i < n; i++) {
             char name[32];
             if (i) dbgPut(b, ",");
             snprintf(child, sizeof child, "%s/%u", ref, (unsigned)i);
             if (!cls || i >= cls->nfields) snprintf(name, sizeof name, "(field %u)", (unsigned)i);
-            dbgPutValue(b, cls && i < cls->nfields ? cls->fields[i] : name, objFields(o)[i], child);
+            dbgPutValue(b, cls && i < cls->nfields ? cls->fields[i] : name, cls && cls->places ? placeGet(o, &cls->places[i]) : objFields(o)[i], child);
         }
     }
     else if (v.kind == K_Array) {

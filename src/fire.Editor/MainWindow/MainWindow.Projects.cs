@@ -12,7 +12,7 @@ using fire.Projects;
 
 namespace fire.Editor
 {
-    // Projects and solutions (docs/PROJECTS.md): the workspace, the solution explorer, the Project menu, what Start and Build act on.
+    // Projects and solutions (docs/tools/projects.md): the workspace, the solution explorer, the Project menu, what Start and Build act on.
     public partial class MainWindow
     {
         private static readonly FilePickerFileType AllFilesType = new("All files") { Patterns = new[] { "*" } };
@@ -458,7 +458,7 @@ namespace fire.Editor
                     string name = values.Expand(rel);
                     string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, rel.Replace('/', Path.DirectorySeparatorChar))));
                     string ext = Path.GetExtension(name).ToLowerInvariant();
-                    var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".biscuit" => DocumentKind.Circuit, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
+                    var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".biscuit" => DocumentKind.Circuit, ".fblocks" => DocumentKind.Blocks, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
                     CreateDocument(kind, text, null, untitledName: Path.GetFileName(name));
                 }
             }

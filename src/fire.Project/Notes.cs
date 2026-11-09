@@ -3,11 +3,11 @@ using System.Text.RegularExpressions;
 
 namespace fire.Projects
 {
-    /// <summary>The state of a task in a todo list (docs/NOTES.md): `[ ]` open, `[/]` in progress, `[#]` blocked, `[x]` done.</summary>
+    /// <summary>The state of a task in a todo list (docs/tools/notes.md): `[ ]` open, `[/]` in progress, `[#]` blocked, `[x]` done.</summary>
     public enum TodoState { Open, InProgress, Blocked, Done }
 
     /// <summary>
-    /// Where the notes of a project or a solution live (docs/NOTES.md): the folder `notes/` next to the `.fireproj` or `.firesln`, or the folder its `"notes"` names.
+    /// Where the notes of a project or a solution live (docs/tools/notes.md): the folder `notes/` next to the `.fireproj` or `.firesln`, or the folder its `"notes"` names.
     /// The folder and the files in it are made when the first entry is written.
     /// </summary>
     public static class ProjectNotes
@@ -76,7 +76,7 @@ namespace fire.Projects
     }
 
     /// <summary>
-    /// A todo list (docs/NOTES.md): a Markdown file whose list items with `[ ]`, `[/]`, `[#]` or `[x]` are tasks, grouped by the headings of level 2 and deeper.
+    /// A todo list (docs/tools/notes.md): a Markdown file whose list items with `[ ]`, `[/]`, `[#]` or `[x]` are tasks, grouped by the headings of level 2 and deeper.
     /// Changes go only to the lines they concern - the rest of the file (paragraphs, notes, code, line endings) stays as it was written. After a change the tasks are read
     /// again: <see cref="Items"/> holds new objects, which are found again by their <see cref="TodoItem.Line"/>.
     /// </summary>

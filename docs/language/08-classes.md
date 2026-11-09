@@ -275,7 +275,8 @@ print(Show.Of<int>(1))          // generic - written type arguments mean the gen
 
 - The values decide at run time: a variable of type `any` picks the overload of what it holds then. Where the type checker knows the argument types,
   it makes the same choice and knows the return type of that overload.
-- An `int` goes into a `float` parameter, but an exact `int` overload wins.
+- An `int` goes into a `float` parameter, but an exact `int` overload wins. An `int` goes into a `word` parameter too, and rather there than into
+  a `float` one; a `float` never goes into a `word` parameter.
 - Two methods with the same parameter types in one class are an error.
 - In a derived class, a method with the same parameter types (or untyped ones) **overrides** the inherited one (mark it `override`); with other types it is one more
   overload next to it.
@@ -320,7 +321,7 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 
 An attribute is a name in square brackets on the line before a class, a method, a field or a property, with arguments after the name and no parentheses (as in C#, `[Name 1, "text", {1, 2},
 new List<int>()]`; `{...}` is an array here, like `[...]`). A declaration may have several. Attributes do nothing by themselves; tools read them (reflection: `Type.Attributes`, `Member.Attributes`, see [Probes and reflection](16-probes-and-reflection.md)) - `forge test`
-runs the methods with `[Test]` (docs/TESTING.md):
+runs the methods with `[Test]` ([Testing: forge test](../tools/testing.md)):
 
 ```fire
 class CalcTests {
@@ -347,7 +348,7 @@ class Mixer {
 }
 ```
 
-Fields and properties can have attributes too. `#import "json"` reads two of them (docs/JSON.md):
+Fields and properties can have attributes too. `#import "json"` reads two of them ([JSON](../stdlib/json.md)):
 
 ```fire
 class Account {

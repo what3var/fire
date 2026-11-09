@@ -30,11 +30,13 @@
     "functions": [
       {
         "name": "__TlsLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_tls_LastError"
       },
       {
         "name": "__TlsLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -42,51 +44,61 @@
       },
       {
         "name": "__TlsSupported",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_tls_Supported"
       },
       {
         "name": "__TlsOpen",
+        "returns": "int",
         "arguments": 7,
         "c": "fire_tls_Open"
       },
       {
         "name": "__TlsHandshake",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_tls_Handshake"
       },
       {
         "name": "__TlsServerContext",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_tls_ServerContext"
       },
       {
         "name": "__TlsFreeContext",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_tls_FreeContext"
       },
       {
         "name": "__TlsAccept",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_tls_Accept"
       },
       {
         "name": "__TlsRead",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_tls_Read"
       },
       {
         "name": "__TlsWrite",
+        "returns": "int",
         "arguments": 5,
         "c": "fire_tls_Write"
       },
       {
         "name": "__TlsPending",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_tls_Pending"
       },
       {
         "name": "__TlsInfo",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -94,11 +106,46 @@
       },
       {
         "name": "__TlsClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_tls_Close"
       }
     ],
     "reset": "fire_tls_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "posix": [
+        "native/fire_tls_desktop.h"
+      ],
+      "windows": [
+        "native/fire_tls_desktop.h"
+      ],
+      "wasm": [
+        "native/fire_tls_none.h"
+      ],
+      "dos16": [
+        "native/fire_tls_none.h"
+      ],
+      "esp32": [
+        "native/fire_tls_mbedtls.h"
+      ],
+      "freertos": [
+        "native/fire_tls_none.h"
+      ],
+      "default": [
+        "native/fire_tls_none.h"
+      ]
+    },
+    "uses": [
+      "net"
+    ],
+    "headers": [
+      "native/fire_tls_c.h",
+      "native/fire_tls_desktop.h",
+      "native/fire_tls_mbedtls.h",
+      "native/fire_tls_none.h",
+      "native/fire_tls_openssl.h",
+      "native/fire_tls_schannel.h"
+    ]
   }
 }

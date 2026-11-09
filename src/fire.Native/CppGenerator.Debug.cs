@@ -6,7 +6,7 @@ using fire.Runtime;
 namespace fire.Native
 {
     /// <summary>
-    /// Debug builds (mode `debug`, docs/NATIVE_BACKEND.md "Debug-Builds", docs/NATIVE_DEBUG_PROTOCOL.md): every fire function gets a frame on a shadow stack
+    /// Debug builds (mode `debug`, docs/spec/NATIVE_BACKEND.md "Debug-Builds", docs/spec/NATIVE_DEBUG_PROTOCOL.md): every fire function gets a frame on a shadow stack
     /// (fire_debug.h) - pushed by its wrapper, which also notices the return into the caller - and the code updates its position where a line begins
     /// (`FIRE_DBG_L(source, line, scope state)`), at the same places where the stepping loops of the VM see a new position: the start of a range of the line
     /// table, and every jump target. The scope state is a static table per function: the levels of the scope chain with the names of their variables and
@@ -18,13 +18,13 @@ namespace fire.Native
         private bool DebugBuild => _program.ExecutionMode == VmExecutionMode.Debug;
 
         /// <summary>The functions have a wrapper (`fN` calls `fN_b`): it counts the call depth (`try x.Take...`) or keeps the debug frame.</summary>
-        private bool Wrapped => _usesTryDepth || DebugBuild;
+        private bool Wrapped => DebugBuild;
 
         /// <summary>The platforms with a debug agent: the desktop (TCP or stdio), ESP32 (the console UART) and FreeRTOS (stdio).</summary>
         private bool DebugAgent => _target.Native.Platform is "posix" or "windows" or "esp32" or "freertos";
 
         /// <summary>The transport of the agent that the build fixes (a board has no environment): the console UART of an ESP32, stdio on FreeRTOS; null: the
-        /// desktop, where FIRE_DEBUG chooses (docs/NATIVE_DEBUG_PROTOCOL.md "Transport").</summary>
+        /// desktop, where FIRE_DEBUG chooses (docs/spec/NATIVE_DEBUG_PROTOCOL.md "Transport").</summary>
         private string? DebugTransportDefine => _target.Native.Platform switch
         {
             "esp32" => "FIRE_DEBUG_TRANSPORT_UART",
@@ -132,7 +132,7 @@ namespace fire.Native
             var sb = new StringBuilder();
             if (d.DvNames.Count > 0)
             {
-                sb.AppendLine($"    Value* const dv_[] = {{{string.Join(", ", d.DvNames.Select(n => "&" + n))}}};");
+                sb.AppendLine($"    {CArray("Value*", "dv_", d.DvNames.Select(n => "&" + n).ToList())}");
                 sb.AppendLine("    DF->vars = dv_;");
             }
             if (f.HasSelf || f.Kind == FuncKind.Lambda) sb.AppendLine("    DF->thisSlot = &self;");
@@ -155,11 +155,11 @@ namespace fire.Native
             return sb.ToString();
         }
 
-        /// <summary>The wrapper `fN` around the function proper `fN_b`: it keeps the frame (and counts the call depth for `try x.Take...`).</summary>
+        /// <summary>The wrapper `fN` around the function proper `fN_b`: it keeps the frame.</summary>
         private string DebugWrapper(Func f, string call)
         {
             string hidden = IsHiddenFunc(f) ? "1" : "0";
-            string depthIn = _usesTryDepth ? " ++g_callDepth;" : "", depthOut = _usesTryDepth ? " --g_callDepth;" : "";
+            const string depthIn = "", depthOut = "";
             return f.Kind is FuncKind.FireBody or FuncKind.Main
                 ? $"{{ DbgFrame DF_; fire_dbgEnter(&DF_, &kDbgF_{f.Name}, {hidden});{depthIn} {call};{depthOut} fire_dbgLeave(&DF_); }}"
                 : $"{{ DbgFrame DF_; Value r_; fire_dbgEnter(&DF_, &kDbgF_{f.Name}, {hidden});{depthIn} r_ = {call};{depthOut} fire_dbgLeave(&DF_); return r_; }}";
@@ -249,9 +249,14 @@ namespace fire.Native
             if (nglobals > 0)
                 sb.AppendLine("static const DbgGlobal kDbgGlobals[] = {" + string.Join(", ", Enumerable.Range(0, nglobals).Select(i =>
                     $"{{{(_globalNames.TryGetValue(i, out var n) ? CString(n) : "NULL")}, {(_globals.Contains(i) ? $"&G{i}" : "NULL")}}}")) + "};");
+            // (a class whose fields are not slot by slot - packed or narrow ones: where each of them lives)
+            bool Placed(ClassInfo c) => Enumerable.Range(0, c.Fields.Count).Any(i => FieldPlace(c.Rc, i) is var p && (p.Slot != i || p.Half >= 0));
             foreach (var cls in _classList)
+            {
                 if (cls.Fields.Count > 0) sb.AppendLine($"static const char* const kDbgFields{cls.Id}[] = {{{string.Join(", ", cls.Fields.Select(CString))}}};");
-            sb.AppendLine("static const DbgClass kDbgClasses[] = {" + string.Join(", ", _classList.Select(c => $"{{{CString(c.Rc.Name)}, {c.Fields.Count}, {(c.Fields.Count > 0 ? $"kDbgFields{c.Id}" : "NULL")}}}").DefaultIfEmpty("{\"\", 0, NULL}")) + "};");
+                if (cls.Fields.Count > 0 && Placed(cls)) sb.AppendLine($"static const FirePlace kDbgPlaces{cls.Id}[] = {{{string.Join(", ", Enumerable.Range(0, cls.Fields.Count).Select(i => PlaceOf(cls.Rc, i)))}}};");
+            }
+            sb.AppendLine("static const DbgClass kDbgClasses[] = {" + string.Join(", ", _classList.Select(c => $"{{{CString(c.Rc.Name)}, {c.Fields.Count}, {(c.Fields.Count > 0 ? $"kDbgFields{c.Id}" : "NULL")}, {(c.Fields.Count > 0 && Placed(c) ? $"kDbgPlaces{c.Id}" : "NULL")}}}").DefaultIfEmpty("{\"\", 0, NULL, NULL}")) + "};");
             sb.AppendLine("const DbgClass* fire_dbgClass(uint32_t cls) {");
             if (_classList.Count > 0)
             {
@@ -264,7 +269,7 @@ namespace fire.Native
             sb.AppendLine("}");
             // `set` of a field: through the setter of the field (the declared kind is checked, probes hear it) as if the class itself assigned it
             sb.AppendLine("void fire_dbgSetField(Value o, uint32_t index, Value x) {");
-            sb.AppendLine("    OwnList scratch_ = {NULL, NULL, poolMark(), 0, NULL, NULL};");
+            sb.AppendLine("    OwnList scratch_ = scopeList(poolMark());");
             sb.AppendLine("    (void)scratch_;");
             var setters = _classList.Where(c => c.Fields.Any(_fieldNames.Contains)).ToList();
             if (setters.Count > 0)

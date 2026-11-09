@@ -8,13 +8,20 @@ Arrays and byte buffers have an owner too. Numbers, `bool`, `char` and strings a
 
 ## Who owns a new object?
 
-| Where the object is created | Owner |
+**A new value belongs to the first slot it lands in.** "New" - *unclaimed* - is what an expression makes right there: `new Foo()`, an array literal,
+`new int[n]`, `copy x`/`flat x`, and the result that a call hands back with `return`. `c ? a : b` and parentheses pass it on.
+
+| Where the new value lands | Owner |
 |---|---|
-| `var x = new Foo()` in a block or method | that block / method call |
+| `var x = new Foo()` | the block that declares `x` |
+| `x = new Foo()`, `x` declared in an outer block | the block that **declares** `x` |
+| `g = new Foo()`, `g` a global variable | the global scope |
 | `obj.field = new Foo()`, a field initializer, `field = new Foo()` in a class | the object `obj` / `this` |
-| `return new Foo()` | goes to the caller (with everything that hangs on it) |
-| `f(new Foo())` - a new object as an argument | the call of `f`; `f` keeps it with `try x.TakeTo(this)` |
-| top-level code | the global scope (lives until the program ends) |
+| `arr[i] = new Foo()` | the array `arr` |
+| `f(new Foo())` - an argument | the call of `f`; `f` keeps it with `take`, `TakeTo` or `try x.TakeTo(this)` |
+| `obj.Prop = new Foo()` - a property | the setter, which passes it on to the field it stores it in (see [In setters](#in-setters)) |
+| `return new Foo()` | goes on to wherever the call's result lands (with everything that hangs on it) |
+| nowhere: `new Foo().Run()`, `print(new Foo())` | nobody: it is destroyed at the **end of the statement** |
 
 ```fire
 class Item {
@@ -36,9 +43,49 @@ print("after the block")
 
 The objects of a scope are destroyed when the scope is left - at the end of the block, at `return`, at `break`, and when an exception passes through.
 
+## Temporaries die at the end of the statement
+
+A new value that no slot takes is a **temporary**: it lives until the statement is done, then it is destroyed.
+
+```fire
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+    string Name() { return this.n }
+}
+print(new Item("temp").Name())      // temp, then: destroy temp
+print("next statement")             // next statement
+```
+
+A method that returns `this` passes the temporary on, so builders work: the last result still counts as new, and the variable takes it.
+
+```fire
+class Builder {
+    int size = 0
+    Builder With(int n) { this.size = this.size + n; return this }
+    destruct() { print("destroy builder") }
+}
+var b = new Builder().With(2).With(3)
+print(b.size)                       // 5 - the builder lives on in b
+```
+
+The same holds for what hangs on a temporary: `var m = Type.Of(c).Find("radius")` keeps the member, although the type it belongs to dies at the end of the
+statement.
+
+The collection of a `foreach` is a temporary of the loop: `foreach (d in Bus.Devices()) { found.Add(d) }` leaves `found` with destroyed devices after the
+loop. Keep the collection in a variable when its elements should outlive the loop:
+
+```fire
+var all = Bus.Devices()
+foreach (d in all) { if (d.Matches()) { found.Add(d) } }
+return found                          // the devices in found go along with the return
+```
+
 ## Returning objects
 
-A returned object goes to the caller, together with everything it points to that belongs to the method:
+A returned object goes on to where the call's result lands - a variable, a field, an element, the next call - together with everything it points to
+that belongs to the method:
 
 ```fire
 class Item {
@@ -48,14 +95,24 @@ class Item {
 class Factory {
     static Item Make(string n) { return new Item(n) }
 }
+class Box { Item content }
 var kept = Factory.Make("returned")
-print(kept.n)                       // still alive
+var box = new Box()
+box.content = Factory.Make("boxed")   // the box owns it
+print(kept.n + ", " + box.content.n)  // returned, boxed
+print(box.content is from box)        // True
 ```
 
-## Assignment moves up to the method
+Arguments count as the method's own (they belong to the call), and a returned lambda takes along what it captured: `return new Wrapper(arg)` and
+`return () => list.Count` both keep their values alive at the caller.
 
-When an object of an inner block (a loop body, an `if`) is assigned to a variable of an outer block, it moves to the scope of the **method**
-(top-level code: the global scope) and lives until the method ends:
+A method that returns something that belongs to somebody else - an object's field, a variable of the caller - does not hand it over: the caller
+only gets a reference, and the owner stays.
+
+## Assignment moves up to the declaring block
+
+When a value of an inner block (a loop body, an `if`) is assigned to a variable of an outer block, it moves to the block that **declares** the variable
+and lives as long as that block:
 
 ```fire
 class Item {
@@ -66,12 +123,33 @@ class Item {
 Item last = undefined
 for (int i = 0; i < 2; i++) {
     var it = new Item("loop " + i)
-    if (i == 1) { last = it }       // "loop 1" survives the loop
+    if (i == 1) { last = it }       // "loop 1" moves up to the block of `last`
 }                                   // destroy loop 0
 print("kept: " + last.n)
 ```
 
-Objects that are assigned in a loop collect until the method ends; use `delete` or `TakeLocal()` when that matters.
+It moves only upwards and never out of the method - out of a method a value goes only with `return` or `take`. Objects that are assigned in a loop
+collect in the declaring block; use `delete` or `take` when that matters.
+
+## Arrays own what is stored into them
+
+`arr[i] = new Foo()` (or an array literal, a copy, a returned value) gives the new value to the array: it lives as long as the array. Overwriting the
+element does not destroy it.
+
+```fire
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+{
+    Item items[2]
+    items[0] = new Item("a")
+    items[1] = new Item("b")
+    items[0] = new Item("c")        // "a" stays: it belongs to the array
+    print("end of block")
+}                                   // destroy a, destroy b, destroy c - with the array
+```
 
 ## A reference does not keep anything alive
 
@@ -181,9 +259,42 @@ print(h.Count)
 print(h.cache is from h)            // True - without the rule it would have died with the getter
 ```
 
-Only fields of `this` take an object over (`this.node.child = it` does not), and only what belongs to the accessor call: the setter's `value` from ordinary
-code, or an object of the caller, stays with its owner. Methods do not do this - there, use `take`/`TakeTo`. An exception thrown after the assignment does not
-undo it.
+Only fields of `this` take a local of the accessor over (`this.node.child = it` does not). Methods do not do this - there, use `take`/`TakeTo`. An
+exception thrown after the assignment does not undo it.
+
+## In setters
+
+`obj.Prop = new Foo()` gives the new value to the **setter**. The setter passes it on at its first assignment of `value` to a field or a property - of
+any object - and if it has none, to the first call it passes `value` to:
+
+```fire
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+class Shelf {
+    Item top
+    List log = new List()
+    Item Top {
+        get { return this.top }
+        set { this.top = value }            // the shelf owns the new item
+    }
+    Item Peek {
+        get { return this.top }
+        set { print("only looked at " + value.n) }   // no field, no call: the value dies with the setter
+    }
+}
+var shelf = new Shelf()
+shelf.Top = new Item("kept")
+shelf.Peek = new Item("seen")       // only looked at seen, then: destroy seen
+print(shelf.top.n)                  // kept
+print(shelf.top is from shelf)      // True
+```
+
+The compiler decides this for every path through the setter. If the path that runs has no such assignment or call (a branch that is not taken), the
+value is destroyed when the setter returns. Only the name `value` counts (`var v = value; this.f = v` does not pass it on). A value that is not new
+(`shelf.Top = existing`) stays with its owner; the setter only refers to it.
 
 ## `delete`
 
@@ -258,12 +369,13 @@ thread, every one copies it; `handover` moves it instead (the way to give a reso
 
 | Form | Copies or shares | With a `[NoCopy]` instance |
 |---|---|---|
-| `fire taking x { }`, `fire Method(args)` (`this` and every argument) | a copy of everything reachable from `x` (an array too), whoever owns the parts; the copies belong to the thread | refused when `x`, a field or an element reaches one: the `ArgumentException` at the `fire`, nothing is copied, the thread does not start |
-| `fire handover x { }` (also `fire Method(args) handover x`) | nothing is copied: `x` and everything reachable from it move to the thread, the variable becomes `undefined`; every other reference to them from before is dead (a `DestroyedException` "... was handed over to a thread") | fine - that is what it is for; the thread owns the instance and its destructor runs there |
+| `fire taking x { }`, `fire Method(args)` (`this` and every argument that is not a direct `new`) | a copy of everything reachable from `x` (an array too), whoever owns the parts; the copies belong to the thread | refused when `x`, a field or an element reaches one: the `ArgumentException` at the `fire`, nothing is copied, the thread does not start |
+| `fire handover x { }` (also `fire Method(args) handover x`, and an argument `fire Method(new X())`) | nothing is copied: `x` and everything reachable from it move to the thread, the variable becomes `undefined`; every other reference to them from before is dead (a `DestroyedException` "... was handed over to a thread") | fine - that is what it is for; the thread owns the instance and its destructor runs there |
 | `fire global { } taking x` | an object is copied for the job; an array or a text is handed over as it is | an object that reaches one is refused before the job is queued (the job never runs); an array that holds one is fine |
 | `sync x`, `try sync x` | a new object in the copy is copied into the original (case A); an object on both sides stays and is synced field by field (case C) | refused before anything is written back when case A reaches one, or when case C would write one into another instance |
 | `sync flat x`, `try sync flat x` | like `sync`, but case C keeps the reference and copies nothing | case A is refused as with `sync`; case C is fine |
-| `fire with a`, the global variables (also in `sync global { }`) | shared: the actor or the object itself, no copy | fine - a resource in a global variable is used by the threads in a section |
+| `fire with a`, the global variables (also in `sync global { }`) | shared: the actor or the object itself, no copy |
+| a message to an actor `a.M(arg)` | a direct `new` is handed over to the actor's thread; another new value (`copy x`, a call result) belongs to the message and then to the method; a variable or field is passed as a reference | fine - a resource in a global variable is used by the threads in a section |
 | a host callback (an event from a thread of the host) while the program runs | shared: it runs in the main program with the real global variables | fine |
 | a host callback after the end of the program (VM only, while the host still holds the globals) | an isolated copy of the global variables: an object is copied, an array is shared as it is | refused when a global variable (a field, an element of one of its objects) reaches one: the callback does not run, the host gets the `ArgumentException` as the text of an unhandled exception (`'host callback' would copy ...`). A native program runs no callback after its end, so it copies nothing |
 

@@ -1,6 +1,6 @@
 #import "time"
 
-// Devices (docs/DEVICES.md): every device is a `Device` - a serial port, a GPIO port, an I2C bus or a device on it, an SPI device - and comes from a `Driver`.
+// Devices (docs/devices/README.md): every device is a `Device` - a serial port, a GPIO port, an I2C bus or a device on it, an SPI device - and comes from a `Driver`.
 // `DeviceManager` holds the drivers of the program (`DeviceManager.AddDriver(new GpioDriver())`) and finds devices by their identifier (`DeviceManager.Get("gpio:gpioa")`).
 // What the program's host offers (the editor: the default device it chose, its packet trace) comes in through `DeviceManager.Host`.
 
@@ -111,7 +111,7 @@ class Device : IDevice {
 
     /// <summary>The next data as text, one character per byte (Latin1): "" if nothing is waiting.</summary>
     string ReadString() {
-        var data = this.TakePending()
+        any data = this.TakePending()
         if (data == undefined) { data = this.Read() }
         if (data == undefined || data is of int) { return "" }
         return Device.Latin1(data)
@@ -123,7 +123,7 @@ class Device : IDevice {
     /// <summary>Sends a command: a text as a line (with a line ending); a command object (anything with `Execute(device)`) is executed with the device as its context.</summary>
     bool DoCommand(any command) {
         if (command is of string) { return this.WriteString(command + "\n") }
-        var result = command.Execute(this)
+        any result = command.Execute(this)
         if (result is of bool) { return result }
         return true
     }
@@ -153,21 +153,21 @@ class Device : IDevice {
         while (true) {
             if (this.CutThrough(data)) { return true }
             if (DateTime.UtcNow.Ticks >= deadline) { return false }
-            var more = this.Read()
+            any more = this.Read()
             if (more != undefined && !(more is of int) && more.length > 0) { this.Append(more) } else { Sleep(2) }
         }
     }
 
     // ---- the receive buffer of the waiting functions ----
     any TakePending() {
-        var p = this.pending
+        any p = this.pending
         if (p == undefined || p.length == 0) { return undefined }
         this.pending = undefined
         return p
     }
 
     undefined Append(any more) {
-        var old = this.pending
+        any old = this.pending
         if (old == undefined) {
             var fresh = new byte[more.length]
             for (int i = 0; i < more.length; i++) { fresh[i] = more[i] }
@@ -182,7 +182,7 @@ class Device : IDevice {
 
     // Is `pattern` in the buffer? Then everything up to its end is dropped.
     bool CutThrough(any pattern) {
-        var p = this.pending
+        any p = this.pending
         if (p == undefined || pattern.length == 0 || p.length < pattern.length) { return false }
         for (int start = 0; start + pattern.length <= p.length; start++) {
             var match = true
@@ -193,7 +193,7 @@ class Device : IDevice {
                 }
             }
             if (match) {
-                var restLength = p.length - start - pattern.length
+                any restLength = p.length - start - pattern.length
                 if (restLength == 0) { this.pending = undefined }
                 else {
                     var rest = new byte[restLength]
@@ -268,7 +268,7 @@ class DeviceHost {
     undefined DevicesChanged(List devices) { }
 }
 
-/// <summary>Something simulated that runs alongside the program - a circuit at the simulated GPIO chip, I2C bus and SPI device (docs/CIRCUITS.md): every time
+/// <summary>Something simulated that runs alongside the program - a circuit at the simulated GPIO chip, I2C bus and SPI device (docs/circuits/README.md): every time
 /// the program uses one of the simulated devices, the simulation first catches up with the time (Advance). `Simulation.Start(s)` makes `s` the one that runs.</summary>
 class Simulation {
     static Simulation current
@@ -389,13 +389,13 @@ class DeviceManager {
             }
         }
         // `driver:name`: the driver may make it (an I2C device at an address)
-        var colon = identifier.IndexOf(":")
+        any colon = identifier.IndexOf(":")
         if (colon > 0) {
-            var driverName = identifier.Substring(0, colon)
-            var rest = identifier.Substring(colon + 1)
+            any driverName = identifier.Substring(0, colon)
+            any rest = identifier.Substring(colon + 1)
             foreach (d in DeviceManager.drivers) {
                 if (d.Name() == driverName) {
-                    var made = d.Find(rest)
+                    any made = d.Find(rest)
                     if (made != undefined) { return made }
                 }
             }
@@ -458,7 +458,7 @@ class SerialPort : Device {
     /// <summary>A text goes out as a line (with a line ending, in the device's encoding); a command object is executed with the device as its context.</summary>
     override bool DoCommand(any command) {
         if (command is of string) { return __DEVDoCommand(this.handle, command) }
-        var result = command.Execute(this)
+        any result = command.Execute(this)
         if (result is of bool) { return result }
         return true
     }

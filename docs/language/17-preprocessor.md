@@ -46,6 +46,7 @@ The build defines these symbols:
 | `esp32`, `freertos` | the board of a native target |
 | `vm`, `native` | the engine: the virtual machine or a native (C++) build |
 | `float32` | `float` has 32 bits |
+| `word16`, `word32`, `word64` | the width of `word`, the machine word of the target (64 on the desktop, 32 on the ESP32) |
 | your own | `-D NAME` on the command line, `symbols` of a target in `fire.native.json`, `#define` |
 
 ## Settings of the program
@@ -55,6 +56,8 @@ The build defines these symbols:
 | `#strict`, `#lax` | type checking mode of this file - see [Types](02-types.md#the-type-checker-lax-and-strict) |
 | `#debug`, `#performance` | execution mode of the VM: `#debug` checks everything and allows stepping, `#performance` skips run-time checks (default: release) |
 | `#floatwidth 32` | `float` without explicit width has 32 bits |
+| `#intwidth 32` | `int` without explicit width has 32 bits (default 64) - see [Types](02-types.md#the-width-of-the-whole-program) |
+| `#globaljobs safepoints\|sleep\|sync` | when the main program runs `fire global` jobs itself - see [Threads and actors](15-threads-and-actors.md) |
 | `#timeout 10s` | default waiting time of the waiting functions of devices and network |
 | `#nosync` | threads may change globals only at an explicit `sync globals` - see [Threads and actors](15-threads-and-actors.md#global-variables) |
 | `#noshadow` | threads do not see the globals of the main program |

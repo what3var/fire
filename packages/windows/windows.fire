@@ -59,7 +59,7 @@ class Window {
     // One cycle of the manager for this window: events in (callbacks, queue), onCycle, frame out. false once the window is closed.
     bool Cycle() {
         if (this.IsClosed) { return false }
-        var open = __GRPHWinPump(this.id)
+        any open = __GRPHWinPump(this.id)
         var hook = this.onCycle
         if (hook != undefined) { hook() }
         __GRPHWinPresent(this.id)
@@ -71,7 +71,7 @@ class Window {
     // the window whose event opened the modal one, and that is still running.
     bool Idle() {
         if (this.IsClosed) { return false }
-        var open = __GRPHWinPump(this.id)
+        any open = __GRPHWinPump(this.id)
         __GRPHWinPresent(this.id)
         if (!open) { this.IsClosed = true }
         return !this.IsClosed
@@ -82,14 +82,14 @@ class Window {
     // but a drawing loop with one tick per pass then takes 256 x 16.7 ms = 4.3 s. Whoever draws a lot and only wants to
     // show now and then calls Tick less often or sets `win.VSync = false` (Tick then returns immediately).
     bool Tick() {
-        var open = __GRPHWinTick(this.id)
+        any open = __GRPHWinTick(this.id)
         if (!open) { this.IsClosed = true }
         return open
     }
 
     int cursor = 0
 
-    /// <summary>The mouse pointer over the window: a pointer of the system in the numbering of SDL (0 arrow, 1 text, 2 wait, 3 crosshair, 4 progress,
+    /// <summary>The mouse pointer over the window: a pointer of the system in the numbering of UI.Cursor (0 arrow, 1 text, 2 wait, 3 crosshair, 4 progress,
     /// 5 NW-SE, 6 NE-SW, 7 W-E, 8 N-S, 9 move, 10 not allowed, 11 hand - UI.Cursor names them).</summary>
     int Cursor {
         get { return this.cursor }
@@ -111,7 +111,7 @@ class Window {
         set { __GRPHWinSetBackdrop(this.id, value!int) }
     }
 
-    // How the window showed its last frame (docs/UI_PLATFORM.md, part 4.4): "gpu+directcomposition" (Windows: the frame from the GPU into DirectComposition's
+    // How the window showed its last frame (docs/spec/UI_PLATFORM.md, part 4.4): "gpu+directcomposition" (Windows: the frame from the GPU into DirectComposition's
     // swap chain), "gpu" (into a swap chain of Vulkan; or a package's presenter, scene3d DirectDrawing), "directcomposition" (Windows: the pixels into
     // DirectComposition), "pixels" (the pixels, the display's usual way). With a manager's thread: after its next cycle.
     string PresentPath() { return __GRPHWinPresentPath(this.id) }
@@ -148,7 +148,7 @@ class Window {
     // follows when the window has its new size. False for a size that is not above 0.
     bool SetSize(int width, int height) { return __GRPHWinSetSize(this.id, width, height) }
 
-    // true (default): a finger on the touchscreen ALSO triggers mouse events (as SDL does by itself), so a program that only listens to the mouse can be operated with a finger.
+    // true (default): a finger on the touchscreen ALSO triggers mouse events (as the desktops do by themselves), so a program that only listens to the mouse can be operated with a finger.
     // false: only the touch events (EventType.TouchDown/TouchMove/TouchUp). A UI.Root switches it off and evaluates the fingers itself.
     bool TouchMouse {
         get { return __GRPHWinGetTouchMouse(this.id) }
@@ -164,7 +164,7 @@ class Window {
     // distinguishes several fingers; pressure 0 to 1). Joystick: JoystickAxis [type, joystick, axis, position] (-1 to 1), JoystickButtonDown/JoystickButtonUp [type, joystick, button],
     // JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre), JoystickAdded/JoystickRemoved [type, joystick] (plugged in/unplugged).
     // Dropped from another program (the file manager, a browser): DropFiles [type, paths (string[]), x, y], DropText [type, text, x, y]; while it is dragged over
-    // the window DragHover [type, x, y], and DragLeave [type] when it leaves without being dropped (a build with SDL2 sends neither).
+    // the window DragHover [type, x, y], and DragLeave [type] when it leaves without being dropped.
     // An input method composing text: TextEditing [type, text, cursor, marked] (text "" when the composition ended; the finished text comes as TextInput).
     // ScaleChanged [type, scale]; MouseEnter, MouseLeave, FocusGained, FocusLost [type].
     // Processing thus happens in the main program - with the real global variables, not the isolated copy of a
@@ -302,7 +302,7 @@ class SystemTheme {
     static SystemTheme Current() {
         if (SystemTheme.cached != undefined) { return SystemTheme.cached }
         var t = new SystemTheme()
-        var info = __GRPHWinSystemTheme()
+        any info = __GRPHWinSystemTheme()
         t.embedded = info[0]
         t.scale = info[1]
         t.dark = info[2]
@@ -311,7 +311,7 @@ class SystemTheme {
         if (info.length > 6) { t.transparency = info[6] }
         string candidates = info[4]
         if (candidates != "") {
-            var names = candidates.Split(";")
+            any names = candidates.Split(";")
             for (int i = 0; i < names.length; i++) {
                 if (names[i] != "" && Fonts.Has(names[i])) {
                     t.font = names[i]
@@ -410,7 +410,7 @@ class WindowManager {
         this.ticking = true
         var i = 0
         while (i < this.windows.Count) {
-            var window = this.windows[i]
+            any window = this.windows[i]
             if (!window.Cycle()) {
                 this.Detach(window)
                 continue
@@ -448,7 +448,7 @@ class WindowManager {
         this.modals = this.modals + 1
         var depth = this.modals
         for (var i = 0; i < this.windows.Count; i = i + 1) {
-            var other = this.windows[i]
+            any other = this.windows[i]
             if (other != modal && other.blockedBy == 0) {
                 other.blockedBy = depth
                 __GRPHWinSetBlocked(other.id, true)
@@ -459,8 +459,8 @@ class WindowManager {
         while (!modal.IsClosed && modal.Manager == this) {
             var i = 0
             while (i < this.windows.Count) {
-                var window = this.windows[i]
-                var open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
+                any window = this.windows[i]
+                any open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
                 if (!open) {
                     this.Detach(window)
                     continue
@@ -472,7 +472,7 @@ class WindowManager {
         if (modal.Manager == this) { this.Detach(modal) }
         this.ticking = wasTicking
         for (var i = 0; i < this.windows.Count; i = i + 1) {
-            var other = this.windows[i]
+            any other = this.windows[i]
             if (other.blockedBy == depth) {
                 other.blockedBy = 0
                 __GRPHWinSetBlocked(other.id, false)
@@ -532,7 +532,7 @@ enum Backdrop
 class Clipboard {
     // The text on the clipboard, "" when there is none (or the clipboard holds something else, e.g. a picture).
     static string GetText() {
-        var text = __GRPHWinClipboardGetText()
+        any text = __GRPHWinClipboardGetText()
         if (text == undefined) { return "" }
         return text
     }
@@ -545,13 +545,13 @@ class Clipboard {
 
     // The picture on the clipboard as a new framebuffer (RGBA, or with the palette of the file), undefined when there is none (or it cannot be read).
     static Framebuffer GetImage() {
-        var data = __GRPHWinClipboardGetImage()
+        any data = __GRPHWinClipboardGetImage()
         if (data == undefined) { return undefined }
         try { return Framebuffer.FromImage(data) }
         catch (ImageException e) { return undefined }
     }
 
-    // Puts the picture there (as PNG; where the desktop wants it also as BMP); false when the desktop refuses (or a build with SDL2: it has text only).
+    // Puts the picture there (as PNG; where the desktop wants it also as BMP); false when the desktop refuses.
     static bool SetImage(Framebuffer fb) {
         if (fb == undefined) { return false }
         return __GRPHWinClipboardSetImage(fb.ToPng())

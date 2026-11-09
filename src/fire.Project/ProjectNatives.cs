@@ -3,7 +3,7 @@ using fire.Package.Manager;
 
 namespace fire.Projects
 {
-    /// <summary>The C++ natives of a project (or of a library project), ready to build: what the project's `native` part and the folder `native/` give (docs/PROJECTS.md).</summary>
+    /// <summary>The C++ natives of a project (or of a library project), ready to build: what the project's `native` part and the folder `native/` give (docs/tools/projects.md).</summary>
     public sealed record NativePart(string ImportName, string ProjectName, string Directory, PackageNative Native)
     {
         /// <summary>The project file: the build order of the sources is written there, so a library built from them is older than it when it changed.</summary>
@@ -53,6 +53,8 @@ namespace fire.Projects
             if (n.Platforms != null) native.Platforms.AddRange(n.Platforms);
             if (n.LinkLibraries != null) foreach (var (key, libs) in n.LinkLibraries) native.LinkLibraries[key] = libs.ToList();
             if (n.Exceptions != null) native.Exceptions.AddRange(n.Exceptions);
+            if (n.Uses != null) native.Uses.AddRange(n.Uses);
+            if (n.Headers != null) native.Headers.AddRange(ExpandOrdered(dir, n.Headers, found));
             foreach (var p in found) problems?.Add($"{project.Name}: native: {p}");
             if (sources.Count == 0 && native.PlatformSources.Count == 0) problems?.Add($"{project.Name}: the project has a native part but no C++ files (put them into the folder 'native').");
 

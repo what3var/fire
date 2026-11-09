@@ -1,6 +1,6 @@
 namespace fire.Package.Manager
 {
-    /// <summary>The user-wide cache of the static libraries of native builds with linkage "static" (ROADMAP 9.2, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"):
+    /// <summary>The user-wide cache of the static libraries of native builds with linkage "static" (ROADMAP 9.2, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"):
     /// `fire/cache/native/&lt;target&gt;/&lt;key&gt;/` below the folder for application data of the user (LocalApplicationData: `~/.local/share` on Linux, `%LOCALAPPDATA%` on
     /// Windows, `~/Library/Application Support` on macOS); the environment variable FIRE_NATIVE_CACHE moves it. The key is the content hash of everything the C of a
     /// library depends on - a stale entry is never used, only left behind. `ember cache clean` empties it.</summary>

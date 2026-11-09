@@ -1,0 +1,151 @@
+#import "windows"
+#import "scene3d"
+#import "scene3d.physics"
+#import "time"
+// Physics (docs/graphics/physics.md): a body makes an object solid. Static bodies never move (their shape is their own triangles), dynamic ones fall, bounce, tumble
+// and are pushed, a kinematic one is moved by the program; joints hang them on ropes and springs. scene.Advance(dt) moves them all on.
+//   arrow keys / WASD  walk        Space  jump        R  more balls        F  the renderer (Software / Fast)
+
+var fb = new Framebuffer(640, 400)
+var win = new Window(fb, "Scene3D Physics")
+win.EnableEvents()
+var hud = new Renderer(fb)
+var white = new SolidBrush(S3D.Rgb(255, 255, 255))
+var shade = new SolidBrush(S3D.Rgba(0, 0, 0, 160))
+
+var scene = new Scene()
+scene.Add(Light.Directional(-0.5, -1.0, -0.3))
+scene.AmbientIntensity = 0.35
+
+var ground = new Object(Template.Plane, 0m, 0m, 0m, 30m, 0m, 30m)
+ground.Texture = Texture.Checker(64, 2, S3D.Rgb(120, 170, 110), S3D.Rgb(105, 150, 95))
+ground.TextureWidth = 2m
+ground.TextureHeight = 2m
+scene.Add(ground)
+Body.Static(ground)
+
+// stairs: steps of 20 cm (the figure climbs up to 30 cm by walking against them)
+for (var i = 0; i < 5; i++) {
+    var stair = new Object(Template.Box, 4m + i * 0.8m, (i + 1) * 0.1m, -3m, 0.8m, (i + 1) * 0.2m, 2m)
+    stair.Color = S3D.Rgb(200, 190, 170)
+    Body.Static(stair)
+    scene.Add(take stair)   // (`take`: the loop body hands the object to the scene - else it would end with the body)
+}
+// a ramp: a box turned 20 degrees - static bodies collide with their real (turned) triangles
+var ramp = new Object(Template.Box, -5m, 0.6m, -3m, 4m, 0.2m, 2m)
+ramp.RotationZ = 20deg
+ramp.Color = S3D.Rgb(170, 150, 200)
+scene.Add(ramp)
+Body.Static(ramp)
+// a wall too high to climb
+var wall = new Object(Template.Box, 0m, 1m, -7m, 12m, 2m, 0.5m)
+wall.Color = S3D.Rgb(180, 120, 100)
+scene.Add(wall)
+Body.Static(wall)
+
+// crates: dynamic boxes - heavy enough to stand still, light enough for the figure to push
+for (var i = 0; i < 3; i++) {
+    var crate = new Object(Template.Box, -2m + i * 1.1m, 0.5m + i * 1m, 2m, 1m, 1m, 1m)
+    crate.Color = S3D.Rgb(190, 140, 80)
+    Body.Dynamic(crate, 20kg)
+    scene.Add(take crate)
+}
+
+// a lift: kinematic - the program moves it, what stands on it goes along
+var lift = new Object(Template.Box, 8m, 0.1m, 2m, 2m, 0.2m, 2m)
+lift.Color = S3D.Rgb(90, 120, 200)
+scene.Add(lift)
+var liftBody = Body.Kinematic(lift)
+liftBody.SetVelocity(0m / 1s, 0.8m / 1s, 0m / 1s)
+
+// a swing: a plank on a rope from a point above, and a box on a spring that bounces
+var plank = new Object(Template.Box, -8m, 2m, 3m, 1.2m, 0.15m, 0.6m)
+plank.Color = S3D.Rgb(150, 110, 70)
+scene.Add(plank)
+Body.Dynamic(plank, 10kg)
+Joint.Rope(scene, plank, -8m, 5m, 3m)
+var bouncer = new Object(Template.Box, -11m, 2m, 3m, 0.8m, 0.8m, 0.8m)
+bouncer.Color = S3D.Rgb(120, 200, 120)
+scene.Add(bouncer)
+Body.Dynamic(bouncer, 5kg).Rotates = false
+Joint.Spring(scene, bouncer, -11m, 4m, 3m, 120.0, 2.0, 1.5m)
+
+// a coin: a trigger - it is touched, but it pushes nothing
+var coin = new Object(Template.Cylinder, 8m, 3.5m, 2m, 0.6m, 0.08m, 0.6m)
+coin.RotationX = 90deg
+coin.SpinY = 180deg
+coin.Color = S3D.Rgb(255, 200, 40)
+coin.Material = Material.Metal()
+scene.Add(coin)
+Body.Static(coin, BodyShape.Box).Trigger = true
+var coins = 0
+
+// the figure: a character (an upright capsule) - Walk sets where it goes, gravity and the ground do the rest
+var hero = new Object(Template.Cylinder, 0m, 0m, 4m, 0.6m, 1.8m, 0.6m)
+hero.AnchorY = 0.0
+hero.Color = S3D.Rgb(220, 60, 60)
+scene.Add(hero)
+var player = new Character(hero, 30cm, 1.8m)
+player.Mass = 80kg
+
+var cam = new Camera(fb)
+scene.Add(cam)
+
+var up = false
+var down = false
+var left = false
+var right = false
+var balls = 0
+var last = DateTime.UtcNow.Ticks
+while (win.Tick()) {
+    any e = win.NextEvent()
+    while (e != undefined) {
+        if (e[0] == EventType.KeyDown || e[0] == EventType.KeyUp) {
+            bool pressed = e[0] == EventType.KeyDown
+            int key = e[1]
+            if (key == 119 || key == 1073741906) { up = pressed }          // W, up
+            else if (key == 115 || key == 1073741905) { down = pressed }   // S, down
+            else if (key == 97 || key == 1073741904) { left = pressed }    // A, left
+            else if (key == 100 || key == 1073741903) { right = pressed }  // D, right
+            else if (pressed && key == 32) { player.Jump(5m / 1s) }       // Space
+            else if (pressed && key == 114) {                              // R: a ball from the sky
+                var ball = new Object(Template.Sphere, (balls % 5 - 2) * 1m, 6m, 0m, 0.5m, 0.5m, 0.5m)
+                ball.Color = S3D.Rgb(60 + balls * 40 % 190, 120, 220)
+                Body.Ball(ball, 1kg).Bouncy()
+                scene.Add(take ball)
+                balls++
+            } else if (pressed && key == 102) {                            // F
+                if (scene.Renderer == RenderMode.Fast) { scene.Renderer = RenderMode.Software } else { scene.Renderer = RenderMode.Fast }
+            }
+        }
+        e = win.NextEvent()
+    }
+    var vx = 0.0
+    var vz = 0.0
+    if (left) { vx = vx - 3.0 }
+    if (right) { vx = vx + 3.0 }
+    if (up) { vz = vz - 3.0 }
+    if (down) { vz = vz + 3.0 }
+    player.Walk(vx * 1m / 1s, vz * 1m / 1s)
+
+    // the lift turns at the top and at the bottom
+    if (lift.Y > 3m) { liftBody.SetVelocity(0m / 1s, -0.8m / 1s, 0m / 1s) }
+    if (lift.Y < 0.1m) { liftBody.SetVelocity(0m / 1s, 0.8m / 1s, 0m / 1s) }
+
+    var now = DateTime.UtcNow.Ticks
+    var dt = (now - last) / 10000000.0
+    last = now
+    if (dt > 0.1) { dt = 0.1 }
+    scene.Advance(dt * 1s)
+
+    if (coin.Visible && player.Touches(coin)) {
+        coins++
+        coin.Visible = false
+    }
+
+    cam.SetPosition(hero.X, hero.Y + 4m, hero.Z + 8m)
+    cam.LookAt(hero.X, hero.Y + 1m, hero.Z)
+    cam.Render()
+    hud.FillRect(0, 0, 640, 18, shade)
+    hud.DrawText(6, 4, "WASD walk  Space jump  R balls  F " + scene.Renderer + "   coins: " + coins, white, shade, Fonts.Console(), 8)
+}

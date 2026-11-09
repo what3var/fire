@@ -2,7 +2,7 @@
 #import "filesystem"
 #import "time"
 
-// Compression (docs/COMPRESSION.md): Deflate, zlib and gzip as streams and in one go, and Zip archives. The Deflate is the package's own C (no library), so
+// Compression (docs/stdlib/compression.md): Deflate, zlib and gzip as streams and in one go, and Zip archives. The Deflate is the package's own C (no library), so
 // the bytes are the same in the VM, in a native build and on every target.
 namespace Compression {
     // The framing around the Deflate data: none (raw, as in Zip), zlib (RFC 1950: a small header and Adler-32) or gzip (RFC 1952: a header and CRC-32).
@@ -239,7 +239,7 @@ namespace Zip {
         // The last part of the path ("readme.txt"; "" for a folder).
         string Name {
             get {
-                var cut = this.fullName.LastIndexOf("/")
+                any cut = this.fullName.LastIndexOf("/")
                 if (cut < 0) { return this.fullName }
                 return this.fullName.Substring(cut + 1)
             }
@@ -546,7 +546,7 @@ namespace Zip {
 
         // Where an entry goes inside `root` (a full path); a ZipException for a name that leaves it.
         static string TargetOf(string root, string name) {
-            var relative = name.Replace("\\", "/")
+            any relative = name.Replace("\\", "/")
             if (relative.StartsWith("/") || (relative.Length >= 2 && relative[1] == ':')) { throw new Zip.ZipException("The entry '" + name + "' has an absolute path: it is not extracted.") }
             foreach (part in relative.Split("/")) {
                 if (part == "..") { throw new Zip.ZipException("The entry '" + name + "' would land outside of the target folder: it is not extracted.") }
@@ -662,7 +662,7 @@ namespace Zip {
 
         // Adds an empty folder entry ("name/").
         Zip.Entry AddDirectory(string name, DateTime time = undefined) {
-            var n = name.Replace("\\", "/")
+            any n = name.Replace("\\", "/")
             if (!n.EndsWith("/")) { n = n + "/" }
             return this.Add(n, new byte[0], 0, time)
         }
@@ -827,7 +827,7 @@ namespace Zip {
 
         // The path below `root` with "/" between the parts.
         static string Relative(string root, string path) {
-            var r = path.Substring(root.Length)
+            any r = path.Substring(root.Length)
             r = r.Replace("\\", "/")
             while (r.StartsWith("/")) { r = r.Substring(1) }
             return r

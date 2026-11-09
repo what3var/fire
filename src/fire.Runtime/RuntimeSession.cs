@@ -12,7 +12,7 @@ namespace fire.Runtime
     /// <summary>
     /// Execution environment of the packed runtime (the variant with editor/debugger lies in fire.Compiler).
     ///
-    /// IMPORTANT for the lean output file: the bridges (terminal/SDL, devices, IO) are NO longer embedded in every
+    /// IMPORTANT for the lean output file: the bridges (terminal/windows, devices, IO) are NO longer embedded in every
     /// packed file, but only if the program needs them via `#import` (see Packer,
     /// PackagePlan). If a bridge DLL is missing, it must therefore never be loaded either - the JIT resolves a type
     /// already when compiling a method that mentions it in a signature, local variable or call.
@@ -74,7 +74,9 @@ namespace fire.Runtime
         public static Session Build(LinkedProgram linkedProgram, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null)
         {
             Value.SingleFloats = linkedProgram.FloatWidth == 32; // the precision of float is process-wide while a program runs
-            Value.Ints32 = linkedProgram.IntWidth == 32;     // (likewise the width of int, SPEC 8.2.1)
+            Value.Ints32 = linkedProgram.IntWidth <= 32;     // (likewise the width of int, SPEC 8.2.1)
+            Value.Ints16 = linkedProgram.IntWidth == 16;
+            Value.WordBits = linkedProgram.WordWidth;        // (and of word, SPEC 8.10)
             var natives = new NativeRegistry();
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))
@@ -92,7 +94,7 @@ namespace fire.Runtime
             // exactly match that when translating (see ImportedPreludes.Insert): graphics, reflection, time, devices, io.
             if (linkedProgram.GraphicsNatives is { } graphicsNatives)
             {
-                // graphics and windows in C: their library is in the payload (docs/UI_PLATFORM.md, part 2)
+                // graphics and windows in C: their library is in the payload (docs/spec/UI_PLATFORM.md, part 2)
                 PackageNativeBinding.Register(natives, graphicsNatives, graphicsNatives.Select(_ => GraphicsLibraryFile).ToList(), null);
                 PackageHost.GraphicsInC = true;
             }
@@ -147,7 +149,7 @@ namespace fire.Runtime
             return fbManager;
         }
 
-        /// <summary>`#import "windows"`: the SDL window (own assembly together with SDL - a program with only `graphics` never loads it).</summary>
+        /// <summary>`#import "windows"`: the window (an assembly of its own - a program with only `graphics` never loads it).</summary>
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RegisterWindows(Session session, NativeRegistry natives, object framebuffers)
         {

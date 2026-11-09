@@ -27,7 +27,7 @@ namespace fire.Compiler
         /// directory of the active file.</summary>
         public string? BasePath { get; set; }
 
-        /// <summary>How a type conflict is reported (docs/TYPES.md): a warning (lax, the default) or an error (strict); a `#lax` / `#strict` in a file decides for that file.</summary>
+        /// <summary>How a type conflict is reported (docs/spec/TYPES.md): a warning (lax, the default) or an error (strict); a `#lax` / `#strict` in a file decides for that file.</summary>
         public TypeCheckMode? TypeChecking { get; set; }
 
         /// <summary>The mode the command line asked for (`--types lax|strict`); used by every linker that has no mode of its own set.</summary>
@@ -41,12 +41,15 @@ namespace fire.Compiler
         private TypeCheckMode EffectiveTypeChecking => TypeChecking ?? ProcessDefaultTypeChecking
             ?? (string.Equals(Plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax);
 
-        /// <summary>When the main program processes its queue by itself (`--global-jobs`, docs/THREADING_DESIGN.md section 7): goes before the project, `#globaljobs` and
+        /// <summary>When the main program processes its queue by itself (`--global-jobs`, docs/spec/THREADING_DESIGN.md section 7): goes before the project, `#globaljobs` and
         /// fire.native.json. Process-wide, like <see cref="ProcessDefaultTypeChecking"/>.</summary>
         public static GlobalJobsMode? ProcessGlobalJobs { get; set; }
 
         /// <summary>`"globalJobs"` of fire.native.json (a native build): used when neither the command line, the project nor `#globaljobs`/`#nosync` say anything.</summary>
         public GlobalJobsMode? GlobalJobsDefault { get; set; }
+
+        /// <summary>The direction of a native build (NativeBuilder.OptimizeOf): carried by the linked program for the generator.</summary>
+        public OptimizeFor Optimize { get; set; }
 
         /// <summary>The command line, then the project (`settings.globalJobs`); null: the source decides (`#globaljobs`, then <see cref="GlobalJobsDefault"/>).</summary>
         private GlobalJobsMode? ForcedGlobalJobs => ProcessGlobalJobs ?? GlobalJobsModes.Parse(Plan?.Settings?.GlobalJobs);
@@ -54,10 +57,14 @@ namespace fire.Compiler
         /// <summary>The engine the program is built for, a symbol of `#if` (`vm` or `native`).</summary>
         public string Engine { get; set; } = ConditionalSymbols.DefaultEngine;
 
+        /// <summary>The kind of the C toolchain of a native build (`gcc`, `clang`, `msvc`, `tcc`, `emscripten`, `watcom`, ...): a symbol of `#if`, so that a program
+        /// can choose the C of its `inline c` functions for the compiler (ROADMAP 13.2). Null: no native build, or not known.</summary>
+        public string? ToolchainKind { get; set; }
+
         /// <summary>Further symbols of `#if` (`-D name` on the command line).</summary>
         public IReadOnlyList<string>? Defines { get; set; }
 
-        /// <summary>The project that is built (docs/PROJECTS.md): its settings go before the tags in the source, its libraries can be imported with `#import "Name"`, its package references are
+        /// <summary>The project that is built (docs/tools/projects.md): its settings go before the tags in the source, its libraries can be imported with `#import "Name"`, its package references are
         /// checked, and a library project must not have statements at the top level. Null: single sources without a project.</summary>
         public fire.Projects.BuildPlan? Plan { get; set; }
 
@@ -81,7 +88,7 @@ namespace fire.Compiler
             return (Defines ?? Array.Empty<string>()).Concat(fromProject).Distinct().ToList();
         }
 
-        /// <summary>The settings of a project over what the tags of the source said (the order of docs/PROJECTS.md: project, solution, tags, defaults).</summary>
+        /// <summary>The settings of a project over what the tags of the source said (the order of docs/tools/projects.md: project, solution, tags, defaults).</summary>
         public static void ApplySettings(AssemblyInfo info, fire.Projects.ProjectSettings? settings, ref int? floatWidth)
         {
             int? intWidth = null;
@@ -233,11 +240,11 @@ namespace fire.Compiler
             return assemblyInfo;
         }
 
-        /// <summary>The value of `#intwidth n` (32 or 64).</summary>
+        /// <summary>The value of `#intwidth n` (16, 32 or 64).</summary>
         public static int ParseIntWidth(Value arg)
         {
-            if (arg.Kind == ValueKind.Int && arg.AsInt() is 32 or 64) return (int)arg.AsInt();
-            throw new Exception("The 'intwidth' directive expects 32 or 64.");
+            if (arg.Kind == ValueKind.Int && arg.AsInt() is 16 or 32 or 64) return (int)arg.AsInt();
+            throw new Exception("The 'intwidth' directive expects 16, 32 or 64.");
         }
 
         /// <summary>The value of `#floatwidth n` (32 or 64).</summary>
@@ -296,7 +303,7 @@ namespace fire.Compiler
         private static bool IsDeclaration(Ast.Stmt stmt) =>
             stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
 
-        /// <summary>`forge test` (docs/TESTING.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
+        /// <summary>`forge test` (docs/tools/testing.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
         /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
         [ThreadStatic] public static Func<IReadOnlyList<Ast.Stmt>, int, string>? TestDriver;
 
@@ -375,6 +382,7 @@ namespace fire.Compiler
             var resources = new ResourceTable();
             registry.Resources = resources;
             foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, EffectiveDefines(), intWidthOverride ?? ProcessIntWidth)) registry.Symbols.Add(symbol);
+            if (!string.IsNullOrWhiteSpace(ToolchainKind)) registry.Symbols.Add(ToolchainKind.Trim());
             var projectImports = new List<string>();   // libraries of the project that a source imports
             ProjectNativeOverlay.Register(Plan);   // the C++ natives of the project and its libraries are found like those of installed packages
             if (ProjectNativeOverlay.OwnKey(Plan) is { } ownNativeKey) nativeImports.Add(ownNativeKey);
@@ -578,11 +586,32 @@ namespace fire.Compiler
                 TypeChecker.MemberLog = null;
                 lock (typeof(Linker)) File.AppendAllText(memberLogFile, lines.ToString());
             }
+            string? varLogFile = Environment.GetEnvironmentVariable("FIRE_VAR_LOG");
+            if (varLogFile != null)
+            {
+                // a migration tool: every `var` without a type of its own (TC019/TC020), in every source (the libraries too), with the text of its line
+                TypeChecker.VarLog = new();
+                try { TypeChecker.Check(program, resolveResult, TypeCheckMode.Strict, 0); }
+                catch (Exception) { }
+                var lines = new System.Text.StringBuilder();
+                foreach (var e in TypeChecker.VarLog)
+                {
+                    if (e.Source < 0 || e.Source >= processedSources.Count) continue;
+                    var text = processedSources[e.Source].Source.Split('\n');
+                    if (e.Line < 1 || e.Line > text.Length) continue;
+                    lines.Append(processedSources[e.Source].Module ?? processedSources[e.Source].Name ?? "?").Append('\t').Append(e.Line).Append('\t').Append(e.Name).Append('\t').Append(e.Code).Append('\t').Append(e.Type).Append('\t').Append(text[e.Line - 1].TrimEnd('\r')).Append('\n');
+                }
+                TypeChecker.VarLog = null;
+                lock (typeof(Linker)) File.AppendAllText(varLogFile, lines.ToString());
+            }
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
+            // (the width of the program's int as below - the project's setting before the tag of the source: TC021 needs it)
+            TypeChecker.ProgramIntWidth = intWidthOverride ?? ProcessIntWidth ?? Plan?.Settings?.IntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
+            TypeChecker.NativeReturns = PackageImports.NativeReturnTypes(nativeImports);
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
             var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
-            // the classes of a package with `"serializable": false` (docs/JSON.md)
+            // the classes of a package with `"serializable": false` (docs/stdlib/json.md)
             var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));
             if (notSerializable.Count > 0)
                 foreach (var rc in compiled.Classes.Values)
@@ -599,8 +628,8 @@ namespace fire.Compiler
             if (floatWidth != 32 && floatWidth != 64) throw new ArgumentOutOfRangeException(nameof(floatWidthOverride), "The float width must be 32 or 64.");
             if (floatWidth == 32) FloatNarrowing.Apply(compiled);
             int intWidth = intWidthOverride ?? ProcessIntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
-            if (intWidth != 32 && intWidth != 64) throw new ArgumentOutOfRangeException(nameof(intWidthOverride), "The int width must be 32 or 64.");
-            if (intWidth == 32) FloatNarrowing.ApplyInts32(compiled);
+            if (intWidth != 16 && intWidth != 32 && intWidth != 64) throw new ArgumentOutOfRangeException(nameof(intWidthOverride), "The int width must be 16, 32 or 64.");
+            if (intWidth < 64) FloatNarrowing.ApplyIntWidth(compiled, intWidth);
 
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
@@ -612,7 +641,7 @@ namespace fire.Compiler
                 graphicsNatives = natives.Names.Where(n => n.StartsWith("__GRPH", StringComparison.Ordinal)).OrderBy(natives.IndexOf).ToList();
                 (packageLibraryFiles ??= new List<string>()).Add(gfxLibrary);
             }
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, IntWidth = intWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, IntWidth = intWidth, WordWidth = target?.WordWidth ?? 64, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GraphicsNatives = graphicsNatives, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, Optimize = Optimize, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList(),
                 SourceHashes = SourceHashesOf(processedSources.Count - driverSources, sources).Concat(new string?[driverSources]).ToList(),
                 SourceModules = processedSources.Select((p, i) => i == 0 ? "core" : p.Module).ToList(), ModuleDeps = ModuleDependencies(processedSources),
                 SourceTextHashes = processedSources.Select(p => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(p.Source))).ToLowerInvariant()).ToList() };

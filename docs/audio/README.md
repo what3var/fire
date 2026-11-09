@@ -1,0 +1,136 @@
+# Sound (`#import "audio"`, the package `fire-audio`)
+
+Sound output and input: play samples, generate tones, play WAV files, record from a microphone or a line in. Like every bridge it is a **package** (`ember`, [Packages and ember](../packages/README.md)): a prelude in fire plus C in `packages/audio/native/fire_bridge_audio.h` over the platform layer in C `fire_audio_*`
+(`packages/audio/native/fire_audio_*.h`), so the same code runs in the virtual machine (through the package ABI, [Writing the natives of a package (C or C++) and connecting them to the prelude](../packages/natives.md)) and in a native build. It needs `time`.
+
+```
+program        #import "audio"        Audio.Output, Audio.Input, Audio.Sound, Audio.Board, Audio.Sim   (fire, package fire-audio)
+bridge         fire_bridge_audio.h    handles, volume, waves, errors, the simulated device             (C, shared by VM and native)
+platform       fire_audio_*           open / write / queued / stop / close,                            (Linux: PulseAudio or ALSA, Windows: winmm, macOS: Audio Queue Services, browser: Web Audio, ESP32: PWM, else: stub)
+                                      openInput / read / available / closeInput
+```
+
+Music from tracker modules (`.mod`) is played by the package `fire-tracker` ([Tracker modules](tracker.md)) on top of this one. Sound through a simulated circuit - a guitar through a
+pedal, a microphone through a filter - goes with the package `circuits` ([Circuits](../circuits/README.md), "Streams" and "Sound devices").
+
+## Quick start
+
+```
+#import "audio"
+
+var out = new Audio.Output()                       // the default device, 44100 Hz, mono
+out.Beep(440, 200)                                 // a 440 Hz sine for 200 ms, returns when it has been played
+out.Tone(523.25, 500, Audio.Wave.Square, 30)       // queue a tone (Hz, ms, wave, volume in percent); returns when it is queued
+out.Drain()                                        // wait until everything queued has been played
+
+var sound = Audio.Sound.FromWav(IO.File.ReadAllBytes("door.wav"))     // needs #import "filesystem"
+var player = sound.Open()                          // an output that fits the sound (its rate and its channels)
+player.Play(sound)
+player.Drain()
+
+var speaker = new Audio.Output(25, 8000)           // ESP32: PWM on GPIO 25 at 8000 Hz
+```
+
+### Without speakers
+
+The simulated device `"sim"` records what is played - this runs everywhere, also in a test:
+
+```fire
+#import "audio"
+
+var out = new Audio.Output("sim", 22050)           // the simulated device records what is played
+out.Tone(440, 100)                                 // 100 ms of a 440 Hz sine
+out.Tone(660, 100, Audio.Wave.Square, 50)
+out.Drain()
+print(Audio.Sim.Played())                          // 8820 - 0.2 s x 22050 frames x 2 bytes
+var tone = Audio.Sound.Tone(880, 50, Audio.Wave.Triangle, 80, 8000)
+var wav = tone.ToWav()                             // the bytes of a WAV file
+var back = Audio.Sound.FromWav(wav)
+print(back.rate + " Hz, " + back.channels + " channel(s)")   // 8000 Hz, 1 channel(s)
+```
+
+## The device
+
+`new Audio.Output(device = "default", rate = 44100, channels = 1)`:
+
+| Device | Where | Meaning |
+|---|---|---|
+| `"default"` | Linux | PulseAudio (or PipeWire, which speaks its protocol) when a server answers, ALSA otherwise |
+| `"pulse"`, `"pulse:<sink>"` | Linux | PulseAudio, optionally a named sink |
+| `"alsa"`, `"alsa:<pcm>"` | Linux | ALSA, the default PCM or a named one (`"alsa:plughw:1,0"`) |
+| `"default"`, a device name, or its number | Windows | the default device of the user (the wave mapper), or one that `Audio.Board.Devices()` lists |
+| `"default"`, a device name, or its number | macOS | Audio Queue Services (see below) |
+| `"pwm:<gpio>"`, or just the number | ESP32 | PWM on that GPIO pin: `new Audio.Output(25)` is `new Audio.Output("pwm:25")` |
+| `"sim"` | everywhere | the simulated device (see below) |
+
+`Audio.Board.Devices()` lists the names ("sim" first), `Audio.Board.Available()` says whether the machine has a sound output at all. An unknown name is `Audio.NotFoundException`.
+
+**Linux** needs nothing to *build* a program: PulseAudio (`libpulse-simple.so.0`) and ALSA (`libasound.so.2`) are loaded with `dlopen` when they are first needed, so one binary runs on a machine with either, both or none (then
+`Audio.UnsupportedException`). The package asks for `-ldl` only. **Windows** links `winmm` (part of Windows). **macOS** plays through **Audio Queue Services** of AudioToolbox (a C interface: `fire_audio_coreaudio.h`; the package links the framework AudioToolbox): three
+buffers of 20 ms that the queue's own thread fills from a ring of half a second, the device is the system's default (`"default"`). **The browser** plays through **Web Audio**
+(`fire_audio_web.h`: every write becomes an AudioBuffer planned after the last one; sound starts with the user's first click or key on the page). (The macOS backend is syntax-checked,
+not yet tried on a Mac.)
+
+**ESP32 (PWM):** a LEDC channel with a 78 kHz carrier and 8 bit resolution drives the pin; a timer interrupt sets the duty cycle once per sample (rates 2000..48000 Hz; 8000..22050 are plenty for beeps, speech and
+melodies). Connect the pin through a small RC low-pass filter (for example 1 kOhm + 100 nF) to an amplifier, or drive a piezo; a speaker needs a transistor or an amplifier - never connect it to the pin directly. One output
+at a time. A stereo input is mixed down. Add the components `esp_driver_ledc` and `esp_driver_gptimer` (IDF 5.x) or `driver` to the project, and set `CONFIG_LEDC_CTRL_FUNC_IN_IRAM` and `CONFIG_GPTIMER_ISR_IRAM_SAFE`.
+(Written against the IDF 5.x API and checked for syntax against a stand-in of its headers; not built with ESP-IDF or tried on a board yet - like the other ESP32 parts.)
+
+## Samples and waiting
+
+Samples are **16 bit signed, little endian, interleaved** (a *frame* is one sample per channel); the rate is any rate the device takes (PulseAudio, ALSA's `plug` and Windows convert, the ESP32 plays it as it is).
+
+* `Write(buffer, offset = 0, count = -1)` plays the bytes. It returns when the device has **taken** them all - it sleeps (5 ms at a time) while the device's buffer is full, so a program can always be aborted and nothing blocks inside
+  the native code. `Offer(buffer, offset, count)` takes only what fits and returns how many bytes it took (0: full).
+* `Queued` is the number of bytes taken and not yet played, `Playing` is `Queued > 0`. `Drain(timeoutMs = -1)` waits until the queue is empty (true) or the time ran out (false). `Stop()` throws the queue away.
+* `Close()` plays what was taken to its end, then closes (call `Stop()` first to cut it off). The destructor closes, too - but **call `Drain()` before the program ends** if the last sound must be heard.
+* `Volume` (0..100) scales the samples written afterwards.
+* `Tone(frequency, milliseconds, wave = Audio.Wave.Sine, volume = 100)` generates and queues a tone (the frequency may be a float); the waves are `Sine`, `Square`, `Triangle`, `Saw` and `Noise`. The generation is native (a
+  fast loop in C, the same in the VM and in a native build). `Beep(frequency = 440, milliseconds = 200, volume = 100)` is a tone that is played to its end.
+
+`Audio.Sound` is PCM in memory: `new Audio.Sound(rate, channels, buffer, offset = 0, length = -1)`; `sound.ToWav()` gives the bytes of a WAV file (PCM, 16 bit) and `Audio.Sound.FromWav(bytes)` reads PCM WAV files (8 or 16 bit, mono or stereo, any rate; other formats are
+`Audio.UnsupportedException`); `Audio.Sound.Tone(frequency, milliseconds, wave, volume, rate = 22050)` generates one. `sound.Open(device)` opens an output with the rate and channels of the sound, and `output.Play(sound)` queues it
+(a sound whose rate or channels differ from the output's is an error - open the output with `sound.Open()`).
+
+## Recording
+
+`new Audio.Input(device = "default", rate = 44100, channels = 1)` records from the moment it is opened (16 bit samples like the output):
+
+* `Read(buffer, offset = 0, count = -1)` takes what was recorded (whole frames, up to `count` bytes) and returns the number of bytes - at once, 0 when nothing is there yet.
+  `Available` is the number of bytes waiting.
+* `Record(milliseconds, timeoutMs = -1)` waits until that much is recorded and returns it as an `Audio.Sound`.
+* `Close()` (or the destructor) ends the recording.
+
+Read a few times per second at least: what the system buffers is limited (a quarter of a second with PulseAudio, about a third with Windows' blocks, ALSA's own buffer) and what is
+not read in time is lost. `Audio.Board.Inputs()` lists the names ("sim" first; on Linux "default", "pulse", "pulse:<source>", "alsa", "alsa:<pcm>"; on Windows and macOS "default" and
+the names of the devices), `Audio.Board.InputAvailable()` says whether there is an input at all.
+
+```
+var mic = new Audio.Input("default", 22050)
+var take = mic.Record(2000)                        // two seconds
+var out = take.Open()
+out.Play(take)                                     // and back
+out.Drain()
+```
+
+The platform layers: ALSA in non-blocking mode (`snd_pcm_readi`, an overrun is recovered); PulseAudio's blocking read in a thread of the input that fills a ring (fragments of 10 ms);
+Windows: 16 blocks of 20 ms handed to `waveInAddBuffer`, read when the driver has filled them; macOS: an input audio queue into a ring of a second; the browser: the microphone (getUserMedia, the user is asked); no input on the ESP32 yet.
+
+## Errors
+
+`Audio.AudioException` with a `code` (1 invalid argument, 2 closed/invalid handle, 7 other) and its subclasses `NotFoundException` (3), `BusyException` (4: the device is used by somebody else), `PermissionException` (5),
+`UnsupportedException` (6: no sound system, a rate or channel count the device does not take). A failure of the sound system reports its own text ("ALSA 'default': No such file or directory", "PulseAudio: Connection refused").
+
+## The simulated device
+
+Every platform has the device `"sim"`: it records what is played. `Audio.Sim.Data()` is the bytes (a buffer; at most 16 MB are kept), `Played()` their number, `Rate()` and `Channels()` those of the output opened last. `Hold()`
+makes it slow: it takes only 4096 bytes and keeps them (`Waiting()`), as a device does that plays in real time - `Hold(false)` plays them. `Reset()` forgets everything. A program written against `"sim"` runs on the board
+with the real device name; the test suite uses it (VM and native build must agree). It also records: `Audio.Sim.Feed(bytes, offset, count)` (or `FeedSound(sound)`) gives
+it sound, which an `Audio.Input("sim", ...)` then reads (in the channels of that input); `InputWaiting()` is what is left, `Recorded()` what was handed over.
+
+## How the platform layers work
+
+`fire_audio_*` (`packages/audio/native/fire_audio_c.h` describes the interface; it compiles as C++ as well): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close` -
+and for inputs `inputDevices`, `openInput`, `read` (takes what was recorded, never blocks), `available`, `closeInput`. The package `circuits` uses the same layer for its fast way to a device. The bridge keeps the handle table, applies
+the volume and generates the waves. macOS: the ring and the buffers on their way are `queued`; the browser: the planned time not played yet. Linux: ALSA runs non-blocking (`snd_pcm_writei`, `-EAGAIN` means full, an underrun is recovered); PulseAudio's simple API only blocks, so each output has a thread that plays a ring buffer
+(all calls into PulseAudio are made by that thread, with a 200 ms buffer on the server and playback starting at once). Windows: blocks of 50 ms handed to `waveOutWrite`, free again when the driver sets the DONE flag.

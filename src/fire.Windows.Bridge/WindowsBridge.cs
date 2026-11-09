@@ -10,7 +10,7 @@ using System.Collections.Generic;
 namespace fire.Windows.Bridge
 {
     /// <summary>
-    /// The window bridge (`#import "windows"`): the SDL window in which a framebuffer of the graphics bridge (`#import "graphics"`) is shown -
+    /// The window bridge (`#import "windows"`): the window in which a framebuffer of the graphics bridge (`#import "graphics"`) is shown -
     /// separate from `graphics`, so that a program for a platform without a window (embedded) imports only `graphics` and plugs in another
     /// output device (e.g. a display) instead. Registers the <see cref="WindowManager"/> as native functions (prefix <see cref="WindowPrefix"/>)
     /// and supplies the classes `Window` and `EventType` as fire source (the prelude of the standard package). Requires `graphics`
@@ -120,7 +120,7 @@ namespace fire.Windows.Bridge
                 // Window.CanStartDrag: can StartDrag hand a drag to the desktop here (Windows, X11)?
                 ["CanStartDrag"] = args => Value.MakeBool(mgr.CanStartDrag((int)args[0].AsInt())),
                 // Window.SetTextInputArea, Window.Backdrop, Window.Scale: the VM's window has no input method, shows nothing behind itself and reports scale 1
-                // (it moves to the C display of the native builds, docs/UI_PLATFORM.md)
+                // (it moves to the C display of the native builds, docs/spec/UI_PLATFORM.md)
                 ["SetTextInputRect"] = args => Value.MakeUndefined(),
                 ["SetBackdrop"] = args => Value.MakeUndefined(),
                 ["GetBackdrop"] = args => Value.MakeInt(0),

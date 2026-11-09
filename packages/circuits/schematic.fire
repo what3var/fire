@@ -1,6 +1,6 @@
 #import "json"
 
-// Schematics (docs/CIRCUITS.md, "Schaltpläne"): a circuit drawn on a grid, the way Paul Falstad's simulator does it. Every element lies between two points of the
+// Schematics (docs/circuits/README.md, "Schaltpläne"): a circuit drawn on a grid, the way Paul Falstad's simulator does it. Every element lies between two points of the
 // grid (a resistor from one end to the other, a transistor from its base to the line of collector and emitter); pins at the same point are connected, wires
 // connect their two ends. The schematic makes the parts of its circuit from the elements and connects their ports; a `.biscuit` file is a schematic as JSON.
 namespace Circuits {
@@ -73,7 +73,7 @@ namespace Circuits {
         }
 
         bool Flag(string key) {
-            var v = this.Get(key).ToLower()
+            any v = this.Get(key).ToLower()
             return v == "true" || v == "1" || v == "yes" || v == "on"
         }
 
@@ -216,7 +216,7 @@ namespace Circuits {
         static string Entry(string type) {
             foreach (line in Circuits.Symbols.Catalog()) {
                 string s = line
-                var parts = s.Split("|")
+                any parts = s.Split("|")
                 if (parts[1] == type) { return s }
             }
             return ""
@@ -229,12 +229,12 @@ namespace Circuits {
             var entry = Circuits.Symbols.Entry(type)
             if (entry == "") { throw new ArgumentException("There is no element '" + type + "' (see Circuits.Symbols.Catalog()).") }
             var e = new Circuits.Element(type, x1, y1, x2, y2)
-            var props = entry.Split("|")[2]
+            any props = entry.Split("|")[2]
             if (props != "") {
                 foreach (p in props.Split(";")) {
                     string prop = p
-                    var eq = prop.IndexOf("=")
-                    var colon = prop.IndexOf(":")
+                    any eq = prop.IndexOf("=")
+                    any colon = prop.IndexOf(":")
                     e.keys.Add(prop.Substring(0, colon))
                     e.values.Add(prop.Substring(eq + 1))
                 }
@@ -296,7 +296,7 @@ namespace Circuits {
 
         /// <summary>The distance of the pins of a chip in grid units ("spacing", default 2; Falstad's large chips have 4).</summary>
         static int ChipSpacing(Circuits.Element e) {
-            var n = e.Get("spacing").TryToInt()
+            any n = e.Get("spacing").TryToInt()
             if (n == undefined || n < 1) { return 2 }
             if (n > 8) { return 8 }
             return n
@@ -304,9 +304,9 @@ namespace Circuits {
 
         /// <summary>The rows of a chip (the longer side; empty names are gaps).</summary>
         static int ChipRows(Circuits.Element e) {
-            var sides = Circuits.Symbols.ChipPins(e).Split("|")
-            var a = Circuits.Symbols.Names(sides[0]).length
-            var b = Circuits.Symbols.Names(sides[1]).length
+            any sides = Circuits.Symbols.ChipPins(e).Split("|")
+            any a = Circuits.Symbols.Names(sides[0]).length
+            any b = Circuits.Symbols.Names(sides[1]).length
             if (a > b) { return a }
             return b
         }
@@ -322,7 +322,7 @@ namespace Circuits {
         }
 
         static int Channels(Circuits.Element e, int fallback) {
-            var n = e.Get("channels").TryToInt()
+            any n = e.Get("channels").TryToInt()
             if (n == undefined || n < 1) { return fallback }
             if (n > 16) { return 16 }
             return n
@@ -330,17 +330,17 @@ namespace Circuits {
 
         /// <summary>An I2C address of an element: "0x48", "72" (undefined if it is none).</summary>
         static any Address(Circuits.Element e) {
-            var text = e.Get("address").Trim().ToLower()
+            any text = e.Get("address").Trim().ToLower()
             var v = 0
             if (text.StartsWith("0x")) {
                 if (text.Length < 3) { return undefined }
                 for (int i = 2; i < text.Length; i++) {
-                    var d = "0123456789abcdef".IndexOf(text.Substring(i, 1))
+                    any d = "0123456789abcdef".IndexOf(text.Substring(i, 1))
                     if (d < 0) { return undefined }
                     v = v * 16 + d
                 }
             } else {
-                var n = text.TryToInt()
+                any n = text.TryToInt()
                 if (n == undefined) { return undefined }
                 v = n
             }
@@ -349,27 +349,27 @@ namespace Circuits {
         }
 
         static int Line(Circuits.Element e) {
-            var n = e.Get("line").TryToInt()
+            any n = e.Get("line").TryToInt()
             if (n == undefined || n < 0) { return 0 }
             return n
         }
 
         static int Bits(Circuits.Element e) {
-            var n = e.Get("bits").TryToInt()
+            any n = e.Get("bits").TryToInt()
             if (n == undefined || n < 1) { return 4 }
             if (n > 16) { return 16 }
             return n
         }
 
         static int Throws(Circuits.Element e) {
-            var n = e.Get("throws").TryToInt()
+            any n = e.Get("throws").TryToInt()
             if (n == undefined || n < 2) { return 2 }
             if (n > 8) { return 8 }
             return n
         }
 
         static int Inputs(Circuits.Element e) {
-            var n = e.Get("inputs").TryToInt()
+            any n = e.Get("inputs").TryToInt()
             if (n == undefined || n < 2) { return 2 }
             if (n > 8) { return 8 }
             return n
@@ -390,7 +390,7 @@ namespace Circuits {
         // a point at fraction f of the way from (x1, y1) to (x2, y2), moved g grid units sideways (to the right of the direction for g > 0)
         // the parameters of a tube as written in its property ("mu=95, kg1=1100"): checked here, so that a mistake shows at the element
         static string TubeParameters(string text) {
-            var t = text.Trim()
+            any t = text.Trim()
             if (t == "") { return "" }
             var message = __CirCheckFormula("0", t, false)
             if (message != "") { throw new ArgumentException(message) }
@@ -400,7 +400,7 @@ namespace Circuits {
         static undefined Interp(Circuits.Element e, float f, float g, List into) {
             float dx = e.x2 - e.x1
             float dy = e.y2 - e.y1
-            var len = Math.Sqrt(dx * dx + dy * dy)
+            any len = Math.Sqrt(dx * dx + dy * dy)
             var px = 0.0
             var py = 0.0
             if (len > 0.0) {
@@ -478,7 +478,7 @@ namespace Circuits {
                 if (e.Flag("flip")) { fl = -fl }
                 float dx = e.x2 - e.x1
                 float dy = e.y2 - e.y1
-                var len = Math.Sqrt(dx * dx + dy * dy)
+                any len = Math.Sqrt(dx * dx + dy * dy)
                 if (len < 4.0) { len = 4.0 }
                 Circuits.Symbols.Interp(e, 1.0, 4.0 * fl, e.pins)
                 Circuits.Symbols.Interp(e, 1.0 + 4.0 / len, 1.0 * fl, e.pins)
@@ -493,7 +493,7 @@ namespace Circuits {
                 if (e.Flag("flip")) { fl = -fl }
                 float dx = e.x2 - e.x1
                 float dy = e.y2 - e.y1
-                var len = Math.Sqrt(dx * dx + dy * dy)
+                any len = Math.Sqrt(dx * dx + dy * dy)
                 if (len < 4.0) { len = 4.0 }
                 Circuits.Symbols.Interp(e, 1.0, 4.0 * fl, e.pins)
                 e.pins.Add(e.x1)
@@ -530,11 +530,11 @@ namespace Circuits {
             if (Circuits.Symbols.IsChip(t)) {
                 // a box: the pins of the left side go down from the first point, those of the right side from the point `width` to the right (`spacing`
                 // apart; an empty name is a gap)
-                var sides = Circuits.Symbols.ChipPins(e).Split("|")
+                any sides = Circuits.Symbols.ChipPins(e).Split("|")
                 var width = Circuits.Symbols.ChipWidth(e)
                 var sp = Circuits.Symbols.ChipSpacing(e)
-                var left = Circuits.Symbols.Names(sides[0])
-                var right = Circuits.Symbols.Names(sides[1])
+                any left = Circuits.Symbols.Names(sides[0])
+                any right = Circuits.Symbols.Names(sides[1])
                 for (int i = 0; i < left.length; i++) {
                     if (left[i] == "") { continue }
                     e.pins.Add(e.x1)
@@ -556,9 +556,9 @@ namespace Circuits {
             if (t == "Transformer") {
                 // the primary from the first point down (or to the side) by `width`, the secondary at the second point, as in Falstad's simulator
                 var end = Circuits.Symbols.AxisEnd(e)
-                var w = e.Get("width").TryToInt()
+                any w = e.Get("width").TryToInt()
                 if (w == undefined || w == 0) { w = 4 }
-                var g = -Circuits.Symbols.Dsign(e) * w
+                any g = -Circuits.Symbols.Dsign(e) * w
                 if (e.Flag("flip")) { g = -g }
                 var axis = new Circuits.Element("Wire", e.x1, e.y1, end[0], end[1])
                 e.pins.Add(e.x1)
@@ -621,7 +621,7 @@ namespace Circuits {
             if (t == "TransmissionLine") {
                 // the conductor from the first point to the second, the return `width` units beside it (as Falstad's line)
                 var end = Circuits.Symbols.AxisEnd(e)
-                var w = e.Get("width").TryToInt()
+                any w = e.Get("width").TryToInt()
                 if (w == undefined || w == 0) { w = 4 }
                 var ds = 1
                 if (end[1] == e.y1) {
@@ -691,7 +691,7 @@ namespace Circuits {
             float dn = axis
             if (e.Flag("legacy")) { dn = Math.Sqrt(dx * dx + dy * dy + 0.0) * 8.0 }
             var leadlen = (dn - 16.0) / 2.0
-            var gatelen = grid + (leadlen - grid * Math.Floor(leadlen / grid))
+            any gatelen = grid + (leadlen - grid * Math.Floor(leadlen / grid))
             if (leadlen < gatelen || axis <= 0.0) {
                 // too short for a gate: it sits on the first point
                 e.pins.Add(e.x1)
@@ -699,13 +699,13 @@ namespace Circuits {
                 return
             }
             var lead2 = axis * (dn + 16.0) / (2.0 * dn)
-            var along = (lead2 + (axis - lead2) * gatelen / leadlen) / 8.0
+            any along = (lead2 + (axis - lead2) * gatelen / leadlen) / 8.0
             var side = grid * 2.0 * dir / 8.0
             // the direction of the axis and the side to the right of it (Interp's)
             float ux = Circuits.Symbols.Sign(end[0] - e.x1)
             float uy = Circuits.Symbols.Sign(end[1] - e.y1)
-            var gx = e.x1 + ux * along + uy * side
-            var gy = e.y1 + uy * along - ux * side
+            any gx = e.x1 + ux * along + uy * side
+            any gy = e.y1 + uy * along - ux * side
             if (e.type == "Thyristor") {
                 // Falstad snaps the gate of a thyristor to its grid
                 gx = Math.Floor((gx * 8.0 + grid / 2.0 - 1.0) / grid) * grid / 8.0
@@ -721,9 +721,9 @@ namespace Circuits {
             var ds = Circuits.Symbols.Dsign(e)
             float dx = e.x2 - e.x1
             float dy = e.y2 - e.y1
-            var len = Math.Sqrt(dx * dx + dy * dy)
+            any len = Math.Sqrt(dx * dx + dy * dy)
             if (len < 1.0) { len = 1.0 }
-            var end = len
+            any end = len
             if (end < 11.75) { end = 11.75 }
             Circuits.Symbols.Interp(e, 0.0, 4.0 * ds, e.pins)
             Circuits.Symbols.Interp(e, 0.0, -4.0 * ds, e.pins)
@@ -823,7 +823,7 @@ namespace Circuits {
         }
 
         static int Count(Circuits.Element e, string key, int fallback, int low, int high) {
-            var n = e.Get(key).TryToInt()
+            any n = e.Get(key).TryToInt()
             if (n == undefined) { return fallback }
             if (n < low) { return low }
             if (n > high) { return high }
@@ -881,26 +881,26 @@ namespace Circuits {
 
         // the size of a cell of a Falstad chip in grid units (4, or 2 for a small one)
         static int FalstadCell(Circuits.Element e) {
-            var n = e.Get("spacing").TryToInt()
+            any n = e.Get("spacing").TryToInt()
             if (n == undefined || n < 1) { return 4 }
             return n
         }
 
         static int Int(string text) {
-            var n = text.TryToInt()
+            any n = text.TryToInt()
             if (n == undefined) { return 0 }
             return n
         }
 
         static undefined FalstadChipPins(Circuits.Element e) {
-            var parts = Circuits.Symbols.FalstadLayout(e).Split("|")
-            var size = parts[0].Split(",")
+            any parts = Circuits.Symbols.FalstadLayout(e).Split("|")
+            any size = parts[0].Split(",")
             var sx = Circuits.Symbols.Int(size[0])
             var sy = Circuits.Symbols.Int(size[1])
             var cs = Circuits.Symbols.FalstadCell(e)
             foreach (p in parts[1].Split(";")) {
                 string pin = p
-                var f = pin.Split(":")
+                any f = pin.Split(":")
                 var pos = Circuits.Symbols.Int(f[1])
                 if (f[0] == "W") {
                     e.pins.Add(e.x1)
@@ -940,7 +940,7 @@ namespace Circuits {
         /// the parameters of the circuit ("2*R").</summary>
         static float Value(Circuits.Element e, string key, Circuits.Circuit circuit) {
             var text = e.Get(key)
-            var v = Circuits.Symbols.Number(text)
+            any v = Circuits.Symbols.Number(text)
             if (v != undefined) { return v }
             if (circuit != undefined) { return circuit.Value(Circuits.Symbols.Expand(text)) }
             throw new ArgumentException("'" + text + "' is not a number.")
@@ -952,7 +952,7 @@ namespace Circuits {
             var i = 0
             var n = text.Length
             while (i < n) {
-                var c = text.CharAt(i)
+                any c = text.CharAt(i)
                 var startsNumber = c.IsDigit() || (c == '.' && i + 1 < n && text.CharAt(i + 1).IsDigit())
                 var afterName = i > 0 && (text.CharAt(i - 1).IsLetterOrDigit() || text.CharAt(i - 1) == '_')
                 if (startsNumber && !afterName) {
@@ -960,7 +960,7 @@ namespace Circuits {
                     while (j < n && (text.CharAt(j).IsDigit() || text.CharAt(j) == '.')) { j = j + 1 }
                     var k = j
                     while (k < n && (text.CharAt(k).IsLetter() || text.CharAt(k) == 'µ' || text.CharAt(k) == 'Ω')) { k = k + 1 }
-                    var v = Circuits.Symbols.Number(text.Substring(i, k - i))
+                    any v = Circuits.Symbols.Number(text.Substring(i, k - i))
                     if (v != undefined && k > j) {
                         r = r + v
                         i = k
@@ -978,27 +978,27 @@ namespace Circuits {
 
         /// <summary>A number with SI prefix and unit ("4.7k", "10uF", "2.2µH", "1meg", "-5V"); undefined if the text is not one.</summary>
         static any Number(string text) {
-            var s = text.Trim()
+            any s = text.Trim()
             if (s == "") { return undefined }
             // the longest start that is a number
             var end = 0
-            var n = s.Length
+            any n = s.Length
             while (end < n) {
-                var c = s.CharAt(end)
+                any c = s.CharAt(end)
                 if (c.IsDigit() || c == '.' || c == '-' || c == '+') { end = end + 1 }
                 else {
                     if ((c == 'e' || c == 'E') && end + 1 < n && (s.CharAt(end + 1).IsDigit() || s.CharAt(end + 1) == '-' || s.CharAt(end + 1) == '+')) { end = end + 2 } else { break }
                 }
             }
             if (end == 0) { return undefined }
-            var number = s.Substring(0, end).TryToFloat()
+            any number = s.Substring(0, end).TryToFloat()
             if (number == undefined) { return undefined }
             float v = number
-            var rest = s.Substring(end).Trim()
+            any rest = s.Substring(end).Trim()
             if (rest == "") { return v }
-            var lower = rest.ToLower()
+            any lower = rest.ToLower()
             if (lower.StartsWith("meg")) { return v * 1000000.0 }
-            var p = rest.CharAt(0)
+            any p = rest.CharAt(0)
             var factor = 1.0
             var prefixed = true
             if (p == 'f') { factor = 0.000000000000001 }
@@ -1011,7 +1011,7 @@ namespace Circuits {
             else if (p == 'G') { factor = 1000000000.0 }
             else if (p == 'T') { factor = 1000000000000.0 }
             else { prefixed = false }
-            var unit = rest
+            any unit = rest
             if (prefixed) { unit = rest.Substring(1) }
             // what is left must be a unit (or nothing): "F" alone is farad, not femto
             if (!Circuits.Symbols.IsUnit(unit)) {
@@ -1022,7 +1022,7 @@ namespace Circuits {
         }
 
         static bool IsUnit(string u) {
-            var s = u.Trim()
+            any s = u.Trim()
             return s == "" || s == "V" || s == "A" || s == "Ohm" || s == "ohm" || s == "Ω" || s == "R" || s == "F" || s == "H" || s == "Hz" || s == "s" || s == "W"
         }
 
@@ -1046,7 +1046,7 @@ namespace Circuits {
                                           Circuits.Symbols.Value(e, "offCurrent", c))
             }
             else if (t == "Switch2") {
-                var pos = e.Get("position").TryToInt()
+                any pos = e.Get("position").TryToInt()
                 if (pos == undefined) { pos = 0 }
                 part = new Circuits.Switch2(pos, Circuits.Symbols.Throws(e), e.Flag("centerOff"))
             }
@@ -1162,10 +1162,10 @@ namespace Circuits {
             else if (t == "Ground") { part = new Circuits.Ground() }
             else if (t == "GpioLine") { part = new Circuits.GpioLine(Circuits.Symbols.Line(e), Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "I2cAdc" || t == "I2cDac") {
-                var address = Circuits.Symbols.Address(e)
+                any address = Circuits.Symbols.Address(e)
                 if (address == undefined) { throw new ArgumentException("'" + e.Get("address") + "' is no I2C address (0x08 to 0x77).") }
                 if (t == "I2cAdc") {
-                    var bits = e.Get("bits").TryToInt()
+                    any bits = e.Get("bits").TryToInt()
                     if (bits == undefined || bits < 1 || bits > 16) { bits = 8 }
                     part = new Circuits.I2cAdc(address, Circuits.Symbols.Channels(e, 4), Circuits.Symbols.Value(e, "reference", c), bits)
                 } else {
@@ -1267,7 +1267,7 @@ namespace Circuits {
         }
 
         static Part MakeSource(Circuits.Element e, Circuits.Circuit c) {
-            var w = e.Get("waveform").ToLower()
+            any w = e.Get("waveform").ToLower()
             var v = Circuits.Symbols.Value(e, "voltage", c)
             if (w == "sine") {
                 return new Circuits.SineSource(v, Circuits.Symbols.Value(e, "frequency", c), Circuits.Symbols.Value(e, "offset", c), Circuits.Symbols.Value(e, "phase", c))
@@ -1444,7 +1444,7 @@ namespace Circuits {
         /// <summary>The pin (from 0) of the element that "which" names: a number counted from 1 or the name of the port of its part; -1 if none.</summary>
         static int PinIndex(Circuits.Element target, string which) {
             var count = target.pins.Count / 2
-            var number = which.TryToInt()
+            any number = which.TryToInt()
             if (number != undefined) {
                 if (number >= 1 && number <= count) { return number - 1 }
                 return -1
@@ -1470,7 +1470,7 @@ namespace Circuits {
             e.name = name
             Circuits.Schematic.SetAll(e, properties)
             this.elements.Add(take e)
-            var added = this.elements[this.elements.Count - 1]
+            any added = this.elements[this.elements.Count - 1]
             this.Changed(true)
             return added
         }
@@ -1479,7 +1479,7 @@ namespace Circuits {
             if (properties == "") { return }
             foreach (p in properties.Split(";")) {
                 string prop = p
-                var eq = prop.IndexOf("=")
+                any eq = prop.IndexOf("=")
                 if (eq > 0) { e.Set(prop.Substring(0, eq).Trim(), prop.Substring(eq + 1).Trim()) }
             }
         }
@@ -1662,7 +1662,7 @@ namespace Circuits {
         // connects the ports of the parts from the drawing: pins at the same point, the ends of wires, labels of the same text, pins of the circuit
         undefined Connect() {
             var c = this.circuit
-            var top = c.Top() == c
+            any top = c.Top() == c
             // the connections of before go away
             foreach (e in this.elements) {
                 foreach (p in e.pinPorts) {
@@ -1699,12 +1699,12 @@ namespace Circuits {
             // the two ends of a wire, the labels of the same text
             var start = 0
             foreach (e in this.elements) {
-                var count = e.pins.Count / 2
+                any count = e.pins.Count / 2
                 if (e.type == "Wire" && count == 2) { Circuits.Schematic.Union(parent, start, start + 1) }
                 if (e.type == "Label") {
                     var other = 0
                     foreach (f in this.elements) {
-                        var fc = f.pins.Count / 2
+                        any fc = f.pins.Count / 2
                         if (f != e && f.type == "Label" && f.Get("text") == e.Get("text") && fc > 0) { Circuits.Schematic.Union(parent, start, other) }
                         other = other + fc
                     }
@@ -1787,7 +1787,7 @@ namespace Circuits {
                     d.error = "It is bound to no pin."
                     continue
                 }
-                var dot = d.pin.LastIndexOf(".")
+                any dot = d.pin.LastIndexOf(".")
                 Circuits.Element target = undefined
                 if (dot > 0) { target = this.Find(d.pin.Substring(0, dot)) }
                 if (target == undefined) {
@@ -1885,11 +1885,11 @@ namespace Circuits {
             var pin = -1
             var target = this.Find(probe)
             if (target == undefined && probe.LastIndexOf(".") > 0) {
-                var dot = probe.LastIndexOf(".")
+                any dot = probe.LastIndexOf(".")
                 target = this.Find(probe.Substring(0, dot))
                 if (target != undefined) {
-                    var which = probe.Substring(dot + 1)
-                    var number = which.TryToInt()
+                    any which = probe.Substring(dot + 1)
+                    any number = which.TryToInt()
                     if (number != undefined && number >= 1 && number <= target.nets.Count) { pin = number - 1 }
                     else {
                         for (int k = 0; k < target.nets.Count; k++) {
@@ -1951,7 +1951,7 @@ namespace Circuits {
         static bool IsName(string s) {
             if (s.Length == 0) { return false }
             for (int i = 0; i < s.Length; i++) {
-                var c = s.CharAt(i)
+                any c = s.CharAt(i)
                 var letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
                 if (!letter && (i == 0 || c < '0' || c > '9')) { return false }
             }
@@ -1963,7 +1963,7 @@ namespace Circuits {
             while (parent[r] != r) { r = parent[r] }
             var k = i
             while (parent[k] != r) {
-                var next = parent[k]
+                any next = parent[k]
                 parent[k] = r
                 k = next
             }
@@ -1981,7 +1981,7 @@ namespace Circuits {
         static string Quote(string s) {
             var r = "\""
             for (int i = 0; i < s.Length; i++) {
-                var c = s.CharAt(i)
+                any c = s.CharAt(i)
                 if (c == '"') { r = r + "\\\"" }
                 else if (c == '\\') { r = r + "\\\\" }
                 else if (c == '\n') { r = r + "\\n" }
@@ -2028,7 +2028,7 @@ namespace Circuits {
         /// <summary>A number with an SI prefix ("4.7k", "10u", "0").</summary>
         static string Format(float v) {
             if (v == 0.0) { return "0" }
-            var a = Math.Abs(v)
+            any a = Math.Abs(v)
             var prefixes = ["p", "n", "u", "m", "", "k", "M", "G"]
             var factors = [0.000000000001, 0.000000001, 0.000001, 0.001, 1.0, 1000.0, 1000000.0, 1000000000.0]
             var k = 4
@@ -2042,7 +2042,7 @@ namespace Circuits {
         }
 
         static string Trim(float x) {
-            var r = Math.Round(x * 1000000.0) / 1000000.0
+            any r = Math.Round(x * 1000000.0) / 1000000.0
             if (r == Math.Round(r)) { return "" + Math.Round(r)!int }
             var s = "" + r
             return s
@@ -2058,15 +2058,15 @@ namespace Circuits {
                 foreach (e in this.elements) { this.Drop(e) }
                 this.elements.Clear()
                 this.portDefs.Clear()
-                var ports = o.Get("ports")
+                any ports = o.Get("ports")
                 if (ports != undefined) {
                     for (int i = 0; i < ports.length; i++) {
                         if (!(ports[i] is of JsonObject)) { throw new ArgumentException("Port " + i + " is not an object.") }
                         JsonObject pdo = ports[i]!JsonObject
-                        var pname = pdo.Get("name")
-                        var pdir = pdo.Get("direction")
-                        var ppin = pdo.Get("pin")
-                        var pcol = pdo.Get("color")
+                        any pname = pdo.Get("name")
+                        any pdir = pdo.Get("direction")
+                        any ppin = pdo.Get("pin")
+                        any pcol = pdo.Get("color")
                         var dname = ""
                         if (pname != undefined) { dname = "" + pname }
                         var ddir = "input"
@@ -2080,27 +2080,27 @@ namespace Circuits {
                         this.portDefs.Add(take d)
                     }
                 }
-                var cls = o.Get("class")
+                any cls = o.Get("class")
                 if (cls != undefined) { this.className = "" + cls }
-                var ns = o.Get("namespace")
+                any ns = o.Get("namespace")
                 if (ns != undefined) { this.namespaceName = "" + ns }
-                var step = o.Get("timeStep")
+                any step = o.Get("timeStep")
                 if (step != undefined) {
-                    var dt = Circuits.Symbols.Number("" + step)
+                    any dt = Circuits.Symbols.Number("" + step)
                     if (dt != undefined && dt > 0.0 && Math.Abs(this.circuit.StepRaw() - dt) > dt * 0.000001) { this.circuit.TimeStep = dt * 1s }
                 }
                 // the pace of real time (simulated seconds per second); a file without it runs in real time
-                var speed = o.Get("speed")
+                any speed = o.Get("speed")
                 this.circuit.speed = 1.0
                 if (speed != undefined) {
-                    var sp = Circuits.Symbols.Number("" + speed)
+                    any sp = Circuits.Symbols.Number("" + speed)
                     if (sp != undefined && sp >= 0.0001 && sp <= 1000.0) { this.circuit.speed = sp }
                 }
-                var prms = o.Get("parameters")
+                any prms = o.Get("parameters")
                 if (prms != undefined && prms is of JsonObject) {
                     JsonObject po = prms!JsonObject
                     foreach (k in po.Keys()) {
-                        var v = Circuits.Symbols.Number("" + po.Get(k))
+                        any v = Circuits.Symbols.Number("" + po.Get(k))
                         if (v == undefined) { throw new ArgumentException("The parameter '" + k + "' is not a number.") }
                         var i = this.circuit.paramNames.IndexOf(k)
                         if (i < 0) {
@@ -2109,22 +2109,22 @@ namespace Circuits {
                         } else { this.circuit.paramValues[i] = v }
                     }
                 }
-                var list = o.Get("elements")
+                any list = o.Get("elements")
                 if (list != undefined) {
                     for (int i = 0; i < list.length; i++) {
                         if (!(list[i] is of JsonObject)) { throw new ArgumentException("Element " + i + " is not an object.") }
                         JsonObject eo = list[i]!JsonObject
                         var type = "" + eo.Get("type")
                         if (!Circuits.Symbols.Known(type)) { throw new ArgumentException("Element " + i + ": there is no element '" + type + "'.") }
-                        var a = eo.Get("from")
-                        var b = eo.Get("to")
+                        any a = eo.Get("from")
+                        any b = eo.Get("to")
                         if (a == undefined || b == undefined) { throw new ArgumentException("Element " + i + " (" + type + ") needs 'from' and 'to'.") }
                         var e = Circuits.Symbols.Make(type, Math.Round(a[0])!int, Math.Round(a[1])!int, Math.Round(b[0])!int, Math.Round(b[1])!int)
                         foreach (k in eo.Keys()) {
                             string key = k
                             if (key == "name") { e.name = "" + eo.Get(k) }
                             else if (key != "type" && key != "from" && key != "to") {
-                                var value = eo.Get(k)
+                                any value = eo.Get(k)
                                 if (value is of bool) {
                                     if (value) { e.Set(key, "true") } else { e.Set(key, "false") }
                                 } else { e.Set(key, "" + value) }

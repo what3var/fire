@@ -18,11 +18,13 @@
     "functions": [
       {
         "name": "__IOLastError",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_io_LastError"
       },
       {
         "name": "__IOLastErrorMessage",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -30,51 +32,61 @@
       },
       {
         "name": "__IOOpenCount",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_io_OpenCount"
       },
       {
         "name": "__IOFileOpen",
+        "returns": "int",
         "arguments": 3,
         "c": "fire_io_FileOpen"
       },
       {
         "name": "__IOMemNew",
+        "returns": "int",
         "arguments": 0,
         "c": "fire_io_MemNew"
       },
       {
         "name": "__IOMemFromBuffer",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_io_MemFromBuffer"
       },
       {
         "name": "__IOClose",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_Close"
       },
       {
         "name": "__IORead",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_io_Read"
       },
       {
         "name": "__IOWrite",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_io_Write"
       },
       {
         "name": "__IOReadByte",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_io_ReadByte"
       },
       {
         "name": "__IOWriteByte",
+        "returns": "int",
         "arguments": 2,
         "c": "fire_io_WriteByte"
       },
       {
         "name": "__IOReadRest",
+        "returns": "byte[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -82,46 +94,55 @@
       },
       {
         "name": "__IOFlush",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_Flush"
       },
       {
         "name": "__IOSeek",
+        "returns": "int[64]",
         "arguments": 3,
         "c": "fire_io_Seek"
       },
       {
         "name": "__IOPosition",
+        "returns": "int[64]",
         "arguments": 1,
         "c": "fire_io_Position"
       },
       {
         "name": "__IOLength",
+        "returns": "int[64]",
         "arguments": 1,
         "c": "fire_io_Length"
       },
       {
         "name": "__IOSetLength",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_io_SetLength"
       },
       {
         "name": "__IOCanRead",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_CanRead"
       },
       {
         "name": "__IOCanWrite",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_CanWrite"
       },
       {
         "name": "__IOCanSeek",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_CanSeek"
       },
       {
         "name": "__IOMemToBuffer",
+        "returns": "byte[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -129,51 +150,61 @@
       },
       {
         "name": "__IOFileExists",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_io_FileExists"
       },
       {
         "name": "__IOFileSize",
+        "returns": "int[64]",
         "arguments": 1,
         "c": "fire_io_FileSize"
       },
       {
         "name": "__IOFileTime",
+        "returns": "int[64]",
         "arguments": 1,
         "c": "fire_io_FileTime"
       },
       {
         "name": "__IOFileDelete",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_FileDelete"
       },
       {
         "name": "__IOFileCopy",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_io_FileCopy"
       },
       {
         "name": "__IOFileMove",
+        "returns": "bool",
         "arguments": 3,
         "c": "fire_io_FileMove"
       },
       {
         "name": "__IODirExists",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_io_DirExists"
       },
       {
         "name": "__IODirCreate",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_DirCreate"
       },
       {
         "name": "__IODirDelete",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_io_DirDelete"
       },
       {
         "name": "__IODirList",
+        "returns": "any[]",
         "arguments": 4,
         "needsList": true,
         "returnsReference": true,
@@ -181,6 +212,7 @@
       },
       {
         "name": "__IOCurrentDir",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -188,21 +220,25 @@
       },
       {
         "name": "__IOEntryTime",
+        "returns": "int[64]",
         "arguments": 1,
         "c": "fire_io_EntryTime"
       },
       {
         "name": "__IODirMove",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_io_DirMove"
       },
       {
         "name": "__IOSetCurrentDir",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_SetCurrentDir"
       },
       {
         "name": "__IORoots",
+        "returns": "any[]",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -210,6 +246,7 @@
       },
       {
         "name": "__IOHomeDir",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -217,6 +254,7 @@
       },
       {
         "name": "__IOPathCombine",
+        "returns": "string",
         "arguments": 2,
         "needsList": true,
         "returnsReference": true,
@@ -224,6 +262,7 @@
       },
       {
         "name": "__IOPathFileName",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -231,6 +270,7 @@
       },
       {
         "name": "__IOPathStem",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -238,6 +278,7 @@
       },
       {
         "name": "__IOPathExtension",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -245,6 +286,7 @@
       },
       {
         "name": "__IOPathParent",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -252,6 +294,7 @@
       },
       {
         "name": "__IOPathFull",
+        "returns": "string",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -259,6 +302,7 @@
       },
       {
         "name": "__IOPathTemp",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -266,6 +310,7 @@
       },
       {
         "name": "__IOPathSeparator",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -273,26 +318,31 @@
       },
       {
         "name": "__IOPathIsRooted",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_PathIsRooted"
       },
       {
         "name": "__IOStdHandle",
+        "returns": "int",
         "arguments": 1,
         "c": "fire_io_StdHandle"
       },
       {
         "name": "__IOStdWrite",
+        "returns": "bool",
         "arguments": 2,
         "c": "fire_io_StdWrite"
       },
       {
         "name": "__IOStdFlush",
+        "returns": "bool",
         "arguments": 1,
         "c": "fire_io_StdFlush"
       },
       {
         "name": "__IOStdReadLine",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -300,6 +350,7 @@
       },
       {
         "name": "__IOStdReadAll",
+        "returns": "string",
         "arguments": 0,
         "needsList": true,
         "returnsReference": true,
@@ -307,11 +358,13 @@
       },
       {
         "name": "__IOBufferIndexOf",
+        "returns": "int",
         "arguments": 4,
         "c": "fire_io_BufferIndexOf"
       },
       {
         "name": "__IOUtf8Encode",
+        "returns": "byte[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -319,6 +372,7 @@
       },
       {
         "name": "__IOUtf8Decode",
+        "returns": "string",
         "arguments": 3,
         "needsList": true,
         "returnsReference": true,
@@ -326,6 +380,7 @@
       },
       {
         "name": "__IOSplitLines",
+        "returns": "any[]",
         "arguments": 1,
         "needsList": true,
         "returnsReference": true,
@@ -336,6 +391,46 @@
       "DestroyedException"
     ],
     "reset": "fire_io_reset",
-    "language": "c"
+    "language": "c",
+    "platformSources": {
+      "posix": [
+        "native/fire_fs_posix.h"
+      ],
+      "windows": [
+        "native/fire_fs_win32.h"
+      ],
+      "wasm": [
+        "native/fire_fs_posix.h"
+      ],
+      "dos16": [
+        "native/fire_fs_dos.h"
+      ],
+      "esp32": [
+        "native/fire_fs_board.h"
+      ],
+      "freertos": [
+        "native/fire_fs_board.h"
+      ],
+      "default": [
+        "native/fire_fs_none.h"
+      ],
+      "dos32": [
+        "native/fire_fs_dos.h"
+      ],
+      "win16": [
+        "native/fire_fs_dos.h"
+      ],
+      "bios16-dos": [
+        "native/fire_fs_dos.h"
+      ]
+    },
+    "headers": [
+      "native/fire_fs_c.h",
+      "native/fire_fs_dos.h",
+      "native/fire_fs_none.h",
+      "native/fire_fs_posix.h",
+      "native/fire_fs_win32.h",
+      "native/fire_fs_board.h"
+    ]
   }
 }

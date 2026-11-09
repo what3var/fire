@@ -94,6 +94,8 @@
         <StreamGeometry x:Key="IconOpen">M19,20H4C2.89,20 2,19.1 2,18V6C2,4.89 2.89,4 4,4H10L12,6H19A2,2 0 0,1 21,8H21L4,8V18L6.14,10H23.21L20.93,18.5C20.7,19.37 19.92,20 19,20Z</StreamGeometry>
         <StreamGeometry x:Key="IconSave">M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z</StreamGeometry>
         <StreamGeometry x:Key="IconBuild">M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15M5,15.91L11,19.29V12.58L5,9.21V15.91M19,15.91V9.21L13,12.58V19.29L19,15.91Z</StreamGeometry>
+        <StreamGeometry x:Key="IconProfile">M12,16A3,3 0 0,1 9,13C9,11.88 9.61,10.9 10.5,10.39L20.21,4.77L14.68,14.35C14.18,15.33 13.17,16 12,16M12,3C13.81,3 15.5,3.5 16.97,4.32L14.87,5.53C14,5.19 13,5 12,5A8,8 0 0,0 4,13C4,15.21 4.89,17.21 6.34,18.65H6.35C6.74,19.04 6.74,19.67 6.35,20.06C5.96,20.45 5.32,20.45 4.93,20.07V20.07C3.12,18.26 2,15.76 2,13A10,10 0 0,1 12,3M22,13C22,15.76 20.88,18.26 19.07,20.07V20.07C18.68,20.45 18.05,20.45 17.66,20.06C17.27,19.67 17.27,19.04 17.66,18.65V18.65C19.11,17.2 20,15.21 20,13C20,12 19.81,11 19.46,10.1L20.67,8C21.5,9.5 22,11.18 22,13Z</StreamGeometry>
+        <StreamGeometry x:Key="IconStats">M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z</StreamGeometry>
         <StreamGeometry x:Key="IconSettings">M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z</StreamGeometry>
     </Window.Resources>
 
@@ -163,6 +165,7 @@
 						</MenuItem>
 						<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
 						<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
+						<MenuItem Header="_Block Model" Click="NewBlockModel_Click"/>
 					</MenuItem>
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
 					<Separator/>
@@ -225,7 +228,7 @@
 					<MenuItem Header="_Pack Library as Package (.fpk)..." x:Name="mnuPackLibrary" Click="PackLibrary_Click"/>
 					<MenuItem Header="_Install Library (pack and install)" x:Name="mnuInstallLibrary" Click="InstallLibrary_Click"/>
 					<MenuItem Header="_Reload Project (read the folder again)" x:Name="mnuReloadProject" Click="ReloadProject_Click"/>
-					<!-- the notes of the project (docs/NOTES.md) -->
+					<!-- the notes of the project (docs/tools/notes.md) -->
 					<MenuItem Header="_Todo List" Click="TodoOpen_Click"/>
 					<MenuItem Header="O_verview" Click="OverviewOpen_Click"/>
 					<MenuItem Header="Project Pr_operties..." x:Name="mnuProjectProperties" Click="ProjectProperties_Click"/>
@@ -249,17 +252,17 @@
 					<MenuItem Header="_Refresh" Click="GitRefresh_Click"/>
 				</MenuItem>
 				<MenuItem Header="_Run">
-					<MenuItem Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
+					<MenuItem x:Name="miRun" Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
 					<MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+F5"/>
 					<MenuItem Header="Build Stan_dalone..." Click="Build_Click"/>
 					<MenuItem Header="Build _Native..." Click="BuildNative_Click"/>
 					<MenuItem Header="Cancel Bui_ld" Click="CancelBuild_Click" InputGesture="Ctrl+Pause"/>
 					<Separator/>
-					<MenuItem Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
-					<MenuItem Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
-					<MenuItem Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
-					<MenuItem Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
-					<MenuItem Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
+					<MenuItem x:Name="miStep" Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
+					<MenuItem x:Name="miStepInto" Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
+					<MenuItem x:Name="miStepOut" Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
+					<MenuItem x:Name="miContinue" Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
+					<MenuItem x:Name="miRunToEnd" Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
 					<MenuItem Header="_Ignore Error and Continue" Click="IgnoreError_Click" InputGesture="Shift+F8"/>
 					<MenuItem Header="S_top" Click="Stop_Click" InputGesture="Shift+F5"/>
 					<Separator/>
@@ -273,7 +276,7 @@
 					<Separator/>
 					<MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
 				</MenuItem>
-				<!-- the Test Explorer (docs/TESTING.md): the tests of the solution, the project or the active file -->
+				<!-- the Test Explorer (docs/tools/testing.md): the tests of the solution, the project or the active file -->
 				<MenuItem Header="_Test">
 					<MenuItem Header="Test _Explorer" Click="TestsOpen_Click"/>
 					<Separator/>
@@ -355,6 +358,7 @@
 									</MenuItem>
 									<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
 									<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
+						<MenuItem Header="_Block Model" Click="NewBlockModel_Click"/>
 									<Separator/>
 									<MenuItem Header="_Project..." Click="NewProject_Click"/>
 									<MenuItem Header="_Solution..." Click="NewSolution_Click"/>
@@ -389,15 +393,17 @@
 							<ComboBoxItem Content="VM" Tag="vm"/>
 							<ComboBoxItem Content="Native" Tag="native"/>
 						</ComboBox>
-						<local:ToolStripButton Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended" IconSource="/Assets/icons/Material-Play.png"/>
+						<local:ToolStripButton x:Name="tbRun" Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended" IconSource="/Assets/icons/Material-Play.png"/>
 						<local:ToolStripButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)" IconSource="/Assets/icons/Material-Restart.png"/>
-						<local:ToolStripButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
-						<local:ToolStripButton Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)" IconSource="/Assets/icons/Material-Stop.png"/>
+						<local:ToolStripButton x:Name="tbRunToEnd" Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
+						<local:ToolStripButton x:Name="tbStop" Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)" IconSource="/Assets/icons/Material-Stop.png"/>
+						<local:ToolStripButton x:Name="tbProfile" Click="Profile_Click" IconData="{StaticResource IconProfile}"
+						                       ToolTip.Tip="Profile runs in the VM (on/off): afterwards a tab shows which lines took the most time, how often each line ran and which code never ran"/>
 					</local:ToolStrip>
 					<local:ToolStrip Id="debug" Title="Debug" Band="0" BandIndex="3">
-						<local:ToolStripButton Click="Step_Click" ToolTip.Tip="Step over (F10)" IconSource="/Assets/icons/Material-DebugStepOver.png"/>
-						<local:ToolStripButton Click="StepInto_Click" ToolTip.Tip="Step into (F11)" IconSource="/Assets/icons/Material-DebugStepInto.png"/>
-						<local:ToolStripButton Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)" IconSource="/Assets/icons/Material-DebugStepOut.png"/>
+						<local:ToolStripButton x:Name="tbStep" Click="Step_Click" ToolTip.Tip="Step over (F10)" IconSource="/Assets/icons/Material-DebugStepOver.png"/>
+						<local:ToolStripButton x:Name="tbStepInto" Click="StepInto_Click" ToolTip.Tip="Step into (F11)" IconSource="/Assets/icons/Material-DebugStepInto.png"/>
+						<local:ToolStripButton x:Name="tbStepOut" Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)" IconSource="/Assets/icons/Material-DebugStepOut.png"/>
 						<local:ToolStripButton Label="Breakpoint" Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)" IconSource="/Assets/icons/Material-PauseCircle.png"/>
 					</local:ToolStrip>
 					<local:ToolStrip Id="device" Title="Default device" Band="1" BandIndex="1">
@@ -410,6 +416,8 @@
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbTarget" Width="170" SelectionChanged="cmbTarget_SelectionChanged" MinHeight="26" Padding="8,2"
 						          ToolTip.Tip="The target of a native build (Build native). Default: the target of the project or of the native build settings"/>
 						<local:ToolStripButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build native..." IconData="{StaticResource IconBuild}"/>
+						<local:ToolStripButton x:Name="tbBuildStats" Click="BuildStats_Click" IconData="{StaticResource IconStats}"
+						                       ToolTip.Tip="Statistics of native builds (on/off): code by origin, data, the typing of the generated functions, the biggest functions - shown in a tab after the build (forge --stats)"/>
 						<local:ToolStripButton Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)" IconData="{StaticResource IconSettings}"/>
 					</local:ToolStrip>
 					<!-- the circuit editor: on while a circuit is the active document -->
@@ -453,7 +461,7 @@
 					        Background="Transparent" BorderThickness="0" VerticalAlignment="Center">
 						<StackPanel Orientation="Horizontal" Spacing="8">
 							<TextBlock x:Name="BuildStatusText" Text="Building..." VerticalAlignment="Center"/>
-							<ProgressBar x:Name="BuildStatusBar" Width="80" Height="6" MinHeight="6" MinWidth="80" IsIndeterminate="True" VerticalAlignment="Center"/>
+							<ProgressBar x:Name="BuildStatusBar" Width="80" Height="6" MinHeight="6" MinWidth="80" IsIndeterminate="False" VerticalAlignment="Center"/>
 						</StackPanel>
 					</Button>
 					<TextBlock x:Name="GitText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="The git branch (↑ commits to push, ↓ commits to pull) and the number of changed files"/>

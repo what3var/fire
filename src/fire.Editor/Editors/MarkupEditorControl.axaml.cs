@@ -15,7 +15,7 @@ using fire.UI.Markup;
 
 namespace fire.Editor
 {
-    /// <summary>Editor of a UI markup file (.fxml, docs/UI_MARKUP.md): the XML text with colours, and next to it the design view - a picture of the interface (only to look at,
+    /// <summary>Editor of a UI markup file (.fxml, docs/ui/markup.md): the XML text with colours, and next to it the design view - a picture of the interface (only to look at,
     /// see <see cref="MarkupPreviewControl"/>) that follows the text while it is typed; mistakes of the markup are listed under the picture and underlined in the text.</summary>
     public partial class MarkupEditorControl : UserControl, IDocumentView, IPropertyHost
     {

@@ -129,7 +129,7 @@ namespace fire.Editor
                 catch (ParseException pe) when (otherFiles is { Count: > 0 } && pe.FileName != null) { throw new OtherFileBroken(); }
                 catch (LexException) when (otherFiles is { Count: > 0 }) { throw new OtherFileBroken(); }
                 var resolveResult = Resolver.Resolve(program, natives.Names);
-                // type conflicts (docs/TYPES.md): the code of the document is the last source; warnings in lax mode, errors in strict mode (the project's setting, `#lax` / `#strict` in the file)
+                // type conflicts (docs/spec/TYPES.md): the code of the document is the last source; warnings in lax mode, errors in strict mode (the project's setting, `#lax` / `#strict` in the file)
                 var typeMode = string.Equals(plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax;
                 diagnostics.AddRange(TypeChecker.Check(program, resolveResult, typeMode, processed.Count - 1));
                 Compiler.Compiler.Compile(program, resolveResult, natives);

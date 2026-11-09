@@ -13,7 +13,7 @@ namespace fire.Runtime
     }
 
     /// <summary>
-    /// `taking X` (docs/THREADING_DESIGN.md section 3): creates a complete, isolated deep copy of EVERYTHING reachable from X through fields and
+    /// `taking X` (docs/spec/THREADING_DESIGN.md section 3): creates a complete, isolated deep copy of EVERYTHING reachable from X through fields and
     /// array elements (objects, arrays, buffers) for a fire thread - regardless of who owns the parts in the original (an object that X only refers
     /// to, an array literal assigned to a field, the objects in it). Every part is copied once (shared parts and cycles stay shared/cyclic in the copy);
     /// a copied object that belonged to another copied object belongs to that one's copy, every other copy (the root included) belongs to `newOwner`

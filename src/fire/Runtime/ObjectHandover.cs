@@ -5,7 +5,7 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// `fire handover x` (docs/THREADING_DESIGN.md section 1): x goes to the new thread WITHOUT a copy - the counterpart of `taking` for what must not or
+    /// `fire handover x` (docs/spec/THREADING_DESIGN.md section 1): x goes to the new thread WITHOUT a copy - the counterpart of `taking` for what must not or
     /// cannot be duplicated (a `[NoCopy]` resource such as a NativeHandle). Like `taking`, it takes everything reachable from x through fields and array
     /// elements (and everything the objects own): those parts move as they are. A part whose owner moves too keeps its owner, every other part (x itself
     /// included) belongs to `target` - the root scope of the new thread - from then on, whoever owned it before (as `take` does). The parts leave the

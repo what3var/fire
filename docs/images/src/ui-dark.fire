@@ -1,0 +1,13 @@
+// Made from docs/ui/windows.md by extract.py - edit the page, not this file.
+#include "ui-dark/Dark.fxml"
+#include "shot.fire"
+
+class DarkWindow : DarkBase {
+    construct() {
+        this.ui.Dark = true              // whatever the system says
+        this.ui.Accent = 0x8854D0
+    }
+}
+
+var window = new DarkWindow()
+Shot.Save(window.ui, "ui-dark.png")

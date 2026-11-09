@@ -7,7 +7,7 @@ using fire.Runtime;
 namespace fire.Compiler
 {
     /// <summary>
-    /// The natives of a package for the virtual machine (docs/PACKAGE_NATIVES.md): the C++ source of an import is built into a shared library with the C ABI of native/abi/fire_pkg_abi.h
+    /// The natives of a package for the virtual machine (docs/packages/natives.md): the C++ source of an import is built into a shared library with the C ABI of native/abi/fire_pkg_abi.h
     /// - a generated wrapper around the functions, compiled together with the runtime and the sources, for the platform of this machine (`platformSources` of the package for it are
     /// used) - and the VM calls it. A package may bring a prebuilt library for the machine (<c>native.libraries</c>), which is used as it is. The built libraries are kept in the
     /// folder of the package (<c>lib/&lt;runtime identifier&gt;/</c>; a folder in the temporary files when that cannot be written) and are built again when a source is newer.
@@ -26,7 +26,8 @@ namespace fire.Compiler
         }
 
         /// <summary>The keys that `platformSources` and `platforms` of a package are matched with for this machine: the platform package and the target name.</summary>
-        public static IReadOnlyList<string> HostPlatformKeys => new[] { TargetProfile.Host.Native.Platform, TargetProfile.Host.Name };
+        /// <summary>The keys of the platform sources for the library of the VM: `vm` first (a package that has it gets only that layer - see SourcesFor), then the machine's.</summary>
+        public static IReadOnlyList<string> HostPlatformKeys => new[] { fire.Package.Manager.PackageNativeExtensions.VmKey, TargetProfile.Host.Native.Platform, TargetProfile.Host.Name };
 
         private static string Extension => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".dll" : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? ".dylib" : ".so";
         private static string Prefix => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "" : "lib";
@@ -51,9 +52,14 @@ namespace fire.Compiler
             yield return Path.Combine(Path.GetTempPath(), "fire-packages", Safe(import.Package.Name) + "-" + Safe(import.Package.Version), Rid);
         }
 
+        /// <summary>When the runtime that libraries are built against last changed (the fire.Native assembly; MinValue in a single-file build without a location).</summary>
+        private static DateTime RuntimeStamp() => typeof(NativeRuntimeFiles).Assembly.Location is { Length: > 0 } location && File.Exists(location) ? File.GetLastWriteTimeUtc(location) : DateTime.MinValue;
+
         private static DateTime NewestSource(InstalledImport import) =>
-            import.Import.Native!.SourcesFor(HostPlatformKeys).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s)))
-                .Concat(import.Package.DescriptionFile is { } d && File.Exists(d) ? new[] { File.GetLastWriteTimeUtc(d) } : Array.Empty<DateTime>()).DefaultIfEmpty(DateTime.MinValue).Max();
+            import.Import.Native!.SourcesFor(HostPlatformKeys).Concat(import.Import.Native.Headers).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s)))
+                .Concat(import.Package.DescriptionFile is { } d && File.Exists(d) ? new[] { File.GetLastWriteTimeUtc(d) } : Array.Empty<DateTime>())
+                // the runtime the library is built against (fire_rt.h, the ABI wrapper - inside fire.Native): a new runtime rebuilds the library like a new source
+                .Append(RuntimeStamp()).DefaultIfEmpty(DateTime.MinValue).Max();
 
         /// <summary>The library of an import on this machine if there is one (prebuilt, or built earlier and not older than the sources); otherwise null.</summary>
         public static string? Locate(InstalledImport import)
@@ -118,12 +124,6 @@ namespace fire.Compiler
                 bool isC = import.Import.Native.IsC;
                 string cpp = Path.Combine(work, isC ? "wrapper.c" : "wrapper.cpp");
                 File.WriteAllText(cpp, isC ? GenerateCWrapper(import) : GenerateWrapper(import));
-                if (ToolchainProvider.RequireLibraries(toolchain, cpp) is { } missingLibrary)
-                {
-                    string message = $"Building the native part of the package '{import.Package.Name}' needs a library that is missing:\n{missingLibrary}";
-                    RememberFailure(import, message);
-                    throw new PackageException(message);
-                }
                 string outFile = Path.Combine(work, FileNameFor(import));
                 var (exe, args) = NativeBuilder.CompilerCommand(toolchain, target, cpp, work, outFile, sharedLibrary: true, extraIncludeDirs: new[] { Path.Combine(work, "abi") }, language: isC ? "c" : "c++");
                 var (ok, text) = NativeBuilder.Run(exe, args, work);   // (cancelled: OperationCanceledException - nothing is remembered as a failure, the folder goes)
@@ -212,11 +212,10 @@ namespace fire.Compiler
             foreach (string lib in native.LinkLibrariesFor(HostPlatformKeys)) sb.AppendLine($"// fire-link: {lib}");
             sb.AppendLine("#define FIRE_LIBRARY 1");
             sb.AppendLine($"#define FIRE_TARGET \"{target.Name}\"");
-            sb.AppendLine($"#define FIRE_TARGET_{target.Name.ToUpperInvariant()} 1");
+            sb.AppendLine($"#define FIRE_TARGET_{target.MacroName} 1");
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
-            foreach (string line in CppGenerator.CPlatformHeaderDefines(target.Native.Platform)) sb.AppendLine(line);
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   /* the library has a runtime of its own (its state lives here) */");
             sb.AppendLine("#include \"fire_rt.h\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
@@ -229,8 +228,13 @@ namespace fire.Compiler
             for (int i = 0; i < functions.Count; i++)
             {
                 var fn = functions[i];
-                var args = Enumerable.Range(0, fn.Arguments).Select(k => $"a[{k}]").Concat(fn.NeedsList ? new[] { "list" } : Array.Empty<string>());
-                sb.AppendLine($"static Value thunk_{i}(const Value* a, OwnList* list) {{ (void)a; (void)list; return {fn.Symbol}({string.Join(", ", args)}); }}");
+                // (a typed function - "parameters" in the manifest: the Values converted into its C numbers, its C result into a Value)
+                bool typed = fire.Native.NativeCTypes.IsTyped(fn, true);
+                var args = Enumerable.Range(0, fn.Arguments).Select(k => typed && fire.Native.NativeCTypes.ParamCType(fn, k) is { } ct ? fire.Native.NativeCTypes.FromValue(ct, $"a[{k}]") : $"a[{k}]")
+                    .Concat(fn.NeedsList ? new[] { "list" } : Array.Empty<string>());
+                string call = $"{fn.Symbol}({string.Join(", ", args)})";
+                if (typed && fire.Native.NativeCTypes.ReturnCType(fn) is { } rt) call = fire.Native.NativeCTypes.ToValue(rt, call);
+                sb.AppendLine($"static Value thunk_{i}(const Value* a, OwnList* list) {{ (void)a; (void)list; return {call}; }}");
             }
             sb.AppendLine("static const FirePkgFn kEntries[] = {");
             for (int i = 0; i < functions.Count; i++)
@@ -299,7 +303,7 @@ namespace fire.Compiler
         }
 
         /// <summary>The C of the library of `graphics` and `windows` for the VM: the runtime in library mode, the sources of both imports (the bridges, the display of the platform
-        /// - fire's own, without SDL), the entry points of the ABI around every `__GRPH...` native the native backend knows (CppGenerator's tables: the same names, arguments and
+        /// - fire's own), the entry points of the ABI around every `__GRPH...` native the native backend knows (CppGenerator's tables: the same names, arguments and
         /// lists), and the host's own functions (the pixels of a framebuffer, a presenter for scene3d, the windows without a screen for the editor).</summary>
         /// <param name="target">The machine the library is for (default: this one; the tests generate the one of Windows to build it with MinGW).</param>
         public static string GenerateGraphicsWrapper(InstalledImport graphics, InstalledImport windows, TargetProfile? target = null)
@@ -311,11 +315,10 @@ namespace fire.Compiler
             foreach (string lib in CppGenerator.DisplayLibraries(target)) sb.AppendLine($"// fire-link: {lib}");
             sb.AppendLine("#define FIRE_LIBRARY 1");
             sb.AppendLine($"#define FIRE_TARGET \"{target.Name}\"");
-            sb.AppendLine($"#define FIRE_TARGET_{target.Name.ToUpperInvariant()} 1");
+            sb.AppendLine($"#define FIRE_TARGET_{target.MacroName} 1");
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
-            foreach (string line in CppGenerator.CPlatformHeaderDefines(target.Native.Platform)) sb.AppendLine(line);
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   /* the library has a runtime of its own (its state lives here) */");
             sb.AppendLine("#include \"fire_rt.h\"");
             foreach (var import in new[] { graphics, windows })
@@ -362,12 +365,11 @@ namespace fire.Compiler
             foreach (string lib in native.LinkLibrariesFor(HostPlatformKeys)) sb.AppendLine($"// fire-link: {lib}");   // (`linkLibraries` of the package: the build links them)
             sb.AppendLine("#define FIRE_LIBRARY 1");
             sb.AppendLine($"#define FIRE_TARGET \"{target.Name}\"");
-            sb.AppendLine($"#define FIRE_TARGET_{target.Name.ToUpperInvariant()} 1");
+            sb.AppendLine($"#define FIRE_TARGET_{target.MacroName} 1");
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
             sb.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{target.Native.Platform}/fire_platform.hpp\"");
-            foreach (string line in CppGenerator.CPlatformHeaderDefines(target.Native.Platform)) sb.AppendLine(line);   // (the platform layers in C: packages in C++ use them as well)
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the library has a runtime of its own (its state lives here)");
             sb.AppendLine("#include \"fire_rt_cpp.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))

@@ -1,0 +1,53 @@
+#import "scene3d"
+
+// scene3d.terrain (docs/graphics/terrain.md): a landscape from a grid of heights (a heightmap). The mesh is made by the renderer (fire_bridge_scene3d.h): nothing of it is
+// built in fire, and a program that does not import this package carries nothing of it.
+
+// How the heights become ground: Smooth - every height is a corner and the ground runs smoothly between them (hills); Hard - every height is a block with a flat top and
+// upright walls (steps, terraces, the look of a world of blocks; only the walls that can be seen are built).
+enum TerrainMode { Smooth = 0, Hard = 1 }
+
+// A landscape: an object of the scene (position, size, texture, material and everything else of an Object), made from `columns` x `rows` heights.
+// heights: a byte buffer (columns * rows heights 0..255, or columns * rows * 4 bytes R, G, B, A whose brightness is the height: a picture) or an array of numbers.
+// cell: the size of one cell (the distance of two heights; in Hard the width of a block), step: how high a height of 1 is.
+// The terrain lies centred on its position (x and z), and its height 0 is at the position's y.
+class Terrain : Object {
+    int columns
+    int rows
+    TerrainMode mode
+
+    construct(any heights, int columns, int rows, float cell : any m = 1m, float step : any m = 10cm, TerrainMode mode = TerrainMode.Smooth) : base() {
+        this.Build(heights, columns, rows, S3D.Length(cell), S3D.Length(step), mode)
+    }
+
+    // A terrain from a picture (a framebuffer in the colour mode Rgba): one height per pixel, its brightness (0..255).
+    static Terrain FromImage(Framebuffer image, float cell : any m = 1m, float step : any m = 10cm, TerrainMode mode = TerrainMode.Smooth) {
+        return new Terrain(image.ReadBytes(), image.Width(), image.Height(), cell, step, mode)
+    }
+
+    undefined Build(any heights, int columns, int rows, float cell, float step, TerrainMode mode) {
+        if (!__S3DTerrain(this.h, heights, columns, rows, cell, step, mode!int)) {
+            throw new Scene3DException("The heights do not make a terrain (columns * rows heights - at least 2 x 2 for a smooth one - as bytes, bytes R, G, B, A, or an array of numbers; a cell larger than 0).")
+        }
+        this.columns = columns
+        this.rows = rows
+        this.mode = mode
+    }
+
+    // The heights again (the same number of them, or another grid): the mesh is made anew.
+    undefined SetHeights(any heights, int columns, int rows, float cell : any m = 1m, float step : any m = 10cm) {
+        this.Build(heights, columns, rows, S3D.Length(cell), S3D.Length(step), this.mode)
+    }
+
+    int Columns { get { return this.columns } }
+    int Rows { get { return this.rows } }
+    TerrainMode Mode { get { return this.mode } }
+
+    // The height of the ground (its y in the world) below the point (x, z) of the world, or undefined outside the terrain. The terrain may be moved, scaled and turned around
+    // the vertical axis. For a figure that walks on it: figure.Y = terrain.HeightAt(figure.X, figure.Z).
+    any HeightAt(float x : any m, float z : any m) {
+        any y = __S3DTerrainHeight(this.h, S3D.Length(x), S3D.Length(z))
+        if (y == undefined) { return undefined }
+        return y * 1m
+    }
+}
