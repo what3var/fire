@@ -187,7 +187,7 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   Values of related types join: `int`/`float` to `float` (the whole number is converted at run time), objects to the nearest class or interface all of
   them are (`c ? new Dog() : new Cat()` is an `Animal`). The point of all this is that every variable has one static type the backend can lay out (a
   narrow value where it is known, the wide one only for `any`). For the same reason no operation has a type that depends on a value: `int / int` is an
-  `int` (`7 / 2` is 3), a power is always a `float` (`2 ^ 3` is 8.0). `var a = []` says nothing about its elements: `TC020`, an `any[]`
+  `int` (`7 / 2` is 3), a power of two ints an `int` (`2 ^ 3` is 8) unless its target is a `float` (then 8.0, SPEC 1.1). `var a = []` says nothing about its elements: `TC020`, an `any[]`
   (`int a[] = []` says it).
 * **`defined` (SPEC 8.10b).** A static type of a value type carries what the checker knows about `undefined` (`StaticType.Null`): *defined* - a
   literal, the result of an operator, a `defined` declaration, a call of a method whose return value is `defined`, `trust x`; *may be undefined* - a

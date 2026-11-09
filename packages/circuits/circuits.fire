@@ -11,7 +11,7 @@ prefixed unit Hertz: Hz
 // A ratio of amplitudes in decibels: 6dB is a factor of about 2, 20dB of 10 (-3dB: 1/sqrt 2). Multiplied with a value it is that factor (`1V * 6dB` is
 // 2V), decibels add (`3dB + 3dB` is 6dB), a declaration without a unit takes the factor (`float k : unitless = 20dB` and `20dB:unitless` are 10).
 unit Decibel: dB {
-    coerce to unitless => 10 ^ (value / 20)
+    coerce to unitless => 10.0 ^ (value / 20.0)
     coerce from unitless => 20 * Math.Log10(value)
 }
 

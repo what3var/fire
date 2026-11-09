@@ -25,7 +25,7 @@ From the loosest to the tightest binding:
 
 fire differs from C-style languages in a few places:
 
-- **`^` is the power**, not exclusive or. Exclusive or is `#`. A sign in front binds looser than `^`: `-2^2` is `-4`; the exponent may start with a sign: `2^-1` is `0.5`.
+- **`^` is the power**, not exclusive or. Exclusive or is `#`. A sign in front binds looser than `^`: `-2^2` is `-4`; the exponent may start with a sign: `2.0^-1` is `0.5`.
 - **`##`** is another way to write `!=`.
 - **`and`/`or`** are words for `&&`/`||`.
 - **`cond ? a : b`** gives `a` when the condition is `true`, otherwise `b`; only that side is evaluated. Inside the middle part a `:` ends it, so
@@ -34,7 +34,9 @@ fire differs from C-style languages in a few places:
 ```fire
 print(2 ^ 10)        // 1024
 print(-2 ^ 2)        // -4
-print(2 ^ -1)        // 0.5
+print(2.0 ^ -1)      // 0.5
+float half = 2 ^ -1  // 0.5: the target is a float
+print(2 ^ -1)        // 0: two ints, an int power
 print(5 # 3)         // 6 (exclusive or)
 print(5 & 3)         // 1
 print(5 | 3)         // 7
@@ -50,7 +52,7 @@ print(n < 0 ? "neg" : n == 0 ? "zero" : "pos")   // pos
 ## Arithmetic
 
 - `+ - * / %` work on `int` and `float`. Two `int`s stay an `int`: `7 / 2` is `3`. With a `float` on one side the result is a `float`: `7.0 / 2` is `3.5`.
-- A power is always a `float` (`2 ^ 10` is `1024.0`, printed `1024`): its type does not depend on the exponent. `(2 ^ 10)!int` is the whole number.
+- A power of two `int`s is an `int` (`2 ^ 10` is `1024`; a negative exponent works like `/` of ints: `2 ^ -1` is `0`), with a `float` operand a `float`. When the result goes to a `float` - a `float` variable, field, parameter or return value - the float power is used also for two ints: `float f = 2 ^ -1` is `0.5`.
 - Division of an `int` by zero throws a `DivideByZeroException`.
 - `+` joins texts as soon as one side is a `string`: `"n = " + 3` is `"n = 3"`.
 - Numbers with [units](05-units.md) are converted and checked: `500mm + 2m` is `2500mm`, `5mm + 2kg` throws a `UnitMismatchException`.

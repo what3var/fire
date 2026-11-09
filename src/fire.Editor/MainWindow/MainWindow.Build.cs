@@ -387,6 +387,7 @@ namespace fire.Editor
             NativeBuildResult result;
             try
             {
+                config.Stats = _settings.BuildStats;   // (the Statistics switch: the report next to the program, shown below)
                 result = await Task.Run(() =>
                     fire.Compiler.NativeBuilder.BuildSafe(sources, config, target, toolchain, output, mode, null, false, baseDirectory, null, plan, job.Monitor));
             }
@@ -408,11 +409,35 @@ namespace fire.Editor
             {
                 EndBuildJob(job, BuildOutcome.Succeeded);
                 UpdateStatus($"Built {result.Output} (native, {target.Name}).");
+                if (_settings.BuildStats && result.Output is { } built) ShowBuildStats(built + ".stats.json");
                 return;
             }
             EndBuildJob(job, BuildOutcome.Failed, BuildErrorText(result));
             UpdateStatus("The native build failed.");
             if (!FailureShown(job)) await Dialogs.Message(this, result.Log, "Build Native");
+        }
+
+        /// <summary>The Statistics switch of the build tool strip: native builds write their statistics and show them in a tab (kept in the settings of spark).</summary>
+        private void BuildStats_Click(object? sender, RoutedEventArgs e)
+        {
+            _settings.BuildStats = !_settings.BuildStats;
+            tbBuildStats.IsChecked = _settings.BuildStats;
+            _settings.Save();
+            UpdateStatus(_settings.BuildStats ? "Native builds show their statistics." : "Native builds without statistics.");
+        }
+
+        /// <summary>The statistics of the build just made: its tab, opened or shown again with the new numbers.</summary>
+        private void ShowBuildStats(string statsPath)
+        {
+            if (!File.Exists(statsPath))
+            {
+                UpdateStatus("The build wrote no statistics (the toolchain gives no map of the program, or linkage static with another target).");
+                return;
+            }
+            var open = _documents.FirstOrDefault(d => d.Kind == DocumentKind.BuildStats && d.View.FilePath != null
+                && string.Equals(Path.GetFullPath(d.View.FilePath), Path.GetFullPath(statsPath), StringComparison.OrdinalIgnoreCase));
+            if (open != null) { open.View.ResetTo("", statsPath); Activate(open); }
+            else OpenFile(statsPath, forceKind: DocumentKind.BuildStats);
         }
 
         /// <summary>The name of the mode of the run (`debug`, `release`, `performance`).</summary>

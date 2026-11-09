@@ -1551,8 +1551,24 @@ namespace fire.Compiler
         // Expressions
         // -------------------------------------------------------------------------------------------------------------
         /// <summary>The type of an expression that goes to a target of the type <paramref name="expected"/>: a lambda takes the types of its parameters and of its result from there.</summary>
-        private StaticType Infer(Expr expr, StaticType? expected) =>
-            expr is LambdaExpr lam ? InferLambda(lam, expected) : Infer(expr);
+        private StaticType Infer(Expr expr, StaticType? expected)
+        {
+            if (expected is { Kind: StaticKind.Float }) MarkFloatTarget(expr);
+            return expr is LambdaExpr lam ? InferLambda(lam, expected) : Infer(expr);
+        }
+
+        /// <summary>The powers of an expression whose target is a float (SPEC 1.1): `float f = 2 ^ -1` and `x = 2 ^ n * 3` with a float `x` take the float power
+        /// also of two ints - through `+ - * / %`, a sign and the branches of `?:`, not into the arguments of a call.</summary>
+        private static void MarkFloatTarget(Expr e)
+        {
+            switch (e)
+            {
+                case BinaryExpr { Op: BinaryOp.Power } p: p.FloatPower = true; break;
+                case BinaryExpr { Op: BinaryOp.Add or BinaryOp.Sub or BinaryOp.Mul or BinaryOp.Div or BinaryOp.Mod } b: MarkFloatTarget(b.Left); MarkFloatTarget(b.Right); break;
+                case UnaryExpr { Op: UnaryOp.Negate } u: MarkFloatTarget(u.Operand); break;
+                case ConditionalExpr c: MarkFloatTarget(c.Then); MarkFloatTarget(c.Else); break;
+            }
+        }
 
         private StaticType Infer(Expr expr)
         {
@@ -1773,7 +1789,8 @@ namespace fire.Compiler
                     if (left.Kind is StaticKind.Int or StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float) return StaticType.Float;
                     return StaticType.Dynamic;
                 case BinaryOp.Power:
-                    // a power is always a float (`2 ^ 3` is 8.0): its type does not depend on the exponent
+                    // two ints give an int (`2 ^ 10` is 1024, SPEC 1.1) - unless the target is a float (FloatPower: `float f = 2 ^ -1` is 0.5); a float gives a float
+                    if (left.Kind == StaticKind.Int && right.Kind == StaticKind.Int && !b.FloatPower) return StaticType.Int;
                     return left.Kind is StaticKind.Int or StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float ? StaticType.Float : StaticType.Dynamic;
                 case BinaryOp.Div:
                     // two ints divide into an int (`7 / 2` is 3)

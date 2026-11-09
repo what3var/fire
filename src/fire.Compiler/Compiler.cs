@@ -3881,7 +3881,7 @@ namespace fire.Compiler
                 BinaryOp.Mul => OpCode.Mul,
                 BinaryOp.Div => OpCode.Div,
                 BinaryOp.Mod => OpCode.Mod,
-                BinaryOp.Power => OpCode.Power,
+                BinaryOp.Power => b.FloatPower ? OpCode.PowerFloat : OpCode.Power,   // (a float target: the float power, SPEC 1.1)
                 BinaryOp.BitAnd => OpCode.BitAnd,
                 BinaryOp.BitOr => OpCode.BitOr,
                 BinaryOp.BitXor => OpCode.BitXor,

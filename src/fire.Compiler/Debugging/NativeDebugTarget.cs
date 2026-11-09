@@ -101,6 +101,8 @@ namespace fire.Debugging
         private long _nextId;
         private HashSet<(int, int)>? _sentBreakpoints;
         private Process? _process;
+        /// <summary>The program's process (see <see cref="AttachProcess"/>), null over a framed transport (a board).</summary>
+        public Process? Process => _process;
         private readonly List<string> _bufferedOutput = new();
         private Action<IDebugThread?, string>? _output;
         private volatile bool _closed;

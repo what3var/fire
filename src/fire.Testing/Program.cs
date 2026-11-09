@@ -4053,6 +4053,7 @@ print("2 * 3^2 = " + (2 * 3 ^ 2))
 print("-2^2 = " + (-2 ^ 2))
 print("2.0 ^ 0.5 = " + (2.0 ^ 0.5))
 print("2 ^ -1 = " + (2 ^ -1))
+print("2.0 ^ -1 = " + (2.0 ^ -1))
 
 print("12 & 10 = " + (12 & 10))
 print("12 | 10 = " + (12 | 10))
@@ -4071,7 +4072,7 @@ try
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
     Console.WriteLine(
-        "Ausgabe (erwartet: 1024 / 512 / 18 / -4 / 1.41... / 0.5 / 8 / 14 / 6 / 16 / 16 / 6):");
+        "Ausgabe (erwartet: 1024 / 512 / 18 / -4 / 1.41... / 0 / 0.5 / 8 / 14 / 6 / 16 / 16 / 6):");
     var vmGlobalScope = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
     vm.Run();
@@ -18985,6 +18986,9 @@ else
             print(2.0 ^ 0.5)
             print(2 ^ -1)
             print(3m ^ 2m)
+            float pwf = 2 ^ -1
+            print(pwf)
+            print(3 ^ 4 + 1)
             var i = 7
             print(i!float / 2)
             print(i / 2)

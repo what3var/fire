@@ -834,13 +834,45 @@ namespace fire.Values
         /// <summary>`^` (power, NOT bitwise XOR - that is `#`, see BitXor).
         /// A power is always a float (`2 ^ 3` is 8.0, `2 ^ -1` is 0.5): its type must not depend on the value of the exponent - a variable keeps its
         /// type (docs/spec/TYPES.md), and `int ^ int` as an int would be one for some exponents only. A whole result is `x!int` away.</summary>
+        /// <summary>`a ^ b` (SPEC 1.1): two ints give the int power (<see cref="IntPower"/>), anything with a float the float power. The units must be equal.</summary>
         public static Value Power(Value a, Value b)
         {
             if (AnyWord(a, b)) return WordOp(WordOperation.Pow, a, b);
             RequireNumeric(a); RequireNumeric(b);
             RequireSameUnit(a, b);
-
+            if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int) return MakeInt(IntPower(a._intValue, b._intValue), a.Unit, NumericWidth.W64, W(a, b));
             return MakeFloat(System.Math.Pow(a.ToDouble(), b.ToDouble()), a.Unit);
+        }
+
+        /// <summary>`a ^ b` whose target is a float (OpCode.PowerFloat): always the float power, also of two ints (`float f = 2 ^ -1` is 0.5).</summary>
+        public static Value PowerFloat(Value a, Value b)
+        {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Pow, a, b);
+            RequireNumeric(a); RequireNumeric(b);
+            RequireSameUnit(a, b);
+            return MakeFloat(System.Math.Pow(a.ToDouble(), b.ToDouble()), a.Unit);
+        }
+
+        /// <summary>The int power (wraps like `*`); a negative exponent is what dividing gives, like `/` of ints: 1 for 1, ±1 for -1, 0 otherwise, and a
+        /// DivideByZeroException for 0.</summary>
+        public static long IntPower(long b, long e)
+        {
+            if (e < 0)
+            {
+                if (b == 0) throw new DivideByZeroException();
+                return b == 1 ? 1 : b == -1 ? ((e & 1) == 0 ? 1 : -1) : 0;
+            }
+            long r = 1;
+            unchecked
+            {
+                while (e > 0)
+                {
+                    if ((e & 1) != 0) r *= b;
+                    e >>= 1;
+                    if (e > 0) b *= b;
+                }
+            }
+            return r;
         }
 
         /// <summary>Truncates an Int/Float value to the given bit width

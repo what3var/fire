@@ -150,7 +150,12 @@ namespace fire.Ast
     public sealed record UnaryExpr(int Line, UnaryOp Op, Expr Operand) : Expr(Line);
 
     public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power }
-    public sealed record BinaryExpr(int Line, BinaryOp Op, Expr Left, Expr Right) : Expr(Line);
+    public sealed record BinaryExpr(int Line, BinaryOp Op, Expr Left, Expr Right) : Expr(Line)
+    {
+        /// <summary>`a ^ b` whose target is a float (set by the type checker, SPEC 1.1): the float power (OpCode.PowerFloat) even of two ints, which otherwise give
+        /// an int power.</summary>
+        public bool FloatPower { get; set; }
+    }
     /// <summary>`lambda on target`: a new lambda with the same body whose `this` is `target` (the old one stays as it is).</summary>
     public sealed record RebindExpr(int Line, Expr Lambda, Expr Target) : Expr(Line);
     /// <summary>`Condition ? Then : Else` - only one of the two branches is evaluated.</summary>

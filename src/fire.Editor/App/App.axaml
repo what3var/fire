@@ -108,6 +108,12 @@
             <Setter Property="Margin" Value="4,2"/>
             <Setter Property="Fill" Value="#4A4252"/>
         </Style>
+        <!-- a tool button that is a switch (IsChecked): on, it keeps a frame and a light background -->
+        <Style Selector="local|ToolStripButton:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#3360A5FA"/>
+            <Setter Property="BorderBrush" Value="#9960A5FA"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
         <Style Selector="local|ToolStripButton Border.dropdown:pointerover">
             <Setter Property="Background" Value="#33FFFFFF"/>
         </Style>

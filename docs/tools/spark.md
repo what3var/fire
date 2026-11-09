@@ -9,9 +9,16 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   ([error codes](errors.md)).
 - **Run and debug:** `F5` starts, `F9` sets a breakpoint, `F10`/`F11` step; the panels *Threads*, *Scope* and *Stack* show the paused program. The
   engine box chooses the VM or a native build - native programs are debugged the same way, an ESP32 over its serial port ([targets](../targets/README.md)).
-- **Build tool strip:** mode (Debug/Release/Performance), engine (VM/Native), target, *Build*.
+- **Build tool strip:** mode (Debug/Release/Performance), engine (VM/Native), target, *Build*, and the *Statistics* switch: when it is on, *Build*
+  writes the statistics of the native build (`forge build --stats`, [forge](forge.md)) and opens them in a tab - the size of the program and what it takes
+  to load, the code by origin (the C of the packages, the runtime, the C library, the generated fire code by module), the data, how much of the generated
+  functions are C numbers, the biggest functions. A `.stats.json` next to a program opens in the same viewer.
+- **Runtime panel:** docked on the right, it shows itself while a program runs and hides again a few seconds after it ended (unless it was open
+  before): CPU and memory of the last minute as curves, CPU now and on average, memory now and at its peak, threads, lines of output, for the VM the
+  collections of the .NET heap, and the events of the run (start, pauses, errors, new threads, the end with exit code and duration). A native program is
+  measured as its own process; the VM runs inside spark, so its numbers are those of spark's process.
 - **Panels:** Output, Build log, Error list, Solution Explorer, Test Explorer ([testing](testing.md)), Todo ([notes](notes.md)), Devices
-  ([devices](../devices/README.md)), Properties. All of them dock, float or auto-hide; *View > Reset Layout* brings the start layout back.
+  ([devices](../devices/README.md)), Properties, Runtime. All of them dock, float or auto-hide; *View > Reset Layout* brings the start layout back.
 
 ## The markup designer
 

@@ -232,5 +232,12 @@ namespace fire.Native
         }
 
         public static string Json(Report r) => JsonSerializer.Serialize(r, new JsonSerializerOptions { WriteIndented = true });
+
+        /// <summary>A report written by <see cref="Json"/> (a `.stats.json` next to a program), null when the text is none.</summary>
+        public static Report? FromJson(string json)
+        {
+            try { return JsonSerializer.Deserialize<Report>(json); }
+            catch (JsonException) { return null; }
+        }
     }
 }

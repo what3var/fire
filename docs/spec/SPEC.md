@@ -92,9 +92,11 @@ is `0.25`, neither rejected nor `-4`.
 interplay with units), and `+` additionally for string
 concatenation (as soon as one side is a `string`, the other is appended via
 its normal `ToString()` representation). `^` (exponentiation) also accepts
-`int`/`float`; the result is always a `float` (`2 ^ 10` is `1024.0`, `2 ^ -1` is `0.5`): the type of an
-expression must not depend on a value (a variable keeps its type, docs/spec/TYPES.md) - `(2 ^ 10)!int` is the whole
-number. (A `word` to an int power stays a word.)
+`int`/`float` with two variants: two `int`s give the **int power** (`2 ^ 10` is `1024`, an `int`; it wraps like `*`; a negative exponent gives what `/` of
+ints gives - `2 ^ -1` is `0`, `1 ^ -n` is `1`, `(-1) ^ -n` is `±1`, `0 ^ -1` a `DivideByZeroException`), a `float` operand the float power. When the
+**target is a float** - a variable, field, parameter or return value declared `float`, also through `+ - * / %`, a sign and the branches of `?:` -
+the float variant wins also for two ints: `float f = 2 ^ -1` is `0.5`, `float g = 2 ^ 3 / 3` is `2.666…` (the type checker marks it, OpCode.PowerFloat).
+The type of an expression never depends on a value: `int ^ int` is an `int` wherever the target is not a float. (A `word` to an int power stays a word.)
 
 `&`/`|`/`#`/`<<`/`>>` (bitwise operators, including the unary `~`)
 accept **only** `int` - a run-time error for `float`/

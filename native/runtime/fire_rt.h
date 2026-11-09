@@ -1958,9 +1958,28 @@ FIRE_FN Value modulo(Value a, Value b) {
     if (a.kind == K_Word || b.kind == K_Word) return wordOp(W_MOD, a, b);
     return opFailed(a, b);
 }
-/* `a ^ b` (power; `#` is the bitwise xor): ints multiply, a float or a negative exponent uses pow. The units must be equal. */
-/* A power is always a float (Value.Power: its type must not depend on the value of the exponent). */
+FIRE_FN int64_t intPower(int64_t b, int64_t e) {
+    uint64_t r = 1, x = (uint64_t)b;
+    while (e > 0) { if (e & 1) r *= x; e >>= 1; if (e > 0) x *= x; }
+    return (int64_t)r;
+}
+/* `a ^ b` (SPEC 1.1): two ints give the int power (wrapping like `*`; a negative exponent is what `/` of ints gives - 1 for 1, +-1 for -1, 0 otherwise,
+ * 0 a DivideByZeroException), anything with a float the float power. The units must be equal. */
 FIRE_FN Value power(Value a, Value b) {
+    if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_POW, a, b);
+    if (FIRE_UNLIKELY(!isNumeric(a) || !isNumeric(b))) return opFailed(a, b);
+    if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); }
+    if (a.kind == K_Int && b.kind == K_Int) {
+        if (b.i < 0) {
+            if (a.i == 0) return divideByZero();
+            return IntOp(a.i == 1 ? 1 : a.i == -1 ? ((b.i & 1) ? -1 : 1) : 0, a.unit, a, b);
+        }
+        return IntOp(intPower(a.i, b.i), a.unit, a, b);
+    }
+    return Float((Real)pow((double)toR(a), (double)toR(b)), a.unit);
+}
+/* `a ^ b` whose target is a float (OpCode.PowerFloat): always the float power, also of two ints (`float f = 2 ^ -1` is 0.5). */
+FIRE_FN Value powerF(Value a, Value b) {
     if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_POW, a, b);
     if (FIRE_UNLIKELY(!isNumeric(a) || !isNumeric(b))) return opFailed(a, b);
     if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); }

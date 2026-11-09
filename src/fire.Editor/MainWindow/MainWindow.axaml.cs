@@ -45,6 +45,7 @@ namespace fire.Editor
         private readonly DevicesPanelControl _devicesPanel = new();
         private readonly SolutionExplorerControl _solutionPanel = new();
         private readonly PropertiesPanelControl _propertiesPanel = new();
+        private readonly RuntimePanelControl _runtimePanel = new();
 
         private AssemblyInfo _scriptAssemblyInfo = new();
 
@@ -57,7 +58,7 @@ namespace fire.Editor
         private static readonly Dictionary<string, string> PanelTitles = new()
         {
             ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["tests"] = "Test Explorer", ["todo"] = "Todo", ["properties"] = "Properties",
-            ["toolbox"] = "Toolbox",
+            ["toolbox"] = "Toolbox", ["runtime"] = "Runtime",
         };
 
         /// <summary>What kind of document a tab holds.</summary>
@@ -83,6 +84,8 @@ namespace fire.Editor
             Circuit,
             /// <summary>A model of blocks (.fblocks, docs/graphics/models.md) in the block editor.</summary>
             Blocks,
+            /// <summary>The statistics of a native build (.stats.json, BuildStatsViewerControl), to look at.</summary>
+            BuildStats,
         }
 
         /// <summary>An open tab. `Layout` is the docking element that shows the view (the view - the editor control - stays the same when the layout is rebuilt).</summary>
@@ -155,6 +158,7 @@ namespace fire.Editor
 
         private static DocumentKind KindOfPath(string path)
         {
+            if (path.EndsWith(".stats.json", StringComparison.OrdinalIgnoreCase)) return DocumentKind.BuildStats;
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (ext is ".md" or ".xmd" or ".markdown" or ".mdown") return DocumentKind.Markdown;   // .xmd: a canvas (docs/tools/notes.md)
             if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
@@ -170,7 +174,11 @@ namespace fire.Editor
         public MainWindow()
         {
             InitializeComponent();
-            Opened += (_, _) => UpdateRunButtons();   // (Stop is grey while nothing runs)
+            Opened += (_, _) =>
+            {
+                UpdateRunButtons();   // (Stop is grey while nothing runs)
+                tbBuildStats.IsChecked = _settings.BuildStats;
+            };
             // our caption buttons (see SparkDecorations in MainWindow.axaml): set explicitly, since the decorations do not see Window.Resources
             WindowDecorationsTheme = (Avalonia.Styling.ControlTheme)Resources["SparkDecorations"]!;
 
@@ -185,7 +193,7 @@ namespace fire.Editor
                     ("stack", PanelTitles["stack"], _stackPanel),
                 },
                 new() { ("solution", PanelTitles["solution"], _solutionPanel), ("tests", PanelTitles["tests"], _testExplorer), ("todo", PanelTitles["todo"], _todoPanel), ("devices", PanelTitles["devices"], _devicesPanel) },
-                new() { ("properties", PanelTitles["properties"], _propertiesPanel) },
+                new() { ("properties", PanelTitles["properties"], _propertiesPanel), ("runtime", PanelTitles["runtime"], _runtimePanel) },
                 new() { ("toolbox", PanelTitles["toolbox"], _toolboxPanel) });
             var layout = _factory.CreateLayout();
             _factory.InitLayout(layout);
@@ -193,6 +201,8 @@ namespace fire.Editor
             DockHost.Layout = layout;
             CollectTools();
             HookFactory();
+            // (the Runtime panel shows itself while a program runs: hidden until then - MainWindow.Run.cs UpdateRuntimePanel)
+            if (_tools.TryGetValue("runtime", out var runtimeTool)) _factory.HideDockable(runtimeTool);
 
             _strips = new ToolStripManager(this, DockArea, DockHint, trayTop, trayBottom, trayLeft, trayRight);
             _strips.Adopt();
@@ -250,7 +260,11 @@ namespace fire.Editor
             // IMPORTANT: Post (non-blocking), NOT Invoke - these handlers can fire from the OWN background thread of a fire thread that is just starting/pausing while the
             // UI thread ITSELF sits synchronously in a "run to the end" of the main thread (e.g. RunToCompletion) that in turn waits for a message from exactly this fire
             // thread (e.g. via `process`) - a blocking Invoke would deadlock then (the fire thread waits for the UI thread, the UI thread transitively for the fire thread).
-            _session.ThreadAdded += ctx => Dispatcher.UIThread.Post(() => _debugger.Refresh(BreakpointDescriptions()));
+            _session.ThreadAdded += ctx => Dispatcher.UIThread.Post(() =>
+            {
+                _debugger.Refresh(BreakpointDescriptions());
+                if (!ctx.IsMain) _runtimePanel.ThreadStarted(ctx.Name);
+            });
             _session.ThreadPaused += ctx => Dispatcher.UIThread.Post(() =>
             {
                 // Only when the thread that is SHOWN (the active one) is affected, the details (highlight/scope/stack) have to be rebuilt - another fire thread that continues
@@ -261,6 +275,8 @@ namespace fire.Editor
                     _isBusy = false;
                     AfterStep(!ctx.IsFinished);
                 }
+                if (ctx.RuntimeError != null) _runtimePanel.Event($"error{(ctx.IsMain ? "" : " in " + ctx.Name)}: {ctx.RuntimeError}");
+                else if (ReferenceEquals(ctx, _session.ActiveThread) && !ctx.IsFinished) _runtimePanel.Event("paused");
                 if (ctx.RuntimeError != null) _ = ReportRuntimeErrorAsync(ctx);   // the main program or any thread: the program stands still, the user decides
             });
 
@@ -407,7 +423,7 @@ namespace fire.Editor
             var contents = new Dictionary<string, Control>
             {
                 ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["tests"] = _testExplorer, ["todo"] = _todoPanel, ["properties"] = _propertiesPanel,
-                ["toolbox"] = _toolboxPanel,
+                ["toolbox"] = _toolboxPanel, ["runtime"] = _runtimePanel,
             };
             MakeObservable(layout, new HashSet<IDockable>());
             _factory.InitLayout(layout);
@@ -423,6 +439,7 @@ namespace fire.Editor
             EnsureTool(layout, "tests", contents["tests"], "solution");
             EnsureTool(layout, "todo", contents["todo"], "solution");
             EnsureTool(layout, "properties", contents["properties"], "solution");
+            EnsureTool(layout, "runtime", contents["runtime"], "properties");
             EnsureLeftTool(layout, "toolbox", contents["toolbox"]);
             DockHost.Layout = layout;
 
@@ -750,6 +767,7 @@ namespace fire.Editor
                 DocumentKind.Hex => new HexEditorControl(),
                 DocumentKind.Circuit => new CircuitEditorControl(),
                 DocumentKind.Blocks => new BlockEditorControl(),
+                DocumentKind.BuildStats => new BuildStatsViewerControl(),
                 _ => new ScriptEditorControl(),
             };
 

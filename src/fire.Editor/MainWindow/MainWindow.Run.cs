@@ -33,6 +33,53 @@ namespace fire.Editor
             foreach (var c in new Control?[] { tbRun, tbRunToEnd, tbStep, tbStepInto, tbStepOut, miRun, miStep, miStepInto, miStepOut, miContinue, miRunToEnd })
                 if (c != null) c.IsEnabled = idle;
             if (tbStop != null) tbStop.IsEnabled = _isBusyValue || _buildJob != null || _nativeRun != null || (_session.HasProgram && !_session.IsFinished);
+            UpdateRuntimePanel();
+        }
+
+        // The Runtime panel (Panels/RuntimePanelControl.cs) watches a run: it shows itself when a program starts and hides again a few seconds after it ended, when
+        // it was hidden before (a panel the user keeps open stays).
+        private bool _runtimeActive;
+        private bool _runtimeAutoShown;
+        private System.Diagnostics.Process? _runtimeProcess;
+        private DispatcherTimer? _runtimeHide;
+
+        private void UpdateRuntimePanel()
+        {
+            bool active = _nativeRun != null || (_session.HasProgram && _session.IsStarted && !_session.IsFinished);
+            if (active == _runtimeActive) return;
+            _runtimeActive = active;
+            _tools.TryGetValue("runtime", out var tool);
+            if (active)
+            {
+                _runtimeHide?.Stop();
+                _runtimeProcess = _nativeRun ?? (_session.Target as fire.Debugging.NativeDebugTarget)?.Process;
+                string what = _runtimeProcess != null ? $"native, {_session.ActiveExecutionMode ?? _session.ExecutionMode}" : $"VM, {_session.ActiveExecutionMode ?? _session.ExecutionMode}";
+                _runtimePanel.Start(_runtimeProcess, what);
+                if (tool != null && !IsToolVisible(tool))
+                {
+                    _runtimeAutoShown = true;
+                    _factory.RestoreDockable(tool);
+                }
+                return;
+            }
+            int? exitCode = null;
+            try { if (_runtimeProcess is { HasExited: true } p) exitCode = p.ExitCode; }
+            catch (InvalidOperationException) { }
+            _runtimePanel.Stop(exitCode);
+            _runtimeProcess = null;
+            if (!_runtimeAutoShown || tool == null) return;
+            _runtimeHide ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+            _runtimeHide.Tick -= RuntimeHideTick;
+            _runtimeHide.Tick += RuntimeHideTick;
+            _runtimeHide.Start();
+        }
+
+        private void RuntimeHideTick(object? sender, EventArgs e)
+        {
+            _runtimeHide?.Stop();
+            if (_runtimeActive || !_tools.TryGetValue("runtime", out var tool)) return;
+            _runtimeAutoShown = false;
+            if (IsToolVisible(tool) && (RootDock == null || !_factory.IsDockablePinned(tool, RootDock))) _factory.HideDockable(tool);
         }
 
         // The script that is compiled/paused in the debugger right now (stays so even when the tab is changed): a single file's document. null for a run of a project
@@ -120,6 +167,7 @@ namespace fire.Editor
             // Deliberately ONLY queue, NO UI interaction here - this method can fire very often and very fast from a fire thread (e.g. in a loop with hundreds of print() calls).
             // _outputFlushTimer (see the constructor) fetches the whole queue in bundles, at fixed intervals, in ONE append.
             _pendingOutput.Enqueue(text);
+            _runtimePanel.OutputLine();
         }
 
         private void FlushPendingOutput()

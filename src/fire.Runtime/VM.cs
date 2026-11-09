@@ -4200,6 +4200,7 @@ namespace fire.Runtime
                 case OpCode.Div: BinaryNumericOrOperator(Value.Divide, "operator/"); break;
                 case OpCode.Mod: BinaryNumericOrOperator(Value.Modulo, "operator%"); break;
                 case OpCode.Power: BinaryNumericOrOperator(Value.Power, "operator^"); break;
+                case OpCode.PowerFloat: BinaryNumericOrOperator(Value.PowerFloat, "operator^"); break;
                 case OpCode.BitAnd: BinaryNumericOrOperator(Value.BitAnd, "operator&"); break;
                 case OpCode.BitOr: BinaryNumericOrOperator(Value.BitOr, "operator|"); break;
                 case OpCode.BitXor: BinaryNumericOrOperator(Value.BitXor, "operator#"); break;

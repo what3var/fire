@@ -4553,6 +4553,7 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.Power: return Binary("power", "operator^");
+                case OpCode.PowerFloat: return Binary("powerF", "operator^");
                 case OpCode.StepSub:
                 case OpCode.Sub:
                     Need(2);

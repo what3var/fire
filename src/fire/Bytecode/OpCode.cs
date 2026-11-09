@@ -267,6 +267,8 @@ namespace fire.Bytecode
         TryTakeToScope,      // u16 depth
         TryTakeToObject,     //                     : Stack [obj, value]
         TryTakeToArray,      //                     : Stack [array, index, value]
+        // `a ^ b` whose target is a float (BinaryExpr.FloatPower, SPEC 1.1): the float power also of two ints (Power gives them an int power)
+        PowerFloat,
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the
