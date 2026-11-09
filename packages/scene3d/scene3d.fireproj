@@ -16,6 +16,7 @@
       "native/s3d_lean.h",
       "native/s3d_model.h",
       "native/s3d_effects.h",
+      "native/s3d_physics.h",
       "native/s3d_vk.h",
       "native/s3d_shaders.h",
       "native/s3d_gpu_vk.h",
@@ -372,6 +373,54 @@
         "returns": "bool",
         "arguments": 3,
         "c": "fire_s3d_EmitterPreset"
+      },
+      {
+        "name": "__S3DBody",
+        "returns": "bool",
+        "arguments": 3,
+        "c": "fire_s3d_Body"
+      },
+      {
+        "name": "__S3DBodyRemove",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_s3d_BodyRemove"
+      },
+      {
+        "name": "__S3DBodySet",
+        "returns": "bool",
+        "arguments": 3,
+        "c": "fire_s3d_BodySet"
+      },
+      {
+        "name": "__S3DBodyGet",
+        "returns": "float",
+        "arguments": 2,
+        "c": "fire_s3d_BodyGet"
+      },
+      {
+        "name": "__S3DBodyTouch",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_s3d_BodyTouch"
+      },
+      {
+        "name": "__S3DBodyTouches",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_BodyTouches"
+      },
+      {
+        "name": "__S3DRaycast",
+        "returns": "int",
+        "arguments": 8,
+        "c": "fire_s3d_Raycast"
+      },
+      {
+        "name": "__S3DRayInfo",
+        "returns": "float",
+        "arguments": 1,
+        "c": "fire_s3d_RayInfo"
       },
       {
         "name": "__S3DObjAdvance",

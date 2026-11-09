@@ -33,7 +33,10 @@ static class Scene3DTests
         #import "scene3d"
         #import "scene3d.terrain"
         #import "scene3d.effects"
+        #import "scene3d.physics"
 
+        // (two places after the point)
+        class P { static string F(any v) { return "" + Math.Floor(v / 1m * 100.0 + 0.5) / 100.0 } }
         // a checksum of the picture (the same in the VM and in C++)
         class H {
             static int Sum(Framebuffer f) {
@@ -369,6 +372,78 @@ static class Scene3DTests
         scene.Remove(smoke)
         scene.Remove(boom)
         try { flames.Speed = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }
+
+        // physics (scene3d.physics): a ball bounces, crates stack, a character walks up a step, stops at a wall, jumps; a trigger, rays, a terrain, a lift
+        var world = new Scene()
+        var pFloor = new Object(Template.Plane, 0m, 0m, 0m, 20m, 0m, 20m)
+        world.Add(pFloor)
+        Body.Static(pFloor)
+        var pStep = new Object(Template.Box, 3m, 0.1m, 0m, 2m, 0.2m, 4m)
+        world.Add(pStep)
+        Body.Static(pStep)
+        var pWall = new Object(Template.Box, 3m, 0.5m, 3m, 2m, 1m, 1m)
+        world.Add(pWall)
+        Body.Static(pWall)
+        var pBall = new Object(Template.Sphere, -2m, 3m, 0m, 0.5m, 0.5m, 0.5m)
+        world.Add(pBall)
+        var bb = Body.Ball(pBall, 1kg).Bouncy()
+        var pCrate = new Object(Template.Box, -4m, 2m, 0m, 1m, 1m, 1m)
+        world.Add(pCrate)
+        var cb = Body.Dynamic(pCrate, 5kg)
+        var pCrate2 = new Object(Template.Box, -4.2m, 4m, 0m, 1m, 1m, 1m)
+        world.Add(pCrate2)
+        Body.Dynamic(pCrate2, 5kg)
+        var pHero = new Object(Template.Box, 0m, 0m, 0m, 0.6m, 1.8m, 0.6m)
+        pHero.AnchorY = 0.0
+        world.Add(pHero)
+        var ch = new Character(pHero, 30cm, 1.8m)
+        var pGoal = new Object(Template.Box, 4m, 1m, 0m, 1m, 2m, 1m)
+        world.Add(pGoal)
+        Body.Static(pGoal, BodyShape.Box).Trigger = true
+        print("kinds " + bb.Kind + " " + bb.Shape + " " + ch.Kind + " " + ch.Shape + " " + bb.Mass + " " + ch.StepHeight + " " + ch.MaxSlope)
+        for (var i = 0; i < 30; i++) { world.Advance(1s / 30.0) }
+        print("ball " + P.F(pBall.Y) + " " + P.F(bb.VelocityY * 1s) + " crate " + P.F(pCrate.Y) + " " + P.F(pCrate2.Y) + " " + P.F(pCrate2.X) + " hero " + P.F(pHero.Y) + " " + ch.OnGround)
+        for (var i = 0; i < 90; i++) { world.Advance(1s / 30.0) }
+        print("rest " + P.F(pBall.Y) + " crate " + P.F(pCrate.Y) + " " + P.F(pCrate2.Y) + " " + cb.OnGround)
+        ch.Walk(2m / 1s, 0m / 1s)
+        for (var i = 0; i < 60; i++) { world.Advance(1s / 30.0) }
+        print("walked " + P.F(pHero.X) + " " + P.F(pHero.Y) + " " + ch.OnGround + " in goal " + ch.Touches(pGoal))
+        ch.Walk(0m / 1s, 2m / 1s)
+        for (var i = 0; i < 60; i++) { world.Advance(1s / 30.0) }
+        print("wall " + P.F(pHero.X) + " " + P.F(pHero.Y) + " " + P.F(pHero.Z))
+        ch.Walk(0m / 1s, 0m / 1s)
+        print("jump " + ch.Jump(5m / 1s))
+        world.Advance(1s / 30.0)
+        for (var i = 0; i < 10; i++) { world.Advance(1s / 30.0) }
+        print("up " + P.F(pHero.Y) + " " + ch.OnGround + " " + ch.Jump())
+        var pHit = world.Raycast(-2m, 5m, 0m, 0.0, -1.0, 0.0)
+        print("ray " + pHit.Object.Triangles + " " + P.F(pHit.Distance) + " " + P.F(pHit.Y) + " " + pHit.NormalY)
+        var pHit2 = world.Raycast(3m, 5m, 0m, 0.0, -1.0, 0.0)
+        print("ray2 " + (pHit2.Object == pStep) + " " + P.F(pHit2.Y) + " none " + (world.Raycast(0m, 5m, 0m, 0.0, 1.0, 0.0) == undefined))
+        // a terrain: a pBall rolls down a slope
+        var pHeights = new byte[16 * 16]
+        for (var z = 0; z < 16; z++) { for (var x = 0; x < 16; x++) { pHeights[z * 16 + x] = x * 10 } }
+        var pLand = new Terrain(pHeights, 16, 16, 1m, 5cm)
+        pLand.Z = 30m
+        world.Add(pLand)
+        Body.Static(pLand)
+        var pRock = new Object(Template.Sphere, 3m, 10m, 30m, 0.6m, 0.6m, 0.6m)
+        world.Add(pRock)
+        var rb = Body.Ball(pRock, 2kg)
+        for (var i = 0; i < 90; i++) { world.Advance(1s / 30.0) }
+        print("rock " + P.F(pRock.X) + " " + P.F(pRock.Y) + " ground " + P.F(pLand.HeightAt(pRock.X, pRock.Z)) + " " + rb.OnGround)
+        // a pLift: kinematic, it carries a pCrate up
+        var pLift = new Object(Template.Box, 8m, 0.1m, 0m, 2m, 0.2m, 2m)
+        world.Add(pLift)
+        var lb = Body.Kinematic(pLift)
+        lb.SetVelocity(0m / 1s, 1m / 1s, 0m / 1s)
+        var pBox3 = new Object(Template.Box, 8m, 1m, 0m, 0.8m, 0.8m, 0.8m)
+        world.Add(pBox3)
+        Body.Dynamic(pBox3)
+        for (var i = 0; i < 60; i++) { world.Advance(1s / 30.0) }
+        print("lift " + P.F(pLift.Y) + " box " + P.F(pBox3.Y))
+        world.Gravity = 0m / 1s / 1s
+        print("gravity " + world.Gravity)
         try { robot.Play("dance") } catch (Scene3DException e) { print("error " + e.message) }
         try { Model.FromBytes(new byte[10]) } catch (Scene3DException e) { print("error " + e.message) }
         try { robot.Advance(3) } catch (UnitMismatchException e) { print("unit " + e.message) }

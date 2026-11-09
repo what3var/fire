@@ -39,7 +39,7 @@ class S3D {
     }
 
     // A speed in meters a second (m/s, km/h, ...).
-    static defined float Speed(defined float v : m/s) { return v / (1m / 1s) }
+    static float Speed(float v : m/s) { return v / (1m / 1s) }
 
     static defined float:m Meters(defined float m) { return m * 1m }
     static defined float:deg Degrees(defined float radians) { return (radians * 57.29577951308232) * 1deg }

@@ -31,6 +31,7 @@
     "scene3d/scene3d.fireproj",
     "scene3d.terrain/scene3d.terrain.fireproj",
     "scene3d.effects/scene3d.effects.fireproj",
+    "scene3d.physics/scene3d.physics.fireproj",
     "json/json.fireproj",
     "circuits/circuits.fireproj",
     "circuits.ui/circuits.ui.fireproj",
