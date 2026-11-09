@@ -117,6 +117,12 @@ token of the running task.
 
 * **Every task has a token.** An awaited call gets a **new token linked to the caller's**: cancelling the caller cancels the child (and everything below
   it), cancelling the child's own token does not reach the caller. So a task can end its children without ending itself or its caller.
+* **A source is born linked:** a `new CancellationSource()` made inside a task is implicitly a child of the task's token (`CurrentToken`). A task that makes
+  its own source for its own tasks therefore stays reachable from above: cancelling the caller cancels the task, its source and everything started with
+  `until source.Token` - also `fire` tasks. Cancelling the source reaches only what hangs below it. A source that must not follow its creator is made
+  explicitly: `CancellationSource.Detached()` (e.g. for work that is meant to outlive the task).
+* In C the tokens are the nodes of a tree with reference counts, apart from the fire objects: the end of a `CancellationSource` (its owner's scope) only
+  lets go of its node; tokens handed to tasks keep it alive and keep the link to the parent. A node that is cancelled cancels its subtree at once.
 * **`await` inherits** (the callee is a child the caller waits for). **`fire` does not inherit** - a fire and forget task lives on independently - but it can
   be cancelled like any task with `until`.
 * **`until`** - a keyword like the other clauses (`taking`, `with`, `handover`) - gives a task its token: the token of the task is then linked to the
