@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using fire.Bytecode;
+using fire.Values;
 
 namespace fire.Native
 {
@@ -16,24 +17,69 @@ namespace fire.Native
         private readonly Dictionary<string, int> _rawType = new(StringComparer.Ordinal);
         private readonly Dictionary<RuntimeClass, (int[] Off, int Bytes)> _rawLayout = new();
 
-        /// <summary>The static type of a packed field `name` (a narrow int, a float, a bool or a word, never undefined), 0 when it is a Value slot.</summary>
+        /// <summary>The static type of a packed field `name` (a narrow int, a float, a bool or a word, never undefined), 0 when it is a Value slot: every class
+        /// that has the field declares it alike (DeclaredRawType). Only the declarations count - not what the code does with the field (its address: a K_PtrField).</summary>
         private int RawType(string name)
         {
-            if (!PackedOn || _fieldAddressTaken.Contains(name)) return 0;
+            if (!PackedOn || HasProperty(name)) return 0;
             if (_rawType.TryGetValue(name, out int known)) return known;
-            int result = FieldType(name);
-            byte kind = KindOfType(result);
-            if (!(IsNarrowIntType(result) || kind is KindFloat or KindBool or KindWord)) result = 0;
-            if (result != 0)
-                foreach (var rc in _program.Program.Classes.Values)
-                {
-                    if (!rc.FieldIndex.ContainsKey(name)) continue;
-                    FieldInfo? info = null;
-                    for (var c = rc; c != null && info == null; c = c.Base) c.OwnFieldInfo.TryGetValue(name, out info);
-                    if (info is not { IsStatic: false } || info.RequiredKind == 0 || !DeclaredKind.IsNonNull(info.RequiredKind)) { result = 0; break; }
-                }
-            _rawType[name] = result;
-            return result;
+            int? result = null;
+            foreach (var rc in _program.Program.Classes.Values)
+            {
+                if (!rc.FieldIndex.ContainsKey(name)) continue;
+                int type = DeclaredRawType(DeclaringInfo(rc, name));
+                if (type == 0 || result is { } r && r != type) { result = 0; break; }
+                result = type;
+            }
+            _rawType[name] = result ?? 0;
+            return result ?? 0;
+        }
+
+        /// <summary>The declaration of the field `name` in `rc` or the class it comes from.</summary>
+        private static FieldInfo? DeclaringInfo(RuntimeClass rc, string name)
+        {
+            FieldInfo? info = null;
+            for (var c = rc; c != null && info == null; c = c.Base) c.OwnFieldInfo.TryGetValue(name, out info);
+            return info;
+        }
+
+        /// <summary>The static type a field declared like this is packed with: `defined`, a narrow int (no wider width), a float, a bool or a word, in a static unit;
+        /// 0 for any other declaration.</summary>
+        private int DeclaredRawType(FieldInfo? info)
+        {
+            if (info is not { IsStatic: false } || info.RequiredKind == 0 || !DeclaredKind.IsNonNull(info.RequiredKind) || info.RequiredArray != 0) return 0;
+            int type = DeclaredValueType(info.RequiredKind, info.RequiredUnit);
+            byte kind = KindOfType(type);
+            return IsNarrowIntType(type) || kind is KindFloat or KindBool or KindWord ? type : 0;
+        }
+
+        /// <summary>Is the field `name` declared `defined` in every class that has it (a write through its address is checked like an assignment: K_PtrField)?</summary>
+        private bool DefinedEverywhere(string name)
+        {
+            bool any = false;
+            foreach (var rc in _program.Program.Classes.Values)
+            {
+                if (!rc.FieldIndex.ContainsKey(name)) continue;
+                if (DeclaringInfo(rc, name) is not { IsStatic: false, RequiredKind: not 0 } info || !DeclaredKind.IsNonNull(info.RequiredKind)) return false;
+                any = true;
+            }
+            return any;
+        }
+
+        /// <summary>`&obj.name` of a field declared `defined` (at the place `addr`, a C expression): a K_PtrField with its descriptor (writes are checked like an
+        /// assignment to the field); null for any other field (a K_PtrVar to its slot).</summary>
+        private string? FieldPtrExpr(RuntimeClass rc, int index, string addrOfSlot, string obj)
+        {
+            if (DeclaringInfo(rc, rc.FlattenedFieldNames[index]) is not { IsStatic: false, RequiredKind: not 0 } info || !DeclaredKind.IsNonNull(info.RequiredKind)) return null;
+            string name = rc.FlattenedFieldNames[index];
+            int rawType = RawTypeAt(rc, index);
+            string raw = rawType == 0 ? "0" : KindOfType(rawType) switch { KindFloat => "FIRE_RAW_REAL", KindBool => "FIRE_RAW_BOOL", KindWord => "FIRE_RAW_WORD", _ => "FIRE_RAW_INT" };
+            string? demand = info.RequiredUnit;
+            int unit = demand != null ? DemandedUnitId(demand) : 0;
+            string addr = rawType != 0 ? $"(void*)&{RawRef(rc, index, obj)}" : addrOfSlot;
+            string text = Constant(Value.MakeString(Unit.DemandDisplay(demand?.TrimStart('#') is { } d && !d.StartsWith("any", StringComparison.Ordinal) ? d : "unitless")));
+            return $"{{ static FireFieldPtr d_ = {{{CString(name)}, {raw}, {KindConstant(info.RequiredKind)}, {(DeclaredKind.IsUnitless(info.RequiredKind) ? 1 : 0)}, {(unit > 0 ? 1 : 0)}, 0, {{0}}, 0}}; "
+                + $"d_.unit = {(unit > 0 ? UnitC(unit) : "0")}; d_.text = {text}; return fieldPtrV({addr}, &d_); }}";
         }
 
         /// <summary>Is the field `index` of `rc` packed, and its static type (0: a Value slot)? In a program of one piece by the name (RawType: every class that has

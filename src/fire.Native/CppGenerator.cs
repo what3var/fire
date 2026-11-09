@@ -915,7 +915,8 @@ namespace fire.Native
         /// checks every assignment, DeclaredKind) - the kind or undefined; TypeUnknown for a property, a field whose address is taken, or anything else.</summary>
         private int FieldType(string name)
         {
-            if (LibraryRole || HasProperty(name) || _fieldAddressTaken.Contains(name) || name is "Length" or "length" or "littleEndian") return TypeUnknown;
+            // (a field whose address is taken holds what was written through the pointer - unchecked, unless it is `defined` everywhere: K_PtrField checks)
+            if (LibraryRole || HasProperty(name) || _fieldAddressTaken.Contains(name) && !DefinedEverywhere(name) || name is "Length" or "length" or "littleEndian") return TypeUnknown;
             int? result = null;
             foreach (var cls in _classList)
             {
@@ -2441,7 +2442,8 @@ namespace fire.Native
             foreach (var cls in _classList)
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) indexByClass[cls.Id] = index;
             // (a packed field: its offset is the class's - the helpers by class, like those of a property)
-            if (Modular || HasProperty(name) || RestrictedField(name) || _classList.Any(c => c.Rc.FieldIndex.TryGetValue(name, out int ri) && RawTypeAt(c.Rc, ri) != 0)) return PropertyHelpers(name, indexByClass);
+            if (Modular || HasProperty(name) || RestrictedField(name) || _classList.Any(c => c.Rc.FieldIndex.TryGetValue(name, out int ri) && RawTypeAt(c.Rc, ri) != 0)
+                || _fieldAddressTaken.Contains(name) && _classList.Any(c => DeclaringInfo(c.Rc, name) is { RequiredKind: not 0 } di && DeclaredKind.IsNonNull(di.RequiredKind))) return PropertyHelpers(name, indexByClass);
             // (the place of the field: its slot - of a narrow one slot * 2 + half, the helpers below take it apart)
             bool narrow = NarrowName(name);
             foreach (var cls in _classList)
@@ -2583,10 +2585,11 @@ namespace fire.Native
                     if (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck)
                         unit += arrayCheck + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     var (armSlot, armHalf) = FieldPlace(cls.Rc, index);
-                    if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawTypeAt(cls.Rc, index), "x")}; return; }}")); ptrArms.Add((label, $"return packedFieldAddress({CString(name)});")); continue; }
+                    if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawTypeAt(cls.Rc, index), "x")}; return; }}")); ptrArms.Add((label, FieldPtrExpr(cls.Rc, index, "NULL", "o")!)); continue; }
                     setArms.Add((label, armHalf >= 0 ? $"{{ {fieldGuardSet}{unit}nvSet(&objFields(o)[{armSlot}], {armHalf}, x); return; }}"
                         : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; retain(x); release(old); return; }}"));
-                    ptrArms.Add((label, $"return PtrV(&objFields(o)[{armSlot}]);"));
+                    // (a field declared `defined`: a K_PtrField, writes through it are checked like an assignment)
+                    ptrArms.Add((label, FieldPtrExpr(cls.Rc, index, $"(void*)&objFields(o)[{armSlot}]", "o") ?? $"return PtrV(&objFields(o)[{armSlot}]);"));
                     continue;
                 }
                 var (getter, getterDecl, getterAccess) = cls.Rc.FindMethodWithAccess("get_" + name, 0);
