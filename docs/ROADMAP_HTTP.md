@@ -107,7 +107,10 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    task meanwhile; the TLS handshake runs in the accepting task.
 2. File client and `wwwroot` (safety, caching, MIME) - **built** (`Http.Files`, docs/networking/http.md). Open: the `Map(pattern, lambda)` form of the
    file client (with the lambdas of step 8 point 4), symbolic links (the file system API cannot tell them), several ranges in one request.
-3. Sessions (their home, time limit) and `ISessionStore` (files).
+3. Sessions (their home, time limit) and `ISessionStore` (files) - **built** (`Http.Sessions`, docs/networking/http.md): one home actor for all sessions of a
+   server on a thread of its own, ids from `Net.SecureRandom`, `Renew`, `End`, memory and file stores. Found on the way: `taking` copied an actor that it
+   reached through a field (VM and native) - now its reference goes along. Open: one home per session (when one home becomes the bottleneck), live objects
+   in a session (step 4).
 4. RPC with DI and lifetimes.
 5. WebSocket.
 6. FXML to HTML/CSS, `fire.js`, live updates.

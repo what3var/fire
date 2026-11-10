@@ -113,3 +113,34 @@ Never served: a path with `..` (also percent-encoded), a backslash, a colon or a
 the folder, and the sources of fire (`.fire`, `.fxml`, `.fireproj`, `.firesln`). A symbolic link inside the folder is followed (the file system API cannot
 tell it yet). `Http.Files.Serve(file, request)` answers with one file from anywhere (a route of your own), `Http.LimitedStream(stream, count)` reads a part
 of a stream.
+
+### Sessions: `Http.Sessions`
+
+```fire
+class Counter : Http.IRouter {
+    Http.Response Handle(Http.Context ctx, Http.Next next) {
+        Http.Session s = ctx.Item("session")
+        int n = Http.Num.Parse(s.Get("n", "0")) + 1
+        s.Set("n", n)
+        return Http.Response.FromText("visit " + n)
+    }
+}
+var server = new Http.AppServer("127.0.0.1", 8080)
+server.PushTo(new Http.Sessions(20 * 60000, new Http.FileSessionStore("sessions"))).PushTo(new Counter())
+server.Run()
+server.Close()                                   // also ends the home of the sessions
+```
+
+`Http.Sessions(timeoutMs = 20 min, store = undefined, cookie = "fire-session", secure = false)` is a link of the chain: it finds the session of the request by
+its cookie (or starts one), puts an `Http.Session` into the context (`ctx.Item("session")`) and sets the cookie on the answer when the session is new or got a
+new id (`HttpOnly; SameSite=Lax`, with `secure` also `Secure`; an ended session clears it).
+
+* **The home of the sessions** is an actor (`Http.SessionHome`) on a thread of its own: every access is a message to it (`await`), so they run one after
+  the other and every connection sees the same state of a session, without locks. A session that no request touches for `timeoutMs` ends (and is deleted
+  from the store). `Http.AppServer.Close()` ends the home (`Http.IClosable`).
+* `Http.Session`: `Id`, `Get(name, fallback)`, `Set(name, value)` (a text; other values as their text; undefined removes), `Remove(name)`, `Renew()` (a new
+  id for the same values - after a login, so that an id someone may have seen is no longer good), `End()`.
+* **Ids** are 32 hex digits from the random source of the operating system (`Net.SecureRandom`); a cookie that is not such an id starts a new session.
+* **Stores** (`Http.ISessionStore`: `Load(id)`, `Save(id, data)`, `Delete(id)`; the home calls them one after the other): `Http.MemorySessionStore` (the default:
+  the sessions end with the program), `Http.FileSessionStore(folder)` (one file `<id>.session` per session: a restarted program finds them again). Databases
+  implement the same interface later. A store keeps the values as text (`name=value&...`); live objects of a session (RPC instances) are for step 4.

@@ -6948,6 +6948,7 @@ FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
             if (!leafAlive(v)) continue;
             o = asObj(v);
             if (copyMapFind(&c->objects, o)) continue;
+            if ((o->h.flags & 8) && !(start.kind == K_Class && o == asObj(start))) continue;   /* (an actor reached through a field: its reference goes along, like `fire with`) */
             if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyErrorOp(o->cls, start.kind != K_Class || o != asObj(start), c->noCopyOp); return false; }
             copyMapPut(&c->objects, o, Undef());   /* marks it as found; the copy is made in phase 2 */
             c->order = (Obj**)fire_growPush(c->order, &c->orderCount, &c->orderCap, sizeof(Obj*));
@@ -9040,9 +9041,11 @@ typedef struct ComplNode {
 } ComplNode;
 FIRE_FN ComplNode* complOf(Value h) { return h.kind == K_Int ? (ComplNode*)(intptr_t)h.i : NULL; }
 FIRE_FN bool fire_complDone(void* ctx) { return fire_atomic_loadAcquire(&((ComplNode*)ctx)->done) != 0; }
-/* (a copy for the scope `owner` of another thread: objects, arrays and buffers deep, their strings as copies; a string as a copy with no count yet) */
+/* (a copy for the scope `owner` of another thread: objects, arrays and buffers deep, their strings as copies; a string as a copy with no count yet; an
+ * actor stays itself - its reference may go to any thread) */
 FIRE_FN Value complCopy(Value v, OwnList* owner) {
     if (v.kind == K_String) return strCross(v);
+    if (v.kind == K_Class && leafAlive(v) && (asObj(v)->h.flags & 8)) return v;   /* (an actor: its reference, like `fire with`) */
     if ((v.kind == K_Class && leafAlive(v)) || ((v.kind == K_Array || v.kind == K_Buffer) && ownedOf(v))) {
         DeepCopier c;
         Value r;

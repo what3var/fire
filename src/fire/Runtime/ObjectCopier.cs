@@ -71,8 +71,11 @@ namespace fire.Runtime
 
             public Copier(IOwner owner) => _owner = owner;
 
+            private object? _rootObj;
+
             public Value Run(Value root)
             {
+                _rootObj = root.Kind == ValueKind.Class ? root.AsObjectRef() : null;
                 Discover(root);
                 foreach (var obj in _order) Materialize(obj);
                 foreach (var obj in _order)
@@ -97,6 +100,7 @@ namespace fire.Runtime
                         {
                             var obj = (ObjectInstance)v.AsObjectRef();
                             if (obj.IsDestroyed || _found.ContainsKey(obj)) break;
+                            if (IsActor(obj) && !ReferenceEquals(v.AsObjectRef(), _rootObj)) break;   // (an actor reached through a field: its reference goes along, like `fire with`)
                             var fields = FieldsOf(obj);
                             _found[obj] = fields;
                             _order.Add(obj);
@@ -188,6 +192,7 @@ namespace fire.Runtime
                 {
                     var obj = (ObjectInstance)x.AsObjectRef();
                     if (obj.IsDestroyed || !seen.Add(obj)) continue;
+                    if (IsActor(obj) && !ReferenceEquals(obj, root)) continue;   // (an actor at depth is not copied: what it holds stays with it)
                     if (obj.RtClass?.IsNoCopy() == true)
                         throw new InvalidOperationException(RuntimeClass.NoCopyMessage(obj.ClassName, !ReferenceEquals(obj, root), op));
                     foreach (var (_, field) in FieldsOf(obj)) pending.Push(field);
@@ -200,6 +205,10 @@ namespace fire.Runtime
                 }
             }
         }
+
+        /// <summary>An actor: reached through a field or an element it is not copied - its reference goes along (THREADING_DESIGN 2: actor references may
+        /// be passed around; the language reference: "Actors ... stay shared references"), as with ObjectCloner.</summary>
+        private static bool IsActor(ObjectInstance obj) => obj.Mailbox != null || (obj.RtClass?.IsActor ?? false);
 
         /// <summary>The fields of `node`, read under its tree lock when it has one.</summary>
         internal static List<KeyValuePair<string, Value>> FieldsOf(ObjectInstance node)

@@ -8,6 +8,7 @@
 typedef struct FireNetConnect { int unused; } FireNetConnect;
 
 static int fire_net_supported(void) { return 0; }
+static int fire_net_randomBytes(uint8_t* p, size_t n) { (void)p; (void)n; return 0; }
 static int fire_net_none(FireNetStatus* st) { return fire_net_fail(st, FIRE_NET_E_UNSUPPORTED, "This platform has no network."); }
 
 static int fire_net_resolve(const char* host, FireNetList* addresses, FireNetStatus* st) { (void)host; (void)addresses; return fire_net_none(st); }

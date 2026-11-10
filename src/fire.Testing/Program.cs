@@ -27563,6 +27563,113 @@ else
             server.Close()
             IO.Directory.Delete(root, true)
             """),
+        ("Http.Sessions: Cookie (HttpOnly), Werte ueber Verbindungen hinweg am Zuhause der Sitzungen (ein Actor), Renew nach dem Login, ungueltige Id, Ablauf, End, Dateispeicher", """
+            #import "http"
+            #import "filesystem"
+            #import "time"
+            class Counter : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    Http.Session s = ctx.Item("session")
+                    var path = ctx.Request.path
+                    if (path == "/count") {
+                        int n = Http.Num.Parse(s.Get("n", "0")) + 1
+                        s.Set("n", n)
+                        return Http.Response.FromText("n=" + n)
+                    }
+                    if (path == "/login") { s.Set("user", "anna"); s.Renew(); return Http.Response.FromText("welcome " + s.Get("user")) }
+                    if (path == "/logout") { s.End(); return Http.Response.FromText("bye") }
+                    return next.Invoke(ctx)
+                }
+            }
+            var folder = IO.Path.Combine(IO.Path.GetTempPath(), "fire-sessions-" + DateTime.UtcNow.Ticks)
+            var sessions = new Http.Sessions(300, new Http.FileSessionStore(folder))
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(take sessions).PushTo(new Counter())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port
+                var out = ""
+                var r = c.Get(site + "/count")
+                var cookie = r.Header("Set-Cookie")
+                var id = cookie.Substring(13, 32)
+                out = out + r.Text() + " cookie " + cookie.StartsWith("fire-session=") + " " + (cookie.IndexOf("HttpOnly") > 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", "theme=dark; fire-session=" + id)
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + r.Text() + " again " + (r.Header("Set-Cookie") == undefined) + "\n"
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + r.Text() + "\n"
+                r = c.Get(site + "/count")
+                out = out + "other " + r.Text() + "\n"
+                r = c.Request("GET", site + "/login", undefined, h)
+                var renewed = r.Header("Set-Cookie").Substring(13, 32)
+                out = out + r.Text() + " new id " + (renewed != id) + "\n"
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + "old id after login " + r.Text() + "\n"
+                var h2 = new Http.Headers()
+                h2.Set("Cookie", "fire-session=" + renewed)
+                r = c.Request("GET", site + "/count", undefined, h2)
+                out = out + "renewed keeps " + r.Text() + "\n"
+                var h3 = new Http.Headers()
+                h3.Set("Cookie", "fire-session=../../etc/passwd")
+                r = c.Request("GET", site + "/count", undefined, h3)
+                out = out + "bad id " + r.Text() + "\n"
+                Sleep(400ms)
+                r = c.Request("GET", site + "/count", undefined, h2)
+                out = out + "after the time " + r.Text() + "\n"
+                r = c.Request("GET", site + "/logout", undefined, h2)
+                out = out + r.Text() + " " + r.Header("Set-Cookie") + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            IO.Directory.Delete(folder, true)
+            """),
+        ("Threads: ein Actor in einem Feld dessen, was ein Thread mit taking bekommt, bleibt der Actor selbst (keine Kopie) - Completion bringt seine Referenz aus seinem Thread", """
+            #import "time"
+            actor Store {
+                List items
+                bool stopped
+                construct() { this.items = new List(); this.stopped = false }
+                int Add(string s) { this.items.Add(s); return this.items.Count }
+                int Count() { return this.items.Count }
+                undefined Stop() { this.stopped = true }
+            }
+            class Service {
+                Store store
+                string name
+                construct(Store s, string name) { this.store = s; this.name = name }
+            }
+            var ready = new Completion()
+            var back = ready.Share()
+            fire handover back {
+                var home = new Store()
+                back.Set(home)
+                while (!home.stopped) { process home }
+            }
+            Store st = ready.Wait(5s)
+            int first = await st.Add("main")
+            var services = new List()
+            services.Add(new Service(st, "svc"))
+            int done = 0
+            fire taking services {
+                Service svc = services[0]
+                var s = svc.store
+                int before = await s.Count() until 2s
+                int after = await s.Add("thread")
+                print("thread " + before + " " + after + " " + svc.name)
+                sync global { done = 1 }
+            }
+            var t0 = 0
+            while (done < 1 && t0 < 300) { sync globals; Sleep(10ms); t0 = t0 + 1 }
+            int n = await st.Count()
+            print("main " + first + " " + n)
+            st.Stop()
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"

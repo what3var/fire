@@ -1077,9 +1077,17 @@ namespace Http {
             while (!this.stopped && !token.IsCancelled) { this.AcceptOne(250) }
         }
 
+        // Stops listening and closes the routers that hold something (Http.IClosable: the home of the sessions).
         undefined Close() {
             this.listener.Close()
             if (this.tlsServer != undefined) { this.tlsServer.Close() }
+            for (var i = 0; i < this.chain.Count; i++) {
+                any router = this.chain[i]
+                if (router is of Http.IClosable) {
+                    Http.IClosable c = router
+                    c.Close()
+                }
+            }
         }
 
         // ---- inside the task of a connection ----
@@ -1422,6 +1430,307 @@ namespace Http {
             r.headers.Set("ETag", tag)
             r.headers.Set("Last-Modified", lastModified)
             if (maxAge >= 0) { r.headers.Set("Cache-Control", "max-age=" + maxAge) }
+        }
+    }
+
+    // ---- sessions (docs/ROADMAP_HTTP.md step 3) ------------------------------------------------------------------------------------------------------
+
+    // A router that holds something beyond the requests (a thread, a file): Http.AppServer.Close() closes it - the server's own router, never the copies of
+    // the connections.
+    interface IClosable {
+        undefined Close()
+    }
+
+    // Where sessions are kept beyond the memory of the program: the text of a session (its values, encoded) by its id. The calls come from the home of
+    // the sessions, one after the other.
+    interface ISessionStore {
+        string Load(string id)
+        undefined Save(string id, string data)
+        undefined Delete(string id)
+    }
+
+    // Sessions only in memory: they end with the program.
+    class MemorySessionStore : ISessionStore {
+        string Load(string id) { return undefined }
+        undefined Save(string id, string data) { }
+        undefined Delete(string id) { }
+    }
+
+    // Sessions in files: one file `<id>.session` per session in a folder (a restart of the program finds them again).
+    class FileSessionStore : ISessionStore {
+        string folder
+
+        construct(string folder) {
+            this.folder = folder
+            IO.Directory.CreateDirectory(folder)
+        }
+
+        string Load(string id) {
+            var path = IO.Path.Combine(this.folder, id + ".session")
+            if (!IO.File.Exists(path)) { return undefined }
+            return IO.File.ReadAllText(path)
+        }
+
+        undefined Save(string id, string data) { IO.File.WriteAllText(IO.Path.Combine(this.folder, id + ".session"), data) }
+
+        undefined Delete(string id) { IO.File.Delete(IO.Path.Combine(this.folder, id + ".session")) }
+    }
+
+    // The values of one session at its home.
+    class SessionEntry {
+        string id
+        Dictionary<string, string> values
+        int touched
+
+        construct(string id) {
+            this.id = id
+            this.values = new Dictionary<string, string>()
+            this.touched = DateTime.UtcNow.Ticks
+        }
+
+        // name=value&... (percent encoded) - what a store keeps.
+        string Encode() {
+            var t = ""
+            foreach (var pair in this.values) {
+                if (t.Length > 0) { t = t + "&" }
+                t = t + Http.Uri.Encode(pair.Key) + "=" + Http.Uri.Encode(pair.Value)
+            }
+            return t
+        }
+
+        undefined Decode(string data) {
+            if (data == undefined || data.Length == 0) { return }
+            any pairs = data.Split("&")
+            for (var i = 0; i < pairs.length; i++) {
+                string pair = pairs[i]
+                any eq = pair.IndexOf("=")
+                if (eq > 0) { this.values[Http.Uri.Decode(pair.Substring(0, eq))] = Http.Uri.Decode(pair.Substring(eq + 1)) }
+            }
+        }
+    }
+
+    // The home of the sessions of a server: an actor on a thread of its own. Every access to a session is a message to it (`await home.Get(id, name)`), so
+    // they run one after the other and the state of a session is always the same for every connection. A session that nobody touches for `timeout`
+    // ms ends (and is deleted from the store).
+    actor SessionHome {
+        Dictionary<string, Http.SessionEntry> entries
+        Http.ISessionStore store
+        int timeoutTicks
+        bool stopped
+        int lastSweep
+
+        construct(Http.ISessionStore store, int timeoutMs) {
+            this.entries = new Dictionary<string, Http.SessionEntry>()
+            this.store = take store
+            this.timeoutTicks = timeoutMs * 10000
+            this.stopped = false
+            this.lastSweep = DateTime.UtcNow.Ticks
+        }
+
+        // The id of a living session: `id` when it is one (touched now; from the store when it is not in memory), otherwise a new one.
+        string Open(string id) {
+            this.Sweep()
+            var now = DateTime.UtcNow.Ticks
+            if (id != undefined && Http.SessionHome.ValidId(id)) {
+                if (this.entries.ContainsKey(id)) {
+                    Http.SessionEntry e = this.entries[id]
+                    if (now - e.touched <= this.timeoutTicks) {
+                        e.touched = now
+                        return id
+                    }
+                    this.End(id)
+                } else {
+                    var saved = this.store.Load(id)
+                    if (saved != undefined) {
+                        var back = new Http.SessionEntry(id)
+                        back.Decode(saved)
+                        this.entries.Add(id, take back)
+                        return id
+                    }
+                }
+            }
+            var fresh = Net.SecureRandom.Hex(16)
+            this.entries.Add(fresh, new Http.SessionEntry(fresh))
+            return fresh
+        }
+
+        string Get(string id, string name) {
+            if (!this.entries.ContainsKey(id)) { return undefined }
+            Http.SessionEntry e = this.entries[id]
+            if (!e.values.ContainsKey(name)) { return undefined }
+            return e.values[name]
+        }
+
+        bool Set(string id, string name, string value) {
+            if (!this.entries.ContainsKey(id)) { return false }
+            Http.SessionEntry e = this.entries[id]
+            if (value == undefined) { e.values.Remove(name) } else { e.values[name] = value }
+            this.store.Save(id, e.Encode())
+            return true
+        }
+
+        // A new id for the same values (after a login: an id someone else may have seen is no longer good); the new id.
+        string Renew(string id) {
+            if (!this.entries.ContainsKey(id)) { return this.Open(undefined) }
+            Http.SessionEntry old = this.entries[id]
+            var fresh = Net.SecureRandom.Hex(16)
+            var moved = new Http.SessionEntry(fresh)
+            foreach (var pair in old.values) { moved.values[pair.Key] = pair.Value }
+            this.End(id)
+            this.store.Save(fresh, moved.Encode())
+            this.entries.Add(fresh, take moved)
+            return fresh
+        }
+
+        bool End(string id) {
+            if (!this.entries.ContainsKey(id)) { return false }
+            this.entries.Remove(id)
+            this.store.Delete(id)
+            return true
+        }
+
+        int Count() { return this.entries.Count }
+
+        undefined Stop() { this.stopped = true }
+
+        // (sessions that ran out, at most once a second)
+        undefined Sweep() {
+            var now = DateTime.UtcNow.Ticks
+            if (now - this.lastSweep < 10000000) { return }
+            this.lastSweep = now
+            var gone = new List()
+            foreach (var pair in this.entries) {
+                Http.SessionEntry e = pair.Value
+                if (now - e.touched > this.timeoutTicks) { gone.Add(pair.Key) }
+            }
+            for (var i = 0; i < gone.Count; i++) { this.End(gone[i]) }
+        }
+
+        static bool ValidId(string id) {
+            if (id.Length != 32) { return false }
+            for (var i = 0; i < 32; i++) {
+                int c = id.CharAt(i).ToInt()
+                if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) { return false }
+            }
+            return true
+        }
+    }
+
+    // A session as a router sees it (ctx.Item("session")): every call is a message to the home of the sessions.
+    class Session {
+        Http.SessionHome home
+        string id
+        bool renewed
+
+        construct(Http.SessionHome home, string id) {
+            this.home = home
+            this.id = id
+            this.renewed = false
+        }
+
+        string Id { get { return this.id } }
+
+        string Get(string name, string fallback = undefined) {
+            var h = this.home
+            string v = await h.Get(this.id, name)
+            if (v == undefined) { return fallback }
+            return v
+        }
+
+        undefined Set(string name, any value) {
+            var h = this.home
+            string text = undefined
+            if (value != undefined) { text = "" + value }
+            bool ok = await h.Set(this.id, name, text)
+        }
+
+        undefined Remove(string name) { this.Set(name, undefined) }
+
+        // A new id for the same values - after a login (the cookie is set again).
+        undefined Renew() {
+            var h = this.home
+            string fresh = await h.Renew(this.id)
+            this.id = fresh
+            this.renewed = true
+        }
+
+        // Ends the session (the cookie is cleared).
+        undefined End() {
+            var h = this.home
+            bool ok = await h.End(this.id)
+            this.id = ""
+            this.renewed = true
+        }
+    }
+
+    // The session resolver as a link of the chain: finds the session of the request by its cookie (or starts one), puts an Http.Session into the context
+    // (`ctx.Item("session")`) and sets the cookie on the answer when the session is new or got a new id. The home of the sessions is an actor on a thread
+    // of its own (Http.AppServer.Close() ends it).
+    class Sessions : IRouter, IClosable {
+        Http.SessionHome home
+        string cookie
+        bool secure
+        int timeoutMs
+
+        // `timeoutMs` without a request until a session ends (default 20 min), `store` where they are kept (default: in memory).
+        construct(int timeoutMs = 1200000, Http.ISessionStore store = undefined, string cookie = "fire-session", bool secure = false) {
+            this.cookie = cookie
+            this.secure = secure
+            this.timeoutMs = timeoutMs
+            if (store == undefined) { store = new Http.MemorySessionStore() }
+            var ready = new Completion()
+            var back = ready.Share()
+            Http.Sessions.StartHome(take store, timeoutMs, take back)
+            this.home = ready.Wait(10s)
+        }
+
+        // (the thread of the home: makes the actor, hands its reference back, then serves its messages until Stop)
+        static undefined StartHome(Http.ISessionStore store, int timeoutMs, Completion back) {
+            fire handover store handover back taking timeoutMs {
+                var home = new Http.SessionHome(take store, timeoutMs)
+                back.Set(home)
+                while (!home.stopped) { process home }
+            }
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var asked = Http.Sessions.CookieOf(ctx.request.headers.Get("Cookie"), this.cookie)
+            var h = this.home
+            string id = await h.Open(asked)
+            var session = new Http.Session(h, id)
+            ctx.SetItem("session", session)
+            Http.Response r = next.Invoke(ctx)
+            if (session.id != asked || session.renewed) {
+                var attrs = "; Path=/; HttpOnly; SameSite=Lax"
+                if (this.secure) { attrs = attrs + "; Secure" }
+                if (session.id.Length == 0) { r.headers.Add("Set-Cookie", this.cookie + "=; Path=/; Max-Age=0") }
+                else { r.headers.Add("Set-Cookie", this.cookie + "=" + session.id + attrs) }
+            }
+            return r
+        }
+
+        // The number of living sessions.
+        int Count() {
+            var h = this.home
+            int n = await h.Count()
+            return n
+        }
+
+        undefined Close() {
+            var h = this.home
+            h.Stop()
+        }
+
+        // The value of a cookie in a Cookie header, undefined when it is not there.
+        static string CookieOf(string header, string name) {
+            if (header == undefined) { return undefined }
+            any parts = header.Split(";")
+            for (var i = 0; i < parts.length; i++) {
+                string part = parts[i].Trim()
+                any eq = part.IndexOf("=")
+                if (eq > 0 && part.Substring(0, eq).Trim() == name) { return part.Substring(eq + 1).Trim() }
+            }
+            return undefined
         }
     }
 }
