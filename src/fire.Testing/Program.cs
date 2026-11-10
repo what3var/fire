@@ -17101,7 +17101,7 @@ else
             print(w)
             foreach (n in [5, 9, -3]) { switch (n) { case 5, 6: print("five-six"); case < 0, > 100: print("out"); case default: print("other") } }
             print(1_000_000)
-            class Button { lambda onClick; construct(lambda f) { this.onClick = f } undefined Click() { this.onClick(); onClick() } }
+            class Button { lambda onClick; construct(lambda f) { this.onClick = take f } undefined Click() { this.onClick(); onClick() } }
             var b = new Button(() => print("clicked"))
             b.Click()
             b.onClick()
@@ -25342,8 +25342,8 @@ else
                     res.B.Connect(c.A)
                     c.B.Connect(this.Ground)
                     output.Connect(res.B)
-                    this.Bind((Circuits.Circuit p) => res.Resistance = p.Get("R"))
-                    this.Bind((Circuits.Circuit p) => c.Capacitance = p.Get("C"))
+                    this.Bind(func (Circuits.Circuit p) on res => { Resistance = p.Get("R") })   // (bound to the part: a capture would be a copy)
+                    this.Bind(func (Circuits.Circuit p) on c => { Capacitance = p.Get("C") })
                 }
                 float Cutoff() { return this.Value("1/(2*pi*R*C)") }
             }

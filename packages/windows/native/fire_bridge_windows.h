@@ -838,7 +838,7 @@ static Value fire_win_WinMgrStart(Value mgrId, Value service) {
     if (fire_winb_started(m)) return Bool(false);
     if (service.kind != K_Lambda) return Bool(false);
     if (!registered) { registered = 1; hostAddService(fire_winb_serveManagers); }
-    retain(service);
+    retain(lamKeep(service));   /* (the manager keeps it: it leaves its owner) */
     m->service = service;
 #ifdef FIRE_WINDOW_COOP
     hostHold((int32_t)m->attachedCount);
@@ -1330,7 +1330,7 @@ static Value fire_win_WinRegisterEvent(Value id, Value type, Value lam) {
     t = (int32_t)type.i;
     if (lamOf(lam)->nparams != fire_winb_callbackParams(t)) return Bool(false);
     if (!fire_gfx_grow((void**)&w->callbacks, &w->callbackCap, w->callbackCount, sizeof(FireWinCallback))) fatal("Out of memory.");
-    retain(lam);
+    retain(lamKeep(lam));   /* (the window keeps it: it leaves its owner) */
     w->callbacks[w->callbackCount].type = t;
     w->callbacks[w->callbackCount].lam = lam;
     w->callbackCount++;

@@ -3132,23 +3132,24 @@ FIRE_FN void freeRef(Ref* r) {
             lamDestroy(l);            /* (no owner: it dies with its last count - lamDestroy's own count is the last, it frees it) */
             return;
         }
-        /* (destroyed: its captures and its store went already) */
+        {   /* (destroyed: its store went already; the captures stay until the memory goes, like the VM's - the runtime may still call it) */
+            uint32_t i;
+            for (i = 0; i < l->ncaps; i++) release(lamCaps(l)[i]);
+        }
     }
     free(r);
 }
 
-/* A lambda is destroyed (its owner ends, `delete`, a lambda that nobody owns loses its last count): what it owns goes (its store), its captures are released,
- * a call of it is the DestroyedException from now on. The memory stays while it is counted (a reference to it, a native that keeps it): the last count frees it.
+/* A lambda is destroyed (its owner ends, `delete`, a lambda that nobody owns loses its last count): what it owns goes (its store; the captures are released with the memory),
+ * a call of it from the language is the DestroyedException from now on (callLamU). The memory stays while it is counted (a reference to it, a native that keeps it): the last count frees it.
  * (The count it takes here makes it the one that frees it when nobody else counts it - also against a release on another thread.) */
 FIRE_FN void lamDestroy(Lam* l) {
     Value self = LamV(l);
-    uint32_t i;
     if (l->o.flags & 1) return;
     retain(self);
     l->o.flags |= 1;
     if (l->o.owner) ownUnlink(&l->o);
     if (l->store.head) destroyList(&l->store);
-    for (i = 0; i < l->ncaps; i++) { Value c = lamCaps(l)[i]; lamCaps(l)[i] = Undef(); release(c); }
     release(self);
 }
 
@@ -3301,6 +3302,14 @@ FIRE_FN Value lamCaptureLent(Value lam, uint32_t index) {
     return Undef();
 }
 
+/* A lambda that the runtime (or a native) keeps - a probe's handler, a job for the main program, a callback of a window: it leaves its owner and lives
+ * as long as it is counted, with its store (freeRef: the last count destroys and frees it). Its creator's scope or thread does not destroy it any more. */
+FIRE_FN Value lamKeep(Value v) {
+    Owned* o;
+    if (v.kind == K_Lambda && (o = ownedOf(v)) != NULL && o->owner) ownUnlink(o);
+    return v;
+}
+
 /* The `this` of a lambda body: its `on` target. */
 FIRE_FN Value lamOn(Value lam) { return lamOf(lam)->on; }
 FIRE_FN Value lamCapture(Value lam, uint32_t index) { return lamCaps(lamOf(lam))[index]; }
@@ -3336,9 +3345,15 @@ FIRE_FN Value callLamV(Value callee, int argc, const Value* args, OwnList* list)
     Lam* l;
     if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
     l = lamOf(callee);
-    if (FIRE_UNLIKELY(l->o.flags & 1)) return destroyedError(callee);   /* (its owner ended: "Access to a destroyed lambda.") */
     if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) return callLamDefaults(callee, argc, args, list);
     return l->fn(callee, args);
+}
+/* `f(args)` of the generated code: a lambda whose owner ended is the DestroyedException "Access to a destroyed lambda." (docs/ROADMAP_TASKS.md step 8).
+ * What the runtime keeps and calls itself (a probe, a job, a callback: callLam) is called as it is - like the VM, which checks only the calls of the
+ * language. */
+FIRE_FN Value callLamU(Value callee, int argc, const Value* args, OwnList* list) {
+    if (FIRE_UNLIKELY(callee.kind == K_Lambda && (lamOf(callee)->o.flags & 1))) return destroyedError(callee);
+    return callLamV(callee, argc, args, list);
 }
 /* A lambda that the runtime or a native calls (a probe, a job, a callback): in a debug build the VM runs it nested - no stops inside. */
 FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
@@ -5057,7 +5072,7 @@ FIRE_FN int64_t probeAddEntryFull(Obj* o, const char* member, bool changing, Val
     e->member = NULL;
     if (member) { size_t l = strlen(member); e->member = (char*)malloc(l + 1); if (!e->member) allocFailed(); memcpy(e->member, member, l + 1); }
     e->changing = changing;
-    e->handler = handler;
+    e->handler = lamKeep(handler);
     retain(handler);
     e->deps = deps;
     e->getter = getter;
@@ -8701,7 +8716,7 @@ FIRE_FN bool fire_groupCall(Value lam, int argc, const Value* args) {
     c = (GroupCall*)calloc(1, sizeof(GroupCall));
     t = (FireTask*)calloc(1, sizeof(FireTask));
     if (!c || !t) allocFailed();
-    c->lam = lam;
+    c->lam = lamKeep(lam);
     retain(lam);
     c->argc = argc;
     for (i = 0; i < argc; i++) {
@@ -9836,7 +9851,7 @@ FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, 
         if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return;
     j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
-    j->lam = lam;
+    j->lam = lamKeep(lam);
     j->reply = reply;
 #ifdef FIRE_STR_CROSS
     /* (the lambda is made here and let go of by the main program, which runs it: it is counted atomically from now on, its captures too) */
