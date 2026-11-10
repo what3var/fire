@@ -431,6 +431,12 @@ The rules that make a lambda the same kind of thing as a `fire` body - everythin
    (`copy = take node`) or handed to it as the owner (`copy.Add(take node)`) - the type checker warns once more (a code of its own: ownership given
    to an implicit copy - it dies with the copy, not with the variable of the code around it).
 
+7. **The captures belong to the scope that the lambda makes, not to the scope that declares it** (the user): a copy (`taking`, implicit) and what
+   `handover` moves in are owned by the lambda's own scope and live and die with it.
+
+**Found on the way:** natively a `taking` copy in a lambda dies after the first call (`var t = () => (taking b).v; t(); t()` - the second call throws
+`DestroyedException`; the VM keeps it): the copy is owned by the temporaries of the statement that makes the lambda. Fixed by rule 7.
+
 **Still to settle on the way:** whether a change of a captured copy lasts from one call to the next (the copy is the lambda's variable, as long as the
 lambda lives - assumed) or each call starts from the copy made with the lambda; whether "the lambda's scope" in 5 is the lambda's life (assumed) or
 one call.
