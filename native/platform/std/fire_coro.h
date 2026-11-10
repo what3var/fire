@@ -172,10 +172,18 @@ __asm__(
 static FIRE_CORO_TLS fire_coro* fire_coro_selfCtx;
 #ifdef FIRE_CORO_ASAN
 static FIRE_CORO_TLS fire_coro* fire_coro_prev;
-static inline void fire_coro_arrived(void* fakeStack) {
+/* (the slot of the worker it runs on - never inlined: see fire_tlGet in fire_rt.h) */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static fire_coro** fire_coro_prevSlot(void) { return &fire_coro_prev; }
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void fire_coro_arrived(void* fakeStack) {
     const void* low;
     size_t size;
-    fire_coro* prev = fire_coro_prev;
+    fire_coro* prev = *fire_coro_prevSlot();
     __sanitizer_finish_switch_fiber(fakeStack, &low, &size);
     if (prev && !prev->base) { prev->stackLow = low; prev->stackSize = size; }   /* (a worker's own stack: learnt when it is left the first time) */
 }
@@ -276,6 +284,39 @@ static inline fire_coro* fire_coro_new(fire_coro_fn fn, void* arg, size_t stackB
     return c;
 }
 
+/* Makes a coroutine that has ended (its entry switched away for the last time) start anew with entry(arg) on the same stack - cheaper than a new one. */
+static inline void fire_coro_reset(fire_coro* c, fire_coro_fn fn, void* arg) {
+    c->fn = fn;
+    c->arg = arg;
+#if defined(FIRE_CORO_FIBERS)
+    DeleteFiber(c->fiber);
+    c->fiber = CreateFiberEx(64 * 1024, c->size ? c->size : FIRE_CORO_STACK_BYTES, FIBER_FLAG_FLOAT_SWITCH, fire_coro_fiberMain, c);
+#elif defined(FIRE_CORO_X64)
+    {
+        uintptr_t top = ((uintptr_t)c->stackLow + c->stackSize) & ~(uintptr_t)15;
+        void** sp = (void**)top;
+        *--sp = NULL;
+        *--sp = (void*)(uintptr_t)fire_coro_x64_start;
+        *--sp = NULL;
+        *--sp = NULL;
+        *--sp = (void*)c;
+        *--sp = (void*)(uintptr_t)fire_coro_main;
+        *--sp = NULL;
+        *--sp = NULL;
+        --sp;
+        ((uint32_t*)sp)[0] = 0x1F80u;
+        ((uint32_t*)sp)[1] = 0x037Fu;
+        c->sp = sp;
+    }
+#else
+    fire_coro_ucInit(c);
+#endif
+#ifdef FIRE_CORO_TSAN
+    __tsan_destroy_fiber(c->tsanFiber);
+    c->tsanFiber = __tsan_create_fiber(0);
+#endif
+}
+
 static inline void fire_coro_free(fire_coro* c) {
     if (!c) return;
 #ifdef FIRE_CORO_TSAN
@@ -291,7 +332,7 @@ static inline void fire_coro_free(fire_coro* c) {
 
 static inline void fire_coro_switch(fire_coro* from, fire_coro* to) {
 #ifdef FIRE_CORO_ASAN
-    fire_coro_prev = from;
+    *fire_coro_prevSlot() = from;
     __sanitizer_start_switch_fiber(&from->fakeStack, to->stackLow, to->stackSize);
 #endif
 #ifdef FIRE_CORO_TSAN

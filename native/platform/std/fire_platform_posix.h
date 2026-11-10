@@ -123,6 +123,14 @@ static inline fire_thread* fire_thread_start(fire_thread_fn fn, void* arg, uint3
     return t;
 }
 static inline void fire_thread_join(fire_thread* t) { pthread_join(t->t, NULL); free(t); }
+static inline void fire_thread_detach(fire_thread* t) { pthread_detach(t->t); free(t); }
+/* the cores of the machine (the workers of the scheduler of tasks) */
+#include <unistd.h>
+static inline int fire_plat_cores(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (int)n : 1; }
+#ifndef FIRE_GREEN_THREADS
+#include "fire_coro.h"   /* the coroutines of the tasks (fire_rt.h: FIRE_TASKS) */
+#define FIRE_PLAT_CORO 1
+#endif
 #endif
 
 #include "fire_env_posix.h"   /* (the process: arguments, path, environment variables) */

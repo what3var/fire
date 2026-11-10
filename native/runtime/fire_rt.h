@@ -64,6 +64,12 @@
 #if defined(FIRE_NO_GIL) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_DLL) && !defined(FIRE_TLS_VARS)
 #define FIRE_TASK_STATE 1
 #endif
+/* Tasks (docs/ROADMAP_TASKS.md step 3): a fire thread is a task - a coroutine with a stack of its own - on a pool of workers (as many as the machine has
+ * cores; more while some wait in a native). Where the platform has coroutines (FIRE_PLAT_CORO: posix, windows) and the state is per task; FIRE_NO_TASKS
+ * keeps one system thread per fire thread. */
+#if defined(FIRE_TASK_STATE) && defined(FIRE_PLAT_CORO) && !defined(FIRE_NO_TASKS)
+#define FIRE_TASKS 1
+#endif
 
 FIRE_CC_RUNTIME_BEGIN
 #define FIRE_FN static inline
@@ -417,9 +423,25 @@ FIRE_COLD FIRE_FN ThreadLocals* fire_tlNew(void) {
     fire_curTask = t;
     return t;
 }
-#define fire_tl() (fire_curTask)
-FIRE_FN void fire_strandAttach(void) { if (!fire_curTask) fire_tlNew(); }
-FIRE_FN void fire_strandDetach(void) { free(fire_curTask); fire_curTask = NULL; }
+/* (read through a function that is never inlined: a compiler may keep the address of a thread-local variable across a call - after a switch of tasks that
+ * is the slot of the old worker. The function reads the slot of the worker it runs on; marked const, its result - the task, which stays the same across a
+ * switch - is asked for once per function.) */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline, const)) static ThreadLocals* fire_tlGet(void) { return fire_curTask; }
+#elif defined(_MSC_VER)
+__declspec(noinline) static ThreadLocals* fire_tlGet(void) { return fire_curTask; }
+#else
+static ThreadLocals* fire_tlGet(void) { return fire_curTask; }
+#endif
+#define fire_tl() (fire_tlGet())
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void fire_strandAttach(void) { if (!fire_curTask) fire_tlNew(); }
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void fire_strandDetach(void) { free(fire_curTask); fire_curTask = NULL; }   /* (never inlined either: called after the task's switches) */
 #define FIRE_TLV(name) (fire_tl()->name)
 #else
 /* The structure of the calling task (made when the task first asks). */
@@ -7412,14 +7434,37 @@ FIRE_FN void pkgLeave(fire_mutex* m, fire_mutex* prev) {
 }
 #define FIRE_PKG_ENTER(m) fire_mutex* pkPrev_ = pkgEnter(&(m));
 #define FIRE_PKG_LEAVE(m) pkgLeave(&(m), pkPrev_);
-FIRE_FN void gilAcquire(void) {
+#ifdef FIRE_TASKS
+FIRE_FN void taskYield(void);
+FIRE_FN bool taskRunning(void);
+FIRE_FN void workerBlockEnter(void);
+FIRE_FN void workerBlockLeave(void);
+extern FIRE_RT_DATA fire_atomic32 g_schedReady;
+FIRE_FN bool schedSleeperDue(void);
+#endif
+/* (what a strand lets go of while it waits, and takes again - without the counting of a native that waits, see gilRelease) */
+FIRE_FN void strandAcquire(void) {
     if (!g_isThread) domMainEnter();
     else if (g_pkgHeld && g_domReader) domReadEnter();
     if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
 }
-FIRE_FN void gilRelease(void) {
+FIRE_FN void strandRelease(void) {
     if (g_pkgHeld) fire_mutex_unlock(g_pkgHeld);
     if (!g_isThread) domMainLeave(); else domReadLeave();
+}
+/* gilRelease ... gilAcquire around a wait in a native (and the runtime's own waits that do not go through blockUntil): on a task the worker is blocked
+ * meanwhile - the pool may start another one for the waiting tasks. */
+FIRE_FN void gilAcquire(void) {
+#ifdef FIRE_TASKS
+    if (g_isThread && taskRunning()) workerBlockLeave();
+#endif
+    strandAcquire();
+}
+FIRE_FN void gilRelease(void) {
+    strandRelease();
+#ifdef FIRE_TASKS
+    if (g_isThread && taskRunning()) workerBlockEnter();
+#endif
 }
 FIRE_FN void gilYield(void) {
     FIRE_PLAT_YIELD();
@@ -7433,9 +7478,18 @@ FIRE_FN void gilYield(void) {
         /* (inside a native's callback: the others get the package and the main program its turn, then this thread takes both again, in the order) */
         fire_mutex_unlock(g_pkgHeld);
         domReadLeave();
+#ifdef FIRE_TASKS
+        if ((fire_atomic_load(&g_schedReady) || schedSleeperDue()) && taskRunning()) taskYield();
+#endif
         domReadEnter();
         fire_mutex_lock(g_pkgHeld);
-    } else domReadLeave();
+    } else {
+        domReadLeave();
+#ifdef FIRE_TASKS
+        /* (the end of a time slice: when other tasks wait for a worker, this one goes to the end of the queue) */
+        if ((fire_atomic_load(&g_schedReady) || schedSleeperDue()) && taskRunning()) taskYield();
+#endif
+    }
 }
 #else
 FIRE_FN void gilAcquire(void) {
@@ -7468,10 +7522,365 @@ FIRE_FN void gilYield(void) {
 extern FIRE_RT_DATA fire_mutex g_evM;
 extern FIRE_RT_DATA fire_cond g_evCv;
 extern FIRE_RT_DATA uint64_t g_evCount;
+#ifdef FIRE_TASKS
+/* ---- The scheduler of tasks (docs/ROADMAP_TASKS.md step 3) ----------------------------------------------------------------------------------------
+ * A task is a coroutine (fire_coro.h) with the state of a strand (ThreadLocals). Workers - system threads, one per core to begin with - take the ready
+ * tasks from a queue and run each until it gives its turn away: at the end of a time slice (gilYield at the safe points: to the end of the queue), when it
+ * waits (blockUntil: parked until an event or its time - Sleep is a time in the heap of the sleepers) or when it ends. A worker runs a task by switching to
+ * it; the task switches back to the worker, which then does what the task asked for (requeue, park, free) - so a task is never in a queue while its stack is
+ * still in use. A task that is woken while it is parking is put back by the worker that parks it (TS_WOKEN). The sleepers whose time has come go to the
+ * front at every switch. A worker that waits inside a native (gilRelease) is counted as blocked; while tasks wait for a worker, another one is started
+ * (the pool grows), and a worker that has had nothing to do for a while ends (never the last one). */
+enum { TS_RUNNING, TS_PARKING, TS_PARKED, TS_WOKEN, TS_READY };
+enum { TA_NONE, TA_REQUEUE, TA_PARK, TA_DONE };
+typedef struct FireTask {
+    fire_coro* coro;
+    ThreadLocals* state;        /* its strand (fire_curTask while it runs) */
+    void (*fn)(void*);
+    void* arg;
+    struct FireTask* next;      /* in the ready queue */
+    struct FireTask* evNext;    /* in the list of those that wait for an event (or for one key: evList) */
+    struct FireTask* evPrev;
+    struct FireTask** evList;   /* ... the head of that list */
+    const void* waitKey;        /* what it waits for (null: any event) */
+    int64_t wakeAt;             /* in the heap of the sleepers: when */
+    int32_t heapAt;             /* ... its place (-1: not in it) */
+    fire_atomic32 st;           /* TS_... */
+    bool evWaiting;
+} FireTask;
+typedef struct FireSched {
+    fire_mutex m;
+    fire_cond cv;               /* idle workers wait here */
+    FireTask* head;
+    FireTask* tail;
+    FireTask** heap;            /* the sleepers, a min-heap by wakeAt */
+    uint32_t heapN, heapCap;
+    int32_t workers, idle, cores;
+    fire_atomic32 blocked;      /* workers inside a native that waits */
+    fire_coro** spare;          /* coroutines of ended tasks with the default stack, for the next ones (a new stack costs a mapping, its end an unmapping) */
+    uint32_t spareN, spareCap;
+} FireSched;
+#ifndef FIRE_TASK_STACK_BYTES
+#define FIRE_TASK_STACK_BYTES (8u * 1024u * 1024u)   /* reserved per task like the stack of a system thread; only what is used is committed */
+#endif
+#ifndef FIRE_TASK_SPARE
+#define FIRE_TASK_SPARE 64u
+#endif
+extern FIRE_RT_DATA FireSched g_sched;
+extern FIRE_RT_DATA fire_atomic32 g_schedReady;    /* tasks in the ready queue (read without the lock: is anyone waiting?) */
+extern FIRE_RT_DATA FireTask* g_evWaiters;         /* the tasks that wait for any event (under g_evM) */
+/* The tasks that wait for one thing (a section granted or done, a message for an actor: the key is that object; Sleep: &g_terminate), in buckets by the key
+ * (under g_evM): notifyKey wakes only them - with thousands of tasks waiting for their sections, waking all at every grant would be quadratic. */
+#define FIRE_EV_BUCKETS 64u
+extern FIRE_RT_DATA FireTask* g_evKeyed[FIRE_EV_BUCKETS];
+#define FIRE_EV_BUCKET(key) (((uintptr_t)(key) >> 4) & (FIRE_EV_BUCKETS - 1u))
+extern FIRE_RT_DATA fire_atomic32 g_schedOn;
+extern FIRE_RT_DATA int64_t g_schedNextWake;     /* the time of the earliest sleeper (INT64_MAX: none) - read without the lock */
+#if defined(__GNUC__) || defined(__clang__)
+#define schedNextWakeGet() __atomic_load_n(&g_schedNextWake, __ATOMIC_RELAXED)
+#define schedNextWakeSet(v) __atomic_store_n(&g_schedNextWake, (v), __ATOMIC_RELAXED)
+#else
+#define schedNextWakeGet() (*(volatile int64_t*)&g_schedNextWake)
+#define schedNextWakeSet(v) (*(volatile int64_t*)&g_schedNextWake = (v))
+#endif
+/* (at a time slice: a sleeper whose time has come waits for a worker - all are busy) */
+FIRE_FN bool schedSleeperDue(void) { int64_t w = schedNextWakeGet(); return w != INT64_MAX && fire_plat_nowMs() >= w; }
+/* The worker of this system thread (its own context, the task it runs, what the task asked for): read anew after every switch - a task may go on elsewhere. */
+typedef struct FireWorker { fire_coro* self; FireTask* cur; int action; int64_t idleSince; } FireWorker;
+extern FIRE_TLS FireWorker* g_worker;
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static FireWorker* workerSelf(void) { return g_worker; }   /* (not inlined: the compiler must not keep the address of the thread-local across a switch) */
+FIRE_FN bool taskRunning(void) { FireWorker* w = workerSelf(); return w && w->cur; }
+
+#ifndef FIRE_TASK_SLEEP_IDLE_MS
+#define FIRE_TASK_SLEEP_IDLE_MS 10000   /* a worker that had nothing to do for this long ends (not the last one) */
+#endif
+
+/* ---- the heap of the sleepers (under g_sched.m) */
+FIRE_FN void schedHeapSwap(uint32_t a, uint32_t b) {
+    FireTask* t = g_sched.heap[a];
+    g_sched.heap[a] = g_sched.heap[b]; g_sched.heap[a]->heapAt = (int32_t)a;
+    g_sched.heap[b] = t; t->heapAt = (int32_t)b;
+}
+FIRE_FN void schedHeapUp(uint32_t i) {
+    while (i > 0 && g_sched.heap[(i - 1) / 2]->wakeAt > g_sched.heap[i]->wakeAt) { schedHeapSwap(i, (i - 1) / 2); i = (i - 1) / 2; }
+}
+FIRE_FN void schedHeapDown(uint32_t i) {
+    for (;;) {
+        uint32_t l = 2 * i + 1, r = l + 1, m = i;
+        if (l < g_sched.heapN && g_sched.heap[l]->wakeAt < g_sched.heap[m]->wakeAt) m = l;
+        if (r < g_sched.heapN && g_sched.heap[r]->wakeAt < g_sched.heap[m]->wakeAt) m = r;
+        if (m == i) return;
+        schedHeapSwap(i, m);
+        i = m;
+    }
+}
+FIRE_FN void schedHeapAdd(FireTask* t) {
+    g_sched.heap = (FireTask**)fire_growPush(g_sched.heap, &g_sched.heapN, &g_sched.heapCap, sizeof(FireTask*));
+    g_sched.heap[g_sched.heapN++] = t;
+    t->heapAt = (int32_t)(g_sched.heapN - 1);
+    schedHeapUp(g_sched.heapN - 1);
+    schedNextWakeSet(g_sched.heap[0]->wakeAt);
+}
+FIRE_FN void schedHeapRemove(FireTask* t) {
+    uint32_t i = (uint32_t)t->heapAt;
+    if (t->heapAt < 0) return;
+    t->heapAt = -1;
+    if (i == g_sched.heapN - 1) g_sched.heapN--;
+    else {
+        g_sched.heap[i] = g_sched.heap[--g_sched.heapN];
+        g_sched.heap[i]->heapAt = (int32_t)i;
+        schedHeapDown(i);
+        schedHeapUp(i);
+    }
+    schedNextWakeSet(g_sched.heapN ? g_sched.heap[0]->wakeAt : INT64_MAX);
+}
+
+FIRE_FN void workerStart(void);
+/* (under g_sched.m) the task at the end of the ready queue - a worker that waits is woken, or one more is started while all are busy */
+FIRE_FN void schedPushLocked(FireTask* t) {
+    t->next = NULL;
+    if (g_sched.tail) g_sched.tail->next = t; else g_sched.head = t;
+    g_sched.tail = t;
+    fire_atomic_add(&g_schedReady, 1);
+    if (g_sched.idle > 0) fire_cond_notifyAll(&g_sched.cv);
+    else if (g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) workerStart();
+}
+/* Wakes a parked task (an event, its time, a section): ready again. A task that is still parking is put back by its worker (TS_WOKEN). */
+FIRE_FN void taskWake(FireTask* t) {
+    for (;;) {
+        uint32_t st = fire_atomic_load(&t->st);
+        if (st == TS_PARKED) {
+            fire_mutex_lock(&g_sched.m);
+            if (fire_atomic_load(&t->st) == TS_PARKED) {
+                fire_atomic_store(&t->st, TS_READY);
+                schedPushLocked(t);
+                fire_mutex_unlock(&g_sched.m);
+                return;
+            }
+            fire_mutex_unlock(&g_sched.m);
+            continue;
+        }
+        if (st == TS_PARKING) {
+            fire_mutex_lock(&g_sched.m);
+            if (fire_atomic_load(&t->st) == TS_PARKING) { fire_atomic_store(&t->st, TS_WOKEN); fire_mutex_unlock(&g_sched.m); return; }
+            fire_mutex_unlock(&g_sched.m);
+            continue;
+        }
+        return;   /* (running, ready, woken already: nothing to do) */
+    }
+}
+/* The running task gives its turn to the worker: `action` tells the worker what to do with it. Back here when the task runs again - perhaps elsewhere. */
+FIRE_FN void taskSwitchOut(int action) {
+    FireWorker* w = workerSelf();
+    FireTask* t = w->cur;
+    w->action = action;
+    fire_coro_switch(t->coro, w->self);
+}
+/* (the end of a time slice) */
+FIRE_FN void taskYield(void) { taskSwitchOut(TA_REQUEUE); }
+/* Parks the running task until an event after `seen` - any (notifyEvent) when `key` is null, else one for the key (notifyKey) - or until `deadlineMs`
+ * (0: none). */
+FIRE_FN void taskWaitEvent(uint64_t seen, int64_t deadlineMs, const void* key) {
+    FireTask* t = workerSelf()->cur;
+    FireTask** list;
+    fire_mutex_lock(&g_evM);
+    if (g_evCount != seen) { fire_mutex_unlock(&g_evM); return; }
+    fire_atomic_store(&t->st, TS_PARKING);
+    list = key ? &g_evKeyed[FIRE_EV_BUCKET(key)] : &g_evWaiters;
+    t->evPrev = NULL;
+    t->evNext = *list;
+    if (*list) (*list)->evPrev = t;
+    *list = t;
+    t->evList = list;
+    t->waitKey = key;
+    t->evWaiting = true;
+    fire_mutex_unlock(&g_evM);
+    if (deadlineMs) {
+        fire_mutex_lock(&g_sched.m);
+        t->wakeAt = deadlineMs;
+        schedHeapAdd(t);
+        if (g_sched.idle > 0) fire_cond_notifyAll(&g_sched.cv);   /* (an idle worker waits until the earliest sleeper) */
+        fire_mutex_unlock(&g_sched.m);
+    }
+    taskSwitchOut(TA_PARK);
+    /* (woken: out of the lists it may still be in) */
+    fire_mutex_lock(&g_evM);
+    if (t->evWaiting) {
+        if (t->evPrev) t->evPrev->evNext = t->evNext; else *t->evList = t->evNext;
+        if (t->evNext) t->evNext->evPrev = t->evPrev;
+        t->evWaiting = false;
+    }
+    fire_mutex_unlock(&g_evM);
+    if (deadlineMs) {
+        fire_mutex_lock(&g_sched.m);
+        schedHeapRemove(t);
+        fire_mutex_unlock(&g_sched.m);
+    }
+}
+
+/* ---- the workers */
+FIRE_FN void workerBlockEnter(void) {
+    fire_atomic_add(&g_sched.blocked, 1);
+    if (fire_atomic_load(&g_schedReady)) {
+        fire_mutex_lock(&g_sched.m);
+        if (g_sched.head && g_sched.idle == 0 && g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) workerStart();
+        fire_mutex_unlock(&g_sched.m);
+    }
+}
+FIRE_FN void workerBlockLeave(void) { fire_atomic_add(&g_sched.blocked, (uint32_t)-1); }
+/* The next task for a worker (under g_sched.m): the sleepers whose time has come first, then the queue; none: it waits (until the earliest sleeper), or -
+ * idle for long and not the last one - it ends (NULL). */
+FIRE_FN FireTask* schedTake(FireWorker* w) {
+    for (;;) {
+        int64_t now = fire_plat_nowMs(), wait = -1;
+        while (g_sched.heapN && g_sched.heap[0]->wakeAt <= now) {
+            FireTask* s = g_sched.heap[0];
+            schedHeapRemove(s);
+            if (fire_atomic_load(&s->st) == TS_PARKED) { fire_atomic_store(&s->st, TS_READY); schedPushLocked(s); }
+            else if (fire_atomic_load(&s->st) == TS_PARKING) fire_atomic_store(&s->st, TS_WOKEN);
+        }
+        if (g_sched.head) {
+            FireTask* t = g_sched.head;
+            g_sched.head = t->next;
+            if (!g_sched.head) g_sched.tail = NULL;
+            fire_atomic_add(&g_schedReady, (uint32_t)-1);
+            w->idleSince = 0;
+            return t;
+        }
+        if (!w->idleSince) w->idleSince = now;
+        if (now - w->idleSince >= FIRE_TASK_SLEEP_IDLE_MS && g_sched.workers > 1) return NULL;
+        if (g_sched.heapN) wait = g_sched.heap[0]->wakeAt - now;
+        if (wait < 0 || wait > 1000) wait = 1000;
+        g_sched.idle++;
+        fire_cond_waitFor(&g_sched.cv, &g_sched.m, wait < 1 ? 1 : wait);
+        g_sched.idle--;
+    }
+}
+FIRE_FN void workerMain(void* arg) {
+    FireWorker w;
+    (void)arg;
+    memset(&w, 0, sizeof w);
+    w.self = fire_coro_self();
+    g_worker = &w;
+    fire_mutex_lock(&g_sched.m);
+    for (;;) {
+        FireTask* t = schedTake(&w);
+        if (!t) break;
+        fire_mutex_unlock(&g_sched.m);
+        w.cur = t;
+        w.action = TA_NONE;
+        fire_atomic_store(&t->st, TS_RUNNING);
+        fire_curTask = t->state;
+        fire_coro_switch(w.self, t->coro);
+        fire_curTask = NULL;
+        w.cur = NULL;
+        fire_mutex_lock(&g_sched.m);
+        if (w.action == TA_REQUEUE) { fire_atomic_store(&t->st, TS_READY); schedPushLocked(t); }
+        else if (w.action == TA_PARK) {
+            if (fire_atomic_load(&t->st) == TS_WOKEN) { fire_atomic_store(&t->st, TS_READY); schedPushLocked(t); }
+            else fire_atomic_store(&t->st, TS_PARKED);
+        } else if (w.action == TA_DONE) {
+            if (t->coro->stackSize + 4096u >= FIRE_TASK_STACK_BYTES && t->coro->stackSize <= FIRE_TASK_STACK_BYTES && g_sched.spareN < FIRE_TASK_SPARE) {
+                g_sched.spare = (fire_coro**)fire_growPush(g_sched.spare, &g_sched.spareN, &g_sched.spareCap, sizeof(fire_coro*));
+                g_sched.spare[g_sched.spareN++] = t->coro;
+                free(t);
+            } else {
+                fire_mutex_unlock(&g_sched.m);
+                fire_coro_free(t->coro);
+                free(t);
+                fire_mutex_lock(&g_sched.m);
+            }
+        }
+    }
+    g_sched.workers--;
+    fire_mutex_unlock(&g_sched.m);
+    g_worker = NULL;
+}
+/* (under g_sched.m) one more worker */
+FIRE_FN void workerStart(void) {
+    g_sched.workers++;
+    fire_thread_detach(fire_thread_start(workerMain, NULL, 256 * 1024));
+}
+/* Where a task begins: its strand, its function, then the worker frees it. */
+FIRE_FN void taskEntry(void* p) {
+    FireTask* t = (FireTask*)p;
+    fire_strandAttach();
+    t->state = fire_curTask;
+    t->fn(t->arg);
+    t->state = NULL;   /* (the strand was let go of at the end of the function) */
+    taskSwitchOut(TA_DONE);
+}
+/* Starts a task that runs fn(arg) (stackBytes 0: the default). */
+FIRE_FN void taskSpawn(void (*fn)(void*), void* arg, uint32_t stackBytes) {
+    FireTask* t = (FireTask*)calloc(1, sizeof(FireTask));
+    if (!t) allocFailed();
+    t->fn = fn;
+    t->arg = arg;
+    t->heapAt = -1;
+    fire_mutex_lock(&g_sched.m);
+    if (!stackBytes && g_sched.spareN) { t->coro = g_sched.spare[--g_sched.spareN]; fire_coro_reset(t->coro, taskEntry, t); }
+    fire_mutex_unlock(&g_sched.m);
+    if (!t->coro) t->coro = fire_coro_new(taskEntry, t, stackBytes ? stackBytes : FIRE_TASK_STACK_BYTES);
+    if (!t->coro) allocFailed();
+    fire_mutex_lock(&g_sched.m);
+    if (!fire_atomic_exchange(&g_schedOn, 1)) g_sched.cores = fire_plat_cores();
+    fire_atomic_store(&t->st, TS_READY);
+    schedPushLocked(t);
+    fire_mutex_unlock(&g_sched.m);
+}
+#endif
+#ifdef FIRE_TASKS
+/* (under g_evM) wakes the tasks of a list - all, or those that wait for `key` */
+FIRE_FN void evWakeList(FireTask** list, const void* key) {
+    FireTask* t = *list;
+    while (t) {
+        FireTask* n = t->evNext;
+        if (!key || t->waitKey == key) {
+            if (t->evPrev) t->evPrev->evNext = t->evNext; else *list = t->evNext;
+            if (t->evNext) t->evNext->evPrev = t->evPrev;
+            t->evWaiting = false;
+            t->evNext = t->evPrev = NULL;
+            taskWake(t);
+        }
+        t = n;
+    }
+}
+#endif
+/* Something changed that a waiting strand may be looking for: the system threads look again, and the tasks that wait for any event. */
 FIRE_FN void notifyEvent(void) {
     fire_mutex_lock(&g_evM);
     g_evCount++;
     fire_cond_notifyAll(&g_evCv);
+#ifdef FIRE_TASKS
+    evWakeList(&g_evWaiters, NULL);
+#endif
+    fire_mutex_unlock(&g_evM);
+}
+/* ... for one thing (`key`: a section request, an actor): the system threads, and only the tasks that wait for it. */
+FIRE_FN void notifyKey(const void* key) {
+    fire_mutex_lock(&g_evM);
+    g_evCount++;
+    fire_cond_notifyAll(&g_evCv);
+#ifdef FIRE_TASKS
+    evWakeList(&g_evKeyed[FIRE_EV_BUCKET(key)], key);
+#endif
+    fire_mutex_unlock(&g_evM);
+}
+/* ... for everyone (terminate). */
+FIRE_FN void notifyEventAll(void) {
+    fire_mutex_lock(&g_evM);
+    g_evCount++;
+    fire_cond_notifyAll(&g_evCv);
+#ifdef FIRE_TASKS
+    {
+        uint32_t b;
+        evWakeList(&g_evWaiters, NULL);
+        for (b = 0; b < FIRE_EV_BUCKETS; b++) evWakeList(&g_evKeyed[b], NULL);
+    }
+#endif
     fire_mutex_unlock(&g_evM);
 }
 
@@ -7499,6 +7908,10 @@ FIRE_FN void threadServe(void);
 FIRE_FN void threadRecBegin(void);
 FIRE_FN void threadRecEnd(void);
 #endif
+FIRE_FN bool fire_sleepWake(void* ctx);
+FIRE_FN bool fire_sectionGranted(void* ctx);
+FIRE_FN bool fire_sectionDone(void* ctx);
+FIRE_FN bool fire_actorReady(void* ctx);
 FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs) {
     for (;;) {
         int64_t now, slice = 5;
@@ -7506,19 +7919,40 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
 #ifdef FIRE_NO_GIL
         threadServe();   /* (a fire thread that waits grants the sections other threads ask of it) */
 #endif
+        /* (the count of the events before the condition is looked at: an event between the two - the condition true by then - makes the wait below end at
+         * once; read after it, the event would be lost and the wait would last until the next one) */
+        fire_mutex_lock(&g_evM);
+        seen = g_evCount;
+        fire_mutex_unlock(&g_evM);
         if (pred(ctx)) return true;
         if (stopOnTerminate && terminateRequested()) return false;
         now = steadyMs();
         if (deadlineMs && now >= deadlineMs) return false;
-        fire_mutex_lock(&g_evM);
-        seen = g_evCount;
-        fire_mutex_unlock(&g_evM);
+#ifdef FIRE_NO_GIL
+        strandRelease();
+#else
         gilRelease();
+#endif
         if (deadlineMs && deadlineMs - now < slice) slice = deadlineMs - now;
+#ifdef FIRE_TASKS
+        if (g_isThread && taskRunning()) {
+            /* (a task: parked until an event or its time - Sleep wakes only at its time, the other conditions are looked at again every few ms) */
+            const void* key = pred == fire_sleepWake ? (const void*)&g_terminate
+                : (pred == fire_sectionGranted || pred == fire_sectionDone || pred == fire_actorReady) ? ctx : NULL;
+            /* (Sleep wakes at its time, a section when it is granted or done - notifyKey; anything else is looked at again every few ms) */
+            taskWaitEvent(seen, pred == fire_sleepWake || pred == fire_sectionGranted || pred == fire_sectionDone ? deadlineMs : now + slice, key);
+            strandAcquire();
+            continue;
+        }
+#endif
         fire_mutex_lock(&g_evM);
         if (g_evCount == seen) fire_cond_waitFor(&g_evCv, &g_evM, slice);
         fire_mutex_unlock(&g_evM);
+#ifdef FIRE_NO_GIL
+        strandAcquire();
+#else
         gilAcquire();
+#endif
     }
 }
 
@@ -7578,7 +8012,11 @@ FIRE_FN void threadEntry(ThreadStart st) {
 #ifdef FIRE_NO_GIL
     g_domReader = 1;
 #endif
+#ifdef FIRE_NO_GIL
+    strandAcquire();   /* (not a native that waits: the worker is not blocked) */
+#else
     gilAcquire();
+#endif
     g_attnMask = ATTN_ALL;
 #ifdef FIRE_NO_GIL
     g_attnMask |= ATTN_PEER;
@@ -7605,7 +8043,11 @@ FIRE_FN void threadEntry(ThreadStart st) {
 #endif
     fire_atomic_add(&g_threadsLive, (uint32_t)-1);
     notifyEvent();
+#ifdef FIRE_NO_GIL
+    strandRelease();
+#else
     gilRelease();
+#endif
 #ifdef FIRE_TLS_STRUCT
     free(fire_tl());   /* the state of this task (the GIL is gone, nothing of it is used any more) */
     fire_tls_set(NULL);
@@ -7632,12 +8074,16 @@ FIRE_FN void fireThread(void (*fn)(const Value*), const Value* args, uint32_t n,
     if (!boxed->args) allocFailed();
     for (i = 0; i < n; i++) boxed->args[i] = args[i];
     fire_atomic_add(&g_threadsLive, 1);
+#ifdef FIRE_TASKS
+    taskSpawn(threadMain, boxed, FIRE_THREAD_STACK_BYTES);
+#else
     {
         fire_thread* t = fire_thread_start(threadMain, boxed, FIRE_THREAD_STACK_BYTES);
         fire_mutex_lock(&g_thrM);
         ptrVecPush(&g_threadList, t);
         fire_mutex_unlock(&g_thrM);
     }
+#endif
 }
 
 /* The list that carries the copies for a new thread from the spawner to the thread. */
@@ -7721,7 +8167,7 @@ FIRE_FN void actorSend(Value self, MsgFn fn, const Value* args, uint32_t n) {
     fire_mutex_lock(&g_mailboxM);
     mailboxPush(b, m);
     fire_mutex_unlock(&g_mailboxM);
-    notifyEvent();
+    notifyKey(asObj(self));   /* (who waits in `process` for this actor) */
 }
 FIRE_FN void actorFree(Obj* o) {
     Mailbox* b = mailboxOf(o);
@@ -7897,7 +8343,7 @@ FIRE_FN void sectionRelease(void) {
     domWriterLeave();
 #endif
     fire_atomic_storeRelease(&r->done, 1);
-    notifyEvent();
+    notifyKey(r);
     sectionReqDrop(r);
 }
 FIRE_FN void sectionAbort(void) { if (g_curSection) { g_secDepth = 0; sectionRelease(); } }
@@ -7914,7 +8360,12 @@ FIRE_FN void sectionYieldEnd(int32_t held) { if (held > 0) { sectionAcquire(); g
 /* A fire thread as the owner of originals (without the GIL): `sync` from another thread into an original this thread owns (`taking` in this thread) is a
  * section of this thread - asked for here, granted at this thread's next safe point or wait (threadServe), which then waits until the sync is done, as the
  * main program does for its globals. When the thread ends its originals are destroyed first (`sync` says undefined), then what is still asked is granted. */
-typedef struct ThreadRec { fire_mutex m; SectionReq** reqs; uint32_t n, cap; fire_atomic32 pending, refs; bool dead; } ThreadRec;
+typedef struct ThreadRec {
+    fire_mutex m; SectionReq** reqs; uint32_t n, cap; fire_atomic32 pending, refs; bool dead;
+#ifdef FIRE_TASKS
+    FireTask* task;   /* (a task: woken when something is asked of it - it may wait for something else) */
+#endif
+} ThreadRec;
 extern FIRE_RT_DATA fire_atomic32 g_peerPending;   /* asked sections of all threads (ATTN_PEER is set while there are some) */
 FIRE_FN void threadRecDrop(ThreadRec* r) {
     if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) { free(r->reqs); free(r); }
@@ -7924,6 +8375,9 @@ FIRE_FN void threadRecBegin(void) {
     if (!r) allocFailed();
     fire_mutex_init(&r->m);
     fire_atomic_store(&r->refs, 1);
+#ifdef FIRE_TASKS
+    r->task = taskRunning() ? workerSelf()->cur : NULL;
+#endif
     g_self = r;
 }
 /* Grants what other threads asked of this one, one after the other (each: until its sync is done). */
@@ -7942,7 +8396,7 @@ FIRE_FN void threadServe(void) {
             if (fire_atomic_load(&g_peerPending)) fire_atomic_or(&g_attn, ATTN_PEER);
         }
         fire_atomic_storeRelease(&q->granted, 1);
-        notifyEvent();
+        notifyKey(q);
         blockUntil(fire_sectionDone, q, false, 0);
         sectionReqDrop(q);
     }
@@ -7953,6 +8407,9 @@ FIRE_FN void threadRecEnd(void) {
     if (!r) return;
     fire_mutex_lock(&r->m);
     r->dead = true;
+#ifdef FIRE_TASKS
+    r->task = NULL;
+#endif
     fire_mutex_unlock(&r->m);
     threadServe();
     g_self = NULL;
@@ -7968,6 +8425,9 @@ FIRE_FN SectionReq* threadRecAsk(ThreadRec* owner) {
     owner->reqs = (SectionReq**)fire_growPush(owner->reqs, &owner->n, &owner->cap, sizeof(SectionReq*));
     owner->reqs[owner->n++] = q;
     fire_atomic_store(&owner->pending, 1);
+#ifdef FIRE_TASKS
+    if (owner->task) taskWake(owner->task);
+#endif
     fire_mutex_unlock(&owner->m);
     fire_atomic_add(&g_peerPending, 1);
     fire_atomic_or(&g_attn, ATTN_PEER);
@@ -7978,7 +8438,7 @@ FIRE_FN SectionReq* threadRecAsk(ThreadRec* owner) {
 FIRE_FN void threadRecDone(SectionReq* q) {
     if (!q) return;
     fire_atomic_storeRelease(&q->done, 1);
-    notifyEvent();
+    notifyKey(q);
     sectionReqDrop(q);
 }
 #endif
@@ -8069,7 +8529,7 @@ FIRE_FN int drainQueue(void) {
         if (r.sec) {
             SectionReq* sec = r.sec;
             fire_atomic_storeRelease(&sec->granted, 1);
-            notifyEvent();
+            notifyKey(sec);
             blockUntil(fire_sectionDone, sec, false, 0);
             sectionReqDrop(sec);
         } else runJob(r.job);
@@ -8556,7 +9016,7 @@ FIRE_FN void terminateNow(Value v) {
     fire_mutex_unlock(&g_thrM);
     if (first) {
         fire_atomic_or(&g_attn, ATTN_ALL);
-        notifyEvent();
+        notifyEventAll();
     }
     startLeave();
 }
@@ -8782,6 +9242,10 @@ FIRE_FN void fire_threadsInit(void) {
     fire_mutex_init(&g_dom.m);
     fire_cond_init(&g_dom.cv);
 #endif
+#ifdef FIRE_TASKS
+    fire_mutex_init(&g_sched.m);
+    fire_cond_init(&g_sched.cv);
+#endif
     fire_atomic_store(&g_terminate.requested, 0);
     g_terminate.value = Undef();
     ownListInit(&g_terminateOwn, 0, NULL);
@@ -8851,6 +9315,15 @@ TerminateState g_terminate;
 fire_mutex g_thrM, g_reqM, g_mailboxM;
 #ifdef FIRE_NO_GIL
 DomLock g_dom;
+#endif
+#ifdef FIRE_TASKS
+FireSched g_sched;
+fire_atomic32 g_schedReady;
+fire_atomic32 g_schedOn;
+FireTask* g_evWaiters = NULL;
+FireTask* g_evKeyed[FIRE_EV_BUCKETS];
+FIRE_TLS FireWorker* g_worker = NULL;
+int64_t g_schedNextWake = INT64_MAX;
 #endif
 #ifdef FIRE_STR_CROSS
 void (*g_domShareGlobals)(void) = NULL;
