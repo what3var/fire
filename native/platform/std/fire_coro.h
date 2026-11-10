@@ -6,6 +6,7 @@
  *   void        fire_coro_free(c)                        its stack and itself (not the running one)
  *   void        fire_coro_switch(from, to)               saves the running context in `from` (a coroutine, or the worker's own: fire_coro_self()) and runs `to`
  *   fire_coro*  fire_coro_self(void)                     the context of the calling worker thread itself (made on first use; one per thread)
+ *   void        fire_coro_selfRelease(void)              lets go of it, at the end of a thread that ran coroutines for a while (fibers: back to a thread)
  *
  * The switch: a few instructions of assembler on x86-64 (System V: Linux, the BSDs, macOS on Intel) - the callee-saved registers, the control words of the
  * floating point; Windows: fibers (CreateFiberEx, SwitchToFiber); anywhere else ucontext. A stack is reserved with a guard page below it (mmap; the system
@@ -203,6 +204,15 @@ static inline fire_coro* fire_coro_self(void) {
         fire_coro_selfCtx = c;
     }
     return c;
+}
+static inline void fire_coro_selfRelease(void) {
+    fire_coro* c = fire_coro_selfCtx;
+    if (!c) return;
+#if defined(FIRE_CORO_FIBERS)
+    ConvertFiberToThread();
+#endif
+    fire_coro_selfCtx = NULL;
+    free(c);
 }
 
 /* (where every coroutine starts: the sanitizers learn that the switch arrived, then the entry) */

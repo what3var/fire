@@ -20752,6 +20752,77 @@ else
             var none = await []
             print("empty " + none.Length)
             """),
+        ("Await: await actor.Methode() - Ergebnis, neues Objekt (übergeben), Feld (Kopie), String, Array, Ausnahme zurück zum Aufrufer, am eigenen Home sofort", """
+            class Exception { string message; construct(string message = "") { this.message = message } }
+            class Box {
+                int v
+                construct(int v) { this.v = v }
+            }
+            actor Counter {
+                int n
+                Box box
+                construct() { this.n = 0; this.box = new Box(7) }
+                undefined Add(int k) { this.n += k }
+                int Get() { return this.n }
+                Box Fresh() { return new Box(this.n * 10) }
+                Box Mine() { return this.box }
+                string Text() { return "n=" + this.n }
+                int[] Arr() { return [1, 2, this.n] }
+                int Fail() { throw new Exception("kaputt " + this.n) }
+                int Take(Box b) { return b.v + this.n }
+            }
+            var c = new Counter()
+            fire with c {
+                c.Add(5)
+                print("Get: " + await c.Get())
+                var f = await c.Fresh()
+                print("Fresh: " + f.v)
+                var m = await c.Mine()
+                m.v = 100
+                print("Mine: " + m.v)
+                print("Text: " + await c.Text())
+                var a = await c.Arr()
+                print("Arr: " + a[2] + " " + a.Length)
+                try { await c.Fail() } catch (Exception e) { print("caught: " + e.message) }
+                print("Take: " + await c.Take(new Box(3)))
+                c.Add(1)
+            }
+            for (var i = 0; i < 9; i++) process c
+            print("main: " + c.n + " box " + c.box.v)
+            print("home: " + await c.Get())
+            """),
+        ("Await: await dedicated (nativ auf einem eigenen Systemthread), Ausnahme drinnen und draussen gefangen, verschachtelt, Blockform, in await [ ... ], fire dedicated, dedicated als Name", """
+            #import "time"
+            class Item { int v = 0
+                construct(int v) { this.v = v } }
+            class Work {
+                static int Sum(Item list[]) { Sleep(2ms); var s = 0; foreach (var i in list) { s = s + i.v }; return s }
+                static int Fail(int k) { Sleep(1ms); throw new ArgumentException("fail " + k) }
+                static int Inner(int k) { try { return Work.Fail(k) } catch (ArgumentException e) { return k * 2 } }
+                static int Nested(int k) { return await dedicated Work.Inner(k) + 1 }
+                static undefined Run(string who) {
+                    var list = [new Item(1), new Item(2), new Item(3)]
+                    print(who + " sum " + await dedicated Work.Sum(list))
+                    try { await dedicated Work.Fail(7) } catch (ArgumentException e) { print(who + " caught " + e.message) }
+                    print(who + " inner " + await dedicated Work.Inner(4))
+                    print(who + " nested " + await dedicated Work.Nested(5))
+                    int b = await dedicated taking list { list[0].v = 50; return list[0].v + list.Length }
+                    print(who + " block " + b + " " + list[0].v)
+                    var all = await [dedicated Work.Sum(list), Work.Inner(1), dedicated Work.Inner(2)]
+                    print(who + " all " + all[0] + " " + all[1] + " " + all[2])
+                    print(who + " again " + await Work.Sum(list))
+                }
+            }
+            int done = 0
+            fire { Work.Run("thread"); sync global { done = done + 1 } }
+            while (done < 1) { sync globals }
+            Work.Run("main")
+            int k = 4
+            fire dedicated taking k { print("dedicated thread " + k); sync global { done = done + 1 } }
+            while (done < 2) { sync globals }
+            var dedicated = 3
+            print("name " + dedicated)
+            """),
         ("copy/flat als Argument eines Lambda-Aufrufs: die Kopie, nicht das Original", """
             class Item { int v = 0
                 construct(int v) { this.v = v } }

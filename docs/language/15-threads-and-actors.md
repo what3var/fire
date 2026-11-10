@@ -18,6 +18,9 @@ print("main goes on")
 - Inside a class, `fire Method(args)` runs a method of `this` in a new thread. Its arguments are copied like `taking` - except a direct `new`
   (`fire Work(new Job())`), which is handed over to the thread without a copy.
 - The program waits at its end for all running threads.
+- In a native build a fire thread is a light task on a pool of system threads (one per core). `fire dedicated { ... }` (also
+  `fire dedicated Work(x)`, with the same clauses) gives it a system thread of its own - for work that waits in natives for a long time. In the VM
+  every fire thread is a system thread anyway. `dedicated` is a word only right after `fire` or `await`.
 - Which thread prints first is decided by the scheduler; the examples use `Sleep` from `#import "time"` to wait.
 
 ## Copies: `taking` and `sync`
@@ -164,8 +167,11 @@ print(n + " " + sum)
   the brackets. When some fail, all are waited for and the first exception in that order is thrown. Each element is what a single `await` takes, clauses
   included (`await [Load(a), Merge(x, y) taking y]`). The calls get the caller's objects lent; in a native build they run side by side on all cores when
   no two of them reach the same object (otherwise one after the other); the VM runs them one after the other.
-- Coming next (docs/ROADMAP_TASKS.md): `await actor.Method()` (the result of an actor's method), `dedicated` (a thread of its own for work that blocks
-  in natives) and cancellation with `until`.
+- `await actor.Method()` waits for the result of an actor's method (see [Actors](#actors)).
+- `await dedicated Work(x)` (also `await dedicated taking x { ... }`, and as an element of `await [ ... ]`) is `await` for work that blocks in natives
+  for a long time: in a native build the waiting task runs the call on a system thread of its own and goes back to the pool after it - the call still
+  has the caller's objects lent, and an exception goes on at the `await` as usual. Elsewhere it is the same as `await`.
+- Coming next (docs/ROADMAP_TASKS.md): cancellation with `until`.
 
 ## Actors
 
@@ -194,7 +200,10 @@ print(try process logger)                   // False - the mailbox is empty
 
 - `process a` waits for the next message and runs it; `try process a` runs one if there is one and returns `True`/`False`.
 - References to actors may be passed to threads with `fire with a` - the one controlled exception to "no shared memory".
-- A thread that needs an answer sends a message back to an actor of its caller; threads have no return values.
+- A thread that needs an answer awaits it: `var n = await counter.Get()` posts the message and waits until the actor's home has run it at its
+  `process`; the result comes back (an exception that nothing in the method caught is thrown at the `await`). What the method made (`return new Box()`)
+  is handed over; what the actor keeps - a field, a global - comes back as a copy. On the actor's home thread `await a.M()` runs the method at once,
+  like a call (waiting for its own `process` would never end). Threads themselves have no return values.
 - The arguments of a message: a direct `new` (`logger.log(new Entry())`) is handed over to the actor's home thread; another new value (`copy x`, a call
   result) belongs to the message and then to the method that runs it; a variable or a field is passed as a reference and stays with its owner.
 

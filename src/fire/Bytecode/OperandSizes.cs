@@ -23,7 +23,7 @@ namespace fire.Bytecode
             [OpCode.Add] = Array.Empty<int>(), [OpCode.Sub] = Array.Empty<int>(), [OpCode.Mul] = Array.Empty<int>(),
             [OpCode.RelabelUnit] = new[] { 2 }, [OpCode.RelabelUnitDynamic] = Array.Empty<int>(), [OpCode.StepAdd] = Array.Empty<int>(), [OpCode.StepSub] = Array.Empty<int>(), [OpCode.Div] = Array.Empty<int>(), [OpCode.Mod] = Array.Empty<int>(),
             [OpCode.BitAnd] = Array.Empty<int>(), [OpCode.BitOr] = Array.Empty<int>(), [OpCode.BitXor] = Array.Empty<int>(),
-            [OpCode.ShiftLeft] = Array.Empty<int>(), [OpCode.ShiftRight] = Array.Empty<int>(), [OpCode.Power] = Array.Empty<int>(), [OpCode.PowerFloat] = Array.Empty<int>(),
+            [OpCode.ShiftLeft] = Array.Empty<int>(), [OpCode.ShiftRight] = Array.Empty<int>(), [OpCode.Power] = Array.Empty<int>(), [OpCode.PowerFloat] = Array.Empty<int>(), [OpCode.AwaitReply] = Array.Empty<int>(), [OpCode.Dedicate] = Array.Empty<int>(), [OpCode.Undedicate] = Array.Empty<int>(),
             [OpCode.FormatValue] = new[] { 2 },
             [OpCode.Neg] = Array.Empty<int>(), [OpCode.LogicalNot] = Array.Empty<int>(), [OpCode.BitNot] = Array.Empty<int>(),
             [OpCode.Eq] = Array.Empty<int>(), [OpCode.NotEq] = Array.Empty<int>(), [OpCode.Lt] = Array.Empty<int>(),

@@ -15,12 +15,28 @@ namespace fire.Runtime
         /// <summary>The owner of the message's unclaimed arguments until the message runs (SPEC 2.4, THREADING_DESIGN.md section 2); null: none.</summary>
         public Scope? Holder { get; }
 
-        public ActorMessage(string methodName, Value[] args, Scope? holder = null)
+        /// <summary>`await actor.Method()`: where the result (or the exception) goes back to the caller that waits; null: a plain message.</summary>
+        public ActorReply? Reply { get; }
+
+        public ActorMessage(string methodName, Value[] args, Scope? holder = null, ActorReply? reply = null)
         {
             MethodName = methodName;
             Args = args;
             Holder = holder;
+            Reply = reply;
         }
+    }
+
+    /// <summary>The way back of `await actor.Method()` (docs/ROADMAP_TASKS.md section 3): the home of the actor runs the message at its `process` and puts the
+    /// result - or the exception that nothing caught - here, moved out of its own scopes into <see cref="Holder"/>; the caller waits for <see cref="Done"/>
+    /// and takes them over.</summary>
+    public sealed class ActorReply
+    {
+        public readonly ManualResetEventSlim Done = new(false);
+        public Value Result;
+        public ObjectInstance? Exception;
+        /// <summary>What the result and the exception belong to between the two threads.</summary>
+        public readonly Scope Holder = new(null);
     }
 
     /// <summary>The mailbox of ONE actor instance (docs/spec/THREADING_DESIGN.md
@@ -42,6 +58,9 @@ namespace fire.Runtime
     /// apart.</summary>
     public sealed class ActorMailbox
     {
+        /// <summary>The VM (thread) that made the actor: there `await actor.Method()` runs the method at once (waiting for itself would never end).</summary>
+        public object? Home { get; set; }
+
         private readonly ConcurrentQueue<ActorMessage> _queue = new();
         private readonly SemaphoreSlim _signal = new(0);
 

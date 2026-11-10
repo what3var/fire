@@ -181,6 +181,9 @@ namespace fire.Editor
                 // `await f()`, `await [ ... ]`, `await taking x { }` (docs/ROADMAP_TASKS.md) - like the parser: in front of what it awaits, on the same line
                 "await" => i + 1 < tokens.Count && !At(i + 1).NewlineBefore
                     && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.LBracket or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New,
+                // `fire dedicated { }`, `await dedicated Work()` - like the parser: right after `fire` or `await`, in front of what follows
+                "dedicated" => i > 0 && (tokens[i - 1].Type == TokenType.Fire || tokens[i - 1].Lexeme == "await")
+                    && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New or TokenType.With,
                 _ => false,
             };
         }

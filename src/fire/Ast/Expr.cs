@@ -186,7 +186,9 @@ namespace fire.Ast
     // ---------------------------------------------------------------
     /// <summary>TypeArgs: type arguments written at the call of a generic method (`Pick<string>(a, b)`) - only generic overloads are meant then; null without.
     /// ArgNames: the names of named arguments (`f(1, size: 2)`: [null, "size"]) - null when no argument is named; the named ones follow the positional ones.</summary>
-    public sealed record CallExpr(int Line, Expr Callee, IReadOnlyList<Expr> Args, IReadOnlyList<TypeRef>? TypeArgs = null, IReadOnlyList<string?>? ArgNames = null) : Expr(Line);
+    /// <summary>Awaited: written as `await x.Method(...)` - on an actor the call waits for the result (OpCode.AwaitReply). Dedicated: `await dedicated ...` -
+    /// natively the caller's task runs the call on a system thread of its own (OpCode.Dedicate/Undedicate around it; nothing in the VM).</summary>
+    public sealed record CallExpr(int Line, Expr Callee, IReadOnlyList<Expr> Args, IReadOnlyList<TypeRef>? TypeArgs = null, IReadOnlyList<string?>? ArgNames = null, bool Awaited = false, bool Dedicated = false) : Expr(Line);
     public sealed record MemberExpr(int Line, Expr Target, string Name) : Expr(Line);
     public sealed record IndexExpr(int Line, Expr Target, Expr Index) : Expr(Line);
     public sealed record AssignExpr(int Line, Expr Target, Expr Value) : Expr(Line);

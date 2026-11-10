@@ -1419,7 +1419,7 @@ namespace fire.Compiler
             _chunk.EmitU16(protoIdx);
             _chunk.EmitU16(_globalSlotCount);
             _chunk.EmitByte((byte)fs.TakingCaptures.Count);
-            _chunk.EmitByte(hasWith ? (byte)1 : (byte)0);
+            _chunk.EmitByte((byte)((hasWith ? 1 : 0) | (fs.Dedicated ? 2 : 0)));   // (bit 1: `fire dedicated`)
             _chunk.EmitByte((byte)fs.TakingCaptures.Count(c => c.Handover));   // (the parser put them last)
         }
 
@@ -2841,6 +2841,14 @@ namespace fire.Compiler
                     break;
                 }
 
+                case CallExpr { Dedicated: true } dedicatedCall:
+                    // `await dedicated ...`: the call between Dedicate and Undedicate (natively on a system thread of its own; an exception that leaves it
+                    // takes the task back to the pool at its catch - fire_rt.h fire_dedicateCaught)
+                    _chunk.EmitOp(OpCode.Dedicate);
+                    CompileCall(dedicatedCall with { Dedicated = false });
+                    _chunk.EmitOp(OpCode.Undedicate);
+                    break;
+
                 case CallExpr call:
                     CompileCall(call);
                     break;
@@ -3290,6 +3298,7 @@ namespace fire.Compiler
                 CompileExpr(me.Target);
                 ulong callCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count));
                 EmitCallTypeArgs(call);
+                if (call.Awaited) _chunk.EmitOp(OpCode.AwaitReply);   // (in front of the other prefixes: they are looked for right in front of the call)
                 EmitCopyArgsPrefix(callCopyMask);
                 EmitArgNames(call.ArgNames);
                 _chunk.EmitOp(OpCode.CallMethod);

@@ -2228,9 +2228,15 @@ namespace fire.Native
             if (_usesActors)
             {
                 sb.AppendLine("    if (self.kind == K_Class && FIRE_LIKELY(leafAlive(self)) && (asObj(self)->h.flags & 8)) {");
-                sb.AppendLine($"        {CArray("Value", "av", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
-                sb.AppendLine($"        actorSend(self, {msg}, av, {argc});");
-                sb.AppendLine("        return Undef();");
+                // `await a.M()` (g_awaitReplyTo, OpCode.AwaitReply): a message with a way back - at the actor's home the method runs at once, like a call
+                sb.AppendLine("        bool aw_ = sameRef(g_awaitReplyTo, self);");
+                sb.AppendLine("        if (aw_) g_awaitReplyTo = Undef();");
+                sb.AppendLine("        if (!aw_ || !actorAtHome(self)) {");
+                sb.AppendLine($"            {CArray("Value", "av", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
+                sb.AppendLine($"            if (aw_) return actorAwait(self, {msg}, av, {argc});");
+                sb.AppendLine($"            actorSend(self, {msg}, av, {argc});");
+                sb.AppendLine("            return Undef();");
+                sb.AppendLine("        }");
                 sb.AppendLine("    }");
             }
             if (_usesThreads)
@@ -5865,6 +5871,25 @@ namespace fire.Native
                 case OpCode.OverloadHint:
                     // (read by the call it stands in front of: OverloadHintBefore)
                     return Next();
+                case OpCode.Dedicate:
+                    // `await dedicated ...`: the running task goes to a system thread of its own (only a task can: a program without threads has none)
+                    if (_usesThreads) E("fire_dedicateEnter();");
+                    return Next();
+                case OpCode.Undedicate:
+                    if (_usesThreads) E("fire_dedicateLeave();");
+                    return Next();
+                case OpCode.AwaitReply:
+                {
+                    // `await x.M()`: when x is an actor, the message of the call that follows gets a way back (its dispatcher: actorAwait)
+                    if (!_usesActors || !f.IndexOf.TryGetValue(ins.Addr, out int awaitAt)) return Next();
+                    int k = awaitAt + 1;
+                    while (k < f.Decoded.Count && f.Decoded[k].Op is OpCode.CopyArgs or OpCode.ArgNames or OpCode.OverloadHint or OpCode.SetTypeArgs) k++;
+                    if (k >= f.Decoded.Count || f.Decoded[k].Op != OpCode.CallMethod) return Next();
+                    int receiver = d - f.Decoded[k].A[1] - 1;
+                    if (receiver < 0 || ObjSlot(receiver) && !InstancesOf(ObjClass(Ty(receiver))).Any(c => c.Rc.IsActor)) return Next();   // (no actor can be there)
+                    E($"g_awaitReplyTo = {S(receiver)};");
+                    return Next();
+                }
                 case OpCode.ArgNames:
                     // (read by the call it stands in front of: NamesBefore)
                     return Next();
@@ -6467,7 +6492,8 @@ namespace fire.Native
                 {
                     UseThreads();
                     int takingCount = ins.A[2];
-                    bool hasWith = ins.A[3] != 0;
+                    bool hasWith = (ins.A[3] & 1) != 0;
+                    bool dedicatedThread = (ins.A[3] & 2) != 0;   // `fire dedicated`: a system thread of its own, not a task
                     int handoverCount = ins.A[4];   // the last ones of the taking values: `handover` (moved, not copied)
                     int copyCount = takingCount - handoverCount;
                     int argc = takingCount + (hasWith ? 1 : 0);
@@ -6491,7 +6517,7 @@ namespace fire.Native
                     // (all `handover` values together - one may reach another; the sender's other references die, see fire_rt.h handOverAll)
                     if (handoverCount > 0) sbf.Append($"handOverAll(tv + {copyCount}, av + {copyCount}, {handoverCount}, travel); ");
                     if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
-                    sbf.Append($"ensureDomain(); fireThread({body.Name}, av, {argc}, travel); }}");
+                    sbf.Append($"ensureDomain(); {(dedicatedThread ? "fireThreadDedicated" : "fireThread")}({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");
                     E(sbf.ToString());
                     if (takingCount > 0) Check();

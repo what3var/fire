@@ -269,6 +269,11 @@ namespace fire.Bytecode
         TryTakeToArray,      //                     : Stack [array, index, value]
         // `a ^ b` whose target is a float (BinaryExpr.FloatPower, SPEC 1.1): the float power also of two ints (Power gives them an int power)
         PowerFloat,
+        // `await x.Method()` (docs/ROADMAP_TASKS.md): the method call that follows waits for the result when x is an actor (a message with a way back)
+        AwaitReply,          //                     : prefix of CallMethod
+        // `await dedicated ...`: natively the running task goes to a system thread of its own for what follows, and back to the pool after it; nothing in the VM
+        Dedicate,
+        Undedicate,
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

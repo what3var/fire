@@ -2027,8 +2027,15 @@ namespace fire.Compiler
             int line = Peek().Line;
             Expect(TokenType.Fire, "Expected 'fire'");
 
+            // `fire dedicated { ... }` / `fire dedicated Work(x)`: a system thread of its own (natively; a task of the pool otherwise) - `dedicated` is a word
+            // only there
+            bool dedicated = Check(TokenType.Identifier) && Peek().Lexeme == "dedicated"
+                && (PeekAt(1).Type is TokenType.LBrace or TokenType.Taking or TokenType.Handover or TokenType.With
+                    || PeekAt(1).Type == TokenType.Identifier && PeekAt(2).Type == TokenType.LParen);
+            if (dedicated) Advance();
+
             if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LParen)
-                return ParseFireCallForm(line);
+                return ParseFireCallForm(line, dedicated);
 
             // `fire global { ... }`: job for the main program instead of a new thread (docs/spec/THREADING_DESIGN.md section 7)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking || PeekAt(1).Type == TokenType.Handover))
@@ -2036,7 +2043,7 @@ namespace fire.Compiler
 
             var (takingCaptures, withVarName, withSource) = ParseFireTakingWithClauses();
             var body = ParseBlock();
-            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body));
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body, dedicated));
         }
 
         /// <summary>`fire handover x`: after the `fire` the sender's variable is `undefined` (it no longer owns the value) - desugared into
@@ -2137,7 +2144,7 @@ namespace fire.Compiler
         /// Requires 'this' in the calling context (only valid inside a
         /// method/a constructor - checked by the resolver like any
         /// other 'this', no special check needed here).</summary>
-        private Stmt ParseFireCallForm(int line)
+        private Stmt ParseFireCallForm(int line, bool dedicated = false)
         {
             string methodName = Advance().Lexeme;
             Expect(TokenType.LParen, "Expected '(' after '" + methodName + "'");
@@ -2171,7 +2178,7 @@ namespace fire.Compiler
             var callExpr = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, thisCaptureName), methodName), argRefs);
             var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
 
-            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body));
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body, dedicated));
         }
 
         /// <summary>`await Call(args) [taking x | handover x ...]` / `await [taking x | handover x ...] { ... return v }` (docs/ROADMAP_TASKS.md section 3).
@@ -2230,6 +2237,19 @@ namespace fire.Compiler
         /// <summary>What one `await` waits for: a call with its clauses, or a block (see ParseAwait).</summary>
         private Expr ParseAwaited(Token awaitTok)
         {
+            // `await dedicated Work()`: natively the caller's task runs the call on a system thread of its own (work that blocks in natives for long holds
+            // no worker of the pool); the same as `await` otherwise
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "dedicated"
+                && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New)
+            {
+                Advance();
+                return ParseAwaitedPlain(awaitTok) is CallExpr dc ? dc with { Dedicated = true } : throw Error("'await dedicated' expects a call or a block", Peek());
+            }
+            return ParseAwaitedPlain(awaitTok);
+        }
+
+        private Expr ParseAwaitedPlain(Token awaitTok)
+        {
             int line = awaitTok.Line;
             if (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.LBrace))
             {
@@ -2251,6 +2271,8 @@ namespace fire.Compiler
                 var nameTok = Expect(TokenType.Identifier, "Expected an identifier after '" + (handover ? "handover" : "taking") + "'");
                 modes[nameTok.Lexeme] = handover ? UnaryOp.Take : UnaryOp.DeepCopy;
             }
+            // (a method of an object: when it is an actor, the call waits for the result - the message gets a way back)
+            if (call.Callee is MemberExpr) call = call with { Awaited = true };
             if (modes.Count == 0) return call;
             var used = new HashSet<string>();
             Expr Apply(Expr e) => e is IdentifierExpr id && modes.TryGetValue(id.Name, out var op) && used.Add(id.Name) ? new UnaryExpr(id.Line, op, e) : e;

@@ -147,7 +147,8 @@ namespace fire.Ast
         IReadOnlyList<FireTakingCapture> TakingCaptures,
         string? WithVarName,
         Expr? WithSource,
-        Stmt.BlockStmt Body) : Stmt(Source, Line);
+        Stmt.BlockStmt Body,
+        bool Dedicated = false) : Stmt(Source, Line);   // `fire dedicated { }`: natively a system thread of its own, not a task of the pool
 
     /// <summary>Start of a `sync global { ... }` section (docs/spec/THREADING_DESIGN.md section 7) - the parser desugars the block into
     /// `SectionEnterStmt; try { Body } finally { SectionExitStmt }`, so that the section also ends on `throw` in the block.</summary>

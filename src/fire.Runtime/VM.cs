@@ -463,6 +463,8 @@ namespace fire.Runtime
         private readonly record struct CallbackBoundary(int FrameDepth, Scope Scope, int HandlerFloor, int StackPointer);
         private readonly Stack<CallbackBoundary> _callbackBoundaries = new();
         private ObjectInstance? _callbackError;
+        /// <summary>`await x.Method()` (OpCode.AwaitReply): the next method call waits for the result when x is an actor (Next: set by the prefix, Now: of the running call).</summary>
+        private bool _awaitReplyNext, _awaitReplyNow;
 
         // -----------------------------------------------------------
         // Global variables and fire threads (docs/spec/THREADING_DESIGN.md section 7, Runtime.GlobalsBroker)
@@ -1261,6 +1263,37 @@ namespace fire.Runtime
             _currentScope = scope;
             _currentChunk = proto.Chunk;
             _ip = 0;
+
+            if (message.Reply is { } reply)
+            {
+                // `await actor.Method()`: the exception that nothing in the method caught goes back to the caller, not to the handlers of `process`
+                int frameDepth = targetDepth - 1;
+                var freshOwner = _frames.Peek().ReturnScope.Temp;   // (where a value made by the call lands when it returns)
+                _callbackBoundaries.Push(new CallbackBoundary(frameDepth, _frames.Peek().ReturnScope, _handlers.Count, _sp));
+                _callbackError = null;
+                try { RunNestedUntil(targetDepth); }
+                finally { _callbackBoundaries.Pop(); }
+                if (_shutdownDeferred) FinishDeferredShutdown();
+                var error = _callbackError;
+                _callbackError = null;
+                if (error != null)
+                {
+                    error.ReparentTo(reply.Holder);
+                    reply.Exception = error;
+                }
+                else if (!_stopExecutionRequested)
+                {
+                    var result = Pop();
+                    // to the caller, out of this thread's scopes: what the call made goes over (handover), what the actor keeps - a field, a global - as a copy
+                    if (OwnerOfValue(result) is { } resultOwner)
+                        result = ReferenceEquals(resultOwner, freshOwner)
+                            ? ObjectHandover.MoveAll(new[] { result }, reply.Holder)[0]
+                            : ObjectCloner.Clone(result, reply.Holder, deep: true);
+                    reply.Result = result;
+                }
+                reply.Done.Set();
+                return true;
+            }
 
             RunNestedUntil(targetDepth);
             PopNestedResult(); // Return value unused, see documentation above.
@@ -2674,7 +2707,7 @@ namespace fire.Runtime
             {
                 if (ctorEntry.Guard != null) TakeGuardedHit(cachedCtor);
                 var created = new ObjectInstance(cachedClass.Name, _currentScope.Temp, cachedClass);   // unclaimed: the statement temporaries (SPEC 2.1)
-                if (cachedClass.IsActor) created.Mailbox = new ActorMailbox();
+                if (cachedClass.IsActor) created.Mailbox = new ActorMailbox { Home = this };
                 TakeTypeArgs(created);
                 EnterCall(cachedCtor, argCount, dropBelow: false, newThis: created, constructed: created, copyMask: copyMask);
                 return;
@@ -2702,7 +2735,7 @@ namespace fire.Runtime
             if (ctorProto.ParamCount == argCount && (!rc.IsConstructorTypeOverloaded(argCount) || _hintTaken != null))
                 StoreSite(site, new SiteCache(rc, ctorProto, 0, guard: _hintTaken));
             var instance = new ObjectInstance(rc.Name, _currentScope.Temp, rc);   // unclaimed: the statement temporaries (SPEC 2.1)
-            if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            if (rc.IsActor) instance.Mailbox = new ActorMailbox { Home = this };
             TakeTypeArgs(instance);
             args = FillDefaultArgs(ctorProto, args, instance);
             BeginConstruction(instance, ctorProto, args, copyMask);
@@ -2732,7 +2765,7 @@ namespace fire.Runtime
             }
 
             var instance = new ObjectInstance(rc.Name, owner, rc);
-            if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            if (rc.IsActor) instance.Mailbox = new ActorMailbox { Home = this };
             TakeTypeArgs(instance);
             args = FillDefaultArgs(ctorProto, args, instance);
             BeginConstruction(instance, ctorProto, args, copyMask);
@@ -3259,6 +3292,8 @@ namespace fire.Runtime
             int methodNameIdx = ReadU16();
             int argCount = ReadByte();
             long copyMask = TakeCopyMask();
+            _awaitReplyNow = _awaitReplyNext;
+            _awaitReplyNext = false;
 
             // Fast path (inline cache, see SiteCache): an object of the same class as at the last call
             // of this site - method, access and argument checks are already done.
@@ -3388,15 +3423,35 @@ namespace fire.Runtime
             // instead of a direct call, regardless of the calling
             // thread - this call itself returns 'undefined' and
             // continues normally (no jump into any chunk).
-            if (obj.Mailbox != null)
+            if (obj.Mailbox != null && !(_awaitReplyNow && ReferenceEquals(obj.Mailbox.Home, this)))
             {
                 var holder = new Scope(null);   // the message owns its unclaimed arguments until it runs (SPEC 2.4)
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask, holder);
                 RejectArgNames("a method of an actor");
+                if (_awaitReplyNow)
+                {
+                    // `await actor.Method()`: the message has a way back; this thread waits until the actor's home ran it (at its `process`)
+                    _awaitReplyNow = false;
+                    var reply = new ActorReply();
+                    obj.Mailbox.Enqueue(new ActorMessage(methodName, args, holder, reply));
+                    while (!reply.Done.Wait(20))
+                        if (CheckShutdownSignals()) { Push(Value.MakeUndefined()); StopExecution(); return; }
+                    if (reply.Exception != null) { ThrowException(Value.MakeClassRef(reply.Exception)); return; }
+                    var result = reply.Result;
+                    // (handed over: it belongs to this thread's call now, like a returned value)
+                    if (ReferenceEquals(OwnerOfValue(result), reply.Holder))
+                    {
+                        if (result.Kind == ValueKind.Class) ((ObjectInstance)result.AsObjectRef()).ReparentTo(_currentScope.Temp);
+                        else if (LeafOf(result) is { } resultLeaf) LeafOwnership.Reparent(resultLeaf, _currentScope.Temp);
+                    }
+                    Push(result);
+                    return;
+                }
                 obj.Mailbox.Enqueue(new ActorMessage(methodName, args, holder));
                 Push(Value.MakeUndefined());
                 return;
             }
+            _awaitReplyNow = false;   // (an `await` of the actor's own home runs the method at once, like a call)
 
             // Fire thread calls a method of an object of the shared area: it runs as a whole in a section (atomic).
             if (NeedsSection(obj))
@@ -4236,6 +4291,8 @@ namespace fire.Runtime
                 case OpCode.Mod: BinaryNumericOrOperator(Value.Modulo, "operator%"); break;
                 case OpCode.Power: BinaryNumericOrOperator(Value.Power, "operator^"); break;
                 case OpCode.PowerFloat: BinaryNumericOrOperator(Value.PowerFloat, "operator^"); break;
+                case OpCode.AwaitReply: _awaitReplyNext = true; break;
+                case OpCode.Dedicate: case OpCode.Undedicate: break;   // (`dedicated`: a native build moves the task to a system thread; a VM thread is one)
                 case OpCode.BitAnd: BinaryNumericOrOperator(Value.BitAnd, "operator&"); break;
                 case OpCode.BitOr: BinaryNumericOrOperator(Value.BitOr, "operator|"); break;
                 case OpCode.BitXor: BinaryNumericOrOperator(Value.BitXor, "operator#"); break;
@@ -5108,7 +5165,7 @@ namespace fire.Runtime
                     int protoIdx = ReadU16();
                     int globalSlotCount = ReadU16();
                     int takingCount = ReadByte();
-                    bool hasWith = ReadByte() != 0;
+                    bool hasWith = (ReadByte() & 1) != 0;   // (bit 1: `fire dedicated` - a VM thread is a system thread anyway)
                     int handoverCount = ReadByte();   // the last ones of the taking values are `handover` (moved, not copied)
                     // Order reversed to compiling (stack!): with
                     // was pushed LAST, so lies on top, is popped FIRST;
@@ -6176,7 +6233,7 @@ namespace fire.Runtime
             var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             var instance = new ObjectInstance(rc.Name, _currentScope.Temp, rc);   // unclaimed: the statement temporaries (SPEC 2.1)
-            if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            if (rc.IsActor) instance.Mailbox = new ActorMailbox { Home = this };
             TakeTypeArgs(instance);
             args = FillDefaultArgs(ctorProto, args, instance);
 

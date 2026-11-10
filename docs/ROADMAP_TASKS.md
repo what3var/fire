@@ -183,7 +183,28 @@ var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for
   grants; so calls that change the same global object run safely, in an order that is not fixed (as threads). A program with `await [ ... ]` uses the scheduler of tasks. Four calls that
   sleep 100 ms: about 100 ms natively; ThreadSanitizer and AddressSanitizer clean. The element type of the result is `any` for now (the common type of
   the results, as for an array literal, is left for later).
-* Next: 4c `await actor.Method()`, 4d `dedicated`.
+* **4c done:** `await actor.Method()`. The parser marks a method call after `await` (CallExpr.Awaited); the compiler puts the prefix
+  `OpCode.AwaitReply` in front of it. On an actor the message then gets a way back (VM: ActorReply with an event; native: `g_awaitReplyTo`, which the
+  actor's dispatcher compares with its receiver - with the generation, so a stale value never hits a later object - and `actorAwait`). The home of the
+  actor runs the message at its `process` under a catch of its own: an exception that nothing in the method caught goes back and is thrown at the `await`,
+  not to the handlers around `process`. The result goes over like a handover when the call made it, as a deep copy when the actor keeps it (a field, a
+  global); the strings in it are copied for the other thread. The caller waits with its section given back (the home may be the main program, which
+  waits for sections) - a task is parked, keyed to its reply; the main program serves its queue meanwhile. On the actor's home `await` runs the method
+  at once, like a call. `terminate` ends the wait; an actor that dies with waiting messages answers them with undefined. Fixed on the way: the waits of
+  `await [ ... ]` (4b) were not keyed - a task looked again only every 5 ms; keyed, a round trip of `await actor.M()` takes about 30 us natively
+  (2000 in 62 ms; before the fix 5 ms each). ThreadSanitizer and AddressSanitizer clean with four threads awaiting one actor.
+* **4d done:** `dedicated`. `fire dedicated { }` (and the call form) sets bit 1 of the `with` byte of OpCode.Fire; a native build starts a system
+  thread of its own for it (`fireThreadDedicated`) instead of a task. `await dedicated X` (a call, a block, an element of `await [ ... ]`) puts
+  OpCode.Dedicate/Undedicate around the call; natively the running task switches out with TA_DEDICATE, its worker starts a system thread that switches
+  into the task's coroutine (a FireWorker with `dedicated`: taskRunning is false there, so the task waits, sleeps and blocks like a thread and never
+  parks), and Undedicate switches out with TA_REQUEUE - that thread puts the task back into the pool and ends. It is the same strand, so lending stays as
+  it is. An exception that leaves the call skips Undedicate: throwValueR, when the catch it found was there before the `await dedicated`
+  (g_dedHandlers), takes the task back first. Nested: counted (an exception out of an inner one that the outer one catches keeps the task on its thread
+  until the outer one ends). The VM ignores both (its threads are system threads). Twenty tasks in `await dedicated` sleeping at once: 25 system
+  threads (20 of their own and the pool), 5 without `dedicated`; ThreadSanitizer and AddressSanitizer clean.
+* Open (found on the way, not of step 4): a lambda inside a `fire` body cannot use the variables of the body's top level (E4022 - the resolver gives
+  the lambda the main program's global scope as its parent, the body's variables are in the thread's own global scope); so `await [ ... ]` in a `fire`
+  body works only in a method it calls. Natively the body's variables are no globals of the program either - the fix needs both sides.
 
 ## 4. The scheduler in C
 
