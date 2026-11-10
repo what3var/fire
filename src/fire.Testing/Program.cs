@@ -20917,6 +20917,55 @@ else
             var detached = CancellationSource.Detached()
             print(detached.IsCancelled)
             """),
+        ("Completion: Set in einem anderen Thread (Share, handover), Kopie fuer jeden Wait, nur der erste Set zaehlt, String, Zeitlimit, Fail, Abbruch per until, geliehen an await, Actor-Argument", """
+            #import "time"
+            class Box { int v
+                string name
+                construct(int v, string name) { this.v = v; this.name = name } }
+            class W {
+                static int Later(Completion c) { Sleep(20ms); c.Set(new Box(7, "seven")); return 1 }
+                static int Never() { var x = new Completion(); x.Wait(); return 1 }
+            }
+            actor Reader {
+                undefined Answer(Completion c, int v) { c.Set(v * 2) }
+            }
+            var c = new Completion()
+            var s = c.Share()
+            bool second = true
+            fire handover s {
+                Sleep(20ms)
+                s.Set(new Box(42, "answer"))
+                bool again = s.Set(1)
+                sync global { second = again }
+            }
+            Box b = c.Wait(2s)
+            b.v = 0
+            Box b2 = c.Wait()
+            print(b2.v + " " + b2.name + " " + c.IsDone)
+            while (second) { sync globals; Sleep(1ms) }
+            print("second set: " + second)
+            var t = new Completion()
+            print(t.IsDone + " " + t.Set("text " + 5) + " " + t.Wait())
+            var never = new Completion()
+            try { never.Wait(30ms); print("no") } catch (TimeoutException e) { print("timeout: " + e.message) }
+            var f = new Completion()
+            var fs = f.Share()
+            fire handover fs { fs.Fail(new Exception("broken")) }
+            try { f.Wait(2s); print("no") } catch (Exception e) { print("failed: " + e.message) }
+            var src = new CancellationSource()
+            src.CancelAfter(30ms)
+            try { int r = await W.Never() until src.Token; print("no") } catch (CancelledException e) { print("cancelled") }
+            var w = new Completion()
+            int n = await W.Later(w)
+            Box lent = w.Wait()
+            print("lent: " + n + " " + lent.name)
+            var reader = new Reader()
+            var answer = new Completion()
+            fire with reader { Sleep(10ms) }
+            reader.Answer(answer.Share(), 21)
+            process reader
+            print("actor: " + answer.Wait(1s))
+            """),
         ("Tasks: 600 fire-Threads schlafen und schreiben in Sektionen (die VM als Tasks eines Pools, docs/ROADMAP_TASKS.md Schritt 7)", """
             #import "time"
             int done = 0

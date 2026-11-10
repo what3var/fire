@@ -109,6 +109,27 @@ namespace fire.Standard
                 undefined CancelAfter(any time) { __cancel_after(this.node, time) }
             }
 
+            /// A value that another task delivers (docs/ROADMAP_TASKS.md section 6): `Set(value)` - the first `Set` or `Fail` counts, the Completion keeps a
+            /// copy -, `Fail(exception)`, `IsDone`; `Wait(limit)` waits until it is there and returns a copy of the value (or throws a copy of the exception).
+            /// A wait follows the token of the task (`until`, cancelling) and ends with a TimeoutException after `limit`. A Completion is never copied:
+            /// `Share()` gives another one on the same value, for another task (`fire handover s { s.Set(1) }`, the argument of an actor's method).
+            [NoCopy]
+            class Completion {
+                int node = 0
+                construct() { this.node = __completion_new() }
+                destruct() { __completion_release(this.node) }
+                Completion Share() {
+                    var c = new Completion()
+                    __completion_release(c.node)
+                    c.node = __completion_ref(this.node)
+                    return c
+                }
+                bool IsDone { get { return __completion_done(this.node) } }
+                bool Set(any value) { return __completion_set(this.node, value, false) }
+                bool Fail(Exception e) { return __completion_set(this.node, e, true) }
+                any Wait(any limit = undefined) { return __completion_wait(this.node, limit) }
+            }
+
             // (`until x`: a token, a source or a time limit as the node a task follows)
             class __Cancel {
                 static int Limit(any limit) {

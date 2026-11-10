@@ -4966,6 +4966,17 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
+                    if (Array.IndexOf(CompletionMethods.Names, native) >= 0)
+                    {
+                        // Completion (fire_rt.h: fire_completion_new, ...): a value that another task delivers; Wait copies it into this scope
+                        UseThreads();
+                        int first = d - argc;
+                        var completionArgs = Enumerable.Range(first, argc).Select(SR).ToList();   // (read before the result slot is written: it may be an alias)
+                        if (native == "__completion_wait") completionArgs.Add("&" + OwnerList());
+                        E($"{T(first)} = fire_{native.Substring(2)}({string.Join(", ", completionArgs)});");
+                        Check();
+                        d = first + 1; SetR(first, native == "__completion_wait"); return Next();
+                    }
                     if (native == AwaitMethods.NativeName && argc == 3)
                     {
                         // `await [ ... ]` (fire_rt.h awaitRun: the lambdas of the calls side by side, as tasks - where the target has threads)
