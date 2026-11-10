@@ -93,8 +93,8 @@ Work.Run()
   of the main program are no locals: the thread reads them directly (see [Global variables](#global-variables)).
 - The same words work in a **lambda**: `() => (taking item).v` captures a copy of `item`, made when the lambda is made; `() => (handover item).v` moves
   the instance into the lambda like a handover to a thread - `item` is `undefined` afterwards and every other reference from before is dead (a
-  `DestroyedException`). Without a word a lambda captures the variable's value as before: an object is shared, nothing is copied - no warning (a lambda
-  never goes to another thread).
+  `DestroyedException`). Without a word a lambda gets a copy, like `taking`, with the warning `TC023`. A `taking` copy is new in every call of the lambda;
+  the `handover` instance belongs to the lambda and is lent to each call (see [Lambdas](12-lambdas.md#captured-values)).
 - A lambda inside a `fire` block captures the block's own variables like locals (`fire { var n = 41; var f = () => n + 1 }`) - so `await [ ... ]`
   works in a `fire` block too.
 

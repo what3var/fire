@@ -3678,7 +3678,7 @@ namespace fire.Runtime
                 default: LeafOwnership.Reparent(leaf, _currentScope); target = _currentScope; break;
             }
             if (mode != Takes.This && !leaf.IsDestroyed)
-                OwnershipWalk.MoveReachable(leaf is ScriptArray a ? Value.MakeArray(a) : Value.MakeBuffer((ByteBuffer)leaf), mode, OwnsWithinCall, target, EnumerateItems);
+                OwnershipWalk.MoveReachable(leaf switch { ScriptArray a => Value.MakeArray(a), LambdaValue l => Value.MakeLambda(l), _ => Value.MakeBuffer((ByteBuffer)leaf) }, mode, OwnsWithinCall, target, EnumerateItems);
             return true;
         }
 
@@ -3697,10 +3697,11 @@ namespace fire.Runtime
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
+                case ValueKind.Lambda:
                     LeafOwnership.Destroy(LeafOf(v)!, this);
                     return;
                 default:
-                    throw new InvalidOperationException($"'delete' expects an object, an array or a buffer, not {v.Kind}.");
+                    throw new InvalidOperationException($"'delete' expects an object, an array, a buffer or a lambda, not {v.Kind}.");
             }
         }
 
@@ -5120,8 +5121,21 @@ namespace fire.Runtime
                     bool transitive = ReadByte() != 0;
                     var ownerVal = Pop();
                     var operandVal = Pop();
-                    var operandObj = RequireObjectInstance(operandVal, "'is from'/'is under'");
                     var ownerObj = RequireObjectInstance(ownerVal, "'is from'/'is under' (owner expression)");
+                    if (operandVal.Kind == ValueKind.Lambda && LeafOf(operandVal) is { } lambdaLeaf)
+                    {
+                        // a lambda (an owned leaf): its owner, or one above it
+                        IOwner? up = lambdaLeaf.IsDestroyed ? null : lambdaLeaf.LeafOwner;
+                        bool found = ReferenceEquals(up, ownerObj);
+                        for (int guard = 0; transitive && !found && up != null && guard < 10000; guard++)
+                        {
+                            up = up switch { ObjectInstance oi => oi.Owner, IOwnedLeaf l => l.LeafOwner, _ => null };
+                            found = ReferenceEquals(up, ownerObj);
+                        }
+                        Push(Value.MakeBool(found));
+                        break;
+                    }
+                    var operandObj = RequireObjectInstance(operandVal, "'is from'/'is under'");
                     bool result = transitive
                         ? operandObj.IsTransitivelyOwnedBy(ownerObj)
                         : operandObj.IsOwnedBy(ownerObj);
@@ -6022,6 +6036,7 @@ namespace fire.Runtime
                 case "string": return v.Kind == ValueKind.String;
                 case "undefined": return v.Kind == ValueKind.Undefined;
                 case "class": return v.Kind == ValueKind.Class;
+                case "lambda": return v.Kind == ValueKind.Lambda;
             }
             if (v.IsEnum) return v.Enum!.Matches(typeName);
             // Arrays and buffers are enumerable (GetEnumerator, foreach): they fulfil the interface IEnumerable of the prelude

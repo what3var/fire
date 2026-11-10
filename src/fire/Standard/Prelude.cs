@@ -371,7 +371,7 @@ namespace fire.Standard
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
-                    if (value is of class) {
+                    if ((value is of class || value is of lambda)) {
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
                     this.items[this.count] = value
@@ -380,7 +380,7 @@ namespace fire.Standard
 
                 // an element that falls out: destroyed when the list owns its elements (Owns.Values) and this one
                 undefined DropElement(any value) {
-                    if (value is of class && this.owns.HasFlag(Owns.Values) && value is from this) { delete value }
+                    if ((value is of class || value is of lambda) && this.owns.HasFlag(Owns.Values) && value is from this) { delete value }
                 }
 
                 T operator[](int index) {
@@ -389,7 +389,7 @@ namespace fire.Standard
 
                 undefined operator[](int index, T value) {
                     any old = this.items[index]
-                    if (value is of class) {
+                    if ((value is of class || value is of lambda)) {
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
                     this.items[index] = value
@@ -413,7 +413,7 @@ namespace fire.Standard
                 T TakeAt(int index) {
                     any value = this.items[index]
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
-                    if (value is of class && value is from this) { taken = take value }
+                    if ((value is of class || value is of lambda) && value is from this) { taken = take value }
                     this.RemoveAt(index)
                     if (taken != undefined) { return taken }
                     return value
@@ -429,7 +429,7 @@ namespace fire.Standard
                         this.items[i] = this.items[i - 1]
                         i = i - 1
                     }
-                    if (value is of class) {
+                    if ((value is of class || value is of lambda)) {
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
                     this.items[index] = value
@@ -574,7 +574,7 @@ namespace fire.Standard
 
                 // a key or value that falls out: destroyed when the table owns that part (`what`) and this object
                 undefined Drop(any x, Owns what) {
-                    if (x is of class && this.owns.HasFlag(what) && x is from this) { delete x }
+                    if ((x is of class || x is of lambda) && this.owns.HasFlag(what) && x is from this) { delete x }
                 }
 
                 // room for more entries: the live ones move to new arrays (in their order, without the removed ones)
@@ -712,10 +712,10 @@ namespace fire.Standard
                 undefined Add(K key, V value) {
                     var h = this.HashOf(key)
                     if (this.Find(key, h) >= 0) { throw new ArgumentException("The key '" + key + "' is already in the dictionary.") }
-                    if (key is of class) {
+                    if ((key is of class || key is of lambda)) {
                         if (this.owns.HasFlag(Owns.Keys)) { key.TakeTo(this) } else { try key.TakeTo(this) }
                     }
-                    if (value is of class) {
+                    if ((value is of class || value is of lambda)) {
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
                     this.Insert(key, value, h)
@@ -732,7 +732,7 @@ namespace fire.Standard
                 undefined operator[](K key, V value) {
                     var h = this.HashOf(key)
                     var at = this.Find(key, h)
-                    if (value is of class) {
+                    if ((value is of class || value is of lambda)) {
                         if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
                     }
                     if (at >= 0) {
@@ -741,7 +741,7 @@ namespace fire.Standard
                         if (old != value) { this.Drop(old, Owns.Values) }
                         return
                     }
-                    if (key is of class) {
+                    if ((key is of class || key is of lambda)) {
                         if (this.owns.HasFlag(Owns.Keys)) { key.TakeTo(this) } else { try key.TakeTo(this) }
                     }
                     this.Insert(key, value, h)
@@ -792,7 +792,7 @@ namespace fire.Standard
                     this.Unlink(at)
                     this.Drop(k, Owns.Keys)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
-                    if (v is of class && v is from this) {
+                    if ((v is of class || v is of lambda) && v is from this) {
                         taken = take v
                         return taken
                     }
@@ -834,7 +834,7 @@ namespace fire.Standard
                 bool Add(T item) {
                     var h = this.HashOf(item)
                     if (this.Find(item, h) >= 0) { return false }
-                    if (item is of class) {
+                    if ((item is of class || item is of lambda)) {
                         if (this.owns.HasFlag(Owns.Values)) { item.TakeTo(this) } else { try item.TakeTo(this) }
                     }
                     this.Insert(item, undefined, h)
@@ -860,7 +860,7 @@ namespace fire.Standard
                     any k = this.keys[at]
                     this.Unlink(at)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
-                    if (k is of class && k is from this) {
+                    if ((k is of class || k is of lambda) && k is from this) {
                         taken = take k
                         return taken
                     }

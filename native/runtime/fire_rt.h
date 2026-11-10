@@ -50,7 +50,7 @@
  * (FIRE_TLS_STRUCT), the modules (FIRE_MODULES, FIRE_DLL) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL keeps it
  * anywhere. */
 #if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_MODULES) \
-    && !defined(FIRE_DLL) && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER))
+    && !defined(FIRE_DLL) && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER) || defined(FIRE_PLAT_ASM_ATOMICS))
 #define FIRE_NO_GIL 1
 #endif
 #if defined(FIRE_GIL) && defined(FIRE_NO_GIL)
@@ -75,10 +75,19 @@ FIRE_CC_RUNTIME_BEGIN
 #define FIRE_FN static inline
 
 /* Thread-local storage of the compiler (only with fire threads; FIRE_TLS_STRUCT platforms keep the state on the task instead). */
-#if defined(FIRE_THREADS) && !defined(FIRE_TLS_STRUCT)
+#if defined(FIRE_THREADS) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_TLS_EMULATED)
 #define FIRE_TLS FIRE_TLS_KEYWORD
+#define FIRE_TLS_REAL 1
 #else
 #define FIRE_TLS
+#endif
+/* (a cache that is per thread where the compiler has thread-local storage; with fire threads and without it, none - a static would be shared) */
+#if defined(FIRE_THREADS) && !defined(FIRE_TLS_REAL)
+#define FIRE_TLS_CACHE(type, name, n) type name[1] = {{0}}
+#define FIRE_TLS_CACHE_MASK(n) 0u
+#else
+#define FIRE_TLS_CACHE(type, name, n) static FIRE_TLS type name[n]
+#define FIRE_TLS_CACHE_MASK(n) ((n) - 1u)
 #endif
 
 /* Linkage "shared" on Windows (FIRE_DLL, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): the runtime is a DLL of its own (FIRE_DLL_RUNTIME: the translation unit that
@@ -420,7 +429,11 @@ FIRE_RT_FN ThreadLocals* fire_tl(void) FIRE_CONST_FN;
  * without it the structure is as fast as thread-local variables). So every strand gets its structure before it runs fire code: the main program in
  * fire_threadsInit, a fire thread in threadEntry; a thread of a package that calls into the runtime (strings, exceptions, fire code) calls
  * fire_strandAttach() first and fire_strandDetach() at its end. */
+#ifdef FIRE_TLS_EMULATED
+#define fire_curTask (*(ThreadLocals**)&FIRE_TLS_SLOT(0))   /* (TinyCC: a slot on a key of the platform - fire_platform_posix.h) */
+#else
 extern FIRE_TLS ThreadLocals* fire_curTask;
+#endif
 FIRE_COLD FIRE_FN ThreadLocals* fire_tlNew(void) {
 #define FIRE_XI(type, name, init) init,
     static const ThreadLocals init = { FIRE_THREAD_VARS(FIRE_XI) };
@@ -910,12 +923,12 @@ FIRE_FN double unitNiceFactor(double factor) {
 }
 typedef struct fire_FactorEntry { uint32_t from, to; double factor; } fire_FactorEntry;
 FIRE_FN double unitFactor(uint32_t from, uint32_t to) {
-    static FIRE_TLS fire_FactorEntry cache[64];
+    FIRE_TLS_CACHE(fire_FactorEntry, cache, 64);
     fire_FactorEntry* e;
     double factor;
     if (from == to) return 1.0;
     if (!unitCompatible(from, to)) { unitConflict(from, to); return 1.0; }
-    e = &cache[(from * 31u + to) & 63u];
+    e = &cache[(from * 31u + to) & FIRE_TLS_CACHE_MASK(64)];
     if (e->from == from && e->to == to && e->factor != 0) return e->factor;
     factor = unitNiceFactor(g_ud[from].scale / g_ud[to].scale);
     e->from = from; e->to = to; e->factor = factor;
@@ -1365,9 +1378,38 @@ typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; u
 /* The type arguments of an object or a call, one per type parameter (null: not known); interned, never freed. */
 typedef const TArg* const* TArgs;
 
-/* A lambda value: the function, the values it captured when it was created (copies, SPEC 4.2.1) and the `on` target (`this`). */
+/* Owned values: the header they share. An owner is an OwnList (for a scope a local of the generated function, for an object the `owned` list in its header); it
+ * holds its members in creation order, which is the order they are destroyed in. */
+enum { O_Object, O_Array, O_Buffer, O_Lambda };
+
+struct Owned {
+    Owned* prev;
+    Owned* next;
+    OwnList* owner;    /* the list this value is in; null while it travels as a return value to its new owner */
+    uint32_t slot;     /* the slot in the handle table (see below) */
+    FireGen gen;       /* ... and its generation */
+    uint8_t okind;     /* O_Object / O_Array / O_Buffer / O_Lambda */
+    uint8_t flags;     /* bit 0: destroyed (or being destroyed) */
+};
+
+struct OwnList {
+    Owned* head;
+    Owned* tail;
+    uint32_t mark;     /* scopes: height of the temporary pool when the scope was entered */
+    uint32_t depth;    /* (unused: kept for the layout of OwnList) */
+    OwnList* parent;   /* scopes: the enclosing scope (TakeUpwards; set only when the program uses it) */
+    Owned* holder;     /* object lists: the object that owns the list (null for a scope) */
+    OwnList* home;     /* the statement temporaries of a scope (SPEC 2.1): that scope's list (null for any other list) */
+};
+
+/* A lambda value: the function, the values it captured when it was created (copies, SPEC 4.2.1) and the `on` target (`this`). It is counted (Ref: the
+ * memory, also for the natives that keep a callback) and owned like an array (docs/ROADMAP_TASKS.md step 8): `o` is its place in the owner structure - when
+ * its owner ends it is destroyed (a call is the DestroyedException), its memory goes when the last count does (freeRef) - and `store` holds what it owns:
+ * the copies of its captures (`taking`, a variable without a word) and what `handover` moved into it. */
 typedef struct Lam {
     Ref h;
+    Owned o;
+    OwnList store;
     uint32_t nparams;
     uint32_t ncaps;
     uint32_t nreq;     /* parameters without a default value (they come first) */
@@ -1384,30 +1426,9 @@ typedef struct Lam {
 #endif
 } Lam;
 FIRE_FN Value* lamCaps(Lam* l) { return (Value*)((char*)l + FIRE_HDR(Lam)); }
+/* The lambda of an owner header with okind O_Lambda. */
+FIRE_FN Lam* lamOfOwned(Owned* o) { return (Lam*)(void*)((char*)o - offsetof(Lam, o)); }
 
-/* Owned values: the header they share. An owner is an OwnList (for a scope a local of the generated function, for an object the `owned` list in its header); it
- * holds its members in creation order, which is the order they are destroyed in. */
-enum { O_Object, O_Array, O_Buffer };
-
-struct Owned {
-    Owned* prev;
-    Owned* next;
-    OwnList* owner;    /* the list this value is in; null while it travels as a return value to its new owner */
-    uint32_t slot;     /* the slot in the handle table (see below) */
-    FireGen gen;       /* ... and its generation */
-    uint8_t okind;     /* O_Object / O_Array / O_Buffer */
-    uint8_t flags;     /* bit 0: destroyed (or being destroyed) */
-};
-
-struct OwnList {
-    Owned* head;
-    Owned* tail;
-    uint32_t mark;     /* scopes: height of the temporary pool when the scope was entered */
-    uint32_t depth;    /* (unused: kept for the layout of OwnList) */
-    OwnList* parent;   /* scopes: the enclosing scope (TakeUpwards; set only when the program uses it) */
-    Owned* holder;     /* object lists: the object that owns the list (null for a scope) */
-    OwnList* home;     /* the statement temporaries of a scope (SPEC 2.1): that scope's list (null for any other list) */
-};
 /* A scope's list that starts at `mark` (the height of the temporary pool) - as a value: the generated code declares its lists with it (`OwnList O = scopeList(poolMark())`;
  * C89 compilers like Open Watcom take no aggregate initializer that is not constant). */
 FIRE_FN OwnList scopeList(uint32_t mark) {
@@ -1913,13 +1934,13 @@ FIRE_COLD FIRE_FN bool unitCallConv(uint32_t u, bool to, double v, double* out, 
  * function threw. */
 typedef struct fire_ConvEntry { uint32_t from, to; double factor, shift; } fire_ConvEntry;
 FIRE_COLD FIRE_FN bool unitConvert(double v, uint32_t from, uint32_t to, double* out) {
-    static FIRE_TLS fire_ConvEntry cache[16];
+    FIRE_TLS_CACHE(fire_ConvEntry, cache, 16);
     fire_ConvEntry* e;
     double x, scaled, y;
     if (from == to) { *out = v; return true; }
     if (unitLinear(from) && unitLinear(to)) { *out = v * unitFactor(from, to); return true; }
     if (!unitCompatible(from, to)) { unitConflict(from, to); return false; }
-    e = &cache[(from * 31u + to) & 15u];
+    e = &cache[(from * 31u + to) & FIRE_TLS_CACHE_MASK(16)];
     if (!(e->from == from && e->to == to && e->factor != 0)) {
         double shift = (g_ud[from].offset - g_ud[to].offset) / g_ud[to].scale;
         e->from = from; e->to = to;
@@ -3030,8 +3051,10 @@ FIRE_FN void destroyList(OwnList* list) {
 }
 
 /* An array or buffer is destroyed: what it holds is released, the inner arrays it owns are destroyed, its handle expires. */
+FIRE_FN void lamDestroy(Lam* l);
 FIRE_FN void destroyLeaf(Owned* o) {
     if (o->flags & 1) return;
+    if (o->okind == O_Lambda) { lamDestroy(lamOfOwned(o)); return; }
     o->flags |= 1;
 #ifdef FIRE_SLOT_SEGMENTS
     slotBornSet(o->slot, slotGenGet(o->slot));   /* (see destroy) */
@@ -3067,29 +3090,14 @@ FIRE_ALWAYS_INLINE FIRE_FN void leave(OwnList* list) {
 /* The header of an object, an array or a buffer (null for any other value, and for an array or buffer that is already destroyed). */
 FIRE_FN Owned* ownedOf(Value v) {
     if ((v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) && leafAlive(v)) return leafOf(v);
+    if (v.kind == K_Lambda && !(((Lam*)v.p)->o.flags & 1)) return &((Lam*)v.p)->o;   /* (a lambda: its header in the counted memory) */
     return NULL;
 }
 
 /* `return`: an object (array, buffer) returned from the scope that owns it does not die with it; it goes to the caller (SPEC 2.3). */
 FIRE_FN void transferOut(Value v, OwnList* list) {
     Owned* o = ownedOf(v);
-    if (o && o->owner == list) ownUnlink(o);
-    else if (v.kind == K_Lambda) {   /* a lambda owns nothing: what it captured from `list` travels with it (the caller's `adopt` takes it) */
-        Lam* l = (Lam*)v.p;
-        uint32_t i;
-        for (i = 0; i < l->ncaps; i++) transferOut(lamCaps(l)[i], list);
-    }
-}
-
-/* The captures of a returned lambda that travel without an owner (transferOut, transferTree): `list` takes them like the lambda. */
-FIRE_FN void adoptCaptures(Lam* l, OwnList* list) {
-    uint32_t i;
-    for (i = 0; i < l->ncaps; i++) {
-        Value c = lamCaps(l)[i];
-        Owned* o = ownedOf(c);
-        if (o) { if (!o->owner) ownLink(list, o); }
-        else if (c.kind == K_Lambda) adoptCaptures((Lam*)c.p, list);
-    }
+    if (o && o->owner == list) ownUnlink(o);   /* (a lambda too: what it captured is in its store and travels with it) */
 }
 
 /* The caller takes over what came back from a call: an object, array or buffer without an owner, or a string/lambda that the callee retained for the trip (that
@@ -3100,12 +3108,10 @@ FIRE_FN Value retainedV(Value v) { retain(v); return v; }
 
 FIRE_FN void adopt(Value v, OwnList* list) {
     Owned* o = ownedOf(v);
-    if (o) {
-        if (!o->owner) ownLink(list, o);
-    } else if (isRef(v)) {
+    if (o && !o->owner) ownLink(list, o);
+    if (isRef(v)) {   /* (a string, a lambda) */
         Ref* r = refOf(v);
         if (r->rc != IMMORTAL) poolPush(r);   /* the count that came with the value now belongs to the pool */
-        if (v.kind == K_Lambda) adoptCaptures((Lam*)v.p, list);
     }
 }
 
@@ -3121,11 +3127,29 @@ FIRE_FN Value adoptV(Value v, OwnList* list) {
 FIRE_FN void freeRef(Ref* r) {
     if (R_KIND(r) == R_Lam) {
         Lam* l = (Lam*)r;
-        Value* caps = lamCaps(l);
-        uint32_t i;
-        for (i = 0; i < l->ncaps; i++) release(caps[i]);
+        if (!(l->o.flags & 1)) {
+            if (l->o.owner) return;   /* still owned: its owner destroys it (lamDestroy) - the memory goes then */
+            lamDestroy(l);            /* (no owner: it dies with its last count - lamDestroy's own count is the last, it frees it) */
+            return;
+        }
+        /* (destroyed: its captures and its store went already) */
     }
     free(r);
+}
+
+/* A lambda is destroyed (its owner ends, `delete`, a lambda that nobody owns loses its last count): what it owns goes (its store), its captures are released,
+ * a call of it is the DestroyedException from now on. The memory stays while it is counted (a reference to it, a native that keeps it): the last count frees it.
+ * (The count it takes here makes it the one that frees it when nobody else counts it - also against a release on another thread.) */
+FIRE_FN void lamDestroy(Lam* l) {
+    Value self = LamV(l);
+    uint32_t i;
+    if (l->o.flags & 1) return;
+    retain(self);
+    l->o.flags |= 1;
+    if (l->o.owner) ownUnlink(&l->o);
+    if (l->store.head) destroyList(&l->store);
+    for (i = 0; i < l->ncaps; i++) { Value c = lamCaps(l)[i]; lamCaps(l)[i] = Undef(); release(c); }
+    release(self);
 }
 
 /* A fresh reference value is held by the temporary pool (count 1) until its scope ends. */
@@ -3201,6 +3225,14 @@ FIRE_FN Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const
     Lam* l = (Lam*)malloc(blockSize(FIRE_HDR(Lam), ncaps, sizeof(Value)));
     if (FIRE_UNLIKELY(!l)) allocFailed();
     l->h.type = R_Lam;
+    l->o.prev = l->o.next = NULL;
+    l->o.owner = NULL;
+    l->o.slot = 0;
+    l->o.gen = 0;
+    l->o.okind = O_Lambda;
+    l->o.flags = 0;
+    l->store = scopeList(0);
+    l->store.holder = &l->o;   /* (what the lambda owns hangs on it: the chain of owners goes through it) */
     l->nparams = nparams;
     l->ncaps = ncaps;
     l->nreq = nparams;
@@ -3213,7 +3245,60 @@ FIRE_FN Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const
     l->nsel = 0;
 #endif
     registerTemp(&l->h, list);
+    if (list) ownLink(list, &l->o);   /* (a new lambda belongs to the statement until a slot claims it, like a new array) */
     return l;
+}
+
+/* The store of a new lambda (docs/ROADMAP_TASKS.md step 8; the VM: OwnStore): what it captured and is still in the statement temporaries `temps` - the
+ * copies of `taking` (and of a variable without a word), what `handover` moved - belongs to the lambda and dies with it. */
+FIRE_FN void claimTree(Owned* o, OwnList* from, OwnList* to);
+FIRE_FN void lamOwnStore(Lam* l, OwnList* temps) {
+    uint32_t i;
+    for (i = 0; i < l->ncaps; i++) {
+        Owned* o = ownedOf(lamCaps(l)[i]);
+        if (o && o != &l->o) claimTree(o, temps, &l->store);
+    }
+}
+/* A copy of a lambda (`copy`, `flat`, a deep copy that reaches it, `a on obj`; the VM: ObjectCloner.CopyLambda): the same body, default values and target,
+ * owned by `owner`, with a store of its own - deep: the captures that are owned are copied into it, else the same values. */
+FIRE_FN Value copyValue(Value v, bool deep, OwnList* owner);
+FIRE_FN Value lamCopy(Value lam, bool deep, OwnList* owner) {
+    Lam* a = lamOf(lam);
+    Lam* l = allocLam(a->nparams, a->ncaps, a->fn, owner);
+    uint32_t i;
+    l->nreq = a->nreq;
+    l->dflt = a->dflt;
+    l->targs = a->targs;
+#ifdef FIRE_REFLECTION
+    l->sel = a->sel;
+    l->nsel = a->nsel;
+#endif
+    l->on = a->on;
+    for (i = 0; i < a->ncaps; i++) {
+        Value c = lamCaps(a)[i];
+        if (deep && ownedOf(c)) c = copyValue(c, true, &l->store);
+        lamCaps(l)[i] = c;
+        retain(c);
+    }
+    return LamV(l);
+}
+/* What a call of the lambda gets for capture i (docs/ROADMAP_TASKS.md step 8; the VM: CaptureForCall). `taking` and a variable without a word (that the
+ * body writes): a copy of the store's value that belongs to the call (`call`, the function scope). */
+FIRE_FN Value lamCaptureCopy(Value lam, uint32_t index, OwnList* call) {
+    Value c = lamCaps(lamOf(lam))[index];
+    return ownedOf(c) ? copyValue(c, true, call) : c;
+}
+/* `handover`: the store's instance itself, lent to the call; once a call took it away (`take`), the store has none - undefined. */
+FIRE_FN Value lamCaptureLent(Value lam, uint32_t index) {
+    Lam* l = lamOf(lam);
+    Value c = lamCaps(l)[index];
+    Owned* o;
+    if (c.kind != K_Class && c.kind != K_Array && c.kind != K_Buffer && c.kind != K_Lambda) return c;
+    o = ownedOf(c);
+    if (o && o->owner == &l->store) return c;
+    lamCaps(l)[index] = Undef();
+    release(c);
+    return Undef();
 }
 
 /* The `this` of a lambda body: its `on` target. */
@@ -3239,18 +3324,10 @@ FIRE_COLD FIRE_FN Value callLamDefaults(Value callee, int argc, const Value* arg
 FIRE_FN Value rebindLam(Value lam, Value on, OwnList* list) {
     Lam* a;
     Lam* l;
-    uint32_t i;
     if (FIRE_UNLIKELY(lam.kind != K_Lambda)) return fireError("ArgumentException", "'on' binds a lambda to an object; the value before 'on' is not a lambda.");
     a = lamOf(lam);
-    l = allocLam(a->nparams, a->ncaps, a->fn, list);
-    l->nreq = a->nreq;
-    l->dflt = a->dflt;
-    l->targs = a->targs;
-#ifdef FIRE_REFLECTION
-    l->sel = a->sel;
-    l->nsel = a->nsel;
-#endif
-    for (i = 0; i < a->ncaps; i++) { lamCaps(l)[i] = lamCaps(a)[i]; retain(lamCaps(l)[i]); }
+    if (FIRE_UNLIKELY(a->o.flags & 1)) return destroyedError(lam);
+    l = lamOf(lamCopy(lam, true, list));   /* (the captures copied into the new lambda's store, as in the VM) */
     l->on = on;
     return LamV(l);
 }
@@ -3259,6 +3336,7 @@ FIRE_FN Value callLamV(Value callee, int argc, const Value* args, OwnList* list)
     Lam* l;
     if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
     l = lamOf(callee);
+    if (FIRE_UNLIKELY(l->o.flags & 1)) return destroyedError(callee);   /* (its owner ended: "Access to a destroyed lambda.") */
     if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) return callLamDefaults(callee, argc, args, list);
     return l->fn(callee, args);
 }
@@ -5243,7 +5321,7 @@ FIRE_COLD FIRE_FN const char* handedOverText(Value leaf, const char* text) {
          : "Access to an array that was handed over to a thread ('fire handover').";
 }
 FIRE_FN Value destroyedError(Value leaf) {
-    const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : leaf.kind == K_Class ? "Access to a destroyed object." : "Access to a destroyed array.";
+    const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : leaf.kind == K_Class ? "Access to a destroyed object." : leaf.kind == K_Lambda ? "Access to a destroyed lambda." : "Access to a destroyed array.";
 #ifdef FIRE_THREADS
     text = handedOverText(leaf, text);   /* (only a program with threads can hand over: without them destroyedError needs nothing but the kind) */
 #endif
@@ -6219,11 +6297,14 @@ FIRE_FN void takeToObject(Owned* o, Obj* target) {
 /* `object is from owner` / `object is under owner` (SPEC 6): the owner of the object is that object - directly, or anywhere up the chain. */
 FIRE_FN bool isFrom(Value operand, Value owner, bool transitive) {
     Owned* target;
+    Owned* self;
     OwnList* l;
-    if (FIRE_UNLIKELY(operand.kind != K_Class || owner.kind != K_Class)) fatal("'is from'/'is under' expects objects.");
-    if (FIRE_UNLIKELY(!leafAlive(operand) || !leafAlive(owner))) return false;   /* (a destroyed object owns nothing and belongs to nothing, like in the VM) */
+    if (FIRE_UNLIKELY((operand.kind != K_Class && operand.kind != K_Lambda) || owner.kind != K_Class)) fatal("'is from'/'is under' expects objects.");
+    if (FIRE_UNLIKELY(!leafAlive(owner))) return false;
+    self = ownedOf(operand);   /* (an object, or a lambda: owned like one) */
+    if (FIRE_UNLIKELY(!self)) return false;   /* (a destroyed object owns nothing and belongs to nothing, like in the VM) */
     target = &asObj(owner)->h;
-    for (l = asObj(operand)->h.owner; l; l = l->holder->owner) {
+    for (l = self->owner; l; l = l->holder->owner) {
         if (l->holder == target) return true;
         if (!transitive || !l->holder) return false;
     }
@@ -6283,7 +6364,7 @@ FIRE_FN void takeToHolder(Value holder, Value v) {
     Owned* o = ownedOf(v);
     Owned* h = ownedOf(holder);
     Arr* a;
-    if (!h || h->okind == O_Buffer) { if (!h && holder.kind != K_Buffer) fatal("take: the holder of the value has to be an object or an array."); return; }
+    if (!h || h->okind == O_Buffer || h->okind == O_Lambda) { if (!h && holder.kind != K_Buffer && holder.kind != K_Lambda) fatal("take: the holder of the value has to be an object or an array."); return; }
     if (!o) return;
     if (h->okind == O_Object) { takeToObject(o, (Obj*)h); return; }
     a = (Arr*)h;
@@ -6422,6 +6503,7 @@ FIRE_FN void ownedStackFree(OwnedStack* s) { free(s->items); s->items = NULL; s-
 /* (An object: its list as it is - NULL when it owns nothing yet; moveReachable makes it only when something really moves, see fire_carrierList.) */
 FIRE_FN OwnList* carrierOf(Owned* node) {
     if (node->okind == O_Object) return ((Obj*)node)->ext ? &((Obj*)node)->ext->owned : NULL;
+    if (node->okind == O_Lambda) return &lamOfOwned(node)->store;
     if (node->okind == O_Array) {
         Arr* a;
         if (node->owner && node->owner->holder) return node->owner;
@@ -6465,19 +6547,12 @@ FIRE_FN void fire_moveSinkItem(Value v, void* ctx) {
  * belongs to a scope of the call (recursively), TK_ALL everything reachable. A thing that moves belongs to the object that points to it; what would end up
  * below itself stays where it is. Every node is visited once. TK_CHILDREN of an IEnumerable takes its items (through the enumerator, which lives in `here`,
  * null: none) instead of its fields. */
-/* One value that hangs on a node of moveReachable: it moves to `carrier` (by the mode) and is walked further. A lambda owns nothing: what it captured hangs
- * on the holder of the lambda. */
+/* One value that hangs on a node of moveReachable: it moves to `carrier` (by the mode) and is walked further. (A lambda is a node: what it captured is in its
+ * store.) */
 FIRE_FN void fire_moveChild(Value v, fire_Carrier* carrier, int mode, const LocalScopes* locals, OwnedStack* work, OwnedStack* seen) {
     Owned* child = ownedOf(v);
     bool move, descend;
-    if (!child) {
-        if (v.kind == K_Lambda) {
-            Lam* l = (Lam*)v.p;
-            uint32_t i;
-            for (i = 0; i < l->ncaps; i++) fire_moveChild(lamCaps(l)[i], carrier, mode, locals, work, seen);
-        }
-        return;
-    }
+    if (!child) return;
     if (child->flags & (1 | F_VISIT)) return;
     child->flags |= F_VISIT;
     ownedStackPush(seen, child);
@@ -6509,6 +6584,7 @@ FIRE_FN void moveReachable(Owned* root, int mode, const LocalScopes* locals, Own
         }
         if (node->okind == O_Object) { Obj* ob = (Obj*)node; items = objFields(ob); n = ob->nfields; }
         else if (node->okind == O_Array) { Arr* a = (Arr*)node; items = arrValues(a); n = items ? a->length : 0; }   /* (a packed array holds numbers only) */
+        else if (node->okind == O_Lambda) { Lam* l = lamOfOwned(node); items = lamCaps(l); n = l->ncaps; }
         else continue;
         for (i = 0; i < n; i++) fire_moveChild(items[i], &carrier, mode, locals, &work, &seen);
     }
@@ -6522,14 +6598,7 @@ FIRE_FN void moveReachable(Owned* root, int mode, const LocalScopes* locals, Own
 FIRE_FN void transferTree(Value v, OwnList* const* lists, int n) {
     Owned* o = ownedOf(v);
     LocalScopes scopes;
-    if (!o) {
-        if (v.kind == K_Lambda) {   /* (a lambda owns nothing, but what it captured from the call goes along with it) */
-            Lam* l = (Lam*)v.p;
-            uint32_t i;
-            for (i = 0; i < l->ncaps; i++) transferTree(lamCaps(l)[i], lists, n);
-        }
-        return;
-    }
+    if (!o) return;
     scopes.lists = lists;
     scopes.n = n;
     if (!isLocalNode(o, &scopes)) return;
@@ -6547,10 +6616,6 @@ FIRE_FN void fire_carryFromArgs(Value v, OwnList* al) {
         scopes.lists = &al;
         scopes.n = 1;
         moveReachable(o, TK_LOCALS, &scopes, NULL);
-    } else if (v.kind == K_Lambda) {
-        Lam* l = (Lam*)v.p;
-        uint32_t i;
-        for (i = 0; i < l->ncaps; i++) fire_carryFromArgs(lamCaps(l)[i], al);
     }
 }
 FIRE_FN void finishArgs(Value result, OwnList* al) {
@@ -6575,12 +6640,6 @@ FIRE_FN void claimTree(Owned* o, OwnList* from, OwnList* to) {
 }
 /* `var v = E`, `v = E`, a global: the scope's list claims an unclaimed value. */
 FIRE_FN void claimToList(Value v, OwnList* from, OwnList* to) {
-    if (v.kind == K_Lambda) {   /* a lambda owns nothing: the slot claims what it captured and is still in the temporaries */
-        Lam* l = (Lam*)v.p;
-        uint32_t i;
-        for (i = 0; i < l->ncaps; i++) claimToList(lamCaps(l)[i], from, to);
-        return;
-    }
     claimTree(ownedOf(v), from, to);
 }
 /* `obj.f = E`, `arr[i] = E`, a field initializer: the object (the array) claims an unclaimed value. */
@@ -6589,13 +6648,7 @@ FIRE_FN void claimToHolder(Value holder, Value v, OwnList* from) {
     Owned* h = ownedOf(holder);
     LocalScopes scopes;
     Arr* a;
-    if (!o && v.kind == K_Lambda && h && h->okind != O_Buffer) {   /* (what a stored lambda captured belongs to the holder) */
-        Lam* l = (Lam*)v.p;
-        uint32_t i;
-        for (i = 0; i < l->ncaps; i++) claimToHolder(holder, lamCaps(l)[i], from);
-        return;
-    }
-    if (!o || scopeListOf(o) != from || !h || h == o || h->okind == O_Buffer) return;
+    if (!o || scopeListOf(o) != from || !h || h == o || h->okind == O_Buffer || h->okind == O_Lambda) return;
     if (h->okind == O_Object) {
         takeToObject(o, (Obj*)h);
         if (from->head && scopeListOf(o) != from) { scopes.lists = &from; scopes.n = 1; moveReachable(o, TK_LOCALS, &scopes, NULL); }
@@ -6756,6 +6809,7 @@ FIRE_FN Value flatCopy(Value v, OwnList* owner) {
             dst = bufCopy(src, owner);
             return BufV(dst);
         }
+        case K_Lambda: return ownedOf(v) ? lamCopy(v, false, owner) : v;
         default: return v;
     }
 }
@@ -6946,6 +7000,16 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
             copyMapPut(&c->containers, src, r);
             return r;
         }
+        case K_Lambda: {   /* (a lambda with a store of its own: its captures copied - not for a thread, which gets no lambdas) */
+            Value* m;
+            Value r;
+            if (c->taking || !ownedOf(v)) return v;
+            m = copyMapFind(&c->containers, v.p);
+            if (m) return *m;
+            r = lamCopy(v, true, c->owner);
+            copyMapPut(&c->containers, v.p, r);
+            return r;
+        }
         default: return c->cross ? strCross(v) : v;
     }
 }
@@ -6975,6 +7039,7 @@ FIRE_FN Value deepCopy(Value v, OwnList* owner) {
         return r;
     }
     if (v.kind == K_Array || v.kind == K_Buffer) return destroyedError(v);
+    if (v.kind == K_Lambda && ownedOf(v)) return lamCopy(v, true, owner);
     return v;
 }
 
@@ -7039,10 +7104,10 @@ FIRE_FN void deleteValue(Value v) {
         o = objAt(v);
         if (o->h.owner) ownUnlink(&o->h);
         destroy(o);
-    } else if (v.kind == K_Array || v.kind == K_Buffer) {
+    } else if (v.kind == K_Array || v.kind == K_Buffer || v.kind == K_Lambda) {
         Owned* o = ownedOf(v);
         if (o) destroyLeaf(o);
-    } else fatal("'delete' expects an object, an array or a buffer.");
+    } else fatal("'delete' expects an object, an array, a buffer or a lambda.");
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -7720,7 +7785,11 @@ extern FIRE_RT_DATA ThreadLocals* g_homeState;   /* the main program's strand */
 extern FIRE_RT_DATA fire_atomic32 g_groupLive;   /* members of its group that have not ended */
 extern FIRE_RT_DATA fire_atomic32 g_evTick;      /* counts the events, read without a lock (notifyEvent, notifyKey) */
 extern FIRE_RT_DATA fire_atomic32 g_homeSeen;    /* ... what the main program had seen when it lent its thread to a task */
+#ifdef FIRE_TLS_EMULATED
+#define g_worker (*(FireWorker**)&FIRE_TLS_SLOT(1))
+#else
 extern FIRE_TLS FireWorker* g_worker;
+#endif
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noinline))
 #endif
@@ -10019,7 +10088,7 @@ FIRE_FN bool takingNoCopyFree(const Value* vs, uint32_t n) {
 /* ---- `fire handover x`: x goes to the thread without a copy (the VM: Runtime.ObjectHandover). Everything reachable from x through fields and elements, and
  * what the objects (and arrays) own, moves as it is: a part whose owner moves too keeps it, every other part belongs to `travel` (the root scope of the thread)
  * from then on, whoever owned it before; the parts leave the shared domain of the globals. Actors and destroyed values stay shared references. */
-FIRE_FN Value ownedValue(Owned* h) { return h->okind == O_Object ? ObjV((Obj*)h) : h->okind == O_Array ? ArrV((Arr*)h) : BufV((Buf*)h); }
+FIRE_FN Value ownedValue(Owned* h) { return h->okind == O_Object ? ObjV((Obj*)h) : h->okind == O_Array ? ArrV((Arr*)h) : h->okind == O_Lambda ? LamV(lamOfOwned(h)) : BufV((Buf*)h); }
 FIRE_COLD FIRE_FN Value handoverRefused(const char* what) {
     char text[200];
     snprintf(text, sizeof text, "'handover' rejected: %s", what);
@@ -10102,12 +10171,14 @@ FIRE_FN void handoverRehome(Value* v, CopyMap* seen) {
 #endif
 FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* travel);
 /* `handover x` in a lambda: x and what it reaches move - like a handover to a thread, every reference from before is dead (the caller's variable is reset by
- * the generated code). Who owns them until the lambda lets them go is open (docs/ROADMAP_TASKS.md): for now the global scope (they live as long as it). */
-FIRE_FN Value fire_lambdaHandover(Value v) {
+ * the generated code). They go to the statement temporaries `temps`, from where the new lambda takes them into its store (lamOwnStore). */
+FIRE_FN Value fire_lambdaHandover(Value v, OwnList* temps) {
     Value out = v;
-    if (!ownedOf(v)) return v;
+    Owned* o = ownedOf(v);
+    if (!o) return v;
+    if (v.kind == K_Lambda) { if (o->owner) ownUnlink(o); ownLink(temps, o); return v; }   /* (a lambda moves as it is) */
     if (!handoverFree(&v, 1)) return Undef();   /* (refused: the exception is set) */
-    handOverAll(&v, &out, 1, g_globalOwn);
+    handOverAll(&v, &out, 1, temps);
     return out;
 }
 /* What the thread gets for the `handover` values `vs` of one `fire` (all together: one may reach another): each value itself, moved (see above); a string or
@@ -10697,7 +10768,9 @@ fire_atomic32 g_hostPending;
 #if defined(FIRE_THREADS) && defined(FIRE_DLL)
 ThreadLocals* fire_tl(void) { return &fire_tlsBlock; }   /* (linkage "shared" on Windows: the block of the calling thread) */
 #elif defined(FIRE_THREADS) && defined(FIRE_TASK_STATE)
+#ifndef FIRE_TLS_EMULATED
 FIRE_TLS ThreadLocals* fire_curTask = NULL;
+#endif
 #elif !(defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT))
 #define FIRE_X(type, name, init) FIRE_TLS type FIRE_CC_NEAR_DATA name = init;
 FIRE_THREAD_VARS(FIRE_X)
@@ -10755,7 +10828,9 @@ fire_atomic32 g_schedReady;
 fire_atomic32 g_schedOn;
 FireTask* g_evWaiters = NULL;
 FireTask* g_evKeyed[FIRE_EV_BUCKETS];
+#ifndef FIRE_TLS_EMULATED
 FIRE_TLS FireWorker* g_worker = NULL;
+#endif
 int64_t g_schedNextWake = INT64_MAX;
 #endif
 #ifdef FIRE_STR_CROSS

@@ -28138,6 +28138,39 @@ else
             }
         }
 
+        // TinyCC with tasks: no thread-local storage and no builtins for atomics in tcc - the runtime brings its own (x86 instructions, a few slots on a key
+        // of pthreads: FIRE_TLS_EMULATED) - the thread cases built with tcc run without the GIL, on the scheduler of tasks, and print what the VM prints
+        const string tccTitle = "TinyCC: die Thread-Faelle laufen mit Tasks (ohne GIL; Atomics und Thread-Slots der Runtime) - dieselbe Ausgabe wie die VM";
+        if (TestSelected(tccTitle) && File.Exists("/usr/bin/tcc") && !OperatingSystem.IsWindows())
+        {
+            var expectedOf = new Dictionary<string, string>();
+            for (int i = 0; i < natCases.Length; i++) expectedOf[natCases[i].Name] = vmResults[i];
+            // (the cases that the filter left out of the run above: their VM output here, one after the other like there)
+            foreach (var c in natThreadCases)
+                if (!expectedOf.ContainsKey(c.Name)) { expectedOf[c.Name] = vmOutput(c.Source); Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false; }
+            var tccReports = new System.Collections.Concurrent.ConcurrentBag<(int Index, string Text)>();
+            int tccRan = 0;
+            Parallel.For(0, natThreadCases.Length, new ParallelOptions { MaxDegreeOfParallelism = TestJobs.Count }, i =>
+            {
+                var c = natThreadCases[i];
+                if (!expectedOf.TryGetValue(c.Name, out var expected) || c.Source.Contains("terminate(")) return;
+                fire.Native.NativeSources generated;
+                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
+                catch (fire.Native.NativeNotSupportedException) { return; }
+                if (generated.Natives != null) return;   // (natives in C++: not for tcc)
+                string cFile = Path.Combine(workDir, $"tcc{i}.c"), exe = Path.Combine(workDir, $"tcc{i}.bin");
+                File.WriteAllText(cFile, generated.Program);
+                var (bout, berr, bexit) = TestProcess.Run("/usr/bin/tcc", $"-I\"{workDir}\" \"{cFile}\" -o \"{exe}\" -lpthread -lm -ldl", workDir);
+                if (bexit != 0) { tccReports.Add((i, $"{c.Name}: tcc: {bout}{berr}")); return; }
+                if (!File.ReadAllText(cFile).Contains("FIRE_THREADS")) return;
+                var (stdout, stderr, exit) = TestProcess.Run(exe, "", workDir, timeoutMs: 120_000);
+                Interlocked.Increment(ref tccRan);
+                string actual = exit == 0 ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
+                if (actual != expected) tccReports.Add((i, $"{c.Name}:\n  erwartet (VM):\n{expected}\n  erhalten (tcc):\n{actual}"));
+            });
+            CheckNat(tccTitle + $" ({tccRan} Faelle)", tccReports.IsEmpty && tccRan > 0, string.Join("\n\n", tccReports.OrderBy(r => r.Index).Select(r => r.Text)));
+        }
+
         // (the trim cases and the TLS case under Wine at the same time)
         TestJobs.Concurrently(() =>
         {
