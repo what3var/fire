@@ -1802,7 +1802,7 @@ namespace fire.Runtime
             {
                 // (every assignment of a value and every call with declared parameters: not through Execute, whose frame is expensive to set up)
                 case OpCode.HoistValue:
-                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) HoistValue(_stack[_sp - 1]);
+                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) HoistValue(_stack[_sp - 1]);
                     return;
                 case OpCode.GuardLocal: OpGuardLocal(); return;
                 case OpCode.GuardLocalType: OpGuardLocalType(); return;
@@ -2291,9 +2291,47 @@ namespace fire.Runtime
             var proto = _currentChunk.Functions[protoIdx];
             object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
             var lambdaValue = new LambdaValue(proto, onTarget) { TypeArgs = TakeLambdaTypeArgs() };
+            LeafOwnership.Adopt(lambdaValue, _currentScope.Temp);   // (a new lambda belongs to the statement until a slot claims it, like a new array)
             Push(Value.MakeLambda(lambdaValue));
             return;
         }
+        }
+
+        /// <summary>The store of a new lambda (ROADMAP_TASKS step 8): what it captured and is still in the temporaries of the statement - the copies of
+        /// `taking` (and of a variable without a word), the instances `handover` moved - belongs to the lambda and dies with it.</summary>
+        private void OwnStore(LambdaValue lambda)
+        {
+            var temp = _currentScope.Temp;
+            if (lambda.Captures == null || !temp.HasOwned) return;
+            foreach (var c in lambda.Captures)
+                if (c.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && RootedIn(c, temp)) OwnershipWalk.TakeValue(c, lambda, this);
+        }
+
+        /// <summary>What a call of the lambda gets for capture i (ROADMAP_TASKS step 8): a copy of the store's value that belongs to the call (`taking`, a
+        /// variable without a word - unless the body only reads it), the store's instance itself (`handover`: lent; once it was taken away, the store has
+        /// none), or the store's value (a number, a text, a copy that is only read).</summary>
+        private Value CaptureForCall(LambdaValue lambda, int i, Scope callScope)
+        {
+            var c = lambda.Captures![i];
+            var proto = lambda.Proto;
+            if (i >= 64) return c.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda ? ObjectCloner.Clone(c, callScope, deep: true) : c;
+            if ((proto.CaptureMovedMask >> i & 1) != 0)
+            {
+                if (c.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && !ReferenceEquals(OwnerOfLive(c), lambda))
+                    lambda.Captures[i] = c = Value.MakeUndefined();   // (taken away in an earlier call - `take`)
+                return c;
+            }
+            if ((proto.CaptureCopyMask >> i & 1) != 0 && c.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && !IsDestroyedLeaf(c)
+                && !(c.Kind == ValueKind.Class && c.AsObjectRef() is ObjectInstance { IsDestroyed: true }))
+                return ObjectCloner.Clone(c, callScope, deep: true);
+            return c;
+        }
+
+        /// <summary>The captures of a lambda as the slots behind its parameters (the calls that build their scope themselves).</summary>
+        private void DefineCaptureSlots(LambdaValue lambda, Scope funcScope)
+        {
+            if (lambda.Captures == null) return;
+            for (int i = 0; i < lambda.Captures.Length; i++) funcScope.DefineSlot(CaptureForCall(lambda, i, funcScope));
         }
 
         private void OpMakeLambdaCapturing()
@@ -2305,7 +2343,10 @@ namespace fire.Runtime
             object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
             var captures = new Value[captureCount];
             for (int i = captureCount - 1; i >= 0; i--) captures[i] = Pop();
-            Push(Value.MakeLambda(new LambdaValue(proto, onTarget, null, captures) { TypeArgs = TakeLambdaTypeArgs() }));
+            var lambda = new LambdaValue(proto, onTarget, null, captures) { TypeArgs = TakeLambdaTypeArgs() };
+            LeafOwnership.Adopt(lambda, _currentScope.Temp);
+            OwnStore(lambda);
+            Push(Value.MakeLambda(lambda));
         }
 
         // -----------------------------------------------------------
@@ -2319,14 +2360,19 @@ namespace fire.Runtime
         /// <summary>Switches into the call of `proto`: the topmost `argCount` stack values are taken directly as
         /// parameter slots of the new scope and (together with the receiver/callee below them, if
         /// `dropBelow`) removed from the stack. Only for calls with EXACTLY the matching argument count (no default value needed).</summary>
-        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, long copyMask = 0, Value[]? captures = null)
+        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, long copyMask = 0, LambdaValue? lambda = null)
         {
+            var captures = lambda?.Captures;
             int captureCount = captures?.Length ?? 0;
             int paramCount = argCount + captureCount;
             var scope = RentCallScope(paramCount + SlotSlack, paramCount);
             var slots = scope.SlotArray;
             Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
-            if (captureCount != 0) Array.Copy(captures!, 0, slots, argCount, captureCount); // Lambda captures directly behind the parameters
+            if (captureCount != 0)   // Lambda captures directly behind the parameters (from its store - ROADMAP_TASKS step 8)
+            {
+                if ((proto.CaptureCopyMask | proto.CaptureMovedMask) == 0) Array.Copy(captures!, 0, slots, argCount, captureCount);
+                else for (int i = 0; i < captureCount; i++) slots[argCount + i] = CaptureForCall(lambda!, i, scope);
+            }
             _sp -= argCount + (dropBelow ? 1 : 0);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
@@ -2408,6 +2454,7 @@ namespace fire.Runtime
                 case ValueKind.Class: ((ObjectInstance)arg.AsObjectRef()).ReparentToArgument(calleeScope); break;   // (a destroyed object stays; the check ran before the call)
                 case ValueKind.Array when !arg.AsArray().IsDestroyed: LeafOwnership.Reparent(arg.AsArray(), calleeScope); break;
                 case ValueKind.Buffer when !arg.AsBuffer().IsDestroyed: LeafOwnership.Reparent(arg.AsBuffer(), calleeScope); break;
+                case ValueKind.Lambda when arg.AsLambda() is LambdaValue { IsDestroyed: false } lambda: LeafOwnership.Reparent(lambda, calleeScope); break;
             }
         }
 
@@ -2457,8 +2504,9 @@ namespace fire.Runtime
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
+                case ValueKind.Lambda:   // (a lambda made in the call's arguments - `list.Add(() => ...)` - belongs to the call like a new object)
                 {
-                    var leaf = arg.Kind == ValueKind.Array ? (IOwnedLeaf)arg.AsArray() : arg.AsBuffer();
+                    if (LeafOf(arg) is not { } leaf) break;
                     if (!leaf.IsDestroyed && RootedIn(arg, callerScope.Temp)) LeafOwnership.Reparent(leaf, calleeScope);
                     break;
                 }
@@ -2504,11 +2552,11 @@ namespace fire.Runtime
             // Fast path: a lambda with exactly this parameter count (no default value needed).
             if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Lambda } fastCallee
                 && fastCallee.AsLambda() is LambdaValue fastLambda
-                && fastLambda.Proto.ParamCount == argCount)
+                && fastLambda.Proto.ParamCount == argCount && !fastLambda.IsDestroyed)
             {
                 _pendingCallTypeArgs = fastLambda.TypeArgs;   // (taken by the TakeCallTypeArgs of a lambda made in generic code)
                 _pendingExplicitTypeArgs = false;
-                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask, captures: fastLambda.Captures);
+                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask, lambda: fastLambda);
                 return;
             }
 
@@ -2529,6 +2577,7 @@ namespace fire.Runtime
                     $"Call of a value of type {calleeVal.Kind} which is not a lambda.");
 
             var lambda = (LambdaValue)calleeVal.AsLambda();
+            if (IsDestroyedLeaf(calleeVal)) { ThrowDestroyed(calleeVal); return; }   // (a lambda that died with its owner - ROADMAP_TASKS step 8)
             CheckArity(lambda.Proto, args.Length);
             args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
 
@@ -2536,7 +2585,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
-            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            DefineCaptureSlots(lambda, funcScope);
             _pendingCallTypeArgs = lambda.TypeArgs;
             _pendingExplicitTypeArgs = false;
             ApplyCopyMask(funcScope, copyMask, lambda.Proto.RefMask);
@@ -2634,14 +2683,12 @@ namespace fire.Runtime
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
+                case ValueKind.Lambda:   // (a lambda with its store - ROADMAP_TASKS step 8)
                 {
-                    var leaf = LeafOf(retVal)!;
-                    if (leaf.IsDestroyed || !OwnershipWalk.IsLocal(leaf.LeafOwner, isLocalScope)) return;
+                    if (LeafOf(retVal) is not { } leaf || leaf.IsDestroyed || !OwnershipWalk.IsLocal(leaf.LeafOwner, isLocalScope)) return;
                     LeafOwnership.Reparent(leaf, target);
                     break;
                 }
-                case ValueKind.Lambda:
-                    break;   // (a lambda owns nothing, but what it captured from the call goes along with it)
                 default:
                     return;
             }
@@ -2964,7 +3011,7 @@ namespace fire.Runtime
             int fieldNameIdx = ReadU16();
             bool getter = (ReadByte() & 1) != 0;
             var value = _stack[_sp - 1];
-            if (value.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer) || !IsCurrentCallOwner(OwnerOfLive(value)))
+            if (value.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) || !IsCurrentCallOwner(OwnerOfLive(value)))
             {
                 SetFieldAt(site, fieldNameIdx);
                 return;
@@ -3029,6 +3076,7 @@ namespace fire.Runtime
             ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o ? o.Owner : null,
             ValueKind.Array => v.AsArray() is { IsDestroyed: false } a ? a.LeafOwner : null,
             ValueKind.Buffer => v.AsBuffer() is { IsDestroyed: false } b ? b.LeafOwner : null,
+            ValueKind.Lambda => v.AsLambda() is LambdaValue { IsDestroyed: false } l ? l.LeafOwner : null,
             _ => null,
         };
 
@@ -4399,7 +4447,13 @@ namespace fire.Runtime
                         ThrowArgumentError("'on' binds a lambda to an object; the value before 'on' is not a lambda.");
                         break;
                     }
-                    Push(Value.MakeLambda(((LambdaValue)lambdaValue.AsLambda()).WithOnTarget(BoxValueForOnTarget(onTarget))));
+                    if (IsDestroyedLeaf(lambdaValue)) { ThrowDestroyed(lambdaValue); break; }
+                    // (its own store: copies of the first lambda's - each lambda owns what it holds)
+                    var rebound = ((LambdaValue)lambdaValue.AsLambda()).WithOnTarget(BoxValueForOnTarget(onTarget));
+                    LeafOwnership.Adopt(rebound, _currentScope.Temp);
+                    if (rebound.Captures != null)
+                        for (int i = 0; i < rebound.Captures.Length; i++) rebound.Captures[i] = ObjectCloner.Clone(rebound.Captures[i], rebound, deep: true);
+                    Push(Value.MakeLambda(rebound));
                     break;
                 }
                 case OpCode.TypeArray:
@@ -4797,7 +4851,7 @@ namespace fire.Runtime
                 }
 
                 case OpCode.HoistValue:
-                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) HoistValue(_stack[_sp - 1]);
+                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) HoistValue(_stack[_sp - 1]);
                     break;
 
                 case OpCode.TakeToScope:
@@ -6084,7 +6138,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
-            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            DefineCaptureSlots(lambda, funcScope);
             _pendingCallTypeArgs = lambda.TypeArgs;
             _pendingExplicitTypeArgs = false;
 
@@ -6151,7 +6205,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
-            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            DefineCaptureSlots(lambda, funcScope);
             _pendingCallTypeArgs = lambda.TypeArgs;
             _pendingExplicitTypeArgs = false;
 
@@ -6442,6 +6496,7 @@ namespace fire.Runtime
             ValueKind.Class when v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o => o.Owner,
             ValueKind.Array when !v.AsArray().IsDestroyed => v.AsArray().LeafOwner,
             ValueKind.Buffer when !v.AsBuffer().IsDestroyed => v.AsBuffer().LeafOwner,
+            ValueKind.Lambda when v.AsLambda() is LambdaValue { IsDestroyed: false } l => l.LeafOwner,
             _ => null,
         };
 
@@ -6450,12 +6505,6 @@ namespace fire.Runtime
         private void ClaimTree(Value v, IOwner target)
         {
             var temp = _currentScope.Temp;
-            if (v.Kind == ValueKind.Lambda)
-            {
-                // a lambda owns nothing: what it captured and is still in the temporaries (a returned lambda's captures) goes to the slot
-                if (temp.HasOwned) OwnershipWalk.MoveReachable(v, Takes.Locals, s => ReferenceEquals(s, temp), target);
-                return;
-            }
             if (!RootedIn(v, temp)) return;
             OwnershipWalk.TakeValue(v, target, this);
             if (temp.HasOwned) OwnershipWalk.MoveReachable(v, Takes.Locals, s => ReferenceEquals(s, temp), target);
@@ -6467,7 +6516,7 @@ namespace fire.Runtime
             var temp = _currentScope.Temp;
             if (!temp.HasOwned) return;
             for (int i = 0; i < arr.Items.Length; i++)
-                if (arr.Items[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) ClaimTree(arr.Items[i], arr);
+                if (arr.Items[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) ClaimTree(arr.Items[i], arr);
         }
 
         /// <summary>Is the value unclaimed - does it belong to the statement temporaries of the current scope (SPEC 2.1)?</summary>
@@ -6481,7 +6530,7 @@ namespace fire.Runtime
             for (int guard = 0; o != null && guard < 10000; guard++)
             {
                 if (ReferenceEquals(o, temp)) return true;
-                o = o switch { ObjectInstance oi => oi.Owner, ScriptArray a => a.LeafOwner, _ => null };
+                o = o switch { ObjectInstance oi => oi.Owner, IOwnedLeaf leaf => leaf.LeafOwner, _ => null };
             }
             return false;
         }
@@ -6490,7 +6539,6 @@ namespace fire.Runtime
         /// block between the current one and that scope moves up to it (within the call; the global scope only from the top-level code).</summary>
         private void ClaimToScope(Value v, Scope target, int flags)
         {
-            if (v.Kind == ValueKind.Lambda) { if ((flags & 1) != 0) ClaimTree(v, target); return; }
             if ((flags & 1) != 0 && RootedIn(v, _currentScope.Temp)) { ClaimTree(v, target); return; }
             if (OwnerOfValue(v) is not Scope owner || ReferenceEquals(owner, target)) return;
             bool move = false;
@@ -6518,6 +6566,7 @@ namespace fire.Runtime
                 ValueKind.Class => ((ObjectInstance)v.AsObjectRef()).Owner,
                 ValueKind.Array => v.AsArray().LeafOwner,
                 ValueKind.Buffer => v.AsBuffer().LeafOwner,
+                ValueKind.Lambda => (v.AsLambda() as LambdaValue)?.LeafOwner,
                 _ => null,
             };
             if (owner is not Scope scope || !OwnsWithinCall(scope)) return;
@@ -6541,21 +6590,22 @@ namespace fire.Runtime
         {
             ValueKind.Array => v.AsArray(),
             ValueKind.Buffer => v.AsBuffer(),
+            ValueKind.Lambda => v.AsLambda() as LambdaValue,   // (a lambda belongs to its owner like an array - ROADMAP_TASKS step 8)
             _ => null,
         };
 
         /// <summary>Is the value a destroyed array/buffer whose use is checked (not in performance mode)?</summary>
         private bool IsDestroyedLeaf(Value v) =>
-            v.Kind is ValueKind.Array or ValueKind.Buffer && ExecutionMode != VmExecutionMode.Performance
-            && (v.Kind == ValueKind.Array ? v.AsArray().IsDestroyed : v.AsBuffer().IsDestroyed);
+            v.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && ExecutionMode != VmExecutionMode.Performance
+            && (v.Kind == ValueKind.Array ? v.AsArray().IsDestroyed : v.Kind == ValueKind.Buffer ? v.AsBuffer().IsDestroyed : v.AsLambda() is LambdaValue { IsDestroyed: true });
 
         /// <summary>Use of a destroyed array/buffer: a catchable `DestroyedException` (prelude).</summary>
         private void ThrowDestroyed(Value leaf)
         {
             var rc = ResolveClass("DestroyedException");
-            string what = leaf.Kind == ValueKind.Buffer ? "buffer" : "array";
+            string what = leaf.Kind == ValueKind.Buffer ? "buffer" : leaf.Kind == ValueKind.Lambda ? "lambda" : "array";
             // (`fire handover`: a reference from before the handover - the array lives on in the thread, under a new identity)
-            bool handedOver = leaf.Kind == ValueKind.Buffer ? leaf.AsBuffer().LivesInAnotherThread : leaf.AsArray().LivesInAnotherThread;
+            bool handedOver = leaf.Kind == ValueKind.Buffer ? leaf.AsBuffer().LivesInAnotherThread : leaf.Kind == ValueKind.Array && leaf.AsArray().LivesInAnotherThread;
             var instance = ConstructNested(rc, new[] { Value.MakeString(handedOver ? $"Access to {(leaf.Kind == ValueKind.Buffer ? "a buffer" : "an array")} that was handed over to a thread ('fire handover')." : $"Access to a destroyed {what}.") });
             ThrowException(Value.MakeClassRef(instance));
         }

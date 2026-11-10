@@ -23,12 +23,23 @@ namespace fire.Runtime
     /// For both: constructors do not run (only field values are transferred), the destructor of the copy runs like
     /// for any object. Actors are never copied (an actor as operand is an error, an actor at depth remains
     /// a shared reference - actor references are meant for passing around anyway, THREADING_DESIGN 2), likewise
-    /// an already destroyed object at depth remains a shared reference. Lambdas and pointers are shared. An instance of a `[NoCopy]` class (SPEC 5.12)
+    /// an already destroyed object at depth remains a shared reference. Pointers are shared; a lambda is copied with its store (CopyLambda). An instance of a `[NoCopy]` class (SPEC 5.12)
     /// is never duplicated: as the operand of `flat`/`copy`, or reached by `copy`, it is an error (`flat` keeps the references of the fields, so a field
     /// holding one is fine there).
     /// </summary>
     public static class ObjectCloner
     {
+        /// <summary>A copy of a lambda (ROADMAP_TASKS step 8): a new lambda with the same body and target that belongs to <paramref name="owner"/> and has
+        /// a store of its own - the captures copied (`copy`: deeply, into the new lambda; `flat`: the same values).</summary>
+        public static LambdaValue CopyLambda(LambdaValue lambda, IOwner owner, bool deep)
+        {
+            var copy = lambda.WithOnTarget(lambda.OnTarget);
+            LeafOwnership.Adopt(copy, owner);
+            if (deep && copy.Captures != null)
+                for (int i = 0; i < copy.Captures.Length; i++) copy.Captures[i] = Clone(copy.Captures[i], copy, deep: true);
+            return copy;
+        }
+
         public static Value Clone(Value source, IOwner owner, bool deep)
         {
             switch (source.Kind)
@@ -56,6 +67,9 @@ namespace fire.Runtime
                     LeafOwnership.Adopt(copy, owner);
                     return Value.MakeBuffer(copy);
                 }
+
+                case ValueKind.Lambda when source.AsLambda() is LambdaValue lambda:
+                    return Value.MakeLambda(CopyLambda(lambda, owner, deep));
 
                 default:
                     // Value-like (bool/int/float/char/string/undefined) and references without content of their own
@@ -264,6 +278,9 @@ namespace fire.Runtime
                         }
                         return Value.MakeBuffer(copy);
                     }
+
+                    case ValueKind.Lambda when v.AsLambda() is LambdaValue { IsDestroyed: false } lambda:
+                        return Value.MakeLambda(CopyLambda(lambda, _rootOwner, deep: true));   // (a lambda at depth: a copy with its store, like an array)
 
                     default:
                         return v;

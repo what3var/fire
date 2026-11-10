@@ -19,8 +19,29 @@ namespace fire.Runtime
     /// created, bound and called, their ownership integration follows
     /// with the class/object stage.
     /// </summary>
-    public sealed class LambdaValue
+    public sealed class LambdaValue : IOwnedLeaf, IOwner
     {
+        // ---- the owner structure (ROADMAP_TASKS step 8): a lambda belongs to a scope or an object like an array (LeafOwner), dies with it, and owns
+        //      its store - the copies and moved instances it captured - like an array its elements
+        public IOwner? LeafOwner { get; set; }
+        public bool IsDestroyed { get; private set; }
+        private OwnedSet _ownedObjects;
+        private System.Collections.Generic.List<IOwnedLeaf>? _parts;
+        public System.Collections.Generic.IReadOnlyList<ObjectInstance> OwnedObjects => _ownedObjects.AsList();
+        public void AddOwned(ObjectInstance obj) => _ownedObjects.Add(obj);
+        public void RemoveOwned(ObjectInstance obj) => _ownedObjects.Remove(obj);
+        public void AddLeaf(IOwnedLeaf leaf) => (_parts ??= new System.Collections.Generic.List<IOwnedLeaf>()).Add(leaf);
+        public void RemoveLeaf(IOwnedLeaf leaf) => _parts?.Remove(leaf);
+        public void MarkDestroyed(IDestructRunner runner)
+        {
+            if (IsDestroyed) return;
+            if (!_ownedObjects.IsEmpty) _ownedObjects.DestroyAll(runner);
+            IsDestroyed = true;
+            LeafOwner = null;
+            if (_parts != null) foreach (var part in _parts.ToArray()) part.MarkDestroyed(runner);
+            _parts = null;
+        }
+
         public FunctionProto Proto { get; }
 
         /// <summary>The object bound via 'on' (this context), or null
@@ -49,7 +70,7 @@ namespace fire.Runtime
         /// this context; `a` itself stays unchanged (SPEC 4.2). The same proto
         /// is reused (execution, not definition, changes).</summary>
         public LambdaValue WithOnTarget(object? newTarget, IOwner? owner = null) =>
-            new(Proto, newTarget, owner, Captures) { TypeArgs = TypeArgs };
+            new(Proto, newTarget, owner, (Value[]?)Captures?.Clone()) { TypeArgs = TypeArgs };   // (the VM gives the new lambda copies for its own store)
 
         internal void SetOwnerInternal(IOwner newOwner) => Owner = newOwner;
 

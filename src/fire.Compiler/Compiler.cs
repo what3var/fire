@@ -2935,6 +2935,16 @@ namespace fire.Compiler
                 ParamNames = lambda.Params.Select(p => p.Name).ToArray(),
             };
             if (Reflection) proto.SelectorPath = TrySelectorPath(lambda);
+            // (the store of the lambda - ROADMAP_TASKS step 8: which captures each call copies, which ones `handover` moved in)
+            if (_refs.TryGetValue(lambda, out var storeRef) && storeRef is ResolvedRef.LambdaCaptures { Loads: { } storeLoads } stored)
+            {
+                var readOnly = AstNames.ReadOnly(lambda, stored.Variables.Select(v => v.Name));
+                for (int i = 0; i < storeLoads.Count && i < 64; i++)
+                {
+                    if (storeLoads[i] is CallExpr { Callee: IdentifierExpr { Name: fire.Standard.LambdaHandover.NativeName } }) proto.CaptureMovedMask |= 1UL << i;
+                    else if (storeLoads[i] is UnaryExpr { Op: UnaryOp.DeepCopy } && !readOnly.Contains(stored.Variables[i].Name)) proto.CaptureCopyMask |= 1UL << i;
+                }
+            }
             int protoIdx = _chunk.AddFunctionProto(proto);
 
             // Lambda captures (SPEC 4.2): the values of the used outer locals are loaded NOW (copy), in the enclosing scope.
@@ -3100,7 +3110,7 @@ namespace fire.Compiler
         /// still belong to the temporaries).</summary>
         private static bool MayBeUnclaimed(Expr e) => e switch
         {
-            LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or AssignExpr or IncDecExpr or LambdaExpr or InterpolatedStringExpr
+            LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or AssignExpr or IncDecExpr or InterpolatedStringExpr
                 or IsOfExpr or IsInExpr or IsFromExpr or TryProcessExpr => false,   // (`a..b` is a call of __Range.Of: a new array, claimed like one)
             UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } => false,
             UnaryExpr { Op: UnaryOp.Trust } t => MayBeUnclaimed(t.Operand),
@@ -3112,7 +3122,7 @@ namespace fire.Compiler
         /// statement needs no ReleaseTemps.</summary>
         private static bool MayLeaveTemps(Expr? e) => e switch
         {
-            null or LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr or LambdaExpr => false,
+            null or LiteralExpr or IdentifierExpr or ThisExpr or BaseExpr or SelfClassExpr => false,   // (a lambda is a new value of the statement - ROADMAP_TASKS step 8)
             AssignExpr a => (a.Target is not IdentifierExpr && MayLeaveTemps(a.Target)) || MayLeaveTemps(a.Value),
             IncDecExpr i => i.Target is not IdentifierExpr,
             UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake or UnaryOp.Trust } u => MayLeaveTemps(u.Operand),

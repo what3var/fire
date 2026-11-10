@@ -2229,10 +2229,6 @@ namespace fire.Compiler
             switch (target)
             {
                 case IdentifierExpr id:
-                    if (IsCapturedVariable(id.Name))
-                        throw new ResolverException(
-                            $"'{id.Name}' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there " +
-                            "(declare a new local variable with a different name)", id.Line);
                     if (IsReadonlyVariable(id.Name))
                         throw new ResolverException(
                             $"'{id.Name}' is 'readonly' and cannot be assigned after its declaration", id.Line);
@@ -2543,6 +2539,7 @@ namespace fire.Compiler
 
             List<IdentifierExpr>? captures = null;
             List<Expr>? loads = null;
+            List<string>? implicitNames = null;
             foreach (var name in names)
             {
                 if (paramNames.Contains(name)) continue;
@@ -2568,6 +2565,15 @@ namespace fire.Compiler
                     _fireScope.RequiredUnits.TryGetValue(name, out requiredUnit);
                     _refs[outer] = new ResolvedRef.Global(threadSlot, requiredUnit);
                 }
+                else if (!reachesFire && _globalScope.Slots.TryGetValue(name, out int globalSlot) && !name.StartsWith('\u0001') && !name.StartsWith('$'))
+                {
+                    // a global variable (ROADMAP_TASKS step 8): captured the same way as a local - a copy (`taking`, or without a word with TC023);
+                    // it belongs to the program and cannot move into a lambda
+                    if (lambda.CaptureModes != null && lambda.CaptureModes.TryGetValue(name, out bool movesGlobal) && movesGlobal)
+                        throw new ResolverException($"'handover {name}': '{name}' is a global variable - it belongs to the program and cannot move into a lambda; write 'taking {name}' (a copy)", lambda.Line);
+                    _globalScope.RequiredUnits.TryGetValue(name, out requiredUnit);
+                    _refs[outer] = new ResolvedRef.Global(globalSlot, requiredUnit);
+                }
                 else
                 {
                     if (lambda.CaptureModes != null && lambda.CaptureModes.ContainsKey(name))
@@ -2577,8 +2583,10 @@ namespace fire.Compiler
                 Define(name, lambda.Line, requiredUnit: requiredUnit);
                 _current.CaptureNames.Add(name);
                 (captures ??= new List<IdentifierExpr>()).Add(outer);
-                // (`taking x` / `handover x` in the body: the lambda gets a copy / takes it over when it is made)
-                Expr load = outer;
+                // (`taking x` / `handover x` in the body: the lambda gets a copy / takes it over when it is made; without a word a copy too - marked
+                // implicit, the type checker says so: TC023)
+                Expr load = new UnaryExpr(lambda.Line, UnaryOp.DeepCopy, outer);
+                if (lambda.CaptureModes == null || !lambda.CaptureModes.ContainsKey(name)) (implicitNames ??= new List<string>()).Add(name);
                 if (lambda.CaptureModes != null && lambda.CaptureModes.TryGetValue(name, out bool moved))
                 {
                     if (moved)
@@ -2588,11 +2596,10 @@ namespace fire.Compiler
                         _refs[mover] = new ResolvedRef.Native(fire.Standard.LambdaHandover.NativeName);
                         load = new CallExpr(lambda.Line, mover, new List<Expr> { outer });
                     }
-                    else load = new UnaryExpr(lambda.Line, UnaryOp.DeepCopy, outer);
                 }
                 (loads ??= new List<Expr>()).Add(load);
             }
-            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures, loads != null && loads.Exists(l => !ReferenceEquals(l, null) && l is not IdentifierExpr) ? loads : null);
+            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures, loads, implicitNames);
         }
 
         /// <summary>Is the code currently being resolved inside a lambda with `on target`? Then unknown names are members of the bound object.</summary>
@@ -2726,6 +2733,47 @@ namespace fire.Compiler
                 }
                 return members;
             }
+        }
+
+        /// <summary>The names of <paramref name="names"/> that the body of a lambda only reads (ROADMAP_TASKS step 8): every use is a call of it, a
+        /// read of one of its fields or elements that is consumed at once (an operand, a condition, `print`, a text), or the operand of an operator - never
+        /// an assignment, a method call on it, an argument, a `return`, a `take` or an alias. A name the body declares again is not read-only.</summary>
+        public static HashSet<string> ReadOnly(LambdaExpr lambda, IEnumerable<string> names)
+        {
+            var all = new List<object>();
+            Walk(lambda.Body, all);
+            var declared = Declared(lambda.Body);
+            var wanted = new HashSet<string>(names);
+            wanted.ExceptWith(declared);
+            var safe = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            // the root variable of a read `x`, `x.a.b`, `x[i]`
+            IdentifierExpr? RootOf(Expr? e) => e switch
+            {
+                IdentifierExpr id => id,
+                MemberExpr m => RootOf(m.Target),
+                IndexExpr ix => RootOf(ix.Target),
+                _ => null,
+            };
+            void Consumed(Expr? e) { if (RootOf(e) is { } root && wanted.Contains(root.Name)) safe.Add(root); }
+            foreach (var n in all)
+                switch (n)
+                {
+                    case BinaryExpr b: Consumed(b.Left); Consumed(b.Right); break;
+                    case UnaryExpr { Op: UnaryOp.Negate or UnaryOp.LogicalNot or UnaryOp.BitNot } u: Consumed(u.Operand); break;
+                    case ConditionalExpr c: Consumed(c.Condition); break;
+                    case IfStmt i: Consumed(i.Condition); break;
+                    case WhileStmt w: Consumed(w.Condition); break;
+                    case InterpolatedStringExpr s: foreach (var part in s.Parts) if (part is InterpolationExprPart pe) Consumed(pe.Expression); break;
+                    case IndexExpr ix: Consumed(ix.Index); break;
+                    case CallExpr { Callee: IdentifierExpr callee } call:
+                        if (wanted.Contains(callee.Name)) safe.Add(callee);   // (a call of the captured lambda)
+                        else if (callee.Name == "print") foreach (var a in call.Args) Consumed(a);
+                        break;
+                }
+            var result = new HashSet<string>(wanted);
+            foreach (var n in all)
+                if (n is IdentifierExpr id && result.Contains(id.Name) && !safe.Contains(id)) result.Remove(id.Name);
+            return result;
         }
 
         public static void Collect(object? node, List<string> names, HashSet<string> seen)

@@ -140,6 +140,9 @@ namespace fire.Compiler
         public const string UndefinedCode = "TC022";
         /// <summary>A `fire` block uses a local of the code around it without `taking` (a copy) or `handover` (moved): the thread gets a copy.</summary>
         public const string ImplicitCaptureCode = "TC023";
+        /// <summary>A `take` goes to a variable that was captured without a word (TC023): the ownership goes to the copy and dies with it (ROADMAP_TASKS
+        /// step 8) - a warning in strict mode too.</summary>
+        public const string TakeIntoCopyCode = "TC024";
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
         [ThreadStatic] public static int ProgramIntWidth;
         /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
@@ -238,7 +241,7 @@ namespace fire.Compiler
         private bool Strict => _strictBySource.TryGetValue(_source, out bool strict) ? strict : _defaultMode == TypeCheckMode.Strict;
 
         private void Report(string code, string message, int line) =>
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
         private void CheckCondition(Expr condition)
@@ -1165,16 +1168,22 @@ namespace fire.Compiler
                         if (f.Until != null) foreach (var limit in f.Until) Infer(limit);
                         // the block runs in a scope of its own: the `taking` copies and the actor of `with` are its variables
                         var captured = f.TakingCaptures.Select(c => (c.VarName, Type: Infer(c.Source))).ToList();
-                        // a local copied without a word: said only when the copy costs memory - an object, an array, a string, an unknown value (a number is copied
-                        // for nothing); the user sees where the memory grows
+                        // a local copied without a word - every one is said (a number too): the thread works with a copy, perhaps without knowing it
+                        var implicitCopies = new List<string>();
                         for (int ci = 0; ci < f.TakingCaptures.Count; ci++)
-                            if (f.TakingCaptures[ci].Implicit && captured[ci].Type.Kind is not (StaticKind.Bool or StaticKind.Int or StaticKind.Float or StaticKind.Char or StaticKind.Enum or StaticKind.Word))
-                                Report(ImplicitCaptureCode, $"The thread uses the local '{captured[ci].VarName}' of the code around it: it gets a copy of it (memory). Write 'taking {captured[ci].VarName}' where it is used (a copy) or 'handover {captured[ci].VarName}' (moved to the thread).", f.Line);
+                            if (f.TakingCaptures[ci].Implicit)
+                            {
+                                implicitCopies.Add(captured[ci].VarName);
+                                Report(ImplicitCaptureCode, $"The thread uses the local '{captured[ci].VarName}' of the code around it: it gets a copy of it - a change does not reach the variable outside. Write 'taking {captured[ci].VarName}' where it is used (a copy) or 'handover {captured[ci].VarName}' (moved to the thread).", f.Line);
+                            }
                         var actor = f.WithSource != null ? Infer(f.WithSource) : StaticType.Dynamic;
                         Push();
                         foreach (var (name, type) in captured) Declare(name, type);
                         if (f.WithVarName != null) Declare(f.WithVarName, actor);
+                        var outerCopies = _implicitCopies;
+                        _implicitCopies = implicitCopies.Count > 0 ? new HashSet<string>(implicitCopies) : null;
                         foreach (var s in f.Body.Statements) Check(s);
+                        _implicitCopies = outerCopies;
                         Pop();
                         break;
                     }
@@ -1825,8 +1834,21 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>The names captured without a word in the lambda or `fire` body being checked (TC024), or null.</summary>
+        private HashSet<string>? _implicitCopies;
+        /// <summary>The lambdas whose implicit copies were said already (a lambda can be inferred again with another expected type).</summary>
+        private readonly HashSet<LambdaExpr> _reportedLambdas = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>TC024: a `take` that goes to an implicit copy - assigned to it, or handed to one of its methods (it becomes the owner).</summary>
+        private void CheckTakeIntoCopy(string name, int line)
+        {
+            if (_implicitCopies != null && _implicitCopies.Contains(name))
+                Report(TakeIntoCopyCode, $"'take' gives the ownership to '{name}', which is an implicit copy (TC023): what it takes dies with the copy, not with the variable outside. Write 'taking {name}' or 'handover {name}' if that is meant.", line);
+        }
+
         private StaticType InferAssign(AssignExpr a)
         {
+            if (a.Target is IdentifierExpr takeTarget && a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake }) CheckTakeIntoCopy(takeTarget.Name, a.Line);
             var target = a.Target switch
             {
                 IdentifierExpr id => CheckImplicitThisAccess(id, MemberUse.Write) ?? Lookup(id.Name, id.Line),
@@ -2141,7 +2163,18 @@ namespace fire.Compiler
             _collectedReturns = returns;
             Push();
             for (int i = 0; i < lam.Params.Count; i++) Declare(lam.Params[i].Name, parameterTypes[i]);
+            // the variables of the code around it that the body uses without a word: copies (ROADMAP_TASKS step 8) - each one is said once
+            var outerCopies = _implicitCopies;
+            _implicitCopies = null;
+            if (_refs.TryGetValue(lam, out var lamRef) && lamRef is ResolvedRef.LambdaCaptures { Implicit: { Count: > 0 } implicitNames })
+            {
+                _implicitCopies = new HashSet<string>(implicitNames);
+                if (_reportedLambdas.Add(lam))
+                    foreach (var name in implicitNames)
+                        Report(ImplicitCaptureCode, $"The lambda uses '{name}' of the code around it: it gets a copy of it, made with the lambda - a change does not reach '{name}' outside, and a later change outside is not seen. Write 'taking {name}' where it is used (a copy), 'handover {name}' (moved into the lambda), or bind an object with 'on'.", lam.Line);
+            }
             foreach (var s in lam.Body.Statements) Check(s);
+            _implicitCopies = outerCopies;
             Pop();
             _returnType = previousReturn;
             _returnTypeRef = previousReturnRef;
@@ -2202,6 +2235,7 @@ namespace fire.Compiler
 
         private StaticType InferCall(CallExpr c)
         {
+            if (c.Callee is MemberExpr { Target: IdentifierExpr owner } && c.Args.Any(arg => arg is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake })) CheckTakeIntoCopy(owner.Name, c.Line);
             // the callee first: the declared types of its parameters are what the arguments go to (a lambda argument takes its types from there)
             MethodDecl? method = null;
             Dictionary<string, StaticType>? map = null;

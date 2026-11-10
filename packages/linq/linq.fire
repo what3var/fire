@@ -9,7 +9,7 @@ class LinqWhereEnumerator : IEnumerator {
     IEnumerator inner
     lambda<any> pred
     any current
-    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = take pred; inner.TakeTo(this) }
     bool MoveNext() {
         var p = this.pred
         while (this.inner.MoveNext()) {
@@ -25,7 +25,7 @@ class LinqSelectEnumerator : IEnumerator {
     IEnumerator inner
     lambda<any> fn
     any current
-    construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = take fn; inner.TakeTo(this) }
     bool MoveNext() {
         if (!this.inner.MoveNext()) { return false }
         var f = this.fn
@@ -40,7 +40,7 @@ class LinqSelectManyEnumerator : IEnumerator {
     lambda<any> fn
     any sub
     any current
-    construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = take fn; inner.TakeTo(this) }
     bool MoveNext() {
         var f = this.fn
         while (true) {
@@ -88,7 +88,7 @@ class LinqTakeWhileEnumerator : IEnumerator {
     lambda<any> pred
     any current
     bool done
-    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.done = false; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = take pred; this.done = false; inner.TakeTo(this) }
     bool MoveNext() {
         if (this.done) { return false }
         var p = this.pred
@@ -106,7 +106,7 @@ class LinqSkipWhileEnumerator : IEnumerator {
     IEnumerator inner
     lambda<any> pred
     bool started
-    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.started = false; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = take pred; this.started = false; inner.TakeTo(this) }
     bool MoveNext() {
         if (this.started) { return this.inner.MoveNext() }
         this.started = true
@@ -142,7 +142,7 @@ class LinqZipEnumerator : IEnumerator {
     IEnumerator b
     lambda<any, any> fn
     any current
-    construct(IEnumerator a, IEnumerator b, lambda<any, any> fn) { this.a = a; this.b = b; this.fn = fn; a.TakeTo(this); b.TakeTo(this) }
+    construct(IEnumerator a, IEnumerator b, lambda<any, any> fn) { this.a = a; this.b = b; this.fn = take fn; a.TakeTo(this); b.TakeTo(this) }
     bool MoveNext() {
         if (!this.a.MoveNext()) { return false }
         if (!this.b.MoveNext()) { return false }
@@ -252,7 +252,7 @@ class Query<T> : IEnumerable<T> {
     lambda factory
 
     // `factory` is a lambda without parameters that supplies a fresh enumerator on every pass
-    construct(lambda factory) { this.factory = factory }
+    construct(lambda factory) { this.factory = take factory }
 
     IEnumerator<T> GetEnumerator() {
         var f = this.factory

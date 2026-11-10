@@ -37,7 +37,7 @@ namespace fire.Runtime
             vm._frames.Push(new CallFrame(StopChunk, 0, _globalScope, null, null));
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
-            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            DefineCaptureSlots(lambda, funcScope);
             vm._pendingCallTypeArgs = lambda.TypeArgs;
             vm._currentThis = lambda.OnTarget;
             vm._currentScope = funcScope;

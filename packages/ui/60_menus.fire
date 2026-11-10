@@ -14,7 +14,7 @@ namespace UI {
 
         construct(string header = "", any onClick = undefined) {
             this.Header = header
-            this.OnClick = onClick
+            this.OnClick = take onClick   // (the row owns its action - a lambda belongs to its owner like an object)
             this.items = new List()
         }
 

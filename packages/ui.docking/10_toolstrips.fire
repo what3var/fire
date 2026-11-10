@@ -82,7 +82,7 @@ namespace UI.Docking {
 
         construct(string text = "", any onClick = undefined) : base(0, 0, -1, -1) {
             this.Text = text
-            this.OnClick = onClick
+            this.OnClick = take onClick
         }
 
         override string StyleKey() { return "ToolStripButton" }

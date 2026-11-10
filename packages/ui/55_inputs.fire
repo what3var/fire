@@ -644,7 +644,7 @@ namespace UI {
 
         UI.Button AddButton(string text, any onClick = undefined) {
             var button = new Button(text, 0, 0, -1, -1)
-            button.OnClick = onClick
+            button.OnClick = take onClick
             this.Add(button)
             return button
         }
