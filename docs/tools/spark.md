@@ -46,6 +46,14 @@ selected part on the right ([circuits](../circuits/README.md#the-circuit-editor-
 ([models](../graphics/models.md#the-block-editor)). In the 3D view a click puts a block on the face under the pointer, the right button takes one away; the
 layer view on the right draws one layer of the grid from above. A program uses the file as a resource - forge makes fire's model file of it.
 
+## The CAD editor
+
+![The CAD editor: three views as wires on a grid and one in 3D, the palette below](../images/mesh-editor.png)
+
+`.fmesh` files (*File > New > Mesh Model (CAD)*) open in the CAD editor: a model of corners and faces ([models](../graphics/models.md#the-cad-editor)). Four views - from
+above, from the front, from the side and in 3D - or one of them large; corners, edges or faces are chosen (1, 2, 3) and dragged on the grid. *Draw* makes a face of
+points clicked in a 2D view, *Extrude* pulls faces out to a body, *Mirror* copies them to the other side, and parts and animations work as in the block editor.
+
 ## More
 
 - [Projects and solutions](projects.md), [templates](templates.md) (*File > New*), [git](git.md), [notes](notes.md)

@@ -24,7 +24,8 @@ while (running) {
 
 * **A resource:** `new Resource("x.gltf")` or `new Resource("x.glb")` is converted to `.f3d` when the program is compiled (in the VM, a packed program and a
   native build alike); a file that is not glTF 2.0 is a compile error with the reason. `.gltf` may keep its buffers next to it or inside (data URIs).
-* **By hand:** `forge model x.gltf [-o x.f3d] [--fps 30]` writes the file; `Model.FromBytes(bytes)` reads it (`IO.File.ReadAllBytes`).
+* **From spark's editors:** `x.fblocks` ([the block editor](#the-block-editor)) and `x.fmesh` ([the CAD editor](#the-cad-editor)) are resources the same way.
+* **By hand:** `forge model x.gltf [-o x.f3d] [--fps 30]` writes the file (also of `.fblocks` and `.fmesh`); `Model.FromBytes(bytes)` reads it (`IO.File.ReadAllBytes`).
 * What is read from glTF: the nodes of the scene become the **parts** (a node's translation, rotation and scale - or its matrix - is the part's rest pose,
   its children are child parts); a node's mesh (all primitives of triangles; positions, normals, texture coordinates) is the part's mesh, the base colour of its
   first material the part's colour. **Animations** become clips: translation, rotation and scale of the nodes, sampled at 30 frames per second (linear, step
@@ -63,6 +64,33 @@ The file is text (JSON, one block a line - it diffs well in git); a program take
 forge builds only what can be seen: no face between two blocks of the same part, and neighbouring faces of one colour in a plane become one rectangle - the garden
 above has 434 blocks and 820 triangles. Each part becomes a part of the model file at its pivot, with one part under it for each colour it uses. The origin of the
 model is the middle of the bottom of the grid.
+
+## The CAD editor
+
+![The CAD editor: the house of the tests with a wing pulled out of its gable and a porch drawn in the top view, extruded and painted](../images/mesh-editor.png)
+
+For models that are not made of blocks spark has a CAD editor (*File > New > Mesh Model (CAD)*, a `.fmesh` file; [spark](../tools/spark.md#the-cad-editor)): **corners**
+(in meters, y up) and **faces** between them - polygons of three or more corners, counter clockwise seen from the side they are seen from -, each of a colour of the
+palette and belonging to a part. A new model is a box of a meter standing on the origin.
+
+| | |
+| --- | --- |
+| views | from above (x, -z), from the front (x, y), from the side (-z, y) - as wires on a grid - and in 3D (shaded; the back of a face is grey); *4 views* or one of them large. The middle button pans (3D: turns it, Shift + middle pans), the wheel zooms around the pointer, Home fits the model |
+| choosing | *Vertex*, *Edge*, *Face* (1, 2, 3): a click chooses what is under the pointer, Shift adds or takes away, a drag over empty space chooses what lies in the box, Esc or the right button lets go; changing the mode keeps what is chosen (faces become their corners, corners the faces between them) |
+| moving | a drag of what is chosen moves it - in a 2D view in its plane, on the grid (*Grid*: its step in meters); the arrow keys move by a step in the plane of the view clicked last, Page Up / Page Down along its depth; *Move...* takes numbers (`move 0, 0.5, 0`, `turn y 90`, `scale 2` or `scale 1, 2, 1`, around the middle of what is chosen) |
+| Draw | (D) a face in a 2D view: click its corners (on the grid), Enter or a click on the first corner closes it - it faces the view; then extrude it to a body |
+| Add | a box, a cylinder (12 sides), a sphere (12 x 8), a plane - at the origin, in the colour and part chosen |
+| Extrude... | (E: by the last distance, Shift + E inwards) the faces chosen go out along their normals and walls join them to where they were - each face of a region moves by the distance, so a corner of two faces goes diagonally; a negative distance pushes them in. A face on its own (a drawn shape, a plane) keeps a copy of itself turned round as its bottom: a closed body |
+| Mirror X / Y / Z | copies the faces chosen to the other side of the plane through the origin; the corners on the plane are shared (the halves stay joined), the copies are turned round so that they face out. *Copy* off: the faces themselves go to the other side |
+| Flip, Merge, Weld, Split, Face | turn faces round; put the corners chosen together at their middle (M); join corners closer than a millimeter; a corner in the middle of each edge chosen; a face through the corners chosen (F, turned to face away from the model) - two corners of one face cut it in two along them |
+| Delete, Ctrl+C / X / V / D | delete corners (with their faces), edges (the faces at them) or faces; copy, cut, paste (where they were, into the part chosen), duplicate the faces chosen |
+| palette, parts, animations | a click on a colour paints the faces chosen; *+* adds a part under the part chosen (its pivot the middle of what is chosen, the faces chosen join it), *Assign* gives faces to the part chosen, *Pivot...* in meters - the animations work as in the block editor (moves in meters) |
+| Preview, Export .f3d... | scene3d draws the model as a program shows it; the model file. Undo / Redo with Ctrl+Z / Ctrl+Y |
+
+The file is text (JSON: `"vertices"` one corner a line, `"faces"` one face a line as `[colour, part, corner, corner, ...]`, palette, parts and animations as in
+`.fblocks`); a program takes it as a resource like the others: `Model.FromResource(new Resource("house.fmesh"))`, `forge model house.fmesh`. Each face gets its own
+normal (flat, low poly), a polygon becomes a fan of triangles; each part becomes a part of the model file at its pivot with one part under it for each colour. The
+origin of the model is the origin of the mesh.
 
 ## Playing
 
