@@ -128,9 +128,10 @@ namespace fire.Runtime
                 if (_stopExecutionRequested) return;
                 if (token != null && token.State != 0) return;   // (cancelled: Sleep throws - TimeNatives.Sleep)
 
+                if (PoolTask == null) VmGroup.WaitTurn();   // (the main program sleeps: a handler that waited may go on, its windows read their events)
                 long remaining = deadline - Stopwatch.GetTimestamp();
                 if (remaining <= 0) return;
-                int milliseconds = (int)Math.Clamp(remaining * 1000 / Stopwatch.Frequency, 1, 20);
+                int milliseconds = (int)Math.Clamp(remaining * 1000 / Stopwatch.Frequency, 1, VmGroup.Any ? 5 : 20);
                 FireRuntime.WaitForWake(milliseconds);
             }
         }

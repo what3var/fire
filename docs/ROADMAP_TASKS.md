@@ -287,23 +287,36 @@ All of it is a small part of the C runtime: native programs use it directly, the
   main program finishes such waits sooner).
 * **5b done - the wait of the UI loop is a wait of the main program:** the pacing of the frames (VSync of X11, Win32, Cocoa) and the wait for a
   window manager's cycle go through `fire_waitHelping` / `fire_frameWait` (`FIRE_RT_HELPING_WAIT`; the display backends are built without the runtime
-  too): on the main program with tasks the thread runs tasks meanwhile, else the old sleep. Waiting in the system's own event wait together with the
-  scheduler's wake signal (`MsgWaitForMultipleObjects`, `poll` on the display's fd) stays for later; today the events are taken at the next pump (at most
-  one frame later).
+  too): on the main program with tasks the thread runs tasks meanwhile, else the old sleep.
+* **5b+ done - the waits of the main program serve its windows:** every wait of the main program (`Sleep`, `await`, a section, a reply, the end of the
+  program; with and without threads) reads at each turn what the system has for the windows it pumps itself (`fire_setIdleHooks`, registered by the
+  windows package when the first window opens on the main program's thread): the events go into the window's inbox for its next `Pump`/`Tick` (no fire
+  code runs in the wait), but the window answers the system at once - it repaints after an Expose, it answers pings, Windows does not call it "not
+  responding". The wait itself is the system's together with the scheduler's wake signal (`notifyEvent` & co. call `fire_idleWake`): `poll` on the X
+  server's connection and a pipe (posix), `MsgWaitForMultipleObjects` with an event (Win32); elsewhere (Wayland, Cocoa, DOS) the runtime's own wait, and
+  the pump at each of its turns. Not in a wait inside the display (the pacing of a frame: the next Tick pumps anyway), never a window of another thread
+  (a token of the thread that opened it). The VM: the same through `fire_pkg_idle` of the C library at each turn of its waits (`VmGroup.WaitTurn`,
+  `TaskHooks.IdlePump`; the C# window manager does it for its own windows). Test: while the program sleeps, its window is unmapped and mapped again
+  under Xvfb - it shows its frame again at once (native and VM; before: black until the next Tick).
 * **5c done - event handlers are members of the main program's group:** a callback of a window (`fire_winb_dispatch` -> `fire_groupCall`) is a task with
   the main program's role (its globals, the writer of the shared domain), pinned to its thread (a queue of its own that no other worker takes; never a
   time slice there, never `dedicated`, never handed off). It starts at once and runs until it ends or waits; then the window goes on, and the handler
   goes on at the next wait of the main program or at the next `Tick` (`fire_groupRun`, the switch point of the UI loop). Only one member runs at a time
   (one thread), so they share the main program's objects like one thread; the end of the program waits for them. A program that registers callbacks of
-  windows uses the scheduler (posix, windows). A member that runs a loop of its own (a modal window) calls the callbacks of that loop itself. The VM
-  calls handlers as before (step 7).
+  windows uses the scheduler (posix, windows). A member that runs a loop of its own (a modal window) calls the callbacks of that loop itself. `Pump`
+  is a switch point too, like `Tick`.
+* **5c in the VM too:** a window's callback from the host (`RuntimeSession.CallLambda` -> `FireRuntime.RunCallback(asTask)`) is a task of the group
+  of the VM's main program (`VmGroup`): a VM of its own that shares the main program's globals and owner broker (`MakeGroupMember`), pinned to the
+  thread of the main program and without time slices. It runs until it ends or waits (`Sleep`, `await`, a section, a reply); then the window goes on,
+  and it goes on at the switch points (`Tick`/`Pump` of the window bridge, the waits of the main program: `Sleep`, waiting for a reply, holds of
+  the host, the end of the program). Not a member: a callback of a fire thread's VM or of a member itself (a nested loop calls it directly).
 * **5d done - `fire on window { }` and `await on window { return ... }`:** a job of the main program (like `fire global`, OpCode.PostGlobal with bit 7:
   the first argument is the object itself, not a copy; bit 6: the result comes back) - it runs in the main program's group at its next safe point; from a
   thread the object must be one of the main program (its globals) or an actor, else ArgumentException. `await on` from a thread waits for the result
   (the way back of 4c: what the block made goes over, anything else is copied; an exception is thrown at the `await`); the main program itself runs the
   block at once. The block's parameters get the types of the arguments, so `await on` has the type of the block's result. `on` is the keyword of bound
   lambdas; there is no `on` for actors yet (an actor has its methods).
-* Tests: a handler that sleeps while the loop goes on (native, headless and Wayland), `fire on` / `await on` (native == VM); ThreadSanitizer and
+* Tests: a handler that sleeps while the loop goes on (native, headless and Wayland; VM: the window manager's `HandlerTasks`), `fire on` / `await on` (native == VM); ThreadSanitizer and
   AddressSanitizer clean.
 
 ## 6. Cancellation

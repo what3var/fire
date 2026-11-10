@@ -80,7 +80,9 @@ static class WindowManagerTests
     private static string StdPrelude(string import) => fire.Package.Manager.PackageStore.Default.FindImport(import)!.ReadPrelude()!;
 
     /// <summary>Runs a script with graphics, windows, reflection and ui; `closesAfter[i]` is how many pumps the i-th window stays open.</summary>
-    private static Result Run(string script, params int[] closesAfter)
+    private static Result Run(string script, params int[] closesAfter) => Run(script, false, closesAfter);
+
+    private static Result Run(string script, bool handlersAsTasks, params int[] closesAfter)
     {
         var lines = new List<string>();
         var fakes = new List<ThreadedFake>();
@@ -96,7 +98,7 @@ static class WindowManagerTests
         var fbManager = new fire.Terminal.FramebufferManager();
         var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager,
-            (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, VmExecutionMode.Debug, vm),
+            (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, VmExecutionMode.Debug, vm, asTask: handlersAsTasks),
             () =>
             {
                 lock (fakes)
@@ -114,6 +116,7 @@ static class WindowManagerTests
         natives.Register("__TestClick", args => { lock (fakes) fakes[(int)args[0].AsInt()].Click((float)args[1].AsFloat(), (float)args[2].AsFloat()); return Value.MakeUndefined(); });
         natives.Register("__TestCloseRequest", args => { lock (fakes) fakes[(int)args[0].AsInt()].CloseRequest(); return Value.MakeUndefined(); });
         natives.Register("__TestWait", args => { Thread.Sleep((int)args[0].AsInt()); return Value.MakeUndefined(); });
+        natives.Register("Sleep", fire.Runtime.HostNatives.Find("Sleep")!);
 
         var resolved = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolved, natives);
@@ -149,12 +152,42 @@ static class WindowManagerTests
             AutoClose();
             ButtonSymbols();
             HoldsPerProgram();
+            HandlerTasks();
         }
         catch (Exception ex)
         {
             Check("ohne Ausnahme durchgelaufen", false, ex.ToString());
         }
         Console.WriteLine(_failures == 0 ? "Alle Fenster-Manager-Pruefungen bestanden." : $"FEHLER: {_failures} Fenster-Manager-Pruefung(en) fehlgeschlagen.");
+    }
+
+    // a handler is a task of the main program's group (docs/ROADMAP_TASKS.md step 5, as natively): when it waits, the window goes on
+    private static void HandlerTasks()
+    {
+        var r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var a = new Window(fb, "A")
+            WindowManager.Default.Attach(a)
+            var order = ""
+            var ticks = 0
+            var during = -1
+            a.onCycle = func () => { ticks++
+                __TestWait(1) }
+            a.RegisterKeyDown(func (int k, int s, int m, bool rep) => {
+                order = order + "down "
+                var before = ticks
+                Sleep(80)
+                during = ticks - before
+                order = order + "after "
+            })
+            __TestKey(0, 65)
+            __TestKey(0, 66)
+            a.Run()
+            print(order + "| ticked " + (during > 0))
+            """, true, 400);
+        Check("Handler als Task: wartet einer (Sleep), laufen das Fenster und die anderen Handler weiter; er macht danach weiter", r.Unhandled == null
+            && r.Lines.Any(l => l.StartsWith("down down after after") && l.EndsWith("| ticked True")), Show(r));
     }
 
     private static string Show(Result r) => string.Join("\n", r.Lines) + (r.Unhandled != null ? "\nUNHANDLED: " + r.Unhandled : "");
@@ -199,7 +232,8 @@ static class WindowManagerTests
             && r.Lines.Contains("key 65") && r.Lines.Contains("cycles 3, left 0, a closed True") && r.Lines.Contains("b vsync False, manager True"), Show(r));
         Check("Run: die Fenster oeffnen und pumpen auf dem Programm-Thread (kein eigener Thread)", r.Windows.Count == 2
             && r.Windows.All(w => w.OpenedOn == r.MainThread && w.PumpedOn.SetEquals(new[] { r.MainThread })), string.Join("; ", r.Windows.Select(w => $"{w.OpenedOn} {string.Join(",", w.PumpedOn)} main {r.MainThread}")));
-        Check("Run: zweites Fenster laeuft weiter, bis es selbst zu ist (5 Zyklen)", r.Windows.Count == 2 && r.Windows[1].Pumps == 5, Show(r));
+        // (it closes at its 5th pump - the waits of the program pump its windows too (ROADMAP_TASKS 5b), so the pumps are at least the cycles)
+        Check("Run: zweites Fenster laeuft weiter, bis es selbst zu ist (5 Zyklen)", r.Windows.Count == 2 && r.Windows[1].Pumps >= 5 && r.Lines.Contains("cycles 3, left 0, a closed True"), Show(r) + $" (pumps of b: {(r.Windows.Count == 2 ? r.Windows[1].Pumps : -1)})");
     }
 
     // Show(): the manager's thread shows the window; the program goes on, runs the cycles at its safe points and waits at its end

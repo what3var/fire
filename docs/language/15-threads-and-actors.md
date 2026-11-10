@@ -209,8 +209,10 @@ print(n + " " + sum)
 - `fire on window { ... }` runs a block in the main program - where its windows live - with `window` as the real object (and copies of what it takes with
   `taking`); the caller goes on. `await on window { return window.Title }` waits for the block's result. From a thread the object must be one of the main
   program (a global variable) or an actor. In the main program itself `await on` runs the block at once and `fire on` at its next safe point.
-- In a native build an event handler of a window is a task of the main program's group: when it waits (`Sleep`, `await`), the window goes on, and the
+- An event handler of a window is a task of the main program's group (natively and in the VM): when it waits (`Sleep`, `await`), the window goes on, and the
   handler continues later on the same thread. Only one handler runs at a time, and only where it waits does another one get its turn.
+- While the main program waits (`Sleep`, `await`, the end of the program), its windows keep answering the system: they repaint and stay responsive;
+  their events wait for the next `Pump`/`Tick` (natively and in the VM).
 - `await dedicated Work(x)` (also `await dedicated taking x { ... }`, and as an element of `await [ ... ]`) is `await` for work that blocks in natives
   for a long time: in a native build the waiting task runs the call on a system thread of its own and goes back to the pool after it - the call still
   has the caller's objects lent, and an exception goes on at the `await` as usual. Elsewhere it is the same as `await`.

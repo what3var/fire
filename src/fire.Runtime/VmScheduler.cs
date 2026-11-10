@@ -34,6 +34,7 @@ namespace fire.Runtime
             public Func<bool>? WaitFor;     // (true: it goes on)
             public long WaitUntil;          // Stopwatch timestamp, 0: none
             public bool IsWaiting;          // (it waits: its wait number is WaitNumber)
+            public bool IsGroup;            // a member of the main program's group (VmGroup): it runs on the main program's thread, never in the pool
             public int WaitNumber;
             public VmTask(VM vm, Action<Exception?> onEnd) { Vm = vm; OnEnd = onEnd; }
         }

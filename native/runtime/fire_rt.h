@@ -5157,10 +5157,47 @@ FIRE_FN bool timeTicksOf(Value a, int64_t* ticks) {
 /* How long a waiting function waits without a time of its own: `#timeout`, else 30 seconds. */
 extern FIRE_RT_DATA int64_t g_defaultTimeoutTicks;
 
+/* The waits of the main program serve the windows of its thread (ROADMAP_TASKS 5b, the wait of the system): `pump` reads what the system has for those
+ * windows into their queues (no fire code runs - the program takes the events at its next Pump/Tick - but the windows answer the system meanwhile: they
+ * repaint, they answer pings), `wait` waits up to `ms` for the system's next event or for `wake`, which any thread calls when something changed that a
+ * waiting main program looks for. The windows package registers them when the first window opens on the main program's thread; without `wait`/`wake`
+ * the runtime waits its own way. */
+#define FIRE_RT_IDLE_HOOKS 1
+extern FIRE_RT_DATA void (*g_idlePump)(void);
+extern FIRE_RT_DATA void (*g_idleWait)(int64_t ms);
+extern FIRE_RT_DATA void (*g_idleWake)(void);
+extern FIRE_RT_DATA fire_atomic32 g_idleOn;   /* (set once, after the three: who reads it sees them) */
+extern FIRE_RT_DATA fire_atomic32 g_idleWaiting;   /* (the main program is in `wait` - set before it looks at the count of the events) */
+FIRE_FN void fire_setIdleHooks(void (*pump)(void), void (*wait)(int64_t ms), void (*wake)(void)) {
+    if (pump == NULL || fire_atomic_load(&g_idleOn)) return;
+    g_idlePump = pump;
+    g_idleWait = wake != NULL ? wait : NULL;
+    g_idleWake = wait != NULL ? wake : NULL;
+    fire_atomic_store(&g_idleOn, 1);
+}
+/* (from any thread, after the change: a main program in the system's wait looks again) */
+FIRE_FN void fire_idleWake(void) { if (fire_atomic_load(&g_idleOn) && fire_atomic_load(&g_idleWaiting) && g_idleWake != NULL) g_idleWake(); }
+/* (the main program: is this thread the one whose windows the hooks serve) */
 #ifdef FIRE_THREADS
+FIRE_FN bool fire_isMainProgram(void);
 FIRE_FN void sleepTicks(int64_t ticks);
 #else
-FIRE_FN void sleepTicks(int64_t ticks) { if (ticks > 0) fire_plat_sleepMs((ticks + TICKS_PER_MS - 1) / TICKS_PER_MS); }
+FIRE_FN bool fire_isMainProgram(void) { return true; }
+FIRE_FN void sleepTicks(int64_t ticks) {
+    int64_t ms, deadline, now;
+    if (ticks <= 0) return;
+    ms = (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
+    if (!fire_atomic_load(&g_idleOn)) { fire_plat_sleepMs(ms); return; }
+    /* (windows on this thread: they are served while it sleeps) */
+    deadline = fire_plat_nowMs() + ms;
+    for (;;) {
+        g_idlePump();
+        now = fire_plat_nowMs();
+        if (now >= deadline) return;
+        if (g_idleWait != NULL) g_idleWait(deadline - now < 50 ? deadline - now : 50);
+        else fire_plat_sleepMs(deadline - now < 5 ? deadline - now : 5);
+    }
+}
 #endif
 /* Step 5b - a wait of a native on the main program (the pacing of a window's frames, the wait for a window manager's cycle): with tasks the thread runs
  * tasks meanwhile, like any wait of the main program, until `pred(ctx)` holds or `ms` passed. false: not here (no tasks, not the main program, no strand on
@@ -7757,6 +7794,7 @@ FIRE_FN void schedPushLocked(FireTask* t) {
         g_sched.groupTail = t;
         fire_atomic_add(&g_evTick, 1);
         fire_cond_notifyAll(&g_evCv);
+        fire_idleWake();
         return;
     }
     if (g_sched.tail) g_sched.tail->next = t; else g_sched.head = t;
@@ -8157,6 +8195,7 @@ FIRE_FN void notifyEvent(void) {
     evWakeList(&g_evWaiters, NULL);
 #endif
     fire_mutex_unlock(&g_evM);
+    fire_idleWake();
 }
 /* ... for one thing (`key`: a section request, an actor): the system threads, and only the tasks that wait for it. */
 FIRE_FN void notifyKey(const void* key) {
@@ -8172,6 +8211,7 @@ FIRE_FN void notifyKey(const void* key) {
     (void)key;
 #endif
     fire_mutex_unlock(&g_evM);
+    fire_idleWake();
 }
 /* ... for everyone (terminate). */
 FIRE_FN void notifyEventAll(void) {
@@ -8189,6 +8229,7 @@ FIRE_FN void notifyEventAll(void) {
     }
 #endif
     fire_mutex_unlock(&g_evM);
+    fire_idleWake();
 }
 
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
@@ -8381,6 +8422,8 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
         if (stopOnTerminate && terminateRequested()) return false;
         now = steadyMs();
         if (deadlineMs && now >= deadlineMs) return false;
+        /* (the main program waits: the windows of its thread read what the system has for them) */
+        if (fire_atomic_load(&g_idleOn) && fire_isMainProgram()) g_idlePump();
 #ifdef FIRE_NO_GIL
         strandRelease();
 #else
@@ -8404,15 +8447,32 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
             if (homeHelp()) { strandAcquire(); continue; }
         }
 #endif
-        fire_mutex_lock(&g_evM);
-        if (g_evCount == seen) fire_cond_waitFor(&g_evCv, &g_evM, slice);
-        fire_mutex_unlock(&g_evM);
+        if (fire_atomic_load(&g_idleOn) && g_idleWait != NULL && fire_isMainProgram()) {
+            /* (in the system's wait for the windows' events, which the scheduler's events end too: fire_idleWake after the count went up) */
+            bool same;
+            fire_atomic_store(&g_idleWaiting, 1);   /* (before the count: an event after it finds the flag and wakes the wait) */
+            fire_mutex_lock(&g_evM);
+            same = g_evCount == seen;
+            fire_mutex_unlock(&g_evM);
+            if (same) g_idleWait(slice);
+            fire_atomic_store(&g_idleWaiting, 0);
+        } else {
+            fire_mutex_lock(&g_evM);
+            if (g_evCount == seen) fire_cond_waitFor(&g_evCv, &g_evM, slice);
+            fire_mutex_unlock(&g_evM);
+        }
 #ifdef FIRE_NO_GIL
         strandAcquire();
 #else
         gilAcquire();
 #endif
     }
+}
+FIRE_FN bool fire_isMainProgram(void) {
+#ifdef FIRE_TASKS
+    if (taskRunning()) return false;   /* (a task, a member of the main program's group too: the main program serves the windows when it waits itself) */
+#endif
+    return !g_isThread;
 }
 
 #ifndef FIRE_THREAD_STACK_BYTES
@@ -10311,6 +10371,10 @@ FIRE_FN void fire_threadsInit(void) {
  * The global state, defined in the one translation unit that defines FIRE_RT_IMPLEMENTATION (the generated program, or the library of a package for the VM).
  * --------------------------------------------------------------------------------------------------------------------- */
 #ifdef FIRE_RT_IMPLEMENTATION
+void (*g_idlePump)(void) = NULL;
+void (*g_idleWait)(int64_t ms) = NULL;
+void (*g_idleWake)(void) = NULL;
+fire_atomic32 g_idleOn, g_idleWaiting;
 #if defined(FIRE_LIBRARY) && !defined(__cplusplus)
 jmp_buf* g_libraryJump = NULL;
 FireLibraryError g_libraryError;

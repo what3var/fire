@@ -104,11 +104,12 @@ namespace fire.Runtime
             while (true)
             {
                 broker?.Drain();
+                TaskHooks.IdlePump?.Invoke();   // (the windows of the main program read their events while it waits for the threads)
                 lock (_liveThreadsGate)
                 {
                     bool pending = broker != null && broker.HasPending;
                     if (_liveThreads == 0 && !pending) return;
-                    if (!pending) Monitor.Wait(_liveThreadsGate, 50);
+                    if (!pending) Monitor.Wait(_liveThreadsGate, TaskHooks.IdlePump != null ? 20 : 50);
                 }
             }
         }
@@ -119,6 +120,7 @@ namespace fire.Runtime
         /// <summary>Wakes a main program that is waiting in <see cref="WaitForAllFireThreads"/> (a thread has put something into the queue).</summary>
         internal static void WakeWaitingOwner()
         {
+            _ = VmGroup.Any;   // (the static constructor of the group sets the switch point of the UI loop)
             lock (_liveThreadsGate) Monitor.PulseAll(_liveThreadsGate);
             VmScheduler.Wake();   // (the tasks of the pool that wait look again)
         }
@@ -370,11 +372,18 @@ namespace fire.Runtime
             Func<IReadOnlyList<Value>> snapshotGlobals,
             Action<string>? onUnhandled = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug,
-            VM? owner = null)
+            VM? owner = null,
+            bool asTask = false)
         {
             var vm = VM.CurrentThreadVm;
             if (vm != null && !vm.IsHalted)
             {
+                // an event handler of a window: a member of the main program's group (VmGroup) - when it waits, the window goes on (as natively)
+                if (asTask)
+                {
+                    VmGroup.RunReady();
+                    if (VmGroup.TryStart(vm, callback, args, onUnhandled)) return;
+                }
                 try
                 {
                     var error = vm.CallLambdaInline(callback, args);

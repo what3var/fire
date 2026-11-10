@@ -68,7 +68,7 @@ namespace fire.Runtime
             if (VirtualMachine == null || nativeRegistry == null)
                 return;
             FireRuntime.RunCallback(lambda, args, nativeRegistry, CompiledProgram.Classes, () => VirtualMachine.SnapshotGlobals(),
-                message => Console.WriteLine($"(unbehandelte Exception im Callback: {message})"), owner: VirtualMachine);
+                message => Console.WriteLine($"(unbehandelte Exception im Callback: {message})"), owner: VirtualMachine, asTask: true);
         }
 
         public static Session Build(LinkedProgram linkedProgram, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null)

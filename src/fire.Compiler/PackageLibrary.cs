@@ -347,6 +347,7 @@ namespace fire.Compiler
             sb.AppendLine("#include \"fire_gfx_host.h\"");
             sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_reset(void) { fire_pkgLock(); fire_gfx_host_reset(); fire_pkgUnlock(); }");
             sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_service(void) { fire_pkgService(); }");
+            sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_idle(void) { fire_pkgIdle(); }");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_abi_version(void) { return FIRE_PKG_ABI_VERSION; }");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_function_count(void) { return kCount; }");
             sb.AppendLine("FIRE_PKG_EXPORT const char* fire_pkg_function_name(int i) { return i >= 0 && i < kCount ? kEntries[i].name : NULL; }");

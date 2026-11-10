@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using fire.Bytecode;
+using fire.Values;
 
 namespace fire.Runtime
 {
@@ -12,6 +13,40 @@ namespace fire.Runtime
     {
         /// <summary>The task of the pool this VM runs as (null: a system thread of its own, or the main program).</summary>
         internal VmScheduler.VmTask? PoolTask;
+
+        /// <summary>A member of the main program's group (VmGroup): the main program's VM it belongs to.</summary>
+        private VM? _groupHome;
+        internal bool IsGroupMember => _groupHome != null;
+
+        internal static void SetCurrentThreadVm(VM? vm) => _currentThreadVm = vm;
+
+        /// <summary>A member of this main program's group for a callback: a VM of its own on the same global scope (the main program's role - its globals,
+        /// its broker), whose program is the call of the lambda; at its end the global scope stays (it is the main program's).</summary>
+        internal VM MakeGroupMember(LambdaValue lambda, Value[] args)
+        {
+            var vm = new VM(StopChunk, _globalScope, _natives, _classes, _externs, _externSignatures, isMainThreadVm: false, isFireThreadVm: false, executionMode: ExecutionMode)
+            {
+                DestroyGlobalsAtEnd = false,
+            };
+            vm._groupHome = this;
+            vm._ownerBroker = _ownerBroker;
+            vm._globalJobs = _globalJobs;
+            CheckArity(lambda.Proto, args.Length);
+            args = vm.FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
+            // (the lambda is the program: when it returns, the VM halts - the return goes to a chunk that only halts)
+            vm._frames.Push(new CallFrame(StopChunk, 0, _globalScope, null, null));
+            var funcScope = new Scope(_globalScope);
+            foreach (var a in args) funcScope.DefineSlot(a);
+            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            vm._pendingCallTypeArgs = lambda.TypeArgs;
+            vm._currentThis = lambda.OnTarget;
+            vm._currentScope = funcScope;
+            vm._currentChunk = lambda.Proto.Chunk;
+            vm._sliceStarted = true;   // (RunLoop would start at the entry chunk: it goes on at the lambda's first instruction)
+            vm._resumeChunk = lambda.Proto.Chunk;
+            vm._resumeIp = 0;
+            return vm;
+        }
 
         private static readonly Chunk SuspendChunk = BuildStopChunk();
         private bool _sliceStarted;
@@ -45,6 +80,7 @@ namespace fire.Runtime
             bool suspended = false;
             try
             {
+                if (_groupHome != null) _ownerBroker = _groupHome._ownerBroker;   // (a member of the group: the main program's broker, made in the meantime)
                 if (!_sliceStarted) { _sliceStarted = true; RunLoop(); }
                 else
                 {

@@ -29970,6 +29970,61 @@ else
                     if (!TestSelected(cc.Title)) continue;
                     windowSteps.Add(() => PrepareWindowCase(cc.Title, cc.Script, cc.Expected, cc.Define, cc.Display, cc.Second));
                 }
+                // ---- the waits of the main program serve its windows (ROADMAP_TASKS 5b): while it sleeps, the window is unmapped and mapped again (xdotool) - the
+                //      Expose that follows is answered at once (the window shows its last frame again - blue: the brush's colour is ABGR), not only at the next
+                //      Tick (before: black until then)
+                {
+                    // (the window, once there: unmapped, mapped again; then the colour of a pixel - the exit code says whether it is the frame's)
+                    string ExposeCheck(string name)
+                    {
+                        string file = Path.Combine(workDir, name + ".sh");
+                        File.WriteAllText(file, $"id=$(xdotool search --sync --name '^idlepump$' | head -1)\nsleep 1\nxdotool windowunmap --sync $id\nxdotool windowmap --sync $id\nsleep 0.5\n" +
+                            $"c=$(import -window $id -depth 8 -crop 1x1+5+5 txt:- | tail -1)\necho \"$c\" > \"{workDir}/{name}.txt\"\ncase \"$c\" in *0000FF*) exit 0;; esac\nexit 1\n");
+                        return file;
+                    }
+                    string idleTitle = "X11 (Xvfb) - waehrend das Hauptprogramm wartet (Sleep), liest es die Ereignisse seiner Fenster: ein Expose zeigt das letzte Bild wieder";
+                    if (TestSelected(idleTitle) && FindProgram("xdotool") != null && FindProgram("import") != null && !OperatingSystem.IsWindows())
+                    {
+                        string check = ExposeCheck("idle_expose");
+                        windowSteps.Add(() => PrepareWindowCase(idleTitle, """
+                            #import "windows"
+                            #import "time"
+                            var fb = new Framebuffer(64, 48)
+                            var r = new Renderer(fb)
+                            var win = new Window(fb, "idlepump")
+                            win.VSync = false
+                            r.FillRect(0, 0, 64, 48, new SolidBrush(0xFFFF0000))
+                            win.Tick()
+                            win.Tick()
+                            Sleep(4000)
+                            print(win.Tick())
+                            """, new[] { "True" }, "", "x11-two", "", $"sh \"{check}\""));
+                    }
+                    else if (TestSelected(idleTitle)) Console.WriteLine("(Expose waehrend Sleep: uebersprungen - xdotool oder import fehlt)");
+                    // (the same in the VM: its windows are those of the C library, its waits give the library a turn - fire_pkg_idle)
+                    string idleVmTitle = idleTitle + " [die VM]";
+                    string idleForge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                    if (TestSelected(idleVmTitle) && File.Exists(idleForge) && FindProgram("xdotool") != null && FindProgram("import") != null && !OperatingSystem.IsWindows())
+                    {
+                        string check = ExposeCheck("idle_expose_vm");
+                        string script = Path.Combine(workDir, "idle_expose_vm.fire");
+                        string vmSource = """
+                            #import "windows"
+                            #import "time"
+                            var fb = new Framebuffer(64, 48)
+                            var r = new Renderer(fb)
+                            var win = new Window(fb, "idlepump")
+                            win.VSync = false
+                            r.FillRect(0, 0, 64, 48, new SolidBrush(0xFFFF0000))
+                            win.Tick()
+                            win.Tick()
+                            Sleep(6000)
+                            print(win.Tick())
+                            """;
+                        File.WriteAllText(script, vmSource);
+                        windowSteps.Add(() => PrepareWindowCase(idleVmTitle, vmSource, new[] { "True" }, "", "x11-two", "", $"sh \"{check}\"", $"\"{idleForge}\" run \"{script}\""));
+                    }
+                }
                 windowRuns.Add(() => TestJobs.Ordered(windowSteps.Count, i => windowSteps[i](), (_, run) => run(), what: "Fenster: gebaut"));
 
                 // ---- the VM (the C library: fire's own display) on X11: it puts text, a picture and files on the clipboard (forge run under Xvfb), a native program reads them

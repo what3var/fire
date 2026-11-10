@@ -43,9 +43,31 @@ namespace fire.Editor
         private System.Diagnostics.Process? _runtimeProcess;
         private DispatcherTimer? _runtimeHide;
 
+        /// <summary>The process of the native program under the debugger still runs.</summary>
+        private bool NativeDebugProcessAlive()
+        {
+            if ((_session.Target as fire.Debugging.NativeDebugTarget)?.Process is not { } p) return false;
+            try { return !p.HasExited; }
+            catch (InvalidOperationException) { return false; }
+        }
+
+        /// <summary>The end of a debugged native process ends the watch of the Runtime panel (its session may have ended before).</summary>
+        private void WatchExit(System.Diagnostics.Process p)
+        {
+            try
+            {
+                p.EnableRaisingEvents = true;
+                p.Exited += (_, _) => Dispatcher.UIThread.Post(UpdateRunButtons);
+                if (p.HasExited) Dispatcher.UIThread.Post(UpdateRunButtons);
+            }
+            catch (InvalidOperationException) { }
+        }
+
         private void UpdateRuntimePanel()
         {
-            bool active = _nativeRun != null || (_session.HasProgram && _session.IsStarted && !_session.IsFinished);
+            // (a step that begins counts already: BeginStep comes before the session marks itself started; a native program under the debugger is watched
+            // as long as its process lives - also after its main thread ended, while it shuts down)
+            bool active = _nativeRun != null || (_session.HasProgram && (_session.IsStarted || _isBusyValue) && !_session.IsFinished) || NativeDebugProcessAlive();
             // (a profiled run that ended or was stopped - also one too short to have been seen running)
             if ((_profile != null || _profileNative != null) && !active && (!_session.HasProgram || _session.IsFinished)) FinishProfile();
             if (active == _runtimeActive) return;
@@ -57,6 +79,7 @@ namespace fire.Editor
                 // (a native program: its own process - also while it is debugged; on a board over its serial line there is none here)
                 var nativeTarget = _session.Target as fire.Debugging.NativeDebugTarget;
                 _runtimeProcess = _nativeRun ?? nativeTarget?.Process;
+                if (_runtimeProcess != null && _runtimeProcess != _nativeRun) WatchExit(_runtimeProcess);
                 bool remote = _nativeRun == null && nativeTarget != null && _runtimeProcess == null;
                 string what = _runtimeProcess != null || nativeTarget != null ? $"native, {_session.ActiveExecutionMode ?? _session.ExecutionMode}" : $"VM, {_session.ActiveExecutionMode ?? _session.ExecutionMode}";
                 _runtimePanel.Start(_runtimeProcess, what, remote);

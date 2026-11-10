@@ -46,6 +46,8 @@ typedef struct FireWinShared {
     char* title;
     int width, height;            /* the size it opens with */
     int opened, failed;
+    const char* idleHome;         /* opened by the main program, whose waits pump it (fire_winb_idlePump): the token of its thread (NULL: none) */
+    int idleClosed;               /* the system closed it meanwhile */
     /* between the program and the manager's thread (under m) */
     FireDisplayEvents inbox;      /* the events the thread fetched */
     int closed;                   /* the thread saw the window close */
@@ -455,6 +457,115 @@ static int fire_winb_ensureOpen(FireWinShared* s, int vsync) {
     return !s->failed;
 }
 
+/* ---- the waits of the main program serve its windows (fire_rt.h FIRE_RT_IDLE_HOOKS, ROADMAP_TASKS 5b): what the system has for them goes into their inbox
+ *      meanwhile (the program takes it at its next Pump/Tick, but the window repaints and answers the system at once); the wait itself is the system's
+ *      (poll on the X server's connection, MsgWaitForMultipleObjects on Win32) together with the runtime's wake signal ---- */
+#if defined(FIRE_RT_IDLE_HOOKS)
+/* (in the library for the VM the waits are the VM's: it calls fire_pkg_idle on the thread that waits - only that thread's windows are pumped; a window
+ * system serves a window only on the thread that created it) */
+static FIRE_TLS_KEYWORD char t_winbSelf;
+static FIRE_TLS_KEYWORD int g_winbDisplayBusy;   /* (this thread is in a call of the display - the pacing of a frame waits inside it: no pump then) */
+static void fire_winb_idlePump(void) {
+    fire_gfx_size i;
+    if (g_winbDisplayBusy) return;
+    g_winbDisplayBusy++;
+    for (i = 0; i < g_fireWinCount; i++) {
+        FireWinState* w = g_fireWinList[i];
+        FireDisplayEvents events = {NULL, 0, 0};
+        size_t k;
+        if (w == NULL || w->sh->idleHome != &t_winbSelf || w->sh->idleClosed || fire_winb_threaded(w)) continue;
+        if (!fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height)) w->sh->idleClosed = 1;
+        for (k = 0; k < events.count; k++) if (w->sh->inbox.count < FIRE_WIN_MAX_QUEUED_EVENTS) fire_display_push(&w->sh->inbox, &events.items[k]);
+        fire_display_eventsFree(&events);
+    }
+    g_winbDisplayBusy--;
+}
+#if defined(_WIN32) && defined(FIRE_THREADS) && !defined(FIRE_LIBRARY)
+static HANDLE g_winbWakeEvent = NULL;
+static void fire_winb_idleWake(void) { SetEvent(g_winbWakeEvent); }
+static void fire_winb_idleWait(int64_t ms) { MsgWaitForMultipleObjects(1, &g_winbWakeEvent, FALSE, (DWORD)(ms > 0 ? ms : 0), QS_ALLINPUT); }
+static int fire_winb_idleWaitInit(void) { g_winbWakeEvent = CreateEventW(NULL, FALSE, FALSE, NULL); return g_winbWakeEvent != NULL; }
+#elif defined(FIRE_THREADS) && !defined(FIRE_LIBRARY) && defined(FIRE_DISPLAY_WAIT_FD) && (defined(__unix__) || defined(__APPLE__))
+#include <poll.h>
+#include <fcntl.h>
+#include <unistd.h>
+static int g_winbWake[2] = {-1, -1};
+static void fire_winb_idleWake(void) { char c = 1; ssize_t r = write(g_winbWake[1], &c, 1); (void)r; }   /* (a full pipe: a wake is pending already) */
+static void fire_winb_idleWait(int64_t ms) {
+    struct pollfd fds[9];
+    nfds_t n = 1;
+    fire_gfx_size i;
+    fds[0].fd = g_winbWake[0]; fds[0].events = POLLIN; fds[0].revents = 0;
+    for (i = 0; i < g_fireWinCount && n < 9; i++) {
+        FireWinState* w = g_fireWinList[i];
+        int fd;
+        if (w == NULL || w->sh->idleHome != &t_winbSelf || w->sh->idleClosed || fire_winb_threaded(w) || (fd = fire_display_waitFd(&w->sh->display)) < 0) continue;
+        fds[n].fd = fd; fds[n].events = POLLIN; fds[n].revents = 0;
+        n++;
+    }
+    if (poll(fds, n, (int)(ms > 0 ? ms : 0)) > 0 && (fds[0].revents & POLLIN)) {
+        char buf[64];
+        while (read(g_winbWake[0], buf, sizeof buf) > 0) { }
+    }
+}
+static int fire_winb_idleWaitInit(void) {
+    if (pipe(g_winbWake) != 0) return 0;
+    fcntl(g_winbWake[0], F_SETFL, O_NONBLOCK); fcntl(g_winbWake[1], F_SETFL, O_NONBLOCK);
+    fcntl(g_winbWake[0], F_SETFD, FD_CLOEXEC); fcntl(g_winbWake[1], F_SETFD, FD_CLOEXEC);
+    return 1;
+}
+#else
+#define FIRE_WINB_NO_IDLE_WAIT 1   /* (the runtime's own wait; the pump still runs at each of its turns) */
+#endif
+/* (once, at the first window the main program opens) */
+static void fire_winb_idleRegister(void) {
+    static int done = 0;
+    if (done) return;
+    done = 1;
+#ifdef FIRE_WINB_NO_IDLE_WAIT
+    fire_setIdleHooks(fire_winb_idlePump, NULL, NULL);
+#else
+    if (fire_winb_idleWaitInit()) fire_setIdleHooks(fire_winb_idlePump, fire_winb_idleWait, fire_winb_idleWake);
+    else fire_setIdleHooks(fire_winb_idlePump, NULL, NULL);
+#endif
+}
+#define FIRE_WINB_DISPLAY_BEGIN() (g_winbDisplayBusy++)
+#define FIRE_WINB_DISPLAY_END() (g_winbDisplayBusy--)
+#else
+#define FIRE_WINB_DISPLAY_BEGIN() ((void)0)
+#define FIRE_WINB_DISPLAY_END() ((void)0)
+#endif
+
+/* Opens the window on this thread (Tick, Pump, Present of the program, a cooperative manager): one of the main program is served by its waits. */
+static int fire_winb_openHere(FireWinState* w) {
+    int first = !w->sh->opened;
+    if (!fire_winb_ensureOpen(w->sh, w->vsync)) return 0;
+#if defined(FIRE_RT_IDLE_HOOKS)
+    if (first && fire_isMainProgram()) { w->sh->idleHome = &t_winbSelf; fire_winb_idleRegister(); }
+#else
+    (void)first;
+#endif
+    return 1;
+}
+
+/* The events of a window of this thread: what the waits of the main program read meanwhile, then what the system has now. */
+static int fire_winb_pumpHere(FireWinState* w, FireDisplayEvents* events) {
+    int open;
+    FireDisplayEvents early = w->sh->inbox;
+    size_t k;
+    w->sh->inbox.items = NULL; w->sh->inbox.count = w->sh->inbox.cap = 0;
+    FIRE_WINB_DISPLAY_BEGIN();
+    open = fire_display_pump(&w->sh->display, events, w->fb->width, w->fb->height);
+    FIRE_WINB_DISPLAY_END();
+    if (early.count) {
+        for (k = 0; k < events->count; k++) fire_display_push(&early, &events->items[k]);
+        fire_display_eventsFree(events);
+        *events = early;
+    } else fire_display_eventsFree(&early);
+    if (w->sh->idleClosed) { w->sh->idleClosed = 0; open = 0; }
+    return open;
+}
+
 /* Window.StartDrag on the thread of the OS window: the drag of the display (0 where the display has none: a board package of its own without
  * fire_display_startDrag). */
 static int fire_winb_startDrag(FireDisplayWindow* display, const char* text, const char* files) {
@@ -848,9 +959,13 @@ static void fire_winb_deliver(Value id, FireWinState* w, FireDisplayEvents* even
 
 /* The first half of a cycle (WindowManager): the events of the window - from its manager's thread, or fetched here when nobody else shows it. */
 static Value fire_win_WinPump(Value id) {
-    FireWinState* w = fire_winb_windowOf(id);
+    FireWinState* w;
     FireDisplayEvents events = {NULL, 0, 0};
     int open;
+#ifdef FIRE_RT_GROUP_CALL
+    fire_groupRun();   /* (the switch point of the UI loop: the handlers that waited and may go on now) */
+#endif
+    w = fire_winb_windowOf(id);
     if (fire_winb_threaded(w)) {
         FireDisplayEvents taken;
         fire_atomic_store(&w->mgr->pending, 0);   /* the program runs a cycle: the next one may be asked for */
@@ -862,8 +977,8 @@ static Value fire_win_WinPump(Value id) {
         fire_winb_unlock(&w->sh->m);
     } else {
         if (w->mgr && fire_winb_started(w->mgr)) fire_atomic_store(&w->mgr->pending, 0);   /* (a cooperative manager: the same) */
-        if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
-        open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);
+        if (!fire_winb_openHere(w)) return Bool(false);
+        open = fire_winb_pumpHere(w, &events);
         fire_winb_applyRequests(w->sh);
     }
     fire_winb_dropBlocked(w, &events);
@@ -941,8 +1056,10 @@ static Value fire_win_WinPresent(Value id) {
         free(old);
         return Undef();
     }
-    if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Undef();
+    if (!fire_winb_openHere(w)) return Undef();
+    FIRE_WINB_DISPLAY_BEGIN();
     fire_winb_presentHere(w);
+    FIRE_WINB_DISPLAY_END();
     return Undef();
 }
 
@@ -957,14 +1074,16 @@ static Value fire_win_WinTick(Value id) {
     fire_groupRun();   /* (the switch point of the UI loop: the handlers that waited and may go on now) */
 #endif
     if (fire_winb_threaded(w)) { Value o = fire_win_WinPump(id); if (g_fireWinList[(fire_gfx_size)(int32_t)id.i]) fire_win_WinPresent(id); return o; }
-    if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
-    open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);
+    if (!fire_winb_openHere(w)) return Bool(false);
+    open = fire_winb_pumpHere(w, &events);
     fire_winb_applyRequests(w->sh);
     if (w->autoResize)
         for (k = 0; k < events.count; k++)
             if (events.items[k].type == FIRE_EV_RESIZE && fire_gfx_validSize(events.items[k].width, events.items[k].height)) fire_gfx_fbResize(w->fb, events.items[k].width, events.items[k].height);
     fire_winb_dropBlocked(w, &events);
+    FIRE_WINB_DISPLAY_BEGIN();
     fire_winb_presentHere(w);
+    FIRE_WINB_DISPLAY_END();
     fire_winb_enqueue(w, &events);
     i = (int32_t)id.i;
     for (k = 0; k < events.count; k++) {

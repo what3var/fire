@@ -263,4 +263,19 @@ FIRE_MAYBE_UNUSED static void fire_pkgService(void) {   /* (only the library of 
     fire_pkgUnlock();
 }
 
+/* fire_pkg_idle: a turn of a wait of the VM on this thread (Sleep, await, the end of the program) - the windows this thread pumps itself read what the
+ * system has for them meanwhile (fire_rt.h FIRE_RT_IDLE_HOOKS, as the waits of a native build do). */
+FIRE_MAYBE_UNUSED static void fire_pkgIdle(void) {   /* (only the library of graphics and windows exports it: fire_pkg_idle) */
+    jmp_buf jump;
+    jmp_buf* outerJump;
+    if (!fire_atomic_load(&g_idleOn)) return;
+    fire_pkgLock();
+    outerJump = g_libraryJump;
+    g_libraryJump = &jump;
+    if (setjmp(jump) == 0) g_idlePump();
+    else fprintf(stderr, "(fire package library: %s)\n", g_libraryError.text);
+    g_libraryJump = outerJump;
+    fire_pkgUnlock();
+}
+
 #endif

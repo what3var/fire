@@ -499,6 +499,7 @@ namespace fire.Runtime
         private GlobalsBroker EnsureOwnerBroker()
         {
             if (_ownerBroker != null) return _ownerBroker;
+            if (_groupHome != null) return _ownerBroker = _groupHome.EnsureOwnerBroker();   // (a member of the main program's group: the main program's)
             var broker = new GlobalsBroker(this, _globalScope);
             _ownerBroker = broker;
             ShareGlobals(broker);
@@ -1042,6 +1043,7 @@ namespace fire.Runtime
                 if (!_inbound.IsEmpty) DrainInbound();
                 if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
                 if (_stopExecutionRequested) break;
+                VmGroup.WaitTurn();   // (a handler that waited; the events of the windows)
                 if (_inbound.IsEmpty) FireRuntime.WaitForWake(5);
             }
         }
@@ -1056,6 +1058,8 @@ namespace fire.Runtime
             bool afterShutdown = _shutdownReleasePending;
             _shutdownReleasePending = false;
             if (!DestroyGlobalsAtEnd) return;
+            // (the members of the main program's group - handlers that wait - end before its globals do)
+            if (!IsFireThreadVm) while (VmGroup.Any && !_stopExecutionRequested) { VmGroup.RunReady(); if (VmGroup.Any) FireRuntime.WaitForWake(5); }
             if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
             // An exception a thread did not catch, delivered after the main program's last safe point, is not dropped: `catch threads`, or the
             // program ends with it (like at a safe point - the global scope then stays, as after any unhandled exception; native: the same at its end).
@@ -6386,8 +6390,9 @@ namespace fire.Runtime
 
         private void WaitReply(ActorReply reply)
         {
-            while (!reply.Done.Wait(20))
+            while (!reply.Done.Wait(PoolTask == null && VmGroup.Any ? 5 : 20))
             {
+                if (PoolTask == null) VmGroup.WaitTurn();   // (the main program waits: a handler that waited may go on, its windows read their events)
                 if (CheckShutdownSignals()) { Push(Value.MakeUndefined()); StopExecution(); return; }
                 // (cancelled: the caller stops waiting - what it waited for may still run)
                 if (CancelledClass() is { } cancelled) { NativeFail(cancelled, cancelled == "TimeoutException" ? "The time limit ran out." : "The task was cancelled."); _nativeRedirected = false; return; }

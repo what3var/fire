@@ -349,6 +349,7 @@ static inline void fire_coro_switch(fire_coro* from, fire_coro* to) {
     __tsan_switch_to_fiber(to->tsanFiber, 0);
 #endif
 #if defined(FIRE_CORO_FIBERS)
+    (void)from;   /* (the fiber keeps its own context) */
     SwitchToFiber(to->fiber);
 #elif defined(FIRE_CORO_X64)
     fire_coro_x64_switch(&from->sp, to->sp);
