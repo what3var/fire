@@ -55,31 +55,56 @@ An optional callback is declared `any` (or `lambda` and checked for `undefined`)
 
 ## Captured values
 
-A lambda can use local variables of the method it is created in. Their **values are copied** when the lambda is created:
+A lambda can use local variables of the method it is created in. A word where the variable is used says how the lambda gets it:
 
 ```fire
+class Box {
+    int v = 0
+    construct(int v) { this.v = v }
+}
 class Demo {
+    static lambda Counter() {
+        var box = new Box(0)
+        return () => { (handover box).v++; return box.v }   // the lambda owns the box: every call gets the same one
+    }
     static undefined Run() {
         var limit = 3
-        var over = (int x) => x > limit     // limit is copied: 3
+        var over = (int x) => x > (taking limit)    // a copy of limit: 3
         limit = 10
-        print(over(5))                      // True - the lambda still sees 3
+        print(over(5))                              // True - the lambda still sees 3
+        var next = Counter()
+        print(next() + " " + next())                // 1 2
     }
 }
 Demo.Run()
 ```
 
-- Later changes outside are not seen inside, and assigning to a copied variable inside the lambda is an error.
-- There is no loop trap: in `for (...) { fs.Add(() => i) }` every lambda gets the value of `i` of its round.
-- **Objects** are copied as references: the lambda sees and changes the same object.
-- **Global variables** (including the variables of the top-level code) are not copied: the lambda always sees their current value.
+| Where it is used | What the lambda gets |
+|---|---|
+| `(taking x)` | a **copy** of `x` (objects and arrays deep), made when the lambda is made. Every **call** starts with a copy of it of its own: what a call changes is gone when it ends. |
+| `(handover x)` | `x` **itself**: it moves into the lambda, `x` is `undefined` outside afterwards and every other reference to it from before is dead. The lambda owns it, every call gets the same instance (lent). `take x` in the body passes it on - after that the lambda has none (`undefined`). |
+| no word | like `taking`, with the warning `TC023`: a copy of it - a change does not reach the variable outside, a later change outside is not seen. A copy the body only reads is lent to the calls (no copy per call). |
+
+- One word per variable is enough: every other use of it in the lambda means the same copy (or the moved instance).
+- Assigning to a captured variable inside the lambda is allowed: it changes the call's copy.
+- There is no loop trap: in `for (...) { fs.Add(() => (taking i)) }` every lambda gets the value of `i` of its round.
+- **Global variables** (including the variables of the top-level code) are not captured: the lambda always sees their current value. `(taking g)` gives
+  it a copy; `handover` of a global is an error - it belongs to the program.
+- `take` into a variable that was captured without a word is the warning `TC024`: what it gets dies with the copy.
 - `this` is not captured; bind it with `on` (below).
 
 ```fire
 var fs = new List<lambda>()
-for (int i = 0; i < 3; i++) { fs.Add(() => i) }
+for (int i = 0; i < 3; i++) { fs.Add(() => (taking i)) }
 foreach (g in fs) { print(g()) }        // 0 1 2
 ```
+
+### A lambda has an owner
+
+A lambda belongs to an owner like an object (see [Ownership](13-ownership.md)): the scope of the variable it is assigned to first, the object or the list it is
+stored in, or the statement when nobody takes it. What it captured belongs to the lambda and dies with it. When its owner ends, the lambda is destroyed:
+calling it is a `DestroyedException` ("Access to a destroyed lambda."). A lambda that has to outlive its scope is passed on with `take` (`list.Add(take f)`,
+`this.handler = take f`) or returned. `copy f` gives a lambda with copies of what it captured, `a on obj` (below) as well.
 
 ## `on`: a lambda with an object
 
@@ -143,5 +168,6 @@ Lambdas work well with lists and queries (see [Arrays and lists](07-arrays-and-l
 
 1. Write a method `static int[] Map(int values[], int lambda<int> f)` that applies `f` to every element.
 2. Store three lambdas `+`, `-` and `*` in an array and apply each of them to `6` and `3`.
-3. Write a method `Counter()` that returns a lambda that counts up on every call. (Hint: a captured `int` is a copy - use an object.)
+3. Write a method `Counter(int start)` that returns a lambda that counts up from `start` on every call. (Hint: a `taking` copy is new in every call -
+   hand an object over to the lambda.)
 4. Build a small event: a class with a `List<lambda>` of handlers and a method `Raise()` that calls all of them.

@@ -460,6 +460,17 @@ Order of the work: (a) lambdas in the owner structure, VM and native; (b) the st
 lending; (c) the compiler part (implicit copies, TC023/TC024, globals); (d) the preludes (Linq, `Library.Get`), tests and docs; (e) `on` on the
 owner's thread, lambdas to other threads.
 
+10. **Globals stay accessible** (the user, replaces rule 2 for globals): a global without a word is not captured - a lambda (and a thread) reads the
+    original; a write and a method call from another thread run as a task on the global's own thread (the main program). `(taking g)` gives a copy;
+    `handover g` is a compile error.
+
+**Status:** (a)-(d) are done in the VM and natively. Natively a lambda stays counted (the memory, also for natives that keep a callback) and carries an
+owner header and a store (`Lam.o`, `Lam.store`, okind `O_Lambda`): destroyed with its owner, freed with its last count; the generated lambda body gets
+`lamCaptureCopy` (a copy in its function scope) or `lamCaptureLent` per capture. `is of lambda` is new (the collections of the prelude take lambdas like
+objects - `List.Add(() => ...)` keeps them). Open: (e), and the writes/calls of globals from other threads as tasks (rule 10).
+Found on the way: `List<int[]>.Add([1, 2])` - an array handed to a collection dies with the statement (VM and native: the prelude takes only objects
+and lambdas; `is of` has no test for "an array").
+
 ## Steps
 
 1. Remove the GIL from the C runtime: lock for the globals, biased counting, slot table, maps, a lock per package. Thread tests on several cores,
@@ -474,4 +485,4 @@ owner's thread, lambdas to other threads.
 
 ## Open
 
-Nothing at the moment - step 8 is decided and under way.
+Step 8 (e) and rule 10 (see "Step 8" above); arrays handed to the collections of the prelude.

@@ -3124,6 +3124,9 @@ namespace fire.Native
             // only for a value whose type was not known yet loses it once the type is known
             f.NeedsList.Clear();
             f.Hoists.Clear();
+            // (a lambda whose calls copy a capture: the copy belongs to the function scope - its list from the start, so that every return leaves it)
+            if (f.Kind == FuncKind.Lambda && f.CaptureCount > 0 && (f.CaptureCount > 64 || ((f.Proto?.CaptureCopyMask ?? 0) & ~(f.Proto?.CaptureMovedMask ?? 0)) != 0))
+                f.NeedsList.Add(FunctionScope);
             var finAddrs = chunk.Handlers.Where(t => t.FinallyAddr != null).Select(t => t.FinallyAddr!.Value).ToHashSet();
 
             var entry = new Flow?[code.Count];
@@ -3267,8 +3270,20 @@ namespace fire.Native
             if (f.Kind == FuncKind.Lambda)
             {
                 if (framed) Var("Value", "self", "lamOn(lam)"); else decl.AppendLine("    Value self = lamOn(lam); (void)self;");
+                // what a call gets for each capture (docs/ROADMAP_TASKS.md step 8; the VM: CaptureForCall): `handover` the store's instance, lent;
+                // `taking` and a variable without a word that the body writes a copy that belongs to the call (its function scope); else the store's value
+                ulong copyMask = f.Proto?.CaptureCopyMask ?? 0, movedMask = f.Proto?.CaptureMovedMask ?? 0;
                 for (int i = 0; i < f.CaptureCount; i++)
-                    if (framed) Var("Value", $"P{f.ParamCount + i}", $"lamCapture(lam, {i})"); else decl.AppendLine($"    Value P{f.ParamCount + i} = lamCapture(lam, {i}); (void)P{f.ParamCount + i};");
+                {
+                    bool moved = i < 64 && (movedMask >> i & 1) != 0, copied = i >= 64 || (copyMask >> i & 1) != 0;
+                    string init = moved ? $"lamCaptureLent(lam, {i})" : $"lamCapture(lam, {i})";
+                    if (framed) Var("Value", $"P{f.ParamCount + i}", init); else decl.AppendLine($"    Value P{f.ParamCount + i} = {init}; (void)P{f.ParamCount + i};");
+                    if (copied && !moved)
+                    {
+                        f.NeedsList.Add(FunctionScope);
+                        post.AppendLine($"    P{f.ParamCount + i} = lamCaptureCopy(lam, {i}, &OP);");
+                    }
+                }
             }
             // (a C parameter that is no variable of a C number: the body has its Value)
             if (f.CAbi is { } boxAbi)
@@ -4662,7 +4677,7 @@ namespace fire.Native
                     string castName = chunk.Constants[ins.A[0]].AsString();
                     string castTest = castName switch
                     {
-                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "word" => "K_Word", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
+                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "word" => "K_Word", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", "lambda" => "K_Lambda", _ => "",
                     };
                     string test = castTest == "K_Int" ? $"{S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0"
                         : castTest.Length > 0 ? $"{S(d - 1)}.kind == {castTest}" : $"{IsOfFn(castName)}({S(d - 1)})";
@@ -4766,7 +4781,7 @@ namespace fire.Native
                     string typeName = chunk.Constants[ins.A[0]].AsString();
                     string test = typeName switch
                     {
-                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "word" => "K_Word", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
+                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "word" => "K_Word", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", "lambda" => "K_Lambda", _ => "",
                     };
                     if (test == "K_Int") E($"{S(d - 1)} = Bool({S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0);");   // (an enum is not an int)
                     else if (test.Length > 0) E($"{S(d - 1)} = Bool({S(d - 1)}.kind == {test});");
@@ -4952,7 +4967,7 @@ namespace fire.Native
                         UseThreads();
                         int first = d - 1;
                         string moved = SR(first);
-                        E($"{T(first)} = fire_lambdaHandover({moved});");
+                        E($"{T(first)} = fire_lambdaHandover({moved}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
@@ -5852,6 +5867,8 @@ namespace fire.Native
                     int first = d - captures - (hasOn ? 1 : 0);
                     var sbCaps = new StringBuilder();
                     for (int i = 0; i < captures; i++) sbCaps.Append($" lamCaps(l)[{i}] = {S(first + i)}; retain({S(first + i)});");
+                    // (what it captured and is still in the statement temporaries - the copies, what `handover` moved - belongs to the lambda: its store)
+                    if (captures > 0) sbCaps.Append($" lamOwnStore(l, &{OwnerList()});");
                     string lambdaTArgs = _pendingLambdaTArgs != null ? $" l->targs = {_pendingLambdaTArgs};" : "";
                     _pendingLambdaTArgs = null;
                     E($"{{ Lam* l = allocLam({proto.ParamCount}, {captures}, {target.Name}_t, &{OwnerList()}); l->on = {(hasOn ? S(d - 1) : "Undef()")};{defaultsInit}{lambdaTArgs}{sbCaps} {S(first)} = LamV(l); }}");
