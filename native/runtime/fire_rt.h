@@ -8942,6 +8942,110 @@ FIRE_FN Value replyResult(Value r, OwnList* msgOwn, OwnList* travel, OwnList* li
     if (isRef(r)) retain(r);
     return r;
 }
+/* ---- Completion (docs/ROADMAP_TASKS.md section 6): a value that another task delivers. A node is an int handle like a CancelNode, counted (every Completion
+ * object of the program holds one count). The first Set/Fail takes `claim`, copies the value into `travel` (strings as copies for another thread) and then
+ * sets `done`; from then on the value does not change, and every Wait gets a copy of it for its own scope. */
+typedef struct ComplNode {
+    fire_atomic32 refs;
+    fire_atomic32 claim;
+    fire_atomic32 done;           /* 1 set, 2 failed (value is the exception) */
+    Value value;
+    OwnList travel;               /* what the value owns, between the threads */
+} ComplNode;
+FIRE_FN ComplNode* complOf(Value h) { return h.kind == K_Int ? (ComplNode*)(intptr_t)h.i : NULL; }
+FIRE_FN bool fire_complDone(void* ctx) { return fire_atomic_loadAcquire(&((ComplNode*)ctx)->done) != 0; }
+/* (a copy for the scope `owner` of another thread: objects, arrays and buffers deep, their strings as copies; a string as a copy with no count yet) */
+FIRE_FN Value complCopy(Value v, OwnList* owner) {
+    if (v.kind == K_String) return strCross(v);
+    if ((v.kind == K_Class && leafAlive(v)) || ((v.kind == K_Array || v.kind == K_Buffer) && ownedOf(v))) {
+        DeepCopier c;
+        Value r;
+        copierInit(&c, owner);
+        c.noCopy = true;
+        c.cross = true;
+        r = copierRun(&c, v);
+        copierFree(&c);
+        return r;
+    }
+    return deepCopy(v, owner);
+}
+FIRE_FN Value fire_completion_new(void) {
+    ComplNode* n = (ComplNode*)calloc(1, sizeof(ComplNode));
+    if (!n) allocFailed();
+    fire_atomic_store(&n->refs, 1);
+    n->value = Undef();
+    ownListInit(&n->travel, 0, NULL);
+    return Int((int64_t)(intptr_t)n);
+}
+FIRE_FN Value fire_completion_ref(Value h) { ComplNode* n = complOf(h); if (n) fire_atomic_add(&n->refs, 1); return n ? h : Int(0); }
+FIRE_FN Value fire_completion_release(Value h) {
+    ComplNode* n = complOf(h);
+    if (!n || fire_atomic_addAcqRel(&n->refs, (uint32_t)-1) != 1) return Undef();
+    if (n->value.kind == K_String) release(n->value);
+    destroyList(&n->travel);
+    free(n);
+    return Undef();
+}
+FIRE_FN Value fire_completion_done(Value h) { ComplNode* n = complOf(h); return Bool(n && fire_complDone(n)); }
+FIRE_FN Value fire_completion_set(Value h, Value v, Value failed) {
+    ComplNode* n = complOf(h);
+    Value c;
+    if (!n) return Bool(false);
+    if (!noCopyFree(v, "Completion.Set")) return Undef();
+    if (fire_atomic_exchange(&n->claim, 1) != 0) return Bool(false);
+    c = complCopy(v, &n->travel);
+    if (c.kind == K_String) retain(c);
+    n->value = c;
+    fire_atomic_storeRelease(&n->done, failed.kind == K_Bool && failed.i ? 2 : 1);
+    notifyEventAll();   /* (every wait looks again) */
+    return Bool(true);
+}
+/* `Completion.Wait(limit)`: parks the task (a thread waits) until the value is there, the token of the task is cancelled or `limit` ran out
+ * (TimeoutException); then a copy of the value for `list`, or the copy of the exception is thrown. */
+FIRE_FN Value fire_completion_wait(Value h, Value limit, OwnList* list) {
+    ComplNode* n = complOf(h);
+    int64_t deadline = 0;
+    Value r;
+    if (!n) return Undef();
+    if (limit.kind != K_Undefined) {
+        int64_t ticks;
+        if (!timeTicksOf(limit, &ticks)) return fireError("ArgumentException", "Wait expects a time value (5s, 200ms) or undefined.");
+        deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
+        if (deadline == 0) deadline = 1;
+    }
+    if (!fire_complDone(n)) {
+        CancelNode* token = fire_curToken();
+        int64_t until = deadline;
+        int32_t held;
+        int state;
+        if (token) {
+            int64_t t = cancelDeadline(token);
+            if ((state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
+            if (t && (!until || t < until)) until = t;
+        }
+        held = sectionYieldBegin();   /* (a section held here would stop the main program - maybe the one that sets the value) */
+        if (token) {
+            TokWait w;
+            w.pred = fire_complDone; w.ctx = n; w.token = token;
+            if (g_isThread) blockUntil(fire_tokWaitPred, &w, true, until); else blockUntilServing(fire_tokWaitPred, &w, true, until);
+        } else if (g_isThread) blockUntil(fire_complDone, n, true, until);
+        else blockUntilServing(fire_complDone, n, true, until);
+        sectionYieldEnd(held);
+        if (!fire_complDone(n)) {
+            if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
+            if (deadline && steadyMs() >= deadline) { fire_throwCancelled(2); return Undef(); }
+            startLeave();   /* (terminate) */
+            return Undef();
+        }
+    }
+    fire_mutex_lock(&g_cancelM);   /* (the waits copy one after the other) */
+    r = complCopy(n->value, list);
+    fire_mutex_unlock(&g_cancelM);
+    if (r.kind == K_String && refOf(r)->rc != IMMORTAL) { retain(r); poolPush(refOf(r)); }
+    if (fire_atomic_loadAcquire(&n->done) == 2 && r.kind == K_Class) return throwValueR(r, false);
+    return r;
+}
+
 #ifdef FIRE_EXCEPTIONS
 /* (the catch of the exceptions that nothing in an awaited method caught: they go back to the caller, not to the handlers around `process`) */
 typedef struct ReplyCatch { Handler h; Value exc; uint8_t caught; } ReplyCatch;

@@ -240,6 +240,28 @@ source.Cancel()                                  // the thread's Sleep ends at o
 - `new CancellationSource()` made inside a task follows the task's token; `CancellationSource.Detached()` follows nobody. `CancelAfter(5s)` cancels later.
   Sources and tokens are never copied (`[NoCopy]`): a thread gets one with `until`.
 
+### A value that another task delivers: `Completion`
+
+```fire
+#import "time"
+var c = new Completion()
+var s = c.Share()                                // a second Completion on the same value, for the other task
+fire handover s {
+    Sleep(20ms)
+    s.Set("ready")
+}
+print(c.Wait(2s))                                // ready - waits until the value is there (at most 2 s)
+```
+
+- `Set(value)` delivers the value; only the first `Set` (or `Fail`) counts, a later one returns `False`. The Completion keeps a **copy** of the value
+  (objects, arrays and buffers deep, like `taking`), and every `Wait()` returns a copy of its own - the tasks never share it.
+- `Fail(exception)` delivers an exception instead: `Wait()` throws (a copy of) it. `IsDone` asks without waiting.
+- `Wait(limit)` waits like `Sleep` - the task gives its worker to others, the main program keeps serving its windows and its queue - until the value is
+  there. It follows the task's token (`until`, a cancelled source: `CancelledException`), and after `limit` it throws a `TimeoutException`; without a
+  limit it waits as long as it takes.
+- A Completion is never copied (`[NoCopy]`): `Share()` gives another one on the same value, which goes to a thread with `handover`, as the argument of an
+  actor's method (`reader.Expect(id, c.Share())`) or lent to an awaited call. The value lives as long as one of them does.
+
 ## Actors
 
 An `actor` is declared like a class. A method call on an actor does not run the method: it puts a **message** into the actor's mailbox. The thread

@@ -28,4 +28,20 @@ namespace fire.Standard
         public static Value Call(string name, Value[] args) =>
             (Implementation ?? throw new InvalidOperationException("Cancellation needs a running program."))(name, args);
     }
+
+    /// <summary>Completion (docs/ROADMAP_TASKS.md section 6): the natives behind the prelude's Completion - a value that another task delivers. A node is an
+    /// int handle (0: none), counted like a cancellation node. The VM implements them (fire.Runtime.Completions), a native build in fire_rt.h.</summary>
+    public static class CompletionMethods
+    {
+        public static readonly string[] Names =
+        {
+            "__completion_new", "__completion_ref", "__completion_release", "__completion_done", "__completion_set", "__completion_wait",
+        };
+
+        /// <summary>Set by the VM: (name, arguments) on the VM of the calling thread.</summary>
+        public static Func<string, Value[], Value>? Implementation;
+
+        public static Value Call(string name, Value[] args) =>
+            (Implementation ?? throw new InvalidOperationException("A Completion needs a running program."))(name, args);
+    }
 }

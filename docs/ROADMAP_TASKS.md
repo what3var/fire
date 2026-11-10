@@ -377,6 +377,15 @@ token of the running task.
   a source that follows its task, `CancelAfter`, `await actor.M() until`, `Detached`; ThreadSanitizer and AddressSanitizer clean (the given-up replies
   were a leak before the claim of who frees them).
 
+### Completion (built, for the HTTP server)
+
+A value that another task delivers - the counterpart of .NET's `TaskCompletionSource`, needed where an answer arrives later over another path (a JS call of
+an FXML page whose result comes back over the WebSocket, an answer of a device): `new Completion()`, `Set(value)` / `Fail(exception)` (the first counts),
+`IsDone`, `Wait(limit)` (follows the task's token, `TimeoutException` after the limit), `Share()` (a second Completion on the same value; `[NoCopy]` like
+the sources). The value is copied in at `Set` (strings as copies for another thread) and copied out for every `Wait`. Prelude class over natives
+(`__completion_*`): VM `fire.Runtime.Completions` (a node table like the cancellation's, the wait like `Sleep`), native `fire_rt.h` `fire_completion_*`
+(a counted node, `blockUntil` with the token, `deepCopy` with `cross`). Test: natCase "Completion: ..." (VM == native).
+
 ### Step 7 in detail - the VM on the scheduler
 
 * **Done (fire.Runtime/VmScheduler.cs, VM.Tasks.cs):** a fire thread of the VM is a task of a pool of system threads (as many as the machine has cores,
