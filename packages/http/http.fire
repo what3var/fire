@@ -304,6 +304,9 @@ namespace Http {
         Headers headers
         byte body[]
         string url
+        // A body that is read from a stream while it is sent (Http.AppServer; instead of `body`): `streamLength` bytes, or chunked when it is -1.
+        IO.IStream stream
+        int streamLength
 
         construct(int status = 200, any body = undefined) {
             this.status = status
@@ -311,6 +314,18 @@ namespace Http {
             this.headers = new Http.Headers()
             this.url = ""
             this.body = Http.Response.Bytes(body)
+            this.stream = undefined
+            this.streamLength = -1
+        }
+
+        // A response whose body is read from `stream` while it is sent (a file, a pipe); the response owns the stream and the server closes it. Without a
+        // `length` the body goes chunked.
+        static Http.Response FromStream(IO.IStream stream, string contentType = "application/octet-stream", int length = -1, int status = 200) {
+            var r = new Http.Response(status)
+            r.stream = take stream
+            r.streamLength = length
+            r.headers.Set("Content-Type", contentType)
+            return r
         }
 
         // The body as bytes: a text becomes UTF-8, a buffer stays, undefined is empty.
@@ -877,6 +892,328 @@ namespace Http {
         undefined Close() {
             this.listener.Close()
             if (this.tlsServer != undefined) { this.tlsServer.Close() }
+        }
+    }
+
+    // ---- the application server (docs/ROADMAP_HTTP.md step 1): a task per connection, keep-alive, a chain of routers -------------------------------------
+
+    // A link of the chain: answers the request itself, or hands it on with `next.Invoke(ctx)` - and may work on the answer of the rest of the chain.
+    interface IRouter {
+        Http.Response Handle(Http.Context ctx, Http.Next next)
+    }
+
+    // The rest of the chain behind a router.
+    class Next {
+        List chain
+        int index
+
+        construct(List chain, int index) {
+            this.chain = chain
+            this.index = index
+        }
+
+        // The answer of the rest of the chain (404 when nothing is left).
+        Http.Response Invoke(Http.Context ctx) {
+            if (this.index >= this.chain.Count) { return Http.Response.Error(404) }
+            Http.IRouter router = this.chain[this.index]
+            var rest = new Http.Next(this.chain, this.index + 1)
+            return router.Handle(ctx, rest)
+        }
+    }
+
+    // What a request carries through the chain: the request, and what the routers note for the ones behind them (`Items`, e.g. the user, the session).
+    class Context {
+        Http.Request request
+        Dictionary<string, any> items
+        int number
+
+        construct(Http.Request request, int number) {
+            this.request = take request
+            this.items = new Dictionary<string, any>()
+            this.number = number
+        }
+
+        Http.Request Request { get { return this.request } }
+        // The number of the request on its connection (1 for the first).
+        int Number { get { return this.number } }
+
+        any Item(string name, any fallback = undefined) {
+            if (this.items.ContainsKey(name)) { return this.items[name] }
+            return fallback
+        }
+        undefined SetItem(string name, any value) { this.items[name] = value }
+    }
+
+    // A router from a lambda: func (Http.Context ctx, Http.Next next) => ... returns the Http.Response.
+    class LambdaRouter : IRouter {
+        lambda<Http.Context, Http.Next> handler
+
+        construct(lambda<Http.Context, Http.Next> handler) { this.handler = take handler }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var h = this.handler
+            any result = h(ctx, next)
+            return Http.AppServer.AsResponse(result)
+        }
+    }
+
+    // The explicit routes as a link of the chain: method and path to a lambda that gets the Http.Context (a text becomes a 200 text response, undefined a
+    // 204); a request that no route matches goes on to the next link.
+    class Routes : IRouter {
+        List entries
+
+        construct() { this.entries = new List() }
+
+        Http.Routes Map(string method, string path, lambda<Http.Context> handler) {
+            var entry = new Http.RouteEntry(method, path, handler)
+            entry.TakeTo(this)
+            this.entries.Add(entry)
+            return this
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            for (var i = 0; i < this.entries.Count; i++) {
+                Http.RouteEntry route = this.entries[i]
+                if (route.Matches(ctx.request.method, ctx.request.path)) {
+                    var h = route.handler
+                    any result = h(ctx)
+                    return Http.AppServer.AsResponse(result)
+                }
+            }
+            return next.Invoke(ctx)
+        }
+    }
+
+    // The settings of an application server (copied to every connection).
+    class ServerSettings {
+        int readTimeout = 10000          // ms for every read and write inside a request
+        int keepAlive = 5000             // ms an idle connection waits for its next request
+        int maxRequests = 1000           // requests per connection, then it is closed
+        int maxBodyBytes = 1048576       // of a request
+        string serverName = "fire-http/1"
+    }
+
+    // An application server: every connection is a task of its own (natively light tasks on all cores), it serves request after request (keep-alive) and
+    // every request runs through the chain of routers. Every connection gets a copy of the chain when it starts: routers are configuration - what they share
+    // (counters, caches, sessions) lives in an actor they ask with `await`.
+    //
+    //     var server = new Http.AppServer("127.0.0.1", 8080)
+    //     server.PushTo(new Http.LambdaRouter(func (Http.Context ctx, Http.Next next) => next.Invoke(ctx)))
+    //           .PushTo((new Http.Routes()).Map("GET", "/hello", func (Http.Context ctx) => "hello"))
+    //     server.Run()                       // until Stop() or the task's token is cancelled (await server.Run() until source.Token)
+    class AppServer {
+        Net.TcpListener listener
+        List chain
+        Http.ServerSettings settings
+        Tls.Server tlsServer
+        bool stopped
+        int served
+
+        construct(string host, int port, int backlog = 128) {
+            this.chain = new List()
+            this.settings = new Http.ServerSettings()
+            this.tlsServer = undefined
+            this.stopped = false
+            this.served = 0
+            this.listener = new Net.TcpListener(host, port, backlog)
+        }
+
+        int Port { get { return this.listener.Port } }
+        Http.ServerSettings Settings { get { return this.settings } }
+        // The connections accepted so far.
+        int Connections { get { return this.served } }
+
+        // Adds a router at the end of the chain (the server owns it); returns the server, so the calls can be chained.
+        Http.AppServer PushTo(Http.IRouter router) {
+            router.TakeTo(this)
+            this.chain.Add(router)
+            return this
+        }
+
+        // A router from a lambda (see LambdaRouter).
+        Http.AppServer Use(lambda<Http.Context, Http.Next> handler) { return this.PushTo(new Http.LambdaRouter(take handler)) }
+
+        // Serves HTTPS: the certificate (with its chain) and the private key as PEM text. The handshake runs in the accepting task.
+        undefined UseTls(string certPem, string keyPem) { this.tlsServer = new Tls.Server(certPem, keyPem) }
+
+        undefined Stop() { this.stopped = true }
+
+        // Waits up to `timeout` for a connection and starts its task; true if one came.
+        bool AcceptOne(any timeout = undefined) {
+            var tcp = this.listener.TryAccept(timeout)
+            if (tcp == undefined) { return false }
+            this.served = this.served + 1
+            tcp.NoDelay = true
+            Net.IConnection connection = tcp
+            if (this.tlsServer != undefined) {
+                try { connection = this.tlsServer.Accept(tcp, this.settings.readTimeout) }
+                catch (Net.NetException e) { return true }   // (a client that did not complete the handshake)
+            }
+            if (!Http.AppServer.Spawn(connection, this.chain, this.settings)) {
+                // (a chain that cannot be copied for a task - lambdas until they may go to other threads, docs/ROADMAP_TASKS.md step 8 point 4: the
+                // connection is served here, one request without keep-alive)
+                Http.AppServer.Serve(connection, this.chain, this.settings, false)
+            }
+            return true
+        }
+
+        // The task of a connection: it owns the connection and serves it with copies of the chain and the settings. False when the chain cannot be copied
+        // (nothing moved then).
+        static bool Spawn(Net.IConnection connection, List chain, Http.ServerSettings settings) {
+            try {
+                fire handover connection taking chain taking settings {
+                    Http.AppServer.Serve(connection, chain, settings, true)
+                }
+            } catch (ArgumentException e) {
+                return false
+            }
+            return true
+        }
+
+        // Accepts connections until Stop() or until the token of the running task is cancelled.
+        undefined Run() {
+            var token = CancellationToken.Current()
+            while (!this.stopped && !token.IsCancelled) { this.AcceptOne(250) }
+        }
+
+        undefined Close() {
+            this.listener.Close()
+            if (this.tlsServer != undefined) { this.tlsServer.Close() }
+        }
+
+        // ---- inside the task of a connection ----
+
+        // Serves the requests of one connection until the client closes it, asks to close it, stays idle longer than `keepAlive` or `maxRequests` are done.
+        static undefined Serve(Net.IConnection connection, List chain, Http.ServerSettings settings, bool keepAlive) {
+            try {
+                connection.WriteTimeout = settings.readTimeout
+                var reader = new Http.Reader(connection)
+                var number = 0
+                var open = true
+                while (open) {
+                    number = number + 1
+                    Http.Response response = undefined
+                    var head = false
+                    var keep = false
+                    try {
+                        connection.ReadTimeout = settings.keepAlive
+                        var request = Http.AppServer.ReadRequest(reader, connection, settings)
+                        if (request == undefined) { break }
+                        head = request.method == "HEAD"
+                        keep = keepAlive && number < settings.maxRequests && Http.AppServer.WantsKeepAlive(request)
+                        var ctx = new Http.Context(take request, number)
+                        response = Http.AppServer.Dispatch(chain, ctx)
+                    } catch (Net.TimeoutException e) {
+                        if (number == 1 || reader.pos < reader.len) { response = Http.Response.Error(408) } else { break }   // (idle: just close)
+                    } catch (Http.HttpException e) {
+                        var status = 400
+                        if (e.code == 4) { status = 413 }
+                        response = Http.Response.Error(status, e.message)
+                    }
+                    Http.AppServer.Send(connection, response, head, keep, settings)
+                    open = keep
+                }
+            } catch (Net.NetException e) {
+                // the client went away
+            }
+            connection.Close()
+        }
+
+        // The next request of the connection (the first line waits up to keepAlive, the rest up to readTimeout); undefined when the client closed.
+        static Http.Request ReadRequest(Http.Reader reader, Net.IConnection connection, Http.ServerSettings settings) {
+            var line = reader.ReadLine(8192)
+            while (line != undefined && line.Length == 0) { line = reader.ReadLine(8192) }
+            if (line == undefined) { return undefined }
+            connection.ReadTimeout = settings.readTimeout
+            any parts = line.Split(" ")
+            if (parts.length != 3 || !parts[2].StartsWith("HTTP/")) { throw new Http.HttpException("A bad request line: '" + line + "'.", 2) }
+            var request = new Http.Request(parts[0], parts[1])
+            request.version = parts[2]
+            request.remoteHost = connection.RemoteHost
+            Http.Wire.ReadHeaders(reader, request.headers)
+            request.body = Http.Wire.ReadBody(reader, request.headers, false, settings.maxBodyBytes)
+            return request
+        }
+
+        static bool WantsKeepAlive(Http.Request request) {
+            var c = request.headers.Get("Connection")
+            if (c != undefined) {
+                var lower = c.ToLower()
+                if (lower.IndexOf("close") >= 0) { return false }
+                if (lower.IndexOf("keep-alive") >= 0) { return true }
+            }
+            return request.version == "HTTP/1.1"
+        }
+
+        // The answer of the chain; an exception of a router is a 500.
+        static Http.Response Dispatch(List chain, Http.Context ctx) {
+            try {
+                var first = new Http.Next(chain, 0)
+                return first.Invoke(ctx)
+            } catch (e) {
+                return Http.Response.Error(500)
+            }
+        }
+
+        // What a lambda returned as a response: a text is a 200 text response, undefined a 204.
+        static Http.Response AsResponse(any result) {
+            if (result == undefined) { return new Http.Response(204) }
+            if (result is of string) { return Http.Response.FromText(result) }
+            return result
+        }
+
+        static undefined Send(IO.IStream connection, Http.Response response, bool head, bool keep, Http.ServerSettings settings) {
+            var h = new Http.Headers()
+            for (var i = 0; i < response.headers.Count; i++) { h.Add(response.headers.names[i], response.headers.values[i]) }
+            var noBody = head || Http.Status.NoBody(response.status)
+            var chunked = false
+            if (response.stream != undefined) {
+                if (response.streamLength >= 0) { h.Set("Content-Length", "" + response.streamLength) }
+                else if (!noBody) { h.Set("Transfer-Encoding", "chunked"); chunked = true }
+            } else {
+                h.Set("Content-Length", "" + response.body.length)
+            }
+            if (keep) { h.Set("Connection", "keep-alive") } else { h.Set("Connection", "close") }
+            if (!h.Has("Server")) { h.Set("Server", settings.serverName) }
+            if (response.stream == undefined) {
+                var body = response.body
+                if (noBody) { body = undefined }
+                Http.Wire.Write(connection, "HTTP/1.1 " + response.status + " " + response.reason, h, body)
+                return
+            }
+            Http.Wire.Write(connection, "HTTP/1.1 " + response.status + " " + response.reason, h, undefined)
+            if (!noBody) {
+                var buf = new byte[16384]
+                while (true) {
+                    var n = response.stream.Read(buf, 0, buf.length)
+                    if (n <= 0) { break }
+                    if (chunked) {
+                        var size = IO.Utf8.GetBytes(Http.AppServer.Hex(n) + "\r\n")
+                        connection.Write(size, 0, size.length)
+                    }
+                    connection.Write(buf, 0, n)
+                    if (chunked) {
+                        var crlf = IO.Utf8.GetBytes("\r\n")
+                        connection.Write(crlf, 0, 2)
+                    }
+                }
+                if (chunked) {
+                    var last = IO.Utf8.GetBytes("0\r\n\r\n")
+                    connection.Write(last, 0, last.length)
+                }
+            }
+            response.stream.Close()
+        }
+
+        static string Hex(int n) {
+            var digits = "0123456789abcdef"
+            if (n == 0) { return "0" }
+            var t = ""
+            while (n > 0) {
+                t = digits.CharAt(n % 16) + t
+                n = n / 16
+            }
+            return t
         }
     }
 }

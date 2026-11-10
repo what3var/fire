@@ -102,7 +102,9 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
 ## Steps
 
 0. Poller in the scheduler (waits of the network without polling) and `Completion` - built.
-1. Server core: a task per connection, keep-alive, router chain (a copy per connection), `Http.Context`, streamed bodies, limits.
+1. Server core: a task per connection, keep-alive, router chain (a copy per connection), `Http.Context`, streamed bodies, limits - **built**
+   (`Http.AppServer`, docs/networking/http.md). Open: a chain with lambdas waits for step 8 point 4 (lambdas to other threads) and is served in the accepting
+   task meanwhile; the TLS handshake runs in the accepting task.
 2. File client and `wwwroot` (safety, caching, MIME).
 3. Sessions (their home, time limit) and `ISessionStore` (files).
 4. RPC with DI and lifetimes.

@@ -53,3 +53,46 @@ server.Close()
 
 The server stays in the main program here: its routes are lambdas, and lambdas cannot be handed to a thread. A server that should run in a thread
 is made inside that thread.
+
+## The application server: `Http.AppServer`
+
+A server for many clients at once (docs/ROADMAP_HTTP.md step 1): every connection is a **task of its own** (natively light tasks on all cores; the waits on
+the network go through the poller of the runtime), it serves **request after request** (keep-alive, also several requests sent at once), and every request
+runs through a **chain of routers**.
+
+```fire
+#import "http"
+class Stamp : Http.IRouter {                                    // a link of the chain: hands on and works on the answer
+    Http.Response Handle(Http.Context ctx, Http.Next next) {
+        Http.Response r = next.Invoke(ctx)
+        r.headers.Set("X-Number", "" + ctx.Number)
+        return r
+    }
+}
+class Hello : Http.IRouter {                                    // answers itself, or hands on
+    Http.Response Handle(Http.Context ctx, Http.Next next) {
+        if (ctx.Request.path == "/hello") { return Http.Response.FromText("hello " + ctx.Request.Query("name", "world")) }
+        return next.Invoke(ctx)                                 // the end of the chain: 404
+    }
+}
+var server = new Http.AppServer("127.0.0.1", 8080)
+server.PushTo(new Stamp()).PushTo(new Hello())
+server.Run()                                                    // until Stop() or the task's token is cancelled
+```
+
+| class | |
+|---|---|
+| `Http.AppServer(host, port, backlog = 128)` | `PushTo(router)` (the server owns it; returns the server), `Use(func (Http.Context ctx, Http.Next next) => ...)` (a `LambdaRouter`), `UseTls(certPem, keyPem)` (the handshake runs in the accepting task), `Run()` (until `Stop()` or the token of the running task: `await server.Run() until source.Token`), `AcceptOne(timeout)` (accepts one connection and starts its task; true if one came), `Port`, `Connections`, `Settings`, `Close()` |
+| `Http.ServerSettings` | `readTimeout` (10 s, every read and write inside a request), `keepAlive` (5 s an idle connection waits for its next request), `maxRequests` (1000 per connection), `maxBodyBytes` (1 MiB), `serverName` |
+| `Http.IRouter` | `Http.Response Handle(Http.Context ctx, Http.Next next)`: answer, or `next.Invoke(ctx)` and maybe change its answer |
+| `Http.Next` | `Invoke(ctx)`: the answer of the rest of the chain (404 when nothing is left) |
+| `Http.Context` | `Request`, `Number` (the request's number on its connection), `Item(name, fallback)` / `SetItem(name, value)` (what a router notes for the ones behind it: the user, the session) |
+| `Http.Routes` | the explicit routes as a link: `Map(method, path, func (Http.Context ctx) => ...)` (returns the routes; a text is a 200 text response, undefined a 204; a path ending in `*` is a prefix); what no route matches goes on |
+| `Http.LambdaRouter(lambda)` | a router from a lambda (`Use`) |
+| `Http.Response.FromStream(stream, contentType, length = -1, status = 200)` | a body read from a stream while it is sent (the response owns the stream; the server closes it); without a length it goes chunked |
+
+* **Every connection gets a copy of the chain** when its task starts (`taking`): routers are configuration. What they share - counters, caches, sessions -
+  lives in an actor they ask with `await` (docs/ROADMAP_HTTP.md). A router that throws gives the client a 500.
+* **Lambdas in the chain** (`Use`, `Routes`) cannot be copied into a task yet (they may go to other threads with docs/ROADMAP_TASKS.md step 8 point 4):
+  until then such a chain is served in the accepting task, one request per connection without keep-alive. Routers written as classes get all of it.
+* `Http.Server` (above) stays the small server for one connection after the other.

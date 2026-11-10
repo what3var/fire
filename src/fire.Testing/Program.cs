@@ -27389,6 +27389,114 @@ else
     // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Http.AppServer: Router als Klassen - ein Task pro Verbindung (30 langsame Anfragen parallel), Keep-Alive mit drei Anfragen hintereinander, Context.Number, 404 am Ende der Kette", """
+            #import "http"
+            #import "time"
+            class Stamp : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    Http.Response r = next.Invoke(ctx)
+                    r.headers.Set("X-Number", "" + ctx.Number)
+                    return r
+                }
+            }
+            class Hello : Http.IRouter {
+                string greeting = "hello"
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    if (ctx.Request.path == "/hello") { return Http.Response.FromText(this.greeting + " " + ctx.Request.Query("n", "?")) }
+                    if (ctx.Request.path == "/slow") { Sleep(30ms); return Http.Response.FromText("slow") }
+                    return next.Invoke(ctx)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Stamp()).PushTo(new Hello())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Net.TcpClient("127.0.0.1", port)
+                c.ReadTimeout = 5000
+                c.WriteString("GET /hello?n=1 HTTP/1.1\r\nHost: x\r\n\r\nGET /hello?n=2 HTTP/1.1\r\nHost: x\r\n\r\nGET /nothing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                var all = new IO.MemoryStream()
+                var buf = new byte[4096]
+                while (true) {
+                    var n = c.Read(buf, 0, 4096)
+                    if (n <= 0) { break }
+                    all.Write(buf, 0, n)
+                }
+                var bytes = all.ToBuffer()
+                string text = IO.Utf8.GetString(bytes, 0, bytes.length)
+                sync global { log = text; done = done + 1 }
+            }
+            int parallel = 0
+            for (var i = 0; i < 30; i++) {
+                fire taking port {
+                    var client = new Http.Client()
+                    var r = client.Get("http://127.0.0.1:" + port + "/slow")
+                    sync global { if (r.Text() == "slow") { parallel = parallel + 1 }; done = done + 1 }
+                }
+            }
+            var start = DateTime.UtcNow.Ticks
+            while (done < 31) { server.AcceptOne(20ms); sync globals }
+            var ms = (DateTime.UtcNow.Ticks - start) / 10000
+            foreach (var l in log.Split("\n")) {
+                string t = l.Trim()
+                if (t.StartsWith("HTTP/") || t.StartsWith("hello") || t.StartsWith("Connection") || t.StartsWith("X-Number") || t.StartsWith("Not Found")) { print(t) }
+            }
+            print("parallel " + parallel + " connections " + server.Connections + " fast " + (ms < 700))
+            server.Close()
+            """),
+        ("Http.AppServer: Lambda-Router (Use, Routes) - Items, Antwort nachbearbeitet, Text, POST, Ausnahme = 500, gestreamte Antwort (chunked); Kette mit Lambdas: eine Anfrage pro Verbindung", """
+            #import "http"
+            #import "time"
+            class Boom : Exception { construct(string m) { this.message = m } }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Use(func (Http.Context ctx, Http.Next next) => {
+                ctx.SetItem("user", "anna")
+                Http.Response r = next.Invoke(ctx)
+                r.headers.Set("X-Chain", "seen " + ctx.Number)
+                return r
+            })
+            var routes = new Http.Routes()
+            routes.Map("GET", "/hello", func (Http.Context ctx) => "hello " + ctx.Item("user") + " " + ctx.Request.Query("n", "?"))
+            routes.Map("POST", "/echo", func (Http.Context ctx) => ctx.Request.Text())
+            routes.Map("GET", "/boom", func (Http.Context ctx) => { throw new Boom("x") })
+            routes.Map("GET", "/stream", func (Http.Context ctx) => {
+                var m = new IO.MemoryStream()
+                var data = IO.Utf8.GetBytes("streamed body of some length")
+                m.Write(data, 0, data.length)
+                m.Position = 0
+                return Http.Response.FromStream(take m, "text/plain")
+            })
+            server.PushTo(take routes)
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                // two requests on one connection (keep-alive), then a third that closes
+                var c = new Net.TcpClient("127.0.0.1", port)
+                c.ReadTimeout = 5000
+                c.WriteString("GET /hello?n=1 HTTP/1.1\r\nHost: x\r\n\r\nGET /hello?n=2 HTTP/1.1\r\nHost: x\r\n\r\nGET /missing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                var all = new IO.MemoryStream()
+                var buf = new byte[4096]
+                while (true) { var n = c.Read(buf, 0, 4096); if (n <= 0) { break }; all.Write(buf, 0, n) }
+                var bytes = all.ToBuffer()
+                string text = IO.Utf8.GetString(bytes, 0, bytes.length)
+                var client = new Http.Client()
+                var r = client.Post("http://127.0.0.1:" + port + "/echo", "ping", "text/plain")
+                var b = client.Get("http://127.0.0.1:" + port + "/boom")
+                var s = client.Get("http://127.0.0.1:" + port + "/stream")
+                var t = r.status + " " + r.Text() + " | " + b.status + " | " + s.status + " " + s.Text() + " " + s.Header("Transfer-Encoding") + " " + s.Header("X-Chain")
+                sync global { log = text + "\nCLIENT " + t; done = done + 2 }
+            }
+            while (done < 2) { server.AcceptOne(50ms); sync globals }
+            var lines = log.Split("\n")
+            foreach (var l in lines) {
+                var t = l.Trim()
+                if (t.StartsWith("HTTP/") || t.StartsWith("hello") || t.StartsWith("Connection") || t.StartsWith("X-Chain") || t.StartsWith("CLIENT") || t.StartsWith("Not Found")) { print(t) }
+            }
+            print("connections " + server.Connections)
+            server.Close()
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"
