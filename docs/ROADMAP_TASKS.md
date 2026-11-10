@@ -128,7 +128,11 @@ thread per fire thread):
 * Fixed on the way: `blockUntil` read the count of events after looking at its condition - an event between the two was lost (the waits of the threads
   hid it by looking again every 5 ms).
 
-Still open in step 3: work stealing (3d - one queue under a lock today), measurements with many waiting tasks (3e).
+* **3d work stealing:** every worker has a queue of its own (under a small lock of its own): a task that gives its turn away, a task started or woken by
+  a task go there, without the shared lock; a worker takes from its own queue first, then from the shared one (the main program's and the timers' tasks),
+  then it steals the oldest task of another worker. 32 tasks that give their turn away 20000 times each (`Sleep(0)`): 2.26 s with one shared queue,
+  0.46 s with the queues of the workers; the other measurements are the same within the noise.
+* The thread cases of the suite (287 checks with ThreadSanitizer) pass with tasks.
 
 ## 3. The language: `fire` and `await`
 

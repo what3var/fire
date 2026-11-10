@@ -7559,6 +7559,9 @@ typedef struct FireSched {
     fire_atomic32 blocked;      /* workers inside a native that waits */
     fire_coro** spare;          /* coroutines of ended tasks with the default stack, for the next ones (a new stack costs a mapping, its end an unmapping) */
     uint32_t spareN, spareCap;
+    struct FireWorker** ws;     /* the workers (an idle one steals from the others' queues) */
+    uint32_t nws, wsCap;
+    fire_atomic32 idleA, workersA;   /* (idle and workers, readable without the lock) */
 } FireSched;
 #ifndef FIRE_TASK_STACK_BYTES
 #define FIRE_TASK_STACK_BYTES (8u * 1024u * 1024u)   /* reserved per task like the stack of a system thread; only what is used is committed */
@@ -7586,7 +7589,12 @@ extern FIRE_RT_DATA int64_t g_schedNextWake;     /* the time of the earliest sle
 /* (at a time slice: a sleeper whose time has come waits for a worker - all are busy) */
 FIRE_FN bool schedSleeperDue(void) { int64_t w = schedNextWakeGet(); return w != INT64_MAX && fire_plat_nowMs() >= w; }
 /* The worker of this system thread (its own context, the task it runs, what the task asked for): read anew after every switch - a task may go on elsewhere. */
-typedef struct FireWorker { fire_coro* self; FireTask* cur; int action; int64_t idleSince; } FireWorker;
+typedef struct FireWorker {
+    fire_coro* self; FireTask* cur; int action; int64_t idleSince;
+    fire_mutex qm;              /* its own queue (step 3d): what this worker readies itself - a yield, a task started or woken by its task - goes there */
+    FireTask* qh;
+    FireTask* qt;
+} FireWorker;
 extern FIRE_TLS FireWorker* g_worker;
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noinline))
@@ -7639,14 +7647,41 @@ FIRE_FN void schedHeapRemove(FireTask* t) {
 }
 
 FIRE_FN void workerStart(void);
-/* (under g_sched.m) the task at the end of the ready queue - a worker that waits is woken, or one more is started while all are busy */
+/* (under g_sched.m) a task is ready: a worker that waits is woken, or one more is started while all are busy */
+FIRE_FN void schedKickLocked(void) {
+    if (g_sched.idle > 0) fire_cond_notifyAll(&g_sched.cv);
+    else if (g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) workerStart();
+}
+/* (under g_sched.m) the task at the end of the shared ready queue */
 FIRE_FN void schedPushLocked(FireTask* t) {
     t->next = NULL;
     if (g_sched.tail) g_sched.tail->next = t; else g_sched.head = t;
     g_sched.tail = t;
     fire_atomic_add(&g_schedReady, 1);
-    if (g_sched.idle > 0) fire_cond_notifyAll(&g_sched.cv);
-    else if (g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) workerStart();
+    schedKickLocked();
+}
+/* The task at the end of a worker's own queue (no shared lock - only to wake or start another worker when one is idle or too few run). */
+FIRE_FN void schedPushLocal(FireWorker* w, FireTask* t) {
+    t->next = NULL;
+    fire_mutex_lock(&w->qm);
+    if (w->qt) w->qt->next = t; else w->qh = t;
+    w->qt = t;
+    fire_mutex_unlock(&w->qm);
+    fire_atomic_add(&g_schedReady, 1);
+    if (fire_atomic_load(&g_sched.idleA) || (int32_t)fire_atomic_load(&g_sched.workersA) - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) {
+        fire_mutex_lock(&g_sched.m);
+        schedKickLocked();
+        fire_mutex_unlock(&g_sched.m);
+    }
+}
+FIRE_FN FireTask* schedPopLocal(FireWorker* w) {
+    FireTask* t;
+    fire_mutex_lock(&w->qm);
+    t = w->qh;
+    if (t) { w->qh = t->next; if (!w->qh) w->qt = NULL; t->next = NULL; }
+    fire_mutex_unlock(&w->qm);
+    if (t) fire_atomic_add(&g_schedReady, (uint32_t)-1);
+    return t;
 }
 /* Wakes a parked task (an event, its time, a section): ready again. A task that is still parking is put back by its worker (TS_WOKEN). */
 FIRE_FN void taskWake(FireTask* t) {
@@ -7726,7 +7761,7 @@ FIRE_FN void workerBlockEnter(void) {
     fire_atomic_add(&g_sched.blocked, 1);
     if (fire_atomic_load(&g_schedReady)) {
         fire_mutex_lock(&g_sched.m);
-        if (g_sched.head && g_sched.idle == 0 && g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) workerStart();
+        if (fire_atomic_load(&g_schedReady) && g_sched.idle == 0 && g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) workerStart();
         fire_mutex_unlock(&g_sched.m);
     }
 }
@@ -7750,13 +7785,25 @@ FIRE_FN FireTask* schedTake(FireWorker* w) {
             w->idleSince = 0;
             return t;
         }
+        {
+            /* (nothing shared: steal the oldest task of another worker's queue) */
+            uint32_t i;
+            for (i = 0; i < g_sched.nws; i++) {
+                FireTask* t;
+                if (g_sched.ws[i] == w) continue;
+                t = schedPopLocal(g_sched.ws[i]);
+                if (t) { w->idleSince = 0; return t; }
+            }
+        }
         if (!w->idleSince) w->idleSince = now;
         if (now - w->idleSince >= FIRE_TASK_SLEEP_IDLE_MS && g_sched.workers > 1) return NULL;
         if (g_sched.heapN) wait = g_sched.heap[0]->wakeAt - now;
         if (wait < 0 || wait > 1000) wait = 1000;
         g_sched.idle++;
+        fire_atomic_add(&g_sched.idleA, 1);
         fire_cond_waitFor(&g_sched.cv, &g_sched.m, wait < 1 ? 1 : wait);
         g_sched.idle--;
+        fire_atomic_add(&g_sched.idleA, (uint32_t)-1);
     }
 }
 FIRE_FN void workerMain(void* arg) {
@@ -7764,10 +7811,17 @@ FIRE_FN void workerMain(void* arg) {
     (void)arg;
     memset(&w, 0, sizeof w);
     w.self = fire_coro_self();
+    fire_mutex_init(&w.qm);
     g_worker = &w;
     fire_mutex_lock(&g_sched.m);
+    g_sched.ws = (FireWorker**)fire_growPush(g_sched.ws, &g_sched.nws, &g_sched.wsCap, sizeof(FireWorker*));
+    g_sched.ws[g_sched.nws++] = &w;
     for (;;) {
-        FireTask* t = schedTake(&w);
+        FireTask* t;
+        fire_mutex_unlock(&g_sched.m);
+        t = schedPopLocal(&w);   /* (its own queue first, without the shared lock) */
+        fire_mutex_lock(&g_sched.m);
+        if (!t) t = schedTake(&w);
         if (!t) break;
         fire_mutex_unlock(&g_sched.m);
         w.cur = t;
@@ -7777,9 +7831,14 @@ FIRE_FN void workerMain(void* arg) {
         fire_coro_switch(w.self, t->coro);
         fire_curTask = NULL;
         w.cur = NULL;
+        if (w.action == TA_REQUEUE) {
+            fire_atomic_store(&t->st, TS_READY);
+            schedPushLocal(&w, t);   /* (to the end of its own queue: the others there run first) */
+            fire_mutex_lock(&g_sched.m);
+            continue;
+        }
         fire_mutex_lock(&g_sched.m);
-        if (w.action == TA_REQUEUE) { fire_atomic_store(&t->st, TS_READY); schedPushLocked(t); }
-        else if (w.action == TA_PARK) {
+        if (w.action == TA_PARK) {
             if (fire_atomic_load(&t->st) == TS_WOKEN) { fire_atomic_store(&t->st, TS_READY); schedPushLocked(t); }
             else fire_atomic_store(&t->st, TS_PARKED);
         } else if (w.action == TA_DONE) {
@@ -7795,13 +7854,20 @@ FIRE_FN void workerMain(void* arg) {
             }
         }
     }
+    {
+        /* (out of the list: its queue is empty, it was idle) */
+        uint32_t i;
+        for (i = 0; i < g_sched.nws; i++) if (g_sched.ws[i] == &w) { g_sched.ws[i] = g_sched.ws[--g_sched.nws]; break; }
+    }
     g_sched.workers--;
+    fire_atomic_add(&g_sched.workersA, (uint32_t)-1);
     fire_mutex_unlock(&g_sched.m);
     g_worker = NULL;
 }
 /* (under g_sched.m) one more worker */
 FIRE_FN void workerStart(void) {
     g_sched.workers++;
+    fire_atomic_add(&g_sched.workersA, 1);
     fire_thread_detach(fire_thread_start(workerMain, NULL, 256 * 1024));
 }
 /* Where a task begins: its strand, its function, then the worker frees it. */
@@ -7825,6 +7891,12 @@ FIRE_FN void taskSpawn(void (*fn)(void*), void* arg, uint32_t stackBytes) {
     fire_mutex_unlock(&g_sched.m);
     if (!t->coro) t->coro = fire_coro_new(taskEntry, t, stackBytes ? stackBytes : FIRE_TASK_STACK_BYTES);
     if (!t->coro) allocFailed();
+    if (taskRunning()) {
+        /* (started by a task: into its worker's own queue) */
+        fire_atomic_store(&t->st, TS_READY);
+        schedPushLocal(workerSelf(), t);
+        return;
+    }
     fire_mutex_lock(&g_sched.m);
     if (!fire_atomic_exchange(&g_schedOn, 1)) g_sched.cores = fire_plat_cores();
     fire_atomic_store(&t->st, TS_READY);
