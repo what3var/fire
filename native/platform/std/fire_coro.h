@@ -132,6 +132,14 @@ void fire_coro_x64_start(void);
 #define FIRE_CORO_SYM(n) #n
 #define FIRE_CORO_FNTYPE(n) ".type " #n ",@function\n"
 #endif
+/* (the control words of SSE and x87; TinyCC's assembler has no stmxcsr/ldmxcsr: the same instructions as bytes) */
+#ifdef __TINYC__
+#define FIRE_CORO_SAVE_FP "    .byte 0x0f, 0xae, 0x1c, 0x24\n    .byte 0xd9, 0x7c, 0x24, 0x04\n"
+#define FIRE_CORO_LOAD_FP "    .byte 0x0f, 0xae, 0x14, 0x24\n    .byte 0xd9, 0x6c, 0x24, 0x04\n"
+#else
+#define FIRE_CORO_SAVE_FP "    stmxcsr (%rsp)\n    fnstcw 4(%rsp)\n"
+#define FIRE_CORO_LOAD_FP "    ldmxcsr (%rsp)\n    fldcw 4(%rsp)\n"
+#endif
 __asm__(
     ".text\n"
     ".globl " FIRE_CORO_SYM(fire_coro_x64_switch) "\n"
@@ -144,12 +152,10 @@ __asm__(
     "    pushq %r14\n"
     "    pushq %r15\n"
     "    subq $8, %rsp\n"
-    "    stmxcsr (%rsp)\n"
-    "    fnstcw 4(%rsp)\n"
+    FIRE_CORO_SAVE_FP
     "    movq %rsp, (%rdi)\n"
     "    movq %rsi, %rsp\n"
-    "    ldmxcsr (%rsp)\n"
-    "    fldcw 4(%rsp)\n"
+    FIRE_CORO_LOAD_FP
     "    addq $8, %rsp\n"
     "    popq %r15\n"
     "    popq %r14\n"
@@ -163,14 +169,18 @@ __asm__(
     FIRE_CORO_SYM(fire_coro_x64_start) ":\n"
     "    movq %r12, %rdi\n"
     "    andq $-16, %rsp\n"
-    "    callq *%r13\n"
-    "    ud2\n"
+    "    call *%r13\n"
+    "    .byte 0x0f, 0x0b\n"   /* (ud2: the main function never returns) */
 );
 #endif
 #endif
 
 /* (the context of the worker thread itself; the context a switch on this thread came from - the arriving side tells AddressSanitizer about it) */
+#ifdef FIRE_TLS_EMULATED
+#define fire_coro_selfCtx (*(fire_coro**)&FIRE_TLS_SLOT(2))   /* (TinyCC: a slot on a key of the platform - fire_platform_posix.h) */
+#else
 static FIRE_CORO_TLS fire_coro* fire_coro_selfCtx;
+#endif
 #ifdef FIRE_CORO_ASAN
 static FIRE_CORO_TLS fire_coro* fire_coro_prev;
 /* (the slot of the worker it runs on - never inlined: see fire_tlGet in fire_rt.h) */

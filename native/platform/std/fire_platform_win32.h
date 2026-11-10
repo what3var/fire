@@ -19,18 +19,30 @@
 #include "fire_platform_c.h"
 
 #if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT)
-/* TinyCC has no thread-local storage: the state of a thread hangs on a TLS slot of Windows instead (fire_rt.h: FIRE_TLS_STRUCT, fire_tl()) */
-#define FIRE_TLS_STRUCT 1
-static DWORD fire_tlsSlot = TLS_OUT_OF_INDEXES;
-static inline DWORD fire_tlsIndex(void) {
-    if (fire_tlsSlot == TLS_OUT_OF_INDEXES) {
+/* TinyCC has no thread-local storage. A build without the GIL (then tasks) keeps the few pointers that must be per thread in slots on a TLS index of
+ * Windows (FIRE_TLS_EMULATED, FIRE_TLS_SLOT); a build with the GIL hangs the whole state of a thread on one (FIRE_TLS_STRUCT, fire_tl()). */
+static DWORD fire_tlsSlot = TLS_OUT_OF_INDEXES, fire_tlsSlotsIndex = TLS_OUT_OF_INDEXES;
+static inline DWORD fire_tlsIndexOf(DWORD* index) {
+    if (*index == TLS_OUT_OF_INDEXES) {
         DWORD slot = TlsAlloc();
-        if (InterlockedCompareExchange((volatile LONG*)&fire_tlsSlot, (LONG)slot, (LONG)TLS_OUT_OF_INDEXES) != (LONG)TLS_OUT_OF_INDEXES) TlsFree(slot);
+        if (InterlockedCompareExchange((volatile LONG*)index, (LONG)slot, (LONG)TLS_OUT_OF_INDEXES) != (LONG)TLS_OUT_OF_INDEXES) TlsFree(slot);
     }
-    return fire_tlsSlot;
+    return *index;
 }
-static inline void* fire_tls_get(void) { return TlsGetValue(fire_tlsIndex()); }
-static inline void fire_tls_set(void* p) { TlsSetValue(fire_tlsIndex(), p); }
+static inline void* fire_tls_get(void) { return TlsGetValue(fire_tlsIndexOf(&fire_tlsSlot)); }
+static inline void fire_tls_set(void* p) { TlsSetValue(fire_tlsIndexOf(&fire_tlsSlot), p); }
+typedef struct FireTlsSlots { void* v[8]; } FireTlsSlots;
+static inline FireTlsSlots* fire_tlsSlots(void) {
+    FireTlsSlots* s = (FireTlsSlots*)TlsGetValue(fire_tlsIndexOf(&fire_tlsSlotsIndex));
+    if (!s) { s = (FireTlsSlots*)calloc(1, sizeof *s); TlsSetValue(fire_tlsIndexOf(&fire_tlsSlotsIndex), s); }
+    return s;
+}
+#define FIRE_TLS_SLOT(i) (fire_tlsSlots()->v[i])
+#if !defined(FIRE_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_MODULES) && !defined(FIRE_DLL) && (defined(__x86_64__) || defined(__i386__))
+#define FIRE_TLS_EMULATED 1
+#else
+#define FIRE_TLS_STRUCT 1
+#endif
 #endif
 
 static inline int64_t fire_plat_nowMs(void) {
@@ -97,7 +109,7 @@ static inline void fire_thread_join(fire_thread* t) { WaitForSingleObject(t->h, 
 static inline void fire_thread_detach(fire_thread* t) { CloseHandle(t->h); free(t); }
 /* the cores of the machine (the workers of the scheduler of tasks) */
 static inline int fire_plat_cores(void) { SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors > 0 ? (int)si.dwNumberOfProcessors : 1; }
-#if defined(FIRE_THREADS) && !defined(__TINYC__)   /* (TinyCC has no thread-local storage: no coroutines, no tasks) */
+#if defined(FIRE_THREADS) && (!defined(__TINYC__) || defined(FIRE_TLS_EMULATED))   /* (TinyCC: only with the slots above) */
 #include "fire_coro.h"   /* the coroutines of the tasks (fire_rt.h: FIRE_TASKS) */
 #define FIRE_PLAT_CORO 1
 #endif

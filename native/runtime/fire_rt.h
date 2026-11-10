@@ -50,7 +50,7 @@
  * (FIRE_TLS_STRUCT), the modules (FIRE_MODULES, FIRE_DLL) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL keeps it
  * anywhere. */
 #if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_MODULES) \
-    && !defined(FIRE_DLL) && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER))
+    && !defined(FIRE_DLL) && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER) || defined(FIRE_PLAT_ASM_ATOMICS))
 #define FIRE_NO_GIL 1
 #endif
 #if defined(FIRE_GIL) && defined(FIRE_NO_GIL)
@@ -75,10 +75,19 @@ FIRE_CC_RUNTIME_BEGIN
 #define FIRE_FN static inline
 
 /* Thread-local storage of the compiler (only with fire threads; FIRE_TLS_STRUCT platforms keep the state on the task instead). */
-#if defined(FIRE_THREADS) && !defined(FIRE_TLS_STRUCT)
+#if defined(FIRE_THREADS) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_TLS_EMULATED)
 #define FIRE_TLS FIRE_TLS_KEYWORD
+#define FIRE_TLS_REAL 1
 #else
 #define FIRE_TLS
+#endif
+/* (a cache that is per thread where the compiler has thread-local storage; with fire threads and without it, none - a static would be shared) */
+#if defined(FIRE_THREADS) && !defined(FIRE_TLS_REAL)
+#define FIRE_TLS_CACHE(type, name, n) type name[1] = {{0}}
+#define FIRE_TLS_CACHE_MASK(n) 0u
+#else
+#define FIRE_TLS_CACHE(type, name, n) static FIRE_TLS type name[n]
+#define FIRE_TLS_CACHE_MASK(n) ((n) - 1u)
 #endif
 
 /* Linkage "shared" on Windows (FIRE_DLL, docs/spec/NATIVE_BACKEND.md "Getrennte Übersetzung"): the runtime is a DLL of its own (FIRE_DLL_RUNTIME: the translation unit that
@@ -420,7 +429,11 @@ FIRE_RT_FN ThreadLocals* fire_tl(void) FIRE_CONST_FN;
  * without it the structure is as fast as thread-local variables). So every strand gets its structure before it runs fire code: the main program in
  * fire_threadsInit, a fire thread in threadEntry; a thread of a package that calls into the runtime (strings, exceptions, fire code) calls
  * fire_strandAttach() first and fire_strandDetach() at its end. */
+#ifdef FIRE_TLS_EMULATED
+#define fire_curTask (*(ThreadLocals**)&FIRE_TLS_SLOT(0))   /* (TinyCC: a slot on a key of the platform - fire_platform_posix.h) */
+#else
 extern FIRE_TLS ThreadLocals* fire_curTask;
+#endif
 FIRE_COLD FIRE_FN ThreadLocals* fire_tlNew(void) {
 #define FIRE_XI(type, name, init) init,
     static const ThreadLocals init = { FIRE_THREAD_VARS(FIRE_XI) };
@@ -910,12 +923,12 @@ FIRE_FN double unitNiceFactor(double factor) {
 }
 typedef struct fire_FactorEntry { uint32_t from, to; double factor; } fire_FactorEntry;
 FIRE_FN double unitFactor(uint32_t from, uint32_t to) {
-    static FIRE_TLS fire_FactorEntry cache[64];
+    FIRE_TLS_CACHE(fire_FactorEntry, cache, 64);
     fire_FactorEntry* e;
     double factor;
     if (from == to) return 1.0;
     if (!unitCompatible(from, to)) { unitConflict(from, to); return 1.0; }
-    e = &cache[(from * 31u + to) & 63u];
+    e = &cache[(from * 31u + to) & FIRE_TLS_CACHE_MASK(64)];
     if (e->from == from && e->to == to && e->factor != 0) return e->factor;
     factor = unitNiceFactor(g_ud[from].scale / g_ud[to].scale);
     e->from = from; e->to = to; e->factor = factor;
@@ -1913,13 +1926,13 @@ FIRE_COLD FIRE_FN bool unitCallConv(uint32_t u, bool to, double v, double* out, 
  * function threw. */
 typedef struct fire_ConvEntry { uint32_t from, to; double factor, shift; } fire_ConvEntry;
 FIRE_COLD FIRE_FN bool unitConvert(double v, uint32_t from, uint32_t to, double* out) {
-    static FIRE_TLS fire_ConvEntry cache[16];
+    FIRE_TLS_CACHE(fire_ConvEntry, cache, 16);
     fire_ConvEntry* e;
     double x, scaled, y;
     if (from == to) { *out = v; return true; }
     if (unitLinear(from) && unitLinear(to)) { *out = v * unitFactor(from, to); return true; }
     if (!unitCompatible(from, to)) { unitConflict(from, to); return false; }
-    e = &cache[(from * 31u + to) & 15u];
+    e = &cache[(from * 31u + to) & FIRE_TLS_CACHE_MASK(16)];
     if (!(e->from == from && e->to == to && e->factor != 0)) {
         double shift = (g_ud[from].offset - g_ud[to].offset) / g_ud[to].scale;
         e->from = from; e->to = to;
@@ -7720,7 +7733,11 @@ extern FIRE_RT_DATA ThreadLocals* g_homeState;   /* the main program's strand */
 extern FIRE_RT_DATA fire_atomic32 g_groupLive;   /* members of its group that have not ended */
 extern FIRE_RT_DATA fire_atomic32 g_evTick;      /* counts the events, read without a lock (notifyEvent, notifyKey) */
 extern FIRE_RT_DATA fire_atomic32 g_homeSeen;    /* ... what the main program had seen when it lent its thread to a task */
+#ifdef FIRE_TLS_EMULATED
+#define g_worker (*(FireWorker**)&FIRE_TLS_SLOT(1))
+#else
 extern FIRE_TLS FireWorker* g_worker;
+#endif
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noinline))
 #endif
@@ -10492,7 +10509,9 @@ fire_atomic32 g_hostPending;
 #if defined(FIRE_THREADS) && defined(FIRE_DLL)
 ThreadLocals* fire_tl(void) { return &fire_tlsBlock; }   /* (linkage "shared" on Windows: the block of the calling thread) */
 #elif defined(FIRE_THREADS) && defined(FIRE_TASK_STATE)
+#ifndef FIRE_TLS_EMULATED
 FIRE_TLS ThreadLocals* fire_curTask = NULL;
+#endif
 #elif !(defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT))
 #define FIRE_X(type, name, init) FIRE_TLS type FIRE_CC_NEAR_DATA name = init;
 FIRE_THREAD_VARS(FIRE_X)
@@ -10550,7 +10569,9 @@ fire_atomic32 g_schedReady;
 fire_atomic32 g_schedOn;
 FireTask* g_evWaiters = NULL;
 FireTask* g_evKeyed[FIRE_EV_BUCKETS];
+#ifndef FIRE_TLS_EMULATED
 FIRE_TLS FireWorker* g_worker = NULL;
+#endif
 int64_t g_schedNextWake = INT64_MAX;
 #endif
 #ifdef FIRE_STR_CROSS
