@@ -2,6 +2,7 @@
 #import "tls"
 #import "io"
 #import "time"
+#import "filesystem"
 
 namespace Http {
     // 1 bad URL, 2 bad message (a malformed request or response), 3 too many redirects, 4 too large, 5 not supported
@@ -1214,6 +1215,213 @@ namespace Http {
                 n = n / 16
             }
             return t
+        }
+    }
+
+    // ---- files (docs/ROADMAP_HTTP.md step 2) ---------------------------------------------------------------------------------------------------------
+
+    // At most `count` bytes of another stream (a range of a file); closing it closes the other one.
+    class LimitedStream : IO.Stream {
+        IO.IStream inner
+        int left
+
+        construct(IO.IStream inner, int count) {
+            this.inner = take inner
+            this.left = count
+        }
+
+        override bool CanRead { get { return true } }
+
+        override int Read(byte buffer[], int offset, int count) {
+            if (this.left <= 0) { return 0 }
+            if (count > this.left) { count = this.left }
+            var n = this.inner.Read(buffer, offset, count)
+            if (n > 0) { this.left = this.left - n }
+            return n
+        }
+
+        override undefined Close() { this.inner.Close() }
+    }
+
+    // The media types of the usual extensions, and the dates of HTTP.
+    class Mime {
+        static string Of(string path) {
+            var ext = IO.Path.GetExtension(path).ToLower()
+            if (ext == ".html" || ext == ".htm") { return "text/html; charset=utf-8" }
+            if (ext == ".css") { return "text/css; charset=utf-8" }
+            if (ext == ".js" || ext == ".mjs") { return "text/javascript; charset=utf-8" }
+            if (ext == ".json" || ext == ".map") { return "application/json" }
+            if (ext == ".txt" || ext == ".md") { return "text/plain; charset=utf-8" }
+            if (ext == ".xml") { return "application/xml" }
+            if (ext == ".svg") { return "image/svg+xml" }
+            if (ext == ".png") { return "image/png" }
+            if (ext == ".jpg" || ext == ".jpeg") { return "image/jpeg" }
+            if (ext == ".gif") { return "image/gif" }
+            if (ext == ".webp") { return "image/webp" }
+            if (ext == ".ico") { return "image/x-icon" }
+            if (ext == ".wasm") { return "application/wasm" }
+            if (ext == ".pdf") { return "application/pdf" }
+            if (ext == ".zip") { return "application/zip" }
+            if (ext == ".woff") { return "font/woff" }
+            if (ext == ".woff2") { return "font/woff2" }
+            if (ext == ".ttf") { return "font/ttf" }
+            if (ext == ".mp4") { return "video/mp4" }
+            if (ext == ".webm") { return "video/webm" }
+            if (ext == ".mp3") { return "audio/mpeg" }
+            if (ext == ".wav") { return "audio/wav" }
+            return "application/octet-stream"
+        }
+
+        // "Tue, 15 Nov 1994 08:12:31 GMT" (RFC 9110) of a point in time in UTC.
+        static string Date(DateTime utc) {
+            var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            return days[utc.DayOfWeek] + ", " + Http.Mime.Two(utc.Day) + " " + months[utc.Month - 1] + " " + utc.Year + " " + Http.Mime.Two(utc.Hour) + ":" + Http.Mime.Two(utc.Minute) + ":" + Http.Mime.Two(utc.Second) + " GMT"
+        }
+
+        static string Two(int n) {
+            if (n < 10) { return "0" + n }
+            return "" + n
+        }
+    }
+
+    // Static files from a folder (by convention `wwwroot`) as a link of the chain: the path of the request maps 1:1 to a file under the folder; what is
+    // not there goes on to the next link. Only GET and HEAD. Never served: a path with `..` or a part that starts with a dot (.git, .env), the sources of
+    // fire (.fire, .fxml, .fireproj, .firesln), anything outside the folder. ETag and Last-Modified (304 for If-None-Match / If-Modified-Since), one range
+    // (206), the body streamed from the file.
+    class Files : IRouter {
+        string root
+        string prefix
+        List defaults
+        bool omitExtensions
+        int maxAge
+
+        // `root` the folder, `prefix` the part of the path that maps to it ("/" or e.g. "/static"); `omitExtensions`: "/about" also finds about.html.
+        construct(string root, string prefix = "/", bool omitExtensions = false) {
+            this.root = IO.Path.GetFullPath(root)
+            this.prefix = prefix
+            if (!this.prefix.EndsWith("/")) { this.prefix = this.prefix + "/" }
+            this.defaults = new List()
+            this.defaults.Add("index.html")
+            this.defaults.Add("index.htm")
+            this.omitExtensions = omitExtensions
+            this.maxAge = -1
+        }
+
+        // Cache-Control: max-age for every file (seconds; -1: none).
+        Http.Files CacheFor(int seconds) {
+            this.maxAge = seconds
+            return this
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var request = ctx.Request
+            if (request.method != "GET" && request.method != "HEAD") { return next.Invoke(ctx) }
+            var file = this.Resolve(request.path)
+            if (file == undefined) { return next.Invoke(ctx) }
+            return Http.Files.Serve(file, request, this.maxAge)
+        }
+
+        // The file of a request path, undefined when it is not one that may be served (or not there).
+        string Resolve(string path) {
+            var p = path
+            if (p + "/" == this.prefix) { p = this.prefix }
+            if (!p.StartsWith(this.prefix)) { return undefined }
+            var rel = p.Substring(this.prefix.Length)
+            if (rel.IndexOf("\\") >= 0 || rel.IndexOf(":") >= 0 || rel.IndexOf("\0") >= 0) { return undefined }
+            any parts = rel.Split("/")
+            for (var i = 0; i < parts.length; i++) {
+                string part = parts[i]
+                if (part == ".." || part.StartsWith(".")) { return undefined }
+            }
+            var full = IO.Path.GetFullPath(IO.Path.Combine(this.root, rel))
+            var inside = this.root
+            if (!inside.EndsWith(IO.Path.DirectorySeparatorChar)) { inside = inside + IO.Path.DirectorySeparatorChar }
+            if (full != this.root && !full.StartsWith(inside)) { return undefined }
+            if (IO.Directory.Exists(full)) {
+                for (var d = 0; d < this.defaults.Count; d++) {
+                    var candidate = IO.Path.Combine(full, this.defaults[d])
+                    if (IO.File.Exists(candidate)) { return candidate }
+                }
+                return undefined
+            }
+            if (Http.Files.Hidden(full)) { return undefined }
+            if (IO.File.Exists(full)) { return full }
+            if (this.omitExtensions && !IO.Path.HasExtension(full)) {
+                var html = full + ".html"
+                if (IO.File.Exists(html)) { return html }
+                var htm = full + ".htm"
+                if (IO.File.Exists(htm)) { return htm }
+            }
+            return undefined
+        }
+
+        // The sources of fire are never served.
+        static bool Hidden(string file) {
+            var ext = IO.Path.GetExtension(file).ToLower()
+            return ext == ".fire" || ext == ".fxml" || ext == ".fireproj" || ext == ".firesln"
+        }
+
+        // The answer for a file: 200 (or 206 for a range, 304 when the client has it, 416 for a range outside the file).
+        static Http.Response Serve(string file, Http.Request request, int maxAge = -1) {
+            int size = IO.File.Size(file)
+            DateTime modified = IO.File.GetLastWriteTimeUtc(file)
+            var tag = "\"" + size + "-" + modified.Ticks + "\""
+            var lastModified = Http.Mime.Date(modified)
+            var type = Http.Mime.Of(file)
+            var inm = request.headers.Get("If-None-Match")
+            var ims = request.headers.Get("If-Modified-Since")
+            if ((inm != undefined && (inm == tag || inm == "*")) || (inm == undefined && ims != undefined && ims == lastModified)) {
+                var nm = new Http.Response(304)
+                Http.Files.Stamp(nm, tag, lastModified, maxAge)
+                return nm
+            }
+            int first = 0
+            int upto = size - 1
+            bool partial = false
+            var range = request.headers.Get("Range")
+            if (range != undefined && range.StartsWith("bytes=") && range.IndexOf(",") < 0) {
+                var spec = range.Substring(6).Trim()
+                any dash = spec.IndexOf("-")
+                if (dash >= 0) {
+                    var a = spec.Substring(0, dash).Trim()
+                    var b = spec.Substring(dash + 1).Trim()
+                    if (a.Length == 0) {
+                        // the last b bytes
+                        var last = Http.Num.Parse(b)
+                        if (last > 0) { first = size - last; if (first < 0) { first = 0 }; partial = true }
+                    } else {
+                        first = Http.Num.Parse(a)
+                        if (b.Length > 0) { upto = Http.Num.Parse(b) }
+                        if (upto >= size) { upto = size - 1 }
+                        partial = first >= 0
+                    }
+                    if (partial && (first > upto || first >= size || first < 0)) {
+                        var bad = Http.Response.Error(416)
+                        bad.headers.Set("Content-Range", "bytes */" + size)
+                        return bad
+                    }
+                }
+            }
+            var stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read)
+            Http.Response r = undefined
+            if (partial) {
+                stream.Seek(first)
+                var part = new Http.LimitedStream(take stream, upto - first + 1)
+                r = Http.Response.FromStream(take part, type, upto - first + 1, 206)
+                r.headers.Set("Content-Range", "bytes " + first + "-" + upto + "/" + size)
+            } else {
+                r = Http.Response.FromStream(take stream, type, size)
+            }
+            r.headers.Set("Accept-Ranges", "bytes")
+            Http.Files.Stamp(r, tag, lastModified, maxAge)
+            return r
+        }
+
+        static undefined Stamp(Http.Response r, string tag, string lastModified, int maxAge) {
+            r.headers.Set("ETag", tag)
+            r.headers.Set("Last-Modified", lastModified)
+            if (maxAge >= 0) { r.headers.Set("Cache-Control", "max-age=" + maxAge) }
         }
     }
 }

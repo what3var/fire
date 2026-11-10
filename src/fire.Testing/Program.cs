@@ -27497,6 +27497,72 @@ else
             print("connections " + server.Connections)
             server.Close()
             """),
+        ("Http.Files: wwwroot 1:1 - index.html, Endung weggelassen, MIME, ETag (304), Range (206, Suffix, 416), HEAD; nie .fire, Punkt-Dateien, .. (auch kodiert), POST geht weiter", """
+            #import "http"
+            #import "filesystem"
+            #import "time"
+            var root = IO.Path.Combine(IO.Path.GetTempPath(), "fire-wwwroot-test-" + DateTime.UtcNow.Ticks)
+            IO.Directory.CreateDirectory(IO.Path.Combine(root, "sub"))
+            IO.File.WriteAllText(IO.Path.Combine(root, "index.html"), "<h1>home</h1>")
+            IO.File.WriteAllText(IO.Path.Combine(root, "about.html"), "about page")
+            IO.File.WriteAllText(IO.Path.Combine(root, "data.json"), "{\"a\": 1}")
+            IO.File.WriteAllText(IO.Path.Combine(root, "sub", "big.txt"), "0123456789abcdefghij")
+            IO.File.WriteAllText(IO.Path.Combine(root, "secret.fire"), "print(1)")
+            IO.File.WriteAllText(IO.Path.Combine(root, ".env"), "KEY=1")
+            class Last : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) { return Http.Response.FromText("fallback " + ctx.Request.path, 404) }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Files(root, "/", true)).PushTo(new Last())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port
+                var out = ""
+                var r = c.Get(site + "/")
+                out = out + "root " + r.status + " " + r.Header("Content-Type") + " " + r.Text() + "\n"
+                r = c.Get(site + "/about")
+                out = out + "omit " + r.status + " " + r.Text() + "\n"
+                r = c.Get(site + "/data.json")
+                out = out + "json " + r.status + " " + r.Header("Content-Type") + " " + r.Length + "\n"
+                var tag = r.Header("ETag")
+                var h = new Http.Headers()
+                h.Set("If-None-Match", tag)
+                r = c.Request("GET", site + "/data.json", undefined, h)
+                out = out + "etag " + r.status + " " + r.Length + "\n"
+                var h2 = new Http.Headers()
+                h2.Set("Range", "bytes=5-9")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h2)
+                out = out + "range " + r.status + " " + r.Text() + " " + r.Header("Content-Range") + "\n"
+                var h3 = new Http.Headers()
+                h3.Set("Range", "bytes=-3")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h3)
+                out = out + "suffix " + r.status + " " + r.Text() + "\n"
+                var h4 = new Http.Headers()
+                h4.Set("Range", "bytes=50-60")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h4)
+                out = out + "outside " + r.status + " " + r.Header("Content-Range") + "\n"
+                r = c.Get(site + "/secret.fire")
+                out = out + "source " + r.status + " " + r.Text() + "\n"
+                r = c.Get(site + "/.env")
+                out = out + "dot " + r.status + "\n"
+                r = c.Get(site + "/../outside.txt")
+                out = out + "up " + r.status + "\n"
+                r = c.Get(site + "/sub/%2e%2e/%2e%2e/etc/passwd")
+                out = out + "encoded up " + r.status + "\n"
+                r = c.Head(site + "/sub/big.txt")
+                out = out + "head " + r.status + " " + r.Header("Content-Length") + " " + r.Length + "\n"
+                r = c.Post(site + "/index.html", "x", "text/plain")
+                out = out + "post " + r.status + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            IO.Directory.Delete(root, true)
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"

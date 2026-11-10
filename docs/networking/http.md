@@ -96,3 +96,20 @@ server.Run()                                                    // until Stop() 
 * **Lambdas in the chain** (`Use`, `Routes`) cannot be copied into a task yet (they may go to other threads with docs/ROADMAP_TASKS.md step 8 point 4):
   until then such a chain is served in the accepting task, one request per connection without keep-alive. Routers written as classes get all of it.
 * `Http.Server` (above) stays the small server for one connection after the other.
+
+### Static files: `Http.Files`
+
+```fire
+server.PushTo(new Http.Files("wwwroot", "/", true).CacheFor(3600))   // the folder, the path it serves, "/about" finds about.html
+```
+
+`Http.Files(root, prefix = "/", omitExtensions = false)` is a link of the chain: the path of a GET or HEAD request maps 1:1 to a file under the folder
+(`prefix` is the part of the path that maps to it, e.g. `"/static"`); a folder answers with its `index.html` (or `index.htm`); what is not there goes on to
+the next link. The body is streamed from the file, with `Content-Type` from the extension (`Http.Mime.Of`), `ETag` and `Last-Modified` (a request with
+`If-None-Match` or `If-Modified-Since` gets a 304), `Accept-Ranges` and one range (`bytes=5-9`, `bytes=-3`: 206 with `Content-Range`; outside the file 416);
+`CacheFor(seconds)` adds `Cache-Control: max-age`.
+
+Never served: a path with `..` (also percent-encoded), a backslash, a colon or a part that starts with a dot (`.git`, `.env`), anything that resolves outside
+the folder, and the sources of fire (`.fire`, `.fxml`, `.fireproj`, `.firesln`). A symbolic link inside the folder is followed (the file system API cannot
+tell it yet). `Http.Files.Serve(file, request)` answers with one file from anywhere (a route of your own), `Http.LimitedStream(stream, count)` reads a part
+of a stream.
