@@ -13,6 +13,7 @@ Leitlinien:
 
 | Phase | Punkt | Hängt ab von | Warum an dieser Stelle |
 |---|---|---|---|
+| **als Nächstes** | [Lambdas: Captures nur mit `taking`/`handover`, Globals per `taking`, `on` läuft auf dem Ziel](ROADMAP_TASKS.md#step-8---captures-only-with-a-word-globals-by-taking-on-runs-on-its-target-next-decided-by-the-user) | Tasks 1-7 | Entscheidung des Benutzers: ein Lambda hält nur Eigenes oder läuft beim Besitzer seines Ziels - die Sprache wird rund |
 | 0 | ~~[Native-C-Port (Kern)](#0-native-c-port-kern)~~ (umgesetzt) | - | Debugging, binäre Libraries und alle neuen Natives bauen auf der Runtime auf; sonst doppelt |
 | 1 | [Echte Enums, Flag-Enums als Attribute](#1-echte-enums) | 0 | Compiler, Typprüfer, VM, Generator; `Owns` für die Container braucht sie |
 | 1 | [Benannte Argumente](#2-benannte-argumente) | - | `new Dictionary<K, V>(Owns.All)` liest sich besser mit Namen; allgemein nützlich |

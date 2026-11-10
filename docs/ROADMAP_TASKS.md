@@ -397,6 +397,34 @@ token of the running task.
 * Measured: 2000 fire threads that sleep 50 ms and then write in a section: 1.3 s on 4 workers (1.5 s with 2000 system threads); actors with `process`
   in threads that start threads as fast as before. Tests (native == VM): 600 threads that sleep and write in sections, `process` in threads.
 
+### Step 8 - captures only with a word, globals by `taking`, `on` runs on its target (next; decided by the user)
+
+The rules that make a lambda the same kind of thing as a `fire` body - everything it holds is its own, or it runs where its target lives:
+
+* **Captures only with `taking` / `handover`.** A local that a lambda uses without a word is copied like `taking` (lax: with the warning `TC023`,
+  strict: an error) - no longer shared. This replaces "a lambda without words captures as before: the instance is shared" (section 3 above,
+  docs/language/12-lambdas.md "Objects are copied as references", 15-threads-and-actors.md).
+* **Globals are captured the same way, but only by `taking`:** `(taking counter)` copies the global into the lambda when it is made; `handover` of a
+  global is a compile error (a global belongs to the program, it cannot move into a lambda).
+* **`on` runs the lambda on its target, always:** `func () on obj => ...` called from anywhere runs on the home of `obj` (the main program's group for
+  its objects and windows, the actor for an actor), like `await on obj { ... }`; the caller waits for the result and meanwhile yields/sleeps (its own
+  queue, its group and its windows are served while it waits - no deadlock when the home waits for the caller). Called on the home itself: directly.
+* Tests: VM == native for each rule (implicit copy with TC023 lax/strict, `taking` of a global, `handover` of a global as an error, an `on` lambda called
+  from a thread and from an actor runs on the main program / the actor, the result and an exception come back, the caller's group goes on meanwhile).
+
+**To be decided before the work starts:**
+
+1. A number without a word: copied silently as in a `fire` body (TC023 only when the copy costs memory), or the warning for every implicit copy?
+2. A global without a word in a lambda: copied with the warning too ("the same way") - then a handler `() => { clicks++ }` on a global is an error
+   (an assignment to a copy) and has to be written with `on` or as a method - or does a global without a word stay a live access (only `taking`
+   makes a copy)?
+3. Which objects have a home for `on`: the main program's (its globals and what they reach), actors, windows; an object of a fire thread (it would
+   serve calls at its safe points like an actor) or an error at the call?
+4. After this, a lambda holds only its own values (or runs on its target): may it then go to another thread (`fire f()`, a lambda in a field of
+   what a thread takes) - today an `ArgumentException`? If yes, the lambda moves or is copied with its captures; the same lambda called by two
+   threads at once would share its copies.
+5. Still open from `handover` in a lambda (section 3): who owns the moved instance and when it is destroyed.
+
 ## Steps
 
 1. Remove the GIL from the C runtime: lock for the globals, biased counting, slot table, maps, a lock per package. Thread tests on several cores,
@@ -407,7 +435,8 @@ token of the running task.
 5. Pinned tasks, task groups and the UI loop on the scheduler (event waits of the display backends).
 6. Cancellation tokens and `until`.
 7. The VM on the scheduler.
+8. Captures only with a word, globals by `taking`, `on` runs on its target (see "Step 8" above) - next.
 
 ## Open
 
-Nothing at the moment - the design questions above are decided.
+The questions of step 8 ("To be decided before the work starts") and the ownership of what a lambda holds after `handover`.

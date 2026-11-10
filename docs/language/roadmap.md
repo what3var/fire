@@ -14,7 +14,9 @@ Nothing open at the moment.
 
 ## 2. Language
 
-Nothing open at the moment.
+| # | Task | Why |
+|---|---|---|
+| 2.1 | Lambdas capture only with `taking`/`handover` (without a word: a copy, lax with the warning `TC023`, strict an error), globals only with `taking` (`handover` of a global is an error), a lambda bound with `on` always runs on its target (the caller waits and yields meanwhile) - [step 8 of the tasks roadmap](../ROADMAP_TASKS.md#step-8---captures-only-with-a-word-globals-by-taking-on-runs-on-its-target-next-decided-by-the-user) | a lambda then holds only what is its own, or runs where its target lives - the same rules as a `fire` body |
 
 ## 3. Type checker
 
