@@ -274,6 +274,9 @@ namespace fire.Bytecode
         // `await dedicated ...`: natively the running task goes to a system thread of its own for what follows, and back to the pool after it; nothing in the VM
         Dedicate,
         Undedicate,
+        // `until x` (docs/ROADMAP_TASKS.md section 6): the node the task follows - n handles (from __Cancel.Limit) on the stack; bit 7: for the `fire` that follows
+        CancelPush,          // count|flags (u8)
+        CancelPop,
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

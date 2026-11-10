@@ -2037,13 +2037,40 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LParen)
                 return ParseFireCallForm(line, dedicated);
 
+            // `fire on window { ... }`: runs in the main program's group with the real object (docs/ROADMAP_TASKS.md section 5) - a job of the main program
+            if (!dedicated && IsOnClause()) return ParseFireOn(line);
+
             // `fire global { ... }`: job for the main program instead of a new thread (docs/spec/THREADING_DESIGN.md section 7)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking || PeekAt(1).Type == TokenType.Handover))
                 return ParseFireGlobal(line);
 
             var (takingCaptures, withVarName, withSource) = ParseFireTakingWithClauses();
-            var body = ParseBlock();
-            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body, dedicated));
+            var until = _clauseUntil;
+            _captureUses.Add(new Dictionary<string, bool>());
+            Stmt.BlockStmt body;
+            Dictionary<string, bool> uses;
+            try { body = ParseBlock(); }
+            finally { uses = PopCaptureUses(); }
+            // `taking x` / `handover x` written in the body: captured like the clauses (the copies first, the moved ones last - the order of the clauses)
+            foreach (var (name, handover) in uses)
+            {
+                var named = takingCaptures.FindIndex(c => c.VarName == name);
+                if (named >= 0)
+                {
+                    if (takingCaptures[named].Handover != handover)
+                        throw Error($"'{name}' is captured with '{(takingCaptures[named].Handover ? "handover" : "taking")}' and written with '{(handover ? "handover" : "taking")}' in the block", Peek());
+                    continue;
+                }
+                if (name == withVarName) continue;
+                var capture = new FireTakingCapture(name, new IdentifierExpr(line, name), Handover: handover);
+                if (handover) takingCaptures.Add(capture);
+                else
+                {
+                    int firstMoved = takingCaptures.FindIndex(c => c.Handover);
+                    if (firstMoved < 0) takingCaptures.Add(capture); else takingCaptures.Insert(firstMoved, capture);
+                }
+            }
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body, dedicated, until));
         }
 
         /// <summary>`fire handover x`: after the `fire` the sender's variable is `undefined` (it no longer owns the value) - desugared into
@@ -2074,6 +2101,87 @@ namespace fire.Compiler
             });
         }
 
+        /// <summary>The bodies of `fire` blocks and lambdas being parsed (innermost last): the variables written `taking x` (false) / `handover x` (true) in them -
+        /// they are captured that way (docs/language/15-threads-and-actors.md).</summary>
+        private readonly List<Dictionary<string, bool>> _captureUses = new();
+
+        private void NoteCaptureUse(string name, bool handover, Token at)
+        {
+            var uses = _captureUses[^1];
+            if (uses.TryGetValue(name, out bool before) && before != handover)
+                throw Error($"'{name}' is written with 'taking' and with 'handover' in the same block - one way only (a copy or moved)", at);
+            uses[name] = handover;
+        }
+
+        /// <summary>The end of a body: what it captures goes on to the body around it too (a lambda in a `fire` block - the thread needs the variable first).</summary>
+        private Dictionary<string, bool> PopCaptureUses()
+        {
+            var uses = _captureUses[^1];
+            _captureUses.RemoveAt(_captureUses.Count - 1);
+            if (_captureUses.Count > 0)
+                foreach (var (name, handover) in uses)
+                    if (!_captureUses[^1].ContainsKey(name)) _captureUses[^1][name] = handover;
+            return uses;
+        }
+
+        /// <summary>`until x, 5s` of the clauses that were parsed last (ParseFireTakingWithClauses), null: none.</summary>
+        private List<Expr>? _clauseUntil;
+        /// <summary>Inside `await [ ... ]`: an `until` of an element takes one limit (the comma is the next element).</summary>
+        private bool _untilSingle;
+
+        /// <summary>`until` (docs/ROADMAP_TASKS.md section 6) - a word only as a clause: after what it limits, on the same line, in front of a value.</summary>
+        private bool IsUntilClause() => Check(TokenType.Identifier) && Peek().Lexeme == "until" && !Peek().NewlineBefore
+            && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.New or TokenType.LParen;
+
+        /// <summary>`until a, b`: each limit as `__Cancel.Limit(x)` (a token, a source or a time value as a handle of the runtime).</summary>
+        private List<Expr> ParseUntilLimits()
+        {
+            var untilTok = Advance();
+            var limits = new List<Expr>();
+            do
+            {
+                var limit = ParseConditional();
+                limits.Add(new CallExpr(untilTok.Line, new MemberExpr(untilTok.Line, new IdentifierExpr(untilTok.Line, "__Cancel"), "Limit"), new List<Expr> { limit }));
+            } while (!_untilSingle && Match(TokenType.Comma));
+            return limits;
+        }
+
+        /// <summary>`on` (the keyword of bound lambdas) in front of the object a block runs on (`fire on window`, `await on window`).</summary>
+        private bool IsOnClause() => Check(TokenType.On) && PeekAt(1).Type is TokenType.Identifier or TokenType.This;
+
+        /// <summary>`on x [taking ...] { ... }`: the lambda of the block - its first parameter is the object under its own name (inside the block the name is
+        /// the real object), then the copies - and the arguments.</summary>
+        private (LambdaExpr Lambda, List<Expr> Args) ParseOnBlock(string what)
+        {
+            var onTok = Advance();   // 'on'
+            var target = ParseUnary();
+            string name = target switch
+            {
+                IdentifierExpr id => id.Name,
+                MemberExpr m => m.Name,
+                ThisExpr => throw Error($"'{what} on this' - name the object ('{what} on window')", onTok),
+                _ => throw Error($"'{what} on' expects the object a block runs on ('{what} on window {{ ... }}')", onTok),
+            };
+            var (captures, withVarName, _) = ParseFireTakingWithClauses();
+            if (withVarName != null) throw Error($"'with' does not exist for '{what} on'", Peek());
+            if (_clauseUntil != null) throw Error($"'until' does not exist for '{what} on' (the block runs in the main program)", Peek());
+            if (captures.Any(c => c.Handover)) throw Error($"'handover' does not exist for '{what} on' (the block gets copies: use 'taking')", Peek());
+            var body = ParseBlock();
+            // (no types written: the type checker gives the parameters the types of the arguments)
+            var parameters = new List<LambdaParam> { new(name, null, new List<Expr?>()) };
+            parameters.AddRange(captures.Where(c => c.VarName != name).Select(c => new LambdaParam(c.VarName, null, new List<Expr?>())));
+            var args = new List<Expr> { target };
+            args.AddRange(captures.Where(c => c.VarName != name).Select(c => c.Source));
+            return (new LambdaExpr(onTok.Line, parameters, null, body, AutoCapture: false), args);
+        }
+
+        /// <summary>`fire on window [taking x] { ... }`: a job of the main program (its group) - see Ast.PostGlobalStmt.OnTarget.</summary>
+        private Stmt ParseFireOn(int line)
+        {
+            var (lambda, args) = ParseOnBlock("fire");
+            return new PostGlobalStmt(_sourceIndex, line, lambda, args, OnTarget: true);
+        }
+
         /// <summary>`fire global { ... } [taking X ...]` - siehe Ast.PostGlobalStmt.</summary>
         private Stmt ParseFireGlobal(int line)
         {
@@ -2081,6 +2189,8 @@ namespace fire.Compiler
             var (captures, withVarName, _) = ParseFireTakingWithClauses();
             if (withVarName != null)
                 throw Error("'with' does not exist for 'fire global'", Peek());
+            if (_clauseUntil != null)
+                throw Error("'until' does not exist for 'fire global' (a job of the main program)", Peek());
             if (captures.Any(c => c.Handover))
                 throw Error("'handover' does not exist for 'fire global' (a job gets copies: use 'taking')", Peek());
             var body = ParseBlock();
@@ -2098,8 +2208,15 @@ namespace fire.Compiler
             string? withVarName = null;
             Expr? withSource = null;
 
-            while (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.With))
+            _clauseUntil = null;
+            while (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.With) || IsUntilClause())
             {
+                if (IsUntilClause())
+                {
+                    if (_clauseUntil != null) throw Error("'until' twice", Peek());
+                    _clauseUntil = ParseUntilLimits();
+                    continue;
+                }
                 if (Check(TokenType.Handover))
                 {
                     Advance();
@@ -2156,6 +2273,7 @@ namespace fire.Compiler
             Expect(TokenType.RParen, "Expected ')' after 'fire " + methodName + "(...)'");
 
             var (explicitTaking, withVarName, withSource) = ParseFireTakingWithClauses();
+            var callUntil = _clauseUntil;
             ExpectStatementTerminator();
 
             const string thisCaptureName = "__fire_this__";
@@ -2178,7 +2296,7 @@ namespace fire.Compiler
             var callExpr = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, thisCaptureName), methodName), argRefs);
             var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
 
-            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body, dedicated));
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body, dedicated, callUntil));
         }
 
         /// <summary>`await Call(args) [taking x | handover x ...]` / `await [taking x | handover x ...] { ... return v }` (docs/ROADMAP_TASKS.md section 3).
@@ -2187,7 +2305,7 @@ namespace fire.Compiler
         /// caller is parked and its worker runs others. Clauses copy (`taking x`: `copy x`) or move (`handover x`: `take x`) what the call names; the block
         /// form is a function of its own that sees only what it takes and the globals (like the body of `fire`), called at once.</summary>
         private bool IsAwaitStart() => Check(TokenType.Identifier) && Peek().Lexeme == "await" && !PeekAt(1).NewlineBefore
-            && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.LBracket or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New;
+            && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.LBracket or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New or TokenType.On;
 
         private Expr ParseAwait()
         {
@@ -2211,7 +2329,11 @@ namespace fire.Compiler
                 do
                 {
                     if (Check(TokenType.RBracket)) break;   // (a comma after the last element)
-                    var call = ParseAwaited(Peek());
+                    bool savedSingle = _untilSingle;
+                    _untilSingle = true;   // (`until x` of one element takes one limit: the comma is the next element)
+                    Expr call;
+                    try { call = ParseAwaited(Peek()); }
+                    finally { _untilSingle = savedSingle; }
                     int at = call.Line;
                     var res = new IndexExpr(at, new IdentifierExpr(at, "__res"), new IdentifierExpr(at, "__i"));
                     var fails = new IndexExpr(at, new IdentifierExpr(at, "__fails"), new IdentifierExpr(at, "__i"));
@@ -2231,7 +2353,9 @@ namespace fire.Compiler
                 } while (Match(TokenType.Comma));
             }
             Expect(TokenType.RBracket, "Expected ']' after the calls of 'await [ ... ]'");
-            return new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, "__Await"), "All"), new List<Expr> { new ArrayLiteralExpr(line, lambdas) });
+            Expr all = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, "__Await"), "All"), new List<Expr> { new ArrayLiteralExpr(line, lambdas) });
+            // `await [ ... ] until token, 10s`: all of them follow it (each task of the calls follows the caller's token)
+            return IsUntilClause() ? new UntilExpr(line, all, ParseUntilLimits()) : all;
         }
 
         /// <summary>What one `await` waits for: a call with its clauses, or a block (see ParseAwait).</summary>
@@ -2243,7 +2367,12 @@ namespace fire.Compiler
                 && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New)
             {
                 Advance();
-                return ParseAwaitedPlain(awaitTok) is CallExpr dc ? dc with { Dedicated = true } : throw Error("'await dedicated' expects a call or a block", Peek());
+                return ParseAwaitedPlain(awaitTok) switch
+                {
+                    CallExpr dc => dc with { Dedicated = true },
+                    UntilExpr { Inner: CallExpr uc } du => du with { Inner = uc with { Dedicated = true } },
+                    _ => throw Error("'await dedicated' expects a call or a block", Peek()),
+                };
             }
             return ParseAwaitedPlain(awaitTok);
         }
@@ -2251,26 +2380,51 @@ namespace fire.Compiler
         private Expr ParseAwaitedPlain(Token awaitTok)
         {
             int line = awaitTok.Line;
+            if (IsOnClause())
+            {
+                var (onLambda, onArgs) = ParseOnBlock("await");
+                return new AwaitOnExpr(line, onLambda, onArgs);
+            }
             if (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.LBrace))
             {
                 var (captures, withName, _) = ParseFireTakingWithClauses();
                 if (withName != null) throw Error("'with' does not exist for 'await' (an actor's method is awaited by calling it: 'await actor.Method()')", Peek());
+                var blockUntil = _clauseUntil;
                 var body = ParseBlock();
                 var parameters = captures.Select(c => new LambdaParam(c.VarName, new TypeRef("any", null, 0), new List<Expr?>())).ToList();
                 var lambda = new LambdaExpr(line, parameters, null, body, AutoCapture: false);
-                return new CallExpr(line, lambda, captures.Select(c => (Expr)new UnaryExpr(line, c.Handover ? UnaryOp.Take : UnaryOp.DeepCopy, c.Source)).ToList());
+                Expr block = new CallExpr(line, lambda, captures.Select(c => (Expr)new UnaryExpr(line, c.Handover ? UnaryOp.Take : UnaryOp.DeepCopy, c.Source)).ToList());
+                return blockUntil != null ? new UntilExpr(line, block, blockUntil) : block;
             }
             var awaited = ParseUnary();
             if (awaited is not CallExpr call)
                 throw new ParseException("'await' expects a call ('await Count(list)') or a block ('await taking x { return ... }')", awaitTok.Line, awaitTok.Column);
             // (clauses: an argument - or the receiver - that is the variable named is copied or moved)
             var modes = new Dictionary<string, UnaryOp>();
-            while (Check(TokenType.Taking) || Check(TokenType.Handover))
+            List<Expr>? callUntilLimits = null;
+            while (Check(TokenType.Taking) || Check(TokenType.Handover) || IsUntilClause())
             {
+                if (IsUntilClause())
+                {
+                    if (callUntilLimits != null) throw Error("'until' twice", Peek());
+                    callUntilLimits = ParseUntilLimits();
+                    continue;
+                }
                 bool handover = Advance().Type == TokenType.Handover;
                 var nameTok = Expect(TokenType.Identifier, "Expected an identifier after '" + (handover ? "handover" : "taking") + "'");
                 modes[nameTok.Lexeme] = handover ? UnaryOp.Take : UnaryOp.DeepCopy;
             }
+            if (callUntilLimits != null)
+            {
+                // (the clauses of the call first, then the limit around it)
+                var limited = ApplyAwaitModes(call, modes, line, awaitTok);
+                return new UntilExpr(line, limited, callUntilLimits);
+            }
+            return ApplyAwaitModes(call, modes, line, awaitTok);
+        }
+
+        private Expr ApplyAwaitModes(CallExpr call, Dictionary<string, UnaryOp> modes, int line, Token awaitTok)
+        {
             // (a method of an object: when it is an actor, the call waits for the result - the message gets a way back)
             if (call.Callee is MemberExpr) call = call with { Awaited = true };
             if (modes.Count == 0) return call;
@@ -3823,6 +3977,16 @@ namespace fire.Compiler
                 return new IncDecExpr(opTok.Line, target, isIncrement, IsPrefix: true);
             }
 
+            // `taking x` / `handover x` in the body of a `fire` block or a lambda: the variable x of the code around it, captured as a copy / moved (the
+            // compiler collects them: the clause `fire taking x` is not needed)
+            if ((Check(TokenType.Taking) || Check(TokenType.Handover)) && _captureUses.Count > 0 && PeekAt(1).Type == TokenType.Identifier)
+            {
+                var modeTok = Advance();
+                var nameTok = Advance();
+                NoteCaptureUse(nameTok.Lexeme, modeTok.Type == TokenType.Handover, modeTok);
+                return new IdentifierExpr(nameTok.Line, nameTok.Lexeme);
+            }
+
             // `flat x` / `copy x` (SPEC 2.4): copy prefixes - the operand is again a unary expression,
             // so `copy a.b` copies `a.b`, `copy a + b` is `(copy a) + b`. (`sync flat x` reads its `flat`
             // itself, see ParseSync - it never arrives here.)
@@ -4377,19 +4541,25 @@ namespace fire.Compiler
             Expect(TokenType.Arrow, "Expected '=>' in the lambda");
 
             Stmt.BlockStmt body;
-            if (Check(TokenType.LBrace))
+            _captureUses.Add(new Dictionary<string, bool>());
+            Dictionary<string, bool> uses;
+            try
             {
-                body = ParseBlock();
+                if (Check(TokenType.LBrace))
+                {
+                    body = ParseBlock();
+                }
+                else
+                {
+                    // Short form: `=> expression` implicitly becomes `{ return expression; }`.
+                    var exprLine = Peek().Line;
+                    var value = ParseExpression();
+                    body = new Stmt.BlockStmt(_sourceIndex, exprLine, new List<Stmt> { new ReturnStmt(_sourceIndex, exprLine, value) });
+                }
             }
-            else
-            {
-                // Short form: `=> expression` implicitly becomes `{ return expression; }`.
-                var exprLine = Peek().Line;
-                var value = ParseExpression();
-                body = new Stmt.BlockStmt(_sourceIndex, exprLine, new List<Stmt> { new ReturnStmt(_sourceIndex, exprLine, value) });
-            }
+            finally { uses = PopCaptureUses(); }
 
-            return new LambdaExpr(line, parms, onTarget, body);
+            return new LambdaExpr(line, parms, onTarget, body, CaptureModes: uses.Count > 0 ? uses : null);
         }
 
         // -----------------------------------------------------------

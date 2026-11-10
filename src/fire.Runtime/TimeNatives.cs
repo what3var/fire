@@ -64,7 +64,13 @@ namespace fire.Runtime
             if (problem != null)
                 return VM.CurrentThreadVm is { } failing ? failing.NativeFail("TimeException", problem) : throw new InvalidOperationException(problem);
 
-            if (VM.CurrentThreadVm is { } vm) vm.SleepTicks(ticks);
+            if (VM.CurrentThreadVm is { } vm)
+            {
+                if (vm.TrySuspendSleep(ticks)) return Value.MakeUndefined();   // (a task of the pool leaves its loop: docs/ROADMAP_TASKS.md step 7)
+                vm.SleepTicks(ticks);
+                // (the token of the task was cancelled - or its time limit ran out - before or while it slept: docs/ROADMAP_TASKS.md section 6)
+                if (vm.CancelledClass() is { } cancelled) return vm.NativeFail(cancelled, cancelled == "TimeoutException" ? "The time limit ran out." : "The task was cancelled.");
+            }
             else if (ticks > 0) System.Threading.Thread.Sleep(TimeSpan.FromTicks(ticks));
             return Value.MakeUndefined();
         }

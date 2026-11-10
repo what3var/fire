@@ -1,7 +1,8 @@
 # Tasks, `await` and multicore - roadmap
 
-Status: **design, nothing built.** fire was meant to be a nicer counterpart to async/await; today it has `fire` (a thread, no result) but no way to wait for
-a result. This plan adds `await`, a scheduler with a pool of workers in the C runtime, and removes the global lock so that fire code runs on all cores.
+Status: **steps 1-7 built** (see the details of each step below). fire was meant to be a nicer counterpart to async/await; it had `fire`
+(a thread, no result) but no way to wait for a result. This plan adds `await`, a scheduler with a pool of workers in the C runtime, and removes the global
+lock so that fire code runs on all cores.
 It is the base of the HTTP server (docs/ROADMAP_HTTP.md). Open points are marked **open**.
 
 ## 1. Where we are
@@ -202,9 +203,18 @@ var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for
   (g_dedHandlers), takes the task back first. Nested: counted (an exception out of an inner one that the outer one catches keeps the task on its thread
   until the outer one ends). The VM ignores both (its threads are system threads). Twenty tasks in `await dedicated` sleeping at once: 25 system
   threads (20 of their own and the pool), 5 without `dedicated`; ThreadSanitizer and AddressSanitizer clean.
-* Open (found on the way, not of step 4): a lambda inside a `fire` body cannot use the variables of the body's top level (E4022 - the resolver gives
-  the lambda the main program's global scope as its parent, the body's variables are in the thread's own global scope); so `await [ ... ]` in a `fire`
-  body works only in a method it calls. Natively the body's variables are no globals of the program either - the fix needs both sides.
+* Fixed later (with the capture of locals): a lambda inside a `fire` body could not use the variables of the body's top level (they are in the thread's
+  own global scope - natively variables of the body's function); the lambda captures them now like locals, by value (Resolver.DefineCaptures).
+
+### Taking at the use: `taking x` / `handover x` in a block or a lambda
+
+* **Done:** in the body of a `fire` block or a lambda, `taking x` / `handover x` is an operand: the parser notes the variable with its way (a body inside
+  a body passes its words on: the `fire` block around a lambda needs the variable first) and the block captures it like the clause (`fire taking x`,
+  copies first, the moved ones last; `handover` resets the caller's variable as before); the lambda's capture is loaded as `copy x` / `take x` when it is
+  made (ResolvedRef.LambdaCaptures.Loads). A local of the code around a `fire` block that the body uses without a word (Resolver: the names it uses that
+  are locals there and that the body does not declare itself) is captured as a copy marked Implicit - `TC023` of the type checker (lax a warning, strict
+  an error). A lambda without words captures as before (it stays on its thread). Tests: native == VM (copy, move, implicit copy, lambdas, a lambda and
+  `await [ ... ]` in a `fire` body), TC023 lax/strict.
 
 ## 4. The scheduler in C
 
@@ -259,6 +269,36 @@ All of it is a small part of the C runtime: native programs use it directly, the
 * **The main program is the UI task:** it always starts as a pinned task on the main thread, and `Run()` makes it the UI group - the most compatible
   way, nothing changes for existing programs.
 
+### Step 5 in detail - pinned, the group, the UI loop
+
+* **5a done - the main program is pinned, not alone:** it is no coroutine (its stack is the thread's, it never moves), but while it waits (blockUntil:
+  `Sleep`, `process`, `await`, a section, the end of the program) its thread is a worker of the pool (`g_homeWorker`, `homeHelp`): it runs one task that
+  waits for a worker, then looks again at what it waits for. A task that borrows the thread yields at its next safe point once an event came
+  (`fire_homeWanted`: the count of the events `g_evTick` against what the main program had seen); one that enters a blocking native there
+  (`gilRelease`) goes to a thread of its own for the wait (like `dedicated`) and back to the pool after it, so the main program never waits for it.
+  Found on the way: a task of `await [ ... ]` read its group after counting it down - the caller may have freed it by then (ThreadSanitizer, now that the
+  main program finishes such waits sooner).
+* **5b done - the wait of the UI loop is a wait of the main program:** the pacing of the frames (VSync of X11, Win32, Cocoa) and the wait for a
+  window manager's cycle go through `fire_waitHelping` / `fire_frameWait` (`FIRE_RT_HELPING_WAIT`; the display backends are built without the runtime
+  too): on the main program with tasks the thread runs tasks meanwhile, else the old sleep. Waiting in the system's own event wait together with the
+  scheduler's wake signal (`MsgWaitForMultipleObjects`, `poll` on the display's fd) stays for later; today the events are taken at the next pump (at most
+  one frame later).
+* **5c done - event handlers are members of the main program's group:** a callback of a window (`fire_winb_dispatch` -> `fire_groupCall`) is a task with
+  the main program's role (its globals, the writer of the shared domain), pinned to its thread (a queue of its own that no other worker takes; never a
+  time slice there, never `dedicated`, never handed off). It starts at once and runs until it ends or waits; then the window goes on, and the handler
+  goes on at the next wait of the main program or at the next `Tick` (`fire_groupRun`, the switch point of the UI loop). Only one member runs at a time
+  (one thread), so they share the main program's objects like one thread; the end of the program waits for them. A program that registers callbacks of
+  windows uses the scheduler (posix, windows). A member that runs a loop of its own (a modal window) calls the callbacks of that loop itself. The VM
+  calls handlers as before (step 7).
+* **5d done - `fire on window { }` and `await on window { return ... }`:** a job of the main program (like `fire global`, OpCode.PostGlobal with bit 7:
+  the first argument is the object itself, not a copy; bit 6: the result comes back) - it runs in the main program's group at its next safe point; from a
+  thread the object must be one of the main program (its globals) or an actor, else ArgumentException. `await on` from a thread waits for the result
+  (the way back of 4c: what the block made goes over, anything else is copied; an exception is thrown at the `await`); the main program itself runs the
+  block at once. The block's parameters get the types of the arguments, so `await on` has the type of the block's result. `on` is the keyword of bound
+  lambdas; there is no `on` for actors yet (an actor has its methods).
+* Tests: a handler that sleeps while the loop goes on (native, headless and Wayland), `fire on` / `await on` (native == VM); ThreadSanitizer and
+  AddressSanitizer clean.
+
 ## 6. Cancellation
 
 **Cancellation tokens**, as in .NET. In C a token is a small object with an atomic flag, its parent and a list of waiters: `Sleep`, `await` and the
@@ -293,6 +333,49 @@ token of the running task.
   `Net.TimeoutException` (a `Net.NetException`); a limit given with `until` around net calls throws `TimeoutException`.
 * What a cancelled task sees: the next wait (`Sleep`, `await`, net) or `ThrowIfCancelled()` throws a `CancelledException`; it runs through `finally`
   and destructors as usual. An `await` of a cancelled task throws it at the caller. Code that never waits and never checks is not stopped (no hard abort).
+
+### Step 6 in detail - cancellation
+
+* **Done:** the prelude has `CancellationSource` (`Cancel()`, `CancelAfter(t)`, `Token`, `IsCancelled`, `CancellationSource.Detached()`),
+  `CancellationToken` (`IsCancelled`, `ThrowIfCancelled()`, `CancellationToken.Current()` - the running task's) and `CancelledException` /
+  `TimeoutException`. Both classes are `[NoCopy]` (a token goes to a task with `until`, never as a copy): they keep an int handle of a node of the
+  runtime (natives `__cancel_*`; the VM: fire.Runtime.Cancellation, a table of handles; native: fire_rt.h, the node's address) and let go of it in
+  their destructor. A node is cancelled itself, by its time limit or by one of its parents (it knows its parents, a check walks up); `Cancel` wakes
+  every wait (notifyEventAll / the VM's wake), and each looks at its token again.
+* **`until`** is a clause like `taking`: `await Call() until token, 5s`, `await [ ... ] until token` (an element of the brackets takes one limit of its
+  own: `await [Load(a) until 2s, Load(b)]`), `await until token { ... }`, `fire until token { }`, `fire Poll(url) until token`. Each limit becomes
+  `__Cancel.Limit(x)` (a token, a source or a time value as a handle); `await ... until` is UntilExpr: OpCode.CancelPush (a node that follows the
+  caller's token and the limits - a frame of the task) around the call and OpCode.CancelPop after it. An exception that leaves the call skips the pop:
+  the catch that takes it outside leaves the frame (VM: the number of handlers when the frame began; native: throwValueR, like `dedicated`). `fire ...
+  until` sets bit 7: the node is the token of the next thread (a thread never follows its caller). The tasks of `await [ ... ]` follow the caller's
+  token; a source made inside a task follows the task's token (`new CancellationSource()`), a detached one nobody.
+* **What a cancelled task sees:** `Sleep` waits no longer than the time limit of its token and throws `CancelledException` (`TimeoutException` for a time
+  limit) - at once when the token is cancelled while it sleeps; the waits of `await actor.M()` and `await on` stop waiting the same way (the reply is
+  given up: who finishes last - the caller or the home - frees it). The net package waits with `Sleep` between its polls, so its waits end as well.
+  `ThrowIfCancelled()` checks by hand. Code that never waits is not stopped. `process` does not look at the token yet.
+* Tests (native == VM): time limit, done before the limit, `fire until` woken at once, `ThrowIfCancelled`, a catch inside the frame, `await [ ... ] until`,
+  a source that follows its task, `CancelAfter`, `await actor.M() until`, `Detached`; ThreadSanitizer and AddressSanitizer clean (the given-up replies
+  were a leak before the claim of who frees them).
+
+### Step 7 in detail - the VM on the scheduler
+
+* **Done (fire.Runtime/VmScheduler.cs, VM.Tasks.cs):** a fire thread of the VM is a task of a pool of system threads (as many as the machine has cores,
+  more while some are blocked), not a system thread of its own. The CLR cannot switch stacks, but the VM keeps its frames on the heap: a wait of a task
+  on its own level - not inside a callback, a getter or a section - leaves the VM's loop: `Suspend` swaps the running chunk for one that only halts
+  (nothing is checked in the hot loop: the halt of that chunk is the way out) and notes what the task waits for; the worker takes the next task, and the
+  task goes on - on any worker - when its condition holds or its time comes (a queue of times; the conditions are looked at again after a wake: a reply,
+  a cancel, a section granted, a message, a signal). The next slice puts the chunk back and runs the resume of the wait, which looks at its condition again
+  (a signal may wake it early) - so `Sleep` sleeps the rest of its time, a section waits until it is granted.
+* Waits that leave the loop: `Sleep` (and its time limit and cancel of step 6), `await actor.M()` / `await on` (the reply), `sync global { }` (the
+  section is asked for, the task waits until the main program grants it), `process` with an empty mailbox. Any other wait - inside a callback or a getter,
+  a section asked for in the middle of an instruction (a write to a global), a native that waits - blocks its worker and counts as blocked: the pool starts
+  another worker for the tasks that are ready.
+* The main program stays on its own thread (pinned, like the native build); the debugger's thread hook (ThreadBodyInterceptor) keeps a system thread per
+  fire thread, and FIRE_VM_THREADS=1 does so for every program.
+* Found on the way: a task that waited again before its old entry of the waiting list was gone stood in it twice and ran on two workers at once - every
+  wait has a number now, an entry of an earlier one is skipped.
+* Measured: 2000 fire threads that sleep 50 ms and then write in a section: 1.3 s on 4 workers (1.5 s with 2000 system threads); actors with `process`
+  in threads that start threads as fast as before. Tests (native == VM): 600 threads that sleep and write in sections, `process` in threads.
 
 ## Steps
 

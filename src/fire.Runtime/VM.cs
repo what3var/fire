@@ -303,6 +303,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("Native libraries can only be loaded while the program runs.")).LibraryCall(args);
             fire.Standard.AwaitMethods.Implementation = args =>
                 (_currentThreadVm ?? throw new InvalidOperationException("'await [ ... ]' needs a running program.")).AwaitRun(args);
+            fire.Standard.CancelMethods.Implementation = (name, args) =>
+                (_currentThreadVm ?? throw new InvalidOperationException("Cancellation needs a running program.")).CancelNative(name, args);
         }
 
         /// <summary>`__await_run(lambdas, res, fails)` (fire.Standard.AwaitMethods): calls every lambda with (res, fails, i), one after the other, nested like a
@@ -547,7 +549,13 @@ namespace fire.Runtime
         /// `sync globals` does the call return.</summary>
         private void EnterGlobalsSection()
         {
-            if (_sectionDepth++ == 0) _sectionHandle = _threadBroker!.EnterSection();
+            if (_sectionDepth++ == 0)
+            {
+                // (a task of the pool waits for the main program on its worker: the pool may start another one meanwhile)
+                if (PoolTask != null) VmScheduler.BlockEnter();
+                try { _sectionHandle = _threadBroker!.EnterSection(); }
+                finally { if (PoolTask != null) VmScheduler.BlockLeave(); }
+            }
         }
 
         private void ExitGlobalsSection()
@@ -764,9 +772,23 @@ namespace fire.Runtime
 
         /// <summary>Executes a `fire global` job on this (the owner) VM. An unhandled exception in it is treated like that of a
         /// fire thread: it goes to the main program (`catch threads`), otherwise it aborts.</summary>
-        internal void RunGlobalsJob(LambdaValue lambda, Value[] args)
+        internal void RunGlobalsJob(LambdaValue lambda, Value[] args, ActorReply? reply = null)
         {
             ObjectInstance? error;
+            if (reply != null)
+            {
+                // `await on`: the result or the exception goes back to the caller that waits (what the block made goes over, anything else as a copy)
+                var freshOwner = _currentScope.Temp;
+                Value result;
+                _noAutoSyncDepth++;
+                try { error = CallInline(lambda, args, out result); }
+                finally { _noAutoSyncDepth--; }
+                if (error != null) { error.ReparentTo(reply.Holder); reply.Exception = error; }
+                else reply.Result = ReplyValue(result, freshOwner, reply.Holder);
+                reply.Done.Set();
+                VmScheduler.Wake();   // (a task of the pool that waits for it)
+                return;
+            }
             _noAutoSyncDepth++;   // (a job runs for itself: at its safe points the next job does not start)
             try { error = CallLambdaInline(lambda, args); }
             finally { _noAutoSyncDepth--; }
@@ -967,13 +989,8 @@ namespace fire.Runtime
         private void RunLoop()
         {
             _ip = 0;
-            // (the try is outside the hot loop: an error inside an instruction leaves it, becomes a script exception and the loop goes on)
-            while (true)
-            {
-                try { RunLoopCore(); return; }
-                catch (ScriptErrorException error) { RaiseScriptError(error); }
-                catch (InvalidOperationException error) when (IsCatchableRuntimeError(error)) { RaiseScriptError(new ScriptErrorException("ArgumentException", error.Message)); }
-            }
+            // (the try is outside the hot loop: an error inside an instruction leaves it, becomes a script exception and the loop goes on - ContinueLoop)
+            ContinueLoop();
         }
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)] // the loop of the whole program: entered once, so compile it fully optimised straight away (not tier 0 and on-stack replacement)
@@ -984,6 +1001,7 @@ namespace fire.Runtime
                 var op = (OpCode)ReadByte();
                 if (op == OpCode.Halt)
                 {
+                    if (ReferenceEquals(_currentChunk, SuspendChunk)) return;   // (a task of the pool waits: VM.Tasks.cs)
                     // A leave/terminate called in nested execution is only now unwound in an orderly way;
                     // afterwards the halt chunk is there again and the next read lands here again.
                     if (FinishDeferredShutdown()) continue;
@@ -1283,15 +1301,10 @@ namespace fire.Runtime
                 }
                 else if (!_stopExecutionRequested)
                 {
-                    var result = Pop();
-                    // to the caller, out of this thread's scopes: what the call made goes over (handover), what the actor keeps - a field, a global - as a copy
-                    if (OwnerOfValue(result) is { } resultOwner)
-                        result = ReferenceEquals(resultOwner, freshOwner)
-                            ? ObjectHandover.MoveAll(new[] { result }, reply.Holder)[0]
-                            : ObjectCloner.Clone(result, reply.Holder, deep: true);
-                    reply.Result = result;
+                    reply.Result = ReplyValue(Pop(), freshOwner, reply.Holder);
                 }
                 reply.Done.Set();
+                VmScheduler.Wake();
                 return true;
             }
 
@@ -3434,17 +3447,7 @@ namespace fire.Runtime
                     _awaitReplyNow = false;
                     var reply = new ActorReply();
                     obj.Mailbox.Enqueue(new ActorMessage(methodName, args, holder, reply));
-                    while (!reply.Done.Wait(20))
-                        if (CheckShutdownSignals()) { Push(Value.MakeUndefined()); StopExecution(); return; }
-                    if (reply.Exception != null) { ThrowException(Value.MakeClassRef(reply.Exception)); return; }
-                    var result = reply.Result;
-                    // (handed over: it belongs to this thread's call now, like a returned value)
-                    if (ReferenceEquals(OwnerOfValue(result), reply.Holder))
-                    {
-                        if (result.Kind == ValueKind.Class) ((ObjectInstance)result.AsObjectRef()).ReparentTo(_currentScope.Temp);
-                        else if (LeafOf(result) is { } resultLeaf) LeafOwnership.Reparent(resultLeaf, _currentScope.Temp);
-                    }
-                    Push(result);
+                    TakeReply(reply);
                     return;
                 }
                 obj.Mailbox.Enqueue(new ActorMessage(methodName, args, holder));
@@ -4292,7 +4295,9 @@ namespace fire.Runtime
                 case OpCode.Power: BinaryNumericOrOperator(Value.Power, "operator^"); break;
                 case OpCode.PowerFloat: BinaryNumericOrOperator(Value.PowerFloat, "operator^"); break;
                 case OpCode.AwaitReply: _awaitReplyNext = true; break;
-                case OpCode.Dedicate: case OpCode.Undedicate: break;   // (`dedicated`: a native build moves the task to a system thread; a VM thread is one)
+                case OpCode.Dedicate: case OpCode.Undedicate: break;
+                case OpCode.CancelPush: { int f = ReadByte(); UntilPush(f & 0x7F, (f & 0x80) != 0); break; }
+                case OpCode.CancelPop: UntilPop(); break;   // (`dedicated`: a native build moves the task to a system thread; a VM thread is one)
                 case OpCode.BitAnd: BinaryNumericOrOperator(Value.BitAnd, "operator&"); break;
                 case OpCode.BitOr: BinaryNumericOrOperator(Value.BitOr, "operator|"); break;
                 case OpCode.BitXor: BinaryNumericOrOperator(Value.BitXor, "operator#"); break;
@@ -5195,9 +5200,11 @@ namespace fire.Runtime
                     // in the (slowest) debug mode, regardless of
                     // which mode the main program itself runs in (see
                     // VmExecutionMode documentation).
+                    var fireToken = _pendingFireToken;   // (`fire ... until x`)
+                    _pendingFireToken = null;
                     FireRuntime.FireVmTaking(
                         fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
-                        executionMode: ExecutionMode, handoverCount: handoverCount);
+                        executionMode: ExecutionMode, handoverCount: handoverCount, token: fireToken);
                     break;
                 }
 
@@ -5219,7 +5226,18 @@ namespace fire.Runtime
                 }
 
                 case OpCode.SectionEnter:
-                    if (_threadBroker != null) EnterGlobalsSection(); // in the main program: no effect (it is the owner itself)
+                    if (_threadBroker != null)   // in the main program: no effect (it is the owner itself)
+                    {
+                        if (_sectionDepth == 0 && CanSuspend)
+                        {
+                            // `sync global { }` of a task of the pool: it asks for the section and leaves its loop until the main program grants it
+                            var request = _threadBroker.RequestSection();
+                            _sectionDepth = 1;
+                            _sectionHandle = request;
+                            if (!GlobalsBroker.IsGranted(request)) SuspendForSection(request);
+                        }
+                        else EnterGlobalsSection();
+                    }
                     break;
 
                 case OpCode.SectionExit:
@@ -5228,10 +5246,31 @@ namespace fire.Runtime
 
                 case OpCode.PostGlobal:
                 {
-                    int jobArgCount = ReadByte();
+                    int jobFlags = ReadByte();
+                    int jobArgCount = jobFlags & 0x3F;
+                    bool onTarget = (jobFlags & 0x80) != 0;   // `fire on x` / `await on x`: the first argument is the object itself
+                    bool awaitJob = (jobFlags & 0x40) != 0;   // `await on x`: the result comes back
                     var jobLambda = (LambdaValue)Pop().AsLambda();
                     var jobArgs = new Value[jobArgCount];
                     for (int i = jobArgCount - 1; i >= 0; i--) jobArgs[i] = Pop();
+                    if (onTarget && jobArgCount > 0 && IsFireThreadVm && jobArgs[0].Kind == ValueKind.Class
+                        && jobArgs[0].AsObjectRef() is ObjectInstance { InGlobalsDomain: false, Mailbox: null })
+                    {
+                        ThrowArgumentError("'on': the object is not one of the main program (a thread may name a global variable of the main program)");
+                        break;
+                    }
+                    if (awaitJob && !IsFireThreadVm)
+                    {
+                        // the main program itself: the block runs at once (the copies are made all the same)
+                        var nowHolder = new Scope(null);
+                        for (int i = onTarget ? 1 : 0; i < jobArgs.Length; i++)
+                            if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], nowHolder, deep: true);
+                        var nowError = CallInline(jobLambda, jobArgs, out var nowResult);
+                        nowHolder.Release(this);
+                        if (nowError != null) { ThrowException(Value.MakeClassRef(nowError)); break; }
+                        Push(nowResult);
+                        break;
+                    }
 
                     // The arguments belong to the job, not to this thread: objects are deeply copied, their owner is a holder scope that
                     // the main program releases after the run.
@@ -5239,10 +5278,17 @@ namespace fire.Runtime
                     foreach (var ja in jobArgs)
                         if (ja.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(ja, "fire global");
                     var holder = new Scope(null);
-                    for (int i = 0; i < jobArgs.Length; i++)
+                    for (int i = onTarget ? 1 : 0; i < jobArgs.Length; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
 
                     var postBroker = IsFireThreadVm ? _threadBroker! : EnsureOwnerBroker();
+                    if (awaitJob)
+                    {
+                        var jobReply = new ActorReply();
+                        postBroker.PostJob(jobLambda, jobArgs, holder, jobReply);
+                        TakeReply(jobReply);
+                        break;
+                    }
                     postBroker.PostJob(jobLambda, jobArgs, holder);
                     break;
                 }
@@ -5308,7 +5354,12 @@ namespace fire.Runtime
                 case OpCode.Process:
                 {
                     var actorTarget = RequireObjectInstance(Pop(), "process");
-                    ProcessOneMessage(actorTarget, blocking: true);
+                    // a task of the pool with an empty mailbox: it leaves its loop until a message comes (VM.Tasks.cs)
+                    if (actorTarget.Mailbox is { HasMessages: false } && CanSuspend) { SuspendForProcess(actorTarget); break; }
+                    bool waits = PoolTask != null && actorTarget.Mailbox is { HasMessages: false };
+                    if (waits) VmScheduler.BlockEnter();
+                    try { ProcessOneMessage(actorTarget, blocking: true); }
+                    finally { if (waits) VmScheduler.BlockLeave(); }
                     break;
                 }
 
@@ -5691,6 +5742,7 @@ namespace fire.Runtime
 
                 if (matchedAddr != null)
                 {
+                    if (_untilFrames.Count > 0) UntilCaught(_handlers.Count);   // (a catch outside an `await ... until x`: its frame is left)
                     // IMPORTANT: do NOT unwind destructively here (UnwindTo) -
                     // instead freeze the throw-site state
                     // (CaptureContinuation), so that a possible `resume()`
@@ -6307,6 +6359,45 @@ namespace fire.Runtime
             var args = new[] { Value.MakeString(msg), Value.MakeInt(index), Value.MakeInt(length) };
             var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));
+        }
+
+        /// <summary>A result for a caller on another thread (`await actor.M()`, `await on`): what the call made (it landed in <paramref name="freshOwner"/>)
+        /// goes over (handover), anything else - a field, a global - as a copy; both into <paramref name="holder"/>.</summary>
+        private static Value ReplyValue(Value result, Scope freshOwner, Scope holder)
+        {
+            if (OwnerOfValue(result) is not { } owner) return result;
+            return ReferenceEquals(owner, freshOwner)
+                ? ObjectHandover.MoveAll(new[] { result }, holder)[0]
+                : ObjectCloner.Clone(result, holder, deep: true);
+        }
+
+        /// <summary>The waiting caller of `await actor.M()` / `await on`: waits for the reply, then throws its exception or pushes its result (it belongs to
+        /// this call now, like a returned value).</summary>
+        private void TakeReply(ActorReply reply)
+        {
+            if (!reply.Done.IsSet && CancelledClass() == null && TrySuspendReply(reply)) return;   // (a task of the pool: it leaves the loop until the reply is there)
+            bool blocked = PoolTask != null && !reply.Done.IsSet;
+            if (blocked) VmScheduler.BlockEnter();
+            try { WaitReply(reply); }
+            finally { if (blocked) VmScheduler.BlockLeave(); }
+        }
+
+        private void WaitReply(ActorReply reply)
+        {
+            while (!reply.Done.Wait(20))
+            {
+                if (CheckShutdownSignals()) { Push(Value.MakeUndefined()); StopExecution(); return; }
+                // (cancelled: the caller stops waiting - what it waited for may still run)
+                if (CancelledClass() is { } cancelled) { NativeFail(cancelled, cancelled == "TimeoutException" ? "The time limit ran out." : "The task was cancelled."); _nativeRedirected = false; return; }
+            }
+            if (reply.Exception != null) { ThrowException(Value.MakeClassRef(reply.Exception)); return; }
+            var result = reply.Result;
+            if (ReferenceEquals(OwnerOfValue(result), reply.Holder))
+            {
+                if (result.Kind == ValueKind.Class) ((ObjectInstance)result.AsObjectRef()).ReparentTo(_currentScope.Temp);
+                else if (LeafOf(result) is { } resultLeaf) LeafOwnership.Reparent(resultLeaf, _currentScope.Temp);
+            }
+            Push(result);
         }
 
         /// <summary>An array/buffer that a built-in or native function has freshly created (still without owner) belongs to the current scope.</summary>

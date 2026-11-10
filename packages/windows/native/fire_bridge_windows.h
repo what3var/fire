@@ -375,6 +375,10 @@ static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
             case FIRE_EV_SCALE: a[0] = Float(e->value); n = 1; break;
             default: break;
         }
+#ifdef FIRE_RT_GROUP_CALL
+        /* (a native build with tasks: the handler is a member of the main program's group - when it waits, the window goes on; docs/ROADMAP_TASKS.md step 5) */
+        if (!fire_groupCall(mine[i].lam, n, a))
+#endif
         fire_winb_runCallback(mine[i].lam, n, a);
         leave(&scratch);
         release(mine[i].lam);
@@ -630,6 +634,9 @@ static void fire_winb_serveManagers(void) {
     fire_gfx_size i;
     if (busy) { fire_atomic_store(&g_hostPending, 1); return; }   /* a cycle is running: the next safe point after it */
     busy = 1;
+#ifdef FIRE_RT_GROUP_CALL
+    fire_groupRun();   /* (the handlers that waited and may go on now) */
+#endif
     for (i = 0; i < g_fireWinMgrCount; i++) {
         FireWinMgr* m = g_fireWinMgrs[i];
         if (m && fire_winb_started(m) && fire_atomic_load(&m->pending) && m->service.kind == K_Lambda) fire_winb_runCallback(m->service, 0, NULL);
@@ -747,12 +754,30 @@ static Value fire_win_WinMgrStart(Value mgrId, Value service) {
 }
 
 /* Waits (on the program's thread, without the GIL) up to `ms` for the next cycle of the manager's thread. */
+#ifdef FIRE_WINDOW_THREADS
+typedef struct FireWinMgrSeen { FireWinMgr* m; uint64_t seen; } FireWinMgrSeen;
+static bool fire_winb_cycled(void* p) {
+    FireWinMgrSeen* c = (FireWinMgrSeen*)p;
+    bool r;
+    fire_mutex_lock(&c->m->cycleM);
+    r = c->m->cycles != c->seen;
+    fire_mutex_unlock(&c->m->cycleM);
+    return r;
+}
+#endif
 static Value fire_win_WinMgrWait(Value mgrId, Value ms) {
     FireWinMgr* m = fire_winb_mgrOf(mgrId);
     int64_t wait = ms.i > 0 ? ms.i : 1;
 #ifdef FIRE_WINDOW_THREADS
     if (fire_winb_started(m)) {
         uint64_t seen;
+        FireWinMgrSeen c;
+        /* (the main program of a native build: its thread runs tasks until the next cycle - the manager's thread asks for it, hostRequest wakes it) */
+        c.m = m;
+        fire_mutex_lock(&m->cycleM);
+        c.seen = m->cycles;
+        fire_mutex_unlock(&m->cycleM);
+        if (fire_waitHelping(fire_winb_cycled, &c, wait)) return Undef();
         gilRelease();
         fire_mutex_lock(&m->cycleM);
         seen = m->cycles;
@@ -763,7 +788,7 @@ static Value fire_win_WinMgrWait(Value mgrId, Value ms) {
     }
 #endif
     (void)m;
-    fire_plat_sleepMs(wait);
+    if (!fire_waitHelping(NULL, NULL, wait)) fire_plat_sleepMs(wait);
     return Undef();
 }
 
@@ -928,6 +953,9 @@ static Value fire_win_WinTick(Value id) {
     int open;
     int64_t i;
     fire_gfx_size k;
+#ifdef FIRE_RT_GROUP_CALL
+    fire_groupRun();   /* (the switch point of the UI loop: the handlers that waited and may go on now) */
+#endif
     if (fire_winb_threaded(w)) { Value o = fire_win_WinPump(id); if (g_fireWinList[(fire_gfx_size)(int32_t)id.i]) fire_win_WinPresent(id); return o; }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Bool(false);
     open = fire_display_pump(&w->sh->display, &events, w->fb->width, w->fb->height);

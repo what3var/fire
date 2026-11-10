@@ -93,8 +93,10 @@ namespace fire.Runtime
             // (docs/spec/THREADING_DESIGN.md section 7). Sleeping is waiting for something else: the section is handed back for the time of the sleep, otherwise a
             // method that waits (a socket accept, a retry loop) would hold the main program for as long as it waits. Afterwards the thread queues for it again.
             int heldSections = YieldGlobalsSection();
+            bool blocked = PoolTask != null;   // (a task of the pool that could not leave the loop sleeps on its worker: another one may start)
+            if (blocked) VmScheduler.BlockEnter();
             try { SleepTicksCore(ticks); }
-            finally { RegainGlobalsSection(heldSections); }
+            finally { if (blocked) VmScheduler.BlockLeave(); RegainGlobalsSection(heldSections); }
         }
 
         private int YieldGlobalsSection()
@@ -118,10 +120,13 @@ namespace fire.Runtime
         private void SleepTicksCore(long ticks)
         {
             long deadline = Stopwatch.GetTimestamp() + (long)(ticks * (Stopwatch.Frequency / 10_000_000.0));
+            var token = CurrentToken;
+            if (token != null && token.Deadline is var limit and not 0 && limit < deadline) deadline = limit;   // (`until 5s`: no longer than the time limit)
             while (true)
             {
                 PollWhileWaiting();
                 if (_stopExecutionRequested) return;
+                if (token != null && token.State != 0) return;   // (cancelled: Sleep throws - TimeNatives.Sleep)
 
                 long remaining = deadline - Stopwatch.GetTimestamp();
                 if (remaining <= 0) return;

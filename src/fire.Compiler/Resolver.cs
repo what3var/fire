@@ -2143,6 +2143,16 @@ namespace fire.Compiler
                     ResolveExpr(th.Value);
                     break;
 
+                case UntilExpr until:
+                    foreach (var limit in until.Limits) ResolveExpr(limit);
+                    ResolveExpr(until.Inner);
+                    break;
+
+                case AwaitOnExpr awaitOn:
+                    foreach (var arg in awaitOn.Args) ResolveExprAllowTake(arg);
+                    ResolveLambda(awaitOn.Lambda);
+                    break;
+
                 case LambdaExpr lam:
                     ResolveLambda(lam);
                     break;
@@ -2345,6 +2355,24 @@ namespace fire.Compiler
         private void ResolveFireStmt(FireStmt fs)
         {
             _sawFire = true;
+            // a local of the code around the block that the body uses without `taking`/`handover`: the thread gets a copy (as with `taking`) - a warning
+            // of the type checker in lax mode, an error in strict mode (TC023)
+            if (fs.TakingCaptures is List<FireTakingCapture> captureList)
+            {
+                var used = new List<string>();
+                AstNames.Collect(fs.Body, used, new HashSet<string>());
+                var declared = AstNames.Declared(fs.Body);
+                foreach (var name in used)
+                {
+                    if (declared.Contains(name) || captureList.Exists(c => c.VarName == name) || name == fs.WithVarName) continue;
+                    var scope = FindScopeOf(name);
+                    if (scope == null || scope.IsGlobal) continue;   // (the globals of the main program: the thread reads them directly)
+                    int firstMoved = captureList.FindIndex(c => c.Handover);
+                    var capture = new FireTakingCapture(name, new IdentifierExpr(fs.Line, name), Implicit: true);
+                    if (firstMoved < 0) captureList.Add(capture); else captureList.Insert(firstMoved, capture);
+                }
+            }
+            if (fs.Until != null) foreach (var limit in fs.Until) ResolveExpr(limit);   // (in the caller: the token the thread follows)
             foreach (var capture in fs.TakingCaptures)
             {
                 ResolveExpr(capture.Source);
@@ -2514,25 +2542,47 @@ namespace fire.Compiler
             foreach (var p in lambda.Params) paramNames.Add(p.Name);
 
             List<IdentifierExpr>? captures = null;
+            List<Expr>? loads = null;
             foreach (var name in names)
             {
                 if (paramNames.Contains(name)) continue;
                 int depth = 0;
                 ResolverScope? found = null;
-                for (var scope = enclosing; scope != null && !scope.IsGlobal; scope = scope.Parent, depth++)
+                bool reachesFire = false;
+                for (var scope = enclosing; scope != null; scope = scope.Parent, depth++)
                 {
+                    if (scope.IsGlobal) { reachesFire = ReferenceEquals(scope, _fireScope); break; }
                     if (scope.Slots.ContainsKey(name)) { found = scope; break; }
                 }
-                if (found == null) continue;
-
-                found.RequiredUnits.TryGetValue(name, out var requiredUnit);
                 var outer = new IdentifierExpr(lambda.Line, name);
-                _refs[outer] = new ResolvedRef.Local(depth, found.Slots[name], requiredUnit, found.RefNames.Contains(name));   // (the capture copies the VALUE of a ref parameter)
+                string? requiredUnit;
+                if (found != null)
+                {
+                    found.RequiredUnits.TryGetValue(name, out requiredUnit);
+                    _refs[outer] = new ResolvedRef.Local(depth, found.Slots[name], requiredUnit, found.RefNames.Contains(name));   // (the capture copies the VALUE of a ref parameter)
+                }
+                else if (reachesFire && _fireScope!.Slots.TryGetValue(name, out int threadSlot) && threadSlot >= _fireSharedSlots && !name.StartsWith('\u0001'))
+                {
+                    // a variable of the `fire` body itself (its own slot of the thread's global scope): the lambda captures it like a local (natively it is a
+                    // variable of the body's function, no global the lambda could reach)
+                    _fireScope.RequiredUnits.TryGetValue(name, out requiredUnit);
+                    _refs[outer] = new ResolvedRef.Global(threadSlot, requiredUnit);
+                }
+                else
+                {
+                    if (lambda.CaptureModes != null && lambda.CaptureModes.ContainsKey(name))
+                        throw new ResolverException($"'{(lambda.CaptureModes[name] ? "handover" : "taking")} {name}' in a lambda names a variable of the code around it - '{name}' is none", lambda.Line);
+                    continue;
+                }
                 Define(name, lambda.Line, requiredUnit: requiredUnit);
                 _current.CaptureNames.Add(name);
                 (captures ??= new List<IdentifierExpr>()).Add(outer);
+                // (`taking x` / `handover x` in the body: the lambda gets a copy / takes it over when it is made)
+                Expr load = lambda.CaptureModes != null && lambda.CaptureModes.TryGetValue(name, out bool moved)
+                    ? new UnaryExpr(lambda.Line, moved ? UnaryOp.Take : UnaryOp.DeepCopy, outer) : outer;
+                (loads ??= new List<Expr>()).Add(load);
             }
-            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures);
+            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures, loads != null && loads.Exists(l => l is UnaryExpr) ? loads : null);
         }
 
         /// <summary>Is the code currently being resolved inside a lambda with `on target`? Then unknown names are members of the bound object.</summary>
@@ -2608,6 +2658,65 @@ namespace fire.Compiler
     internal static class AstNames
     {
         private static readonly Dictionary<Type, System.Reflection.MemberInfo[]> Members = new();
+
+        /// <summary>The names a node declares anywhere below it (variables, `foreach` variables, the variable of a catch, the parameters of lambdas, the
+        /// captures of a nested `fire`) - what a body uses under such a name is its own, not a variable of the code around it.</summary>
+        public static HashSet<string> Declared(object? node)
+        {
+            var declared = new HashSet<string>();
+            var all = new List<object>();
+            Walk(node, all);
+            foreach (var n in all)
+                switch (n)
+                {
+                    case VarDeclStmt v: declared.Add(v.Name); break;
+                    case ForeachStmt f: declared.Add(f.VarName); break;
+                    case CatchClause c: declared.Add(c.VarName); break;
+                    case LambdaParam p: declared.Add(p.Name); break;
+                    case FireTakingCapture t: declared.Add(t.VarName); break;
+                    case FireStmt { WithVarName: { } with }: declared.Add(with); break;
+                }
+            return declared;
+        }
+
+        // (every node below `node`, in no particular order)
+        private static void Walk(object? node, List<object> into)
+        {
+            switch (node)
+            {
+                case null:
+                case string:
+                    return;
+                case System.Collections.IEnumerable items:
+                    foreach (var item in items) Walk(item, into);
+                    return;
+            }
+            var type = node.GetType();
+            if (type.IsPrimitive || type.IsEnum) return;
+            bool isAst = type.Namespace != null && type.Namespace.StartsWith("fire.Ast", StringComparison.Ordinal);
+            bool isTuple = type.IsGenericType && type.FullName!.StartsWith("System.ValueTuple", StringComparison.Ordinal);
+            if (!isAst && !isTuple) return;
+            into.Add(node);
+            foreach (var m in MembersOf(type))
+                Walk(m is System.Reflection.PropertyInfo pi ? pi.GetValue(node) : ((System.Reflection.FieldInfo)m).GetValue(node), into);
+        }
+
+        private static System.Reflection.MemberInfo[] MembersOf(Type type)
+        {
+            lock (Members)
+            {
+                if (!Members.TryGetValue(type, out var members))
+                {
+                    var list = new List<System.Reflection.MemberInfo>();
+                    foreach (var p in type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                        if (p.GetIndexParameters().Length == 0 && p.Name != "EqualityContract") list.Add(p);
+                    foreach (var f in type.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                        list.Add(f);
+                    Members[type] = members = list.ToArray();
+                }
+                return members;
+            }
+        }
 
         public static void Collect(object? node, List<string> names, HashSet<string> seen)
         {

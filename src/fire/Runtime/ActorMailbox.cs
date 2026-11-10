@@ -68,12 +68,19 @@ namespace fire.Runtime
         {
             _queue.Enqueue(message);
             _signal.Release();
+            Enqueued?.Invoke();
         }
 
         /// <summary>`blocking=true` (see Ast.ProcessStmt): waits until
         /// at least one message is there, and then ALWAYS returns `true`.
         /// `blocking=false` (see Ast.TryProcessExpr): returns `false`
         /// immediately if nothing is waiting right now.</summary>
+        /// <summary>Is a message there (a task of the pool that waits in `process` looks at it)?</summary>
+        public bool HasMessages => !_queue.IsEmpty;
+
+        /// <summary>Called after every message that is put in (the scheduler of the VM: a task that waits in `process` looks again).</summary>
+        public static Action? Enqueued;
+
         public bool TryProcessOne(bool blocking, out ActorMessage message)
         {
             if (blocking)

@@ -773,7 +773,12 @@ static void fire_dw32_presentArea(FireDw32Window* w, const uint32_t* rgba, int w
     if (w->vsync) {
         if (lib->DwmFlush == NULL || lib->DwmFlush() != S_OK) {
             double now = fire_dw32_now(), next = w->lastFrame + 1.0 / 60.0;
-            if (w->lastFrame > 0 && now < next) Sleep((DWORD)((next - now) * 1000.0));
+            if (w->lastFrame > 0 && now < next) {
+#ifdef FIRE_RT_HELPING_WAIT
+                if (!fire_frameWait(next - now))   /* (the main program of a native build: its thread runs tasks meanwhile) */
+#endif
+                Sleep((DWORD)((next - now) * 1000.0));
+            }
         }
         w->lastFrame = fire_dw32_now();
     }

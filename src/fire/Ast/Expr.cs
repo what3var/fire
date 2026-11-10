@@ -51,7 +51,8 @@ namespace fire.Ast
         IReadOnlyList<LambdaParam> Params,
         Expr? OnTarget,
         Stmt.BlockStmt Body,
-        bool AutoCapture = true) : Expr(Line);
+        bool AutoCapture = true,
+        IReadOnlyDictionary<string, bool>? CaptureModes = null) : Expr(Line);   // `taking x` (false) / `handover x` (true) in the body: how x is captured
 
     /// <summary>`sync X` / `try sync X` / `sync flat X` / `try sync flat X`
     /// (docs/spec/THREADING_DESIGN.md section 4) - an EXPRESSION (not a
@@ -186,6 +187,14 @@ namespace fire.Ast
     // ---------------------------------------------------------------
     /// <summary>TypeArgs: type arguments written at the call of a generic method (`Pick<string>(a, b)`) - only generic overloads are meant then; null without.
     /// ArgNames: the names of named arguments (`f(1, size: 2)`: [null, "size"]) - null when no argument is named; the named ones follow the positional ones.</summary>
+    /// <summary>`await ... until x, 5s` (docs/ROADMAP_TASKS.md section 6): <see cref="Inner"/> runs with a token of its own that follows the caller's and the
+    /// limits (each `__Cancel.Limit(x)`: a token, a source or a time limit). Its type is the type of <see cref="Inner"/>.</summary>
+    public sealed record UntilExpr(int Line, Expr Inner, IReadOnlyList<Expr> Limits) : Expr(Line);
+
+    /// <summary>`await on window { ... return v }` (docs/ROADMAP_TASKS.md section 5): the block runs in the main program's group (a job of the main program)
+    /// with the first argument - the object - as it is and copies of the others (`taking`); the caller waits for its result. Its type is the block's return type.</summary>
+    public sealed record AwaitOnExpr(int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args) : Expr(Line);
+
     /// <summary>Awaited: written as `await x.Method(...)` - on an actor the call waits for the result (OpCode.AwaitReply). Dedicated: `await dedicated ...` -
     /// natively the caller's task runs the call on a system thread of its own (OpCode.Dedicate/Undedicate around it; nothing in the VM).</summary>
     public sealed record CallExpr(int Line, Expr Callee, IReadOnlyList<Expr> Args, IReadOnlyList<TypeRef>? TypeArgs = null, IReadOnlyList<string?>? ArgNames = null, bool Awaited = false, bool Dedicated = false) : Expr(Line);

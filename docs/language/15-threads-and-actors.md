@@ -18,7 +18,8 @@ print("main goes on")
 - Inside a class, `fire Method(args)` runs a method of `this` in a new thread. Its arguments are copied like `taking` - except a direct `new`
   (`fire Work(new Job())`), which is handed over to the thread without a copy.
 - The program waits at its end for all running threads.
-- In a native build a fire thread is a light task on a pool of system threads (one per core). `fire dedicated { ... }` (also
+- A fire thread is a light task on a pool of system threads (one per core) - in a native build and in the VM; thousands of threads that wait cost no
+  system thread each. `fire dedicated { ... }` (also
   `fire dedicated Work(x)`, with the same clauses) gives it a system thread of its own - for work that waits in natives for a long time. In the VM
   every fire thread is a system thread anyway. `dedicated` is a word only right after `fire` or `await`.
 - Which thread prints first is decided by the scheduler; the examples use `Sleep` from `#import "time"` to wait.
@@ -59,6 +60,40 @@ print("main: " + counter.value)             // main: 15
   `fire global` would copy for its job (it is not queued) and for `sync`, when it would copy one back into the original (nothing is written back);
   `sync flat` keeping an object that is on both sides is fine. The table in [Ownership](13-ownership.md#copying-flat-and-copy) lists every form.
 - `sync` returning `undefined` is a good moment for the thread to `leave`.
+
+## Taking where it is used: `taking x`, `handover x` in the block
+
+Instead of listing what a thread takes in front of the block, the block can say it where it uses the variable. The compiler collects these words before
+the thread starts - the thread gets a copy of each `taking` variable (as with `fire taking x`) and takes over each `handover` variable (as with
+`fire handover x`, the caller's variable is `undefined` afterwards):
+
+```fire
+#import "time"
+class Item { int v
+    construct(int v) { this.v = v } }
+class Work {
+    static undefined Run() {
+        var list = [new Item(1), new Item(2)]
+        var node = new Item(7)
+        fire {
+            (taking list)[0].v = 100                     // the thread's copy
+            print(list[0].v + " " + (handover node).v)   // 100 7 - `list` is the copy everywhere in the block
+        }
+        Sleep(20ms)
+        print(list[0].v + " " + node)                    // 1 undefined
+    }
+}
+Work.Run()
+```
+
+- One word per variable is enough: every other use of it in the block means the same copy (or the moved object). `taking` and `handover` for the same
+  variable in one block is an error.
+- A local of the code around the block that the block uses **without** a word is copied too, and the type checker says so: `TC023`, a warning in lax
+  mode, an error in strict mode. The globals of the main program are no locals: the thread reads them directly (see [Global variables](#global-variables)).
+- The same words work in a **lambda**: `() => (taking item).v` captures a copy of `item`, made when the lambda is made; `handover item` hands the object
+  to the lambda. Without a word a lambda captures the variable's value as before (an object is shared - a lambda never goes to another thread).
+- A lambda inside a `fire` block captures the block's own variables like locals (`fire { var n = 41; var f = () => n + 1 }`) - so `await [ ... ]`
+  works in a `fire` block too.
 
 ## Handing over: `handover`
 
@@ -168,10 +203,37 @@ print(n + " " + sum)
   included (`await [Load(a), Merge(x, y) taking y]`). The calls get the caller's objects lent; in a native build they run side by side on all cores when
   no two of them reach the same object (otherwise one after the other); the VM runs them one after the other.
 - `await actor.Method()` waits for the result of an actor's method (see [Actors](#actors)).
+- `fire on window { ... }` runs a block in the main program - where its windows live - with `window` as the real object (and copies of what it takes with
+  `taking`); the caller goes on. `await on window { return window.Title }` waits for the block's result. From a thread the object must be one of the main
+  program (a global variable) or an actor. In the main program itself `await on` runs the block at once and `fire on` at its next safe point.
+- In a native build an event handler of a window is a task of the main program's group: when it waits (`Sleep`, `await`), the window goes on, and the
+  handler continues later on the same thread. Only one handler runs at a time, and only where it waits does another one get its turn.
 - `await dedicated Work(x)` (also `await dedicated taking x { ... }`, and as an element of `await [ ... ]`) is `await` for work that blocks in natives
   for a long time: in a native build the waiting task runs the call on a system thread of its own and goes back to the pool after it - the call still
   has the caller's objects lent, and an exception goes on at the `await` as usual. Elsewhere it is the same as `await`.
-- Coming next (docs/ROADMAP_TASKS.md): cancellation with `until`.
+
+### Cancellation: `until`
+
+```fire
+#import "time"
+class Work { static int Slow() { Sleep(1s); return 1 } }
+try { var r = await Work.Slow() until 50ms } catch (TimeoutException e) { print(e.message) }   // The time limit ran out.
+var source = new CancellationSource()
+fire until source.Token {
+    try { Sleep(10s) } catch (CancelledException e) { print("cancelled") }
+}
+Sleep(20ms)
+source.Cancel()                                  // the thread's Sleep ends at once: cancelled
+```
+
+- `until` limits what it stands after: a token (`source.Token`), a source, or a time value (`5s` - then the exception is a `TimeoutException`, a kind of
+  `CancelledException`). Several at once: `until source.Token, 10s`. It works with `await Call()`, `await [ ... ]` (all calls; one element:
+  `await [Load(a) until 2s, Load(b)]`), `await until x { ... }`, `fire until x { ... }` and `fire Method(args) until x`.
+- An awaited call follows its caller's token as well: cancelling the caller cancels it. A `fire` thread does not - only what its `until` names.
+- A cancelled task notices it at its next wait - `Sleep`, `await actor.M()`, `await on`, the waits of the net package - which throws the exception, or with
+  `CancellationToken.Current().ThrowIfCancelled()`. Code that never waits is not stopped.
+- `new CancellationSource()` made inside a task follows the task's token; `CancellationSource.Detached()` follows nobody. `CancelAfter(5s)` cancels later.
+  Sources and tokens are never copied (`[NoCopy]`): a thread gets one with `until`.
 
 ## Actors
 

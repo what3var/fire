@@ -94,6 +94,10 @@ static class TypeTests
             Run("var w = undefined\nprint(1)") == "TC019|1" && Run("var w = undefined\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC019"
             && Run("any a = [1]\nvar e = a[0]\nprint(e)") == "TC019|1" && Run("any a = [1]\nvar e = a[0]\nprint(e)", TypeCheckMode.Strict) == "|ERROR TC019"
             && Run("any a = [1]\nany e = a[0]\nprint(e)", TypeCheckMode.Strict) == "|1");
+        Check("fire-Block: ein Local der Umgebung ohne taking/handover wird kopiert - TC023 lax eine Warnung, strikt ein Fehler; mit taking/handover still",
+            Run("class W { static undefined Go() { int k = 3\n fire { print(k) } } }\nW.Go()") is var lax && lax.StartsWith("TC023|")
+            && Run("class W { static undefined Go() { int k = 3\n fire { print(k) } } }\nW.Go()", TypeCheckMode.Strict) == "|ERROR TC023"
+            && Run("class W { static undefined Go() { int k = 3\n fire { print(taking k) } } }\nW.Go()", TypeCheckMode.Strict).StartsWith("|"));
         Check("var aus einem als any deklarierten Wert: TC020 (eine Warnung, auch strikt)",
             Run("class K { static any G() { return 1 } }\nvar v = K.G()\nprint(v)", TypeCheckMode.Strict) == "TC020|1");
         Check("var aus verwandten Typen: int/float wird float, Klassen die naechste gemeinsame Basis; unverwandte werden any (TC020)", Run("""

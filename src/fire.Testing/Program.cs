@@ -20823,6 +20823,179 @@ else
             var dedicated = 3
             print("name " + dedicated)
             """),
+        ("fire on / await on: der Block laeuft im Hauptprogramm mit dem Objekt selbst (Kopien sonst), das Ergebnis kommt zurueck (neu: uebergeben, Feld: Kopie), Ausnahme am await, im Hauptprogramm sofort", """
+            class Box {
+                int v
+                construct(int v) { this.v = v }
+            }
+            class Panel {
+                string status = ""
+                int count = 0
+                Box box
+                construct() { this.box = new Box(5) }
+            }
+            var panel = new Panel()
+            int done = 0
+            fire {
+                int k = 3
+                fire on panel taking k { panel.status = "from thread " + k; panel.count = panel.count + k }
+                var text = await on panel { return panel.status + "/" + panel.count }
+                print("thread got: " + text)
+                var b = await on panel { return panel.box }
+                b.v = 99
+                var fresh = await on panel { return new Box(panel.count * 2) }
+                print("thread box " + b.v + " fresh " + fresh.v)
+                try { any x = await on panel { throw new ArgumentException("no panel") } } catch (ArgumentException e) { print("thread caught " + e.message) }
+                sync global { done = 1 }
+            }
+            while (done < 1) { sync globals }
+            print("main: " + panel.status + " " + panel.count + " box " + panel.box.v)
+            print("main await: " + await on panel { return panel.count + 1 })
+            fire on panel { print("later on main") }
+            print("before")
+            sync globals
+            """),
+        ("Cancellation: until mit Zeitlimit (TimeoutException), fertig vor dem Limit, fire until source.Token (Cancel weckt den Sleep sofort), ThrowIfCancelled, catch innerhalb, await [ ... ] until", """
+            #import "time"
+            class W {
+                static int Slow(int ms) { Sleep(ms * 1ms); return ms }
+                static int Check() { CancellationToken.Current().ThrowIfCancelled(); return 1 }
+                static int Inner() {
+                    try { Sleep(1s) } catch (TimeoutException e) { return 7 }
+                    return 0
+                }
+            }
+            try { int r = await W.Slow(500) until 50ms; print("no " + r) } catch (TimeoutException e) { print("timeout: " + e.message) }
+            print("fast " + await W.Slow(10) until 2s)
+            var source = new CancellationSource()
+            int done = 0
+            fire until source.Token {
+                try { Sleep(5s); print("slept") } catch (CancelledException e) { print("thread cancelled") }
+                sync global { done = 1 }
+            }
+            Sleep(50ms)
+            source.Cancel()
+            while (done < 1) { sync globals; Sleep(5ms) }
+            var s2 = new CancellationSource()
+            s2.Cancel()
+            try { int c = await W.Check() until s2.Token; print("no") } catch (CancelledException e) { print("checked " + e.message) }
+            print("inner " + await W.Inner() until 30ms)
+            print(source.IsCancelled + " " + s2.Token.IsCancelled + " " + (new CancellationSource()).IsCancelled)
+            var outer = new CancellationSource()
+            var parts = await [W.Slow(20), W.Slow(30)] until outer.Token, 1s
+            print("all " + parts[0] + " " + parts[1])
+            try { Sleep(1ms); print("no limit outside") } catch (CancelledException e) { print("wrong") }
+            """),
+        ("Cancellation: eine Quelle im Task folgt dessen Token, await [ ... ] mit Zeitlimit, CancelAfter, await actor.M() until, Detached", """
+            #import "time"
+            class W {
+                static int Slow(int ms) { Sleep(ms * 1ms); return ms }
+                static undefined Watch() {
+                    var inner = new CancellationSource()
+                    try { int r = await W.Slow(5000) until inner.Token; print("watch no") } catch (CancelledException e) { print("watch: inner followed outer") }
+                }
+            }
+            actor Clock {
+                int Tick() { return 1 }
+            }
+            var outer = new CancellationSource()
+            int done = 0
+            fire until outer.Token { W.Watch(); sync global { done = done + 1 } }
+            Sleep(30ms)
+            outer.Cancel()
+            while (done < 1) { sync globals; Sleep(5ms) }
+            try { var both = await [W.Slow(1000), W.Slow(10)] until 40ms; print("no") } catch (TimeoutException e) { print("all: " + e.message) }
+            var later = new CancellationSource()
+            later.CancelAfter(30ms)
+            try { int r = await W.Slow(2000) until later.Token; print("no") } catch (CancelledException e) { print("after: " + e.message) }
+            var clock = new Clock()
+            fire with clock {
+                try { int t = await clock.Tick() until 30ms; print("no tick " + t) } catch (TimeoutException e) { print("actor: " + e.message) }
+                sync global { done = done + 1 }
+            }
+            while (done < 2) { sync globals; Sleep(5ms) }
+            var detached = CancellationSource.Detached()
+            print(detached.IsCancelled)
+            """),
+        ("Tasks: 600 fire-Threads schlafen und schreiben in Sektionen (die VM als Tasks eines Pools, docs/ROADMAP_TASKS.md Schritt 7)", """
+            #import "time"
+            int done = 0
+            for (var i = 0; i < 600; i++) {
+                fire taking i {
+                    Sleep(50ms)
+                    sync global { done = done + 1 }
+                }
+            }
+            while (done < 600) { sync globals; Sleep(5ms) }
+            print("done " + done)
+            """),
+        ("Tasks: process in Threads, die Threads starten (die Nachrichten kommen, waehrend der Task wartet)", """
+            #import "time"
+            actor Box {
+                int n
+                construct() { this.n = 0 }
+                undefined Add(int k) { this.n += k }
+            }
+            actor Done {
+                int count
+                construct() { this.count = 0 }
+                undefined One() { this.count++ }
+            }
+            var done = new Done()
+            for (var t = 0; t < 50; t++) {
+                fire with done {
+                    var box = new Box()
+                    fire with box { for (var i = 0; i < 10; i++) { Sleep(1ms); box.Add(i) } }
+                    for (var i = 0; i < 10; i++) process box
+                    if (box.n == 45) done.One()
+                }
+            }
+            for (var m = 0; m < 50; m++) process done
+            print("all " + done.count)
+            """),
+        ("Einfangen: taking x / handover x an der Verwendung im fire-Block und im Lambda, ein Local ohne Wort wird kopiert (TC023), ein Lambda im fire-Koerper sieht dessen Variablen", """
+            class Item {
+                int v
+                construct(int v) { this.v = v }
+            }
+            class Work {
+                static undefined Run() {
+                    var list = [new Item(1), new Item(2)]
+                    var node = new Item(7)
+                    int k = 5
+                    int done = 0
+                    fire {
+                        (taking list)[0].v = 100
+                        print("thread copy " + list[0].v + " k " + (taking k) + " node " + (handover node).v)
+                    }
+                    Sleep(50ms)
+                    print("caller " + list[0].v + " node " + node)
+                    fire { print("implicit " + list.Length + " " + k) }
+                    Sleep(50ms)
+                    // lambdas: taking - a copy made when the lambda is made; plain - the variable's value as before
+                    var item = new Item(3)
+                    var copyIt = () => { (taking item).v = 30; return item.v }
+                    var shareIt = () => { item.v = item.v + 1; return item.v }
+                    print("lambda copy " + copyIt() + " caller " + item.v)
+                    print("lambda shared " + shareIt() + " caller " + item.v)
+                    var moved = new Item(9)
+                    var keep = () => (handover moved).v
+                    print("lambda moved " + keep())
+                    // a lambda in a fire body sees the body's variables
+                    fire {
+                        var mine = 41
+                        var f = () => mine + 1
+                        print("in thread " + f())
+                        var parts = await [Work.Twice(mine), Work.Twice(2)]
+                        print("await in thread " + parts[0] + " " + parts[1])
+                    }
+                    Sleep(50ms)
+                }
+                static int Twice(int x) { return x * 2 }
+            }
+            #import "time"
+            Work.Run()
+            """),
         ("copy/flat als Argument eines Lambda-Aufrufs: die Kopie, nicht das Original", """
             class Item { int v = 0
                 construct(int v) { this.v = v } }
@@ -29402,6 +29575,36 @@ else
                 for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, new SolidBrush(9)); win.Tick() }
                 print(win.Tick())
                 """, new[] { "True", "False", "True", "True", "undefined", "True", "True", "True", "True" }, ""),
+                    ("Fenster: ein Handler, der wartet, haelt das Fenster nicht an (Task der Gruppe des Hauptprogramms, docs/ROADMAP_TASKS.md Schritt 5)", """
+                #import "windows"
+                #import "time"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "group")
+                win.VSync = false
+                var ticks = 0
+                var during = -1
+                var finished = false
+                var order = ""
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => {
+                    order = order + "down "
+                    var before = ticks
+                    Sleep(40ms)
+                    during = ticks - before
+                    order = order + "after "
+                    finished = true
+                })
+                win.RegisterKeyUp(func(int k, int s, int m, bool r) => { order = order + "up " })
+                var open = true
+                var n = 0
+                while (!finished && n < 2000) {
+                    if (open) { open = win.Tick() }
+                    ticks = ticks + 1
+                    n = n + 1
+                    Sleep(2ms)
+                }
+                print(order)
+                print(during > 0)
+                """, new[] { "down up after ", "True" }, "-DFIRE_DISPLAY_SELFTEST "),
                     ("Fenster: AutoResize bringt den Framebuffer auf die Groesse des Fensters", """
                 #import "windows"
                 var fb = new Framebuffer(64, 48)

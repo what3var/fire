@@ -2048,6 +2048,8 @@ namespace fire.Native
                 if (!_errorClasses.Contains("ArgumentException")) _errorClasses.Add("ArgumentException");
                 if (!_errorClasses.Contains("OverflowException")) _errorClasses.Add("OverflowException");   // (adaptUnit)
                 if (!_errorClasses.Contains("MissingMemberException")) _errorClasses.Add("MissingMemberException");   // (missingMethod, missingField)
+                // (a wait of a task that is cancelled: fire_throwCancelled)
+                if (_usesThreads) foreach (var cancelled in new[] { "CancelledException", "TimeoutException" }) if (!_errorClasses.Contains(cancelled)) _errorClasses.Add(cancelled);
                 // (a program that loads plugins: `fireError("X", ...)` of a plugin's code may name any exception class of the libraries)
                 if (_openWorld)
                     foreach (var rc in _program.Program.Classes.Values.Where(c => ModuleOf(c) != null && ClassIs(c, "Exception")).OrderBy(c => c.Name, StringComparer.Ordinal))
@@ -4944,6 +4946,16 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
+                    if (Array.IndexOf(CancelMethods.Names, native) >= 0)
+                    {
+                        // cancellation (fire_rt.h: fire_cancel_new, ...): the nodes of the runtime behind the prelude's CancellationSource / CancellationToken
+                        UseThreads();
+                        int first = d - argc;
+                        string cancelArgs = string.Join(", ", Enumerable.Range(first, argc).Select(SR));   // (read before the result slot is written: it may be an alias)
+                        E($"{T(first)} = fire_{native.Substring(2)}({cancelArgs});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
                     if (native == AwaitMethods.NativeName && argc == 3)
                     {
                         // `await [ ... ]` (fire_rt.h awaitRun: the lambdas of the calls side by side, as tasks - where the target has threads)
@@ -4997,6 +5009,9 @@ namespace fire.Native
                         UseWindows(); _nativeImportsUsed.Add(NativeImports.Windows);
                         string name = native.Substring(6);
                         int first = d - argc;
+                        // a callback of a window runs as a task of the main program's group where there are tasks (fire_groupCall: when it waits, the window goes
+                        // on - docs/ROADMAP_TASKS.md step 5): the program has the scheduler then
+                        if (name == "WinRegisterEvent" && _target.Native.SupportsThreads && _target.Native.Platform is "posix" or "windows") UseThreads();
                         if (name == "WinMgrStart")
                         {
                             // the thread of a window manager runs the program's cycles at its safe points: fire threads (the GIL, host services); a platform
@@ -5871,6 +5886,20 @@ namespace fire.Native
                 case OpCode.OverloadHint:
                     // (read by the call it stands in front of: OverloadHintBefore)
                     return Next();
+                case OpCode.CancelPush:
+                {
+                    // `until x` (fire_rt.h fire_untilPush): the node the task follows - for `await` its frame, for the `fire` that follows its token
+                    UseThreads();
+                    int n = ins.A[0] & 0x7F;
+                    Need(n);
+                    int first = d - n;
+                    E($"{{ {CArray("Value", "lv", Enumerable.Range(first, n).Select(SR).DefaultIfEmpty("Undef()").ToList())}fire_untilPush(lv, {n}, {((ins.A[0] & 0x80) != 0 ? "true" : "false")}); }}");
+                    d = first;
+                    return Next();
+                }
+                case OpCode.CancelPop:
+                    E("fire_untilPop();");
+                    return Next();
                 case OpCode.Dedicate:
                     // `await dedicated ...`: the running task goes to a system thread of its own (only a task can: a program without threads has none)
                     if (_usesThreads) E("fire_dedicateEnter();");
@@ -6579,10 +6608,23 @@ namespace fire.Native
                 case OpCode.PostGlobal:
                 {
                     UseThreads();
-                    int argc = ins.A[0];
+                    int argc = ins.A[0] & 0x3F;
+                    bool onTarget = (ins.A[0] & 0x80) != 0;   // `fire on x` / `await on x`: the first argument is the object itself
+                    bool awaitJob = (ins.A[0] & 0x40) != 0;   // `await on x`: the result comes back
                     Need(argc + 1);
                     int first = d - argc - 1;
-                    E($"{{ {CArray("Value", "av", Enumerable.Range(first, argc).Select(S).DefaultIfEmpty("Undef()").ToList())}postJob({S(d - 1)}, av, {argc}); }}");
+                    string av = CArray("Value", "av", Enumerable.Range(first, argc).Select(SR).DefaultIfEmpty("Undef()").ToList());
+                    if (awaitJob)
+                    {
+                        string onLam = SR(d - 1);
+                        E($"{{ {av}{T(first)} = adoptV(awaitOnJob({onLam}, av, {argc}), &{OwnerList()}); }}");
+                        Check();
+                        d = first + 1;
+                        SetR(first, false);
+                        SetT(first, TypeUnknown);
+                        return Next();
+                    }
+                    E($"{{ {av}postJobEx({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, NULL); }}");
                     if (argc > 0) Check();   // (`[NoCopy]`: an argument that reaches one is the ArgumentException, nothing is queued)
                     d = first;
                     return Next();

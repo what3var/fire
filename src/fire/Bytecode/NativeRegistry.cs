@@ -149,6 +149,11 @@ namespace fire.Bytecode
             Register(fire.Standard.EnvironmentMethods.NativeName, args => fire.Standard.EnvironmentMethods.Call(args, env));
             Register(fire.Standard.LibraryMethods.NativeName, fire.Standard.LibraryMethods.Call);
             Register(fire.Standard.AwaitMethods.NativeName, fire.Standard.AwaitMethods.Call);
+            foreach (var cancelName in fire.Standard.CancelMethods.Names)
+            {
+                string bound = cancelName;
+                Register(bound, args => fire.Standard.CancelMethods.Call(bound, args));
+            }
         }
     }
 }
