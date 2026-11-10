@@ -8639,6 +8639,9 @@ FIRE_FN bool awaitRunTasks(Value* lams, uint32_t n, Value res, Value fails, OwnL
     uint32_t i;
     bool left = false;
     if (res.kind != K_Array || fails.kind != K_Array || !ownedOf(res) || !ownedOf(fails)) return false;
+    /* (the calls may use the main program's globals - not lent, read directly: from now on the global scope is shared, as at the first `fire` - the tasks read
+     * it under the lock of the globals and change it in sections, which the waiting main program grants) */
+    ensureDomain();
     for (i = 0; i < n; i++) {
         CopyMap mine = {0};
         uint32_t k;

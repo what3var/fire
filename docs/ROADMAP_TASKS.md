@@ -178,7 +178,9 @@ var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for
   (the results belong to the array: the first slot claims them, SPEC 2.1). The VM runs them one after the other. A native build (`awaitRun`) runs them as
   tasks side by side - the last one on the caller's strand - when no two of them reach the same object (else one after the other: lending to two at once
   is not safe); the strings they reach count atomically from then on; every task has its own arrays of one element for its result and exception and a
-  global scope of its own, which the caller takes over when all are done. A program with `await [ ... ]` uses the scheduler of tasks. Four calls that
+  global scope of its own, which the caller takes over when all are done. The main program's globals are not lent (the calls read them directly): the
+  global scope becomes shared as at the first `fire` - the tasks read it under the lock of the globals and change it in sections that the waiting caller
+  grants; so calls that change the same global object run safely, in an order that is not fixed (as threads). A program with `await [ ... ]` uses the scheduler of tasks. Four calls that
   sleep 100 ms: about 100 ms natively; ThreadSanitizer and AddressSanitizer clean. The element type of the result is `any` for now (the common type of
   the results, as for an array literal, is left for later).
 * Next: 4c `await actor.Method()`, 4d `dedicated`.
