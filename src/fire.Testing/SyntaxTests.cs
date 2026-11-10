@@ -480,6 +480,16 @@ static class SyntaxTests
             var p = new Box.Port()
             print(p.Kind() + " " + p.Own() + " " + new Box.Plain().Kind())
             """) is var chain && chain == "own inner\nglobal box global", chain);
+        Check("Namensaufloesung: lokal vor dem Objekt (Feld) vor global", Output("""
+            var count = 1
+            class C {
+                int count = 2
+                int Get() { return count }
+                int Local() { var count = 3; return count }
+            }
+            var c = new C()
+            print(c.Get() + " " + c.Local() + " " + count)
+            """) is var vars && vars == "2 3 1", vars);
 
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }

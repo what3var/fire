@@ -1193,20 +1193,40 @@ namespace fire.Compiler
 
         private ResolvedRef ResolveIdentifierRef(string name, int line)
         {
+            // the chain (like C#): the local scopes, the members of the object (its class and the base classes), then the global variables and
+            // the natives - a field `count` hides a global `count` inside the class
             int depth = 0;
             var scope = _current;
+            ResolverScope? global = null;
+            int globalSlot = -1;
             while (scope != null)
             {
                 if (scope.Slots.TryGetValue(name, out int slot))
                 {
+                    if (scope.IsGlobal) { global = scope; globalSlot = slot; break; }
                     scope.RequiredUnits.TryGetValue(name, out var requiredUnit);
                     scope.Widths.TryGetValue(name, out int width);
-                    return scope.IsGlobal
-                        ? new ResolvedRef.Global(slot, requiredUnit, width)
-                        : new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name), width);
+                    return new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name), width);
                 }
                 depth++;
                 scope = scope.Parent;
+            }
+
+            if (_currentClass != null && FindMemberInClassChain(_currentClass, name) is { } member)
+            {
+                if (member.IsStatic) return new ResolvedRef.StaticMember(member.ClassName);
+                if (!_inStaticMethod) return new ResolvedRef.ImplicitThisMember();
+                if (global == null)
+                    throw new ResolverException(
+                        $"'{name}' is an instance member - it is not reachable in a static method or static " +
+                        "field initializer without a bound 'this'", line);
+            }
+
+            if (global != null)
+            {
+                global.RequiredUnits.TryGetValue(name, out var requiredUnit);
+                global.Widths.TryGetValue(name, out int width);
+                return new ResolvedRef.Global(globalSlot, requiredUnit, width);
             }
 
             if (_nativeNames.Contains(name))
@@ -1217,29 +1237,6 @@ namespace fire.Compiler
                 throw new ResolverException(
                     $"'{name}' is registered as 'tryable' - it can only be called with 'try {name}(...)', " +
                     "not as a direct call.", line);
-
-            // SPEC "Implicit member references" - inside a class
-            // a field/a method/a property may also be addressed WITHOUT
-            // 'this.'/'ClassName.' prefix, just like a
-            // local variable (in addition to, not instead of, the explicit
-            // forms - see the MemberExpr case for 'this.X'/'ClassName.X').
-            // Deliberately checked AFTER natives/externs - a class member
-            // of the same name should not surprisingly shadow an existing native/extern
-            // function.
-            if (_currentClass != null)
-            {
-                var found = FindMemberInClassChain(_currentClass, name);
-                if (found != null)
-                {
-                    if (found.Value.IsStatic)
-                        return new ResolvedRef.StaticMember(found.Value.ClassName);
-                    if (_inStaticMethod)
-                        throw new ResolverException(
-                            $"'{name}' is an instance member - it is not reachable in a static method or static " +
-                            "field initializer without a bound 'this'", line);
-                    return new ResolvedRef.ImplicitThisMember();
-                }
-            }
 
             // A lambda with `on target` (SPEC 4.2): the members of the bound object are visible unqualified. Whose class that is is only
             // known at runtime - the name is read/written/called there like `this.name` (an unknown name is then a runtime error).
