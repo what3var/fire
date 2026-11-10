@@ -466,6 +466,21 @@ static class SyntaxTests
         Check("Interface: doppeltes get ist E3020, ein Name ohne Accessoren E3023, ein unbekanntes Wort E3022", Output("interface I { int X { get; get; } }").StartsWith("ERROR E3020")
             && Output("interface I { int X { } }").StartsWith("ERROR E3023") && Output("interface I { int X { init; } }") is var unknownAccessor && unknownAccessor.StartsWith("ERROR E3022"), Output("interface I { int X { } }"));
 
+        // the chain of names (like C#): the own namespace before the global names, `global.X` for a global X that the namespace hides; a base class
+        // of the same name as the class is the other one
+        Check("Namensaufloesung: der eigene Namespace vor global (TimeoutException), global.X fuer das verdeckte, class Port : Port nimmt die andere", Output("""
+            class Port { string Kind() { return "global" } }
+            namespace Box {
+                class TimeoutException : Exception { construct(string m) : base(m) { } }
+                class Port : Port { string Own() { return "box" } }
+                class Plain : global.Port { }
+                class Thrower { static undefined Go() { throw new TimeoutException("inner") } }
+            }
+            try { Box.Thrower.Go() } catch (Box.TimeoutException e) { print("own " + e.message) } catch (Exception e) { print("global") }
+            var p = new Box.Port()
+            print(p.Kind() + " " + p.Own() + " " + new Box.Plain().Kind())
+            """) is var chain && chain == "own inner\nglobal box global", chain);
+
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }
 }

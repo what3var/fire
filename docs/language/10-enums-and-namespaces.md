@@ -143,6 +143,10 @@ print(new Geo.Deep.Inner() is of Geo.Deep.Inner)
 
 - From outside, a member is written with its full name: `Geo.Shape`, `Geo.Deep.Inner`. Inside the namespace the short name is enough.
 - Namespaces can be nested, also written with a dot: `namespace Geo.Sub { ... }`.
+- A name is looked up from the inside out (as in C#): local variables, the members of the object, the namespace the code is written in, the
+  global names, then the `#using` namespaces. A class of the own namespace hides a global class of the same name - `new TimeoutException(...)`
+  inside `namespace Net` is `Net.TimeoutException`. `global.Name` is the hidden global class (`class Port : global.Device`); a base class with the
+  class's own name (`class Port : Port`) is always the other one.
 - The same namespace can be opened several times, also in different files; the contents are merged.
 - Several libraries of the standard library live in namespaces: `IO`, `Net`, `Http`, `Tls`, `Gpio`, `I2c`, `Spi`, `WiFi`, `Audio`, `Tracker` (see [Standard library](19-standard-library.md)).
 

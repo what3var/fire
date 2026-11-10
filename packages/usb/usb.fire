@@ -58,7 +58,7 @@ namespace Usb {
             if (code == 4) { throw new BusyException(message) }
             if (code == 5) { throw new PermissionException(message) }
             if (code == 6) { throw new UnsupportedException(message) }
-            if (code == 8) { throw new TimeoutException(message) }
+            if (code == 8) { throw new Usb.TimeoutException(message) }
             if (code == 9) { throw new StallException(message) }
             if (code == 10) { throw new DisconnectedException(message) }
             throw new UsbException(message, code)
@@ -304,7 +304,7 @@ namespace Usb {
                 var slice = 20
                 if (limit >= 0) {
                     var left = limit - (Usb.Clock.Now() - start)
-                    if (left <= 0) { throw new TimeoutException("The USB transfer on endpoint 0x" + Usb.Format.Hex(endpoint, 2) + " did not finish in time.") }
+                    if (left <= 0) { throw new Usb.TimeoutException("The USB transfer on endpoint 0x" + Usb.Format.Hex(endpoint, 2) + " did not finish in time.") }
                     if (left < slice) { slice = left }
                 }
                 var n = __UsbTransfer(this.handle, type, endpoint, buffer, offset + done, count - done, slice)
@@ -466,7 +466,7 @@ namespace Usb {
 
     /// <summary>A USB device as one device of the device framework (`usb:sim`, `usb:001:004`): Connect opens it and takes the first interface with bulk endpoints
     /// as a stream; Write sends a byte buffer to its bulk OUT endpoint, Read returns what came on its bulk IN endpoint (an empty buffer when nothing came).</summary>
-    class Port : Device {
+    class Port : global.Device {   // (the Device of the device framework - Usb.Device is the USB device)
         Usb.DeviceInfo info
         Usb.Device device
         Usb.UsbStream stream

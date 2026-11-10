@@ -53,7 +53,7 @@ namespace WiFi {
             if (code == 4) { throw new BusyException(message) }
             if (code == 6) { throw new UnsupportedException(message) }
             if (code == 8) { throw new AuthException(message) }
-            if (code == 9) { throw new TimeoutException(message) }
+            if (code == 9) { throw new WiFi.TimeoutException(message) }
             if (code == 10) { throw new NotConnectedException(message) }
             throw new WiFiException(message, code)
         }
@@ -179,7 +179,7 @@ namespace WiFi {
                 var done = __WiFiScanStep(this.handle)
                 if (done == 1) { break }
                 if (done < 0) { WiFi.Errors.Throw() }
-                if (WiFi.Clock.Expired(deadline)) { throw new TimeoutException("The scan did not finish in time.") }
+                if (WiFi.Clock.Expired(deadline)) { throw new WiFi.TimeoutException("The scan did not finish in time.") }
                 WiFi.Clock.Pause(deadline, tries)
                 tries = tries + 1
             }
@@ -210,7 +210,7 @@ namespace WiFi {
                 if (s == 0) { throw new NotConnectedException("The connection was lost while joining.") }
                 if (WiFi.Clock.Expired(deadline)) {
                     __WiFiDisconnect(this.handle)
-                    throw new TimeoutException("Joining '" + ssid + "' did not finish in time.")
+                    throw new WiFi.TimeoutException("Joining '" + ssid + "' did not finish in time.")
                 }
                 WiFi.Clock.Pause(deadline, tries)
                 tries = tries + 1

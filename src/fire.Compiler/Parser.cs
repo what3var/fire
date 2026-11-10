@@ -563,7 +563,7 @@ namespace fire.Compiler
         private IReadOnlyList<string> CurrentNamespaces() =>
             _currentNamespace == null
                 ? _usingNamespaces
-                : new[] { _currentNamespace }.Concat(_usingNamespaces).ToList();
+                : new OwnNamespaceList(new[] { _currentNamespace }.Concat(_usingNamespaces));
 
         /// <summary>Appends `simpleName` to the current namespace (SPEC
         /// "Namespaces") - `_currentNamespace + "." + simpleName`, or
@@ -2566,7 +2566,8 @@ namespace fire.Compiler
                     // `class Home : Command<IDevice>`: the type arguments are (as everywhere) not evaluated, only their COUNT chooses the generic
                     // class or the generic interface of this name (see GenericClassNames.ResolveNewTarget).
                     var baseTypeArgs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
-                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
+                    // (`class Port : Port` in a namespace: the base is the other Port - a class of the own namespace does not win over itself)
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: baseName == name && namespaces is OwnNamespaceList ? namespaces.ToList() : namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
                 } while (Match(TokenType.Comma));
             }
 
@@ -2875,7 +2876,8 @@ namespace fire.Compiler
                 {
                     string baseName = ParseDottedName("interface names");
                     var baseTypeArgs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
-                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
+                    // (`class Port : Port` in a namespace: the base is the other Port - a class of the own namespace does not win over itself)
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: baseName == name && namespaces is OwnNamespaceList ? namespaces.ToList() : namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
                 } while (Match(TokenType.Comma));
             }
             var typeParams = typeParamNames.Count > 0 ? ParseWhereClauses(typeParamNames, line) : null;

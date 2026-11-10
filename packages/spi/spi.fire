@@ -44,7 +44,7 @@ namespace Spi {
             if (code == 4) { throw new BusyException(message) }
             if (code == 5) { throw new PermissionException(message) }
             if (code == 6) { throw new UnsupportedException(message) }
-            if (code == 8) { throw new TimeoutException(message) }
+            if (code == 8) { throw new Spi.TimeoutException(message) }
             throw new SpiException(message, code)
         }
 

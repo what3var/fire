@@ -127,6 +127,10 @@ namespace fire.Ast
         /// "unknown class/unknown type".</summary>
         public string ResolveBaseName(Func<string, bool> isKnown)
         {
+            // the chain (like C#): the namespace the code is written in, then the global names, then the `#using` namespaces; `global.X` is the global X
+            // that a class of the own namespace hides (`global::X` in C#)
+            if (BaseName.StartsWith("global.", StringComparison.Ordinal)) return BaseName.Substring("global.".Length);
+            if (Namespaces is OwnNamespaceList && BaseName.IndexOf('.') < 0 && isKnown(Namespaces[0] + "." + BaseName)) return Namespaces[0] + "." + BaseName;
             if (isKnown(BaseName)) return BaseName;
             if (Namespaces != null)
                 foreach (var ns in Namespaces)
@@ -169,4 +173,10 @@ namespace fire.Ast
         }
     }
 
+    /// <summary>The namespaces a name is looked up in, when the first one is the namespace the code is written in (the parser's CurrentNamespaces
+    /// inside a `namespace` block): its classes win over global ones of the same name (TypeRef.ResolveBaseName).</summary>
+    public sealed class OwnNamespaceList : System.Collections.Generic.List<string>
+    {
+        public OwnNamespaceList(System.Collections.Generic.IEnumerable<string> items) : base(items) { }
+    }
 }

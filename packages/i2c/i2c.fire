@@ -50,7 +50,7 @@ namespace I2c {
             if (code == 5) { throw new PermissionException(message) }
             if (code == 6) { throw new UnsupportedException(message) }
             if (code == 8) { throw new NoAckException(message) }
-            if (code == 9) { throw new TimeoutException(message) }
+            if (code == 9) { throw new I2c.TimeoutException(message) }
             throw new I2cException(message, code)
         }
 

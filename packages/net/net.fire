@@ -63,7 +63,7 @@ namespace Net {
             var message = __NetLastErrorMessage()
             if (code == 2 || code == 7 || code == 12) { throw new ClosedException(message, code) }
             if (code == 3) { throw new RefusedException(message) }
-            if (code == 4) { throw new TimeoutException(message) }
+            if (code == 4) { throw new Net.TimeoutException(message) }
             if (code == 8 || code == 13) { throw new PermissionException(message, code) }
             if (code == 10) { throw new ResolveException(message) }
             throw new NetException(message, code)
@@ -162,7 +162,7 @@ namespace Net {
                 var state = __NetConnectStep(this.handle)
                 if (state == 1) { break }
                 if (state < 0) { Net.NetErrors.Throw() }
-                if (Net.Clock.Expired(deadline)) { throw new TimeoutException("Connecting to " + host + ":" + port + " timed out.") }
+                if (Net.Clock.Expired(deadline)) { throw new Net.TimeoutException("Connecting to " + host + ":" + port + " timed out.") }
                 Net.Clock.Pause(deadline, tries)
                 tries = tries + 1
             }
@@ -289,7 +289,7 @@ namespace Net {
                 var n = __NetRecv(this.handle, buffer, offset, count, 0)
                 if (n >= 0) { return n }
                 if (__NetLastError() != 4) { Net.NetErrors.Throw() }
-                if (Net.Clock.Expired(deadline)) { throw new TimeoutException("Nothing was received in time.") }
+                if (Net.Clock.Expired(deadline)) { throw new Net.TimeoutException("Nothing was received in time.") }
                 Net.Clock.Pause(deadline, tries)
                 tries = tries + 1
             }
@@ -307,7 +307,7 @@ namespace Net {
                     n = __NetSend(this.handle, buffer, offset + done, count - done, 0)
                     if (n >= 0) { break }
                     if (__NetLastError() != 4) { Net.NetErrors.Throw() }
-                    if (Net.Clock.Expired(deadline)) { throw new TimeoutException("Sending timed out.") }
+                    if (Net.Clock.Expired(deadline)) { throw new Net.TimeoutException("Sending timed out.") }
                     Net.Clock.Pause(deadline, tries)
                     tries = tries + 1
                 }
@@ -392,7 +392,7 @@ namespace Net {
         // The next connection as a TcpClient; waits without a limit unless one is given, then Net.TimeoutException.
         Net.TcpClient Accept(any timeout = undefined) {
             var c = this.TryAccept(timeout)
-            if (c == undefined) { throw new TimeoutException("No connection arrived in time.") }
+            if (c == undefined) { throw new Net.TimeoutException("No connection arrived in time.") }
             return c
         }
 
@@ -512,7 +512,7 @@ namespace Net {
                     return n
                 }
                 if (__NetLastError() != 4) { Net.NetErrors.Throw() }
-                if (Net.Clock.Expired(deadline)) { throw new TimeoutException("No datagram arrived in time.") }
+                if (Net.Clock.Expired(deadline)) { throw new Net.TimeoutException("No datagram arrived in time.") }
                 Net.Clock.Pause(deadline, tries)
                 tries = tries + 1
             }
