@@ -2578,11 +2578,21 @@ namespace fire.Compiler
                 _current.CaptureNames.Add(name);
                 (captures ??= new List<IdentifierExpr>()).Add(outer);
                 // (`taking x` / `handover x` in the body: the lambda gets a copy / takes it over when it is made)
-                Expr load = lambda.CaptureModes != null && lambda.CaptureModes.TryGetValue(name, out bool moved)
-                    ? new UnaryExpr(lambda.Line, moved ? UnaryOp.Take : UnaryOp.DeepCopy, outer) : outer;
+                Expr load = outer;
+                if (lambda.CaptureModes != null && lambda.CaptureModes.TryGetValue(name, out bool moved))
+                {
+                    if (moved)
+                    {
+                        // (moved like a handover to a thread: fire.Standard.LambdaHandover; the compiler resets the variable after the lambda is made)
+                        var mover = new IdentifierExpr(lambda.Line, fire.Standard.LambdaHandover.NativeName);
+                        _refs[mover] = new ResolvedRef.Native(fire.Standard.LambdaHandover.NativeName);
+                        load = new CallExpr(lambda.Line, mover, new List<Expr> { outer });
+                    }
+                    else load = new UnaryExpr(lambda.Line, UnaryOp.DeepCopy, outer);
+                }
                 (loads ??= new List<Expr>()).Add(load);
             }
-            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures, loads != null && loads.Exists(l => l is UnaryExpr) ? loads : null);
+            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures, loads != null && loads.Exists(l => !ReferenceEquals(l, null) && l is not IdentifierExpr) ? loads : null);
         }
 
         /// <summary>Is the code currently being resolved inside a lambda with `on target`? Then unknown names are members of the bound object.</summary>

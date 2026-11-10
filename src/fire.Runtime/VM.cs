@@ -303,6 +303,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("Native libraries can only be loaded while the program runs.")).LibraryCall(args);
             fire.Standard.AwaitMethods.Implementation = args =>
                 (_currentThreadVm ?? throw new InvalidOperationException("'await [ ... ]' needs a running program.")).AwaitRun(args);
+            fire.Standard.LambdaHandover.Implementation = args =>
+                (_currentThreadVm ?? throw new InvalidOperationException("'handover' needs a running program.")).LambdaHandoverNow(args);
             fire.Standard.CancelMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("Cancellation needs a running program.")).CancelNative(name, args);
         }

@@ -5,6 +5,16 @@ namespace fire.Standard
 {
     /// <summary>Cancellation (docs/ROADMAP_TASKS.md section 6): the natives behind the prelude's CancellationSource / CancellationToken. A node is an int
     /// handle (0: none). The VM implements them (fire.Runtime.Cancellation), a native build in fire_rt.h.</summary>
+    /// <summary>`handover x` in a lambda: x - and what it reaches - moves to the lambda like a handover to a thread (every reference from before is dead);
+    /// the caller's variable is undefined afterwards. The VM: ObjectHandover.MoveAll; native: fire_rt.h fire_lambdaHandover.</summary>
+    public static class LambdaHandover
+    {
+        public const string NativeName = "__lambda_handover";
+        public static Func<Value[], Value>? Implementation;
+        public static Value Call(Value[] args) =>
+            (Implementation ?? throw new InvalidOperationException("'handover' needs a running program."))(args);
+    }
+
     public static class CancelMethods
     {
         public static readonly string[] Names =

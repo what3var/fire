@@ -1163,10 +1163,13 @@ namespace fire.Compiler
                 case FireStmt f:
                     {
                         if (f.Until != null) foreach (var limit in f.Until) Infer(limit);
-                        foreach (var implicitName in f.TakingCaptures.Where(c => c.Implicit).Select(c => c.VarName))
-                                Report(ImplicitCaptureCode, $"The thread uses the local '{implicitName}' of the code around it: it gets a copy. Write 'taking {implicitName}' where it is used (a copy) or 'handover {implicitName}' (moved to the thread).", f.Line);
                         // the block runs in a scope of its own: the `taking` copies and the actor of `with` are its variables
                         var captured = f.TakingCaptures.Select(c => (c.VarName, Type: Infer(c.Source))).ToList();
+                        // a local copied without a word: said only when the copy costs memory - an object, an array, a string, an unknown value (a number is copied
+                        // for nothing); the user sees where the memory grows
+                        for (int ci = 0; ci < f.TakingCaptures.Count; ci++)
+                            if (f.TakingCaptures[ci].Implicit && captured[ci].Type.Kind is not (StaticKind.Bool or StaticKind.Int or StaticKind.Float or StaticKind.Char or StaticKind.Enum or StaticKind.Word))
+                                Report(ImplicitCaptureCode, $"The thread uses the local '{captured[ci].VarName}' of the code around it: it gets a copy of it (memory). Write 'taking {captured[ci].VarName}' where it is used (a copy) or 'handover {captured[ci].VarName}' (moved to the thread).", f.Line);
                         var actor = f.WithSource != null ? Infer(f.WithSource) : StaticType.Dynamic;
                         Push();
                         foreach (var (name, type) in captured) Declare(name, type);

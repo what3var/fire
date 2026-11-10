@@ -4946,6 +4946,16 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
+                    if (native == LambdaHandover.NativeName && argc == 1)
+                    {
+                        // `handover x` in a lambda (fire_rt.h fire_lambdaHandover: the handover of the threads)
+                        UseThreads();
+                        int first = d - 1;
+                        string moved = SR(first);
+                        E($"{T(first)} = fire_lambdaHandover({moved});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
                     if (Array.IndexOf(CancelMethods.Names, native) >= 0)
                     {
                         // cancellation (fire_rt.h: fire_cancel_new, ...): the nodes of the runtime behind the prelude's CancellationSource / CancellationToken

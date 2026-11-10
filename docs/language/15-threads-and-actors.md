@@ -88,10 +88,13 @@ Work.Run()
 
 - One word per variable is enough: every other use of it in the block means the same copy (or the moved object). `taking` and `handover` for the same
   variable in one block is an error.
-- A local of the code around the block that the block uses **without** a word is copied too, and the type checker says so: `TC023`, a warning in lax
-  mode, an error in strict mode. The globals of the main program are no locals: the thread reads them directly (see [Global variables](#global-variables)).
-- The same words work in a **lambda**: `() => (taking item).v` captures a copy of `item`, made when the lambda is made; `handover item` hands the object
-  to the lambda. Without a word a lambda captures the variable's value as before (an object is shared - a lambda never goes to another thread).
+- A local of the code around the block that the block uses **without** a word is copied too. When the copy costs memory - an object, an array, a string,
+  a value of unknown type - the type checker says so: `TC023`, a warning in lax mode, an error in strict mode (a number is copied silently). The globals
+  of the main program are no locals: the thread reads them directly (see [Global variables](#global-variables)).
+- The same words work in a **lambda**: `() => (taking item).v` captures a copy of `item`, made when the lambda is made; `() => (handover item).v` moves
+  the instance into the lambda like a handover to a thread - `item` is `undefined` afterwards and every other reference from before is dead (a
+  `DestroyedException`). Without a word a lambda captures the variable's value as before: an object is shared, nothing is copied - no warning (a lambda
+  never goes to another thread).
 - A lambda inside a `fire` block captures the block's own variables like locals (`fire { var n = 41; var f = () => n + 1 }`) - so `await [ ... ]`
   works in a `fire` block too.
 

@@ -213,8 +213,15 @@ var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for
   copies first, the moved ones last; `handover` resets the caller's variable as before); the lambda's capture is loaded as `copy x` / `take x` when it is
   made (ResolvedRef.LambdaCaptures.Loads). A local of the code around a `fire` block that the body uses without a word (Resolver: the names it uses that
   are locals there and that the body does not declare itself) is captured as a copy marked Implicit - `TC023` of the type checker (lax a warning, strict
-  an error). A lambda without words captures as before (it stays on its thread). Tests: native == VM (copy, move, implicit copy, lambdas, a lambda and
+  an error) - only when the copy costs memory (an object, an array, a string, an unknown value; a number is copied silently). A lambda without words
+  captures as before: the instance is shared, nothing is copied, no warning. Tests: native == VM (copy, move, implicit copy, lambdas, a lambda and
   `await [ ... ]` in a `fire` body), TC023 lax/strict.
+* **`handover x` in a lambda - done as far as the definition goes:** the instance (and what it reaches) moves into the lambda like a handover to a
+  thread: the caller's variable is `undefined` afterwards and every other reference from before is dead (the next generation of the moved parts -
+  VM: ObjectHandover.MoveAll, native: handOverAll via `__lambda_handover`; natively this needs the thread runtime).
+  **Open (to be decided):** who owns the moved instance while the lambda holds it, and when it is destroyed. For now it belongs to the global scope of
+  the program (it lives until the program ends) - a lambda owns nothing in either backend yet (natively a lambda is counted and could destroy what it
+  owns at its end; the VM's lambdas are not counted). Also open: what a lambda that is called after its instance was destroyed or taken out sees.
 
 ## 4. The scheduler in C
 

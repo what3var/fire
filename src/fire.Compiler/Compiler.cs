@@ -2964,6 +2964,15 @@ namespace fire.Compiler
                 _chunk.EmitU16(protoIdx);
                 _chunk.EmitByte(hasOnTarget ? (byte)1 : (byte)0);
                 _chunk.EmitByte((byte)captures.Count);
+                // `handover x` in the body: the lambda has the instance now - the caller's variable no longer refers to it
+                var moves = captureRef is ResolvedRef.LambdaCaptures movedLoads ? movedLoads.Loads : null;
+                if (moves != null)
+                    for (int i = 0; i < captures.Count; i++)
+                        if (moves[i] is CallExpr { Callee: IdentifierExpr { Name: fire.Standard.LambdaHandover.NativeName } })
+                        {
+                            CompileExpr(new AssignExpr(lambda.Line, captures[i], new LiteralExpr(lambda.Line, Value.MakeUndefined())));
+                            _chunk.EmitOp(OpCode.Pop);
+                        }
             }
             else
             {

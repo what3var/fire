@@ -9735,6 +9735,16 @@ FIRE_FN void handoverRehome(Value* v, CopyMap* seen) {
         FIRE_SETGEN(*v, (FIRE_VGEN(*v) + 1) & FIRE_GEN_MASK);
 }
 #endif
+FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* travel);
+/* `handover x` in a lambda: x and what it reaches move - like a handover to a thread, every reference from before is dead (the caller's variable is reset by
+ * the generated code). Who owns them until the lambda lets them go is open (docs/ROADMAP_TASKS.md): for now the global scope (they live as long as it). */
+FIRE_FN Value fire_lambdaHandover(Value v) {
+    Value out = v;
+    if (!ownedOf(v)) return v;
+    if (!handoverFree(&v, 1)) return Undef();   /* (refused: the exception is set) */
+    handOverAll(&v, &out, 1, g_globalOwn);
+    return out;
+}
 /* What the thread gets for the `handover` values `vs` of one `fire` (all together: one may reach another): each value itself, moved (see above); a string or
  * lambda is shared as with `taking`. Every moved part gets the next generation of its slot - the references among the parts and the values the thread gets
  * carry it, every other Value (the sender's, from before the handover) is dead from then on: its use is the DestroyedException "... was handed over to a
