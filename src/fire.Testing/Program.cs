@@ -20684,6 +20684,53 @@ else
             print("fertig")
             """),
         // (the threads wait for each other with flags, not with counting loops: the order does not depend on how fast the machine or the generated code is)
+        ("Await: ein Aufruf (geliehen, ohne Kopie), die Blockform mit taking (Kopie), Ergebnis, Ausnahme am await, Methode, await als Name", """
+            #import "time"
+            class Item { int v = 0
+                construct(int v) { this.v = v } }
+            class Calc {
+                static int Count(Item list[]) { Sleep(1ms); return list.Length }
+                static int Sum(Item list[]) { var s = 0; foreach (var i in list) { s = s + i.v }; return s }
+                static int Bump(Item list[]) { list[1].v = list[1].v + 10; return list[1].v }
+                static Item Make(int v) { return new Item(v) }
+                static int Boom(int v) { if (v > 0) { throw new ArgumentException("boom " + v) }; return v }
+                int factor = 3
+                int Times(int x) { return x * this.factor }
+            }
+            var list = [new Item(1), new Item(2), new Item(3)]
+            var n = await Calc.Count(list)
+            print("count " + n)
+            print("lent " + (await Calc.Bump(list)) + " " + list[1].v)
+            print("copied " + (await Calc.Bump(list) taking list) + " " + list[1].v)
+            var s = await taking list { list[0].v = 100; return Calc.Sum(list) }
+            print("sum copy " + s + ", original " + list[0].v)
+            var made = await Calc.Make(7)
+            print("made " + made.v)
+            var c = new Calc()
+            print("times " + (await c.Times(5)))
+            try { await Calc.Boom(2) } catch (ArgumentException e) { print("caught " + e.message) }
+            var t = await { return 6 * 7 }
+            print("block " + t)
+            var await = 5
+            print("name " + await)
+            fire {
+                var k = await Calc.Count([new Item(4)])
+                sync global { n = n + k }
+            }
+            while (n < 4) { sync globals }
+            print("in a thread " + n)
+            """),
+        ("copy/flat als Argument eines Lambda-Aufrufs: die Kopie, nicht das Original", """
+            class Item { int v = 0
+                construct(int v) { this.v = v } }
+            var list = [new Item(1), new Item(2)]
+            var f = (any l) => { l[0].v = 50; return 1 }
+            var r = f(copy list)
+            print("copy " + list[0].v)
+            var g = (any l) => { l[1] = new Item(9); return 1 }
+            r = g(flat list)
+            print("flat " + list[1].v)
+            """),
         ("Threads: Thread startet Thread", """
             var innerDone = 0
             var outerDone = 0

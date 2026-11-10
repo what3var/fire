@@ -137,6 +137,32 @@ print(sync globals)                                  // 0: nothing left
 - Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
 - The project setting `globalJobs` and `--global-jobs` on the command line go before the directive ([Projects and solutions](../tools/projects.md)).
 
+## Waiting for a result: `await`
+
+`fire` starts something and goes on; `await` waits for it and gets its result:
+
+```fire
+#import "time"
+class Item { int v = 0
+    construct(int v) { this.v = v } }
+class Stock {
+    static int Count(Item list[]) { Sleep(10ms); return list.Length }
+}
+var list = [new Item(1), new Item(2)]
+var n = await Stock.Count(list)
+var sum = await taking list { var s = 0; foreach (var i in list) { s = s + i.v }; return s }
+print(n + " " + sum)
+```
+
+- `await Call(args)` waits until the call is done and gives its return value. The caller is stopped meanwhile, so nobody else can reach its objects:
+  the call gets them **lent**, without a copy. A copy only on request: `await Count(list) taking list` (or `handover list`: moved).
+- `await taking x { ... return v }` runs a block that sees only what it takes (copies) and the globals, like the body of `fire`.
+- An exception in the awaited code goes on at the `await`, with its type: `try { await Load(name) } catch (IoException e) { ... }`.
+- While the awaited code waits (`Sleep`, the net, a section), the caller's task gives its worker to other tasks - on all cores, without a thread of its
+  own per call. `await` is a word only in front of what it awaits; elsewhere `await` is an ordinary name.
+- Coming next (docs/ROADMAP_TASKS.md): `await [f(), g()]` (several calls at once), `await actor.Method()` (the result of an actor's method),
+  `dedicated` (a thread of its own for work that blocks in natives) and cancellation with `until`.
+
 ## Actors
 
 An `actor` is declared like a class. A method call on an actor does not run the method: it puts a **message** into the actor's mailbox. The thread

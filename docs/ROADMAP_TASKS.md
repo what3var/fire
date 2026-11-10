@@ -164,6 +164,16 @@ var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for
   `var count = await counter.Get()`. The home of an actor processes its mailbox as a task in the pool. This closes the open point of the single
   instances in docs/ROADMAP_HTTP.md.
 
+### Step 4 in detail - `await`
+
+* **4a done:** `await Call(args)` and `await [taking x | handover x] { ... return v }` (the parser: `await` is a word only in front of what it awaits,
+  like `trust`; the editor knows it). A single `await` runs the awaited code **on the caller's strand**: the caller waits anyway, so this is exactly
+  lending - no copy, no switch; the result and an exception are those of a call. While the awaited code waits, the caller's task is parked and its worker
+  runs others (step 3). Clauses after the call copy (`taking x` -> `copy x`) or move (`handover x` -> `take x`) the argument or receiver they name; the
+  block form is a function of its own that sees only what it takes and the globals, called at once. Fixed on the way: `f(copy x)` on a lambda did not copy
+  in a native build (the prefix CopyArgs was only read by calls of methods).
+* Next: 4b `await [ ... ]` (natively tasks in parallel, the VM one after the other until step 7), 4c `await actor.Method()`, 4d `dedicated`.
+
 ## 4. The scheduler in C
 
 All of it is a small part of the C runtime: native programs use it directly, the VM through the package ABI. Lean and fast.

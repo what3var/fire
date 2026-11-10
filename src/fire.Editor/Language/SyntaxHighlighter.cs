@@ -178,6 +178,9 @@ namespace fire.Editor
                 "defined" => At(i + 1).Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwWord or TokenType.KwChar or TokenType.KwByte,
                 "trust" => i + 1 < tokens.Count && !At(i + 1).NewlineBefore
                     && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.True or TokenType.False or TokenType.CharLiteral,
+                // `await f()`, `await [ ... ]`, `await taking x { }` (docs/ROADMAP_TASKS.md) - like the parser: in front of what it awaits, on the same line
+                "await" => i + 1 < tokens.Count && !At(i + 1).NewlineBefore
+                    && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.LBracket or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New,
                 _ => false,
             };
         }

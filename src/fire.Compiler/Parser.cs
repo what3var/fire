@@ -871,6 +871,13 @@ namespace fire.Compiler
             if (Check(TokenType.Interface)) return ParseInterfaceDecl();
             if (Check(TokenType.Identifier) && Peek().Lexeme == "inline" && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "c" && !PeekAt(1).NewlineBefore && PeekAt(2).Type != TokenType.Assign)
                 return ParseInlineCDecl();
+            if (IsAwaitStart())
+            {
+                // (`await Calc.Count(x)` would look like a declaration of a variable `Calc` of the type `await`)
+                var awaitExpr = ParseExpression();
+                ExpectStatementTerminator();
+                return new ExprStmt(_sourceIndex, awaitExpr.Line, awaitExpr);
+            }
             if (NextLooksLikeTypeThenName()) return ParseBareTypedDecl();
             if (Check(TokenType.If)) return ParseIf();
             if (Check(TokenType.While)) return ParseWhile();
@@ -2165,6 +2172,50 @@ namespace fire.Compiler
             var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
 
             return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body));
+        }
+
+        /// <summary>`await Call(args) [taking x | handover x ...]` / `await [taking x | handover x ...] { ... return v }` (docs/ROADMAP_TASKS.md section 3).
+        /// The caller waits until the awaited code is done, so the awaited code runs on the caller's strand: `await f(x)` is the call itself - what it gets is
+        /// lent, without a copy; it gives back its result, an exception goes on at the `await`. While the awaited code waits (Sleep, the net, ...), the task of the
+        /// caller is parked and its worker runs others. Clauses copy (`taking x`: `copy x`) or move (`handover x`: `take x`) what the call names; the block
+        /// form is a function of its own that sees only what it takes and the globals (like the body of `fire`), called at once.</summary>
+        private bool IsAwaitStart() => Check(TokenType.Identifier) && Peek().Lexeme == "await" && !PeekAt(1).NewlineBefore
+            && PeekAt(1).Type is TokenType.Identifier or TokenType.This or TokenType.LBracket or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New;
+
+        private Expr ParseAwait()
+        {
+            var awaitTok = Advance();
+            int line = awaitTok.Line;
+            if (Check(TokenType.LBracket))
+                throw Error("'await [ ... ]' (several calls at once) is not there yet", Peek());
+            if (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.LBrace))
+            {
+                var (captures, withName, _) = ParseFireTakingWithClauses();
+                if (withName != null) throw Error("'with' does not exist for 'await' (an actor's method is awaited by calling it: 'await actor.Method()')", Peek());
+                var body = ParseBlock();
+                var parameters = captures.Select(c => new LambdaParam(c.VarName, new TypeRef("any", null, 0), new List<Expr?>())).ToList();
+                var lambda = new LambdaExpr(line, parameters, null, body, AutoCapture: false);
+                return new CallExpr(line, lambda, captures.Select(c => (Expr)new UnaryExpr(line, c.Handover ? UnaryOp.Take : UnaryOp.DeepCopy, c.Source)).ToList());
+            }
+            var awaited = ParseUnary();
+            if (awaited is not CallExpr call)
+                throw new ParseException("'await' expects a call ('await Count(list)') or a block ('await taking x { return ... }')", awaitTok.Line, awaitTok.Column);
+            // (clauses: an argument - or the receiver - that is the variable named is copied or moved)
+            var modes = new Dictionary<string, UnaryOp>();
+            while (Check(TokenType.Taking) || Check(TokenType.Handover))
+            {
+                bool handover = Advance().Type == TokenType.Handover;
+                var nameTok = Expect(TokenType.Identifier, "Expected an identifier after '" + (handover ? "handover" : "taking") + "'");
+                modes[nameTok.Lexeme] = handover ? UnaryOp.Take : UnaryOp.DeepCopy;
+            }
+            if (modes.Count == 0) return call;
+            var used = new HashSet<string>();
+            Expr Apply(Expr e) => e is IdentifierExpr id && modes.TryGetValue(id.Name, out var op) && used.Add(id.Name) ? new UnaryExpr(id.Line, op, e) : e;
+            var callee = call.Callee is MemberExpr m ? m with { Target = Apply(m.Target) } : call.Callee;
+            var result = call with { Callee = callee, Args = call.Args.Select(Apply).ToList() };
+            foreach (var name in modes.Keys)
+                if (!used.Contains(name)) throw new ParseException($"'{name}' is not an argument of the awaited call", line, awaitTok.Column);
+            return result;
         }
 
         /// <summary>`terminate()` / `terminate(value)` - see Ast.TerminateStmt
@@ -3724,6 +3775,9 @@ namespace fire.Compiler
                 var trustTok = Advance();
                 return new UnaryExpr(trustTok.Line, UnaryOp.Trust, ParseUnary());
             }
+
+            // `await ...` (docs/ROADMAP_TASKS.md section 3): a word of its own only in front of what it awaits, on the same line (`await` stays a name elsewhere)
+            if (IsAwaitStart()) return ParseAwait();
 
             // `try take x` (SPEC 2.2): like `take x`, but only what the running call owns moves
             if (Check(TokenType.Try) && PeekAt(1).Type == TokenType.Take)

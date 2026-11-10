@@ -5812,6 +5812,16 @@ namespace fire.Native
                     Need(argc + 1);
                     int slot = d - argc - 1;
                     string owner = OwnerList();
+                    {
+                        // `f(copy x)` / `f(flat x)` on a lambda: the copy (the prefix CopyArgs in front of the call) - it belongs to the caller's scope
+                        long lamMask = ArgMask();
+                        for (int i = 0; i < Math.Min(argc, 16); i++)
+                            if ((lamMask >> (4 * i) & 15) is 1 or 2)
+                            {
+                                E($"{S(slot + 1 + i)} = copyValue({S(slot + 1 + i)}, {((lamMask >> (4 * i) & 15) == 2 ? "true" : "false")}, &{owner});");
+                                Check();
+                            }
+                    }
                     var argItems = argc == 0 ? new List<string> { "Undef()" } : Enumerable.Range(slot + 1, argc).Select(S).ToList();
                     E($"{{ {CArray("Value", "args", argItems)}{S(slot)} = {(DebugBuild ? "callLamV" : "callLam")}({S(slot)}, {argc}, args, &{owner}); }}");
                     Check();
