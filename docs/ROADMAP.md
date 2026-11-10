@@ -33,6 +33,18 @@ Leitlinien:
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
 
+**Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
+
+1. [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) vervollständigen.
+2. Der Rest der laufenden Arbeitsliste: Ebene 2 (typisierte Locals und Felder als C-Typen, 13.9), Besitz ohne Aufruftiefe (`TakeTo` mit C-ABI),
+   schlankere Konstruktoren, weniger Value-Kopien (Alias-Slots, dann Zeiger-Argumente/Ergebnisse), spark: CPU-Last im Leerlauf und der FPS-Einbruch von scene3d.
+3. Die kleinen Punkte aus [Kleine und alte Ziele](#13-kleine-und-alte-ziele) ("Dazwischen, klein").
+4. Die Reste aus Generator, Linkage und Größe (Abschnitte 9, 11, 12, 17) - nur, was wirklich Vorteile bringt.
+5. UI zuletzt (Abschnitte 10 und 14).
+
+Die neuen Ziele (bios32, efi-x64, win32-legacy, weitere Boards, Grafik alter Hardware) können parallel laufen, sobald die Basis (1-3) weit genug
+ist; der HTTP-Server ([ROADMAP_HTTP.md](ROADMAP_HTTP.md)) läuft parallel bei jemand anderem.
+
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
 ### Warum der C-Port zuerst
