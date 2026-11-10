@@ -106,6 +106,30 @@ as big. Left per worker on purpose: two caches of unit factors and the last erro
 no switch in between). FreeRTOS, TinyCC and the scheduler of fire itself (`FIRE_TLS_STRUCT`) and the modules (`FIRE_DLL`) had a structure already; the
 switch of a task (step 3) sets `fire_curTask`.
 
+### Step 3 in detail - the scheduler
+
+*Done so far* (`FIRE_TASKS`: without the GIL, with the task state, where the platform has coroutines - posix, windows; `FIRE_NO_TASKS` keeps a system
+thread per fire thread):
+
+* **3a coroutines** (`platform/std/fire_coro.h`): the switch in assembler on x86-64 (System V; 15 ns a switch), fibers on Windows, ucontext elsewhere
+  (arm64 and riscv in assembler are left for later); stacks reserved with a guard page below them (8 MB like a system thread, committed on use), a cache of
+  64 stacks of ended tasks for the next ones; every switch is told to AddressSanitizer and ThreadSanitizer. A coroutine stopped on one worker goes on on
+  another.
+* **3b/3c the scheduler** (`fire_rt.h`, before `notifyEvent`): `fire` starts a task (`taskSpawn`). Workers - system threads, one per core to begin with -
+  take the ready tasks from a queue; a task switches back to its worker to give its turn away, and the worker then requeues, parks or frees it (a task is
+  never in a queue while its stack is in use; a wake while it is parking is put right by the worker, `TS_WOKEN`). `blockUntil` parks a task instead of
+  blocking its worker: until an event, its time (the heap of the sleepers - `Sleep`), or one thing it waits for (`notifyKey`: a section granted or done, a
+  message for an actor - waking every waiting task at every grant was quadratic). The safe points give the turn away at the end of a time slice when tasks
+  wait for a worker or a sleeper is due. A native that waits (`gilRelease`) counts its worker as blocked: while tasks wait, another worker starts; an idle
+  worker ends after 10 s (never the last). The task pointer (`fire_curTask`) is read through a function that is never inlined - ThreadSanitizer showed a
+  compiler keeping the address of the thread-local slot across a switch, which is the old worker's after a move.
+* Measured (4 cores): 20000 `fire` that do nothing: 82 ms with tasks, 531 ms with system threads; 10000 `fire` with a section each: 567 ms against 855 ms;
+  four strands computing (objects, methods, strings): the same (about 230 ms). A program without `fire` is not touched.
+* Fixed on the way: `blockUntil` read the count of events after looking at its condition - an event between the two was lost (the waits of the threads
+  hid it by looking again every 5 ms).
+
+Still open in step 3: work stealing (3d - one queue under a lock today), measurements with many waiting tasks (3e).
+
 ## 3. The language: `fire` and `await`
 
 ```
