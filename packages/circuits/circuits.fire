@@ -622,7 +622,7 @@ namespace Circuits {
         any function
 
         construct(any function) : base(0) {
-            this.function = function
+            this.function = take function   // (the source owns its function - a lambda belongs to its owner like an object)
             // its value comes from fire every step: in real time too (no thread of the kernel)
             this.everyStep = true
         }
@@ -2833,7 +2833,7 @@ namespace Circuits {
         /// <summary>Binds parts to the parameters: `action(circuit)` runs now and whenever a parameter of this circuit or of a circuit around it changes
         /// (`c.Bind(c => r.Resistance = c.Get("R") * 2)`).</summary>
         undefined Bind(any action) {
-            this.bindings.Add(action)
+            this.bindings.Add(take action)   // (the circuit owns its bindings)
             any f = action
             f(this)
         }

@@ -5891,7 +5891,7 @@ namespace fire.Native
                             }
                     }
                     var argItems = argc == 0 ? new List<string> { "Undef()" } : Enumerable.Range(slot + 1, argc).Select(S).ToList();
-                    E($"{{ {CArray("Value", "args", argItems)}{S(slot)} = {(DebugBuild ? "callLamV" : "callLam")}({S(slot)}, {argc}, args, &{owner}); }}");
+                    E($"{{ {CArray("Value", "args", argItems)}{S(slot)} = callLamU({S(slot)}, {argc}, args, &{owner}); }}");
                     Check();
                     AdoptResult(slot);
                     d = slot + 1; return Next();

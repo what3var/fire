@@ -306,8 +306,8 @@ class LowPass : Circuits.Circuit {
         res.B.Connect(c.A)
         c.B.Connect(this.Ground)
         output.Connect(res.B)
-        this.Bind((Circuits.Circuit p) => res.Resistance = p.Get("R"))
-        this.Bind((Circuits.Circuit p) => c.Capacitance = p.Get("C"))
+        this.Bind(func (Circuits.Circuit p) on res => { Resistance = p.Get("R") })   // (bound to the part: a capture would be a copy)
+        this.Bind(func (Circuits.Circuit p) on c => { Capacitance = p.Get("C") })
     }
     float Cutoff() { return this.Value("1/(2*pi*R*C)") }
 }
